@@ -97,7 +97,7 @@ MusicSeerr is designed to work with Lidarr. If you're putting together a music s
 |-|-|
 | [Lidarr](https://lidarr.audio/) (nightly recommended) | Library management, download orchestration |
 | [slskd](https://github.com/slskd/slskd) | Soulseek download client |
-| [Tubifarry](https://github.com/Tubifarry/Tubifarry) | YouTube-based download client for Lidarr |
+| [Tubifarry](https://github.com/TypNull/Tubifarry) | YouTube-based download client for Lidarr |
 
 Lidarr is the only requirement. slskd and Tubifarry are optional but between them they cover most music sourcing needs. For playback, connect Jellyfin, Navidrome, Plex, or mount your music folder directly into the container.
 
