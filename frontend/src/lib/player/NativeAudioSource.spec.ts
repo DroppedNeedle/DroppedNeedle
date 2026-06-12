@@ -93,6 +93,25 @@ describe('NativeAudioSource', () => {
 		expect(onProgress).toHaveBeenCalledWith(0, 178);
 	});
 
+	it('detaches ready listeners on first ready event so onReady is single-shot', async () => {
+		const source = new NativeAudioSource('local', { url: '/single-shot.mp3', seekable: true });
+		const onReady = vi.fn();
+		source.onReady(onReady);
+
+		const loadPromise = source.load();
+		hoisted.dispatch('canplay');
+		await loadPromise;
+
+		expect(onReady).toHaveBeenCalledTimes(1);
+		for (const event of ['canplay', 'loadedmetadata', 'loadeddata']) {
+			expect(hoisted.audio.removeEventListener).toHaveBeenCalledWith(event, expect.any(Function));
+		}
+
+		hoisted.dispatch('loadedmetadata');
+		hoisted.dispatch('loadeddata');
+		expect(onReady).toHaveBeenCalledTimes(1);
+	});
+
 	it('fails load when timeout is reached', async () => {
 		vi.useFakeTimers();
 		const source = new NativeAudioSource('local', { url: '/timeout.mp3', seekable: true });

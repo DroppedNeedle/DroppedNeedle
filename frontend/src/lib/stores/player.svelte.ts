@@ -287,10 +287,12 @@ function createPlayerStore() {
 				url: resolvedUrl,
 				format: activeItem.format
 			});
+			// Session must exist before play(): a fast 'playing' event would otherwise
+			// start the progress reporter without a playSessionId and it bails permanently.
+			if (activeItem.sourceType === 'jellyfin') await startJellyfinPlayback(index);
 			if (gen === loadGeneration && activeItem.sourceType !== 'youtube') {
 				source.play();
 			}
-			if (activeItem.sourceType === 'jellyfin') await startJellyfinPlayback(index);
 			await loadPromise;
 			if (gen === loadGeneration && activeItem.sourceType === 'youtube') {
 				source.play();

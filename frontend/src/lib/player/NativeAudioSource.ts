@@ -117,18 +117,19 @@ export class NativeAudioSource implements PlaybackSource {
 				reject(new Error(message));
 			}, LOAD_TIMEOUT_MS);
 
-			this.registerListener('canplay', () => {
+			const readyEvents = ['canplay', 'loadedmetadata', 'loadeddata'];
+			const handleReady = () => {
 				clearTimeout(timeoutHandle);
+				// Single-shot: detach all ready listeners on first fire so the other
+				// two events can never re-enter onReady.
+				for (const event of readyEvents) {
+					this.unregisterListener(event, handleReady);
+				}
 				onReady();
-			});
-			this.registerListener('loadedmetadata', () => {
-				clearTimeout(timeoutHandle);
-				onReady();
-			});
-			this.registerListener('loadeddata', () => {
-				clearTimeout(timeoutHandle);
-				onReady();
-			});
+			};
+			for (const event of readyEvents) {
+				this.registerListener(event, handleReady);
+			}
 			this.registerListener('durationchange', emitProgress);
 			this.registerListener('play', onPlay);
 			this.registerListener('playing', onPlaying);
@@ -218,6 +219,11 @@ export class NativeAudioSource implements PlaybackSource {
 	private registerListener(event: string, handler: EventListener): void {
 		this.audio.addEventListener(event, handler);
 		this.listeners.push({ event, handler });
+	}
+
+	private unregisterListener(event: string, handler: EventListener): void {
+		this.audio.removeEventListener(event, handler);
+		this.listeners = this.listeners.filter((l) => !(l.event === event && l.handler === handler));
 	}
 
 	private cleanupListeners(): void {
