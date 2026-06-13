@@ -77,6 +77,7 @@ NPM    ?= pnpm
 	frontend-format-check frontend-check frontend-lint frontend-test frontend-test-server \
 	frontend-test-album-page \
 	frontend-test-audiodb-images \
+	frontend-test-auth \
 	frontend-test-discover-page \
 	frontend-test-jellyfin \
 	frontend-test-monitored-artists \
@@ -334,6 +335,9 @@ frontend-test-jellyfin: ## Run Jellyfin frontend tests
 
 frontend-test-discover-page: ## Run discover page and query tests
 	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project server src/lib/queries/discover/DiscoverQuery.spec.ts
+
+frontend-test-auth: ## Run auth query/mutation data-layer tests
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project server src/lib/queries/auth/AuthMutations.spec.ts
 
 rebuild: ## Rebuild the application
 	cd "$(ROOT_DIR)" && ./manage.sh --rebuild

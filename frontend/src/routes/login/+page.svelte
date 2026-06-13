@@ -1,124 +1,98 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { onMount, onDestroy } from 'svelte';
+	import { api, ApiError } from '$lib/api/client';
+	import { getAuthProvidersQuery } from '$lib/queries/auth/AuthProvidersQuery.svelte';
+	import {
+		createJellyfinLoginMutation,
+		createLocalLoginMutation,
+		createOidcAuthorizeMutation,
+		createPlexPinMutation
+	} from '$lib/queries/auth/AuthMutations.svelte';
+	import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
+	import {
+		toAuthUser,
+		type AuthProviders,
+		type AuthSessionResponse,
+		type PlexPollResponse
+	} from '$lib/queries/auth/types';
+	import { onDestroy } from 'svelte';
 	import { Music, Eye, EyeOff } from 'lucide-svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 
 	type Tab = 'local' | 'plex' | 'jellyfin' | 'oidc';
 
-	interface Providers {
-		local: boolean;
-		plex: boolean;
-		jellyfin: boolean;
-		oidc: boolean;
-	}
+	const DEFAULT_PROVIDERS: AuthProviders = {
+		local: true,
+		plex: false,
+		jellyfin: false,
+		oidc: false
+	};
 
-	let providers = $state<Providers>({ local: true, plex: false, jellyfin: false, oidc: false });
+	const providersQuery = getAuthProvidersQuery();
+	const providers = $derived(providersQuery.data ?? DEFAULT_PROVIDERS);
+
 	let activeTab = $state<Tab>('local');
+	// Auto-select a tab once providers load, but never override a user's choice.
+	let tabInitialised = false;
+	$effect(() => {
+		if (tabInitialised || !providersQuery.isSuccess) return;
+		tabInitialised = true;
+		if (!providers.local && providers.plex) activeTab = 'plex';
+		else if (!providers.local && providers.jellyfin) activeTab = 'jellyfin';
+		else if (!providers.local && providers.oidc) activeTab = 'oidc';
+	});
 
 	// Local login
 	let email = $state('');
 	let password = $state('');
 	let showPassword = $state(false);
-	let localLoading = $state(false);
 	let localError = $state<string | null>(null);
+	const localLogin = createLocalLoginMutation();
 
 	// Jellyfin login
 	let jfUsername = $state('');
 	let jfPassword = $state('');
 	let jfShowPassword = $state(false);
-	let jfLoading = $state(false);
 	let jfError = $state<string | null>(null);
+	const jellyfinLogin = createJellyfinLoginMutation();
 
-	// Plex login
+	// Plex login: the PIN request is a mutation; authorisation is polled imperatively.
 	let plexLoading = $state(false);
 	let plexError = $state<string | null>(null);
 	let plexPollInterval: ReturnType<typeof setInterval> | null = null;
+	const plexPin = createPlexPinMutation();
 
 	// OIDC
 	let oidcLoading = $state(false);
 	let oidcError = $state<string | null>(null);
-
-	onMount(async () => {
-		try {
-			const data = await fetch('/api/v1/auth/providers').then((r) => r.json());
-			providers = data as Providers;
-			if (!providers.local && providers.plex) activeTab = 'plex';
-			else if (!providers.local && providers.jellyfin) activeTab = 'jellyfin';
-			else if (!providers.local && providers.oidc) activeTab = 'oidc';
-		} catch {
-			// keep defaults
-		}
-	});
+	const oidcAuthorize = createOidcAuthorizeMutation();
 
 	onDestroy(() => {
 		if (plexPollInterval) clearInterval(plexPollInterval);
 	});
 
-	function storeSession(data: {
-		user: {
-			id: string;
-			display_name: string;
-			role: string;
-			email: string | null;
-			avatar_url: string | null;
-		};
-	}) {
-		authStore.setUser({
-			id: data.user.id,
-			display_name: data.user.display_name,
-			role: data.user.role as 'admin' | 'trusted' | 'user',
-			email: data.user.email,
-			avatar_url: data.user.avatar_url
-		});
+	function storeSession(data: AuthSessionResponse) {
+		authStore.setUser(toAuthUser(data.user));
 		goto('/');
 	}
 
 	async function handleLocalLogin() {
 		localError = null;
-		localLoading = true;
 		try {
-			const res = await fetch('/api/v1/auth/login', {
-				method: 'POST',
-				credentials: 'include',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ email, password })
-			});
-			if (!res.ok) {
-				const data = await res.json().catch(() => ({}));
-				localError = data.detail ?? 'Invalid email or password';
-				return;
-			}
-			storeSession(await res.json());
-		} catch {
-			localError = 'Could not reach the server';
-		} finally {
-			localLoading = false;
+			storeSession(await localLogin.mutateAsync({ email, password }));
+		} catch (e) {
+			localError = e instanceof ApiError ? e.message : 'Could not reach the server';
 		}
 	}
 
 	async function handleJellyfinLogin() {
 		jfError = null;
-		jfLoading = true;
 		try {
-			const res = await fetch('/api/v1/auth/jellyfin/login', {
-				method: 'POST',
-				credentials: 'include',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ username: jfUsername, password: jfPassword })
-			});
-			if (!res.ok) {
-				const data = await res.json().catch(() => ({}));
-				jfError = data.detail ?? 'Invalid credentials or Jellyfin unavailable';
-				return;
-			}
-			storeSession(await res.json());
-		} catch {
-			jfError = 'Could not reach the server';
-		} finally {
-			jfLoading = false;
+			storeSession(await jellyfinLogin.mutateAsync({ username: jfUsername, password: jfPassword }));
+		} catch (e) {
+			jfError = e instanceof ApiError ? e.message : 'Could not reach the server';
 		}
 	}
 
@@ -127,42 +101,24 @@
 		plexLoading = true;
 		if (plexPollInterval) clearInterval(plexPollInterval);
 		try {
-			const pinRes = await fetch('/api/v1/auth/plex/pin', {
-				method: 'POST',
-				credentials: 'include'
-			});
-			if (!pinRes.ok) {
-				plexError = 'Plex login unavailable';
-				plexLoading = false;
-				return;
-			}
-			const { pin_id, auth_url } = await pinRes.json();
+			const { pin_id, auth_url } = await plexPin.mutateAsync();
 			window.open(auth_url, '_blank', 'width=800,height=600');
 
 			plexPollInterval = setInterval(async () => {
 				try {
-					const pollRes = await fetch(`/api/v1/auth/plex/poll?pin_id=${pin_id}`, {
-						credentials: 'include'
-					});
-					if (!pollRes.ok) {
-						clearInterval(plexPollInterval!);
-						plexLoading = false;
-						plexError = 'Plex access denied';
-						return;
-					}
-					const data = await pollRes.json();
+					const data = await api.global.get<PlexPollResponse>(AUTH_ENDPOINTS.plexPoll(pin_id));
 					if (data.completed === false) return;
 					clearInterval(plexPollInterval!);
 					plexLoading = false;
-					storeSession(data);
-				} catch {
+					if (data.user) storeSession({ user: data.user });
+				} catch (e) {
 					clearInterval(plexPollInterval!);
 					plexLoading = false;
-					plexError = 'Plex login failed';
+					plexError = e instanceof ApiError ? 'Plex access denied' : 'Plex login failed';
 				}
 			}, 2000);
 		} catch {
-			plexError = 'Could not reach the server';
+			plexError = 'Plex login unavailable';
 			plexLoading = false;
 		}
 	}
@@ -171,19 +127,10 @@
 		oidcError = null;
 		oidcLoading = true;
 		try {
-			const res = await fetch('/api/v1/auth/oidc/authorize', {
-				method: 'POST',
-				credentials: 'include'
-			});
-			if (!res.ok) {
-				oidcError = 'SSO is not configured';
-				oidcLoading = false;
-				return;
-			}
-			const { redirect_url } = await res.json();
+			const { redirect_url } = await oidcAuthorize.mutateAsync();
 			window.location.href = redirect_url;
 		} catch {
-			oidcError = 'Could not reach the server';
+			oidcError = 'SSO is not configured';
 			oidcLoading = false;
 		}
 	}
@@ -284,8 +231,8 @@
 						{#if localError}
 							<div class="alert alert-error py-2 text-sm">{localError}</div>
 						{/if}
-						<button type="submit" class="btn btn-primary w-full" disabled={localLoading}>
-							{#if localLoading}<span class="loading loading-spinner loading-sm"></span>{/if}
+						<button type="submit" class="btn btn-primary w-full" disabled={localLogin.isPending}>
+							{#if localLogin.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
 							Sign in
 						</button>
 					</form>
@@ -347,8 +294,8 @@
 						{#if jfError}
 							<div class="alert alert-error py-2 text-sm">{jfError}</div>
 						{/if}
-						<button type="submit" class="btn btn-primary w-full" disabled={jfLoading}>
-							{#if jfLoading}<span class="loading loading-spinner loading-sm"></span>{/if}
+						<button type="submit" class="btn btn-primary w-full" disabled={jellyfinLogin.isPending}>
+							{#if jellyfinLogin.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
 							Sign in with Jellyfin
 						</button>
 					</form>

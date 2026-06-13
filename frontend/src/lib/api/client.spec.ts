@@ -4,7 +4,19 @@ vi.mock('$lib/utils/navigationAbort', () => ({
 	pageFetch: vi.fn()
 }));
 
-import { api, ApiError } from './client';
+vi.mock('$app/environment', () => ({ browser: true }));
+
+const authMock = vi.hoisted(() => ({ isAuthenticated: false, clear: vi.fn() }));
+vi.mock('$lib/stores/authStore.svelte', () => ({
+	authStore: {
+		get isAuthenticated() {
+			return authMock.isAuthenticated;
+		},
+		clear: authMock.clear
+	}
+}));
+
+import { api, ApiError, SessionExpiredError } from './client';
 import { pageFetch } from '$lib/utils/navigationAbort';
 
 const mockPageFetch = vi.mocked(pageFetch);
@@ -46,6 +58,9 @@ function errorResponse(status: number, body?: unknown): Response {
 beforeEach(() => {
 	mockPageFetch.mockReset();
 	mockGlobalFetch.mockReset();
+	authMock.isAuthenticated = false;
+	authMock.clear.mockReset();
+	vi.unstubAllGlobals();
 });
 
 describe('api client', () => {
@@ -316,6 +331,44 @@ describe('api client', () => {
 			expect(err.status).toBe(404);
 			expect(err.message).toBe('Not found');
 			expect(err.code).toBe('NOT_FOUND');
+		});
+	});
+
+	describe('session expiry (401)', () => {
+		it('throws SessionExpiredError, clears the store, and redirects when authenticated', async () => {
+			authMock.isAuthenticated = true;
+			const win = { location: { href: '' } };
+			vi.stubGlobal('window', win);
+			mockPageFetch.mockResolvedValue(errorResponse(401, { detail: 'expired' }));
+
+			try {
+				await api.get('/api/v1/auth/me');
+				expect.unreachable('should have thrown');
+			} catch (e) {
+				expect(e).toBeInstanceOf(SessionExpiredError);
+				expect((e as SessionExpiredError).status).toBe(401);
+				expect((e as SessionExpiredError).code).toBe('session_expired');
+			}
+			// Never returns undefined — the Promise<T> contract is honoured by throwing.
+			expect(authMock.clear).toHaveBeenCalledOnce();
+			expect(win.location.href).toBe('/login');
+		});
+
+		it('falls through to a plain ApiError (no redirect) when unauthenticated, e.g. bad login', async () => {
+			authMock.isAuthenticated = false;
+			mockGlobalFetch.mockResolvedValue(
+				errorResponse(401, { detail: 'Invalid email or password' })
+			);
+
+			try {
+				await api.global.post('/api/v1/auth/login', { email: 'a', password: 'b' });
+				expect.unreachable('should have thrown');
+			} catch (e) {
+				expect(e).toBeInstanceOf(ApiError);
+				expect(e).not.toBeInstanceOf(SessionExpiredError);
+				expect((e as ApiError).message).toBe('Invalid email or password');
+			}
+			expect(authMock.clear).not.toHaveBeenCalled();
 		});
 	});
 });
