@@ -622,7 +622,7 @@
 			{@render children()}
 		{/if}
 
-		<nav class="musicseerr-bottom-nav lg:hidden" aria-label="Primary navigation">
+		<nav class="musicseerr-bottom-nav" aria-label="Primary navigation">
 			<a
 				href="/"
 				class="musicseerr-bottom-nav__item"

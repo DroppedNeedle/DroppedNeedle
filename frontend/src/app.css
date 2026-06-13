@@ -347,6 +347,13 @@ textarea {
 		--ms-player-height: 5.625rem;
 	}
 
+	/* Desktop: hide the mobile bottom nav. The element's `lg:hidden` utility has
+	   the same specificity as the base `.musicseerr-bottom-nav { display: grid }`
+	   rule and loses on source order, so it stayed visible — hide it explicitly. */
+	.musicseerr-bottom-nav {
+		display: none;
+	}
+
 	.musicseerr-topbar {
 		min-height: 4rem;
 		padding-top: 0;
