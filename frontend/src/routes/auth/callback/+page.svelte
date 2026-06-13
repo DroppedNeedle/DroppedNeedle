@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { ApiError } from '$lib/api/client';
 	import { createOidcExchangeMutation } from '$lib/queries/auth/AuthMutations.svelte';
@@ -21,7 +20,10 @@
 		try {
 			const data = await oidcExchange.mutateAsync({ code });
 			authStore.setUser(toAuthUser(data.user));
-			goto('/');
+			// Full reload (not goto) so the layout re-hydrates auth from the just-set
+			// session cookie. A client-side nav races the cookie and bounces to /login
+			// on the first sign-in.
+			window.location.href = '/';
 		} catch (e) {
 			error =
 				e instanceof ApiError
