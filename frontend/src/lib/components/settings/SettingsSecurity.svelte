@@ -63,8 +63,9 @@
 		await oidcForm.save();
 	}
 
+	// Client secret is optional: public clients use PKCE (no secret).
 	const hasOidcCredentials = $derived(
-		Boolean(oidcForm.data?.client_id && oidcForm.data?.client_secret && oidcForm.data?.redirect_uri)
+		Boolean(oidcForm.data?.client_id && oidcForm.data?.redirect_uri)
 	);
 	const oidcToggleDisabled = $derived(
 		!hasOidcCredentials || (!oidcForm.testResult?.valid && !oidcForm.wasAlreadyEnabled)
@@ -411,6 +412,7 @@
 					<div class="form-control w-full">
 						<label class="label" for="oidc-client-secret">
 							<span class="label-text font-medium">Client Secret</span>
+							<span class="label-text-alt opacity-60">optional — leave blank for public/PKCE clients</span>
 						</label>
 						<label class="input input-bordered flex items-center gap-2 w-full">
 							{#if showClientSecret}

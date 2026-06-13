@@ -25,6 +25,7 @@ _STATE_TTL = 600
 
 _CACHE_PREFIX_DISCOVERY = "oidc:discovery:"
 _CACHE_PREFIX_CODE      = "oidc:code:"
+_CACHE_PREFIX_PKCE      = "oidc:pkce:"
 
 
 class OIDCUserAuthService:
@@ -67,7 +68,7 @@ class OIDCUserAuthService:
         config = self._prefs.get_oidc_connection_raw()
         if not config.enabled:
             raise ConfigurationError("OIDC login is not enabled")
-        if not all([config.issuer, config.client_id, config.client_secret, config.redirect_uri]):
+        if not all([config.issuer, config.client_id, config.redirect_uri]):
             raise ConfigurationError("OIDC configuration is incomplete")
         return config
 
@@ -127,12 +128,22 @@ class OIDCUserAuthService:
         state = _random_state()
         await self._store.store_oidc_state(state, ttl_seconds = _STATE_TTL)
 
+        # PKCE (S256): stash the verifier against the state so the callback can
+        # complete the token exchange. Lets public clients (no secret) work, and
+        # is recommended even for confidential clients (OAuth 2.1).
+        verifier, challenge = _make_pkce()
+        await self._cache.set(
+            f"{_CACHE_PREFIX_PKCE}{state}", verifier, ttl_seconds = _STATE_TTL
+        )
+
         params = {
             "response_type": "code",
             "client_id": config.client_id,
             "redirect_uri": config.redirect_uri,
             "scope": config.scopes,
             "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
         }
         query = urlencode(params)
         return f"{doc['authorization_endpoint']}?{query}"
@@ -142,10 +153,14 @@ class OIDCUserAuthService:
         if not valid:
             raise AuthenticationError("Invalid or expired OIDC state")
 
+        pkce_key = f"{_CACHE_PREFIX_PKCE}{state}"
+        code_verifier = await self._cache.get(pkce_key)
+        await self._cache.delete(pkce_key)
+
         config = self._require_config()
         doc = await self._discover(config.issuer)
 
-        tokens = await self._exchange_code(code, config, doc)
+        tokens = await self._exchange_code(code, config, doc, code_verifier)
 
         profile = await self._fetch_user_info(tokens, config, doc)
 
@@ -188,14 +203,25 @@ class OIDCUserAuthService:
 
         return user, raw_token
 
-    async def _exchange_code(self, code: str, config: OIDCConnectionSettings, doc: dict) -> dict:
+    async def _exchange_code(
+        self,
+        code: str,
+        config: OIDCConnectionSettings,
+        doc: dict,
+        code_verifier: str | None = None,
+    ) -> dict:
         body = {
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": config.redirect_uri,
             "client_id": config.client_id,
-            "client_secret": config.client_secret,
         }
+        # Confidential clients still send their secret; public (PKCE-only) clients
+        # don't have one. PKCE proves possession of the verifier for both.
+        if config.client_secret:
+            body["client_secret"] = config.client_secret
+        if code_verifier:
+            body["code_verifier"] = code_verifier
         try:
             async with httpx.AsyncClient(timeout = 15.0) as client:
                 resp = await client.post(
@@ -296,6 +322,17 @@ class OIDCUserAuthService:
 
 def _random_state() -> str:
     return urlsafe_b64encode(os.urandom(32)).decode()
+
+
+def _make_pkce() -> tuple[str, str]:
+    """Return (code_verifier, code_challenge) for PKCE S256.
+
+    The verifier is 43 chars of base64url (unreserved per RFC 7636); the
+    challenge is base64url(SHA256(verifier)), both unpadded.
+    """
+    verifier = urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
+    challenge = urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    return verifier, challenge
 
 
 def _decode_jwt_payload(token: str) -> dict | None:
