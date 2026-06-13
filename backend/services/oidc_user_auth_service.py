@@ -25,7 +25,6 @@ _STATE_TTL = 600
 
 _CACHE_PREFIX_DISCOVERY = "oidc:discovery:"
 _CACHE_PREFIX_CODE      = "oidc:code:"
-_CACHE_PREFIX_PKCE      = "oidc:pkce:"
 
 
 class OIDCUserAuthService:
@@ -125,16 +124,12 @@ class OIDCUserAuthService:
         config = self._require_config()
         doc = await self._discover(config.issuer)
 
-        state = _random_state()
-        await self._store.store_oidc_state(state, ttl_seconds = _STATE_TTL)
-
-        # PKCE (S256): stash the verifier against the state so the callback can
-        # complete the token exchange. Lets public clients (no secret) work, and
-        # is recommended even for confidential clients (OAuth 2.1).
+        # PKCE (S256): persist the verifier with the state so the callback can
+        # complete the token exchange (durable + worker-safe). Lets public clients
+        # (no secret) work, and is recommended even for confidential ones (OAuth 2.1).
         verifier, challenge = _make_pkce()
-        await self._cache.set(
-            f"{_CACHE_PREFIX_PKCE}{state}", verifier, ttl_seconds = _STATE_TTL
-        )
+        state = _random_state()
+        await self._store.store_oidc_state(state, ttl_seconds = _STATE_TTL, code_verifier = verifier)
 
         params = {
             "response_type": "code",
@@ -149,13 +144,9 @@ class OIDCUserAuthService:
         return f"{doc['authorization_endpoint']}?{query}"
 
     async def handle_callback(self, *, code: str, state: str, user_agent: str | None = None) -> str:
-        valid = await self._store.consume_oidc_state(state)
+        valid, code_verifier = await self._store.consume_oidc_state(state)
         if not valid:
             raise AuthenticationError("Invalid or expired OIDC state")
-
-        pkce_key = f"{_CACHE_PREFIX_PKCE}{state}"
-        code_verifier = await self._cache.get(pkce_key)
-        await self._cache.delete(pkce_key)
 
         config = self._require_config()
         doc = await self._discover(config.issuer)

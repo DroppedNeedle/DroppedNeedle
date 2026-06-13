@@ -135,9 +135,14 @@ class AuthStore:
                 CREATE TABLE IF NOT EXISTS auth_oidc_states (
                     state TEXT PRIMARY KEY,
                     created_at TEXT NOT NULL,
-                    expires_at TEXT NOT NULL
+                    expires_at TEXT NOT NULL,
+                    code_verifier TEXT
                 );
             """)
+            # Migration: add code_verifier (PKCE) to pre-existing auth_oidc_states.
+            have = {row[1] for row in conn.execute("PRAGMA table_info(auth_oidc_states)")}
+            if "code_verifier" not in have:
+                conn.execute("ALTER TABLE auth_oidc_states ADD COLUMN code_verifier TEXT")
             conn.commit()
         finally:
             conn.close()
@@ -503,7 +508,9 @@ class AuthStore:
             logger.info(f"Cleaned up {count} expired auth token(s)")
         return count
 
-    async def store_oidc_state(self, state: str, ttl_seconds: int = 600) -> None:
+    async def store_oidc_state(
+        self, state: str, ttl_seconds: int = 600, code_verifier: str | None = None
+    ) -> None:
         now = _now_iso()
         expiry = (datetime.now(timezone.utc) + timedelta(seconds = ttl_seconds)).isoformat()
 
@@ -511,24 +518,24 @@ class AuthStore:
             # Also prune stale states opportunistically
             conn.execute("DELETE FROM auth_oidc_states WHERE expires_at < ?", (now,))
             conn.execute(
-                "INSERT INTO auth_oidc_states (state, created_at, expires_at) VALUES (?, ?, ?)",
-                (state, now, expiry),
+                "INSERT INTO auth_oidc_states (state, created_at, expires_at, code_verifier) VALUES (?, ?, ?, ?)",
+                (state, now, expiry, code_verifier),
             )
 
         await self._write(operation)
 
-    async def consume_oidc_state(self, state: str) -> bool:
+    async def consume_oidc_state(self, state: str) -> tuple[bool, str | None]:
         now = _now_iso()
 
-        def operation(conn: sqlite3.Connection) -> bool:
+        def operation(conn: sqlite3.Connection) -> tuple[bool, str | None]:
             row = conn.execute(
-                "SELECT state FROM auth_oidc_states WHERE state = ? AND expires_at > ?",
+                "SELECT code_verifier FROM auth_oidc_states WHERE state = ? AND expires_at > ?",
                 (state, now),
             ).fetchone()
             if row is None:
-                return False
+                return False, None
             conn.execute("DELETE FROM auth_oidc_states WHERE state = ?", (state,))
-            return True
+            return True, row["code_verifier"]
 
         return await self._write(operation)
 
