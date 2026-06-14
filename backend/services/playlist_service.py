@@ -333,11 +333,23 @@ class PlaylistService:
         ]:
             representative = album_tracks[0]
             async with sem:
-                return await self._resolve_album_sources(
-                    representative.album_id, jf_service, local_service, nd_service, plex_service,
-                    album_name=representative.album_name or "",
-                    artist_name=representative.artist_name or "",
-                )
+                try:
+                    return await self._resolve_album_sources(
+                        representative.album_id, jf_service, local_service, nd_service, plex_service,
+                        album_name=representative.album_name or "",
+                        artist_name=representative.artist_name or "",
+                    )
+                except Exception:  # noqa: BLE001
+                    # Now that album groups resolve concurrently, one group failing
+                    # (e.g. a cache/infra error - upstream service errors are already
+                    # caught inside _resolve_album_sources) must not discard every
+                    # other album's results. Degrade to "no extra sources" for this
+                    # album; its tracks keep their stored available_sources.
+                    logger.warning(
+                        "Source resolution failed for album %s; skipping",
+                        representative.album_id, exc_info=True,
+                    )
+                    return ({}, {}, {}, {})
 
         resolved_maps = await asyncio.gather(
             *(_resolve_group(album_tracks) for _album_id, album_tracks in grouped)

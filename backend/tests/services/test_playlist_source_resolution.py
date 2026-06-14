@@ -323,6 +323,32 @@ class TestResolveTrackSourcesConcurrency:
         assert set(result.keys()) == {f"t-{i}" for i in range(5)}
 
     @pytest.mark.asyncio
+    async def test_one_album_failure_does_not_abort_resolution(self, tmp_path):
+        """A single album group raising must not discard the other groups' results."""
+        service, repo = _make_service(tmp_path)
+        tracks = [
+            _make_track(id="t-a", album_id="mbid-a", track_number=1, track_name="Song A"),
+            _make_track(id="t-b", album_id="mbid-b", track_number=1, track_name="Song B"),
+        ]
+        repo.get_tracks = MagicMock(return_value=tracks)
+
+        async def _flaky(album_id, *args, **kwargs):
+            if album_id == "mbid-a":
+                raise RuntimeError("boom")
+            # (jf_by_num, local_by_num, nd_by_num, plex_by_num)
+            return ({}, {1: ("Song B", "789")}, {}, {})
+
+        service._resolve_album_sources = AsyncMock(side_effect=_flaky)
+
+        result = await service.resolve_track_sources(
+            "p-1", local_service=AsyncMock(), nd_service=AsyncMock(),
+        )
+
+        # Failed album degrades to its stored source_type; healthy album still enriches.
+        assert result["t-a"] == ["navidrome"]
+        assert sorted(result["t-b"]) == ["local", "navidrome"]
+
+    @pytest.mark.asyncio
     async def test_concurrent_resolution_preserves_per_track_mapping(self, tmp_path):
         """Each album's resolved tracks must still map back to the right playlist track."""
         service, repo = _make_service(tmp_path)
