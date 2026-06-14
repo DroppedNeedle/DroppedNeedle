@@ -452,10 +452,13 @@
 							type="url"
 							bind:value={oidcForm.data.redirect_uri}
 							class="input input-bordered w-full"
-							placeholder="https://musicseerr.example.com/auth/callback"
+							placeholder="https://musicseerr.example.com/api/v1/auth/oidc/callback"
 						/>
 						<p class="text-xs text-base-content/50 mt-1.5 ml-1">
-							Register this exact URL as a redirect/callback URI with your provider.
+							This must point to the Musicseerr <strong>backend API</strong>, not the web app
+							page. Register this exact URL (ending in
+							<code class="text-xs">/api/v1/auth/oidc/callback</code>) as a redirect/callback URI
+							with your provider.
 						</p>
 					</div>
 
