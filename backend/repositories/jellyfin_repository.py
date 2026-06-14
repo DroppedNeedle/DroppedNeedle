@@ -797,7 +797,10 @@ class JellyfinRepository:
                 return []
             raw_items = result.get("Items", [])
             items = [parse_item(i) for i in raw_items]
-            await self._cache.set(cache_key, items, ttl_seconds=300)
+            # Don't cache an empty result: a cold/indexing Jellyfin can briefly
+            # return no playlists, and caching that would hide them for the full TTL.
+            if items:
+                await self._cache.set(cache_key, items, ttl_seconds=300)
             return items
         except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to get Jellyfin playlists: {e}")

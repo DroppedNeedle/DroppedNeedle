@@ -464,7 +464,10 @@ class PlexRepository:
         )
         raw = container.get("Metadata", [])
         playlists = [parse_playlist(p) for p in raw]
-        await self._cache.set(cache_key, playlists, self._ttl_list)
+        # Don't cache an empty result: a source that briefly returns no playlists
+        # would otherwise hide them for the full TTL.
+        if playlists:
+            await self._cache.set(cache_key, playlists, self._ttl_list)
         return playlists
 
     async def get_playlist_items(self, rating_key: str) -> list[PlexTrack]:

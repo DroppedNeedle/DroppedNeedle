@@ -488,7 +488,10 @@ class NavidromeRepository:
                     duration=p.get("duration", 0),
                 )
             )
-        await self._cache.set(cache_key, playlists, self._ttl_list)
+        # Don't cache an empty result: a source that briefly returns no playlists
+        # would otherwise hide them for the full TTL.
+        if playlists:
+            await self._cache.set(cache_key, playlists, self._ttl_list)
         return playlists
 
     async def get_playlist(self, id: str) -> SubsonicPlaylist:
