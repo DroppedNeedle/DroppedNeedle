@@ -55,10 +55,12 @@ async def request_batch(
 
 @router.post("/batch/cancel", response_model=BatchCancelResponse)
 async def cancel_batch(
+    current_user: CurrentUserDep,
     body: BatchCancelRequest = MsgSpecBody(BatchCancelRequest),
     request_service: RequestService = Depends(get_request_service),
 ):
-    return await request_service.cancel_batch(body.musicbrainz_ids)
+    user_id = None if current_user.role == "admin" else current_user.id
+    return await request_service.cancel_batch(body.musicbrainz_ids, user_id=user_id)
 
 
 @router.get("/new/queue-status", response_model=QueueStatusResponse)

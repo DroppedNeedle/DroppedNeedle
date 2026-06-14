@@ -188,12 +188,24 @@ class RequestService:
             logger.error("Batch request failed: %s", e)
             raise ExternalServiceError(f"Batch request failed: {e}")
 
-    async def cancel_batch(self, musicbrainz_ids: list[str]) -> BatchCancelResponse:
-        """Cancel multiple requests. Uses RequestQueue.cancel() for each."""
+    async def cancel_batch(
+        self, musicbrainz_ids: list[str], user_id: str | None = None
+    ) -> BatchCancelResponse:
+        """Cancel multiple requests. Uses RequestQueue.cancel() for each.
+
+        When ``user_id`` is provided (non-admin caller), only requests owned by
+        that user are cancelled; others are counted as failed without revealing
+        whether they exist, mirroring the single-cancel ownership check.
+        """
         cancelled = 0
         failed = 0
         for mbid in musicbrainz_ids:
             try:
+                if user_id is not None:
+                    record = await self._request_history.async_get_record(mbid)
+                    if record is None or record.user_id != user_id:
+                        failed += 1
+                        continue
                 await self._request_queue.cancel(mbid)
                 now_iso = datetime.now(timezone.utc).isoformat()
                 await self._request_history.async_update_status(

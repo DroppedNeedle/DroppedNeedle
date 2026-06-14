@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import { ApiError } from '$lib/api/client';
+	import { createSetupMutation } from '$lib/queries/auth/AuthMutations.svelte';
+	import { toAuthUser } from '$lib/queries/auth/types';
 	import { Music, Eye, EyeOff, ShieldCheck } from 'lucide-svelte';
 
 	let displayName = $state('');
@@ -8,8 +11,9 @@
 	let password = $state('');
 	let confirmPassword = $state('');
 	let showPassword = $state(false);
-	let loading = $state(false);
 	let error = $state<string | null>(null);
+
+	const setup = createSetupMutation();
 
 	async function handleSetup() {
 		error = null;
@@ -21,32 +25,13 @@
 			error = 'Password must be at least 12 characters';
 			return;
 		}
-		loading = true;
 		try {
-			const res = await fetch('/api/v1/auth/setup', {
-				method: 'POST',
-				credentials: 'include',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ display_name: displayName, email, password })
-			});
-			if (!res.ok) {
-				const data = await res.json().catch(() => ({}));
-				error = data.detail ?? 'Setup failed. Please try again.';
-				return;
-			}
-			const data = await res.json();
-			authStore.setUser({
-				id: data.user.id,
-				display_name: data.user.display_name,
-				role: data.user.role,
-				email: data.user.email,
-				avatar_url: data.user.avatar_url
-			});
+			const data = await setup.mutateAsync({ display_name: displayName, email, password });
+			authStore.setUser(toAuthUser(data.user));
 			goto('/');
-		} catch {
-			error = 'Could not reach the server. Is Musicseerr running?';
-		} finally {
-			loading = false;
+		} catch (e) {
+			error =
+				e instanceof ApiError ? e.message : 'Could not reach the server. Is Musicseerr running?';
 		}
 	}
 </script>
@@ -155,8 +140,8 @@
 					<div class="alert alert-error py-2 text-sm">{error}</div>
 				{/if}
 
-				<button type="submit" class="btn btn-primary w-full mt-1" disabled={loading}>
-					{#if loading}
+				<button type="submit" class="btn btn-primary w-full mt-1" disabled={setup.isPending}>
+					{#if setup.isPending}
 						<span class="loading loading-spinner loading-sm"></span>
 					{/if}
 					Create Admin Account

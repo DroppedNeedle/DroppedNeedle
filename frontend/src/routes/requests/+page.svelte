@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { fade, fly } from 'svelte/transition';
 	import RequestCard from '$lib/components/RequestCard.svelte';
@@ -345,6 +345,29 @@
 		} else {
 			startPolling();
 			if (authStore.isAdmin) void loadApprovals();
+		}
+	});
+
+	// Keep the active tab in sync with the URL. The sidebar's Requests (/requests) and
+	// Approvals (/requests?tab=approvals) links navigate without remounting this page, so
+	// onMount alone can't switch tabs on those clicks. Skip the first run (onMount sets the
+	// initial tab) and untrack `activeTab` so in-page tab buttons (which don't touch the URL)
+	// aren't overridden.
+	let tabSyncReady = false;
+	$effect(() => {
+		const tabParam = page.url.searchParams.get('tab');
+		if (!tabSyncReady) {
+			tabSyncReady = true;
+			return;
+		}
+		const target: 'active' | 'history' | 'approvals' =
+			tabParam === 'approvals' && authStore.isAdmin
+				? 'approvals'
+				: tabParam === 'history'
+					? 'history'
+					: 'active';
+		if (untrack(() => activeTab) !== target) {
+			switchTab(target);
 		}
 	});
 

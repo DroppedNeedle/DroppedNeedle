@@ -2,10 +2,15 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import { ApiError } from '$lib/api/client';
+	import { createOidcExchangeMutation } from '$lib/queries/auth/AuthMutations.svelte';
+	import { toAuthUser } from '$lib/queries/auth/types';
 	import { onMount } from 'svelte';
 	import { Music } from 'lucide-svelte';
 
 	let error = $state<string | null>(null);
+
+	const oidcExchange = createOidcExchangeMutation();
 
 	onMount(async () => {
 		const code = page.url.searchParams.get('code');
@@ -14,27 +19,14 @@
 			return;
 		}
 		try {
-			const res = await fetch('/api/v1/auth/oidc/exchange', {
-				method: 'POST',
-				credentials: 'include',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ code })
-			});
-			if (!res.ok) {
-				error = 'Authentication failed. The link may have expired, please try again.';
-				return;
-			}
-			const data = await res.json();
-			authStore.setUser({
-				id: data.user.id,
-				display_name: data.user.display_name,
-				role: data.user.role,
-				email: data.user.email,
-				avatar_url: data.user.avatar_url
-			});
+			const data = await oidcExchange.mutateAsync({ code });
+			authStore.setUser(toAuthUser(data.user));
 			goto('/');
-		} catch {
-			error = 'Could not reach the server.';
+		} catch (e) {
+			error =
+				e instanceof ApiError
+					? 'Authentication failed. The link may have expired, please try again.'
+					: 'Could not reach the server.';
 		}
 	});
 </script>

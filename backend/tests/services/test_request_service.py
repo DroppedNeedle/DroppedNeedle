@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -57,3 +58,53 @@ def test_get_queue_status_returns_schema():
 
     assert status.queue_size == 3
     assert status.processing is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_batch_admin_cancels_all_without_ownership_lookup():
+    service, request_queue, request_history = _make_service()
+    request_queue.cancel = AsyncMock(return_value=True)
+    request_history.async_update_status = AsyncMock()
+
+    response = await service.cancel_batch(["rg-1", "rg-2"], user_id=None)
+
+    assert response.cancelled == 2
+    assert response.failed == 0
+    assert response.success is True
+    # Admins bypass user scoping, so ownership is never looked up.
+    request_history.async_get_record.assert_not_awaited()
+    assert request_queue.cancel.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_cancel_batch_user_only_cancels_owned_requests():
+    service, request_queue, request_history = _make_service()
+    request_queue.cancel = AsyncMock(return_value=True)
+    request_history.async_update_status = AsyncMock()
+    records = {
+        "rg-mine": SimpleNamespace(user_id="alice"),
+        "rg-theirs": SimpleNamespace(user_id="bob"),
+    }
+    request_history.async_get_record = AsyncMock(side_effect=lambda mbid: records.get(mbid))
+
+    response = await service.cancel_batch(["rg-mine", "rg-theirs"], user_id="alice")
+
+    assert response.cancelled == 1
+    assert response.failed == 1
+    # Only the request owned by alice is actually cancelled.
+    request_queue.cancel.assert_awaited_once_with("rg-mine")
+
+
+@pytest.mark.asyncio
+async def test_cancel_batch_user_missing_record_counts_as_failed():
+    service, request_queue, request_history = _make_service()
+    request_queue.cancel = AsyncMock(return_value=True)
+    request_history.async_update_status = AsyncMock()
+    request_history.async_get_record = AsyncMock(return_value=None)
+
+    response = await service.cancel_batch(["rg-unknown"], user_id="alice")
+
+    assert response.cancelled == 0
+    assert response.failed == 1
+    assert response.success is False
+    request_queue.cancel.assert_not_awaited()

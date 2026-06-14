@@ -255,6 +255,8 @@
 
 	const integrations = fromStore(integrationStore);
 	const lidarrConfigured = $derived(integrations.current.lidarr || !integrations.current.loaded);
+	// Lidarr-backed nav (Library, Playlists, Requests) shows greyed + non-clickable until Lidarr is connected.
+	const lidarrDisabled = $derived(!lidarrConfigured);
 	const showAppShell = $derived(!AUTH_FREE_PATHS.some((p) => page.url.pathname.startsWith(p)));
 
 	async function handleLogout() {
@@ -280,7 +282,7 @@
 			<DegradedBanner />
 			<VersionOverlays bind:updateAvailable={versionUpdateAvailable} />
 
-			<div class="drawer lg:drawer-open">
+			<div class="drawer md:drawer-open">
 				<input id="main-drawer" type="checkbox" class="drawer-toggle" />
 
 				<div class="drawer-content flex min-w-0 flex-col">
@@ -318,7 +320,7 @@
 					</div>
 				</div>
 
-				<div class="drawer-side hidden lg:block is-drawer-close:overflow-visible">
+				<div class="drawer-side hidden md:block is-drawer-close:overflow-visible">
 					<label for="main-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
 					<div
 						class="is-drawer-close:w-16 is-drawer-open:w-64 bg-base-200 flex flex-col items-start min-h-full"
@@ -360,39 +362,47 @@
 								</a>
 							</li>
 
-							{#if lidarrConfigured}
-								<li>
-									<a
-										href="/library"
-										class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-										data-tip="Library"
-									>
-										<div class="relative">
-											<Menu class="h-6 w-6" />
-											{#if syncStatus.isActive}
-												<span
-													class="absolute -top-1 -right-1 badge badge-primary badge-xs w-2.5 h-2.5 p-0 animate-pulse"
-													aria-label="Library sync in progress"
-												></span>
-											{/if}
-										</div>
-										<span class="is-drawer-close:hidden">Library</span>
-									</a>
-								</li>
+							<li>
+								<a
+									href={lidarrDisabled ? undefined : '/library'}
+									aria-disabled={lidarrDisabled ? 'true' : undefined}
+									class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+									class:tooltip={lidarrDisabled}
+									class:tooltip-right={lidarrDisabled}
+									class:opacity-40={lidarrDisabled}
+									class:cursor-not-allowed={lidarrDisabled}
+									data-tip={lidarrDisabled ? 'Connect Lidarr in Settings to enable' : 'Library'}
+								>
+									<div class="relative">
+										<Menu class="h-6 w-6" />
+										{#if syncStatus.isActive}
+											<span
+												class="absolute -top-1 -right-1 badge badge-primary badge-xs w-2.5 h-2.5 p-0 animate-pulse"
+												aria-label="Library sync in progress"
+											></span>
+										{/if}
+									</div>
+									<span class="is-drawer-close:hidden">Library</span>
+								</a>
+							</li>
 
-								<li>
-									<a
-										href="/playlists"
-										class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-										class:menu-active={isNavActive('/playlists')}
-										aria-current={isNavActive('/playlists') ? 'page' : undefined}
-										data-tip="Playlists"
-									>
-										<ListMusic class="h-6 w-6" />
-										<span class="is-drawer-close:hidden">Playlists</span>
-									</a>
-								</li>
-							{/if}
+							<li>
+								<a
+									href={lidarrDisabled ? undefined : '/playlists'}
+									aria-disabled={lidarrDisabled ? 'true' : undefined}
+									class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+									class:tooltip={lidarrDisabled}
+									class:tooltip-right={lidarrDisabled}
+									class:opacity-40={lidarrDisabled}
+									class:cursor-not-allowed={lidarrDisabled}
+									class:menu-active={!lidarrDisabled && isNavActive('/playlists')}
+									aria-current={!lidarrDisabled && isNavActive('/playlists') ? 'page' : undefined}
+									data-tip={lidarrDisabled ? 'Connect Lidarr in Settings to enable' : 'Playlists'}
+								>
+									<ListMusic class="h-6 w-6" />
+									<span class="is-drawer-close:hidden">Playlists</span>
+								</a>
+							</li>
 
 							{#if integrations.current.loaded}
 								<div class="divider my-0"></div>
@@ -532,27 +542,30 @@
 								<SidebarVisualiser />
 							{/if}
 
-							{#if lidarrConfigured}
-								<div class="divider my-0"></div>
-								<li>
-									<a
-										href="/requests"
-										class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-										data-tip="Requests"
-									>
-										<div class="relative">
-											<Download class="h-6 w-6" />
-											{#if requestCountStore.count > 0}
-												<span
-													class="absolute -top-2 -right-2 badge badge-info badge-xs w-4 h-4 p-0 text-[10px] font-bold"
-													>{requestCountStore.count}</span
-												>
-											{/if}
-										</div>
-										<span class="is-drawer-close:hidden">Requests</span>
-									</a>
-								</li>
-							{/if}
+							<div class="divider my-0"></div>
+							<li>
+								<a
+									href={lidarrDisabled ? undefined : '/requests'}
+									aria-disabled={lidarrDisabled ? 'true' : undefined}
+									class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+									class:tooltip={lidarrDisabled}
+									class:tooltip-right={lidarrDisabled}
+									class:opacity-40={lidarrDisabled}
+									class:cursor-not-allowed={lidarrDisabled}
+									data-tip={lidarrDisabled ? 'Connect Lidarr in Settings to enable' : 'Requests'}
+								>
+									<div class="relative">
+										<Download class="h-6 w-6" />
+										{#if requestCountStore.count > 0}
+											<span
+												class="absolute -top-2 -right-2 badge badge-info badge-xs w-4 h-4 p-0 text-[10px] font-bold"
+												>{requestCountStore.count}</span
+											>
+										{/if}
+									</div>
+									<span class="is-drawer-close:hidden">Requests</span>
+								</a>
+							</li>
 
 							{#if authStore.isAdmin}
 								<li>
@@ -622,7 +635,7 @@
 			{@render children()}
 		{/if}
 
-		<nav class="musicseerr-bottom-nav lg:hidden" aria-label="Primary navigation">
+		<nav class="musicseerr-bottom-nav md:hidden" aria-label="Primary navigation">
 			<a
 				href="/"
 				class="musicseerr-bottom-nav__item"
@@ -652,10 +665,13 @@
 				<span>Search</span>
 			</button>
 			<a
-				href="/library"
+				href={lidarrDisabled ? undefined : '/library'}
+				aria-disabled={lidarrDisabled ? 'true' : undefined}
 				class="musicseerr-bottom-nav__item"
-				class:active={isNavActive('/library')}
-				aria-current={isNavActive('/library') ? 'page' : undefined}
+				class:active={!lidarrDisabled && isNavActive('/library')}
+				class:opacity-40={lidarrDisabled}
+				class:pointer-events-none={lidarrDisabled}
+				aria-current={!lidarrDisabled && isNavActive('/library') ? 'page' : undefined}
 			>
 				<Menu />
 				<span>Library</span>

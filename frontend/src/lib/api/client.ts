@@ -17,6 +17,19 @@ export class ApiError extends Error {
 	}
 }
 
+/**
+ * Thrown when a request fails with 401 while a session was active. The client
+ * has already cleared the store and triggered a hard redirect to /login;
+ * callers can use `instanceof SessionExpiredError` to suppress error UI that
+ * would otherwise flash during navigation.
+ */
+export class SessionExpiredError extends ApiError {
+	constructor(message = 'Session expired') {
+		super(401, message, 'session_expired');
+		this.name = 'SessionExpiredError';
+	}
+}
+
 interface RequestOptions extends Omit<RequestInit, 'method' | 'body'> {
 	signal?: AbortSignal;
 	raw?: boolean;
@@ -29,7 +42,7 @@ async function handleResponse<T = void>(res: Response): Promise<T> {
 		if (res.status === 401 && browser && authStore.isAuthenticated) {
 			authStore.clear();
 			window.location.href = '/login';
-			return undefined as T;
+			throw new SessionExpiredError();
 		}
 
 		const text = await res.text().catch(() => '');
