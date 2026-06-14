@@ -31,6 +31,25 @@ _DISCOVERY_WORKER_TIMEOUT = 120
 _discovery_precache_running = False
 
 
+def _dedupe_similar_artists(artists: list[SimilarArtist]) -> list[SimilarArtist]:
+    """Drop entries with a missing or duplicate musicbrainz_id.
+
+    ListenBrainz/Last.fm can return the same artist more than once (or with no
+    mbid). The frontend keys the similar-artists carousel by musicbrainz_id, so
+    a missing/duplicate id would collide and throw svelte's each_key_duplicate,
+    blanking the artist page.
+    """
+    seen: set[str] = set()
+    deduped: list[SimilarArtist] = []
+    for artist in artists:
+        key = (artist.musicbrainz_id or "").lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(artist)
+    return deduped
+
+
 class ArtistDiscoveryService:
     def __init__(
         self,
@@ -130,6 +149,8 @@ class ArtistDiscoveryService:
             except Exception as e:  # noqa: BLE001
                 logger.warning("Failed to get similar artists for %s: %s(%s)", artist_mbid[:8], type(e).__name__, e)
                 result = SimilarArtistsResponse(similar_artists=[])
+
+        result.similar_artists = _dedupe_similar_artists(result.similar_artists)
 
         in_library = await self._is_library_artist(artist_mbid)
         ttl = (

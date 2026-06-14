@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ReleaseGroup } from '$lib/types';
+	import { dedupeById } from '$lib/utils/dedupe';
 	import { colors } from '$lib/colors';
 	import ArtistHeaderSkeleton from '$lib/components/ArtistHeaderSkeleton.svelte';
 	import AlbumGridSkeleton from '$lib/components/AlbumGridSkeleton.svelte';
@@ -129,10 +130,13 @@
 		const albums = releasesQuery.data?.pages.flatMap((page) => page.albums) || [];
 		const singles = releasesQuery.data?.pages.flatMap((page) => page.singles) || [];
 		const eps = releasesQuery.data?.pages.flatMap((page) => page.eps) || [];
+		// Pages from the infinite query (and Lidarr/MusicBrainz merges) can repeat a
+		// release group; dedupe before rendering so ReleaseList's keyed {#each} never
+		// receives a duplicate key (each_key_duplicate), which would blank the page.
 		return {
-			albums: sortReleasesByYear(albums),
-			singles: sortReleasesByYear(singles),
-			eps: sortReleasesByYear(eps)
+			albums: sortReleasesByYear(dedupeById(albums)),
+			singles: sortReleasesByYear(dedupeById(singles)),
+			eps: sortReleasesByYear(dedupeById(eps))
 		};
 	});
 	const loadedReleaseCount = $derived(

@@ -1,9 +1,10 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
+from api.v1.schemas.discovery import SimilarArtist
 from repositories.lastfm_models import LastFmAlbum, LastFmSimilarArtist, LastFmTrack
 from repositories.listenbrainz_models import ListenBrainzRecording, ListenBrainzReleaseGroup
-from services.artist_discovery_service import ArtistDiscoveryService
+from services.artist_discovery_service import ArtistDiscoveryService, _dedupe_similar_artists
 
 
 def _make_lb_repo(configured: bool = True) -> MagicMock:
@@ -487,3 +488,37 @@ class TestGetTopSongsLastFmNoAlbumResolution:
         assert result.songs[1].title == "Song B"
         assert result.songs[1].recording_mbid is None
         assert result.songs[1].listen_count == 3000
+
+
+class TestDedupeSimilarArtists:
+    """Guards the similar-artists carousel against each_key_duplicate."""
+
+    def test_drops_duplicate_mbids_keeping_first(self):
+        artists = [
+            SimilarArtist(musicbrainz_id="mbid-a", name="Artist A"),
+            SimilarArtist(musicbrainz_id="mbid-b", name="Artist B"),
+            SimilarArtist(musicbrainz_id="mbid-a", name="Artist A (dupe)"),
+        ]
+        result = _dedupe_similar_artists(artists)
+        assert [a.musicbrainz_id for a in result] == ["mbid-a", "mbid-b"]
+        assert result[0].name == "Artist A"
+
+    def test_dedupe_is_case_insensitive(self):
+        artists = [
+            SimilarArtist(musicbrainz_id="MBID-A", name="Artist A"),
+            SimilarArtist(musicbrainz_id="mbid-a", name="Artist A (lower)"),
+        ]
+        result = _dedupe_similar_artists(artists)
+        assert len(result) == 1
+        assert result[0].musicbrainz_id == "MBID-A"
+
+    def test_drops_entries_without_mbid(self):
+        artists = [
+            SimilarArtist(musicbrainz_id="", name="No id"),
+            SimilarArtist(musicbrainz_id="mbid-c", name="Has id"),
+        ]
+        result = _dedupe_similar_artists(artists)
+        assert [a.musicbrainz_id for a in result] == ["mbid-c"]
+
+    def test_empty_input(self):
+        assert _dedupe_similar_artists([]) == []

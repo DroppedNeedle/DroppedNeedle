@@ -400,7 +400,7 @@
 								<ArtistCard artist={convertToArtist(artist)} />
 							</div>
 						{/each}
-						{#each recentlyAdded.albums as album (album.album + album.artist)}
+						{#each recentlyAdded.albums as album, i (album.foreignAlbumId || `${album.album}-${album.artist}-${i}`)}
 							<div class="w-48 shrink-0">
 								<AlbumCard album={convertToAlbum(album)} />
 							</div>

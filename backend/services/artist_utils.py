@@ -171,6 +171,7 @@ def categorize_lidarr_albums(
     eps: list[ReleaseItem] = []
     _cache_mbids = library_cache_mbids or set()
     _requested_mbids = requested_mbids or set()
+    seen_mbids: set[str] = set()
     for album in lidarr_albums:
         album_type = (album.get("album_type") or "").lower()
         secondary_types = set(map(str.lower, album.get("secondary_types", []) or []))
@@ -182,8 +183,15 @@ def categorize_lidarr_albums(
                     continue
             elif not secondary_types.intersection(included_secondary_types):
                 continue
-        mbid = album.get("mbid", "")
+        mbid = album.get("mbid") or ""
         mbid_lower = mbid.lower() if mbid else ""
+        # Skip albums without a stable MusicBrainz id and de-duplicate release
+        # groups Lidarr can report more than once; both would otherwise surface as
+        # duplicate keys when rendered (svelte each_key_duplicate). Mirrors the
+        # MusicBrainz path's `if item.id and item.id not in seen_mbids` guard.
+        if not mbid_lower or mbid_lower in seen_mbids:
+            continue
+        seen_mbids.add(mbid_lower)
         track_file_count = album.get("track_file_count", 0)
         in_library = track_file_count > 0 or (mbid_lower in _cache_mbids)
         requested = mbid_lower in _requested_mbids and not in_library

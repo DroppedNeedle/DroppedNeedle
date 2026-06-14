@@ -20,6 +20,8 @@ NPM    ?= pnpm
 	backend-test-artist-lock \
 	backend-test-artist-monitoring \
 	backend-test-artist-page \
+	backend-test-artist-releases-dedup \
+	backend-test-artist-discovery \
 	backend-test-audiodb \
 	backend-test-audiodb-parallel \
 	backend-test-audiodb-phase8 \
@@ -119,6 +121,12 @@ backend-test-artist-monitoring: $(BACKEND_VENV_STAMP) ## Run MUS-15B artist moni
 
 backend-test-artist-page: $(BACKEND_VENV_STAMP) ## Run artist page latency tests (basic route, releases, Last.fm fast path)
 	$(PYTEST) tests/routes/test_artist_basic_route.py tests/routes/test_artist_releases_route.py tests/services/test_artist_basic_info.py tests/services/test_top_albums_lastfm_fast.py -v
+
+backend-test-artist-releases-dedup: $(BACKEND_VENV_STAMP) ## Run artist release de-duplication regressions (each_key_duplicate)
+	$(PYTEST) tests/services/test_categorize_lidarr_albums_dedup.py -v
+
+backend-test-artist-discovery: $(BACKEND_VENV_STAMP) ## Run artist discovery service tests (similar artists, top songs/albums)
+	$(PYTEST) tests/services/test_artist_discovery_service.py -v
 
 backend-test-audiodb: $(BACKEND_VENV_STAMP) ## Run focused AudioDB backend tests
 	$(PYTEST) tests/repositories/test_audiodb_repository.py tests/infrastructure/test_disk_metadata_cache.py tests/services/test_audiodb_image_service.py tests/services/test_artist_audiodb_population.py tests/services/test_album_audiodb_population.py tests/services/test_audiodb_detail_flows.py tests/services/test_search_audiodb_overlay.py
