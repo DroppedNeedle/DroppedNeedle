@@ -4,7 +4,9 @@ Covers:
 - _resolve_album_sources passes album_name/artist_name to Navidrome
 - resolve_track_sources persists resolved sources to DB (superset guard)
 - resolve_track_sources correctly discovers multi-source tracks
+- resolve_track_sources resolves album groups concurrently (large-playlist hang)
 """
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from pathlib import Path
@@ -274,3 +276,79 @@ class TestStringTrackNumberRegression:
         assert isinstance(next(iter(local)), int)
         assert local[6] == ("Speed Kills", "2608")
         assert local[1] == ("Johnny", "2601")
+
+
+class TestResolveTrackSourcesConcurrency:
+    """Large playlists must resolve album groups concurrently, not one-by-one.
+
+    A 300+ track playlist spans hundreds of albums. Resolving them sequentially
+    turned the synchronous /resolve-sources call into hundreds of serial external
+    round-trips, so big playlists appeared to hang (GH #63 / MUS-18). These tests
+    would fail against the old sequential loop.
+    """
+
+    @pytest.mark.asyncio
+    async def test_album_groups_resolved_concurrently(self, tmp_path):
+        service, repo = _make_service(tmp_path)
+        tracks = [
+            _make_track(id=f"t-{i}", album_id=f"mbid-{i}", track_number=1)
+            for i in range(5)
+        ]
+        repo.get_tracks = MagicMock(return_value=tracks)
+
+        in_flight = 0
+        max_in_flight = 0
+
+        async def _slow_match(album_id, album_name, artist_name):
+            nonlocal in_flight, max_in_flight
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            # Yield repeatedly so sibling resolutions can interleave; under the
+            # old sequential loop each call finishes before the next begins.
+            for _ in range(3):
+                await asyncio.sleep(0)
+            in_flight -= 1
+            return SimpleNamespace(
+                found=True,
+                tracks=[SimpleNamespace(track_number=1, title="Wall Street Shuffle", navidrome_id="nd")],
+            )
+
+        nd = AsyncMock()
+        nd.get_album_match = AsyncMock(side_effect=_slow_match)
+
+        result = await service.resolve_track_sources("p-1", nd_service=nd)
+
+        assert nd.get_album_match.await_count == 5
+        assert max_in_flight >= 2  # proves concurrent resolution, not serial
+        assert set(result.keys()) == {f"t-{i}" for i in range(5)}
+
+    @pytest.mark.asyncio
+    async def test_concurrent_resolution_preserves_per_track_mapping(self, tmp_path):
+        """Each album's resolved tracks must still map back to the right playlist track."""
+        service, repo = _make_service(tmp_path)
+        tracks = [
+            _make_track(
+                id="t-a", album_id="mbid-a", track_number=1,
+                track_name="Song A", source_type="navidrome",
+            ),
+            _make_track(
+                id="t-b", album_id="mbid-b", track_number=1,
+                track_name="Song B", source_type="navidrome",
+            ),
+        ]
+        repo.get_tracks = MagicMock(return_value=tracks)
+
+        async def _match(album_id, album_name, artist_name):
+            title = "Song A" if album_id == "mbid-a" else "Song B"
+            return SimpleNamespace(
+                found=True,
+                tracks=[SimpleNamespace(track_number=1, title=title, navidrome_id="nd")],
+            )
+
+        nd = AsyncMock()
+        nd.get_album_match = AsyncMock(side_effect=_match)
+
+        result = await service.resolve_track_sources("p-1", nd_service=nd)
+
+        assert sorted(result["t-a"]) == ["navidrome"]
+        assert sorted(result["t-b"]) == ["navidrome"]
