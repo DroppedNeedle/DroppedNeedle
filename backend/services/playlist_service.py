@@ -25,6 +25,12 @@ _MIME_TO_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"
 _SAFE_ID_RE = re.compile(r"^[a-f0-9\-]+$")
 VALID_SOURCE_TYPES = {"local", "jellyfin", "navidrome", "plex", "youtube", ""}
 MAX_NAME_LENGTH = 100
+# Albums in a playlist are resolved against external sources concurrently. A
+# large playlist (300+ tracks) can span hundreds of albums; resolving them one
+# at a time turned the synchronous /resolve-sources call into hundreds of serial
+# round-trips and made big playlists appear to hang. Bound the fan-out so we
+# don't hammer Navidrome/Plex/Jellyfin all at once.
+_ALBUM_RESOLVE_CONCURRENCY = 8
 
 _SOURCE_TYPE_ALIASES = {
     "local": "local",
@@ -314,13 +320,47 @@ class PlaylistService:
                 no_album_tracks.append(t)
 
         result: dict[str, list[str]] = {}
-        for album_id, album_tracks in album_groups.items():
+        grouped = list(album_groups.items())
+        sem = asyncio.Semaphore(_ALBUM_RESOLVE_CONCURRENCY)
+
+        async def _resolve_group(
+            album_tracks: list[PlaylistTrackRecord],
+        ) -> tuple[
+            dict[int, tuple[str, str]],
+            dict[int, tuple[str, str]],
+            dict[int, tuple[str, str]],
+            dict[int, tuple[str, str, str]],
+        ]:
             representative = album_tracks[0]
-            jf_by_num, local_by_num, nd_by_num, plex_by_num = await self._resolve_album_sources(
-                album_id, jf_service, local_service, nd_service, plex_service,
-                album_name=representative.album_name or "",
-                artist_name=representative.artist_name or "",
-            )
+            async with sem:
+                try:
+                    return await self._resolve_album_sources(
+                        representative.album_id, jf_service, local_service, nd_service, plex_service,
+                        album_name=representative.album_name or "",
+                        artist_name=representative.artist_name or "",
+                    )
+                except Exception:  # noqa: BLE001
+                    # Now that album groups resolve concurrently, one group failing
+                    # (e.g. a cache/infra error - upstream service errors are already
+                    # caught inside _resolve_album_sources) must not discard every
+                    # other album's results. Degrade to "no extra sources" for this
+                    # album; its tracks keep their stored available_sources.
+                    logger.warning(
+                        "Source resolution failed for album %s; skipping",
+                        representative.album_id, exc_info=True,
+                    )
+                    return ({}, {}, {}, {})
+
+        resolved_maps = await asyncio.gather(
+            *(_resolve_group(album_tracks) for _album_id, album_tracks in grouped)
+        )
+
+        for (_album_id, album_tracks), (
+            jf_by_num,
+            local_by_num,
+            nd_by_num,
+            plex_by_num,
+        ) in zip(grouped, resolved_maps):
             for t in album_tracks:
                 sources = set()
                 if t.source_type:
