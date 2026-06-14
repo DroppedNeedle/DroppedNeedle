@@ -47,6 +47,7 @@ NPM    ?= pnpm
 	backend-test-now-playing \
 	backend-test-home-genre \
 	backend-test-infra-hardening \
+	backend-test-memory \
 	backend-test-jellyfin \
 	backend-test-jellyfin-proxy \
 	backend-test-library-pagination \
@@ -202,6 +203,9 @@ backend-test-home-genre: $(BACKEND_VENV_STAMP) ## Run home genre decoupling test
 
 backend-test-infra-hardening: $(BACKEND_VENV_STAMP) ## Run infrastructure hardening tests
 	$(PYTEST) tests/infrastructure/test_circuit_breaker_sync.py tests/infrastructure/test_disk_cache_periodic.py tests/infrastructure/test_retry_non_breaking.py
+
+backend-test-memory: $(BACKEND_VENV_STAMP) ## Run process-memory helper + playback bounding tests
+	$(PYTEST) tests/infrastructure/test_memory.py tests/services/test_navidrome_playback_service.py -v
 
 backend-test-jellyfin: $(BACKEND_VENV_STAMP) ## Run all Jellyfin integration backend tests
 	$(PYTEST) tests/repositories/test_jellyfin_playback_url.py tests/services/test_jellyfin_playback_service.py tests/services/test_jellyfin_library_service.py tests/routes/test_stream_routes.py -v

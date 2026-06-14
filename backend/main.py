@@ -14,7 +14,7 @@ from core.dependencies import (
     init_app_state, 
     cleanup_app_state
 )
-from core.tasks import start_cache_cleanup_task, start_library_sync_task, start_disk_cache_cleanup_task, start_home_cache_warming_task, start_genre_cache_warming_task, start_discover_cache_warming_task, start_artist_discovery_cache_warming_task, start_audiodb_sweep_task, start_request_status_sync_task
+from core.tasks import start_cache_cleanup_task, start_library_sync_task, start_disk_cache_cleanup_task, start_home_cache_warming_task, start_genre_cache_warming_task, start_discover_cache_warming_task, start_artist_discovery_cache_warming_task, start_audiodb_sweep_task, start_request_status_sync_task, start_memory_maintenance_task
 from core.task_registry import TaskRegistry
 from core.config import get_settings
 from core.dependencies.auth_providers import get_auth_service
@@ -76,6 +76,7 @@ async def lifespan(app: FastAPI):
 
     cache = get_cache()
     start_cache_cleanup_task(cache, interval=advanced_settings.memory_cache_cleanup_interval)
+    start_memory_maintenance_task(cache)
     
     from core.dependencies import get_disk_cache
     disk_cache = get_disk_cache()

@@ -4,6 +4,7 @@ from time import time
 from typing import TYPE_CHECKING, Optional
 from infrastructure.cache.memory_cache import CacheInterface
 from infrastructure.cache.disk_cache import DiskMetadataCache
+from infrastructure.memory import get_rss_bytes, trim_malloc
 from infrastructure.serialization import clone_with_updates
 from infrastructure.validators import is_unknown_mbid
 from services.library_service import LibraryService
@@ -42,6 +43,52 @@ async def cleanup_cache_periodically(cache: CacheInterface, interval: int = 300)
 def start_cache_cleanup_task(cache: CacheInterface, interval: int = 300) -> asyncio.Task:
     task = asyncio.create_task(cleanup_cache_periodically(cache, interval=interval))
     TaskRegistry.get_instance().register("cache-cleanup", task)
+    return task
+
+
+_MEMORY_MAINTENANCE_INTERVAL = 600
+
+
+def _log_memory_usage(
+    cache: CacheInterface,
+    rss_before: int | None,
+    rss_after: int | None,
+    trimmed: bool,
+) -> None:
+    parts: list[str] = []
+    if rss_after is not None:
+        parts.append(f"rss={rss_after / 1048576:.0f}MB")
+        if trimmed and rss_before is not None:
+            freed = (rss_before - rss_after) / 1048576
+            if freed >= 1:
+                parts.append(f"trim=-{freed:.0f}MB")
+    parts.append(f"cache={cache.size()} entries")
+    logger.info("memory: %s", " ".join(parts))
+
+
+async def memory_maintenance_periodically(
+    cache: CacheInterface,
+    interval: int = _MEMORY_MAINTENANCE_INTERVAL,
+) -> None:
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            rss_before = get_rss_bytes()
+            trimmed = await asyncio.to_thread(trim_malloc)
+            rss_after = get_rss_bytes()
+            _log_memory_usage(cache, rss_before, rss_after, trimmed)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:  # noqa: BLE001
+            logger.error("Memory maintenance task failed: %s", e, exc_info=True)
+
+
+def start_memory_maintenance_task(
+    cache: CacheInterface,
+    interval: int = _MEMORY_MAINTENANCE_INTERVAL,
+) -> asyncio.Task:
+    task = asyncio.create_task(memory_maintenance_periodically(cache, interval=interval))
+    TaskRegistry.get_instance().register("memory-maintenance", task)
     return task
 
 
