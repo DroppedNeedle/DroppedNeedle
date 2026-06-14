@@ -667,6 +667,7 @@ class PlexLibraryService:
                 album_name=t.parentTitle,
                 album_id=str(t.parentRatingKey) if t.parentRatingKey else "",
                 plex_rating_key=t.ratingKey,
+                part_key=t.Media[0].Part[0].key if (t.Media and t.Media[0].Part) else "",
                 duration_seconds=t.duration // 1000 if t.duration else 0,
                 track_number=t.index,
                 disc_number=t.parentIndex if t.parentIndex else 1,
@@ -711,13 +712,22 @@ class PlexLibraryService:
         track_dicts = []
         failed = 0
         for t in detail.tracks:
+            # The stream proxy keys off the Plex part key (/library/parts/...),
+            # not the rating key - a track without one cannot be played.
+            if not t.part_key:
+                logger.warning(
+                    "Skipping Plex track '%s' (rating key %s) during import: no streamable part",
+                    t.track_name, t.plex_rating_key,
+                )
+                failed += 1
+                continue
             try:
                 track_dicts.append({
                     "track_name": t.track_name,
                     "artist_name": t.artist_name,
                     "album_name": t.album_name,
                     "duration": t.duration_seconds,
-                    "track_source_id": t.id,
+                    "track_source_id": t.part_key,
                     "source_type": "plex",
                     "album_id": t.album_id,
                     "plex_rating_key": t.plex_rating_key,

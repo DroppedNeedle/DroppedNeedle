@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 import pytest
 
 from core.exceptions import ExternalServiceError
-from repositories.plex_models import PlexPlaylist, PlexTrack
+from repositories.plex_models import PlexMedia, PlexPart, PlexPlaylist, PlexTrack
 from repositories.navidrome_models import SubsonicPlaylist, SubsonicSong
 from repositories.jellyfin_models import JellyfinItem
 from repositories.playlist_repository import PlaylistRecord
@@ -92,8 +92,9 @@ def _plex_playlist(key="pl-1", title="My Plex Playlist", leaf=3, dur=180000, sma
     return PlexPlaylist(ratingKey=key, title=title, leafCount=leaf, duration=dur, smart=smart, composite="/art/1")
 
 
-def _plex_track(key="t-1", title="Song", artist="Artist", album="Album", parent_key="a-1") -> PlexTrack:
-    return PlexTrack(ratingKey=key, title=title, grandparentTitle=artist, parentTitle=album, parentRatingKey=parent_key, duration=200000, index=1, parentIndex=1)
+def _plex_track(key="t-1", title="Song", artist="Artist", album="Album", parent_key="a-1", part_key="/library/parts/1/1/file.flac") -> PlexTrack:
+    media = [PlexMedia(Part=[PlexPart(key=part_key)])] if part_key else []
+    return PlexTrack(ratingKey=key, title=title, grandparentTitle=artist, parentTitle=album, parentRatingKey=parent_key, duration=200000, index=1, parentIndex=1, Media=media)
 
 
 def _navidrome_playlist(pid="nd-pl-1", name="ND Playlist", songs=2, dur=300) -> SubsonicPlaylist:
@@ -194,7 +195,23 @@ class TestPlexImportPlaylist:
         assert track_dicts[0]["artist_name"] == "Artist"
         assert track_dicts[0]["album_name"] == "Album"
         assert track_dicts[0]["source_type"] == "plex"
-        assert track_dicts[0]["track_source_id"] == "t-1"
+        # track_source_id must be the Plex part key (what the stream proxy needs),
+        # while plex_rating_key keeps the rating key for scrobble/now-playing.
+        assert track_dicts[0]["track_source_id"] == "/library/parts/1/1/file.flac"
+        assert track_dicts[0]["plex_rating_key"] == "t-1"
+
+    @pytest.mark.asyncio
+    async def test_import_skips_tracks_without_part_key(self):
+        pl = _plex_playlist()
+        tracks = [_plex_track(), _plex_track(key="t-2", title="No Media", part_key="")]
+        svc = _plex_service(playlists=[pl], items=tracks)
+        ps = _mock_playlist_service()
+        result = await svc.import_playlist("pl-1", ps)
+        assert result.tracks_imported == 1
+        assert result.tracks_failed == 1
+        track_dicts = ps.add_tracks.call_args[0][1]
+        assert len(track_dicts) == 1
+        assert track_dicts[0]["track_source_id"] == "/library/parts/1/1/file.flac"
 
     @pytest.mark.asyncio
     async def test_import_rollback_on_add_tracks_failure(self):
