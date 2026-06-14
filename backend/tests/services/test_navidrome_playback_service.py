@@ -55,3 +55,24 @@ class TestScrobble:
         repo.scrobble = AsyncMock(side_effect=RuntimeError("network"))
         result = await service.scrobble("song-1")
         assert result is False
+
+
+class TestPlaybackTrackingBounded:
+    @pytest.mark.asyncio
+    async def test_now_playing_tracking_is_lru_capped(self):
+        from services import navidrome_playback_service as mod
+
+        service, repo = _make_service()
+        repo.now_playing = AsyncMock(return_value=True)
+
+        mod._playback_start_times.clear()
+        try:
+            cap = mod._MAX_TRACKED_PLAYBACKS
+            for i in range(cap + 50):
+                await service.report_now_playing(f"song-{i}")
+
+            assert len(mod._playback_start_times) == cap
+            assert service.get_estimated_position(f"song-{cap + 49}") is not None
+            assert service.get_estimated_position("song-0") is None
+        finally:
+            mod._playback_start_times.clear()

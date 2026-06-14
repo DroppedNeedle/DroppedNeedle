@@ -46,6 +46,7 @@ LABEL org.opencontainers.image.title="MusicSeerr" \
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    MALLOC_ARENA_MAX=2 \
     PORT=8688 \
     COMMIT_TAG=${COMMIT_TAG} \
     BUILD_DATE=${BUILD_DATE}

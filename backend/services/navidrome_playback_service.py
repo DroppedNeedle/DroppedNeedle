@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import OrderedDict
 
 from fastapi.responses import Response, StreamingResponse
 
@@ -11,7 +12,8 @@ from repositories.protocols import NavidromeRepositoryProtocol
 
 logger = logging.getLogger(__name__)
 
-_playback_start_times: dict[str, float] = {}
+_MAX_TRACKED_PLAYBACKS = 256
+_playback_start_times: OrderedDict[str, float] = OrderedDict()
 
 
 class NavidromePlaybackService:
@@ -61,6 +63,9 @@ class NavidromePlaybackService:
         try:
             ok = await self._navidrome.now_playing(song_id)
             _playback_start_times[song_id] = time.time()
+            _playback_start_times.move_to_end(song_id)
+            while len(_playback_start_times) > _MAX_TRACKED_PLAYBACKS:
+                _playback_start_times.popitem(last=False)
             if self._cache:
                 await self._cache.delete("navidrome:now_playing")
             return ok
