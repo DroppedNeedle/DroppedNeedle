@@ -412,7 +412,9 @@
 					<div class="form-control w-full">
 						<label class="label" for="oidc-client-secret">
 							<span class="label-text font-medium">Client Secret</span>
-							<span class="label-text-alt opacity-60">optional — leave blank for public/PKCE clients</span>
+							<span class="label-text-alt opacity-60"
+								>optional — leave blank for public/PKCE clients</span
+							>
 						</label>
 						<label class="input input-bordered flex items-center gap-2 w-full">
 							{#if showClientSecret}
