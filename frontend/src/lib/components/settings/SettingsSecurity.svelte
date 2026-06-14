@@ -63,8 +63,9 @@
 		await oidcForm.save();
 	}
 
+	// Client secret is optional: public clients use PKCE (no secret).
 	const hasOidcCredentials = $derived(
-		Boolean(oidcForm.data?.client_id && oidcForm.data?.client_secret && oidcForm.data?.redirect_uri)
+		Boolean(oidcForm.data?.client_id && oidcForm.data?.redirect_uri)
 	);
 	const oidcToggleDisabled = $derived(
 		!hasOidcCredentials || (!oidcForm.testResult?.valid && !oidcForm.wasAlreadyEnabled)
@@ -411,6 +412,7 @@
 					<div class="form-control w-full">
 						<label class="label" for="oidc-client-secret">
 							<span class="label-text font-medium">Client Secret</span>
+							<span class="label-text-alt opacity-60">optional — leave blank for public/PKCE clients</span>
 						</label>
 						<label class="input input-bordered flex items-center gap-2 w-full">
 							{#if showClientSecret}
@@ -495,7 +497,7 @@
 								<span class="label-text font-medium">Allow login with SSO</span>
 								<p class="text-xs text-base-content/50">
 									{#if !hasOidcCredentials}
-										Fill in the client ID, client secret, and redirect URI first.
+										Fill in the client ID and redirect URI first.
 									{:else if !oidcForm.testResult?.valid && !oidcForm.wasAlreadyEnabled}
 										Test and get a valid connection to enable
 									{:else}
