@@ -31,9 +31,7 @@
 			goto('/');
 		} catch (e) {
 			error =
-				e instanceof ApiError
-					? e.message
-					: 'Could not reach the server. Is Musicseerr running?';
+				e instanceof ApiError ? e.message : 'Could not reach the server. Is Musicseerr running?';
 		}
 	}
 </script>

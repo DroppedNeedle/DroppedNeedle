@@ -8,6 +8,5 @@ import type { AuthProviders } from './types';
 export const getAuthProvidersQuery = () =>
 	createQuery(() => ({
 		queryKey: AuthQueryKeyFactory.providers(),
-		queryFn: ({ signal }) =>
-			api.global.get<AuthProviders>(AUTH_ENDPOINTS.providers, { signal })
+		queryFn: ({ signal }) => api.global.get<AuthProviders>(AUTH_ENDPOINTS.providers, { signal })
 	}));

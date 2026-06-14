@@ -232,7 +232,8 @@
 							<div class="alert alert-error py-2 text-sm">{localError}</div>
 						{/if}
 						<button type="submit" class="btn btn-primary w-full" disabled={localLogin.isPending}>
-							{#if localLogin.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
+							{#if localLogin.isPending}<span class="loading loading-spinner loading-sm"
+								></span>{/if}
 							Sign in
 						</button>
 					</form>
@@ -295,7 +296,8 @@
 							<div class="alert alert-error py-2 text-sm">{jfError}</div>
 						{/if}
 						<button type="submit" class="btn btn-primary w-full" disabled={jellyfinLogin.isPending}>
-							{#if jellyfinLogin.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
+							{#if jellyfinLogin.isPending}<span class="loading loading-spinner loading-sm"
+								></span>{/if}
 							Sign in with Jellyfin
 						</button>
 					</form>
