@@ -340,11 +340,18 @@ textarea {
 	}
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
 	:root {
 		--ms-bottom-nav-height: 0rem;
 		--ms-bottom-nav-offset: 0px;
 		--ms-player-height: 5.625rem;
+	}
+
+	/* The base `.musicseerr-bottom-nav` rule is unlayered, so it outranks Tailwind's
+	   utilities layer — `md:hidden` in the markup can't hide it. Hide it here instead so
+	   the side sidebar (md:drawer-open) is the only nav from the md breakpoint up. */
+	.musicseerr-bottom-nav {
+		display: none;
 	}
 
 	.musicseerr-topbar {
