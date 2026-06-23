@@ -130,6 +130,36 @@ class PlexRepository:
             headers["X-Plex-Client-Identifier"] = self._client_id
         return headers
 
+    def _maybe_upgrade_base_url(
+        self, requested_url: str, response: httpx.Response
+    ) -> None:
+        """Persist an http->https upgrade so we stop paying the redirect each poll.
+
+        Plex behind a TLS-terminating proxy answers http with a 302 to https.
+        httpx follows it, but every fresh request restarts from the stored http
+        URL and repeats the round-trip. When a redirect only swapped the scheme
+        on the same host, rewrite the stored base once so later requests go
+        straight to https.
+        """
+        if not response.history:
+            return
+        requested = httpx.URL(requested_url)
+        final = response.url
+        # only a pure scheme swap (same host, port, path) is safe to cache; any
+        # other change could corrupt the base (e.g. drop a subpath), so skip it
+        if (
+            requested.scheme != "http"
+            or final.scheme != "https"
+            or requested.host != final.host
+            or requested.port != final.port
+            or requested.path != final.path
+        ):
+            return
+        upgraded = "https://" + self._url.split("://", 1)[1]
+        if upgraded != self._url:
+            logger.info("Plex base URL auto-upgraded to https: %s", upgraded)
+            self._url = upgraded
+
     @with_retry(
         max_attempts=3,
         base_delay=1.0,
@@ -158,6 +188,8 @@ class PlexRepository:
             raise ExternalServiceError(f"Plex request timed out: {exc}")
         except httpx.HTTPError as exc:
             raise ExternalServiceError(f"Plex request failed: {exc}")
+
+        self._maybe_upgrade_base_url(url, response)
 
         if response.status_code in (401, 403):
             raise PlexAuthError(

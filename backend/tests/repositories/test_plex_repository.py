@@ -46,6 +46,7 @@ def _mock_response(
     resp.json.return_value = json_data or {}
     resp.content = content
     resp.headers = {"content-type": content_type}
+    resp.history = []  # real httpx.Response sets this; no redirects by default
     return resp
 
 
@@ -118,6 +119,75 @@ class TestBuildHeaders:
         repo.configure("http://plex:32400", "tok", "")
         headers = repo._build_headers()
         assert "X-Plex-Client-Identifier" not in headers
+
+
+class TestBaseUrlUpgrade:
+    """A Plex behind a TLS-terminating proxy 302s http->https. We persist the
+    upgrade once so later polls go straight to https instead of re-paying the
+    redirect every time."""
+
+    @staticmethod
+    def _redirected(final_url: str) -> MagicMock:
+        resp = _mock_response(status_code=200, json_data=_plex_container())
+        resp.history = [MagicMock()]  # a redirect was followed
+        resp.url = httpx.URL(final_url)
+        return resp
+
+    @pytest.mark.asyncio
+    async def test_http_to_https_same_host_persists_upgrade(self):
+        repo, client, _ = _make_repo()  # configured as http://plex:32400
+        client.get = AsyncMock(
+            return_value=self._redirected("https://plex:32400/status/sessions")
+        )
+        await repo._request("/status/sessions")
+        assert repo._url == "https://plex:32400"
+
+    @pytest.mark.asyncio
+    async def test_no_redirect_leaves_url_unchanged(self):
+        repo, client, _ = _make_repo()
+        client.get = AsyncMock(
+            return_value=_mock_response(status_code=200, json_data=_plex_container())
+        )
+        await repo._request("/status/sessions")
+        assert repo._url == "http://plex:32400"
+
+    @pytest.mark.asyncio
+    async def test_cross_host_redirect_not_persisted(self):
+        repo, client, _ = _make_repo()
+        client.get = AsyncMock(
+            return_value=self._redirected("https://evil.example/status/sessions")
+        )
+        await repo._request("/status/sessions")
+        assert repo._url == "http://plex:32400"
+
+    @pytest.mark.asyncio
+    async def test_subsequent_request_uses_upgraded_base(self):
+        repo, client, _ = _make_repo()
+        client.get = AsyncMock(
+            return_value=self._redirected("https://plex:32400/status/sessions")
+        )
+        await repo._request("/status/sessions")
+        await repo._request("/status/sessions")
+        assert client.get.await_args_list[-1].args[0] == "https://plex:32400/status/sessions"
+
+    @pytest.mark.asyncio
+    async def test_subpath_base_is_preserved(self):
+        repo, client, _ = _make_repo(configured=False)
+        repo.configure("http://proxy.example/plex", "test-token")
+        client.get = AsyncMock(
+            return_value=self._redirected("https://proxy.example/plex/status/sessions")
+        )
+        await repo._request("/status/sessions")
+        assert repo._url == "https://proxy.example/plex"
+
+    @pytest.mark.asyncio
+    async def test_port_changing_redirect_not_persisted(self):
+        repo, client, _ = _make_repo()  # http://plex:32400
+        client.get = AsyncMock(
+            return_value=self._redirected("https://plex/status/sessions")  # 32400 -> 443
+        )
+        await repo._request("/status/sessions")
+        assert repo._url == "http://plex:32400"
 
 
 class TestCacheTTLs:

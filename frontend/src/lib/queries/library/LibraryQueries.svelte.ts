@@ -118,10 +118,16 @@ export const getLibraryAlbumStatusQueryOptions = (mbid: string) =>
 export const getLibraryAlbumStatusQuery = (getMbid: Getter<string>) =>
 	createQuery(() => getLibraryAlbumStatusQueryOptions(getMbid()));
 
+// fast-poll only while scanning; when idle keep a lazy poll so a scheduled or
+// external scan still surfaces without hammering scan/status every 2s. An
+// in-page scan stays instant: the scan mutation invalidates and re-fetches this.
 export const getLibraryScanStatusQuery = () =>
 	createQuery(() => ({
 		staleTime: CACHE_TTL.SCAN_STATUS,
-		refetchInterval: CACHE_TTL.SCAN_STATUS,
+		refetchInterval: (query: { state: { data?: LibraryScanStatus | undefined } }) =>
+			query.state.data?.status === 'scanning'
+				? CACHE_TTL.SCAN_STATUS
+				: CACHE_TTL.SCAN_STATUS_IDLE,
 		queryKey: LibraryQueryKeyFactory.scanStatus(),
 		queryFn: ({ signal }) => api.global.get<LibraryScanStatus>(API.library.scanStatus(), { signal })
 	}));

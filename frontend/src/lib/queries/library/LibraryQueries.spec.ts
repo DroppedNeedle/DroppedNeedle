@@ -91,9 +91,14 @@ describe('library query endpoints', () => {
 		expect(mockGet.mock.calls[0][0]).toBe('/api/v1/library/albums/rg-1/status');
 	});
 
-	it('scan status query polls /scan/status with a 2s interval', async () => {
+	it('scan status query polls /scan/status fast while scanning, lazily when idle', async () => {
 		const opts = getLibraryScanStatusQuery() as unknown as Record<string, unknown>;
-		expect(opts.refetchInterval).toBe(2000);
+		const refetchInterval = opts.refetchInterval as (q: {
+			state: { data?: { status: string } };
+		}) => number | false;
+		expect(refetchInterval({ state: { data: { status: 'scanning' } } })).toBe(2000);
+		expect(refetchInterval({ state: { data: { status: 'idle' } } })).toBe(15000);
+		expect(refetchInterval({ state: { data: undefined } })).toBe(15000);
 		await callQueryFn(opts);
 		expect(mockGet.mock.calls[0][0]).toBe('/api/v1/library/scan/status');
 	});
