@@ -215,7 +215,7 @@
 								<span class="badge badge-accent badge-lg">{feature}</span>
 							{/each}
 						</div>
-						<a href="/settings" class="btn btn-accent btn-lg gap-2">
+						<a href="/settings?tab=download-client" class="btn btn-accent btn-lg gap-2">
 							<Download class="h-5 w-5" />
 							Configure Download Client
 						</a>

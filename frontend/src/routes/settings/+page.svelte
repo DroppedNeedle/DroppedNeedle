@@ -63,7 +63,7 @@
 		youtube: 'youtube'
 	};
 
-	let activeTab = $state('settings');
+	let activeTab = $state('library');
 	let filter = $state('');
 
 	const tiers = [

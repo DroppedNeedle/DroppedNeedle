@@ -52,7 +52,7 @@
 	<button class="btn btn-info {klass}" disabled>Requested</button>
 {:else if !configured}
 	{#if isAdmin}
-		<a href="/settings/download-client" class="btn btn-warning {klass}">Configure Download Client</a
+		<a href="/settings?tab=download-client" class="btn btn-warning {klass}">Configure Download Client</a
 		>
 	{:else}
 		<button

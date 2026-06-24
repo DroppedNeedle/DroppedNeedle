@@ -40,7 +40,7 @@
 				title="Download client not configured"
 				description="Connect a download client to request albums."
 				ctaLabel="Configure Download Client"
-				ctaHref="/settings/download-client"
+				ctaHref="/settings?tab=download-client"
 			/>
 		{:else}
 			<EmptyState
