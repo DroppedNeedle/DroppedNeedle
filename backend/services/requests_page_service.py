@@ -38,12 +38,14 @@ class RequestsPageService:
         library_mbids_fn: Callable[..., Coroutine[Any, Any, set[str]]],
         on_import_callback: Callable[[RequestHistoryRecord], Coroutine[Any, Any, None]] | None = None,
         download_service: Optional["DownloadService"] = None,
+        download_store=None,  # DownloadStore | None - native reconciler source of truth
     ):
         self._library_repo = library_repo
         self._request_history = request_history
         self._library_mbids_fn = library_mbids_fn
         self._on_import_callback = on_import_callback
         self._download_service = download_service
+        self._download_store = download_store
         self._library_mbids_cache: set[str] | None = None
         self._library_mbids_cache_time: float = 0
 
@@ -299,34 +301,69 @@ class RequestsPageService:
             return await self._request_history.async_get_active_count_for_user(user_id)
         return await self._request_history.async_get_active_count()
 
+    # download_task.status -> request_history.status
+    _TASK_TO_REQUEST_STATUS = {
+        "downloading": "downloading",
+        "processing": "downloading",
+        "completed": "imported",
+        "partial": "incomplete",
+        "failed": "failed",
+        "cancelled": "cancelled",
+    }
+
     async def sync_request_statuses(self) -> None:
+        """Periodic safety net: reconcile each active request against its native
+        download task. The orchestrator already updates a request at each terminal
+        transition; this catches tasks that died without a clean transition (a crash
+        or a restart mid-download) so a request never sticks on 'Pending' forever.
+
+        Replaces the old Lidarr-queue sync (which referenced an undefined method and
+        was a silent no-op)."""
         active_records = await self._request_history.async_get_active_requests()
         if not active_records:
             return
-
-        try:
-            queue_items = await self._get_cached_queue()
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Status sync failed - cannot reach Lidarr: %s", e)
-            return
-
-        queue_mbids: set[str] = set()
-        for item in queue_items:
-            album_data = item.get("album", {})
-            mbid = album_data.get("musicbrainz_id")
-            if mbid:
-                queue_mbids.add(mbid.lower())
-
         library_mbids = await self._fetch_library_mbids()
-
         for record in active_records:
-            if record.musicbrainz_id.lower() in queue_mbids:
-                if record.status != "downloading":
-                    await self._request_history.async_update_status(
-                        record.musicbrainz_id, "downloading"
-                    )
-            else:
-                await self._check_if_completed(record, library_mbids)
+            try:
+                await self._reconcile_request(record, library_mbids)
+            except Exception:  # noqa: BLE001 - one bad record must not stop the sweep
+                logger.warning("Failed to reconcile request %s", record.musicbrainz_id)
+
+    async def _reconcile_request(
+        self, record: RequestHistoryRecord, library_mbids: set[str]
+    ) -> None:
+        task = await self._find_download_task(record)
+        if task is not None:
+            mapped = self._TASK_TO_REQUEST_STATUS.get(task.status)
+            if mapped and mapped != record.status:
+                completed_at = (
+                    datetime.now(timezone.utc).isoformat()
+                    if mapped in ("imported", "failed", "cancelled")
+                    else None
+                )
+                await self._request_history.async_update_status(
+                    record.musicbrainz_id, mapped, completed_at=completed_at
+                )
+                if mapped == "imported":
+                    await self._notify_import(record)
+            return
+        # No native task (older row, or an orphan flow): fall back to library presence.
+        await self._check_if_completed(record, library_mbids)
+
+    async def _find_download_task(self, record: RequestHistoryRecord):
+        if self._download_store is None:
+            return None
+        # The link is the reliable path (set right after dispatch). The album fallback
+        # only matches ACTIVE tasks, so a request whose link is missing AND whose task
+        # already went terminal can't be recovered here - it then falls through to the
+        # library-presence check in _reconcile_request, which is the correct backstop.
+        if record.download_task_id:
+            task = await self._download_store.get_task(record.download_task_id)
+            if task is not None:
+                return task
+        return await self._download_store.get_active_task_for_album_any_user(
+            record.musicbrainz_id
+        )
 
 
     async def _fetch_library_mbids(self) -> set[str]:

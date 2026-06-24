@@ -661,6 +661,36 @@ def start_request_status_sync_task(
     return task
 
 
+_DOWNLOAD_WATCHDOG_INTERVAL = 300
+_DOWNLOAD_WATCHDOG_INITIAL_DELAY = 120
+
+
+async def reap_stale_downloads_periodically(
+    get_orchestrator, interval: int = _DOWNLOAD_WATCHDOG_INTERVAL
+) -> None:
+    """Age out download tasks whose poll loop died (crash/restart) so a request never
+    sticks on 'downloading' forever. Complements the in-loop stall watchdog.
+
+    Resolves the orchestrator fresh each sweep: saving download-client settings
+    rebuilds the singleton, and we must sweep the CURRENT instance (whose
+    ``_active_tasks`` owns the live downloads) so the 'skip a live loop' guard holds."""
+    await asyncio.sleep(_DOWNLOAD_WATCHDOG_INITIAL_DELAY)
+    while True:
+        try:
+            await get_orchestrator().reap_stale_tasks()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:  # noqa: BLE001
+            logger.error("Download watchdog sweep failed: %s", e, exc_info=True)
+        await asyncio.sleep(interval)
+
+
+def start_download_watchdog_task(get_orchestrator) -> asyncio.Task:
+    task = asyncio.create_task(reap_stale_downloads_periodically(get_orchestrator))
+    TaskRegistry.get_instance().register("download-watchdog", task)
+    return task
+
+
 _FOLLOW_POLL_INTERVAL = 86400  # 24h, hardcoded for v1 (L2)
 _FOLLOW_POLL_INITIAL_DELAY = 300
 

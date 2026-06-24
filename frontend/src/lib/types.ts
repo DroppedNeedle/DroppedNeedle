@@ -1539,6 +1539,10 @@ export interface DownloadClientConfig {
 	flac_mp3_only: boolean;
 	preflight_score_auto_accept: number;
 	preflight_score_manual_min: number;
+	download_stall_timeout_minutes: number;
+	download_queued_timeout_minutes: number;
+	max_failover_attempts: number;
+	max_concurrent_downloads: number;
 }
 
 export interface DownloadsMountStatus {

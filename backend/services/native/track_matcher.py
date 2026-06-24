@@ -44,6 +44,25 @@ class TrackMatcher:
         auto_accept_threshold: float = 0.70,
         manual_threshold: float = 0.50,
     ) -> ScoredCandidate | None:
+        ranked = await self.rank(
+            target, results,
+            auto_accept_threshold=auto_accept_threshold,
+            manual_threshold=manual_threshold,
+        )
+        return ranked[0] if ranked else None
+
+    async def rank(
+        self,
+        target: TargetTrack,
+        results: list[DownloadSearchResult],
+        *,
+        auto_accept_threshold: float = 0.70,
+        manual_threshold: float = 0.50,
+        limit: int = 20,
+    ) -> list[ScoredCandidate]:
+        """Rank candidate files for a single track, best first, one per peer so the
+        orchestrator can fail over to a different source. Each is wrapped as a
+        one-file ``ScoredCandidate`` (consumed identically to an album candidate)."""
         quarantined = await self._store.load_quarantine_set()
         filtered = [r for r in results if (r.username, r.filename) not in quarantined]
         if self._flac_mp3_only:
@@ -54,38 +73,40 @@ class TrackMatcher:
             if in_range(file_tier(r), self._quality_min, self._quality_max)
         ]
         if not filtered:
-            return None
+            return []
 
-        best: DownloadSearchResult | None = None
-        best_key: tuple[int, float] | None = None
-        best_score = -1.0
+        scored: list[tuple[int, float, DownloadSearchResult]] = []
         for file in filtered:
             score = _file_confidence(
                 target.track_title, target.artist_name, target.duration_seconds, file
             )
-            # prefer the higher tier, then better match
-            key = (tier_rank(file_tier(file)), score)
-            if best_key is None or key > best_key:
-                best_key = key
-                best = file
-                best_score = score
+            scored.append((tier_rank(file_tier(file)), score, file))
+        # prefer the higher tier, then the better match
+        scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
 
-        if best is None:
-            return None
-
-        if best_score >= auto_accept_threshold:
-            tier = "auto"
-        elif best_score >= manual_threshold:
-            tier = "manual"
-        else:
-            tier = "rejected"
-
-        return ScoredCandidate(
-            username=best.username,
-            parent_directory=best.parent_directory,
-            files=[best],
-            coherence=best_score,
-            file_confidence=best_score,
-            final_score=best_score,
-            tier=tier,
-        )
+        candidates: list[ScoredCandidate] = []
+        seen_peers: set[str] = set()
+        for _rank, score, file in scored:
+            if file.username in seen_peers:
+                continue  # one candidate per peer - failover skips same-peer anyway
+            seen_peers.add(file.username)
+            if score >= auto_accept_threshold:
+                tier = "auto"
+            elif score >= manual_threshold:
+                tier = "manual"
+            else:
+                tier = "rejected"
+            candidates.append(
+                ScoredCandidate(
+                    username=file.username,
+                    parent_directory=file.parent_directory,
+                    files=[file],
+                    coherence=score,
+                    file_confidence=score,
+                    final_score=score,
+                    tier=tier,
+                )
+            )
+            if len(candidates) >= limit:
+                break
+        return candidates

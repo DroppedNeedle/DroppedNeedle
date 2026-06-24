@@ -172,6 +172,12 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 					!settledTaskIds.has(t.id)
 				) {
 					settledTaskIds.add(t.id);
+					// a fully-completed album flips to In-Library instantly (cover/card
+					// badges read libraryStore, not TanStack); a partial leaves it to the
+					// refetch so missing-track rows still render
+					if (t.status === 'completed' && album?.musicbrainz_id) {
+						libraryStore.addMbid(album.musicbrainz_id);
+					}
 					onDownloadSettled();
 				}
 			}

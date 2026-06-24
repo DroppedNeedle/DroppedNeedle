@@ -2,6 +2,7 @@ from typing import Annotated, Literal
 
 import msgspec
 
+from api.v1.schemas.advanced_settings import _validate_range
 from api.v1.schemas.plex import PlexLibrarySectionInfo
 from infrastructure.msgspec_fastapi import AppStruct
 
@@ -84,6 +85,13 @@ class DownloadClientConnectionSettings(AppStruct):
     flac_mp3_only: bool = True
     preflight_score_auto_accept: float = 0.70
     preflight_score_manual_min: float = 0.50
+    # Download resilience (minutes-scale; user-tunable). A transfer actively
+    # connecting/moving bytes that then freezes is a stall; a transfer still
+    # sitting in the peer's remote upload queue gets the more generous timeout.
+    download_stall_timeout_minutes: int = 30
+    download_queued_timeout_minutes: int = 120
+    max_failover_attempts: int = 3
+    max_concurrent_downloads: int = 3
 
     def __post_init__(self) -> None:
         # normalise a bare host (e.g. "slskd:5030") to a full URL; httpx rejects a
@@ -92,6 +100,14 @@ class DownloadClientConnectionSettings(AppStruct):
         if self.url and not self.url.startswith(("http://", "https://")):
             self.url = f"https://{self.url}"
         self.url = self.url.rstrip("/")
+        _validate_range(
+            self.download_stall_timeout_minutes, "download_stall_timeout_minutes", 2, 240
+        )
+        _validate_range(
+            self.download_queued_timeout_minutes, "download_queued_timeout_minutes", 5, 1440
+        )
+        _validate_range(self.max_failover_attempts, "max_failover_attempts", 1, 10)
+        _validate_range(self.max_concurrent_downloads, "max_concurrent_downloads", 1, 10)
         # mirrors services.native.quality_tiers.TIER_KEYS (best -> worst); keep in sync
         _rank = {k: r for r, k in enumerate(("low", "mp3_192", "mp3_256", "mp3_320", "lossless"))}
         if self.quality_min not in _rank:

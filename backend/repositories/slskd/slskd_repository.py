@@ -332,12 +332,17 @@ class SlskdRepository:
         bytes_downloaded = sum(t.bytes_transferred for t in transfers)
         completed = 0
         failed = 0
+        succeeded_filenames: list[str] = []
+        has_active_transfer = False
         for transfer in transfers:
             flags = self._state_flags(transfer.state)
             if "succeeded" in flags:
                 completed += 1
+                succeeded_filenames.append(transfer.filename)
             elif flags & {"errored", "cancelled", "failed", "rejected", "timedout"}:
                 failed += 1
+            elif flags & {"inprogress", "initializing"}:
+                has_active_transfer = True
 
         progress = (bytes_downloaded / bytes_total * 100.0) if bytes_total else 0.0
 
@@ -368,4 +373,6 @@ class SlskdRepository:
             bytes_total=bytes_total,
             bytes_downloaded=bytes_downloaded,
             progress_percent=progress,
+            succeeded_filenames=succeeded_filenames,
+            has_active_transfer=has_active_transfer,
         )

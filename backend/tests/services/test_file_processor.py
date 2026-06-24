@@ -14,6 +14,8 @@ from models.audio import FingerprintResult
 from models.download_manifest import DownloadManifest, ExpectedFile
 from services.native.file_processor import (
     DOWNLOADS_MOUNT_UNAVAILABLE,
+    QUARANTINE_REASONS,
+    WRONG_TRACK,
     FileProcessor,
     VerifyStatus,
 )
@@ -98,7 +100,7 @@ def _place(downloads: Path, rel: str) -> None:
     shutil.copy(_FLAC, dest)
 
 
-def _manifest(*files: ExpectedFile, task_id="t1", rg="rg-1") -> DownloadManifest:
+def _manifest(*files: ExpectedFile, task_id="t1", rg="rg-1", is_track=False) -> DownloadManifest:
     return DownloadManifest(
         task_id=task_id,
         source_username="peer",
@@ -108,6 +110,7 @@ def _manifest(*files: ExpectedFile, task_id="t1", rg="rg-1") -> DownloadManifest
         naming_template=_TEMPLATE,
         target_files=list(files),
         year=1997,
+        is_track=is_track,
     )
 
 
@@ -168,6 +171,45 @@ async def test_process_downloaded_duration_mismatch_quarantines(tmp_path: Path):
     assert result.succeeded == []
     assert len(result.failed) == 1
     assert result.failed[0].reason == "duration_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_process_downloaded_track_duration_mismatch_is_wrong_track_not_quarantined(
+    tmp_path: Path,
+):
+    """For a per-track download (is_track), a duration mismatch means the WRONG
+    recording was picked - it must be WRONG_TRACK (fail over), not a quarantinable
+    duration_mismatch (which would globally blacklist an otherwise-good file)."""
+    fp, _manager, _client, _library, downloads = _make_processor(tmp_path, verify=False)
+    _place(downloads, "A/track.flac")
+    manifest = _manifest(
+        ExpectedFile(filename="A/track.flac", size=1, duration=500.0), is_track=True
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert result.succeeded == []
+    assert result.failed[0].reason == WRONG_TRACK
+    assert WRONG_TRACK not in QUARANTINE_REASONS
+
+
+@pytest.mark.asyncio
+async def test_process_downloaded_only_filenames_imports_subset(tmp_path: Path):
+    """only_filenames restricts the import to the given subset - the file left out is
+    not processed (so a never-arrived file can't be recorded as a failure)."""
+    fp, _manager, _client, _library, downloads = _make_processor(tmp_path)
+    _place(downloads, "A/one.flac")
+    _place(downloads, "A/two.flac")
+    manifest = _manifest(
+        ExpectedFile(filename="A/one.flac", size=1),
+        ExpectedFile(filename="A/two.flac", size=1),
+    )
+
+    result = await fp.process_downloaded(manifest, only_filenames={"A/one.flac"})
+
+    assert len(result.succeeded) == 1
+    assert result.failed == []
+    assert (downloads / "A/two.flac").exists()   # the unlisted file was left untouched
 
 
 @pytest.mark.asyncio

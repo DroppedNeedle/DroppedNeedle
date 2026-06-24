@@ -46,6 +46,9 @@ DOWNLOADS_MOUNT_UNAVAILABLE = (
 )
 # not a quarantine reason: the source file is fine, the failure is local
 IMPORT_FAILED = "import failed - could not write the file into the library"
+# not a quarantine reason: a per-track download whose duration doesn't match the
+# requested recording is the WRONG track, not a bad file - fail over, don't blacklist
+WRONG_TRACK = "wrong_track"
 
 
 class VerifyStatus:
@@ -164,13 +167,22 @@ class FileProcessor:
             return VerifyResult(status=VerifyStatus.FAIL, reason="track number mismatch")
         return VerifyResult(status=VerifyStatus.PASS)
 
-    async def process_downloaded(self, manifest: DownloadManifest) -> ProcessResult:
+    async def process_downloaded(
+        self,
+        manifest: DownloadManifest,
+        only_filenames: set[str] | None = None,
+    ) -> ProcessResult:
         """Import each expected file from slskd's download dir into the library.
 
         Continue-on-failure: a bad file is recorded and skipped, the rest still
         import. The orchestrator quarantines each failure and derives
         completed/partial/failed from the counts (this is what makes ``partial``
-        reachable)."""
+        reachable).
+
+        ``only_filenames`` restricts the import to a subset of the manifest - the
+        orchestrator passes the files whose slskd transfer actually succeeded, so a
+        stalled task imports what arrived without the never-arrived files being
+        recorded as (quarantinable) verification failures."""
         if self._naming is None or self._library is None or not self._library_paths \
                 or self._client is None:
             # in production all four are injected by the DI provider
@@ -178,7 +190,10 @@ class FileProcessor:
 
         succeeded: list[str] = []
         failed: list[FileFailure] = []
-        for expected in manifest.target_files:
+        targets = manifest.target_files
+        if only_filenames is not None:
+            targets = [f for f in targets if f.filename in only_filenames]
+        for expected in targets:
             try:
                 target = await self._process_one(expected, manifest)
                 succeeded.append(str(target))
@@ -283,14 +298,18 @@ class FileProcessor:
                 f"Cannot read tags: {exc}", reason="corrupt", filename=expected.filename
             ) from exc
 
-        # duration sanity, always on: catches "right filename, wrong audio"
+        # duration sanity, always on: catches "right filename, wrong audio".
+        # Tolerance is the larger of 15s or 10% of the expected length, so normal
+        # master/encoder variance passes. For a per-track download the expected value
+        # is the CANONICAL track length, so a mismatch means the wrong recording was
+        # picked - fail over (WRONG_TRACK), don't quarantine an otherwise-good file.
         if expected.duration and info.duration_seconds and abs(
             info.duration_seconds - expected.duration
         ) > max(15.0, 0.10 * expected.duration):
             raise VerificationFailed(
                 f"Duration mismatch ({info.duration_seconds:.0f}s vs "
                 f"{expected.duration:.0f}s)",
-                reason="duration_mismatch",
+                reason=WRONG_TRACK if manifest.is_track else "duration_mismatch",
                 filename=expected.filename,
             )
         # AcoustID release-group check, only when verify is on and a fingerprinter is

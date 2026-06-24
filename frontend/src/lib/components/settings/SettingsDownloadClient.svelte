@@ -35,6 +35,10 @@
 	let flacMp3Only = $state(true);
 	let autoAccept = $state(0.7);
 	let manualMin = $state(0.5);
+	let stallTimeout = $state(30);
+	let queuedTimeout = $state(120);
+	let maxFailover = $state(3);
+	let maxConcurrent = $state(3);
 	let seeded = $state(false);
 	let testResult = $state<TestConnectionResult | null>(null);
 
@@ -50,6 +54,10 @@
 			flacMp3Only = d.flac_mp3_only ?? true;
 			autoAccept = d.preflight_score_auto_accept;
 			manualMin = d.preflight_score_manual_min;
+			stallTimeout = d.download_stall_timeout_minutes ?? 30;
+			queuedTimeout = d.download_queued_timeout_minutes ?? 120;
+			maxFailover = d.max_failover_attempts ?? 3;
+			maxConcurrent = d.max_concurrent_downloads ?? 3;
 			seeded = true;
 		}
 	});
@@ -77,7 +85,11 @@
 			quality_max: qualityMax,
 			flac_mp3_only: flacMp3Only,
 			preflight_score_auto_accept: autoAccept,
-			preflight_score_manual_min: manualMin
+			preflight_score_manual_min: manualMin,
+			download_stall_timeout_minutes: stallTimeout,
+			download_queued_timeout_minutes: queuedTimeout,
+			max_failover_attempts: maxFailover,
+			max_concurrent_downloads: maxConcurrent
 		};
 	}
 
@@ -352,6 +364,68 @@
 								Below auto-accept and above this lands in the Review tab.
 							</span>
 						</div>
+					</div>
+				</section>
+
+				<section class="space-y-3">
+					<h4 class="text-sm font-semibold">Download resilience</h4>
+					<p class="text-xs text-base-content/60">
+						How long to wait on a slow Soulseek peer before trying another source, and how
+						many downloads run at once. The defaults suit most setups.
+					</p>
+					<div class="grid gap-3 sm:grid-cols-2">
+					<div class="form-control">
+						<label class="label" for="stall-timeout"><span class="label-text">Stall timeout (minutes)</span></label>
+						<input
+							id="stall-timeout"
+							type="number"
+							min="2"
+							max="240"
+							step="1"
+							class="input input-bordered"
+							bind:value={stallTimeout}
+						/>
+						<span class="label-text-alt mt-1 text-base-content/50">No download progress for this long on an active transfer counts as stalled.</span>
+					</div>
+					<div class="form-control">
+						<label class="label" for="queued-timeout"><span class="label-text">Queue wait timeout (minutes)</span></label>
+						<input
+							id="queued-timeout"
+							type="number"
+							min="5"
+							max="1440"
+							step="5"
+							class="input input-bordered"
+							bind:value={queuedTimeout}
+						/>
+						<span class="label-text-alt mt-1 text-base-content/50">How long to wait in a peer's upload queue before giving up on that source.</span>
+					</div>
+					<div class="form-control">
+						<label class="label" for="max-failover"><span class="label-text">Failover attempts</span></label>
+						<input
+							id="max-failover"
+							type="number"
+							min="1"
+							max="10"
+							step="1"
+							class="input input-bordered"
+							bind:value={maxFailover}
+						/>
+						<span class="label-text-alt mt-1 text-base-content/50">How many alternate sources to try before a download is marked failed.</span>
+					</div>
+					<div class="form-control">
+						<label class="label" for="max-concurrent"><span class="label-text">Concurrent downloads</span></label>
+						<input
+							id="max-concurrent"
+							type="number"
+							min="1"
+							max="10"
+							step="1"
+							class="input input-bordered"
+							bind:value={maxConcurrent}
+						/>
+						<span class="label-text-alt mt-1 text-base-content/50">Maximum albums actively downloading at once.</span>
+					</div>
 					</div>
 				</section>
 

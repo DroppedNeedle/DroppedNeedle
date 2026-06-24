@@ -39,6 +39,10 @@ class DownloadManifest(AppStruct):
     release_mbid: str | None = None
     artist_mbid: str | None = None
     year: int | None = None
+    # True when this is a single-track download whose ``duration`` is the canonical
+    # track length (from MusicBrainz). A duration mismatch then means "wrong track for
+    # this request" (fail over to another source), not a corrupt file to quarantine.
+    is_track: bool = False
 
 
 class ManifestCodec:

@@ -97,3 +97,33 @@ async def test_retry_request_redispatches_native_and_links():
     assert resp.success is True
     download_service.request_album.assert_awaited_once()
     history.async_update_download_task_id.assert_awaited_once_with("mbid-1", "task-9")
+
+
+@pytest.mark.asyncio
+async def test_sync_reconciles_request_from_native_download_task():
+    """The rewritten reconciler reads the native download task (not the dead Lidarr
+    queue): a failed task flips its still-active request to 'failed'."""
+    record = SimpleNamespace(
+        musicbrainz_id="mbid-x", status="downloading", download_task_id="task-x"
+    )
+    history = MagicMock()
+    history.async_get_active_requests = AsyncMock(return_value=[record])
+    history.async_update_status = AsyncMock()
+
+    download_store = MagicMock()
+    download_store.get_task = AsyncMock(return_value=SimpleNamespace(status="failed"))
+
+    async def _mbids() -> set[str]:
+        return set()
+
+    service = RequestsPageService(
+        library_repo=MagicMock(),
+        request_history=history,
+        library_mbids_fn=_mbids,
+        download_store=download_store,
+    )
+
+    await service.sync_request_statuses()
+
+    history.async_update_status.assert_awaited_once()
+    assert history.async_update_status.await_args.args[:2] == ("mbid-x", "failed")

@@ -55,6 +55,14 @@ class DownloadTaskStatus(AppStruct):
     bytes_downloaded: int = 0
     progress_percent: float = 0.0
     error: str | None = None
+    # Filenames whose transfer has succeeded so far. Lets the orchestrator import
+    # the already-finished subset of a stalled task without touching files that
+    # never arrived (which would otherwise be quarantined as verify failures).
+    succeeded_filenames: list[str] = []
+    # True when at least one non-terminal transfer is actively connecting or
+    # moving bytes (vs. sitting in the peer's remote upload queue). The stall
+    # watchdog uses this to pick the active-stall timeout vs the queued timeout.
+    has_active_transfer: bool = False
 
 
 @runtime_checkable

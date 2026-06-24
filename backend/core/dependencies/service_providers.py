@@ -224,15 +224,11 @@ def get_request_service() -> "RequestService":
     return RequestService(request_history, get_download_service())
 
 
-@singleton
-def get_requests_page_service() -> "RequestsPageService":
-    from services.requests_page_service import RequestsPageService
-
-    library_repo = get_library_repository()
-    request_history = get_request_history_store()
-    memory_cache = get_cache()
-    disk_cache = get_disk_cache()
-    library_db = get_library_db()
+def _build_import_invalidation(memory_cache, disk_cache, library_db):
+    """The canonical 'an album just landed in the library' invalidation: bust the
+    album/library/home caches and materialise the album row. Shared by the requests
+    reconciler and the download orchestrator's terminal-state bridge so a completed
+    download surfaces in the UI immediately."""
 
     async def on_import(record: RequestHistoryRecord) -> None:
         invalidations = [
@@ -275,10 +271,27 @@ def get_requests_page_service() -> "RequestsPageService":
         except Exception as ex:  # noqa: BLE001
             logger.warning("Failed to upsert album into library cache: %s", ex)
 
+    return on_import
+
+
+@singleton
+def get_requests_page_service() -> "RequestsPageService":
+    from services.requests_page_service import RequestsPageService
+
+    library_repo = get_library_repository()
+    request_history = get_request_history_store()
+    memory_cache = get_cache()
+    disk_cache = get_disk_cache()
+    library_db = get_library_db()
+
+    on_import = _build_import_invalidation(memory_cache, disk_cache, library_db)
+
     library_service = get_library_service()
 
     async def merged_library_mbids() -> set[str]:
         return set(await library_service.get_library_mbids())
+
+    from .repo_providers import get_download_store
 
     return RequestsPageService(
         library_repo=library_repo,
@@ -286,6 +299,7 @@ def get_requests_page_service() -> "RequestsPageService":
         library_mbids_fn=merged_library_mbids,
         on_import_callback=on_import,
         download_service=get_download_service(),
+        download_store=get_download_store(),
     )
 
 
@@ -748,6 +762,14 @@ def get_download_orchestrator() -> "DownloadOrchestrator":
         naming_template=lib.naming_template,
         auto_accept_threshold=dc.preflight_score_auto_accept,
         manual_threshold=dc.preflight_score_manual_min,
+        stall_timeout_minutes=dc.download_stall_timeout_minutes,
+        queued_timeout_minutes=dc.download_queued_timeout_minutes,
+        max_failover_attempts=dc.max_failover_attempts,
+        max_concurrent_downloads=dc.max_concurrent_downloads,
+        request_history=get_request_history_store(),
+        on_import_callback=_build_import_invalidation(
+            get_cache(), get_disk_cache(), get_library_db()
+        ),
     )
 
 

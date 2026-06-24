@@ -208,6 +208,10 @@ class PreferencesService:
                 "flac_mp3_only": settings.flac_mp3_only,
                 "preflight_score_auto_accept": settings.preflight_score_auto_accept,
                 "preflight_score_manual_min": settings.preflight_score_manual_min,
+                "download_stall_timeout_minutes": settings.download_stall_timeout_minutes,
+                "download_queued_timeout_minutes": settings.download_queued_timeout_minutes,
+                "max_failover_attempts": settings.max_failover_attempts,
+                "max_concurrent_downloads": settings.max_concurrent_downloads,
             }
             self._save_config(config)
             logger.info("Saved download client settings to %s", self._config_path)

@@ -42,6 +42,8 @@
 
 	const progress = $derived(stream.state.progress);
 	const livePct = $derived(progress?.progress_percent ?? task.progress_percent);
+	// the orchestrator emits a 'retrying' status while it fails over to another peer
+	const isRetrying = $derived(stream.state.status === 'retrying');
 </script>
 
 <div
@@ -71,6 +73,9 @@
 					filesTotal={progress?.files_total ?? task.files_total}
 				/>
 			</div>
+		{/if}
+		{#if isRetrying}
+			<p class="mt-1 text-xs text-base-content/60">Trying another source…</p>
 		{/if}
 		{#if task.error_message}
 			<p class="mt-1 line-clamp-2 text-xs text-error/80">{task.error_message}</p>

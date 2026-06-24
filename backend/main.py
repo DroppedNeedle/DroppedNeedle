@@ -269,7 +269,11 @@ async def lifespan(app: FastAPI):
         logger.error("startup.config_invalid", extra={"error": str(exc)})
 
     from core.dependencies import get_download_orchestrator, get_library_scanner
-    from core.tasks import start_download_resume_task, start_library_scan_resume_task
+    from core.tasks import (
+        start_download_resume_task,
+        start_download_watchdog_task,
+        start_library_scan_resume_task,
+    )
 
     start_library_scan_resume_task(
         get_library_scanner(),
@@ -277,6 +281,9 @@ async def lifespan(app: FastAPI):
     )
 
     start_download_resume_task(get_download_orchestrator())
+    # pass the provider (not an instance) so the watchdog always sweeps the current
+    # orchestrator singleton, which is rebuilt when download-client settings are saved
+    start_download_watchdog_task(get_download_orchestrator)
 
     from core.dependencies import get_download_store as _get_download_store
     _orphan_task = asyncio.create_task(
