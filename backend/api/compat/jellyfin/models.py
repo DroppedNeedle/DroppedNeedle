@@ -43,6 +43,14 @@ class PlaybackStopInfo(msgspec.Struct, kw_only=True):
     Failed: bool = False
 
 
+class PlaybackProgressInfo(msgspec.Struct, kw_only=True):
+    ItemId: str | None = None
+    PlaySessionId: str | None = None
+    PositionTicks: int | None = None
+    RunTimeTicks: int | None = None
+    IsPaused: bool = False
+
+
 class PublicSystemInfo(msgspec.Struct, kw_only=True):
     LocalAddress: str
     ServerName: str

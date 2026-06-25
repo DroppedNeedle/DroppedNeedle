@@ -153,3 +153,72 @@ class TestJellyfinSessionsRoute:
         resp = self.client.get("/jellyfin/sessions")
         assert resp.status_code == 200
         assert resp.json()["sessions"] == []
+
+
+# Live presence routes (/api/v1/now-playing)
+
+from api.v1.routes.now_playing import router as now_playing_router  # noqa: E402
+from api.v1.schemas.now_playing import NowPlayingSnapshotEntry  # noqa: E402
+from core.dependencies import get_now_playing_service  # noqa: E402
+from tests.helpers import build_test_client, override_user_auth  # noqa: E402
+
+
+class TestNowPlayingPresenceRoutes:
+    def _client(self, service) -> TestClient:
+        app = FastAPI()
+        app.include_router(now_playing_router, prefix="/api/v1")
+        app.dependency_overrides[get_now_playing_service] = lambda: service
+        override_user_auth(app, user_id="user-a")
+        return build_test_client(app)
+
+    def test_get_snapshot_returns_projected_sessions(self):
+        svc = MagicMock()
+        svc.snapshot.return_value = [
+            NowPlayingSnapshotEntry(
+                id="user-a:web",
+                user_name="Alice",
+                track_name="Song",
+                artist_name="Artist",
+                album_name="Album",
+                cover_url="/c",
+                device_name="Web",
+                is_paused=False,
+                source="local",
+                progress_ms=1000,
+                duration_ms=200000,
+                redacted=False,
+            )
+        ]
+        resp = self._client(svc).get("/api/v1/now-playing")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["sessions"][0]["track_name"] == "Song"
+        assert body["sessions"][0]["user_name"] == "Alice"
+
+    def test_post_reports_presence_for_current_user(self):
+        svc = MagicMock()
+        svc.update = AsyncMock()
+        resp = self._client(svc).post(
+            "/api/v1/now-playing",
+            json={
+                "track_name": "S",
+                "artist_name": "A",
+                "source": "local",
+                "progress_ms": 1000,
+                "duration_ms": 2000,
+            },
+        )
+        assert resp.status_code == 204
+        svc.update.assert_awaited_once()
+        kwargs = svc.update.await_args.kwargs
+        assert kwargs["key"] == "user-a:web"
+        assert kwargs["user_id"] == "user-a"
+        assert kwargs["track_name"] == "S"
+        assert kwargs["source"] == "local"
+
+    def test_delete_clears_presence(self):
+        svc = MagicMock()
+        svc.remove = AsyncMock()
+        resp = self._client(svc).delete("/api/v1/now-playing")
+        assert resp.status_code == 204
+        svc.remove.assert_awaited_once_with("user-a:web")

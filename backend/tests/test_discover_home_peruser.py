@@ -271,3 +271,121 @@ async def test_seed_artists_fall_back_to_broader_ranges():
         resolved_source="listenbrainz", lb_client=client,
     )
     assert [s.artist_mbids[0] for s in seeds] == ["mbid-1"]
+
+
+def _swr_service(cache_key: str, cached_response):
+    """A DiscoverHomepageService primed with a cached response, collaborators mocked,
+    for exercising the stale-while-revalidate path in get_discover_data."""
+    from services.discover.homepage_service import DiscoverHomepageService
+
+    svc = DiscoverHomepageService.__new__(DiscoverHomepageService)
+    svc._resolve_user_music = AsyncMock(
+        return_value=(None, None, None, None, True, False, "listenbrainz")
+    )
+    svc._building_keys = set()
+    cache = _FakeCache()
+    cache.store[cache_key] = cached_response
+    svc._memory_cache = cache
+    svc._integration = MagicMock()
+    svc._integration.get_discover_cache_key.return_value = cache_key
+    svc._integration.get_home_settings.return_value = SimpleNamespace(show_globally_trending=True)
+    svc._trigger_warm = MagicMock()
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_stale_cache_serves_immediately_and_revalidates_in_background():
+    import time as _time
+
+    from api.v1.schemas.discover import DiscoverResponse
+    from services.discover.homepage_service import STALE_REVALIDATE_SECONDS
+
+    key = "discover_response:u1:listenbrainz:True:False"
+    svc = _swr_service(key, DiscoverResponse(refreshing=False))
+    # built long ago -> serve the cached copy but kick off a background rebuild
+    svc._built_at = {key: _time.time() - STALE_REVALIDATE_SECONDS - 10}
+
+    resp = await svc.get_discover_data("u1", "listenbrainz")
+
+    assert resp.refreshing is True  # frontend shows the "updating" indicator + polls
+    svc._trigger_warm.assert_called_once_with("u1", "listenbrainz")
+
+
+@pytest.mark.asyncio
+async def test_fresh_cache_served_without_rebuild():
+    import time as _time
+
+    from api.v1.schemas.discover import DiscoverResponse
+
+    key = "discover_response:u1:listenbrainz:True:False"
+    svc = _swr_service(key, DiscoverResponse(refreshing=False))
+    # just built -> serve as-is, no rebuild, not refreshing
+    svc._built_at = {key: _time.time()}
+
+    resp = await svc.get_discover_data("u1", "listenbrainz")
+
+    assert resp.refreshing is False
+    svc._trigger_warm.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_manual_refresh_targets_viewed_source_and_marks_it_stale():
+    from services.discover.homepage_service import DiscoverHomepageService
+
+    svc = DiscoverHomepageService.__new__(DiscoverHomepageService)
+    # primary source is listenbrainz, but the user is viewing (and refreshing) lastfm
+    svc._resolve_user_music = AsyncMock(
+        return_value=(None, None, None, None, False, True, "lastfm")
+    )
+    svc._building_keys = set()
+    key = "discover_response:u1:lastfm:False:True"
+    svc._integration = MagicMock()
+    svc._integration.get_discover_cache_key.return_value = key
+    svc._built_at = {key: 999999999.0}  # currently "fresh"
+    svc._trigger_warm = MagicMock()
+
+    await svc.refresh_discover_data("u1", "lastfm")
+
+    # resolves the VIEWED source, not the primary
+    svc._resolve_user_music.assert_awaited_once_with("u1", "lastfm")
+    # marks that source stale so the next GET reliably revalidates (shows the spinner)
+    assert key not in svc._built_at
+    svc._trigger_warm.assert_called_once_with("u1", "lastfm")
+
+
+def _miss_service(built_at: dict):
+    from services.discover.homepage_service import DiscoverHomepageService
+
+    svc = DiscoverHomepageService.__new__(DiscoverHomepageService)
+    svc._resolve_user_music = AsyncMock(
+        return_value=(None, None, None, None, True, False, "listenbrainz")
+    )
+    svc._building_keys = set()
+    svc._memory_cache = _FakeCache()  # no cached response -> cache miss
+    svc._integration = MagicMock()
+    svc._integration.get_discover_cache_key.return_value = "discover_response:u1:listenbrainz:True:False"
+    svc._integration.get_integration_status.return_value = MagicMock()
+    svc._build_service_prompts = MagicMock(return_value=[])
+    svc._trigger_warm = MagicMock()
+    svc._built_at = built_at
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_first_visit_cache_miss_triggers_build():
+    svc = _miss_service(built_at={})  # never built
+    resp = await svc.get_discover_data("u1", "listenbrainz")
+    assert resp.refreshing is True
+    svc._trigger_warm.assert_called_once_with("u1", "listenbrainz")
+
+
+@pytest.mark.asyncio
+async def test_empty_build_backs_off_instead_of_rebuilding_every_poll():
+    import time as _time
+
+    # a build was just attempted but produced nothing (empty user): the next poll must
+    # NOT rebuild, and must settle (refreshing=false) instead of polling forever
+    svc = _miss_service(built_at={"discover_response:u1:listenbrainz:True:False": _time.time()})
+    resp = await svc.get_discover_data("u1", "listenbrainz")
+    assert resp.refreshing is False
+    svc._trigger_warm.assert_not_called()

@@ -120,3 +120,57 @@ async def test_q21_start_tracking_roundtrip(adapter):
     assert adapter.pop_started("user-alice", "item-1") is not None
     # popped -> gone
     assert adapter.pop_started("user-alice", "item-1") is None
+
+
+async def test_now_playing_writes_presence(
+    scrobble_service, library_view_service, seeded_library
+):
+    _db, _lm, ids = seeded_library
+    presence = AsyncMock()
+    adapter = CompatScrobbleAdapter(scrobble_service, library_view_service, presence)
+    await adapter.now_playing(
+        ids["tracks"][0], user_id="user-alice", client="Finamp", user_name="Alice"
+    )
+    presence.update.assert_awaited_once()
+    kw = presence.update.await_args.kwargs
+    assert kw["key"] == "user-alice:compat:finamp"
+    assert kw["user_id"] == "user-alice" and kw["user_name"] == "Alice"
+    assert kw["source"] == "finamp"
+    assert kw["track_name"] == "Airbag"
+    assert kw["is_paused"] is False
+
+
+async def test_scrobble_clears_presence(
+    scrobble_service, library_view_service, seeded_library
+):
+    _db, _lm, ids = seeded_library
+    presence = AsyncMock()
+    adapter = CompatScrobbleAdapter(scrobble_service, library_view_service, presence)
+    await adapter.scrobble(ids["tracks"][0], user_id="user-alice", client="Symfonium")
+    presence.remove.assert_awaited_once_with("user-alice:compat:symfonium")
+
+
+async def test_clear_presence_removes_compat_key(scrobble_service, library_view_service):
+    presence = AsyncMock()
+    adapter = CompatScrobbleAdapter(scrobble_service, library_view_service, presence)
+    await adapter.clear_presence("user-alice", "Finamp")
+    presence.remove.assert_awaited_once_with("user-alice:compat:finamp")
+
+
+async def test_progress_updates_presence_position(
+    scrobble_service, library_view_service, seeded_library
+):
+    _db, _lm, ids = seeded_library
+    presence = AsyncMock()
+    adapter = CompatScrobbleAdapter(scrobble_service, library_view_service, presence)
+    await adapter.progress(
+        ids["tracks"][0],
+        user_id="user-alice",
+        user_name="Alice",
+        client="Finamp",
+        position_ms=12345,
+        is_paused=True,
+    )
+    presence.update.assert_awaited_once()
+    kw = presence.update.await_args.kwargs
+    assert kw["progress_ms"] == 12345 and kw["is_paused"] is True

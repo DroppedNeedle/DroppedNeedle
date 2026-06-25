@@ -25,7 +25,9 @@
 	const sourceLabels: Record<string, string> = {
 		jellyfin: 'Jellyfin',
 		navidrome: 'Navidrome',
-		plex: 'Plex'
+		plex: 'Plex',
+		local: 'DroppedNeedle',
+		youtube: 'YouTube'
 	};
 </script>
 
@@ -89,10 +91,16 @@
 							</span>
 						</div>
 
-						<p class="truncate text-sm font-semibold leading-tight text-base-content">
-							{session.track_name}
-						</p>
-						<p class="truncate text-xs text-base-content/60">{session.artist_name}</p>
+						{#if session.redacted}
+							<p class="truncate text-sm font-medium italic leading-tight text-base-content/50">
+								Private listening
+							</p>
+						{:else}
+							<p class="truncate text-sm font-semibold leading-tight text-base-content">
+								{session.track_name}
+							</p>
+							<p class="truncate text-xs text-base-content/60">{session.artist_name}</p>
+						{/if}
 
 						<div
 							class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] text-base-content/50"

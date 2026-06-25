@@ -10,7 +10,10 @@
 	} from '$lib/queries/connections/ConnectionsMutations.svelte';
 	import { getScrobblePreferencesQuery } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
 	import { createUpdateScrobblePreferencesMutation } from '$lib/queries/scrobble-preferences/ScrobblePreferencesMutations.svelte';
-	import type { ScrobblePreferencesUpdate } from '$lib/queries/scrobble-preferences/types';
+	import type {
+		NowPlayingVisibility,
+		ScrobblePreferencesUpdate
+	} from '$lib/queries/scrobble-preferences/types';
 	import type { MusicSource } from '$lib/stores/musicSource';
 	import { scrobbleManager } from '$lib/stores/scrobble.svelte';
 
@@ -47,11 +50,13 @@
 	let scrobbleLastfm = $state(false);
 	let scrobbleListenbrainz = $state(false);
 	let primarySource = $state<MusicSource>('listenbrainz');
+	let nowPlayingVisibility = $state<NowPlayingVisibility>('full');
 	$effect(() => {
 		if (prefs) {
 			scrobbleLastfm = prefs.scrobble_to_lastfm;
 			scrobbleListenbrainz = prefs.scrobble_to_listenbrainz;
 			primarySource = (prefs.primary_music_source as MusicSource) ?? 'listenbrainz';
+			nowPlayingVisibility = (prefs.now_playing_visibility as NowPlayingVisibility) ?? 'full';
 		}
 	});
 
@@ -116,6 +121,7 @@
 				scrobbleLastfm = prefs.scrobble_to_lastfm;
 				scrobbleListenbrainz = prefs.scrobble_to_listenbrainz;
 				primarySource = (prefs.primary_music_source as MusicSource) ?? 'listenbrainz';
+				nowPlayingVisibility = (prefs.now_playing_visibility as NowPlayingVisibility) ?? 'full';
 			}
 		}
 	}
@@ -272,7 +278,11 @@
 							</button>
 						{:else if lfmPendingToken}
 							<div class="flex items-center gap-2">
-								<button type="button" class="btn btn-ghost btn-xs rounded-full" onclick={cancelLastFm}>
+								<button
+									type="button"
+									class="btn btn-ghost btn-xs rounded-full"
+									onclick={cancelLastFm}
+								>
 									Cancel
 								</button>
 								<button
@@ -378,6 +388,27 @@
 						</button>
 					{/each}
 				</div>
+			</div>
+
+			<div class="section-divider-glow my-1"></div>
+
+			<div class="flex flex-wrap items-center justify-between gap-3 px-1">
+				<div>
+					<span class="text-sm font-medium">Now Playing visibility</span>
+					<p class="text-xs text-base-content/40">
+						How your listening appears to others on the home page.
+					</p>
+				</div>
+				<select
+					class="select select-bordered select-sm w-full max-w-[16rem] text-xs"
+					bind:value={nowPlayingVisibility}
+					disabled={updatePrefsMutation.isPending}
+					onchange={() => savePrefs({ now_playing_visibility: nowPlayingVisibility })}
+				>
+					<option value="full">Show what I'm playing</option>
+					<option value="track_hidden">Show I'm listening, hide the track</option>
+					<option value="offline">Don't show my activity</option>
+				</select>
 			</div>
 		{/if}
 	</div>

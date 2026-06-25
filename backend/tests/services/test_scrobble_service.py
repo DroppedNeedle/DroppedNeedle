@@ -15,6 +15,7 @@ def _prefs(scrobble_lastfm: bool = True, scrobble_lb: bool = True) -> UserListen
         scrobble_to_lastfm=scrobble_lastfm,
         scrobble_to_listenbrainz=scrobble_lb,
         primary_music_source="listenbrainz",
+        now_playing_visibility="full",
         updated_at="",
     )
 

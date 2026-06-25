@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import random
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -41,6 +42,12 @@ from services.weekly_exploration_service import WeeklyExplorationService
 logger = logging.getLogger(__name__)
 
 DISCOVER_CACHE_TTL = 43200  # 12 hours
+# stale-while-revalidate: serve a cached response immediately but rebuild it in the
+# background once it's older than this. Kept comfortably above a build's duration so
+# active use can't trigger back-to-back rebuilds (external API rate limits). Tunable.
+STALE_REVALIDATE_SECONDS = 300  # 5 minutes
+# cap any single upstream call within a build so one slow service can't hang the update
+DISCOVER_TASK_TIMEOUT_SECONDS = 25
 REDISCOVER_PLAY_THRESHOLD = 5
 REDISCOVER_MONTHS_AGO = 3
 MISSING_ESSENTIALS_MIN_ALBUMS = 3
@@ -86,6 +93,8 @@ class DiscoverHomepageService:
         self._weekly_exploration = WeeklyExplorationService(listenbrainz_repo, musicbrainz_repo)
         # per-(user, source) in-flight warm guard so one user never blocks another
         self._building_keys: set[tuple[str, str]] = set()
+        # cache_key -> unix time of the last successful build, for stale-while-revalidate
+        self._built_at: dict[str, float] = {}
 
     def _daily_mix_cache_key(self, user_id: str, source: str) -> str:
         today = datetime.now(timezone.utc).date().isoformat()
@@ -111,6 +120,20 @@ class DiscoverHomepageService:
         resolved = resolve_source_value(source, primary_source, lb_enabled, lfm_enabled)
         return lb_client, lfm_client, lb_username, lfm_username, lb_enabled, lfm_enabled, resolved
 
+    def _trigger_warm(self, user_id: str, resolved_source: str) -> None:
+        """Kick off a background rebuild for (user, source) if one isn't already running."""
+        from core.task_registry import TaskRegistry
+
+        registry = TaskRegistry.get_instance()
+        task_name = f"discover-homepage-warm-{user_id}-{resolved_source}"
+        if registry.is_running(task_name):
+            return
+        task = asyncio.create_task(self.warm_cache(user_id, source=resolved_source))
+        try:
+            registry.register(task_name, task)
+        except RuntimeError:
+            pass
+
     async def get_discover_data(self, user_id: str, source: str | None = None) -> DiscoverResponse:
         _, _, _, _, lb_enabled, lfm_enabled, resolved_source = await self._resolve_user_music(user_id, source)
         building = (user_id, resolved_source) in self._building_keys
@@ -119,27 +142,37 @@ class DiscoverHomepageService:
                 user_id, resolved_source, lb_enabled, lfm_enabled
             )
             cached = await self._memory_cache.get(cache_key)
-            if cached is not None:
-                if isinstance(cached, DiscoverResponse):
-                    updates = {"refreshing": building}
-                    home_settings = self._integration.get_home_settings()
-                    if not home_settings.show_globally_trending:
-                        updates["globally_trending"] = None
-                    return clone_with_updates(cached, updates)
-        if not building:
-            from core.task_registry import TaskRegistry
-            registry = TaskRegistry.get_instance()
-            task_name = f"discover-homepage-warm-{user_id}-{resolved_source}"
-            if not registry.is_running(task_name):
-                task = asyncio.create_task(self.warm_cache(user_id, source=resolved_source))
-                try:
-                    registry.register(task_name, task)
-                except RuntimeError:
-                    pass
+            if cached is not None and isinstance(cached, DiscoverResponse):
+                # stale-while-revalidate: serve the cached copy immediately, but rebuild
+                # in the background once it's older than the freshness window so the data
+                # always converges to fresh without ever showing the build screen again
+                age = time.time() - self._built_at.get(cache_key, 0.0)
+                if not building and age > STALE_REVALIDATE_SECONDS:
+                    self._trigger_warm(user_id, resolved_source)
+                    building = True
+                updates = {"refreshing": building}
+                home_settings = self._integration.get_home_settings()
+                if not home_settings.show_globally_trending:
+                    updates["globally_trending"] = None
+                return clone_with_updates(cached, updates)
+        # cache miss (first build, restart-wiped cache, or a user whose build is
+        # legitimately empty). Back off if a build was attempted within the freshness
+        # window so an empty/failed build doesn't rebuild on every 3s poll and hammer
+        # upstream APIs; if backed off we report refreshing=false so the UI settles on
+        # the empty state instead of polling forever.
+        cache_key = self._integration.get_discover_cache_key(
+            user_id, resolved_source, lb_enabled, lfm_enabled
+        )
+        attempted_recently = (
+            time.time() - self._built_at.get(cache_key, 0.0) <= STALE_REVALIDATE_SECONDS
+        )
+        if not building and not attempted_recently:
+            self._trigger_warm(user_id, resolved_source)
+            building = True
         return DiscoverResponse(
             integration_status=self._integration.get_integration_status(),
             service_prompts=self._build_service_prompts(lb_enabled, lfm_enabled),
-            refreshing=True,
+            refreshing=building,
         )
 
     async def get_discover_preview(self, user_id: str) -> DiscoverPreview | None:
@@ -163,19 +196,18 @@ class DiscoverHomepageService:
             items=preview_items,
         )
 
-    async def refresh_discover_data(self, user_id: str) -> None:
-        _, _, _, _, _, _, resolved = await self._resolve_user_music(user_id, None)
+    async def refresh_discover_data(self, user_id: str, source: str | None = None) -> None:
+        _, _, _, _, lb_enabled, lfm_enabled, resolved = await self._resolve_user_music(user_id, source)
         if (user_id, resolved) in self._building_keys:
             return
-        from core.task_registry import TaskRegistry
-        registry = TaskRegistry.get_instance()
-        task_name = f"discover-homepage-warm-{user_id}-{resolved}"
-        if not registry.is_running(task_name):
-            task = asyncio.create_task(self.warm_cache(user_id, source=resolved))
-            try:
-                registry.register(task_name, task)
-            except RuntimeError:
-                pass
+        # mark the current cache stale so the next GET's stale-while-revalidate reliably
+        # reports refreshing=true (the UI then shows the updating indicator and polls),
+        # even when the manual refresh hits already-fresh data
+        cache_key = self._integration.get_discover_cache_key(
+            user_id, resolved, lb_enabled, lfm_enabled
+        )
+        self._built_at.pop(cache_key, None)
+        self._trigger_warm(user_id, resolved)
 
     async def warm_cache(self, user_id: str, source: str | None = None) -> None:
         _, _, _, _, lb_enabled, lfm_enabled, resolved = await self._resolve_user_music(user_id, source)
@@ -183,19 +215,23 @@ class DiscoverHomepageService:
         if key in self._building_keys:
             return
         self._building_keys.add(key)
+        cache_key = self._integration.get_discover_cache_key(
+            user_id, resolved, lb_enabled, lfm_enabled
+        )
         try:
             response = await self.build_discover_data(user_id, source=resolved)
             if self._memory_cache and self._has_meaningful_content(response):
-                cache_key = self._integration.get_discover_cache_key(
-                    user_id, resolved, lb_enabled, lfm_enabled
-                )
                 await self._memory_cache.set(cache_key, response, DISCOVER_CACHE_TTL)
-            elif not self._has_meaningful_content(response):
+            else:
                 logger.warning("Discover build produced no meaningful content, keeping existing cache")
         except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to build discover data: {e}")
         finally:
             self._building_keys.discard(key)
+            # record the attempt time on every build (success, empty, or failure) so both
+            # the stale-while-revalidate window and the cache-miss path back off instead of
+            # rebuilding on every poll - including users whose build is legitimately empty
+            self._built_at[cache_key] = time.time()
 
     def _has_meaningful_content(self, response: DiscoverResponse) -> bool:
         return bool(
@@ -1661,7 +1697,9 @@ class DiscoverHomepageService:
         if not tasks:
             return {}
         keys = list(tasks.keys())
-        coros = list(tasks.values())
+        # bound each upstream call so one slow/hanging service can't stall the whole
+        # build (a timeout is caught below and that section is just dropped)
+        coros = [asyncio.wait_for(c, timeout=DISCOVER_TASK_TIMEOUT_SECONDS) for c in tasks.values()]
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
         results = {}
         for key, result in zip(keys, raw_results):

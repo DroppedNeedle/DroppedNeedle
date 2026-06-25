@@ -937,7 +937,8 @@ async def _playing_start(request, services, user, **_):
     if file_id:
         try:
             await services.scrobble.now_playing(
-                file_id, user_id=user.id, client=extract_client(request)
+                file_id, user_id=user.id, client=extract_client(request),
+                user_name=getattr(user, "display_name", ""),
             )
         except ResourceNotFoundError:
             pass
@@ -945,7 +946,31 @@ async def _playing_start(request, services, user, **_):
 
 
 async def _playing_progress(request, services, user, **_):
-    # position update; EventName + extras ignored (lenient). No persistence.
+    # position update: drives the live now-playing presence scrubber + heartbeat.
+    # No scrobble forwarding (that happens on Stopped past threshold).
+    from core.exceptions import ResourceNotFoundError
+
+    body = await decode_body(request, jm.PlaybackProgressInfo)
+    if not body or not body.ItemId:
+        return None  # 204
+    file_id = await _track_from_item_id(services, body.ItemId)
+    if file_id:
+        position_ms = (
+            body.PositionTicks // (JELLYFIN_TICKS_PER_SECOND // 1000)
+            if body.PositionTicks is not None
+            else None
+        )
+        try:
+            await services.scrobble.progress(
+                file_id,
+                user_id=user.id,
+                user_name=getattr(user, "display_name", ""),
+                client=extract_client(request),
+                position_ms=position_ms,
+                is_paused=body.IsPaused,
+            )
+        except ResourceNotFoundError:
+            pass
     return None  # 204
 
 
@@ -964,6 +989,10 @@ async def _playing_stopped(request, services, user, **_):
     from core.exceptions import ResourceNotFoundError
     from api.compat.jellyfin.builders import ticks
 
+    # the session stopped (any reason) -> drop its now-playing presence, even when the
+    # play didn't reach the scrobble threshold below (otherwise it lingers until TTL)
+    await services.scrobble.clear_presence(user.id, extract_client(request))
+
     body = await decode_body(request, jm.PlaybackStopInfo)
     if not body or body.Failed or not body.ItemId:
         return None
@@ -978,7 +1007,7 @@ async def _playing_stopped(request, services, user, **_):
     try:
         await services.scrobble.scrobble(
             file_id, user_id=user.id, client=extract_client(request),
-            played_at=started_at,
+            played_at=started_at, user_name=getattr(user, "display_name", ""),
         )
     except ResourceNotFoundError:
         pass  # file gone since start - benign; still 204

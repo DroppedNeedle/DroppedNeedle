@@ -236,6 +236,13 @@ class HomeService:
         # always present, D8), not by whether a download client is configured
         if integration_status.library:
             tasks["library_albums"] = self._library_repo.get_library(include_unmonitored=True)
+            # get_library() is an empty stub on native installs, so the album-membership
+            # set must come from get_library_mbids() (the authoritative native set the
+            # frontend's /library/mbids also uses) - otherwise chart albums already in the
+            # library are flagged in_library=False and wrongly show a download button.
+            tasks["library_album_mbids"] = self._library_repo.get_library_mbids(
+                include_release_ids=False
+            )
             tasks["library_artists"] = self._library_repo.get_artists_from_library(include_unmonitored=True)
             tasks["recently_imported"] = self._library_repo.get_recently_imported(limit=15)
 
@@ -262,7 +269,7 @@ class HomeService:
             a.get("mbid", "").lower() for a in library_artists if a.get("mbid")
         }
         library_album_mbids = {
-            (a.musicbrainz_id or "").lower() for a in library_albums if a.musicbrainz_id
+            m.lower() for m in (results.get("library_album_mbids") or set())
         }
 
         response = HomeResponse(integration_status=integration_status)

@@ -703,11 +703,13 @@ async def _scrobble(c: Ctx) -> Response:
             if i < len(times) and times[i].isdigit():
                 played_at = int(times[i]) / 1000.0
             await c.services.scrobble.scrobble(
-                fid, user_id=c.user.id, client=client, played_at=played_at
+                fid, user_id=c.user.id, client=client, played_at=played_at,
+                user_name=getattr(c.user, "display_name", ""),
             )
         else:
             await c.services.scrobble.now_playing(
-                fid, user_id=c.user.id, client=client
+                fid, user_id=c.user.id, client=client,
+                user_name=getattr(c.user, "display_name", ""),
             )
     return c.render(None, None)
 

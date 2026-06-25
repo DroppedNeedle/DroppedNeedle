@@ -155,6 +155,30 @@ def test_scrobble_preferences_rejects_bad_source(ctx):
     assert resp.status_code == 422
 
 
+def test_now_playing_visibility_defaults_to_full(ctx):
+    data = ctx.client.get("/me/scrobble-preferences").json()
+    assert data["now_playing_visibility"] == "full"
+
+
+def test_now_playing_visibility_update_roundtrips_and_preserves_others(ctx):
+    resp = ctx.client.put(
+        "/me/scrobble-preferences", json={"now_playing_visibility": "track_hidden"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["now_playing_visibility"] == "track_hidden"
+    data = ctx.client.get("/me/scrobble-preferences").json()
+    assert data["now_playing_visibility"] == "track_hidden"
+    # partial upsert leaves the other prefs untouched
+    assert data["primary_music_source"] == "listenbrainz"
+
+
+def test_now_playing_visibility_rejects_bad_value(ctx):
+    resp = ctx.client.put(
+        "/me/scrobble-preferences", json={"now_playing_visibility": "invisible"}
+    )
+    assert resp.status_code == 422
+
+
 def test_disconnect(ctx):
     ctx.client.post("/me/connections/lastfm/auth/session", json={"token": "tok-1"})
     resp = ctx.client.delete("/me/connections/lastfm")

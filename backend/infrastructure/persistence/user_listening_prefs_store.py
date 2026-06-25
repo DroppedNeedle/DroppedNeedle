@@ -10,6 +10,9 @@ import msgspec
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SOURCE = "listenbrainz"
+# now-playing presence visibility: 'full' (show track), 'track_hidden'
+# (show listening + progress, redact the song), 'offline' (show nothing).
+_DEFAULT_VISIBILITY = "full"
 
 
 class UserListeningPrefsRecord(msgspec.Struct, frozen=True):
@@ -23,6 +26,7 @@ class UserListeningPrefsRecord(msgspec.Struct, frozen=True):
     scrobble_to_lastfm: bool
     scrobble_to_listenbrainz: bool
     primary_music_source: str
+    now_playing_visibility: str
     updated_at: str
 
 
@@ -53,10 +57,19 @@ class UserListeningPrefsStore:
                   scrobble_to_lastfm INTEGER NOT NULL DEFAULT 0,
                   scrobble_to_listenbrainz INTEGER NOT NULL DEFAULT 0,
                   primary_music_source TEXT NOT NULL DEFAULT 'listenbrainz',
+                  now_playing_visibility TEXT NOT NULL DEFAULT 'full',
                   updated_at TEXT NOT NULL
                 )
                 """
             )
+            # additive, idempotent: DBs created before now-playing presence lack the column
+            try:
+                conn.execute(
+                    "ALTER TABLE user_listening_prefs "
+                    "ADD COLUMN now_playing_visibility TEXT NOT NULL DEFAULT 'full'"
+                )
+            except sqlite3.OperationalError:
+                pass  # column already present
             conn.commit()
         finally:
             conn.close()
@@ -100,6 +113,7 @@ class UserListeningPrefsStore:
                 scrobble_to_lastfm=False,
                 scrobble_to_listenbrainz=False,
                 primary_music_source=_DEFAULT_SOURCE,
+                now_playing_visibility=_DEFAULT_VISIBILITY,
                 updated_at="",
             )
         return UserListeningPrefsRecord(
@@ -107,6 +121,7 @@ class UserListeningPrefsStore:
             scrobble_to_lastfm=bool(row["scrobble_to_lastfm"]),
             scrobble_to_listenbrainz=bool(row["scrobble_to_listenbrainz"]),
             primary_music_source=row["primary_music_source"],
+            now_playing_visibility=row["now_playing_visibility"],
             updated_at=row["updated_at"],
         )
 
@@ -117,6 +132,7 @@ class UserListeningPrefsStore:
         scrobble_to_lastfm: bool | None = None,
         scrobble_to_listenbrainz: bool | None = None,
         primary_music_source: str | None = None,
+        now_playing_visibility: str | None = None,
     ) -> None:
         """Partial upsert: only the provided fields change; others are preserved."""
         now = datetime.now(timezone.utc).isoformat()
@@ -124,22 +140,27 @@ class UserListeningPrefsStore:
         ins_lastfm = int(scrobble_to_lastfm) if scrobble_to_lastfm is not None else 0
         ins_lb = int(scrobble_to_listenbrainz) if scrobble_to_listenbrainz is not None else 0
         ins_source = primary_music_source if primary_music_source is not None else _DEFAULT_SOURCE
+        ins_visibility = (
+            now_playing_visibility if now_playing_visibility is not None else _DEFAULT_VISIBILITY
+        )
         # on UPDATE, NULL keeps the existing column value via COALESCE
         upd_lastfm = int(scrobble_to_lastfm) if scrobble_to_lastfm is not None else None
         upd_lb = int(scrobble_to_listenbrainz) if scrobble_to_listenbrainz is not None else None
         upd_source = primary_music_source
+        upd_visibility = now_playing_visibility
 
         def operation(conn: sqlite3.Connection) -> None:
             conn.execute(
                 """
                 INSERT INTO user_listening_prefs (
                     user_id, scrobble_to_lastfm, scrobble_to_listenbrainz,
-                    primary_music_source, updated_at
-                ) VALUES (?, ?, ?, ?, ?)
+                    primary_music_source, now_playing_visibility, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET
                     scrobble_to_lastfm = COALESCE(?, scrobble_to_lastfm),
                     scrobble_to_listenbrainz = COALESCE(?, scrobble_to_listenbrainz),
                     primary_music_source = COALESCE(?, primary_music_source),
+                    now_playing_visibility = COALESCE(?, now_playing_visibility),
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -147,10 +168,12 @@ class UserListeningPrefsStore:
                     ins_lastfm,
                     ins_lb,
                     ins_source,
+                    ins_visibility,
                     now,
                     upd_lastfm,
                     upd_lb,
                     upd_source,
+                    upd_visibility,
                 ),
             )
 

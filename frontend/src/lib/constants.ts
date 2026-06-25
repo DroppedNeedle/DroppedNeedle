@@ -207,7 +207,10 @@ export const API = {
 	homeIntegrationStatus: () => '/api/v1/home/integration-status',
 	discover: (source?: string) =>
 		source ? `/api/v1/discover?source=${encodeURIComponent(source)}` : '/api/v1/discover',
-	discoverRefresh: () => '/api/v1/discover/refresh',
+	discoverRefresh: (source?: string) =>
+		source
+			? `/api/v1/discover/refresh?source=${encodeURIComponent(source)}`
+			: '/api/v1/discover/refresh',
 	discoverQueue: (source?: string) => `/api/v1/discover/queue${source ? `?source=${source}` : ''}`,
 	discoverQueueStatus: (source?: string) =>
 		`/api/v1/discover/queue/status${source ? `?source=${source}` : ''}`,
@@ -273,6 +276,10 @@ export const API = {
 	scrobble: {
 		nowPlaying: () => '/api/v1/scrobble/now-playing',
 		submit: () => '/api/v1/scrobble/submit'
+	},
+	nowPlaying: {
+		report: () => '/api/v1/now-playing',
+		events: () => '/api/v1/now-playing/events'
 	},
 	playlists: {
 		list: () => '/api/v1/playlists',

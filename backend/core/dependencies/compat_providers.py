@@ -85,10 +85,10 @@ def get_library_view_service() -> "LibraryViewService":
 @singleton
 def get_compat_scrobble_adapter() -> "CompatScrobbleAdapter":
     from services.compat.compat_scrobble_adapter import CompatScrobbleAdapter
-    from .service_providers import get_scrobble_service
+    from .service_providers import get_now_playing_service, get_scrobble_service
 
     return CompatScrobbleAdapter(
-        get_scrobble_service(), get_library_view_service()
+        get_scrobble_service(), get_library_view_service(), get_now_playing_service()
     )
 
 

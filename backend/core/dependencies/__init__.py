@@ -64,6 +64,7 @@ from .service_providers import (  # noqa: F401
     get_library_scanner,
     get_file_processor,
     get_sse_publisher,
+    get_now_playing_service,
     get_search_service,
     get_search_enrichment_service,
     get_artist_service,

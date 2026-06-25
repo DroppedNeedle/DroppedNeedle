@@ -52,6 +52,7 @@ from api.v1.routes import local_library as local_library_routes
 from api.v1.routes import lastfm as lastfm_routes
 from api.v1.routes import scrobble as scrobble_routes
 from api.v1.routes import me_connections as me_connections_routes
+from api.v1.routes import now_playing as now_playing_routes
 from api.v1.routes import plex_library as plex_library_routes
 from api.v1.routes import plex_auth as plex_auth_routes
 from api.v1.routes import version as version_routes
@@ -293,6 +294,28 @@ async def lifespan(app: FastAPI):
         )
     )
     TaskRegistry.get_instance().register("orphan-staging-cleanup", _orphan_task)
+
+    # live now-playing presence: TTL-sweep stale native/compat sessions + poll the
+    # upstream Jellyfin/Navidrome/Plex servers into the shared SSE feed
+    from core.dependencies import (
+        get_now_playing_service,
+        get_home_service,
+        get_jellyfin_library_service,
+        get_navidrome_library_service,
+        get_plex_library_service,
+    )
+    from services.now_playing_poller import run_now_playing_presence_loop
+
+    _now_playing_task = asyncio.create_task(
+        run_now_playing_presence_loop(
+            get_now_playing_service(),
+            get_home_service(),
+            get_jellyfin_library_service(),
+            get_navidrome_library_service(),
+            get_plex_library_service(),
+        )
+    )
+    TaskRegistry.get_instance().register("now-playing-presence", _now_playing_task)
 
     cache = get_cache()
     start_cache_cleanup_task(cache, interval=advanced_settings.memory_cache_cleanup_interval)
@@ -599,6 +622,7 @@ v1_router.include_router(local_library_routes.router)
 v1_router.include_router(lastfm_routes.router)
 v1_router.include_router(scrobble_routes.router)
 v1_router.include_router(me_connections_routes.router)
+v1_router.include_router(now_playing_routes.router)
 v1_router.include_router(profile.router)
 v1_router.include_router(playlists.router)
 v1_router.include_router(version_routes.router)

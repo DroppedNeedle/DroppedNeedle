@@ -37,6 +37,7 @@
 		Heart
 	} from 'lucide-svelte';
 	import { getDiscoverQuery } from '$lib/queries/discover/DiscoverQuery.svelte';
+	import { discoverHasContent } from '$lib/utils/discoverContent';
 	import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
@@ -57,7 +58,7 @@
 	const error = $derived(discoverQuery.error?.message ?? '');
 
 	async function handleRefresh() {
-		await api.global.post(API.discoverRefresh());
+		await api.global.post(API.discoverRefresh(activeSource));
 		await invalidateQueriesWithPersister({
 			queryKey: DiscoverQueryKeyFactory.discover(authStore.user?.id, activeSource)
 		});
@@ -80,26 +81,11 @@
 		discoverQueueStatusStore.stopPolling();
 	});
 
-	let hasContent = $derived(
-		(discoverData?.because_you_listen_to?.length ?? 0) > 0 ||
-			discoverData?.fresh_releases != null ||
-			discoverData?.missing_essentials != null ||
-			discoverData?.rediscover != null ||
-			discoverData?.artists_you_might_like != null ||
-			discoverData?.popular_in_your_genres != null ||
-			discoverData?.globally_trending != null ||
-			discoverData?.lastfm_weekly_artist_chart != null ||
-			discoverData?.lastfm_weekly_album_chart != null ||
-			discoverData?.lastfm_recent_scrobbles != null ||
-			(discoverData?.genre_list?.items?.length ?? 0) > 0 ||
-			(discoverData?.daily_mixes?.length ?? 0) > 0 ||
-			(discoverData?.radio_sections?.length ?? 0) > 0 ||
-			discoverData?.discover_picks != null ||
-			discoverData?.unexplored_genres != null
-	);
+	let hasContent = $derived(discoverHasContent(discoverData));
 	let isBuilding = $derived(
 		!!discoverData && !hasContent && (!!discoverData.refreshing || isUpdating)
 	);
+	let isUpdatingInBackground = $derived(!!discoverData?.refreshing && hasContent);
 	let dismissVersion = $state(0);
 	let servicePrompts = $derived.by(() => {
 		void dismissVersion;
@@ -217,7 +203,16 @@
 				</div>
 			{/if}
 
-			{#if loading && !discoverData}
+			{#if (loading && !discoverData) || isBuilding}
+				{#if isBuilding}
+					<div class="mb-8 flex items-center justify-center gap-3 px-4 text-center">
+						<span class="loading loading-spinner loading-sm text-primary"></span>
+						<p class="text-sm text-base-content/60">
+							Building your recommendations from your listening history. The first load can take a
+							moment.
+						</p>
+					</div>
+				{/if}
 				<div class="space-y-8">
 					{#each Array(3) as _, i (`loading-section-${i}`)}
 						<section>
@@ -226,19 +221,14 @@
 						</section>
 					{/each}
 				</div>
-			{:else if isBuilding}
-				<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-					<span class="loading loading-spinner loading-lg text-primary mb-4"></span>
-					<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">
-						Building Your Recommendations
-					</h2>
-					<p class="max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
-						Looking through your listening history to build recommendations. Give it a moment on
-						first load.
-					</p>
-				</div>
 			{:else if discoverData}
 				<div class="space-y-10 sm:space-y-12">
+					{#if isUpdatingInBackground}
+						<div class="flex items-center justify-center gap-2 pb-1 text-xs text-base-content/50">
+							<span class="loading loading-spinner loading-xs text-primary"></span>
+							Updating your recommendations…
+						</div>
+					{/if}
 					{#if hasHero}
 						<div class="discover-section-enter">
 							{#if hasWeeklyExploration && discoverData.weekly_exploration}

@@ -51,9 +51,10 @@ async def get_discover_data(
 @router.post("/refresh", response_model=StatusMessageResponse)
 async def refresh_discover_data(
     current_user: CurrentUserDep,
+    source: Literal["listenbrainz", "lastfm"] | None = Query(default=None),
     discover_service: DiscoverService = Depends(get_discover_service),
 ):
-    await discover_service.refresh_discover_data(current_user.id)
+    await discover_service.refresh_discover_data(current_user.id, source)
     return StatusMessageResponse(status="ok", message="Discover refresh triggered")
 
 

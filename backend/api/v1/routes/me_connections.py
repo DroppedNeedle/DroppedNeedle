@@ -24,6 +24,7 @@ from api.v1.schemas.settings import (
 )
 from core.dependencies import (
     get_lastfm_auth_service,
+    get_now_playing_service,
     get_preferences_service,
     get_settings_service,
     get_user_connections_store,
@@ -73,6 +74,7 @@ async def get_scrobble_preferences(
         scrobble_to_lastfm=prefs.scrobble_to_lastfm,
         scrobble_to_listenbrainz=prefs.scrobble_to_listenbrainz,
         primary_music_source=prefs.primary_music_source,
+        now_playing_visibility=prefs.now_playing_visibility,
     )
 
 
@@ -81,18 +83,26 @@ async def update_scrobble_preferences(
     current_user: CurrentUserDep,
     body: ScrobblePreferencesUpdate = MsgSpecBody(ScrobblePreferencesUpdate),
     prefs_store: UserListeningPrefsStore = Depends(get_user_listening_prefs_store),
+    now_playing_service=Depends(get_now_playing_service),
 ) -> ScrobblePreferences:
     await prefs_store.upsert(
         current_user.id,
         scrobble_to_lastfm=body.scrobble_to_lastfm,
         scrobble_to_listenbrainz=body.scrobble_to_listenbrainz,
         primary_music_source=body.primary_music_source,
+        now_playing_visibility=body.now_playing_visibility,
     )
+    # apply the privacy change to the live presence feed immediately
+    if body.now_playing_visibility is not None:
+        await now_playing_service.set_visibility(
+            current_user.id, body.now_playing_visibility
+        )
     prefs = await prefs_store.get(current_user.id)
     return ScrobblePreferences(
         scrobble_to_lastfm=prefs.scrobble_to_lastfm,
         scrobble_to_listenbrainz=prefs.scrobble_to_listenbrainz,
         primary_music_source=prefs.primary_music_source,
+        now_playing_visibility=prefs.now_playing_visibility,
     )
 
 

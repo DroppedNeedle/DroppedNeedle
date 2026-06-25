@@ -1245,12 +1245,16 @@ export type NowPlayingSession = {
 	cover_url: string;
 	device_name: string;
 	is_paused: boolean;
-	source?: 'jellyfin' | 'navidrome' | 'plex';
+	// upstream servers use 'jellyfin'|'navidrome'|'plex'; the web player adds
+	// 'local'|'youtube'; connected apps report their client name (e.g. 'finamp')
+	source?: string;
 	progress_ms?: number;
 	duration_ms?: number;
 	audio_codec?: string;
 	bitrate?: number;
 	_isLocal?: boolean;
+	// owner chose 'track_hidden': identity + progress only, song fields blank
+	redacted?: boolean;
 };
 
 export type NavidromeArtistInfo = {

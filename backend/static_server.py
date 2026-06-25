@@ -61,6 +61,12 @@ def mount_frontend(app: FastAPI):
             return FileResponse(logo)
         raise HTTPException(status_code=404, detail="Not found")
 
+    @app.get("/logo_wide_white.png")
+    async def serve_logo_wide_white():
+        if logo := resolve_asset("logo_wide_white.png"):
+            return FileResponse(logo)
+        raise HTTPException(status_code=404, detail="Not found")
+
     @app.get("/logo_icon.png")
     async def serve_logo_icon():
         if logo := resolve_asset("logo_icon.png"):

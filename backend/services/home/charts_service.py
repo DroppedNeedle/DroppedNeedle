@@ -131,16 +131,15 @@ class HomeChartsService:
     ) -> GenreDetailResponse:
         library_results = await asyncio.gather(
             self._library_repo.get_artists_from_library(include_unmonitored=True),
-            self._library_repo.get_library(include_unmonitored=True),
+            self._native_album_mbids(),
             return_exceptions=True,
         )
         library_failed = any(isinstance(r, BaseException) for r in library_results[:2])
         if library_failed:
             logger.warning("Lidarr unavailable for genre '%s', proceeding with MusicBrainz data only", genre)
         library_artists = library_results[0] if not isinstance(library_results[0], BaseException) else []
-        library_albums = library_results[1] if not isinstance(library_results[1], BaseException) else []
         library_mbids = {a.get("mbid", "").lower() for a in library_artists if a.get("mbid")}
-        library_album_mbids = {a.musicbrainz_id.lower() for a in library_albums if a.musicbrainz_id}
+        library_album_mbids = library_results[1] if isinstance(library_results[1], set) else set()
         library_section = None
         if self._genre_index:
             lib_artists_data = await self._genre_index.get_artists_by_genre(genre, limit=50)
@@ -291,13 +290,26 @@ class HomeChartsService:
             has_more=has_more,
         )
 
+    async def _native_album_mbids(self) -> set[str]:
+        """Release-group MBIDs in the native library (lowercased) for in_library flags.
+
+        get_library() is an empty stub on native installs, so album membership must be
+        read from get_library_mbids() - the same authoritative set behind /library/mbids.
+        Without this, chart albums already in the library show a stray download button.
+        """
+        try:
+            mbids = await self._library_repo.get_library_mbids(include_release_ids=False)
+        except Exception as exc:  # noqa: BLE001 - membership is best-effort
+            logger.warning("native album mbid lookup failed: %s", exc)
+            return set()
+        return {m.lower() for m in mbids}
+
     async def get_popular_albums(self, limit: int = 10, source: str | None = None) -> PopularAlbumsResponse:
         resolved = self._resolve_source(source)
         if resolved == "lastfm" and self._lfm_repo:
             return await self._get_popular_albums_lastfm(limit)
 
-        library_albums = await self._library_repo.get_library(include_unmonitored=True)
-        library_mbids = {(a.musicbrainz_id or "").lower() for a in library_albums if a.musicbrainz_id}
+        library_mbids = await self._native_album_mbids()
         ranges = ["this_week", "this_month", "this_year", "all_time"]
         tasks = {r: self._lb_repo.get_sitewide_top_release_groups(range_=r, count=limit + 1) for r in ranges}
         results = await self._execute_tasks(tasks)
@@ -338,14 +350,14 @@ class HomeChartsService:
                 limit=limit,
                 offset=offset,
             )
-        library_albums, lb_albums = await asyncio.gather(
-            self._library_repo.get_library(include_unmonitored=True),
+        library_mbids_raw, lb_albums = await asyncio.gather(
+            self._native_album_mbids(),
             self._lb_repo.get_sitewide_top_release_groups(
                 range_=range_key, count=limit + 1, offset=offset
             ),
             return_exceptions=True,
         )
-        library_mbids = {(a.musicbrainz_id or "").lower() for a in library_albums if a.musicbrainz_id}
+        library_mbids = library_mbids_raw if isinstance(library_mbids_raw, set) else set()
         albums = [self._transformers.lb_release_to_home(a, library_mbids) for a in lb_albums]
         has_more = len(albums) > limit
         items = albums[:limit]
@@ -390,14 +402,7 @@ class HomeChartsService:
         self, limit: int = 10, lfm_repo: Any = None, lfm_username: str | None = None
     ) -> PopularAlbumsResponse:
         ranges = ["this_week", "this_month", "this_year", "all_time"]
-        library_albums = await asyncio.gather(
-            self._library_repo.get_library(include_unmonitored=True),
-            return_exceptions=True,
-        )
-        library_albums = library_albums[0]
-        library_mbids = {
-            (a.musicbrainz_id or "").lower() for a in library_albums if a.musicbrainz_id
-        }
+        library_mbids = await self._native_album_mbids()
         repo = lfm_repo or self._lfm_repo
         # per-user your-top passes its own username; sitewide passes none and falls
         # back to the global account
@@ -503,18 +508,16 @@ class HomeChartsService:
             )
 
         total_to_fetch = min(limit + offset + 1, 200)
-        lfm_albums, library_albums = await asyncio.gather(
+        lfm_albums, library_mbids_raw = await asyncio.gather(
             repo.get_user_top_albums(
                 username,
                 period=self._lastfm_period_for_range(range_key),
                 limit=total_to_fetch,
             ),
-            self._library_repo.get_library(include_unmonitored=True),
+            self._native_album_mbids(),
             return_exceptions=True,
         )
-        library_mbids = {
-            (a.musicbrainz_id or "").lower() for a in library_albums if a.musicbrainz_id
-        }
+        library_mbids = library_mbids_raw if isinstance(library_mbids_raw, set) else set()
         albums = [
             HomeAlbum(
                 mbid=album.mbid,
@@ -558,14 +561,7 @@ class HomeChartsService:
                 this_week=empty, this_month=empty, this_year=empty, all_time=empty
             )
 
-        library_albums = await asyncio.gather(
-            self._library_repo.get_library(include_unmonitored=True),
-            return_exceptions=True,
-        )
-        library_albums = library_albums[0]
-        library_mbids = {
-            (a.musicbrainz_id or "").lower() for a in library_albums if a.musicbrainz_id
-        }
+        library_mbids = await self._native_album_mbids()
         ranges = ["this_week", "this_month", "this_year", "all_time"]
         tasks = {
             r: lb_client.get_user_top_release_groups(
@@ -622,16 +618,14 @@ class HomeChartsService:
                 has_more=False,
             )
 
-        library_albums, rgs = await asyncio.gather(
-            self._library_repo.get_library(include_unmonitored=True),
+        library_mbids_raw, rgs = await asyncio.gather(
+            self._native_album_mbids(),
             lb_client.get_user_top_release_groups(
                 username=lb_username, range_=range_key, count=limit + 1, offset=offset
             ),
             return_exceptions=True,
         )
-        library_mbids = {
-            (a.musicbrainz_id or "").lower() for a in library_albums if a.musicbrainz_id
-        }
+        library_mbids = library_mbids_raw if isinstance(library_mbids_raw, set) else set()
         albums = [self._transformers.lb_release_to_home(rg, library_mbids) for rg in rgs]
         has_more = len(albums) > limit
         items = albums[:limit]

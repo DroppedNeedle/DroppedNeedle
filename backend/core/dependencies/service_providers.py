@@ -150,6 +150,13 @@ def get_sse_publisher() -> "SSEPublisher":
 
 
 @singleton
+def get_now_playing_service() -> "NowPlayingService":
+    from services.now_playing_service import NowPlayingService
+
+    return NowPlayingService(get_sse_publisher(), get_user_listening_prefs_store())
+
+
+@singleton
 def get_search_service() -> "SearchService":
     from services.search_service import SearchService
 

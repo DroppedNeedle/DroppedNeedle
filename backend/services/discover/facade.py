@@ -128,8 +128,8 @@ class DiscoverService:
     async def get_discover_preview(self, user_id: str) -> DiscoverPreview | None:
         return await self._homepage.get_discover_preview(user_id)
 
-    async def refresh_discover_data(self, user_id: str) -> None:
-        return await self._homepage.refresh_discover_data(user_id)
+    async def refresh_discover_data(self, user_id: str, source: str | None = None) -> None:
+        return await self._homepage.refresh_discover_data(user_id, source)
 
     async def warm_cache(self, user_id: str, source: str | None = None) -> None:
         return await self._homepage.warm_cache(user_id, source)

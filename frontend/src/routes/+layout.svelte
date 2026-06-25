@@ -47,6 +47,7 @@
 	import { pendingApprovalCountStore } from '$lib/stores/pendingApprovalCountStore.svelte';
 	import { nowPlayingMerged } from '$lib/stores/nowPlayingMerged.svelte';
 	import { nowPlayingStore } from '$lib/stores/nowPlayingSessions.svelte';
+	import { nowPlayingReporter } from '$lib/stores/nowPlayingReporter.svelte';
 	import SidebarVisualiser from '$lib/components/SidebarVisualiser.svelte';
 	import { createNavigationProgressController } from '$lib/utils/navigationProgress';
 	import { fromStore } from 'svelte/store';
@@ -161,9 +162,15 @@
 			syncStatus.connect();
 			downloadsActivity.start();
 		});
-		integrationStore.ensureLoaded().then(() => {
+		// load integration status once for the whole app - the home entry cards and the
+		// services panel depend on it (only some pages call ensureLoaded themselves)
+		void integrationStore.ensureLoaded();
+		// presence is server-driven now (the backend polls upstream servers itself), so
+		// it no longer waits on integration status
+		if (authStore.isAuthenticated) {
 			nowPlayingStore.start();
-		});
+			nowPlayingReporter.start();
+		}
 	});
 
 	onDestroy(() => {
@@ -178,6 +185,7 @@
 		downloadsActivity.stop();
 		syncStatus.disconnect();
 		nowPlayingStore.stop();
+		nowPlayingReporter.stop();
 		unregisterPlaylistModal();
 	});
 
@@ -731,7 +739,8 @@
 				<Menu />
 				<span>Library</span>
 				{#if syncStatus.isActive || libraryScanActive}
-					<span class="droppedneedle-bottom-nav__badge" aria-label="Library sync in progress"></span>
+					<span class="droppedneedle-bottom-nav__badge" aria-label="Library sync in progress"
+					></span>
 				{/if}
 			</a>
 			<a
