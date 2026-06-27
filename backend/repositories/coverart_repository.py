@@ -18,6 +18,7 @@ from infrastructure.cache.cache_keys import ARTIST_WIKIDATA_PREFIX
 from infrastructure.resilience.retry import with_retry, CircuitBreaker, CircuitOpenError
 from infrastructure.resilience.rate_limiter import TokenBucketRateLimiter
 from infrastructure.validators import validate_mbid
+from infrastructure.audio.tagger import AudioTagger
 from infrastructure.queue.priority_queue import RequestPriority, get_priority_queue
 from infrastructure.http.deduplication import RequestDeduplicator
 from infrastructure.http.disconnect import DisconnectCallable
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
     from repositories.jellyfin_repository import JellyfinRepository
     from services.audiodb_image_service import AudioDBImageService
     from services.audiodb_browse_queue import AudioDBBrowseQueue
+    from infrastructure.persistence.library_db import LibraryDB
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,25 @@ def _record_degradation(msg: str) -> None:
     ctx = try_get_degradation_context()
     if ctx is not None:
         ctx.record(IntegrationResult.error(source=_SOURCE, msg=msg))
+
+
+def _sniff_image_content_type(data: bytes) -> Optional[str]:
+    """Raster image MIME from magic bytes, or ``None`` for anything we won't serve.
+
+    Embedded cover art carries a self-declared MIME that is often wrong, and a file
+    could embed an SVG or junk blob. We sniff the bytes and only accept raster
+    formats, so the last-resort embedded cover is never served mislabeled."""
+    if len(data) < 12:
+        return None
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 COVER_ART_ARCHIVE_BASE = "https://coverartarchive.org"
 COVER_NEGATIVE_TTL_SECONDS = 4 * 3600
@@ -189,12 +210,15 @@ class CoverArtRepository:
         cover_memory_cache_max_entries: int = COVER_MEMORY_MAX_ENTRIES,
         cover_memory_cache_max_bytes: int = COVER_MEMORY_MAX_BYTES,
         cover_non_monitored_ttl_seconds: int = 604800,  # 7 days; non-monitored covers change rarely
+        library_db: Optional['LibraryDB'] = None,
     ):
         self._client = http_client
         self._cache = cache
         self._mb_repo = mb_repo
         self._library_repo = library_repo
         self._jellyfin_repo = jellyfin_repo
+        self._library_db = library_db
+        self._tagger = AudioTagger()
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._disk_cache = CoverDiskCache(
@@ -586,10 +610,63 @@ class CoverArtRepository:
             lambda: self._album_fetcher.fetch_release_group_cover(release_group_id, size, file_path, priority=priority, is_disconnected=is_disconnected)
         )
         if result is None:
+            # Last resort: every external source missed - serve art embedded in a
+            # local library file for this album, if any has some. Beats the
+            # turntable placeholder for albums the internet has no cover for.
+            result = await self._embedded_album_cover(release_group_id, file_path)
+        if result is None:
             await self._disk_cache.write_negative(file_path, ttl_seconds=COVER_NEGATIVE_TTL_SECONDS)
         else:
             await self._memory_set_from_result(identifier, suffix, result)
         return result
+
+    async def _embedded_album_cover(
+        self,
+        release_group_id: str,
+        file_path: Path,
+    ) -> Optional[tuple[bytes, str, str]]:
+        """Front cover embedded in a local file for this release group, cached to
+        disk so subsequent loads hit the normal cache path. ``None`` when the native
+        library isn't wired, the album has no local files, or none carry raster art."""
+        if self._library_db is None:
+            return None
+        try:
+            rows = await self._library_db.get_library_files_for_album(release_group_id)
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"Embedded-cover lookup failed for {release_group_id[:8]}: {e}")
+            return None
+
+        paths = [row["file_path"] for row in rows if row.get("file_path")]
+        if not paths:
+            return None
+
+        extracted = await asyncio.to_thread(self._extract_first_embedded_cover, paths)
+        if extracted is None:
+            return None
+
+        content, content_type = extracted
+        await self._disk_cache.write(file_path, content, content_type, {"source": "embedded"})
+        return content, content_type, "embedded"
+
+    def _extract_first_embedded_cover(self, paths: list[str]) -> Optional[tuple[bytes, str]]:
+        """Synchronous: the first local file holding raster cover art. Runs in a
+        worker thread - mutagen reads are blocking."""
+        for raw_path in paths:
+            path = Path(raw_path)
+            if not path.is_file():
+                continue
+            try:
+                data = self._tagger.read_cover_art(path)
+            except Exception as e:  # noqa: BLE001
+                logger.debug(f"Embedded-cover read failed for {path}: {e}")
+                continue
+            if not data:
+                continue
+            content_type = _sniff_image_content_type(data)
+            if content_type is None:
+                continue
+            return data, content_type
+        return None
 
     async def get_release_cover(
         self,

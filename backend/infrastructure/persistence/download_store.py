@@ -714,6 +714,40 @@ class DownloadStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def list_retryable_tasks(
+        self, max_retry_count: int
+    ) -> list[DownloadTask]:
+        """The newest task per target (album, or track + user) when that newest task
+        is a terminal ``failed``/``partial`` under the ``retry_count`` ceiling.
+
+        Restricting to the newest task is what lets auto-retry escalate: each retry
+        spawns a fresh task carrying ``retry_count + 1``, so the original failure
+        must stop seeding retries - otherwise backoff never grows, the ceiling is
+        never reached, and an album whose retry has since succeeded gets downloaded
+        again. Does NOT filter by age - the caller applies per-task exponential
+        backoff (which depends on each task's own ``retry_count``). Ordered
+        oldest-first so the most overdue retry goes first."""
+        def operation(conn: sqlite3.Connection) -> list[DownloadTask]:
+            rows = conn.execute(
+                """SELECT * FROM download_tasks t
+                   WHERE t.status IN ('failed', 'partial')
+                     AND t.retry_count < ?
+                     AND NOT EXISTS (
+                         SELECT 1 FROM download_tasks n
+                         WHERE n.user_id = t.user_id
+                           AND n.download_type = t.download_type
+                           AND n.release_group_mbid = t.release_group_mbid
+                           AND COALESCE(n.recording_mbid, '') = COALESCE(t.recording_mbid, '')
+                           AND (n.created_at > t.created_at
+                                OR (n.created_at = t.created_at AND n.rowid > t.rowid))
+                     )
+                   ORDER BY t.completed_at ASC NULLS LAST""",
+                (max_retry_count,),
+            ).fetchall()
+            return [t for t in (_row_to_task(r) for r in rows) if t is not None]
+
+        return await self._read(operation)
+
 
 def _in_placeholders(items: Any) -> str:
     return ", ".join("?" for _ in items)

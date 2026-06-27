@@ -319,6 +319,7 @@ def get_coverart_repository() -> "CoverArtRepository":
         cover_memory_cache_max_entries=advanced.cover_memory_cache_max_entries,
         cover_memory_cache_max_bytes=advanced.cover_memory_cache_max_size_mb * 1024 * 1024,
         cover_non_monitored_ttl_seconds=advanced.cache_ttl_recently_viewed_bytes,
+        library_db=get_library_db(),
     )
 
 

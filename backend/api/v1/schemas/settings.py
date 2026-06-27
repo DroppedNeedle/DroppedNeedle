@@ -92,6 +92,9 @@ class DownloadClientConnectionSettings(AppStruct):
     download_queued_timeout_minutes: int = 120
     max_failover_attempts: int = 3
     max_concurrent_downloads: int = 3
+    auto_retry_enabled: bool = True
+    auto_retry_max_attempts: int = 6
+    auto_retry_base_interval_minutes: int = 15
 
     def __post_init__(self) -> None:
         # normalise a bare host (e.g. "slskd:5030") to a full URL; httpx rejects a
@@ -108,6 +111,10 @@ class DownloadClientConnectionSettings(AppStruct):
         )
         _validate_range(self.max_failover_attempts, "max_failover_attempts", 1, 10)
         _validate_range(self.max_concurrent_downloads, "max_concurrent_downloads", 1, 10)
+        _validate_range(self.auto_retry_max_attempts, "auto_retry_max_attempts", 0, 20)
+        _validate_range(
+            self.auto_retry_base_interval_minutes, "auto_retry_base_interval_minutes", 1, 1440
+        )
         # mirrors services.native.quality_tiers.TIER_KEYS (best -> worst); keep in sync
         _rank = {k: r for r, k in enumerate(("low", "mp3_192", "mp3_256", "mp3_320", "lossless"))}
         if self.quality_min not in _rank:

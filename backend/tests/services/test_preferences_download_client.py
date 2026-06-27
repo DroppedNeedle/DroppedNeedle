@@ -4,6 +4,7 @@ import json
 import logging
 from pathlib import Path
 
+import msgspec
 import pytest
 
 from api.v1.schemas.settings import DOWNLOAD_CLIENT_API_KEY_MASK, DownloadClientConnectionSettings
@@ -78,6 +79,18 @@ def test_url_scheme_normalised_for_bare_host():
 def test_url_scheme_preserved_when_already_present():
     assert DownloadClientConnectionSettings(url="http://slskd:5030").url == "http://slskd:5030"
     assert DownloadClientConnectionSettings(url="").url == ""
+
+
+def test_auto_retry_fields_default_and_validate():
+    d = DownloadClientConnectionSettings()
+    assert d.auto_retry_enabled is True
+    assert d.auto_retry_max_attempts == 6
+    assert d.auto_retry_base_interval_minutes == 15
+
+    with pytest.raises(msgspec.ValidationError, match="auto_retry_max_attempts"):
+        DownloadClientConnectionSettings(auto_retry_max_attempts=21)
+    with pytest.raises(msgspec.ValidationError, match="auto_retry_base_interval_minutes"):
+        DownloadClientConnectionSettings(auto_retry_base_interval_minutes=0)
 
 
 def test_quality_and_threshold_fields_persist(prefs):

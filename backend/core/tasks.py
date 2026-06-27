@@ -691,6 +691,36 @@ def start_download_watchdog_task(get_orchestrator) -> asyncio.Task:
     return task
 
 
+_DOWNLOAD_AUTO_RETRY_INTERVAL = 300
+_DOWNLOAD_AUTO_RETRY_INITIAL_DELAY = 180
+
+
+async def auto_retry_failed_downloads_periodically(
+    get_orchestrator, interval: int = _DOWNLOAD_AUTO_RETRY_INTERVAL
+) -> None:
+    """Re-dispatch failed/partial downloads whose backoff has elapsed, giving the
+    Soulseek network time to surface new sources. Mirrors the lidarr QueueCleaner
+    pattern. Resolves the orchestrator fresh each sweep (same reason as the
+    watchdog - a settings save rebuilds the singleton)."""
+    await asyncio.sleep(_DOWNLOAD_AUTO_RETRY_INITIAL_DELAY)
+    while True:
+        try:
+            await get_orchestrator().retry_failed_tasks()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:  # noqa: BLE001
+            logger.error("Download auto-retry sweep failed: %s", e, exc_info=True)
+        await asyncio.sleep(interval)
+
+
+def start_download_auto_retry_task(get_orchestrator) -> asyncio.Task:
+    task = asyncio.create_task(
+        auto_retry_failed_downloads_periodically(get_orchestrator)
+    )
+    TaskRegistry.get_instance().register("download-auto-retry", task)
+    return task
+
+
 _FOLLOW_POLL_INTERVAL = 86400  # 24h, hardcoded for v1 (L2)
 _FOLLOW_POLL_INITIAL_DELAY = 300
 

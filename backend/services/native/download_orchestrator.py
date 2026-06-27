@@ -123,6 +123,9 @@ class DownloadOrchestrator:
         queued_timeout_minutes: float = 120.0,
         max_failover_attempts: int = 3,
         max_concurrent_downloads: int = 3,
+        auto_retry_enabled: bool = True,
+        auto_retry_max_attempts: int = 6,
+        auto_retry_base_interval_minutes: float = 15.0,
         request_history=None,  # RequestHistoryStore | None
         on_import_callback=None,  # Callable[[RequestHistoryRecord], Awaitable[None]] | None
     ) -> None:
@@ -152,6 +155,9 @@ class DownloadOrchestrator:
         # global: a settings-save rebuild briefly doubles the cap (acceptable) but
         # avoids the event-loop-binding hazard of a shared global.
         self._download_slots = asyncio.Semaphore(max(1, max_concurrent_downloads))
+        self._auto_retry_enabled = auto_retry_enabled
+        self._auto_retry_max_attempts = max(0, auto_retry_max_attempts)
+        self._auto_retry_base_interval = auto_retry_base_interval_minutes
         self._request_history = request_history
         self._on_import = on_import_callback
         self._active_tasks: dict[str, asyncio.Task] = {}
@@ -995,8 +1001,12 @@ class DownloadOrchestrator:
         if task.status not in ("failed", "cancelled", "partial"):
             raise ValidationError("Only failed, cancelled or partial downloads can be retried")
 
-        # Clean slate (Q3-A): a new task, carrying retry_count + 1 so the search
-        # timeout escalates. The original is kept (terminal) for audit.
+        return await self._create_retry_task(task)
+
+    async def _create_retry_task(self, task) -> str:  # noqa: ANN001 - DownloadTask
+        """Create a fresh queued task carrying ``retry_count + 1`` and dispatch it.
+        The original is kept (terminal) for audit. Shared by manual retry and
+        auto-retry."""
         new_task = await self._store.create_task(
             user_id=task.user_id,
             download_type=task.download_type,
@@ -1007,13 +1017,96 @@ class DownloadOrchestrator:
             artist_name=task.artist_name,
             album_title=task.album_title,
             track_title=task.track_title,
+            track_number=task.track_number,
+            disc_number=task.disc_number,
             year=task.year,
             track_count=task.track_count,
+            track_duration_seconds=task.track_duration_seconds,
             search_query=task.search_query,
             retry_count=task.retry_count + 1,
         )
+        await self._relink_request(task, new_task.id)
         self.dispatch(new_task.id)
         return new_task.id
+
+    async def _relink_request(self, task, new_task_id: str) -> None:  # noqa: ANN001 - DownloadTask
+        """Point the linked request at the replacement task. Without this a retried
+        download imports the album but ``_sync_request_on_terminal`` (keyed on
+        ``download_task_id == task.id``) ignores the new task, so the request stays
+        ``failed`` and the import cache-bust never fires. Album downloads only, and
+        only when THIS task still owns the link - a per-track retry must not hijack
+        the album's request, and a request already re-linked to a newer task is left
+        alone."""
+        if (
+            self._request_history is None
+            or task.download_type != "album"
+            or not task.release_group_mbid
+        ):
+            return
+        try:
+            record = await self._request_history.async_get_record(task.release_group_mbid)
+            if record is not None and getattr(record, "download_task_id", None) == task.id:
+                await self._request_history.async_update_download_task_id(
+                    record.musicbrainz_id, new_task_id
+                )
+        except Exception:  # noqa: BLE001 - re-link must never fail the retry
+            logger.warning("Could not re-link request for retry of %s", task.id)
+
+    async def retry_failed_tasks(self) -> None:
+        """Periodic safety net: re-dispatch ``failed``/``partial`` downloads whose
+        per-task exponential backoff has elapsed, up to ``auto_retry_max_attempts``.
+        Mirrors the lidarr QueueCleaner pattern - a failed download sits until the
+        system retries it, giving the Soulseek network time to surface new sources.
+        Skips any task that already has a newer active task for the same album/track
+        + user (e.g. a manual retry or a new request)."""
+        if not self._auto_retry_enabled:
+            return
+
+        base = self._auto_retry_base_interval * 60.0
+        max_delay = 86400.0
+        now = time.time()
+
+        eligible = await self._store.list_retryable_tasks(self._auto_retry_max_attempts)
+        for task in eligible:
+            # Per-task exponential backoff: base * 2^retry_count, capped at 24h.
+            # A task that has been retried 5 times waits far longer than one that
+            # failed on its first attempt.
+            backoff = min(base * (2 ** task.retry_count), max_delay)
+            completed_at = task.completed_at or task.created_at or 0.0
+            if now - completed_at < backoff:
+                continue
+
+            # Skip if there's already a newer active task for the same target +
+            # user (a manual retry or a new request). The check is per-album for
+            # album downloads, per-recording for track downloads.
+            if task.download_type == "track" and task.recording_mbid:
+                active = await self._store.get_active_task_for_track(
+                    task.recording_mbid, task.user_id
+                )
+            else:
+                active = await self._store.get_active_task_for_album(
+                    task.release_group_mbid, task.user_id
+                )
+            if active is not None and active.id != task.id:
+                continue
+
+            logger.info(
+                "download.auto_retry",
+                extra={
+                    "task_id": task.id,
+                    "retry_count": task.retry_count,
+                    "download_type": task.download_type,
+                    "release_group_mbid": task.release_group_mbid,
+                },
+            )
+            await self._bus.publish(
+                f"download:{task.id}", "auto_retry",
+                {
+                    "retry_count": task.retry_count + 1,
+                    "max_attempts": self._auto_retry_max_attempts,
+                },
+            )
+            await self._create_retry_task(task)
 
     def _read_manifest(self, task_id: str) -> DownloadManifest:
         path = self._staging / task_id / "manifest.json"

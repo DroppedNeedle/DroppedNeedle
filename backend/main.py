@@ -64,7 +64,35 @@ from api.v1.routes import downloads as downloads_routes
 from api.v1.routes import tracks as tracks_routes
 from api.v1.routes import quarantine as quarantine_routes
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+class _ExtraFieldFormatter(logging.Formatter):
+    """Append structured ``extra={...}`` fields to the console line.
+
+    The format string below renders only ``%(message)s``; without this, every
+    ``extra`` value (e.g. a download's verify-failure ``reason``) is silently
+    dropped, leaving failures undiagnosable from logs alone. Messages are left
+    untouched, so the bare event-name log contract (``download.failed`` etc.)
+    still holds. Framework-injected attributes (``taskName``, uvicorn's
+    ``color_message``) are filtered out to keep lines clean."""
+
+    _RESERVED = frozenset(
+        logging.LogRecord("", 0, "", 0, "", (), None).__dict__
+    ) | {"message", "asctime", "taskName", "color_message"}
+
+    def format(self, record: logging.LogRecord) -> str:
+        base = super().format(record)
+        extras = " ".join(
+            f"{key}={value}"
+            for key, value in record.__dict__.items()
+            if key not in self._RESERVED and not key.startswith("_")
+        )
+        return f"{base} | {extras}" if extras else base
+
+
+_log_handler = logging.StreamHandler()
+_log_handler.setFormatter(
+    _ExtraFieldFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+)
+logging.basicConfig(level=logging.INFO, handlers=[_log_handler])
 logger = logging.getLogger(__name__)
 
 _ORPHAN_STAGING_MAX_AGE_SECONDS = 7 * 24 * 3600
@@ -271,6 +299,7 @@ async def lifespan(app: FastAPI):
 
     from core.dependencies import get_download_orchestrator, get_library_scanner
     from core.tasks import (
+        start_download_auto_retry_task,
         start_download_resume_task,
         start_download_watchdog_task,
         start_library_scan_resume_task,
@@ -285,6 +314,7 @@ async def lifespan(app: FastAPI):
     # pass the provider (not an instance) so the watchdog always sweeps the current
     # orchestrator singleton, which is rebuilt when download-client settings are saved
     start_download_watchdog_task(get_download_orchestrator)
+    start_download_auto_retry_task(get_download_orchestrator)
 
     from core.dependencies import get_download_store as _get_download_store
     _orphan_task = asyncio.create_task(

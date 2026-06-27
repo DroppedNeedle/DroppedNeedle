@@ -210,3 +210,85 @@ async def test_create_task_persists_track_duration(store):
     got = await store.get_task(task.id)
     assert got is not None
     assert got.track_duration_seconds == 212.5
+
+
+@pytest.mark.asyncio
+async def test_list_retryable_tasks_filters_by_status_and_retry_count(store):
+    """list_retryable_tasks returns only failed/partial tasks under the retry
+    ceiling. Age filtering (per-task exponential backoff) is the caller's job."""
+    import time as _t
+
+    eligible_failed = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-1", artist_name="A", album_title="B",
+        retry_count=1, status="failed",
+    )
+    await store.update_status(eligible_failed.id, "failed", completed_at=_t.time() - 3600)
+
+    eligible_partial = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-2", artist_name="A", album_title="C",
+        retry_count=0, status="partial",
+    )
+    await store.update_status(eligible_partial.id, "partial", completed_at=_t.time() - 60)
+
+    over_ceiling = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-3", artist_name="A", album_title="D",
+        retry_count=5, status="failed",
+    )
+    await store.update_status(over_ceiling.id, "failed", completed_at=_t.time() - 999_999)
+
+    cancelled = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-4", artist_name="A", album_title="E",
+        retry_count=0, status="cancelled",
+    )
+    await store.update_status(cancelled.id, "cancelled", completed_at=_t.time() - 999_999)
+
+    result = await store.list_retryable_tasks(max_retry_count=5)
+    ids = {t.id for t in result}
+    assert eligible_failed.id in ids
+    assert eligible_partial.id in ids
+    assert over_ceiling.id not in ids
+    assert cancelled.id not in ids
+
+
+@pytest.mark.asyncio
+async def test_list_retryable_tasks_returns_only_latest_per_target(store):
+    """Once a retry exists for a target, the original failed task stops being
+    returned - only the newest task drives the next retry, so backoff escalates and
+    the attempt ceiling is eventually reached instead of the retry_count=0 seed
+    retrying forever at the base interval."""
+    import time as _t
+
+    seed = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-1", artist_name="A", album_title="B",
+        retry_count=0, status="failed",
+    )
+    await store.update_status(seed.id, "failed", completed_at=_t.time() - 5000)
+    retry = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-1", artist_name="A", album_title="B",
+        retry_count=1, status="failed",
+    )
+    await store.update_status(retry.id, "failed", completed_at=_t.time() - 100)
+
+    result = await store.list_retryable_tasks(max_retry_count=5)
+    assert {t.id for t in result} == {retry.id}
+
+
+@pytest.mark.asyncio
+async def test_list_retryable_tasks_excludes_target_whose_latest_succeeded(store):
+    """A failed task is not returned when a newer task for the same target has since
+    completed - the album is already downloaded and must never be re-fetched."""
+    import time as _t
+
+    failed = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-1", artist_name="A", album_title="B",
+        retry_count=0, status="failed",
+    )
+    await store.update_status(failed.id, "failed", completed_at=_t.time() - 5000)
+    succeeded = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-1", artist_name="A", album_title="B",
+        retry_count=1, status="completed",
+    )
+    await store.update_status(succeeded.id, "completed", completed_at=_t.time() - 100)
+
+    result = await store.list_retryable_tasks(max_retry_count=5)
+    assert result == []

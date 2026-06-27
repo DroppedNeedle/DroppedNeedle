@@ -773,6 +773,9 @@ def get_download_orchestrator() -> "DownloadOrchestrator":
         queued_timeout_minutes=dc.download_queued_timeout_minutes,
         max_failover_attempts=dc.max_failover_attempts,
         max_concurrent_downloads=dc.max_concurrent_downloads,
+        auto_retry_enabled=dc.auto_retry_enabled,
+        auto_retry_max_attempts=dc.auto_retry_max_attempts,
+        auto_retry_base_interval_minutes=dc.auto_retry_base_interval_minutes,
         request_history=get_request_history_store(),
         on_import_callback=_build_import_invalidation(
             get_cache(), get_disk_cache(), get_library_db()

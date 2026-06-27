@@ -11,6 +11,7 @@ full real import is covered by the E2E gate."""
 import asyncio
 import sqlite3
 import threading
+import time as _t
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -146,6 +147,7 @@ class _FakeRequestHistory:
     def __init__(self, record=None):
         self.record = record
         self.updates: list[tuple] = []
+        self.relinks: list[tuple] = []
 
     async def async_get_record(self, mbid):
         if self.record is not None and self.record.musicbrainz_id == mbid:
@@ -156,6 +158,11 @@ class _FakeRequestHistory:
         self.updates.append((mbid, status, completed_at))
         if self.record is not None and self.record.musicbrainz_id == mbid:
             self.record.status = status
+
+    async def async_update_download_task_id(self, mbid, task_id):
+        self.relinks.append((mbid, task_id))
+        if self.record is not None and self.record.musicbrainz_id == mbid:
+            self.record.download_task_id = task_id
 
 
 def _request_record(mbid="rg-1", *, download_task_id=None, status="downloading"):
@@ -170,6 +177,7 @@ def _build(
     tmp_path: Path, *, client=None, scorer_result=None, track_result=None, fp_result=None,
     imported_rows=None, library=None, stall_minutes=30.0, queued_minutes=120.0, max_failover=3,
     max_concurrent=3, request_history=None, on_import=None,
+    auto_retry_enabled=True, auto_retry_max_attempts=6, auto_retry_base_interval_minutes=15.0,
 ):
     db_path = tmp_path / "library.db"
     store = DownloadStore(db_path=db_path, write_lock=threading.Lock())
@@ -209,6 +217,9 @@ def _build(
         queued_timeout_minutes=queued_minutes,
         max_failover_attempts=max_failover,
         max_concurrent_downloads=max_concurrent,
+        auto_retry_enabled=auto_retry_enabled,
+        auto_retry_max_attempts=auto_retry_max_attempts,
+        auto_retry_base_interval_minutes=auto_retry_base_interval_minutes,
         request_history=request_history,
         on_import_callback=on_import,
     )
@@ -989,3 +1000,268 @@ async def test_reap_stale_tasks_skips_live_and_fresh(tmp_path: Path):
     await orch.reap_stale_tasks()
 
     assert (await store.get_task(fresh.id)).status == "downloading"   # recently polled -> left alone
+
+
+# ---------------------------------------------------------------------------
+# Auto-retry (retry_failed_tasks)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_retry_failed_tasks_redispatches_eligible_failed(tmp_path: Path):
+    """A failed task whose backoff has elapsed is re-dispatched with retry_count + 1."""
+    store, orch, *_ = _build(tmp_path, auto_retry_base_interval_minutes=0.01)
+    orch.dispatch = MagicMock()
+    task = await _new_task(store, status="failed", retry_count=0)
+    await store.update_status(task.id, "failed", completed_at=_t.time() - 10)
+
+    await orch.retry_failed_tasks()
+
+    orch.dispatch.assert_called_once()
+    new_id = orch.dispatch.call_args.args[0]
+    new_task = await store.get_task(new_id)
+    assert new_task is not None
+    assert new_task.retry_count == 1
+    assert new_task.status == "queued"
+    assert new_task.release_group_mbid == task.release_group_mbid
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_tasks_disabled_is_noop(tmp_path: Path):
+    store, orch, *_ = _build(tmp_path, auto_retry_enabled=False)
+    orch.dispatch = MagicMock()
+    task = await _new_task(store, status="failed", retry_count=0)
+    await store.update_status(task.id, "failed", completed_at=_t.time() - 999_999)
+
+    await orch.retry_failed_tasks()
+
+    orch.dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_tasks_respects_max_attempts(tmp_path: Path):
+    """A task at the retry ceiling is not retried."""
+    store, orch, *_ = _build(tmp_path, auto_retry_max_attempts=3, auto_retry_base_interval_minutes=0.01)
+    orch.dispatch = MagicMock()
+    task = await _new_task(store, status="failed", retry_count=3)
+    await store.update_status(task.id, "failed", completed_at=_t.time() - 999_999)
+
+    await orch.retry_failed_tasks()
+
+    orch.dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_tasks_respects_backoff(tmp_path: Path):
+    """A task that failed too recently (backoff not elapsed) is not retried."""
+    store, orch, *_ = _build(tmp_path, auto_retry_base_interval_minutes=60.0)
+    orch.dispatch = MagicMock()
+    task = await _new_task(store, status="failed", retry_count=0)
+    await store.update_status(task.id, "failed", completed_at=_t.time() - 30)
+
+    await orch.retry_failed_tasks()
+
+    orch.dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_tasks_skips_when_newer_active_exists(tmp_path: Path):
+    """If a newer active task for the same album + user exists, the old failed task
+    is not auto-retried (avoids duplicates from a manual retry or new request)."""
+    store, orch, *_ = _build(tmp_path, auto_retry_base_interval_minutes=0.01)
+    orch.dispatch = MagicMock()
+    old = await _new_task(store, status="failed", retry_count=0)
+    await store.update_status(old.id, "failed", completed_at=_t.time() - 999)
+    # newer active task for the same album + user
+    newer = await _new_task(store, status="downloading")
+
+    await orch.retry_failed_tasks()
+
+    orch.dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_tasks_skips_when_target_already_completed(tmp_path: Path):
+    """A failed task whose target was since downloaded by a newer completed task is
+    NOT auto-retried - an album already in the library must never be re-fetched."""
+    store, orch, *_ = _build(tmp_path, auto_retry_base_interval_minutes=0.01)
+    orch.dispatch = MagicMock()
+    failed = await _new_task(store, status="failed", retry_count=0)
+    await store.update_status(failed.id, "failed", completed_at=_t.time() - 999)
+    # a later retry of the same album + user succeeded
+    done = await _new_task(store, status="completed", retry_count=1)
+    await store.update_status(done.id, "completed", completed_at=_t.time() - 10)
+
+    await orch.retry_failed_tasks()
+
+    orch.dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_tasks_retries_partial(tmp_path: Path):
+    """A partial album download is eligible for auto-retry."""
+    store, orch, *_ = _build(tmp_path, auto_retry_base_interval_minutes=0.01)
+    orch.dispatch = MagicMock()
+    task = await _new_task(store, status="partial", retry_count=0)
+    await store.update_status(task.id, "partial", completed_at=_t.time() - 10)
+
+    await orch.retry_failed_tasks()
+
+    orch.dispatch.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_tasks_skips_cancelled(tmp_path: Path):
+    """Cancelled tasks are NOT auto-retried (cancelled is an explicit user action)."""
+    store, orch, *_ = _build(tmp_path, auto_retry_base_interval_minutes=0.01)
+    orch.dispatch = MagicMock()
+    task = await _new_task(store, status="cancelled", retry_count=0)
+    await store.update_status(task.id, "cancelled", completed_at=_t.time() - 999)
+
+    await orch.retry_failed_tasks()
+
+    orch.dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_retry_task_increments_retry_count(tmp_path: Path):
+    """_create_retry_task (shared by manual + auto retry) carries retry_count + 1."""
+    store, orch, *_ = _build(tmp_path)
+    orch.dispatch = MagicMock()
+    task = await _new_task(store, status="failed", retry_count=2)
+
+    new_id = await orch._create_retry_task(task)
+
+    new_task = await store.get_task(new_id)
+    assert new_task.retry_count == 3
+    assert new_task.status == "queued"
+    orch.dispatch.assert_called_once_with(new_id)
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_tasks_per_task_exponential_backoff(tmp_path: Path):
+    """A task with retry_count=2 waits base*4, not base. One that failed on its
+    first attempt (retry_count=0) and is older than base is retried; one with
+    retry_count=2 that's only base*2 old is NOT (it needs base*4)."""
+    store, orch, *_ = _build(tmp_path, auto_retry_base_interval_minutes=0.1)
+    orch.dispatch = MagicMock()
+    # base = 6 seconds. retry_count=0 -> backoff=6s. retry_count=2 -> backoff=24s.
+
+    old_first = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-old", artist_name="A",
+        album_title="Old", year=2020, track_count=1, retry_count=0, status="failed",
+    )
+    await store.update_status(old_first.id, "failed", completed_at=_t.time() - 10)
+    # 10s > 6s backoff -> eligible
+
+    young_third = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-young", artist_name="A",
+        album_title="Young", year=2020, track_count=1, retry_count=2, status="failed",
+    )
+    await store.update_status(young_third.id, "failed", completed_at=_t.time() - 12)
+    # 12s < 24s backoff -> NOT eligible
+
+    await orch.retry_failed_tasks()
+
+    dispatched_ids = {call.args[0] for call in orch.dispatch.call_args_list}
+    new_tasks = [await store.get_task(i) for i in dispatched_ids]
+    assert any(t.release_group_mbid == "rg-old" for t in new_tasks)
+    assert not any(t.release_group_mbid == "rg-young" for t in new_tasks)
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_tasks_single_sweep_no_duplicates(tmp_path: Path):
+    """A single retry_failed_tasks() call must not create multiple retries for the
+    same failed task (regression: the old tier loop retried the same task up to
+    max_attempts times in one sweep)."""
+    store, orch, *_ = _build(tmp_path, auto_retry_base_interval_minutes=0.01)
+    orch.dispatch = MagicMock()
+    task = await _new_task(store, status="failed", retry_count=0)
+    await store.update_status(task.id, "failed", completed_at=_t.time() - 999)
+
+    await orch.retry_failed_tasks()
+
+    assert orch.dispatch.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_create_retry_task_preserves_track_fields(tmp_path: Path):
+    """_create_retry_task carries track_duration_seconds, track_number, disc_number
+    so a retried track download keeps its duration gate."""
+    store, orch, *_ = _build(tmp_path)
+    orch.dispatch = MagicMock()
+    task = await store.create_task(
+        user_id="user-a", download_type="track", release_group_mbid="rg-1",
+        recording_mbid="rec-1", artist_name="Artist", album_title="Album",
+        track_title="Song", year=2020, track_count=1,
+        track_duration_seconds=212.5, track_number=3, disc_number=2,
+        retry_count=1, status="failed",
+    )
+    await store.update_status(task.id, "failed", completed_at=_t.time() - 100)
+    original = await store.get_task(task.id)
+    assert original.track_duration_seconds == 212.5
+    assert original.track_number == 3
+    assert original.disc_number == 2
+
+    new_id = await orch._create_retry_task(task)
+
+    new_task = await store.get_task(new_id)
+    assert new_task.download_type == "track"
+    assert new_task.recording_mbid == "rec-1"
+    assert new_task.track_title == "Song"
+    assert new_task.track_duration_seconds == 212.5
+    assert new_task.track_number == 3
+    assert new_task.disc_number == 2
+
+
+@pytest.mark.asyncio
+async def test_create_retry_task_relinks_album_request(tmp_path: Path):
+    """A retry re-points the linked request at the replacement task so a successful
+    retry actually marks the request imported and busts caches (without this the
+    request stays 'failed' forever, since _sync_request_on_terminal keys on the old
+    task id)."""
+    record = _request_record(status="failed")
+    rh = _FakeRequestHistory(record)
+    store, orch, *_ = _build(tmp_path, request_history=rh)
+    orch.dispatch = MagicMock()
+    task = await _new_task(store, status="failed", retry_count=0)
+    record.download_task_id = task.id   # request -> original task link
+
+    new_id = await orch._create_retry_task(task)
+
+    assert rh.relinks == [("rg-1", new_id)]
+    assert record.download_task_id == new_id
+
+
+@pytest.mark.asyncio
+async def test_create_retry_task_does_not_relink_track_request(tmp_path: Path):
+    """A per-track retry must not hijack the album's request link."""
+    record = _request_record(status="failed", download_task_id="album-task")
+    rh = _FakeRequestHistory(record)
+    store, orch, *_ = _build(tmp_path, request_history=rh)
+    orch.dispatch = MagicMock()
+    task = await store.create_task(
+        user_id="user-a", download_type="track", release_group_mbid="rg-1",
+        recording_mbid="rec-1", artist_name="A", album_title="B", track_title="S",
+        retry_count=0, status="failed",
+    )
+
+    await orch._create_retry_task(task)
+
+    assert rh.relinks == []
+    assert record.download_task_id == "album-task"
+
+
+@pytest.mark.asyncio
+async def test_create_retry_task_skips_relink_when_request_owned_by_other_task(tmp_path: Path):
+    """If the request already points at a newer task (e.g. a manual retry), an older
+    auto-retry must not steal the link back."""
+    record = _request_record(status="failed", download_task_id="newer-task")
+    rh = _FakeRequestHistory(record)
+    store, orch, *_ = _build(tmp_path, request_history=rh)
+    orch.dispatch = MagicMock()
+    task = await _new_task(store, status="failed", retry_count=0)
+
+    await orch._create_retry_task(task)
+
+    assert rh.relinks == []
+    assert record.download_task_id == "newer-task"
