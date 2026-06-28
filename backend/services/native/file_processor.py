@@ -452,7 +452,10 @@ class FileProcessor:
             except OSError as exc:
                 if exc.errno != errno.EXDEV:
                     raise
-                shutil.copy2(source, tmp)  # cross-mount: the one unavoidable copy
+                try:
+                    shutil.copy2(source, tmp)  # cross-mount: the one unavoidable copy
+                except BaseException:
+                    shutil.copyfile(source, tmp)  # Full fallback, just copy data
             self._tagger.write_album_identity(tmp, target_tag)
             os.replace(tmp, target_path)  # atomic publish within the library dir
         except BaseException:
