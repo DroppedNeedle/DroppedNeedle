@@ -302,6 +302,41 @@ async def test_process_downloaded_cross_mount_copies(tmp_path: Path, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_process_downloaded_cross_mount_survives_metadata_rejection(
+    tmp_path: Path, monkeypatch
+):
+    """Cross-mount import on a filesystem that rejects metadata copies (TrueNAS NFSv4
+    ACLs refuse chmod/utime even for the owner, so copystat raises). The bytes still
+    copy and the file imports - the import must not fail the whole download over the
+    cosmetic metadata copy2 used to insist on."""
+    import errno
+    import os as _os
+
+    fp, manager, _client, _library, downloads = _make_processor(tmp_path, verify=False)
+    _place(downloads, "A/track.flac")
+    src = downloads / "A/track.flac"
+
+    real_replace = _os.replace
+    def fake_replace(a, b):
+        if str(a).startswith(str(downloads)):  # only the cross-mount source->staging move
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        return real_replace(a, b)
+    monkeypatch.setattr(_os, "replace", fake_replace)
+
+    def reject_metadata(*_a, **_k):
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+    monkeypatch.setattr(shutil, "copystat", reject_metadata)
+
+    manifest = _manifest(ExpectedFile(filename="A/track.flac", size=1))
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1
+    assert Path(result.succeeded[0]).exists()
+    assert not src.exists()
+    assert await manager.has_album("rg-1") is True
+
+
+@pytest.mark.asyncio
 async def test_process_downloaded_prunes_empty_leftover_dirs(tmp_path: Path):
     """After the file is moved out, the now-empty folders slskd created are pruned -
     walking up nested dirs - but never the downloads mount root itself."""

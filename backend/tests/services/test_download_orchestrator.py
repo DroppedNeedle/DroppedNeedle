@@ -391,6 +391,32 @@ async def test_missing_on_mount_fails_with_mount_message_not_quarantine(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_import_failure_fails_with_library_message_not_soulseek(tmp_path: Path):
+    """slskd delivered the files and we found them, but writing them into the library
+    failed (IMPORT_FAILED - perms/disk/a rejected cross-mount copy). A local fault: the
+    message must point at the library, not wrongly claim Soulseek had no source."""
+    from services.native.file_processor import IMPORT_FAILED
+
+    client = _StubClient(_status("completed", files_completed=1, succeeded=["peer/01.flac"]))
+    store, orch, _fp, _lib = _build(
+        tmp_path, client=client, scorer_result=[_candidate(0.9)],
+        fp_result=ProcessResult(
+            succeeded=[], failed=[FileFailure(filename="peer/01.flac", reason=IMPORT_FAILED)]
+        ),
+        imported_rows=[],
+    )
+    task = await _new_task(store)
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "failed"
+    assert "library" in final.error_message              # truthful, library-pointing message
+    assert "No working source" not in final.error_message
+    assert await store.load_quarantine_set() == set()  # peer not blacklisted for a local fault
+
+
+@pytest.mark.asyncio
 async def test_enqueue_failure_fails_without_quarantine(tmp_path: Path):
     client = _StubClient()
     client.enqueue = AsyncMock(side_effect=RuntimeError("boom"))

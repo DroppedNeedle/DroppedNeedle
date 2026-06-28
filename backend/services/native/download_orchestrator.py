@@ -67,6 +67,13 @@ _FILES_NOT_FOUND_MSG = (
     "Files downloaded, but couldn't be found in the slskd downloads folder - check "
     "the slskd downloads path points to where slskd saves completed files"
 )
+# slskd delivered the files and we found them, but writing them into the library failed
+# (perms, disk full, a cross-mount copy the filesystem rejected). Local fault, not the
+# peer's - blaming Soulseek sends users chasing the wrong problem.
+_IMPORT_FAILED_MSG = (
+    "Files downloaded, but couldn't be saved into your library - check the library "
+    "folder is writable and has free space"
+)
 
 
 class OrchestrationError(Exception):
@@ -518,6 +525,7 @@ class DownloadOrchestrator:
         iteration skips the enqueue and polls the transfers a restart left behind."""
         from services.native.file_processor import (
             DOWNLOADS_MOUNT_UNAVAILABLE,
+            IMPORT_FAILED,
             SOURCE_FILE_MISSING,
             WRONG_TRACK,
         )
@@ -528,6 +536,7 @@ class DownloadOrchestrator:
         imported_any = False
         wrong_track = False
         source_missing = False
+        import_failed = False
         while True:
             # resume's first iteration polls the transfers a restart left behind (no
             # enqueue), so the no-transfer fast-fail must not apply there - those
@@ -576,6 +585,8 @@ class DownloadOrchestrator:
                     wrong_track = True
                 if any(f.reason == SOURCE_FILE_MISSING for f in result.failed):
                     source_missing = True
+                if any(f.reason == IMPORT_FAILED for f in result.failed):
+                    import_failed = True
                 await self._cancel_transfers(task)
 
                 # A missing/unwritable downloads mount is an environment fault, not
@@ -608,7 +619,8 @@ class DownloadOrchestrator:
                     await self._fallback_track_repull(task)
                     return
                 await self._settle_incomplete(
-                    task, imported_any, source_missing=source_missing
+                    task, imported_any,
+                    source_missing=source_missing, import_failed=import_failed,
                 )
                 return
             task = nxt
@@ -761,17 +773,24 @@ class DownloadOrchestrator:
         return bool(result and result.succeeded and not result.failed)
 
     async def _settle_incomplete(  # noqa: ANN001
-        self, task, imported_any: bool, *, source_missing: bool = False
+        self, task, imported_any: bool, *,
+        source_missing: bool = False, import_failed: bool = False,
     ) -> None:
         """No candidates/attempts left and the download still isn't whole. A track
         either imported (already finalized 'completed') or it didn't ('failed'); an
         album keeps whatever landed as 'partial', or 'failed' if nothing did.
 
-        ``source_missing`` flips the failure message: slskd delivered the files but we
-        couldn't find them on the mount, which is a local/config fault - blaming
-        Soulseek for it sent users chasing the wrong problem (AUD: 'watched it finish
-        in slskd, then it said no source')."""
-        fail_msg = _FILES_NOT_FOUND_MSG if source_missing else _NO_SOURCE_MSG
+        ``source_missing``/``import_failed`` flip the failure message off the default
+        'no source on Soulseek': slskd delivered the files but we either couldn't find
+        them on the mount (config) or couldn't write them into the library (perms/disk).
+        Both are local faults - blaming Soulseek sent users chasing the wrong problem
+        (AUD: 'watched it finish in slskd, then it said no source')."""
+        if source_missing:
+            fail_msg = _FILES_NOT_FOUND_MSG
+        elif import_failed:
+            fail_msg = _IMPORT_FAILED_MSG
+        else:
+            fail_msg = _NO_SOURCE_MSG
         if task.download_type == "track":
             await self._finalize(task, "failed", error_message=fail_msg)
             return

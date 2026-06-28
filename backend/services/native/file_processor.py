@@ -452,7 +452,15 @@ class FileProcessor:
             except OSError as exc:
                 if exc.errno != errno.EXDEV:
                     raise
-                shutil.copy2(source, tmp)  # cross-mount: the one unavoidable copy
+                # cross-mount: copy bytes, then best-effort metadata. copy2's next step
+                # (copystat -> chmod/utime) is rejected by some filesystems even for the
+                # file's owner (TrueNAS NFSv4 ACLs), so it threw and killed the import.
+                # Bytes are all that matter; the tag write below resets mtime, so swallow.
+                shutil.copyfile(source, tmp)
+                try:
+                    shutil.copystat(source, tmp)
+                except OSError:
+                    logger.debug("copystat skipped for %s (filesystem rejected metadata)", tmp.name)
             self._tagger.write_album_identity(tmp, target_tag)
             os.replace(tmp, target_path)  # atomic publish within the library dir
         except BaseException:
