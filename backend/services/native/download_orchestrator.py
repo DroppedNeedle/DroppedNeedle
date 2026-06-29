@@ -802,10 +802,16 @@ class DownloadOrchestrator:
     async def _finalize(self, task, status, *, error_message=None) -> None:  # noqa: ANN001
         if task.download_type == "track":
             present = 1 if status == "completed" else 0
-            expected = 1
+            raw_expected = 1
         else:
             present = await self._imported_track_count(task)
-            expected = self._expected_track_count(task) or present
+            raw_expected = self._expected_track_count(task)
+        # raw_expected==0 means the target size is UNKNOWN (MusicBrainz gave no track
+        # count): completeness can't be measured, so 'completed' here is a best-effort
+        # signal, not a verified full album. Collapse files_total to what landed for the
+        # UI, but log expected_known so a 1/1 'completed' on an unmeasured album is
+        # distinguishable from a genuine 1-track one.
+        expected = raw_expected or present
         fields = {
             "completed_at": time.time(),
             "files_completed": present,
@@ -826,6 +832,7 @@ class DownloadOrchestrator:
                 "status": status,
                 "files_completed": present,
                 "files_total": expected,
+                "expected_known": raw_expected > 0,
             },
         )
         await self._notify_completion(task)
@@ -1071,6 +1078,31 @@ class DownloadOrchestrator:
         except Exception:  # noqa: BLE001 - re-link must never fail the retry
             logger.warning("Could not re-link request for retry of %s", task.id)
 
+    @property
+    def auto_retry_max(self) -> int:
+        """Configured max auto-retry attempts (0 when auto-retry is off)."""
+        return self._auto_retry_max_attempts if self._auto_retry_enabled else 0
+
+    def _retry_backoff_seconds(self, retry_count: int) -> float:
+        # Per-task exponential backoff: base * 2^retry_count, capped at 24h. A task
+        # retried 5 times waits far longer than one that failed on its first attempt.
+        return min(self._auto_retry_base_interval * 60.0 * (2**retry_count), 86400.0)
+
+    def next_retry_at(self, task) -> float | None:  # noqa: ANN001 - DownloadTask
+        """Unix time the task's next auto-retry is due, or None if it won't auto-retry
+        (disabled, not failed/partial, or attempts exhausted). Same anchor+formula the
+        retry sweep uses, so the UI's "retry scheduled" lines up with when it fires."""
+        if (
+            not self._auto_retry_enabled
+            or task.status not in ("failed", "partial")
+            or task.retry_count >= self._auto_retry_max_attempts
+        ):
+            return None
+        anchor = task.completed_at or task.created_at
+        if not anchor:
+            return None
+        return anchor + self._retry_backoff_seconds(task.retry_count)
+
     async def retry_failed_tasks(self) -> None:
         """Periodic safety net: re-dispatch ``failed``/``partial`` downloads whose
         per-task exponential backoff has elapsed, up to ``auto_retry_max_attempts``.
@@ -1081,16 +1113,11 @@ class DownloadOrchestrator:
         if not self._auto_retry_enabled:
             return
 
-        base = self._auto_retry_base_interval * 60.0
-        max_delay = 86400.0
         now = time.time()
 
         eligible = await self._store.list_retryable_tasks(self._auto_retry_max_attempts)
         for task in eligible:
-            # Per-task exponential backoff: base * 2^retry_count, capped at 24h.
-            # A task that has been retried 5 times waits far longer than one that
-            # failed on its first attempt.
-            backoff = min(base * (2 ** task.retry_count), max_delay)
+            backoff = self._retry_backoff_seconds(task.retry_count)
             completed_at = task.completed_at or task.created_at or 0.0
             if now - completed_at < backoff:
                 continue

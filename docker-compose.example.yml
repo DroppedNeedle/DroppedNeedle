@@ -25,11 +25,12 @@ services:
       - ./config:/app/config       # App configuration
       - ./cache:/app/cache         # Cover art and metadata cache
       - /path/to/music:/music:rw   # Your music library (read-write: imports land here)
-      # Mount slskd's downloads directory read-write, on the SAME filesystem as /music.
-      # On a finished download the engine moves files from here into the library with an
-      # atomic rename, which only works within one filesystem. Skip this and downloads
-      # finish in slskd but never import.
-      - /path/to/slskd/downloads:/slskd-downloads:rw
+      # slskd's COMPLETED-downloads directory, read-write. Use the EXACT path from slskd's
+      # Options -> Directories -> "downloads" (often a .../complete folder) - NOT a parent
+      # like your media root. If you mount a parent, downloads finish in slskd but show as
+      # "failed" here, because the engine searches the whole tree and can't find them.
+      # Keep it on the SAME filesystem as /music so imports are an atomic rename.
+      - /path/to/slskd/complete:/slskd-downloads:rw   # == slskd's directories.downloads
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8688/health"]
@@ -48,8 +49,10 @@ services:
 #    volumes:
 #      - ./slskd/config:/app   # slskd.yml lives here
 #      # slskd needs at least one shared folder (slskd.yml: shares.directories) or the
-#      # Soulseek network will ban it. Mount this same downloads path as the droppedneedle
-#      # service's /slskd-downloads above, on the same filesystem as /music.
+#      # Soulseek network will ban it. With this bundled setup slskd's downloads dir is
+#      # /downloads, so set the droppedneedle service's downloads mount above to this SAME
+#      # host path (/path/to/slskd/downloads:/slskd-downloads) - the two must point at the
+#      # exact same folder, on the same filesystem as /music.
 #      - /path/to/slskd/downloads:/downloads:rw
 #    environment:
 #      - SLSKD_REMOTE_CONFIGURATION=true

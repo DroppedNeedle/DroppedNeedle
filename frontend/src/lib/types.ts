@@ -1541,6 +1541,7 @@ export interface DownloadClientConfig {
 	quality_min: string;
 	quality_max: string;
 	flac_mp3_only: boolean;
+	downloads_subpath: string;
 	preflight_score_auto_accept: number;
 	preflight_score_manual_min: number;
 	download_stall_timeout_minutes: number;
@@ -1566,6 +1567,7 @@ export interface DownloadClientStatus {
 	client: DownloadClientHealth;
 	mount: DownloadsMountStatus;
 	mount_advisory?: string | null;
+	slskd_downloads_dir?: string | null;
 }
 
 export interface TestConnectionResult {
@@ -1655,6 +1657,8 @@ export interface DownloadTask {
 	retry_count: number;
 	created_at: number;
 	updated_at: number;
+	next_retry_at: number | null;
+	retry_max: number;
 }
 
 export interface DownloadListResponse {

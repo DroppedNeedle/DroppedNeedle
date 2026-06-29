@@ -5,9 +5,11 @@ coherence, then rank by coherence + per-file confidence + peer-quality signals.
 
 Below-threshold groups are kept (``tier='rejected'``, top ~50 by score) so the
 Review tab's "Show all results anyway" needs no re-search. Quarantined
-``(username, filename)`` sources are dropped before scoring. A quality gate drops
-candidates outside ``quality_min``..``quality_max`` and, when ``flac_mp3_only``,
-any folder with a non-FLAC/MP3 file; ranking prefers the highest tier absolutely.
+``(username, filename)`` sources are dropped before scoring. Non-audio sidecars
+(cover art, cue, log, m3u) a folder search returns are excluded before judging - a
+quality gate then drops folders whose audio is outside ``quality_min``..``quality_max``
+or, when ``flac_mp3_only``, contains a non-FLAC/MP3 track; ranking prefers the highest
+tier absolutely.
 CJK strings skip ``unidecode``; off-version matches (remix/live/acoustic vs
 original) are penalised x0.3.
 """
@@ -28,6 +30,7 @@ from services.native.quality_tiers import (
     DEFAULT_QUALITY_MIN,
     candidate_tier,
     in_range,
+    is_audio,
     is_flac_or_mp3,
     tier_rank,
 )
@@ -183,22 +186,33 @@ class AlbumPreflightScorer:
             groups[(result.username, result.parent_directory)].append(result)
 
         scored: list[ScoredCandidate] = []
+        drop_no_audio = drop_codec = drop_quality = 0
         for (username, parent), files in groups.items():
-            # a folder is rated by its worst file (downloaded whole): drop on a
-            # disallowed codec or a tier outside [quality_min, quality_max]
-            if self._flac_mp3_only and not all(is_flac_or_mp3(f) for f in files):
+            # A folder search returns the album's sidecars (cover art, cue, log, m3u)
+            # alongside the tracks; gate, score and enqueue on the AUDIO files only -
+            # judging a folder by a non-audio file (no codec, no bitrate -> 'low')
+            # rejected every well-ripped release, and enqueuing one fails the import.
+            audio = [f for f in files if is_audio(f)]
+            if not audio:
+                drop_no_audio += 1
                 continue
-            if not in_range(candidate_tier(files), self._quality_min, self._quality_max):
+            # a folder is rated by its worst audio file (downloaded whole): drop on a
+            # disallowed codec or a tier outside [quality_min, quality_max]
+            if self._flac_mp3_only and not all(is_flac_or_mp3(f) for f in audio):
+                drop_codec += 1
+                continue
+            if not in_range(candidate_tier(audio), self._quality_min, self._quality_max):
+                drop_quality += 1
                 continue
 
-            coherence = self._coherence(target, files, parent)
+            coherence = self._coherence(target, audio, parent)
             confidences = [
                 _file_confidence(target.album_title, target.artist_name, target.duration_seconds, f)
-                for f in files
+                for f in audio
             ]
             avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
-            speed_signal = min(1.0, max((f.upload_speed for f in files), default=0) / 1000.0)
-            free_slot = 1.0 if any(f.has_free_slot for f in files) else 0.0
+            speed_signal = min(1.0, max((f.upload_speed for f in audio), default=0) / 1000.0)
+            free_slot = 1.0 if any(f.has_free_slot for f in audio) else 0.0
 
             final = (
                 0.50 * coherence
@@ -218,7 +232,7 @@ class AlbumPreflightScorer:
                 ScoredCandidate(
                     username=username,
                     parent_directory=parent,
-                    files=files,
+                    files=audio,
                     coherence=coherence,
                     file_confidence=avg_confidence,
                     final_score=final,
@@ -239,6 +253,12 @@ class AlbumPreflightScorer:
                 "top_score": ranked[0].final_score if ranked else 0.0,
                 "auto_count": sum(1 for c in ranked if c.tier == "auto"),
                 "manual_count": sum(1 for c in ranked if c.tier == "manual"),
+                # why folders were dropped before scoring - a candidates_count of 0
+                # with a non-zero results_count is explained entirely by these.
+                "groups_total": len(groups),
+                "dropped_no_audio": drop_no_audio,
+                "dropped_codec": drop_codec,
+                "dropped_quality": drop_quality,
             },
         )
         return ranked

@@ -39,7 +39,9 @@ _SSE_HEADERS = {
 }
 
 
-def _to_response(task) -> DownloadTaskResponse:  # noqa: ANN001 - DownloadTask
+def _to_response(  # noqa: ANN001 - DownloadTask
+    task, *, next_retry_at: float | None = None, retry_max: int = 0
+) -> DownloadTaskResponse:
     return DownloadTaskResponse(
         id=task.id,
         user_id=task.user_id,
@@ -66,6 +68,8 @@ def _to_response(task) -> DownloadTaskResponse:  # noqa: ANN001 - DownloadTask
         retry_count=task.retry_count,
         created_at=task.created_at,
         updated_at=task.updated_at,
+        next_retry_at=next_retry_at,
+        retry_max=retry_max,
     )
 
 
@@ -86,8 +90,14 @@ async def list_downloads(
         page=page,
         page_size=page_size,
     )
+    retry_max = service.auto_retry_max
     return DownloadListResponse(
-        items=[_to_response(t) for t in tasks], page=page, page_size=page_size
+        items=[
+            _to_response(t, next_retry_at=service.next_retry_at(t), retry_max=retry_max)
+            for t in tasks
+        ],
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -154,4 +164,6 @@ async def get_download(
     task_id: str, current_user: CurrentUserDep, service=Depends(get_download_service)
 ):
     task = await service.get_task(task_id, current_user.id, current_user.role)
-    return _to_response(task)
+    return _to_response(
+        task, next_retry_at=service.next_retry_at(task), retry_max=service.auto_retry_max
+    )

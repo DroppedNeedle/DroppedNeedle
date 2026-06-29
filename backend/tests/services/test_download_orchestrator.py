@@ -26,7 +26,7 @@ from core.task_registry import TaskRegistry
 from infrastructure.persistence.download_store import DownloadStore
 from infrastructure.sse_publisher import SSEPublisher
 from models.common import ServiceStatus
-from models.download import ScoredCandidate
+from models.download import DownloadTask, ScoredCandidate
 from models.download_manifest import DownloadManifest, ExpectedFile, ManifestCodec
 from repositories.protocols.download_client import (
     DownloadSearchResult,
@@ -1074,6 +1074,34 @@ async def test_retry_failed_tasks_respects_max_attempts(tmp_path: Path):
     await orch.retry_failed_tasks()
 
     orch.dispatch.assert_not_called()
+
+
+def test_next_retry_at_matches_backoff(tmp_path: Path):
+    """next_retry_at = completed_at + base*2^retry_count - the same formula the sweep uses."""
+    _, orch, *_ = _build(tmp_path, auto_retry_base_interval_minutes=15.0)
+    now = _t.time()
+    task = DownloadTask(id="t", user_id="u", status="failed", retry_count=1, completed_at=now)
+    # base 15m * 2^1 = 30m
+    assert orch.next_retry_at(task) == pytest.approx(now + 30 * 60)
+    assert orch.auto_retry_max == 6
+
+
+def test_next_retry_at_none_when_not_eligible(tmp_path: Path):
+    _, orch, *_ = _build(tmp_path, auto_retry_max_attempts=3, auto_retry_base_interval_minutes=15.0)
+    now = _t.time()
+    # exhausted
+    assert orch.next_retry_at(DownloadTask(id="a", user_id="u", status="failed", retry_count=3, completed_at=now)) is None
+    # not a retryable state
+    assert orch.next_retry_at(DownloadTask(id="b", user_id="u", status="downloading", retry_count=0, completed_at=now)) is None
+    # completed (terminal success) never retries
+    assert orch.next_retry_at(DownloadTask(id="c", user_id="u", status="completed", retry_count=0, completed_at=now)) is None
+
+
+def test_next_retry_at_none_and_max_zero_when_auto_retry_disabled(tmp_path: Path):
+    _, orch, *_ = _build(tmp_path, auto_retry_enabled=False)
+    task = DownloadTask(id="t", user_id="u", status="failed", retry_count=0, completed_at=_t.time())
+    assert orch.next_retry_at(task) is None
+    assert orch.auto_retry_max == 0  # advertises "no auto-retry" to the UI
 
 
 @pytest.mark.asyncio

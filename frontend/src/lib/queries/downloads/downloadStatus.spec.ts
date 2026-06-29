@@ -7,8 +7,11 @@ import {
 	bucketDownloads,
 	canCancel,
 	canRetry,
+	collapseRetryChains,
 	derivedDownloadStatus,
+	formatRetryEta,
 	nowPressing,
+	retryDisplay,
 	tabForTask
 } from './downloadStatus';
 
@@ -39,6 +42,8 @@ function task(overrides: Partial<DownloadTask> = {}): DownloadTask {
 		retry_count: 0,
 		created_at: 0,
 		updated_at: 0,
+		next_retry_at: null,
+		retry_max: 6,
 		...overrides
 	};
 }
@@ -133,5 +138,72 @@ describe('nowPressing', () => {
 
 	it('returns null when nothing is active', () => {
 		expect(nowPressing([task({ status: 'completed' })])).toBeNull();
+	});
+});
+
+describe('retryDisplay', () => {
+	const NOW = 1_000_000;
+
+	it('is "retrying" while a retry actively re-runs', () => {
+		const t = task({ status: 'downloading', retry_count: 2, retry_max: 6 });
+		expect(retryDisplay(t, NOW)).toEqual({ kind: 'retrying', attempt: 2, max: 6 });
+	});
+
+	it('is "scheduled" with the eta while waiting for the next attempt', () => {
+		const t = task({ status: 'failed', retry_count: 1, next_retry_at: NOW + 12 * 60 });
+		expect(retryDisplay(t, NOW)).toEqual({ kind: 'scheduled', etaMinutes: 12 });
+	});
+
+	it('is "failed_exhausted" for a failed task with no scheduled retry', () => {
+		const t = task({ status: 'failed', retry_count: 6, next_retry_at: null });
+		expect(retryDisplay(t, NOW)).toEqual({ kind: 'failed_exhausted' });
+	});
+
+	it('is null for a normal in-flight (non-retry) task and for partial-without-retry', () => {
+		expect(retryDisplay(task({ status: 'downloading', retry_count: 0 }), NOW)).toBeNull();
+		expect(retryDisplay(task({ status: 'partial', next_retry_at: null }), NOW)).toBeNull();
+	});
+
+	it('is null when auto-retry is off (retry_max 0): plain status, never "out of retries" or "/0"', () => {
+		expect(retryDisplay(task({ status: 'failed', next_retry_at: null, retry_max: 0 }), NOW)).toBeNull();
+		expect(retryDisplay(task({ status: 'downloading', retry_count: 1, retry_max: 0 }), NOW)).toBeNull();
+	});
+});
+
+describe('formatRetryEta', () => {
+	it('formats sub-minute, minutes, and hours', () => {
+		expect(formatRetryEta(0.4)).toBe('<1m');
+		expect(formatRetryEta(12)).toBe('~12m');
+		expect(formatRetryEta(120)).toBe('~2h');
+	});
+});
+
+describe('collapseRetryChains', () => {
+	it('keeps only the latest attempt per (type, identity, owner)', () => {
+		const original = task({ id: 'o', status: 'failed', retry_count: 0, release_group_mbid: 'rg1' });
+		const retry = task({ id: 'r', status: 'downloading', retry_count: 1, release_group_mbid: 'rg1' });
+		const collapsed = collapseRetryChains([original, retry]);
+		expect(collapsed).toHaveLength(1);
+		expect(collapsed[0].id).toBe('r');
+	});
+
+	it('does not merge different albums, users, or types', () => {
+		const a = task({ id: 'a', release_group_mbid: 'rg1', user_id: 'u1' });
+		const b = task({ id: 'b', release_group_mbid: 'rg2', user_id: 'u1' });
+		const c = task({ id: 'c', release_group_mbid: 'rg1', user_id: 'u2' });
+		expect(collapseRetryChains([a, b, c])).toHaveLength(3);
+	});
+
+	it('never collapses identity-less (free-text) tasks together', () => {
+		const a = task({ id: 'a', release_group_mbid: '', recording_mbid: null });
+		const b = task({ id: 'b', release_group_mbid: '', recording_mbid: null });
+		expect(collapseRetryChains([a, b])).toHaveLength(2);
+	});
+
+	it('keeps two independent downloads of the same album (same attempt) as separate rows', () => {
+		// not a retry chain (both retry_count 0) - e.g. a re-requested album; hiding one loses a real task
+		const first = task({ id: 'a', status: 'completed', retry_count: 0, release_group_mbid: 'rg1' });
+		const second = task({ id: 'b', status: 'downloading', retry_count: 0, release_group_mbid: 'rg1' });
+		expect(collapseRetryChains([first, second])).toHaveLength(2);
 	});
 });

@@ -8,11 +8,13 @@ import {
 	Download,
 	Eye,
 	Loader,
+	RefreshCw,
 	Search,
+	Timer,
 	XCircle
 } from 'lucide-svelte';
 
-import type { DerivedDownloadStatus } from './downloadStatus';
+import type { DerivedDownloadStatus, RetryDisplay } from './downloadStatus';
 
 export interface DownloadStatusMeta {
 	label: string;
@@ -21,6 +23,16 @@ export interface DownloadStatusMeta {
 	/** pulse animation while the state is in-flight */
 	pulse: boolean;
 }
+
+// Visual treatment per retry state (label is built in the badge - it carries the
+// attempt count / countdown). Waiting + re-running pulse like other in-flight states;
+// an exhausted failure uses the plain error style.
+type RetryKind = NonNullable<RetryDisplay>['kind'];
+export const retryBadgeConfig: Record<RetryKind, Omit<DownloadStatusMeta, 'label'>> = {
+	scheduled: { badgeClass: 'badge-warning', icon: Timer, pulse: true },
+	retrying: { badgeClass: 'badge-warning', icon: RefreshCw, pulse: true },
+	failed_exhausted: { badgeClass: 'badge-error', icon: XCircle, pulse: false }
+};
 
 export const downloadStatusConfig: Record<DerivedDownloadStatus, DownloadStatusMeta> = {
 	searching: { label: 'Searching', badgeClass: 'badge-ghost', icon: Search, pulse: true },

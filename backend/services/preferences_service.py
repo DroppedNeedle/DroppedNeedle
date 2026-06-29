@@ -206,6 +206,7 @@ class PreferencesService:
                 "quality_min": settings.quality_min,
                 "quality_max": settings.quality_max,
                 "flac_mp3_only": settings.flac_mp3_only,
+                "downloads_subpath": settings.downloads_subpath,
                 "preflight_score_auto_accept": settings.preflight_score_auto_accept,
                 "preflight_score_manual_min": settings.preflight_score_manual_min,
                 "download_stall_timeout_minutes": settings.download_stall_timeout_minutes,

@@ -1,3 +1,4 @@
+import re
 from typing import Annotated, Literal
 
 import msgspec
@@ -83,6 +84,10 @@ class DownloadClientConnectionSettings(AppStruct):
     quality_min: str = "mp3_320"
     quality_max: str = "lossless"
     flac_mp3_only: bool = True
+    # Optional subfolder inside the mount where slskd actually saves completed downloads,
+    # for when the mount points at a parent (e.g. the whole media share). Relative, never
+    # escapes the mount (sanitised below + confined again at use).
+    downloads_subpath: str = ""
     preflight_score_auto_accept: float = 0.70
     preflight_score_manual_min: float = 0.50
     # Download resilience (minutes-scale; user-tunable). A transfer actively
@@ -123,6 +128,12 @@ class DownloadClientConnectionSettings(AppStruct):
             self.quality_max = "lossless"
         if _rank[self.quality_min] > _rank[self.quality_max]:
             self.quality_min = self.quality_max
+        # keep only safe, relative path components - the subpath joins onto the mount, so
+        # drop "", ".", ".." and any leading slashes so it can never escape it
+        self.downloads_subpath = "/".join(
+            p for p in re.split(r"[\\/]", self.downloads_subpath.strip())
+            if p and p not in (".", "..")
+        )
 
 
 class JellyfinConnectionSettings(AppStruct):

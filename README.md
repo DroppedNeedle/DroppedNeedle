@@ -55,11 +55,13 @@ services:
       - ./config:/app/config  # Persistent app configuration
       - ./cache:/app/cache    # Cover art and metadata cache
       - /path/to/music:/music:rw          # Your music library (read-write: the engine imports into it)
-      # REQUIRED for imports: bind-mount slskd's downloads dir read-write, on the SAME
-      # filesystem as /music above. The engine MOVES finished files out of slskd's
-      # downloads dir into the library (atomic os.rename) - so both share one filesystem.
-      # Without this, downloads succeed in slskd but never import. See slskd Setup below.
-      - /path/to/slskd/downloads:/slskd-downloads:rw
+      # REQUIRED for imports: bind-mount slskd's COMPLETED-downloads dir read-write, on
+      # the SAME filesystem as /music above. Use the EXACT path from slskd's
+      # directories.downloads (Options -> Directories; often a .../complete folder), NOT a
+      # parent like your media root - mount a parent and downloads finish in slskd but show
+      # as "failed" here. The engine MOVES finished files into the library (atomic
+      # os.rename), so both must share one filesystem. See slskd Setup below.
+      - /path/to/slskd/complete:/slskd-downloads:rw   # == slskd's directories.downloads
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8688/health"]
@@ -251,7 +253,7 @@ When slskd finishes a download it writes the file into its own downloads directo
 
 For that move to work, DroppedNeedle must be able to see slskd's downloads directory, and it must be on the same filesystem as your music library:
 
-- Bind-mount slskd's downloads directory into the DroppedNeedle container read-write.
+- Bind-mount slskd's downloads directory into the DroppedNeedle container read-write. Use the **exact** path from slskd's `directories.downloads` (often a `.../complete` folder) - **not a parent** of it. Mounting a parent (e.g. your whole media share) makes DroppedNeedle search the entire tree and give up: downloads finish in slskd but show as **failed** here. The settings page warns when it detects this.
 - Put it on the same filesystem as the library mount (a cross-filesystem rename fails with `EXDEV`).
 - Point DroppedNeedle at the in-container path with `SLSKD_DOWNLOADS_PATH`.
 

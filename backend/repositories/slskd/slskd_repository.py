@@ -37,6 +37,9 @@ class SlskdRepository:
     # lands after the searchTimeout window (observed ~12s later on 0.25.1). Poll past
     # `timeout` by this grace or every search returns 0 candidates.
     _COMPLETION_GRACE_SECONDS = 30.0
+    # How many finished transfers diagnose_downloads_mount tries to locate under the
+    # mount. Small: it's a settings-page check and a wrong mount makes each a full walk.
+    _DIAGNOSIS_SAMPLE = 3
 
     def __init__(
         self,
@@ -146,8 +149,22 @@ class SlskdRepository:
     async def get_file_path(
         self, username: str, remote_filename: str, size: int | None = None
     ) -> Path | None:
+        """Resolve a finished transfer to its on-disk path, OFF the event loop.
+
+        The lookup does bounded but potentially large filesystem walks; running it
+        inline froze the whole loop (polling, SSE, every request - including the cancel
+        the user is trying to click) whenever the mount was big or misconfigured, which
+        reads as "it won't cancel and the whole app hangs"."""
+        return await asyncio.to_thread(
+            self._locate_file, username, remote_filename, size
+        )
+
+    def _locate_file(
+        self, username: str, remote_filename: str, size: int | None = None
+    ) -> Path | None:
         """Resolve a finished transfer to its on-disk path inside the mounted
-        slskd downloads dir, or ``None`` if it can't be located there.
+        slskd downloads dir, or ``None`` if it can't be located there. Sync (runs in a
+        worker thread via ``get_file_path``); does only filesystem I/O, no awaits.
 
         slskd's on-disk layout varies by version and by how the peer organised
         their share: ``{downloads}/{leaf remote folder}/{file}`` (common),
@@ -272,20 +289,55 @@ class SlskdRepository:
 
     async def diagnose_downloads_mount(self) -> MountDiagnosis:
         """Cross-check slskd's completed (not-yet-imported) downloads against the
-        configured mount. slskd having finished downloads while the mount shows no
-        files at all means the path is wrong or unreadable - the silent misconfig the
-        per-download error only reveals one file at a time. Best-effort: never raises."""
+        configured mount. slskd having finished downloads that DN can't locate under
+        the mount means the path is wrong/too-broad or unreadable - the silent misconfig
+        the per-download error only reveals one file at a time. Best-effort: never raises.
+
+        The honest test is whether a sample of those finished files actually RESOLVE
+        under the mount (``resolvable_downloads``); ``mount_has_files`` is a weaker
+        signal that a parent-of-downloads mount (e.g. the whole library) defeats."""
+        client_dir = await self._configured_downloads_dir()
         try:
             transfers = await self._client.get_all_downloads()
         except Exception:  # noqa: BLE001 - a diagnostic must never raise
-            return MountDiagnosis(supported=True)
-        completed = sum(1 for t in transfers if "succeeded" in self._state_flags(t.state))
-        if completed == 0:
-            return MountDiagnosis(supported=True, completed_downloads=0, mount_has_files=True)
+            return MountDiagnosis(supported=True, client_downloads_dir=client_dir)
+        completed = [t for t in transfers if "succeeded" in self._state_flags(t.state)]
+        if not completed:
+            return MountDiagnosis(
+                supported=True, completed_downloads=0, mount_has_files=True,
+                client_downloads_dir=client_dir,
+            )
+        # Resolve a small sample under the mount - the cheap get_file_path steps hit
+        # first for a correct mount, so only a misconfigured one pays the walk cost.
+        sample = completed[: self._DIAGNOSIS_SAMPLE]
+        resolvable = 0
+        for transfer in sample:
+            try:
+                located = await self.get_file_path(
+                    transfer.username, transfer.filename, transfer.size or None
+                )
+            except Exception:  # noqa: BLE001 - a diagnostic must never raise
+                located = None
+            if located is not None:
+                resolvable += 1
         has_files = await asyncio.to_thread(self._mount_has_any_file)
         return MountDiagnosis(
-            supported=True, completed_downloads=completed, mount_has_files=has_files
+            supported=True,
+            completed_downloads=len(completed),
+            mount_has_files=has_files,
+            resolvable_downloads=resolvable,
+            sampled_downloads=len(sample),
+            client_downloads_dir=client_dir,
         )
+
+    async def _configured_downloads_dir(self) -> str | None:
+        """slskd's own ``directories.downloads`` (its in-container path), best-effort -
+        used only to show the user where slskd saves so they can match it to the mount."""
+        try:
+            options = await self._client.get_options()
+        except Exception:  # noqa: BLE001 - a diagnostic must never raise
+            return None
+        return options.directories.downloads or None
 
     def _mount_has_any_file(self) -> bool:
         """Whether the downloads mount holds any file (bounded DFS, stops at the first

@@ -409,6 +409,15 @@ class DownloadService:
         self._ensure_enabled()
         return await self._orchestrator.retry_task(task_id, user_id, user_role)
 
+    @property
+    def auto_retry_max(self) -> int:
+        """Configured max auto-retry attempts, for the queue UI's attempt counter."""
+        return self._orchestrator.auto_retry_max
+
+    def next_retry_at(self, task) -> float | None:  # noqa: ANN001 - DownloadTask
+        """When a failed/partial task's next auto-retry is due (None if it won't)."""
+        return self._orchestrator.next_retry_at(task)
+
     async def cancel_search(self, user_id: str, job_id: str) -> bool:
         job = await self._store.get_search_job(job_id)
         if job is None:

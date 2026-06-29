@@ -25,6 +25,13 @@ DEFAULT_QUALITY_MAX = "lossless"
 _RANK = {key: rank for rank, key in enumerate(reversed(TIER_KEYS))}
 _LOSSLESS_EXT = {"flac", "alac", "wav", "ape", "wv"}
 _FLAC_MP3_EXT = {"flac", "mp3"}
+# A Soulseek folder search returns every file in the matched folder, so cover art,
+# .cue, .log, .m3u and .nfo arrive alongside the audio. These must never be quality-
+# judged (they have no codec/bitrate) nor enqueued as if they were tracks. This is the
+# set the library importer can actually import - a mirror of library_manager._AUDIO_SUFFIXES
+# (sans dots). Keep it to importable formats only: gating in something we can't import
+# (e.g. .ape/.wv) just enqueues a folder that then fails import - the bug this set prevents.
+_AUDIO_EXT = {"flac", "mp3", "m4a", "m4b", "mp4", "ogg", "oga", "opus", "wav"}
 
 
 def is_tier(key: str) -> bool:
@@ -69,6 +76,12 @@ def candidate_tier(files: list[DownloadSearchResult]) -> str:
 
 def is_flac_or_mp3(file: DownloadSearchResult) -> bool:
     return effective_extension(file) in _FLAC_MP3_EXT
+
+
+def is_audio(file: DownloadSearchResult) -> bool:
+    """True for audio files; False for the art/cue/log/m3u sidecars a Soulseek
+    folder search returns alongside the tracks."""
+    return effective_extension(file) in _AUDIO_EXT
 
 
 def in_range(tier_key: str, quality_min: str, quality_max: str) -> bool:

@@ -239,6 +239,8 @@ function makeTask(overrides: Partial<DownloadTask> = {}): DownloadTask {
 		retry_count: 0,
 		created_at: 1,
 		updated_at: 2,
+		next_retry_at: null,
+		retry_max: 6,
 		...overrides
 	};
 }

@@ -75,11 +75,22 @@ class MountDiagnosis(AppStruct):
     """Cross-check of the client's completed (not-yet-imported) downloads against
     the configured import mount, to catch a silently-misconfigured path - reachable
     but pointing elsewhere, or unreadable (PUID/GID) - before it fails downloads one
-    by one. ``supported=False`` when the client can't introspect its downloads."""
+    by one. ``supported=False`` when the client can't introspect its downloads.
+
+    ``resolvable_downloads`` / ``sampled_downloads`` are the honest signal: of a small
+    sample of slskd's finished transfers, how many can actually be LOCATED under the
+    mount. ``mount_has_files`` alone is fooled when the mount is a parent of the real
+    downloads dir (e.g. the whole media library) - full of files, yet none of slskd's
+    downloads are reachable within the file-finder's walk budget."""
 
     supported: bool = False
     completed_downloads: int = 0
     mount_has_files: bool = True
+    resolvable_downloads: int = 0
+    sampled_downloads: int = 0
+    # The client's own configured downloads dir (slskd's directories.downloads), in the
+    # client's namespace - shown to the user so they can match it to DroppedNeedle's mount.
+    client_downloads_dir: str | None = None
 
 
 @runtime_checkable

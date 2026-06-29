@@ -116,6 +116,26 @@ async def test_enqueue_sends_plain_array():
 
 
 @pytest.mark.asyncio
+async def test_get_options_parses_directories():
+    # Shape verified against a live slskd: directories is top-level with downloads/incomplete.
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/api/v0/options")
+        return httpx.Response(200, json={
+            "directories": {
+                "incomplete": "/data/downloads/slskd_incomplete",
+                "downloads": "/data/downloads/slskd",
+            },
+            "someOtherField": 123,  # unknown fields must be ignored
+        })
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = SlskdClient(http, "http://slskd", "k")
+    options = await client.get_options()
+    assert options.directories.downloads == "/data/downloads/slskd"
+    assert options.directories.incomplete == "/data/downloads/slskd_incomplete"
+
+
+@pytest.mark.asyncio
 async def test_429_raises_rate_limited():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, text="Only one concurrent operation is permitted")

@@ -17,6 +17,7 @@ from services.native.quality_tiers import (
     DEFAULT_QUALITY_MIN,
     file_tier,
     in_range,
+    is_audio,
     is_flac_or_mp3,
     tier_rank,
 )
@@ -65,6 +66,8 @@ class TrackMatcher:
         one-file ``ScoredCandidate`` (consumed identically to an album candidate)."""
         quarantined = await self._store.load_quarantine_set()
         filtered = [r for r in results if (r.username, r.filename) not in quarantined]
+        # drop the art/cue/log sidecars a folder search returns alongside the tracks
+        filtered = [r for r in filtered if is_audio(r)]
         if self._flac_mp3_only:
             filtered = [r for r in filtered if is_flac_or_mp3(r)]
         filtered = [

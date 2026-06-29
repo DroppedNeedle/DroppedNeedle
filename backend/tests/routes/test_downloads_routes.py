@@ -23,6 +23,10 @@ def _task(task_id: str = "t1", user_id: str = "u1", **overrides) -> DownloadTask
 
 
 def _app(service) -> FastAPI:
+    # The queue route asks the (sync) service for auto-retry hints; give the AsyncMock
+    # real return values so responses serialise (a bare AsyncMock hands back coroutines).
+    service.next_retry_at = lambda task: None
+    service.auto_retry_max = 0
     app = FastAPI()
     app.include_router(downloads.router)
     app.dependency_overrides[get_download_service] = lambda: service

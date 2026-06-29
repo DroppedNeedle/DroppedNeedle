@@ -104,14 +104,30 @@ async def get_status(
     # Catch the silent misconfig: a mount that passes the basic checks but where
     # slskd's finished downloads aren't actually visible (wrong path / unreadable).
     advisory: str | None = None
+    slskd_dir: str | None = None
     if configured and mount.ok:
         diag = await client.diagnose_downloads_mount()
-        if diag.supported and diag.completed_downloads > 0 and not diag.mount_has_files:
-            advisory = (
-                f"slskd has {diag.completed_downloads} finished download(s), but the downloads "
-                f"folder at {mount.path} looks empty. Make sure it points to slskd's downloads "
-                f"directory and that the container can read it (check the PUID/GID)."
-            )
+        slskd_dir = diag.client_downloads_dir
+        # "slskd saves to X" - naming the exact path turns guesswork into a checklist.
+        saves_to = f" slskd saves to {slskd_dir}." if slskd_dir else ""
+        if diag.supported and diag.completed_downloads > 0:
+            if not diag.mount_has_files:
+                advisory = (
+                    f"slskd has {diag.completed_downloads} finished download(s), but the downloads "
+                    f"folder at {mount.path} looks empty.{saves_to} Make sure it points to slskd's "
+                    f"downloads directory and that the container can read it (check the PUID/GID)."
+                )
+            elif diag.sampled_downloads > 0 and diag.resolvable_downloads == 0:
+                # Mount has files but NONE of slskd's finished downloads resolve under it -
+                # the classic "mounted a parent (whole media share) instead of slskd's
+                # completed-downloads dir" footgun. The finder then can't reach them.
+                advisory = (
+                    f"None of slskd's {diag.completed_downloads} finished download(s) are visible "
+                    f"under {mount.path}.{saves_to} The downloads mount usually points at a parent "
+                    f"folder (e.g. your whole media share) instead of slskd's completed-downloads "
+                    f"folder. Point it at the completed-downloads folder."
+                )
     return DownloadClientStatusResponse(
-        configured=configured, client=client_status, mount=mount, mount_advisory=advisory
+        configured=configured, client=client_status, mount=mount,
+        mount_advisory=advisory, slskd_downloads_dir=slskd_dir,
     )

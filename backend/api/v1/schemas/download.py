@@ -20,6 +20,9 @@ class DownloadClientStatusResponse(AppStruct):
     # Set when the mount looks healthy but slskd's finished downloads aren't visible on
     # it (the silent misconfig); None when there's nothing to flag.
     mount_advisory: str | None = None
+    # slskd's own configured downloads dir (its in-container path), shown as a hint so the
+    # user can match it to DroppedNeedle's mount. None when slskd didn't report it.
+    slskd_downloads_dir: str | None = None
 
 
 class SearchAlbumRequest(AppStruct):
@@ -100,6 +103,10 @@ class DownloadTaskResponse(AppStruct):
     retry_count: int
     created_at: float
     updated_at: float
+    # Auto-retry hints for the queue UI: when the next attempt is due (None if it won't
+    # auto-retry), and the configured attempt cap (0 when auto-retry is off).
+    next_retry_at: float | None = None
+    retry_max: int = 0
 
 
 class DownloadListResponse(AppStruct):

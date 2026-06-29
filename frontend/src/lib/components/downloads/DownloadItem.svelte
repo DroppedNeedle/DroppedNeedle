@@ -47,6 +47,14 @@
 	const isOwnedByOther = $derived(authStore.isAdmin && task.user_id !== authStore.user?.id);
 
 	let reviewOpen = $state(false);
+	// Once retry is clicked the row is about to move to the active queue (the failed task
+	// is superseded by a new attempt); keep the button disabled until then so a second
+	// click can't spawn a duplicate. Reset only if the retry call itself fails.
+	let retried = $state(false);
+	function onRetry() {
+		retried = true;
+		retry.mutate(task.id, { onError: () => (retried = false) });
+	}
 </script>
 
 <article
@@ -135,12 +143,12 @@
 			{#if canRetry(task)}
 				<button
 					class="btn btn-ghost btn-primary btn-xs"
-					onclick={() => retry.mutate(task.id)}
-					disabled={retry.isPending}
+					onclick={onRetry}
+					disabled={retry.isPending || retried}
 					title="Retry"
 					aria-label="Retry download"
 				>
-					<RotateCcw class="h-3.5 w-3.5" /> Retry
+					<RotateCcw class="h-3.5 w-3.5" /> {retried ? 'Retrying…' : 'Retry'}
 				</button>
 			{/if}
 			{#if isCompleted}

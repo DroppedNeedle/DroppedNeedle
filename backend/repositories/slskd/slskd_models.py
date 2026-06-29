@@ -74,3 +74,18 @@ class SlskdTransfer(msgspec.Struct, rename="camel", kw_only=True):
     direction: str = ""
     place_in_queue: int | None = None
     exception: str | None = None
+
+
+class SlskdDirectories(msgspec.Struct, kw_only=True):
+    """``directories`` block of GET /api/v0/options - where slskd saves files (verified
+    keys: ``downloads``, ``incomplete``; both are slskd's in-container paths)."""
+
+    downloads: str = ""
+    incomplete: str = ""
+
+
+class SlskdOptions(msgspec.Struct, kw_only=True):
+    """Subset of GET /api/v0/options we use: just the directories block, so DroppedNeedle
+    can tell the user the exact path slskd downloads to. Unknown fields ignored."""
+
+    directories: SlskdDirectories = msgspec.field(default_factory=SlskdDirectories)

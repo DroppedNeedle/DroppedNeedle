@@ -81,6 +81,19 @@ def test_url_scheme_preserved_when_already_present():
     assert DownloadClientConnectionSettings(url="").url == ""
 
 
+def test_downloads_subpath_sanitised_and_round_trips(prefs):
+    # leading slashes / "." / ".." components are stripped so the subpath can never
+    # escape the mount, and the safe remainder persists.
+    assert DownloadClientConnectionSettings(downloads_subpath="/downloads/slskd/").downloads_subpath == (
+        "downloads/slskd"
+    )
+    assert DownloadClientConnectionSettings(downloads_subpath="../../etc").downloads_subpath == "etc"
+    prefs.save_download_client_settings(
+        DownloadClientConnectionSettings(url="http://a:5030", downloads_subpath="downloads/slskd/complete")
+    )
+    assert prefs.get_download_client_settings().downloads_subpath == "downloads/slskd/complete"
+
+
 def test_auto_retry_fields_default_and_validate():
     d = DownloadClientConnectionSettings()
     assert d.auto_retry_enabled is True

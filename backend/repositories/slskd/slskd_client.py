@@ -18,6 +18,7 @@ from infrastructure.resilience.retry import CircuitBreaker, with_retry
 
 from .slskd_models import (
     SlskdEnqueueResponse,
+    SlskdOptions,
     SlskdSearchResponse,
     SlskdTransfer,
     SlskdUserSearchResponse,
@@ -84,6 +85,21 @@ class SlskdClient:
             raise SlskdApiError(f"slskd request failed: {exc}") from exc
         self._check(response)
         return response.json()
+
+    @with_retry(
+        circuit_breaker=_slskd_circuit_breaker,
+        retriable_exceptions=_RETRIABLE,
+        non_breaking_exceptions=_NON_BREAKING,
+    )
+    async def get_options(self) -> SlskdOptions:
+        # GET /api/v0/options; we read directories.downloads to tell the user the exact
+        # path slskd saves to (for the downloads-mount diagnostic, not a hot path).
+        try:
+            response = await self._http.get(self._url("/options"), headers=self._headers)
+        except httpx.HTTPError as exc:
+            raise SlskdApiError(f"slskd get_options failed: {exc}") from exc
+        self._check(response)
+        return msgspec.convert(response.json(), type=SlskdOptions, strict=False)
 
     @with_retry(
         circuit_breaker=_slskd_circuit_breaker,

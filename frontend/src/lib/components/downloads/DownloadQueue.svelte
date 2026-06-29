@@ -6,6 +6,7 @@
 	import { getQuarantineQuery } from '$lib/queries/downloads/QuarantineQueries.svelte';
 	import {
 		bucketDownloads,
+		collapseRetryChains,
 		nowPressing,
 		type DownloadTab
 	} from '$lib/queries/downloads/downloadStatus';
@@ -21,7 +22,9 @@
 
 	let activeTab = $state<DownloadTab>('active');
 
-	const tasks = $derived(query.data?.items ?? []);
+	// collapse auto-retry chains so each download is one row (the latest attempt), not
+	// the original-failed + retry pair
+	const tasks = $derived(collapseRetryChains(query.data?.items ?? []));
 	const buckets = $derived(bucketDownloads(tasks));
 	const hero = $derived(nowPressing(tasks));
 

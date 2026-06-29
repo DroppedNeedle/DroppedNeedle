@@ -142,6 +142,42 @@ async def test_quality_gate_drops_out_of_range_keeps_in_range():
 
 
 @pytest.mark.asyncio
+async def test_folder_with_sidecars_still_matches_and_enqueues_audio_only():
+    # A real Soulseek folder search returns the album's sidecars (cover art, cue, log,
+    # m3u) alongside the FLACs. They must not gate the folder out (codec/quality) nor be
+    # enqueued as tracks - the regression behind "no matching candidate" on 173 results.
+    audio = [_mk(_PARENT, f"OK Computer {n:02d}.flac") for n in range(1, 13)]
+    sidecars = [
+        _mk(_PARENT, "cover.jpg", ext="jpg", bitrate=None),
+        _mk(_PARENT, "folder.png", ext="png", bitrate=None),
+        _mk(_PARENT, "OK Computer.cue", ext="cue", bitrate=None),
+        _mk(_PARENT, "OK Computer.log", ext="log", bitrate=None),
+        _mk(_PARENT, "00.m3u", ext="m3u", bitrate=None),
+    ]
+    scorer = AlbumPreflightScorer(_store())  # defaults: flac_mp3_only, mp3_320..lossless
+    candidates = await scorer.rank(_TARGET, audio + sidecars)
+    assert len(candidates) == 1
+    top = candidates[0]
+    assert top.tier == "auto"
+    assert top.coherence == pytest.approx(1.0)  # 12/12 audio, sidecars don't inflate the count
+    # only the FLACs are enqueued; no sidecar would reach (and fail) the importer
+    assert all(f.filename.endswith(".flac") for f in top.files)
+    assert len(top.files) == 12
+
+
+@pytest.mark.asyncio
+async def test_art_only_folder_is_not_a_candidate():
+    # A folder of pure cover art (no audio) must not become a candidate.
+    art = [
+        _mk("Radiohead OK Computer Scans", "front.jpg", ext="jpg", bitrate=None, username="bob"),
+        _mk("Radiohead OK Computer Scans", "back.jpg", ext="jpg", bitrate=None, username="bob"),
+    ]
+    scorer = AlbumPreflightScorer(_store())
+    candidates = await scorer.rank(_TARGET, art)
+    assert candidates == []
+
+
+@pytest.mark.asyncio
 async def test_flac_mp3_only_excludes_other_codecs():
     flac = _mk(_PARENT, "01.flac", ext="flac")
     ogg = _mk(f"{_PARENT} (ogg)", "01.ogg", ext="ogg", bitrate=320, username="bob")

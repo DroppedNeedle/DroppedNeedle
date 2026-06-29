@@ -33,6 +33,7 @@
 	let qualityMin = $state('mp3_320');
 	let qualityMax = $state('lossless');
 	let flacMp3Only = $state(true);
+	let downloadsSubpath = $state('');
 	let autoAccept = $state(0.7);
 	let manualMin = $state(0.5);
 	let stallTimeout = $state(30);
@@ -52,6 +53,7 @@
 			qualityMin = d.quality_min ?? 'mp3_320';
 			qualityMax = d.quality_max ?? 'lossless';
 			flacMp3Only = d.flac_mp3_only ?? true;
+			downloadsSubpath = d.downloads_subpath ?? '';
 			autoAccept = d.preflight_score_auto_accept;
 			manualMin = d.preflight_score_manual_min;
 			stallTimeout = d.download_stall_timeout_minutes ?? 30;
@@ -68,6 +70,8 @@
 	// Set when the mount looks reachable but slskd's finished downloads aren't visible
 	// on it (wrong path / unreadable) - the silent misconfig.
 	const mountAdvisory = $derived(status?.mount_advisory);
+	// slskd's own configured downloads path - the hint for the subfolder fix below.
+	const slskdDownloadsDir = $derived(status?.slskd_downloads_dir);
 
 	const MOUNT_REASONS: Record<string, string> = {
 		not_set: 'No slskd downloads folder is mounted into DroppedNeedle.',
@@ -87,6 +91,7 @@
 			quality_min: qualityMin,
 			quality_max: qualityMax,
 			flac_mp3_only: flacMp3Only,
+			downloads_subpath: downloadsSubpath,
 			preflight_score_auto_accept: autoAccept,
 			preflight_score_manual_min: manualMin,
 			download_stall_timeout_minutes: stallTimeout,
@@ -257,6 +262,32 @@
 							<div class="space-y-1">
 								<p>{mountAdvisory}</p>
 								{#if mount.path}<code class="text-base-content/60">{mount.path}</code>{/if}
+							</div>
+						</div>
+						<div class="space-y-1.5 rounded-box border border-base-content/10 bg-base-200/40 p-3">
+							<label class="text-sm font-medium" for="downloads-subpath">Downloads subfolder</label>
+							<p class="text-xs text-base-content/60">
+								The folder inside your mount where slskd saves completed downloads.
+								{#if slskdDownloadsDir}
+									slskd saves to <code class="text-base-content/70">{slskdDownloadsDir}</code>. Set this
+									to the part of that path inside your mount.
+								{/if}
+							</p>
+							<div class="flex flex-wrap items-center gap-2">
+								<input
+									id="downloads-subpath"
+									type="text"
+									class="input input-sm input-bordered flex-1 font-mono"
+									placeholder="e.g. downloads/slskd/complete"
+									bind:value={downloadsSubpath}
+								/>
+								<button
+									class="btn btn-sm btn-primary"
+									onclick={handleSave}
+									disabled={save.isPending}
+								>
+									{save.isPending ? 'Checking…' : 'Save & re-check'}
+								</button>
 							</div>
 						</div>
 					{:else if mount?.ok}

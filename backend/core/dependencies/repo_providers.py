@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 
 import httpx
@@ -356,6 +357,21 @@ def get_slskd_client() -> "SlskdClient":
     return SlskdClient(http, dc.url, dc.api_key)
 
 
+def _mount_with_subpath(mount_path: str, subpath: str):
+    """Join an optional, user-set downloads subfolder onto the mount, confined to it.
+
+    Lets a user whose mount points at a parent (e.g. the whole media share) aim the
+    finder at slskd's actual downloads dir without re-mounting. Defence-in-depth: drop
+    "", ".", ".." components even though the settings struct already sanitises."""
+    from pathlib import Path
+
+    mount = Path(mount_path)
+    if not subpath:
+        return mount
+    safe = [p for p in re.split(r"[\\/]", subpath) if p and p not in (".", "..")]
+    return mount.joinpath(*safe) if safe else mount
+
+
 @singleton
 def get_slskd_repository() -> "SlskdRepository":
     from pathlib import Path
@@ -368,7 +384,7 @@ def get_slskd_repository() -> "SlskdRepository":
         client=get_slskd_client(),
         url=dc.url,
         api_key=dc.api_key,
-        downloads_mount=Path(settings.slskd_downloads_path),
+        downloads_mount=_mount_with_subpath(settings.slskd_downloads_path, dc.downloads_subpath),
         concurrent_searches=settings.download_client_concurrent_searches,
         concurrent_enqueues=settings.download_client_concurrent_enqueues,
     )

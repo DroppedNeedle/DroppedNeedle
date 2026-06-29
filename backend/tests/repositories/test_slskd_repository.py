@@ -3,6 +3,7 @@ slskd JSON -> DownloadSearchResult translation, query building, path parsing,
 and (username, filenames) status/cancel correlation."""
 
 import asyncio
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -16,8 +17,10 @@ from repositories.protocols.download_client import (
 )
 from repositories.slskd.slskd_client import SlskdClient
 from repositories.slskd.slskd_models import (
+    SlskdDirectories,
     SlskdEnqueueResponse,
     SlskdFile,
+    SlskdOptions,
     SlskdSearchResponse,
     SlskdTransfer,
     SlskdUserSearchResponse,
@@ -406,6 +409,7 @@ async def test_diagnose_mount_flags_completed_downloads_but_empty_mount(tmp_path
     # slskd finished downloads but our (empty) mount shows nothing -> silent misconfig
     client = AsyncMock()
     client.get_all_downloads = AsyncMock(return_value=[_completed("a/01.flac"), _completed("a/02.flac")])
+    client.get_options = AsyncMock(return_value=SlskdOptions())
     repo = SlskdRepository(client=client, url="", api_key="", downloads_mount=tmp_path)
     diag = await repo.diagnose_downloads_mount()
     assert diag.supported is True
@@ -419,10 +423,62 @@ async def test_diagnose_mount_ok_when_mount_has_files(tmp_path):
     (tmp_path / "peer" / "01.flac").write_bytes(b"x")
     client = AsyncMock()
     client.get_all_downloads = AsyncMock(return_value=[_completed("peer/01.flac")])
+    client.get_options = AsyncMock(return_value=SlskdOptions())
     repo = SlskdRepository(client=client, url="", api_key="", downloads_mount=tmp_path)
     diag = await repo.diagnose_downloads_mount()
     assert diag.completed_downloads == 1
     assert diag.mount_has_files is True
+    assert diag.resolvable_downloads == 1  # the finished file is locatable under the mount
+
+
+@pytest.mark.asyncio
+async def test_diagnose_mount_flags_unresolvable_downloads_under_full_parent_mount(tmp_path):
+    # The footgun: the mount is a PARENT of slskd's downloads (e.g. the whole media
+    # library) - full of files, so mount_has_files is True, yet none of slskd's finished
+    # downloads resolve under it. resolvable_downloads is the honest signal.
+    (tmp_path / "library").mkdir()
+    (tmp_path / "library" / "unrelated.flac").write_bytes(b"x")
+    client = AsyncMock()
+    client.get_all_downloads = AsyncMock(return_value=[
+        _completed("slskd/complete/a/01.flac"), _completed("slskd/complete/a/02.flac"),
+    ])
+    client.get_options = AsyncMock(
+        return_value=SlskdOptions(directories=SlskdDirectories(downloads="/data/downloads/slskd/complete"))
+    )
+    repo = SlskdRepository(client=client, url="", api_key="", downloads_mount=tmp_path)
+    diag = await repo.diagnose_downloads_mount()
+    assert diag.completed_downloads == 2
+    assert diag.mount_has_files is True       # fooled by the library file
+    assert diag.sampled_downloads == 2
+    assert diag.resolvable_downloads == 0     # but DN can locate none of slskd's files
+    # and we surface slskd's own path so the advisory can name it
+    assert diag.client_downloads_dir == "/data/downloads/slskd/complete"
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_runs_off_the_event_loop(tmp_path, monkeypatch):
+    # The file finder does potentially large filesystem walks. It must run in a worker
+    # thread, not inline - otherwise a big/misconfigured mount freezes the whole loop
+    # (polling, SSE, requests, the cancel button) -> "won't cancel and everything hangs".
+    repo = SlskdRepository(client=AsyncMock(), url="", api_key="", downloads_mount=tmp_path)
+    release = threading.Event()
+
+    def slow_locate(*_args, **_kwargs):
+        release.wait(timeout=5)  # block the worker thread, not the loop
+        return None
+
+    monkeypatch.setattr(repo, "_locate_file", slow_locate)
+    locate = asyncio.create_task(repo.get_file_path("peer", "album/01.flac"))
+
+    ticks = 0
+    for _ in range(5):
+        await asyncio.sleep(0.01)  # the loop keeps turning only if the walk is off it
+        ticks += 1
+    assert ticks == 5
+    assert not locate.done()  # still blocked in its thread, but the loop ran freely
+
+    release.set()
+    assert await locate is None
 
 
 @pytest.mark.asyncio
@@ -432,6 +488,7 @@ async def test_diagnose_mount_no_completed_downloads_skips_walk(tmp_path):
     client.get_all_downloads = AsyncMock(return_value=[
         SlskdTransfer(id="1", username="peer", filename="a/01.flac", state="InProgress")
     ])
+    client.get_options = AsyncMock(return_value=SlskdOptions())
     repo = SlskdRepository(client=client, url="", api_key="", downloads_mount=tmp_path)
     diag = await repo.diagnose_downloads_mount()
     assert diag.completed_downloads == 0
