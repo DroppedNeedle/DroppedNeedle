@@ -384,3 +384,46 @@ async def test_album_quality_tier_is_the_worst_held_file(manager, tmp_path):
 async def test_album_quality_tier_all_lossless(manager, tmp_path):
     await _upsert(manager, tmp_path / "a.flac", info=_info(file_format="flac", bitrate=900))
     assert await manager.album_quality_tier("rg-1") == "lossless"
+
+
+_REAL_ARTIST_MBID = "88d17133-abbc-42db-9526-4e2c1db60336"
+
+
+@pytest.mark.asyncio
+async def test_upsert_inherits_album_artist_from_release_group(manager, tmp_path):
+    # first file resolved the album's artist; a later tag-poor file (e.g. a held
+    # import) must join that identity, not synthesize a second one that splits
+    # the artist into two library entries
+    await _upsert(manager, tmp_path / "a.flac", track=1, rec="rec-1",
+                  tag=_tag(track_number=1, musicbrainz_album_artist_id=_REAL_ARTIST_MBID))
+    await _upsert(manager, tmp_path / "b.mp3", track=2, rec="rec-2",
+                  tag=_tag(track_number=2))
+    artists, total = await manager.get_artists()
+    assert total == 1
+    assert artists[0].artist_mbid == _REAL_ARTIST_MBID
+    assert artists[0].track_count == 2
+
+
+@pytest.mark.asyncio
+async def test_upsert_compilation_does_not_inherit_album_artist(manager, tmp_path):
+    # a compilation file must stay under Various Artists even when its release
+    # group has a resolved single artist on other files
+    await _upsert(manager, tmp_path / "a.flac", track=1, rec="rec-1",
+                  tag=_tag(track_number=1, musicbrainz_album_artist_id=_REAL_ARTIST_MBID))
+    await _upsert(manager, tmp_path / "b.mp3", track=2, rec="rec-2",
+                  tag=_tag(track_number=2, album_artist="Various Artists"))
+    artists, _total = await manager.get_artists()
+    by_name = {a.artist_name: a for a in artists}
+    assert by_name["Radiohead"].artist_mbid == _REAL_ARTIST_MBID
+    assert by_name["Various Artists"].artist_mbid is None
+
+
+@pytest.mark.asyncio
+async def test_get_artists_never_exposes_synthetic_mbid(manager, tmp_path):
+    # no MB album-artist id anywhere: the synthetic (dashless) Q14 id must stay
+    # internal - leaking it gives the UI a MusicBrainz link that can only 404
+    await _upsert(manager, tmp_path / "a.flac")
+    artists, total = await manager.get_artists()
+    assert total == 1
+    assert artists[0].artist_name == "Radiohead"
+    assert artists[0].artist_mbid is None

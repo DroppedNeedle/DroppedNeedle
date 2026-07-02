@@ -610,6 +610,7 @@ class FileProcessor:
                 disc_number=disc_number,
                 track_title=track_title,
                 artist_name=manifest.artist_name,
+                artist_mbid=manifest.artist_mbid,
                 album_title=manifest.album_title,
                 year=manifest.year,
                 original_filename=source.name,
@@ -659,6 +660,7 @@ class FileProcessor:
             musicbrainz_release_id=held.release_mbid,
             musicbrainz_recording_id=held.recording_mbid or tag.musicbrainz_recording_id,
             musicbrainz_artist_id=tag.musicbrainz_artist_id,
+            musicbrainz_album_artist_id=held.artist_mbid or tag.musicbrainz_album_artist_id,
         )
         target_path = self._library_paths[0] / self._naming.format_path(
             held.naming_template or "", target_tag, info.file_format

@@ -31,6 +31,16 @@ def _synth_artist_mbid(name: str | None) -> str:
     return hashlib.sha1(label.lower().encode("utf-8")).hexdigest()[:32]
 
 
+def _real_mbid(value: str | None) -> str | None:
+    """The value if it is a real (dashed) MusicBrainz id, else None - synthetic
+    Q14 ids are dashless and must never leave the library layer as if real."""
+    return value if value and "-" in value else None
+
+
+def _tag_is_compilation(tag: AudioTag) -> bool:
+    return bool(tag.compilation or tag.album_artist == "Various Artists")
+
+
 _AUDIO_SUFFIXES = {".flac", ".mp3", ".m4a", ".m4b", ".mp4", ".ogg", ".oga", ".opus", ".wav"}
 # files imported within this window are protected from a reconcile race with the
 # orchestrator that may have just moved them
@@ -245,14 +255,22 @@ class LibraryManager(LibraryStub):
         sort_by: str = "name",
         sort_order: str = "asc",
         q: str | None = None,
+        include_synthetic_mbids: bool = False,
     ) -> tuple[list[LibraryArtistSummary], int]:
+        """``include_synthetic_mbids`` is for the compat layer, whose browse-by-id
+        keys off the Q14 ids; the native API must not expose them - the UI would
+        link a synthetic id to a MusicBrainz-backed artist page that can only 404."""
         rows, total = await self._db.get_artists_aggregated(
             limit=limit, offset=offset, sort_by=sort_by, sort_order=sort_order, q=q
         )
         artists = [
             LibraryArtistSummary(
                 artist_name=str(row.get("artist_name") or ""),
-                artist_mbid=row.get("artist_mbid"),
+                artist_mbid=(
+                    row.get("artist_mbid")
+                    if include_synthetic_mbids
+                    else _real_mbid(row.get("artist_mbid"))
+                ),
                 album_count=int(row.get("album_count") or 0),
                 track_count=int(row.get("track_count") or 0),
                 date_added=row.get("date_added"),
@@ -313,6 +331,18 @@ class LibraryManager(LibraryStub):
             raise ValueError(
                 "upsert_file requires release_group_mbid unless source='manual_review'"
             )
+        # one album, one album-artist identity: a file whose tags carry no real
+        # album-artist MBID inherits the identity its release group already resolved
+        # to, instead of synthesizing a name-hash id that splits the artist in two
+        album_artist_override = None
+        if (
+            release_group_mbid
+            and _real_mbid(tag.musicbrainz_album_artist_id) is None
+            and not _tag_is_compilation(tag)
+        ):
+            album_artist_override = await self._db.get_album_artist_for_release_group(
+                release_group_mbid
+            )
         row = self._build_row(
             audio_path,
             tag,
@@ -325,6 +355,7 @@ class LibraryManager(LibraryStub):
             download_task_id=download_task_id,
             source_path=source_path,
             file_mtime=file_mtime,
+            album_artist_override=album_artist_override,
         )
         async with self._library_write_lock:
             file_id = await self._db.upsert_library_file(row)
@@ -524,8 +555,9 @@ class LibraryManager(LibraryStub):
         download_task_id: str | None,
         source_path: str | None = None,
         file_mtime: float | None = None,
+        album_artist_override: tuple[str, str] | None = None,
     ) -> dict:
-        is_compilation = tag.compilation or tag.album_artist == "Various Artists"
+        is_compilation = _tag_is_compilation(tag)
         album_artist_name = (
             "Various Artists" if is_compilation else (tag.album_artist or tag.artist)
         )
@@ -541,6 +573,10 @@ class LibraryManager(LibraryStub):
         album_artist_mbid = tag.musicbrainz_album_artist_id or _synth_artist_mbid(
             album_artist_name
         )
+        if album_artist_override is not None and not is_compilation:
+            # both mbid AND name, mirroring set_album_artist: the album's files must
+            # aggregate under one (id, display name) pair
+            album_artist_mbid, album_artist_name = album_artist_override
         return {
             "release_group_mbid": release_group_mbid,
             "release_mbid": release_mbid,

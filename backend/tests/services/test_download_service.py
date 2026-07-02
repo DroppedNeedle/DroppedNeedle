@@ -568,6 +568,7 @@ async def _record_held(store, path, *, task_id="t-1"):
         user_id="user-a", held_path=str(path), reason="fingerprint_mismatch", source="usenet",
         source_task_id=task_id, release_group_mbid="rg-1", release_mbid=None, recording_mbid="rec-3",
         track_number=3, disc_number=1, track_title="You Shook Me", artist_name="Led Zeppelin",
+        artist_mbid="678d88b2-87b0-403b-b63d-5da7465aecc3",
         album_title="Led Zeppelin", year=1969, original_filename="x.flac", file_format="flac",
         duration_seconds=388.0, evidence_title="X", evidence_artist="Y", evidence_score=0.9,
         naming_template="{album}/{track}",
@@ -661,7 +662,8 @@ async def test_purge_album_downloads_clears_tasks_held_and_quarantine(tmp_path):
     await store.record_held_import(
         user_id="user-a", held_path=str(held_file), reason="fingerprint_mismatch", source="usenet",
         source_task_id=task.id, release_group_mbid=RG, release_mbid=None, recording_mbid=None,
-        track_number=3, disc_number=1, track_title="t", artist_name="a", album_title="b", year=None,
+        track_number=3, disc_number=1, track_title="t", artist_name="a", artist_mbid=None,
+        album_title="b", year=None,
         original_filename="x.flac", file_format="flac", duration_seconds=1.0, evidence_title=None,
         evidence_artist=None, evidence_score=None, naming_template=None,
     )

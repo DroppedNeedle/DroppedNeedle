@@ -492,7 +492,8 @@ def _held_kwargs(**overrides):
         user_id="user-a", held_path="/held/a.flac", reason="fingerprint_mismatch",
         source="usenet", source_task_id="task-1", release_group_mbid="rg-1", release_mbid="rel-1",
         recording_mbid="rec-3", track_number=3, disc_number=1, track_title="You Shook Me",
-        artist_name="Led Zeppelin", album_title="Led Zeppelin", year=1969,
+        artist_name="Led Zeppelin", artist_mbid="678d88b2-87b0-403b-b63d-5da7465aecc3",
+        album_title="Led Zeppelin", year=1969,
         original_filename="a.flac", file_format="flac", duration_seconds=388.0,
         evidence_title="Nobody's Fault but Mine", evidence_artist="Led Zeppelin",
         evidence_score=0.99, naming_template="{album}/{track}",
@@ -512,6 +513,8 @@ async def test_held_import_record_list_get_ownership(store):
     got = await store.get_held_import(hid, "user-a", "user")
     assert got is not None and got.track_title == "You Shook Me"
     assert got.evidence_title == "Nobody's Fault but Mine"  # the AcoustID evidence round-trips
+    # the album-artist MBID round-trips so "import anyway" can stamp the real artist
+    assert got.artist_mbid == "678d88b2-87b0-403b-b63d-5da7465aecc3"
     assert await store.get_held_import(hid, "user-b", "user") is None  # not the owner
     # album scoping (the album page)
     assert len(await store.list_held_imports("user-a", "user", release_group_mbid="rg-1")) == 1

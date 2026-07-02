@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS held_imports (
     disc_number INTEGER,
     track_title TEXT,
     artist_name TEXT,
+    artist_mbid TEXT,
     album_title TEXT,
     year INTEGER,
     held_path TEXT NOT NULL,
@@ -298,6 +299,10 @@ class DownloadStore(PersistenceBase):
                 pass  # duplicate column - already present
             self._migrate_quarantine(conn)
             conn.executescript(_HELD_IMPORTS_DDL)
+            try:
+                conn.execute("ALTER TABLE held_imports ADD COLUMN artist_mbid TEXT")
+            except sqlite3.OperationalError:
+                pass  # duplicate column - already present
             conn.commit()
         finally:
             conn.close()
@@ -757,6 +762,7 @@ class DownloadStore(PersistenceBase):
         disc_number: int | None,
         track_title: str | None,
         artist_name: str | None,
+        artist_mbid: str | None,
         album_title: str | None,
         year: int | None,
         original_filename: str | None,
@@ -786,15 +792,16 @@ class DownloadStore(PersistenceBase):
             cur = conn.execute(
                 """INSERT INTO held_imports
                    (user_id, release_group_mbid, release_mbid, recording_mbid, track_number,
-                    disc_number, track_title, artist_name, album_title, year, held_path,
-                    original_filename, file_format, duration_seconds, reason, evidence_title,
-                    evidence_artist, evidence_score, source, source_task_id, naming_template,
-                    status, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'held',?)""",
+                    disc_number, track_title, artist_name, artist_mbid, album_title, year,
+                    held_path, original_filename, file_format, duration_seconds, reason,
+                    evidence_title, evidence_artist, evidence_score, source, source_task_id,
+                    naming_template, status, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'held',?)""",
                 (user_id, release_group_mbid, release_mbid, recording_mbid, track_number,
-                 disc_number, track_title, artist_name, album_title, year, held_path,
-                 original_filename, file_format, duration_seconds, reason, evidence_title,
-                 evidence_artist, evidence_score, source, source_task_id, naming_template, now),
+                 disc_number, track_title, artist_name, artist_mbid, album_title, year,
+                 held_path, original_filename, file_format, duration_seconds, reason,
+                 evidence_title, evidence_artist, evidence_score, source, source_task_id,
+                 naming_template, now),
             )
             return cur.lastrowid
 

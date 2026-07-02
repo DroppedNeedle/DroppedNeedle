@@ -1541,6 +1541,29 @@ class LibraryDB(PersistenceBase):
 
         return await self._write(operation)
 
+    async def get_album_artist_for_release_group(
+        self, release_group_mbid: str
+    ) -> tuple[str, str] | None:
+        """The (mbid, name) of a release group's already-resolved album artist, if any
+        live non-compilation file carries a real (dashed) MusicBrainz id. Lets a new
+        file joining a known album inherit the album's artist identity instead of
+        synthesizing a second one (Q14) and splitting the artist in two."""
+        normalized = _normalize(release_group_mbid)
+
+        def operation(conn: sqlite3.Connection) -> tuple[str, str] | None:
+            row = conn.execute(
+                "SELECT album_artist_mbid, album_artist_name FROM library_files "
+                "WHERE release_group_mbid = ? AND deleted_at IS NULL "
+                "AND is_compilation = 0 AND album_artist_mbid LIKE '%-%' "
+                "AND album_artist_name IS NOT NULL LIMIT 1",
+                (normalized,),
+            ).fetchone()
+            if row is None:
+                return None
+            return (str(row["album_artist_mbid"]), str(row["album_artist_name"]))
+
+        return await self._read(operation)
+
     async def prune_manual_review_for_imported(self) -> int:
         """Drop pending review rows whose file is now an active ``library_files`` row; returns rows removed."""
 

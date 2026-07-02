@@ -22,6 +22,7 @@ class HeldImport(AppStruct):
     disc_number: int | None = None
     track_title: str | None = None
     artist_name: str | None = None
+    artist_mbid: str | None = None
     album_title: str | None = None
     year: int | None = None
     original_filename: str | None = None
