@@ -47,6 +47,8 @@ class RequestHistoryItem(AppStruct):
     requested_by_name: str | None = None
     reviewed_by_name: str | None = None
     reviewed_at: datetime | None = None
+    download_task_id: str | None = None
+    can_reimport: bool = False
 
 
 class ActiveRequestsResponse(AppStruct):

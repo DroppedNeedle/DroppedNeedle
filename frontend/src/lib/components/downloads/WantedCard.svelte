@@ -1,9 +1,18 @@
 <script lang="ts">
-	import { RotateCcw, TimerOff } from 'lucide-svelte';
+	import { FileDown, RotateCcw, TimerOff } from 'lucide-svelte';
 
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import { retryDownload, stopAutoRetry } from '$lib/queries/downloads/DownloadMutations.svelte';
-	import { formatCountdown, retryLadderState } from '$lib/queries/downloads/downloadStatus';
+	import {
+		reimportDownload,
+		retryDownload,
+		stopAutoRetry
+	} from '$lib/queries/downloads/DownloadMutations.svelte';
+	import {
+		canReimport,
+		formatCountdown,
+		retryLadderState
+	} from '$lib/queries/downloads/downloadStatus';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import { nowSeconds, startSharedClock } from '$lib/stores/clock.svelte';
 	import type { DownloadTask } from '$lib/types';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
@@ -15,6 +24,7 @@
 
 	const retry = retryDownload();
 	const stopRetry = stopAutoRetry();
+	const reimport = reimportDownload();
 
 	// this card owns its clock dependency: the shared tick runs while any Wanted card is
 	// mounted (refcounted -> still one interval), so the countdown ticks without relying on
@@ -129,6 +139,20 @@
 			</div>
 		</div>
 	</div>
+	{#if authStore.isAdmin && canReimport(task)}
+		<div class="mt-2 flex justify-end">
+			<button
+				class="btn btn-ghost btn-xs"
+				onclick={() => reimport.mutate(task.id)}
+				disabled={reimport.isPending}
+				title="Already fixed this in slskd? Check the downloads mount again without re-searching."
+				aria-label="Retry import from slskd"
+			>
+				<FileDown class="h-3.5 w-3.5" />
+				{reimport.isPending ? 'Checking...' : 'Retry import'}
+			</button>
+		</div>
+	{/if}
 </article>
 
 <style>

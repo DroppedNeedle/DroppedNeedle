@@ -439,10 +439,12 @@
 								<Check class="h-4 w-4" />
 								In Library
 							</div>
-							<button class="btn btn-sm btn-error btn-outline gap-1" onclick={ondelete}>
-								<Trash2 class="h-4 w-4" />
-								Remove
-							</button>
+							{#if authStore.isAdmin}
+								<button class="btn btn-sm btn-error btn-outline gap-1" onclick={ondelete}>
+									<Trash2 class="h-4 w-4" />
+									Remove
+								</button>
+							{/if}
 						{:else if isRequested}
 							{#if !headerDownloadTask}
 								<div class="badge badge-lg badge-warning gap-2">
@@ -450,10 +452,12 @@
 									Requested
 								</div>
 							{/if}
-							<button class="btn btn-sm btn-error btn-outline gap-1" onclick={ondelete}>
-								<Trash2 class="h-4 w-4" />
-								Remove
-							</button>
+							{#if authStore.isAdmin}
+								<button class="btn btn-sm btn-error btn-outline gap-1" onclick={ondelete}>
+									<Trash2 class="h-4 w-4" />
+									Remove
+								</button>
+							{/if}
 						{:else}
 							<button
 								class="btn btn-lg gap-2"

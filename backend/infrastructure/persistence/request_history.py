@@ -9,6 +9,19 @@ import msgspec
 
 logger = logging.getLogger(__name__)
 
+_REIMPORTABLE_CONDITION = (
+    "status = 'failed'"
+    " AND download_task_id IS NOT NULL"
+    " AND EXISTS ("
+    "SELECT 1 FROM download_tasks"
+    " WHERE download_tasks.id = request_history.download_task_id"
+    " AND download_tasks.status IN ('failed', 'partial')"
+    " AND download_tasks.source_username IS NOT NULL"
+    " AND download_tasks.search_job_id IS NOT NULL"
+    " AND download_tasks.candidate_index IS NOT NULL"
+    ")"
+)
+
 
 class RequestHistoryRecord(msgspec.Struct):
     musicbrainz_id: str
@@ -436,9 +449,12 @@ class RequestHistoryStore:
                 "AND musicbrainz_id_lower NOT IN "
                 "(SELECT musicbrainz_id_lower FROM request_history_dismissals WHERE user_id = ?)"
             )
-            if status_filter:
+            if status_filter == 'reimportable':
+                where = f"WHERE user_id = ? AND {_REIMPORTABLE_CONDITION} {dismiss_clause}"
+                params: tuple = (user_id, user_id)
+            elif status_filter:
                 where = f"WHERE user_id = ? AND status = ? {dismiss_clause}"
-                params: tuple = (user_id, status_filter, user_id)
+                params = (user_id, status_filter, user_id)
             else:
                 where = f"WHERE user_id = ? {dismiss_clause}"
                 params = (user_id, user_id)
@@ -476,11 +492,14 @@ class RequestHistoryStore:
 
         def operation(conn: sqlite3.Connection) -> tuple[list[RequestHistoryRecord], int]:
             params: tuple[object, ...]
-            where_clause = ""
-            if status_filter:
+            if status_filter == 'reimportable':
+                where_clause = f"WHERE {_REIMPORTABLE_CONDITION}"
+                params = ()
+            elif status_filter:
                 where_clause = "WHERE status = ?"
                 params = (status_filter,)
             else:
+                where_clause = ""
                 params = ()
 
             total_row = conn.execute(

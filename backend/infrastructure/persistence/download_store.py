@@ -438,6 +438,24 @@ class DownloadStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def get_reimportable_task_ids(self, task_ids: list[str]) -> set[str]:
+        if not task_ids:
+            return set()
+
+        def operation(conn: sqlite3.Connection) -> set[str]:
+            placeholders = ",".join("?" * len(task_ids))
+            rows = conn.execute(
+                f"SELECT id FROM download_tasks WHERE id IN ({placeholders})"
+                " AND status IN ('failed', 'partial')"
+                " AND source_username IS NOT NULL"
+                " AND search_job_id IS NOT NULL"
+                " AND candidate_index IS NOT NULL",
+                task_ids,
+            ).fetchall()
+            return {row["id"] for row in rows}
+
+        return await self._read(operation)
+
     async def get_task_for_user(
         self, task_id: str, user_id: str, user_role: str
     ) -> DownloadTask | None:

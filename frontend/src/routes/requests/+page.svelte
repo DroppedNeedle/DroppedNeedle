@@ -630,6 +630,9 @@
 					<option value="importFailed">Import Failed</option>
 					<option value="importBlocked">Import Blocked</option>
 					<option value="cancelled">Cancelled</option>
+					{#if authStore.isAdmin}
+						<option value="reimportable">Can reimport</option>
+					{/if}
 				</select>
 
 				<select
@@ -702,6 +705,7 @@
 								: undefined}
 							onclear={handleClear}
 							onremoved={handleRemoved}
+							onreimported={loadHistory}
 						/>
 					{/each}
 				</div>

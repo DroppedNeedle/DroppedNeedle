@@ -92,6 +92,13 @@ class RequestsPageService:
 
         library_mbids = await self._fetch_library_mbids()
 
+        task_ids = [r.download_task_id for r in records if r.download_task_id]
+        reimportable: set[str] = (
+            await self._download_store.get_reimportable_task_ids(task_ids)
+            if self._download_store is not None
+            else set()
+        )
+
         items = [
             RequestHistoryItem(
                 musicbrainz_id=r.musicbrainz_id,
@@ -116,6 +123,8 @@ class RequestsPageService:
                     if r.reviewed_at
                     else None
                 ),
+                download_task_id=r.download_task_id,
+                can_reimport=r.status == 'failed' and r.download_task_id in reimportable,
             )
             for r in records
         ]

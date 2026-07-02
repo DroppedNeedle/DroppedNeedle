@@ -1171,8 +1171,8 @@ class DownloadOrchestrator:
         task = await self._store.get_task(task_id)
         if task is None:
             raise ResourceNotFoundError("Download task not found")
-        if user_role != "admin" and task.user_id != user_id:
-            raise PermissionDeniedError("Cannot reimport another user's download")
+        if user_role != "admin":
+            raise PermissionDeniedError("Only admins can reimport downloads")
         if task.status not in ("failed", "partial"):
             raise ValidationError("Only failed or partial downloads can be reimported")
         if (

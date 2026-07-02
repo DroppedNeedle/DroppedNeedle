@@ -4,6 +4,8 @@
 	import DeleteAlbumModal from './DeleteAlbumModal.svelte';
 	import ArtistRemovedModal from './ArtistRemovedModal.svelte';
 	import type { ActiveRequestItem, RequestHistoryItem } from '$lib/types';
+	import { reimportDownload } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		ChevronDown,
 		X,
@@ -11,6 +13,7 @@
 		Trash2,
 		Clock,
 		Download,
+		FileDown,
 		Loader,
 		CheckCircle2,
 		XCircle,
@@ -28,9 +31,12 @@
 		onretry?: (mbid: string) => void;
 		onclear?: (mbid: string) => void;
 		onremoved?: () => void;
+		onreimported?: () => void;
 	}
 
-	let { item, mode, oncancel, onretry, onclear, onremoved }: Props = $props();
+	let { item, mode, oncancel, onretry, onclear, onremoved, onreimported }: Props = $props();
+
+	const reimport = reimportDownload();
 
 	let confirmingCancel = $state(false);
 	let showDeleteModal = $state(false);
@@ -362,7 +368,23 @@
 							<RotateCcw class="h-3.5 w-3.5" />
 						</button>
 					{/if}
-					{#if historyItem.status === 'imported' && historyItem.in_library}
+					{#if authStore.isAdmin && historyItem.can_reimport && historyItem.download_task_id}
+						<button
+							class="btn btn-xs btn-ghost"
+							onclick={(e) => {
+								e.stopPropagation();
+								reimport.mutate(historyItem.download_task_id!, {
+									onSuccess: () => onreimported?.()
+								});
+							}}
+							disabled={reimport.isPending}
+							title="Already fixed this in slskd? Check the downloads mount again without re-searching."
+							aria-label="Retry import from slskd"
+						>
+							<FileDown class="h-3.5 w-3.5" />
+						</button>
+					{/if}
+					{#if authStore.isAdmin && historyItem.status === 'imported' && historyItem.in_library}
 						<button
 							class="btn btn-xs btn-ghost text-base-content/40 hover:text-error"
 							onclick={handleRemoveFromLibrary}

@@ -611,6 +611,8 @@ export type RequestHistoryItem = {
 	requested_by_name?: string | null;
 	reviewed_by_name?: string | null;
 	reviewed_at?: string | null;
+	download_task_id?: string | null;
+	can_reimport?: boolean;
 };
 
 export type ActiveRequestsResponse = {

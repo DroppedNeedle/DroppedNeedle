@@ -4,6 +4,7 @@
 	import { STATUS_COLORS } from '$lib/constants';
 	import DeleteAlbumModal from './DeleteAlbumModal.svelte';
 	import ArtistRemovedModal from './ArtistRemovedModal.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
 
 	interface Props {
 		status: 'library' | 'requested';
@@ -62,34 +63,60 @@
 	}
 </script>
 
-<button
-	class="{positioning} rounded-full shadow-sm transition-colors duration-200 group/badge {sizeClasses.button} {lgButtonClass}"
-	style="background-color: {bgColor};"
-	onclick={handleClick}
-	onmouseenter={(e) => {
-		e.currentTarget.style.backgroundColor = '#ef4444';
-	}}
-	onmouseleave={(e) => {
-		e.currentTarget.style.backgroundColor = bgColor;
-		e.currentTarget.style.filter = '';
-	}}
-	aria-label={status === 'library' ? 'Remove from library' : 'Remove request'}
->
-	{#if status === 'library'}
-		<Check
-			class="{sizeClasses.icon} group-hover/badge:hidden"
-			color={colors.secondary}
-			strokeWidth={Number(sizeClasses.strokeWidth)}
+{#if authStore.isAdmin}
+	<button
+		class="{positioning} rounded-full shadow-sm transition-colors duration-200 group/badge {sizeClasses.button} {lgButtonClass}"
+		style="background-color: {bgColor};"
+		onclick={handleClick}
+		onmouseenter={(e) => {
+			e.currentTarget.style.backgroundColor = '#ef4444';
+		}}
+		onmouseleave={(e) => {
+			e.currentTarget.style.backgroundColor = bgColor;
+			e.currentTarget.style.filter = '';
+		}}
+		aria-label={status === 'library' ? 'Remove from library' : 'Remove request'}
+	>
+		{#if status === 'library'}
+			<Check
+				class="{sizeClasses.icon} group-hover/badge:hidden"
+				color={colors.secondary}
+				strokeWidth={Number(sizeClasses.strokeWidth)}
+			/>
+		{:else}
+			<Clock
+				class="{sizeClasses.icon} group-hover/badge:hidden"
+				color={colors.secondary}
+				strokeWidth={Number(sizeClasses.strokeWidth)}
+			/>
+		{/if}
+		<Trash2
+			class="{sizeClasses.icon} hidden group-hover/badge:block"
+			color="white"
+			strokeWidth={2}
 		/>
-	{:else}
-		<Clock
-			class="{sizeClasses.icon} group-hover/badge:hidden"
-			color={colors.secondary}
-			strokeWidth={Number(sizeClasses.strokeWidth)}
-		/>
-	{/if}
-	<Trash2 class="{sizeClasses.icon} hidden group-hover/badge:block" color="white" strokeWidth={2} />
-</button>
+	</button>
+{:else}
+	<span
+		class="{positioning} rounded-full shadow-sm {sizeClasses.button} {lgButtonClass}"
+		style="background-color: {bgColor};"
+		aria-label={status === 'library' ? 'In library' : 'Requested'}
+	>
+		{#if status === 'library'}
+			<Check
+				class={sizeClasses.icon}
+				color={colors.secondary}
+				strokeWidth={Number(sizeClasses.strokeWidth)}
+			/>
+		{:else}
+			<Clock
+				class={sizeClasses.icon}
+				color={colors.secondary}
+				strokeWidth={Number(sizeClasses.strokeWidth)}
+			/>
+		{/if}
+	</span>
+{/if}
 
 {#if showDeleteModal}
 	<DeleteAlbumModal
