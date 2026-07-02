@@ -172,7 +172,7 @@
 					<X class="h-3.5 w-3.5" /> Cancel
 				</button>
 			{/if}
-			{#if authStore.isAdmin && canReimport(task)}
+			{#if canReimport(task)}
 				<button
 					class="btn btn-ghost btn-xs"
 					onclick={() =>
