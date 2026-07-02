@@ -133,12 +133,12 @@ describe('canCancel / canRetry', () => {
 
 describe('canReimport', () => {
 	it('allows reimport for failed/partial tasks that picked a candidate', () => {
-		expect(canReimport(task({ status: 'failed', search_job_id: 'j', candidate_index: 0 }))).toBe(
-			true
-		);
-		expect(canReimport(task({ status: 'partial', search_job_id: 'j', candidate_index: 2 }))).toBe(
-			true
-		);
+		expect(
+			canReimport(task({ status: 'failed', search_job_id: 'j', candidate_index: 0, source_username: 'peer' }))
+		).toBe(true);
+		expect(
+			canReimport(task({ status: 'partial', search_job_id: 'j', candidate_index: 2, source_username: 'peer' }))
+		).toBe(true);
 	});
 
 	it('disallows reimport for a task that never picked a candidate', () => {
