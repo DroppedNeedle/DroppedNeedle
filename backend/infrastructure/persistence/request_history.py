@@ -371,6 +371,22 @@ class RequestHistoryStore:
 
         return await self._read(operation)
 
+    async def async_count_user_requests_since(self, user_id: str, since_iso: str) -> int:
+        """Album asks by one user inside the rolling request-quota window (D9/D20).
+        Any status counts - a pending/awaiting_approval ask is still an ask (that's
+        the point of enforcing at submit). ``requested_at`` is ISO-8601 UTC, so a
+        same-format string compare is chronological."""
+
+        def operation(conn: sqlite3.Connection) -> int:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count FROM request_history "
+                "WHERE user_id = ? AND requested_at >= ?",
+                (user_id, since_iso),
+            ).fetchone()
+            return int(row["count"] if row is not None else 0)
+
+        return await self._read(operation)
+
     async def async_record_review(
         self,
         musicbrainz_id: str,

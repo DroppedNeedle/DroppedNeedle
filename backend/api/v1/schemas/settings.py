@@ -176,6 +176,25 @@ class DownloadPolicySettings(AppStruct):
     quality_cutoff: str = "lossless"
     # Master opt-in for replacing held lower-quality files with better ones.
     upgrade_allowed: bool = False
+    # Where files replaced by a quality upgrade are moved instead of deleted (D19:
+    # upgrade-replacements ONLY; user-initiated deletes stay hard deletes). Empty =
+    # "<first library path>/.recycle" (dot-prefixed, so the scanner skips it).
+    recycle_bin_path: str = ""
+    # Recycled files older than this are pruned by the periodic task.
+    recycle_retention_days: int = 30
+    # --- Cost control (CollectionManagement Feature C). 0 = unlimited. Caps BLOCK
+    # new non-upgrade grabs at/over the ceiling; nothing is ever auto-evicted (A3).
+    # Per-user values are defaults; user_quotas rows override them (NULL = inherit).
+    max_library_size_gb: int = 0
+    default_request_quota_count: int = 0
+    default_request_quota_days: int = 7
+    default_storage_quota_gb: int = 0
+    # --- Background upgrade scan (CollectionManagement Phase 5; opt-in, default OFF).
+    # Runs only while upgrade_allowed is ALSO on; enqueues at most
+    # background_upgrade_max_per_run origin='upgrade' grabs per sweep.
+    background_upgrade_scan_enabled: bool = False
+    background_upgrade_scan_interval_hours: int = 12
+    background_upgrade_max_per_run: int = 3
 
     def __post_init__(self) -> None:
         _validate_range(self.download_stall_timeout_minutes, "download_stall_timeout_minutes", 2, 240)
@@ -187,6 +206,16 @@ class DownloadPolicySettings(AppStruct):
         _validate_range(self.usenet_min_release_age_minutes, "usenet_min_release_age_minutes", 0, 1440)
         _validate_range(self.max_size_mb, "max_size_mb", 0, 1_000_000)
         _validate_range(self.usenet_retention_days, "usenet_retention_days", 0, 100_000)
+        _validate_range(self.recycle_retention_days, "recycle_retention_days", 1, 3650)
+        _validate_range(self.max_library_size_gb, "max_library_size_gb", 0, 1_000_000)
+        _validate_range(self.default_request_quota_count, "default_request_quota_count", 0, 100_000)
+        _validate_range(self.default_request_quota_days, "default_request_quota_days", 1, 3650)
+        _validate_range(self.default_storage_quota_gb, "default_storage_quota_gb", 0, 1_000_000)
+        _validate_range(
+            self.background_upgrade_scan_interval_hours,
+            "background_upgrade_scan_interval_hours", 1, 720,
+        )
+        _validate_range(self.background_upgrade_max_per_run, "background_upgrade_max_per_run", 1, 100)
         _rank = {k: r for r, k in enumerate(("low", "mp3_192", "mp3_256", "mp3_320", "lossless"))}
         if self.quality_min not in _rank:
             self.quality_min = "mp3_320"

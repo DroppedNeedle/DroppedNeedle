@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+
 	import {
 		getDownloadPolicyQuery,
 		saveDownloadPolicy
@@ -7,12 +9,16 @@
 	import type { DownloadPolicySettings } from '$lib/types';
 
 	import QualityRangeSlider from './QualityRangeSlider.svelte';
+	import { QUALITY_TIERS, tierIndex } from './qualityTiers';
 
 	const policyQuery = getDownloadPolicyQuery();
 	const save = saveDownloadPolicy();
 
 	let qualityMin = $state('mp3_320');
 	let qualityMax = $state('lossless');
+	let qualityCutoff = $state('lossless');
+	let upgradeAllowed = $state(false);
+	let backgroundScan = $state(false);
 	let flacMp3Only = $state(true);
 	let verifyDownloads = $state(true);
 	let autoAccept = $state(0.7);
@@ -29,6 +35,9 @@
 		if (d && !seeded) {
 			qualityMin = d.quality_min;
 			qualityMax = d.quality_max;
+			qualityCutoff = d.quality_cutoff;
+			upgradeAllowed = d.upgrade_allowed;
+			backgroundScan = d.background_upgrade_scan_enabled;
 			flacMp3Only = d.flac_mp3_only;
 			verifyDownloads = d.verify_downloads;
 			autoAccept = d.preflight_score_auto_accept;
@@ -42,6 +51,17 @@
 		}
 	});
 
+	// The cutoff lives inside the accepted band (mirrors the backend clamp): when
+	// the band moves past it, follow the nearest edge instead of holding an
+	// unsubmittable value.
+	$effect(() => {
+		const minIdx = tierIndex(qualityMin);
+		const maxIdx = tierIndex(qualityMax);
+		const cutIdx = tierIndex(untrack(() => qualityCutoff));
+		if (cutIdx < minIdx) qualityCutoff = qualityMin;
+		else if (cutIdx > maxIdx) qualityCutoff = qualityMax;
+	});
+
 	async function onSave() {
 		const d = policyQuery.data;
 		if (!d) return;
@@ -49,6 +69,9 @@
 			...d,
 			quality_min: qualityMin,
 			quality_max: qualityMax,
+			quality_cutoff: qualityCutoff,
+			upgrade_allowed: upgradeAllowed,
+			background_upgrade_scan_enabled: backgroundScan,
 			flac_mp3_only: flacMp3Only,
 			verify_downloads: verifyDownloads,
 			preflight_score_auto_accept: autoAccept,
@@ -80,6 +103,51 @@
 		<div class="form-control">
 			<span class="label-text mb-2">Accepted quality range</span>
 			<QualityRangeSlider bind:minKey={qualityMin} bind:maxKey={qualityMax} />
+		</div>
+
+		<div class="rounded-box flex flex-col gap-2 border border-base-300 bg-base-200/40 p-3">
+			<label class="label cursor-pointer justify-start gap-3 p-0">
+				<input
+					type="checkbox"
+					class="toggle toggle-sm toggle-primary"
+					bind:checked={upgradeAllowed}
+				/>
+				<span class="label-text">Allow automatic upgrades</span>
+			</label>
+			<p class="text-xs text-base-content/60">
+				When on, DroppedNeedle looks for better-quality copies of anything below your cutoff.
+			</p>
+			<label class="label cursor-pointer justify-start gap-3 p-0">
+				<input
+					type="checkbox"
+					class="toggle toggle-sm toggle-primary"
+					bind:checked={backgroundScan}
+					disabled={!upgradeAllowed}
+				/>
+				<span class="label-text">Scan for upgrades in the background</span>
+			</label>
+			<p class="text-xs text-base-content/60">
+				A slow periodic sweep that queues a few upgrades at a time. When off, upgrades run only when
+				you trigger them.
+			</p>
+			<label class="form-control max-w-xs">
+				<span class="label-text">Upgrade until quality reaches</span>
+				<select
+					class="select select-bordered select-sm"
+					bind:value={qualityCutoff}
+					disabled={!upgradeAllowed}
+				>
+					{#each QUALITY_TIERS as t (t.key)}
+						<option
+							value={t.key}
+							disabled={tierIndex(t.key) < tierIndex(qualityMin) ||
+								tierIndex(t.key) > tierIndex(qualityMax)}
+						>
+							{t.full}
+						</option>
+					{/each}
+				</select>
+			</label>
 		</div>
 
 		<label class="label cursor-pointer justify-start gap-3">

@@ -52,7 +52,10 @@ const policyOptions = () =>
 			api.global.get<DownloadPolicySettings>(API.downloadClients.policy(), { signal })
 	});
 
-export const getDownloadPolicyQuery = () => createQuery(() => policyOptions());
+// enabled-getter so non-admin pages can render without firing the admin-only
+// policy endpoint (it 403s for plain users)
+export const getDownloadPolicyQuery = (getEnabled: () => boolean = () => true) =>
+	createQuery(() => ({ ...policyOptions(), enabled: getEnabled() }));
 
 async function invalidateClients() {
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbd() });

@@ -17,7 +17,9 @@ const meta: LibraryFileMeta = {
 	sample_rate: 44100,
 	bit_depth: 16,
 	duration_seconds: 260,
-	file_size_bytes: 1048576
+	file_size_bytes: 1048576,
+	current_tier: 'lossless',
+	below_cutoff: false
 };
 
 function renderComponent() {

@@ -17,8 +17,16 @@
 		RefreshCw,
 		Trash2,
 		Mail,
-		KeyRound
+		KeyRound,
+		Gauge
 	} from 'lucide-svelte';
+	import UserQuotaEditor from '$lib/components/settings/UserQuotaEditor.svelte';
+	import {
+		getDownloadPolicyQuery,
+		saveDownloadPolicy
+	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
+	import { toastStore } from '$lib/stores/toast';
+	import { SvelteSet } from 'svelte/reactivity';
 
 	interface UserRecord {
 		id: string;
@@ -51,6 +59,48 @@
 	const rangeEnd = $derived(Math.min(page * PAGE_SIZE, total));
 
 	let showImport = $state(false);
+
+	// Per-user quotas (CollectionManagement Feature C): rows with the editor open,
+	// plus the global defaults every user without an override inherits.
+	const quotaOpen = new SvelteSet<string>();
+	function toggleQuota(userId: string) {
+		if (quotaOpen.has(userId)) quotaOpen.delete(userId);
+		else quotaOpen.add(userId);
+	}
+
+	const policyQuery = getDownloadPolicyQuery();
+	const savePolicy = saveDownloadPolicy();
+	let defRequestCount = $state<number | null>(0);
+	let defRequestDays = $state<number | null>(7);
+	let defStorageGb = $state<number | null>(0);
+	let defaultsSeeded = $state(false);
+
+	$effect(() => {
+		const p = policyQuery.data;
+		if (p && !defaultsSeeded) {
+			defRequestCount = p.default_request_quota_count;
+			defRequestDays = p.default_request_quota_days;
+			defStorageGb = p.default_storage_quota_gb;
+			defaultsSeeded = true;
+		}
+	});
+
+	async function handleSaveQuotaDefaults() {
+		const p = policyQuery.data;
+		if (!p) return;
+		try {
+			// a cleared number input binds null; fall back to off/current values
+			await savePolicy.mutateAsync({
+				...p,
+				default_request_quota_count: defRequestCount ?? 0,
+				default_request_quota_days: defRequestDays ?? p.default_request_quota_days,
+				default_storage_quota_gb: defStorageGb ?? 0
+			});
+			toastStore.show({ message: 'Quota defaults saved', type: 'success' });
+		} catch {
+			toastStore.show({ message: 'Could not save quota defaults', type: 'error' });
+		}
+	}
 
 	let showCreateForm = $state(false);
 	let newName = $state('');
@@ -431,6 +481,17 @@
 							</select>
 						{/if}
 						<button
+							class="btn btn-ghost btn-sm btn-circle {quotaOpen.has(user.id)
+								? 'text-primary'
+								: 'text-base-content/50 hover:text-primary'}"
+							onclick={() => toggleQuota(user.id)}
+							aria-expanded={quotaOpen.has(user.id)}
+							aria-label="Request and storage quota"
+							title="Request and storage quota"
+						>
+							<Gauge class="h-4 w-4" />
+						</button>
+						<button
 							class="btn btn-ghost btn-sm btn-circle text-error/70 hover:text-error hover:bg-error/10"
 							onclick={() => confirmDelete(user)}
 							disabled={user.id === authStore.user?.id}
@@ -443,6 +504,9 @@
 						</button>
 					</div>
 				</div>
+				{#if quotaOpen.has(user.id)}
+					<UserQuotaEditor userId={user.id} displayName={user.display_name} />
+				{/if}
 			{/each}
 		</div>
 	{/if}
@@ -464,6 +528,52 @@
 			>
 		</div>
 	{/if}
+
+	<div class="pt-2 border-t border-base-300 space-y-2">
+		<h3 class="text-xs font-semibold text-base-content/50 uppercase tracking-wider">
+			Quota defaults
+		</h3>
+		<p class="text-xs text-base-content/60">
+			Limits for every plain user without an override (admin and trusted are exempt). 0 = unlimited.
+			Requests use a rolling window; storage counts each user's own downloads.
+		</p>
+		<div class="flex flex-wrap items-end gap-2">
+			<label class="form-control">
+				<span class="label-text text-xs">Requests</span>
+				<input
+					type="number"
+					min="0"
+					class="input input-bordered input-sm w-24"
+					bind:value={defRequestCount}
+				/>
+			</label>
+			<label class="form-control">
+				<span class="label-text text-xs">Window (days)</span>
+				<input
+					type="number"
+					min="1"
+					class="input input-bordered input-sm w-24"
+					bind:value={defRequestDays}
+				/>
+			</label>
+			<label class="form-control">
+				<span class="label-text text-xs">Storage (GB)</span>
+				<input
+					type="number"
+					min="0"
+					class="input input-bordered input-sm w-28"
+					bind:value={defStorageGb}
+				/>
+			</label>
+			<button
+				class="btn btn-primary btn-sm"
+				onclick={handleSaveQuotaDefaults}
+				disabled={savePolicy.isPending || !defaultsSeeded}
+			>
+				Save defaults
+			</button>
+		</div>
+	</div>
 
 	<div class="pt-2 border-t border-base-300 space-y-2">
 		<h3 class="text-xs font-semibold text-base-content/50 uppercase tracking-wider">Role guide</h3>

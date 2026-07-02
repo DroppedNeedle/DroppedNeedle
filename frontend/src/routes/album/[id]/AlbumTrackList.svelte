@@ -30,13 +30,16 @@
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import LibraryFormatBadge from '$lib/components/library/LibraryFormatBadge.svelte';
 	import LibraryTrackRow from '$lib/components/library/LibraryTrackRow.svelte';
-	import { ChevronDown, TriangleAlert } from 'lucide-svelte';
+	import { ChevronDown, TriangleAlert, TrendingUp, Check } from 'lucide-svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import type { LibraryFileMeta, DownloadTask, HeldImport } from '$lib/types';
 	import TrackRequestButton from '$lib/components/downloads/TrackRequestButton.svelte';
 	import TrackDownloadStatus from '$lib/components/downloads/TrackDownloadStatus.svelte';
 	import HeldTrackReview from '$lib/components/downloads/HeldTrackReview.svelte';
 	import { integrationStore } from '$lib/stores/integration';
+	import { authStore } from '$lib/stores/authStore.svelte';
+	import { requestUpgradeTrack } from '$lib/queries/downloads/UpgradeQueries.svelte';
+	import { toastStore } from '$lib/stores/toast';
 
 	interface Props {
 		album: AlbumBasicInfo;
@@ -133,6 +136,39 @@
 		if (heldOpen.has(idx)) heldOpen.delete(idx);
 		else heldOpen.add(idx);
 	}
+
+	// Per-track quality upgrade (admin/trusted, CollectionManagement D18): shown on
+	// in-library tracks sitting below the cutoff while upgrades are on.
+	const upgradeTrack = requestUpgradeTrack();
+	const upgradeQueuedRecordings = new SvelteSet<string>();
+	async function handleTrackUpgrade(
+		recordingMbid: string,
+		title: string,
+		durationMs: number | null | undefined
+	) {
+		try {
+			const result = await upgradeTrack.mutateAsync({
+				recording_mbid: recordingMbid,
+				artist_name: album.artist_name,
+				track_title: title,
+				album_title: album.title,
+				duration_seconds: durationMs ? Math.round(durationMs / 1000) : null,
+				release_group_mbid: releaseGroupMbid || album.musicbrainz_id,
+				artist_mbid: album.artist_id
+			});
+			if (result.status === 'queued') {
+				upgradeQueuedRecordings.add(recordingMbid);
+				toastStore.show({ message: `Looking for a better copy of ${title}`, type: 'success' });
+			} else {
+				toastStore.show({ message: 'Already at or above the cutoff', type: 'info' });
+			}
+		} catch (e) {
+			toastStore.show({
+				message: e instanceof Error ? e.message : "Couldn't start that upgrade",
+				type: 'error'
+			});
+		}
+	}
 </script>
 
 <div class="bg-base-200 rounded-box overflow-visible">
@@ -217,6 +253,13 @@
 					!heldMeta &&
 					!!track.recording_id &&
 					$integrationStore.download_client}
+				{@const upgradeRecordingId = track.recording_id ?? libMeta?.recording_mbid ?? null}
+				{@const showUpgrade =
+					!!libMeta?.below_cutoff &&
+					authStore.isTrusted &&
+					!!upgradeRecordingId &&
+					!trackTask &&
+					$integrationStore.download_client}
 				<li
 					class="list-row group hover:bg-base-300/50 transition-colors p-3 sm:p-4"
 					style={isCurrentlyPlaying ? `background-color: ${colors.accent}20;` : ''}
@@ -257,7 +300,7 @@
 							{formatDuration(track.length)}
 						</div>
 
-						{#if youtubeEnabled || showPreview || showJellyfinBtn || showLocalBtn || showNavidromeBtn || showPlexBtn || showRequest || showTrackDownload || heldMeta}
+						{#if youtubeEnabled || showPreview || showJellyfinBtn || showLocalBtn || showNavidromeBtn || showPlexBtn || showRequest || showTrackDownload || heldMeta || showUpgrade}
 							<div class="flex items-center gap-1.5 shrink-0 ml-auto">
 								{#if showTrackDownload && trackTask}
 									<TrackDownloadStatus task={trackTask} />
@@ -282,6 +325,23 @@
 										durationSeconds={track.length ? Math.round(track.length / 1000) : null}
 										artistMbid={album.artist_id}
 									/>
+								{/if}
+								{#if showUpgrade && upgradeRecordingId}
+									{#if upgradeQueuedRecordings.has(upgradeRecordingId)}
+										<span class="btn btn-ghost btn-xs gap-1 pointer-events-none text-success">
+											<Check class="h-3.5 w-3.5" /> queued
+										</span>
+									{:else}
+										<button
+											class="btn btn-ghost btn-xs gap-1 text-primary"
+											disabled={upgradeTrack.isPending}
+											onclick={() =>
+												void handleTrackUpgrade(upgradeRecordingId, track.title, track.length)}
+											title="Below your quality cutoff - find a better copy"
+										>
+											<TrendingUp class="h-3.5 w-3.5" /> upgrade
+										</button>
+									{/if}
 								{/if}
 								{#if showPreview}
 									<TrackPreviewButton

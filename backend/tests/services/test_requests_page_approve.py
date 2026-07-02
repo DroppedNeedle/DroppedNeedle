@@ -128,3 +128,39 @@ async def test_sync_reconciles_request_from_native_download_task():
 
     history.async_update_status.assert_awaited_once()
     assert history.async_update_status.await_args.args[:2] == ("mbid-x", "failed")
+
+
+@pytest.mark.asyncio
+async def test_approve_over_cap_returns_to_approval_queue_with_reason():
+    """Feature C: a cap/quota rejection at approve time must NOT swallow the request
+    into 'failed' (it silently vanished from every view) - it goes back to
+    awaiting_approval and the admin sees the actual reason."""
+    from core.exceptions import ValidationError
+
+    service, history, download_service = _make()
+    download_service.request_album = AsyncMock(
+        side_effect=ValidationError("Library storage limit reached (12.0 / 10 GB)")
+    )
+
+    resp = await service.approve_request("mbid-1", "admin-id", "Admin")
+
+    assert resp.success is False
+    assert "Library storage limit reached" in resp.message
+    history.async_update_status.assert_awaited_once_with("mbid-1", "awaiting_approval")
+
+
+@pytest.mark.asyncio
+async def test_retry_over_cap_restores_prior_status_with_reason():
+    from core.exceptions import ValidationError
+
+    service, history, download_service = _make(record_status="failed")
+    download_service.request_album = AsyncMock(
+        side_effect=ValidationError("Your storage budget is full (5.0 / 5 GB)")
+    )
+
+    resp = await service.retry_request("mbid-1", user_id="u1", user_role="admin")
+
+    assert resp.success is False
+    assert "storage budget" in resp.message
+    # flipped to 'pending' for the attempt, then restored to the pre-retry status
+    assert history.async_update_status.await_args_list[-1].args == ("mbid-1", "failed")

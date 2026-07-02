@@ -201,10 +201,23 @@ def _one_file(username="bob", filename="bob\\Folder\\01.flac"):
 
 def test_album_query_ladder_escalates_and_dedupes():
     with_year = SlskdRepository._album_query_ladder("Artist", "Album", 2000)
-    assert with_year == ["Artist Album 2000", "Artist Album", "Artist"]
-    # year=None collapses the first two rungs into one.
+    assert with_year == [
+        "Artist Album 2000",
+        "*rtist Album 2000",
+        "Artist Album",
+        "*rtist Album",
+        "Artist",
+        "*rtist",
+    ]
+    # year=None collapses the with-year rungs into the no-year ones.
     no_year = SlskdRepository._album_query_ladder("Artist", "Album", None)
-    assert no_year == ["Artist Album", "Artist"]
+    assert no_year == ["Artist Album", "*rtist Album", "Artist", "*rtist"]
+
+
+def test_album_query_ladder_skips_wildcards_for_unwildcardable_artist():
+    # every word too short to wildcard -> the wildcard rungs dedupe away.
+    ladder = SlskdRepository._album_query_ladder("U2", "Pop", 1997)
+    assert ladder == ["U2 Pop 1997", "U2 Pop", "U2"]
 
 
 @pytest.mark.asyncio
@@ -226,7 +239,7 @@ async def test_search_album_falls_back_to_broad_query_on_empty():
     assert len(results) == 1
     assert fake.queries[0] == SlskdRepository._build_album_query("Aphex Twin", "Selected Ambient Works 85-92", 1992)
     assert fake.queries[-1] == "Aphex Twin"  # escalated all the way to artist-only
-    assert len(fake.queries) == 3
+    assert len(fake.queries) == 5  # exact + wildcard siblings before the hit
 
 
 @pytest.mark.asyncio
@@ -234,7 +247,25 @@ async def test_search_album_empty_when_whole_ladder_empty():
     fake = _LadderFake({})
     repo = SlskdRepository(client=fake, url="u", api_key="k", downloads_mount=Path("/dl"))
     assert await repo.search_album("Nobody", "Nothing", 1999) == []
-    assert len(fake.queries) == 3  # exhausted the ladder before giving up
+    assert len(fake.queries) == 6  # exhausted the ladder (incl. wildcard rungs)
+
+
+@pytest.mark.asyncio
+async def test_search_album_wildcard_rung_bypasses_blocked_artist():
+    # The MUS-49 case: Soulseek's server filters searches containing certain
+    # artist terms, so every exact rung returns 0; the first-letter-wildcarded
+    # sibling defeats the filter and must be tried before broadening.
+    fake = _LadderFake(
+        {"*nter *hikari Take to the Skies 2007": _one_file(filename="bob\\Take to the Skies\\01.flac")}
+    )
+    repo = SlskdRepository(client=fake, url="u", api_key="k", downloads_mount=Path("/dl"))
+    results = await repo.search_album("Enter Shikari", "Take to the Skies", 2007)
+    assert len(results) == 1
+    # wildcard sibling right after the exact rung, before dropping specificity.
+    assert fake.queries == [
+        "Enter Shikari Take to the Skies 2007",
+        "*nter *hikari Take to the Skies 2007",
+    ]
 
 
 @pytest.mark.asyncio
@@ -242,8 +273,13 @@ async def test_search_track_keeps_title_and_does_not_go_artist_only():
     fake = _LadderFake({})
     repo = SlskdRepository(client=fake, url="u", api_key="k", downloads_mount=Path("/dl"))
     await repo.search_track("Artist", "Song", "Album")
-    # two rungs, both keep the track title; never falls back to artist-only.
-    assert fake.queries == ["Artist Song Album", "Artist Song"]
+    # every rung keeps the track title; never falls back to artist-only.
+    assert fake.queries == [
+        "Artist Song Album",
+        "*rtist Song Album",
+        "Artist Song",
+        "*rtist Song",
+    ]
 
 
 @pytest.mark.asyncio
@@ -532,6 +568,23 @@ def test_parse_search_responses_windows_linux_and_disc():
 
 def test_sanitize_query_preserves_hyphenated_names():
     assert SlskdRepository._sanitize_query("AC-DC - Back in Black") == "AC-DC Back in Black"
+
+
+def test_sanitize_query_normalises_typographic_apostrophes():
+    # MusicBrainz uses ’ in titles; shared files are named with straight '.
+    assert SlskdRepository._sanitize_query("Don’t Stop Me Now") == "Don't Stop Me Now"
+
+
+def test_wildcard_artist_first_letter_and_apostrophe_absorption():
+    assert SlskdRepository._wildcard_artist("Enter Shikari") == "*nter *hikari"
+    # apostrophe after the first letter is absorbed into the wildcard, in
+    # either typographic form, so peer apostrophe style stops mattering.
+    assert SlskdRepository._wildcard_artist("D'Angelo") == "*Angelo"
+    assert SlskdRepository._wildcard_artist("D’Angelo") == "*Angelo"
+    # too short to wildcard safely, or not letter-initial: left exact.
+    assert SlskdRepository._wildcard_artist("U2") == "U2"
+    assert SlskdRepository._wildcard_artist("311") == "311"
+    assert SlskdRepository._wildcard_artist("MF DOOM") == "MF *OOM"
 
 
 def test_build_album_query_joins_with_separator():

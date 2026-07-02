@@ -13,7 +13,7 @@ from api.v1.schemas.requests_page import (
     RequestHistoryResponse,
     RetryRequestResponse,
 )
-from core.exceptions import PermissionDeniedError
+from core.exceptions import PermissionDeniedError, ValidationError
 from infrastructure.cover_urls import prefer_release_group_cover_url
 from infrastructure.persistence.request_history import RequestHistoryRecord, RequestHistoryStore
 from repositories.protocols import LibraryRepositoryProtocol
@@ -160,7 +160,16 @@ class RequestsPageService:
                     album_title=record.album_title or "Unknown",
                     year=record.year,
                     artist_mbid=record.artist_mbid,
+                    origin="user",
                 )
+            except ValidationError as e:
+                # A cap/quota rejection (Feature C) is not a failure of the request:
+                # put it BACK in the approval queue (it would otherwise silently
+                # vanish into 'failed') and tell the admin exactly why it can't start.
+                await self._request_history.async_update_status(
+                    musicbrainz_id, "awaiting_approval"
+                )
+                return CancelRequestResponse(success=False, message=str(e))
             except Exception as e:  # noqa: BLE001
                 logger.error(f"Failed to dispatch approved request {musicbrainz_id}: {e}")
                 await self._request_history.async_update_status(
@@ -264,6 +273,8 @@ class RequestsPageService:
             return RetryRequestResponse(success=False, message="Downloads unavailable")
         try:
             await self._request_history.async_update_status(musicbrainz_id, "pending")
+            # A retry re-dispatches an already-recorded ask, so it is not a new
+            # user request for quota purposes (CollectionManagement D20).
             task_id = await self._download_service.request_album(
                 user_id=record.user_id or user_id or "",
                 release_group_mbid=musicbrainz_id,
@@ -271,7 +282,13 @@ class RequestsPageService:
                 album_title=record.album_title or "Unknown",
                 year=record.year,
                 artist_mbid=record.artist_mbid,
+                origin="retry",
             )
+        except ValidationError as e:
+            # cap/quota rejection: restore the pre-retry status (don't strand it as
+            # a phantom 'pending') and surface the reason verbatim
+            await self._request_history.async_update_status(musicbrainz_id, record.status)
+            return RetryRequestResponse(success=False, message=str(e))
         except Exception as e:  # noqa: BLE001
             logger.error("Retry failed for %s: %s", musicbrainz_id, e)
             return RetryRequestResponse(success=False, message=f"Retry failed: {e}")

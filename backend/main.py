@@ -532,6 +532,19 @@ async def lifespan(app: FastAPI):
         ignored_retention_days=advanced_settings.ignored_releases_retention_days,
         interval=advanced_settings.store_prune_interval_hours * 3600,
     )
+
+    from core.tasks import start_background_upgrade_scan_task, start_recycle_bin_prune_task
+
+    start_recycle_bin_prune_task(preferences_service)
+
+    # NOTE: get_auth_store is already imported at module level - re-importing it here
+    # would shadow it as a function-local for ALL of lifespan and break the earlier
+    # use at startup (UnboundLocalError).
+    from core.dependencies import get_download_service
+
+    start_background_upgrade_scan_task(
+        get_download_service, get_auth_store(), preferences_service
+    )
     
     logger.info("DroppedNeedle started successfully")
     

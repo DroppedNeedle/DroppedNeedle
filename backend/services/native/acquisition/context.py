@@ -7,7 +7,7 @@ we hoist it all here.
 
 Grows per migration step: step 1 needed only the quarantine/blocklist snapshot;
 step 2 adds ``now`` (for the Usenet retention/min-age specs) and ``free_bytes`` (the
-free-space spec — supplied with the download client's destination path; ``None``
+free-space spec - supplied with the download client's destination path; ``None``
 means "unknown", and the spec then passes). Later steps add library holdings /
 worst-tier and indexer caps.
 """
@@ -30,6 +30,10 @@ class DecisionContext(msgspec.Struct, frozen=True, kw_only=True):
     now: float = 0.0
     # Free bytes on the download destination filesystem; None = unknown (free-space spec passes).
     free_bytes: int | None = None
+    # The held library tier this run must STRICTLY beat (upgrade-floor spec). Set only
+    # for an origin='upgrade' run - the album's worst tier, or the recording's best tier
+    # for a per-track upgrade (D12). None = not an upgrade run (the spec passes).
+    held_tier: str | None = None
 
 
 async def build_context(
@@ -37,11 +41,15 @@ async def build_context(
     *,
     now: float | None = None,
     free_path: "Path | str | None" = None,
+    held_tier: str | None = None,
 ) -> DecisionContext:
     """The ONLY I/O step. Snapshots the blocklist/quarantine set, stamps ``now``, and
     (when a destination path is supplied) reads its free bytes. ``free_path`` is the
-    download CLIENT's destination dir — not our staging dir — so the scorers leave it
-    ``None`` until the source strategy can supply it (step 4); the spec then passes."""
+    download CLIENT's destination dir - not our staging dir - so the scorers leave it
+    ``None`` until the source strategy can supply it (step 4); the spec then passes.
+    ``held_tier`` arrives pre-resolved by the source strategy (which knows the task's
+    origin and whether the floor is album-worst or per-recording), so this stays the
+    single I/O step without growing a library handle."""
     quarantined = await store.load_quarantine_set()
     free_bytes: int | None = None
     if free_path is not None:
@@ -53,4 +61,5 @@ async def build_context(
         quarantine_set=frozenset(quarantined),
         now=now if now is not None else time.time(),
         free_bytes=free_bytes,
+        held_tier=held_tier,
     )

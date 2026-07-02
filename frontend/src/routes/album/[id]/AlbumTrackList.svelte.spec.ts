@@ -9,6 +9,24 @@ vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 	discardHeldTrack: () => ({ mutate: vi.fn(), isPending: false })
 }));
 
+// the per-track upgrade affordance's mutation hook (QueryClient-dependent)
+vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
+	requestUpgradeTrack: () => ({ mutateAsync: vi.fn(), isPending: false })
+}));
+
+// role gates the upgrade affordance (admin/trusted curators only, D18)
+const auth = vi.hoisted(() => ({ role: 'user' }));
+vi.mock('$lib/stores/authStore.svelte', () => ({
+	authStore: {
+		get isAdmin() {
+			return auth.role === 'admin';
+		},
+		get isTrusted() {
+			return auth.role === 'trusted' || auth.role === 'admin';
+		}
+	}
+}));
+
 // download_client gates the Request button
 vi.mock('$lib/stores/integration', () => ({
 	integrationStore: {
@@ -97,6 +115,8 @@ function libTrack(over: Partial<LibraryFileMeta>): LibraryFileMeta {
 		bit_depth: null,
 		duration_seconds: null,
 		file_size_bytes: 1,
+		current_tier: null,
+		below_cutoff: false,
 		...over
 	};
 }
@@ -111,7 +131,11 @@ const byPosition = new Map<string, LibraryFileMeta>([
 ]);
 
 function renderList(
-	over: { heldByRecording?: Map<string, HeldImport>; heldByPosition?: Map<string, HeldImport> } = {}
+	over: {
+		heldByRecording?: Map<string, HeldImport>;
+		heldByPosition?: Map<string, HeldImport>;
+		byRecording?: Map<string, LibraryFileMeta>;
+	} = {}
 ) {
 	const album = {
 		musicbrainz_id: 'rg-1',
@@ -148,7 +172,7 @@ function renderList(
 		localfilesEnabled: false,
 		navidromeEnabled: false,
 		plexEnabled: false,
-		libraryTracksByRecording: byRecording,
+		libraryTracksByRecording: over.byRecording ?? byRecording,
 		libraryTracksByPosition: byPosition,
 		heldByRecording: over.heldByRecording ?? new Map(),
 		heldByPosition: over.heldByPosition ?? new Map(),
@@ -182,5 +206,45 @@ describe('AlbumTrackList in-library detection', () => {
 		await expect.element(page.getByRole('button', { name: /held/i })).toBeVisible();
 		// ...and it replaces the Request button for that track (nothing left to request)
 		expect(page.getByRole('button', { name: 'Request this track' }).elements()).toHaveLength(0);
+	});
+});
+
+describe('AlbumTrackList upgrade affordance (admin/trusted, below cutoff)', () => {
+	const belowCutoffOwned = new Map<string, LibraryFileMeta>([
+		[
+			'rec-1',
+			libTrack({
+				id: 'a',
+				recording_mbid: 'rec-1',
+				track_number: 1,
+				current_tier: 'mp3_192',
+				below_cutoff: true
+			})
+		]
+	]);
+
+	it('shows the upgrade button to a curator for a below-cutoff owned track', async () => {
+		expect.assertions(2);
+		auth.role = 'trusted';
+		renderList({ byRecording: belowCutoffOwned });
+
+		await expect.element(page.getByRole('button', { name: /upgrade/i })).toBeVisible();
+		expect(page.getByRole('button', { name: /upgrade/i }).elements()).toHaveLength(1);
+	});
+
+	it('hides the upgrade button from a plain user even when below cutoff', async () => {
+		expect.assertions(1);
+		auth.role = 'user';
+		renderList({ byRecording: belowCutoffOwned });
+
+		expect(page.getByRole('button', { name: /upgrade/i }).elements()).toHaveLength(0);
+	});
+
+	it('hides the upgrade button when the track meets the cutoff', async () => {
+		expect.assertions(1);
+		auth.role = 'admin';
+		renderList(); // default fixtures: below_cutoff false everywhere
+
+		expect(page.getByRole('button', { name: /upgrade/i }).elements()).toHaveLength(0);
 	});
 });

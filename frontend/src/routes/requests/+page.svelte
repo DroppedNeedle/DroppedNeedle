@@ -17,7 +17,8 @@
 		ShieldCheck,
 		Check,
 		X,
-		Heart
+		Heart,
+		TrendingUp
 	} from 'lucide-svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import {
@@ -39,9 +40,47 @@
 	import { isAbortError } from '$lib/utils/errorHandling';
 	import { libraryStore } from '$lib/stores/library';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import {
+		getCutoffUnmetQuery,
+		requestUpgradeAlbum
+	} from '$lib/queries/downloads/UpgradeQueries.svelte';
+	import { QUALITY_TIERS } from '$lib/components/settings/qualityTiers';
 
-	type RequestsTab = 'active' | 'history' | 'approvals' | 'auto-download';
+	type RequestsTab = 'active' | 'history' | 'approvals' | 'auto-download' | 'upgrades';
 	let activeTab = $state<RequestsTab>('active');
+
+	// Cutoff-unmet worklist (admin/trusted curators, CollectionManagement D7/D18).
+	const cutoffUnmetQuery = getCutoffUnmetQuery(
+		() => authStore.isTrusted && activeTab === 'upgrades'
+	);
+	const upgradeItems = $derived(cutoffUnmetQuery.data?.items ?? []);
+	const upgradeAlbum = requestUpgradeAlbum();
+	// albums this visit already queued an upgrade for (button flips to "Queued")
+	let upgradeQueued = $state<Set<string>>(new Set());
+
+	function tierLabel(key: string): string {
+		return QUALITY_TIERS.find((t) => t.key === key)?.full ?? key;
+	}
+
+	async function handleUpgrade(item: (typeof upgradeItems)[number]) {
+		try {
+			const result = await upgradeAlbum.mutateAsync({
+				release_group_mbid: item.release_group_mbid,
+				artist_name: item.artist_name ?? 'Unknown',
+				album_title: item.album_title ?? 'Unknown',
+				year: item.year,
+				artist_mbid: item.artist_mbid
+			});
+			if (result.status === 'queued') {
+				upgradeQueued = new Set([...upgradeQueued, item.release_group_mbid]);
+				showToast(`Looking for a better copy of ${item.album_title ?? 'this album'}`);
+			} else {
+				showToast('Already at or above the cutoff', 'info');
+			}
+		} catch (e) {
+			showToast(e instanceof Error ? e.message : "Couldn't start that upgrade", 'error');
+		}
+	}
 
 	// Auto-download standing approvals (TanStack); only fetched for admins on this tab.
 	const autoApprovalsQuery = getAutoDownloadApprovalsQuery(
@@ -499,6 +538,25 @@
 				{/if}
 			</button>
 		{/if}
+		{#if authStore.isTrusted}
+			<button
+				role="tab"
+				class="tab-btn"
+				class:tab-btn-active={activeTab === 'upgrades'}
+				aria-selected={activeTab === 'upgrades'}
+				onclick={() => switchTab('upgrades')}
+			>
+				<TrendingUp class="h-4 w-4" />
+				Upgrades
+				{#if upgradeItems.length > 0}
+					<span
+						class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-base-content/8 text-base-content/50 text-xs font-medium tabular-nums"
+					>
+						{upgradeItems.length}
+					</span>
+				{/if}
+			</button>
+		{/if}
 	</div>
 
 	{#if activeTab === 'active'}
@@ -746,6 +804,124 @@
 								>
 									<X class="h-3.5 w-3.5" />
 									Reject
+								</button>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</div>
+	{:else if activeTab === 'upgrades' && authStore.isTrusted}
+		<div in:fade={{ duration: 150 }}>
+			{#if cutoffUnmetQuery.isError}
+				<div class="alert alert-warning mb-4">
+					<TriangleAlert class="h-5 w-5" />
+					<span>Could not load the upgrade worklist.</span>
+					<button class="btn btn-sm" onclick={() => void cutoffUnmetQuery.refetch()}>Retry</button>
+				</div>
+			{:else if cutoffUnmetQuery.isPending}
+				<div class="flex flex-col gap-2.5">
+					{#each Array(3) as _, i (`upgrade-loading-${i}`)}
+						<div
+							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box animate-pulse"
+							style="animation-delay: {i * 100}ms"
+						>
+							<div class="w-14 h-14 sm:w-16 sm:h-16 bg-base-300 rounded-lg"></div>
+							<div class="flex-1">
+								<div class="h-4 bg-base-300 rounded w-44 mb-2"></div>
+								<div class="h-3 bg-base-300 rounded w-28"></div>
+							</div>
+							<div class="h-8 bg-base-300 rounded-btn w-32"></div>
+						</div>
+					{/each}
+				</div>
+			{:else if !cutoffUnmetQuery.data?.upgrade_allowed}
+				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
+					<div
+						class="w-16 h-16 rounded-full bg-base-content/3 flex items-center justify-center mb-4"
+					>
+						<TrendingUp class="h-8 w-8 text-base-content/15" />
+					</div>
+					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">Upgrades are off</h2>
+					<p class="text-base-content/30 text-sm max-w-xs">
+						Turn on "Allow automatic upgrades" in Settings → Download Clients to list albums below
+						your quality cutoff.
+					</p>
+					{#if authStore.isAdmin}
+						<a href="/settings?tab=download-client" class="btn btn-sm btn-primary mt-4">
+							Open download settings
+						</a>
+					{/if}
+				</div>
+			{:else if upgradeItems.length === 0}
+				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
+					<div class="w-16 h-16 rounded-full bg-success/5 flex items-center justify-center mb-4">
+						<CheckCircle class="h-8 w-8 text-success/30" />
+					</div>
+					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">
+						Everything meets your cutoff
+					</h2>
+					<p class="text-base-content/30 text-sm max-w-xs">
+						No album is below {tierLabel(cutoffUnmetQuery.data.cutoff)}. Albums that fall short will
+						appear here.
+					</p>
+				</div>
+			{:else}
+				<p class="text-xs text-base-content/40 mb-3">
+					Albums whose worst track is below your cutoff ({tierLabel(cutoffUnmetQuery.data.cutoff)}).
+					"Find a better copy" only replaces a file when the new one is better quality; replaced
+					files go to the recycle bin.
+				</p>
+				<div class="flex flex-col gap-2.5">
+					{#each upgradeItems as item, i (item.release_group_mbid)}
+						{@const queued = upgradeQueued.has(item.release_group_mbid)}
+						<div
+							in:fly={{ y: 12, duration: 200, delay: i * 30 }}
+							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box"
+						>
+							<div
+								class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg overflow-hidden bg-base-300"
+							>
+								<AlbumImage
+									mbid={item.release_group_mbid}
+									customUrl={null}
+									alt={item.album_title ?? 'Album'}
+									size="sm"
+									rounded="lg"
+									className="w-full h-full"
+								/>
+							</div>
+							<div class="flex-1 min-w-0">
+								<a
+									href="/album/{item.release_group_mbid}"
+									class="block font-semibold text-sm truncate hover:text-accent hover:underline"
+								>
+									{item.album_title ?? 'Unknown album'}
+								</a>
+								<p class="text-base-content/60 text-xs truncate">
+									{item.artist_name ?? 'Unknown artist'}{item.year ? ` • ${item.year}` : ''}
+								</p>
+								<p class="text-base-content/40 text-xs mt-0.5">
+									<span class="text-warning/80">{tierLabel(item.current_tier)}</span>
+									<span class="text-base-content/25">
+										→ {tierLabel(cutoffUnmetQuery.data.cutoff)}</span
+									>
+									<span class="text-base-content/25"> • {item.track_count} tracks</span>
+								</p>
+							</div>
+							<div class="shrink-0">
+								<button
+									class="btn btn-sm gap-1.5 {queued ? 'btn-ghost' : 'btn-primary btn-outline'}"
+									disabled={queued || upgradeAlbum.isPending}
+									onclick={() => void handleUpgrade(item)}
+								>
+									{#if queued}
+										<Check class="h-3.5 w-3.5" />
+										Queued
+									{:else}
+										<TrendingUp class="h-3.5 w-3.5" />
+										Find a better copy
+									{/if}
 								</button>
 							</div>
 						</div>

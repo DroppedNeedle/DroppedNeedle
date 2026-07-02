@@ -80,6 +80,17 @@ def test_policy_defaults_when_unset(prefs):
     assert policy.usenet_min_release_age_minutes == 30
 
 
+def test_policy_upgrade_fields_default_off_for_preexisting_config(prefs):
+    # A config saved before the upgrade/cutoff fields existed must load with
+    # upgrades OFF and the cutoff at the band ceiling (CollectionManagement A1).
+    prefs._save_config({"download_policy": {"quality_min": "mp3_320", "quality_max": "lossless"}})
+    policy = prefs.get_download_policy()
+    assert policy.upgrade_allowed is False
+    assert policy.quality_cutoff == "lossless"
+    assert policy.recycle_bin_path == ""
+    assert policy.recycle_retention_days == 30
+
+
 def test_policy_migrates_from_legacy_download_client(prefs):
     # An upgraded install has policy fields on the old slskd section and NO
     # download_policy section -> get_download_policy derives them (copy-not-delete).

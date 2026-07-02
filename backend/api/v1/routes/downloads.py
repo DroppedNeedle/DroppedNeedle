@@ -24,6 +24,8 @@ from core.exceptions import ResourceNotFoundError
 from api.v1.schemas.download import (
     CancelDownloadResponse,
     ClearDownloadsResponse,
+    CutoffUnmetItem,
+    CutoffUnmetResponse,
     DownloadFileItem,
     DownloadFilesResponse,
     DownloadListResponse,
@@ -35,10 +37,14 @@ from api.v1.schemas.download import (
     RetryAllResponse,
     RetryDownloadResponse,
     StopRetriesResponse,
+    UpgradeAlbumRequestBody,
+    UpgradeRequestResponse,
+    UpgradeTrackRequestBody,
 )
 from core.dependencies import get_download_service, get_sse_publisher
-from infrastructure.msgspec_fastapi import MsgSpecRoute
-from middleware import CurrentUserDep
+from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
+from middleware import CurrentCuratorDep, CurrentUserDep
+from services.native.download_service import ALREADY_IN_LIBRARY
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +245,78 @@ def _held_to_response(held) -> HeldImportResponse:  # noqa: ANN001 - HeldImport
     )
 
 
-# NOTE: declared before "/{task_id}" so the static path wins over the param route.
+# --- Quality upgrades (CollectionManagement, admin/trusted D18) ----------------
+# NOTE: declared before "/{task_id}" so the static paths win over the param route.
+
+
+@router.get("/cutoff-unmet", response_model=CutoffUnmetResponse)
+async def list_cutoff_unmet(
+    current_user: CurrentCuratorDep, service=Depends(get_download_service)
+):
+    """The upgrade worklist: albums whose worst held tier is below the cutoff.
+    Empty while upgrades are off."""
+    rows = await service.list_cutoff_unmet()
+    return CutoffUnmetResponse(
+        items=[
+            CutoffUnmetItem(
+                release_group_mbid=row["release_group_mbid"],
+                current_tier=row["current_tier"],
+                track_count=row["track_count"],
+                artist_name=row.get("artist_name"),
+                artist_mbid=row.get("artist_mbid"),
+                album_title=row.get("album_title"),
+                year=row.get("year"),
+            )
+            for row in rows
+        ],
+        cutoff=service.quality_cutoff,
+        upgrade_allowed=service.upgrade_allowed,
+    )
+
+
+@router.post("/upgrade/album", response_model=UpgradeRequestResponse)
+async def request_upgrade_album(
+    current_user: CurrentCuratorDep,
+    body: UpgradeAlbumRequestBody = MsgSpecBody(UpgradeAlbumRequestBody),
+    service=Depends(get_download_service),
+):
+    """Fetch a better copy of a below-cutoff album (origin='upgrade'; strictly-better
+    replace happens at import)."""
+    task_id = await service.request_upgrade_album(
+        user_id=current_user.id,
+        release_group_mbid=body.release_group_mbid,
+        artist_name=body.artist_name,
+        album_title=body.album_title,
+        year=body.year,
+        artist_mbid=body.artist_mbid,
+    )
+    if task_id == ALREADY_IN_LIBRARY:
+        return UpgradeRequestResponse(status="satisfied")
+    return UpgradeRequestResponse(status="queued", task_id=task_id)
+
+
+@router.post("/upgrade/track", response_model=UpgradeRequestResponse)
+async def request_upgrade_track(
+    current_user: CurrentCuratorDep,
+    body: UpgradeTrackRequestBody = MsgSpecBody(UpgradeTrackRequestBody),
+    service=Depends(get_download_service),
+):
+    """Fetch a better copy of one below-cutoff track (per-recording floor, D12)."""
+    task_id = await service.request_upgrade_track(
+        user_id=current_user.id,
+        recording_mbid=body.recording_mbid,
+        artist_name=body.artist_name,
+        track_title=body.track_title,
+        album_title=body.album_title,
+        duration_seconds=body.duration_seconds,
+        release_group_mbid=body.release_group_mbid,
+        artist_mbid=body.artist_mbid,
+    )
+    if task_id == ALREADY_IN_LIBRARY:
+        return UpgradeRequestResponse(status="satisfied")
+    return UpgradeRequestResponse(status="queued", task_id=task_id)
+
+
 @router.get("/held", response_model=HeldListResponse)
 async def list_held(
     current_user: CurrentUserDep,

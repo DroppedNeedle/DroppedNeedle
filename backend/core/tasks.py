@@ -838,3 +838,113 @@ def start_store_prune_task(
     )
     TaskRegistry.get_instance().register("store-prune", task)
     return task
+
+
+async def prune_recycle_bin_periodically(
+    preferences_service: PreferencesService,
+    interval: int = 21600,
+) -> None:
+    """Remove upgrade-recycled files past ``recycle_retention_days`` (D19). Policy
+    and bin path are re-read every pass so settings changes apply without restart."""
+    from services.native.recycle_bin import prune, resolve_bin_path
+
+    await asyncio.sleep(600)
+    while True:
+        try:
+            policy = preferences_service.get_download_policy()
+            library = preferences_service.get_library_settings()
+            bin_path = resolve_bin_path(policy.recycle_bin_path, library.library_paths)
+            if bin_path is not None:
+                removed = await asyncio.to_thread(
+                    prune, bin_path, policy.recycle_retention_days
+                )
+                if removed:
+                    logger.info("Recycle bin prune removed %d entries", removed)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error("Recycle bin prune failed: %s", e, exc_info=True)
+
+        await asyncio.sleep(interval)
+
+
+def start_recycle_bin_prune_task(
+    preferences_service: PreferencesService,
+    interval: int = 21600,
+) -> asyncio.Task:
+    task = asyncio.create_task(
+        prune_recycle_bin_periodically(preferences_service, interval=interval)
+    )
+    TaskRegistry.get_instance().register("recycle-bin-prune", task)
+    return task
+
+
+async def run_background_upgrade_sweep(
+    download_service, auth_store, policy  # noqa: ANN001
+) -> int:
+    """One background-upgrade pass (CollectionManagement Phase 5): walk the
+    cutoff-unmet worklist and enqueue at most ``background_upgrade_max_per_run``
+    origin='upgrade' grabs, owned by the oldest admin (upgrades are a curator
+    action, D18 - the scan acts as that curator). Returns how many were enqueued.
+    Dedup/gating live in ``request_upgrade_album`` (active-task dedup + the
+    origin-aware gate), so a sweep can never double-grab."""
+    admins = [u for u in await auth_store.list_users(limit=500) if u.role == "admin"]
+    if not admins:
+        logger.info("Background upgrade sweep skipped: no admin user to own the tasks")
+        return 0
+    owner = admins[0]
+    items = await download_service.list_cutoff_unmet()
+    enqueued = 0
+    for item in items:
+        if enqueued >= policy.background_upgrade_max_per_run:
+            break
+        task_id = await download_service.request_upgrade_album(
+            user_id=owner.id,
+            release_group_mbid=item["release_group_mbid"],
+            artist_name=item.get("artist_name") or "Unknown",
+            album_title=item.get("album_title") or "Unknown",
+            year=item.get("year"),
+            artist_mbid=item.get("artist_mbid"),
+        )
+        if task_id != "already_in_library":
+            enqueued += 1
+    if enqueued:
+        logger.info("Background upgrade sweep enqueued %d upgrade(s)", enqueued)
+    return enqueued
+
+
+async def scan_for_upgrades_periodically(
+    get_download_service,  # noqa: ANN001 - resolved fresh (settings saves rebuild it)
+    auth_store,  # noqa: ANN001 - AuthStore
+    preferences_service: PreferencesService,
+) -> None:
+    """Opt-in, throttled background upgrade scan (default OFF). Both toggles are
+    re-read every pass so enabling it needs no restart; it runs only while
+    ``upgrade_allowed`` AND ``background_upgrade_scan_enabled`` are on."""
+    await asyncio.sleep(900)
+    while True:
+        interval_hours = 12
+        try:
+            policy = preferences_service.get_download_policy()
+            interval_hours = policy.background_upgrade_scan_interval_hours
+            if policy.upgrade_allowed and policy.background_upgrade_scan_enabled:
+                await run_background_upgrade_sweep(
+                    get_download_service(), auth_store, policy
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception as e:  # noqa: BLE001
+            logger.error("Background upgrade sweep failed: %s", e, exc_info=True)
+        await asyncio.sleep(interval_hours * 3600)
+
+
+def start_background_upgrade_scan_task(
+    get_download_service,  # noqa: ANN001
+    auth_store,  # noqa: ANN001
+    preferences_service: PreferencesService,
+) -> asyncio.Task:
+    task = asyncio.create_task(
+        scan_for_upgrades_periodically(get_download_service, auth_store, preferences_service)
+    )
+    TaskRegistry.get_instance().register("background-upgrade-scan", task)
+    return task

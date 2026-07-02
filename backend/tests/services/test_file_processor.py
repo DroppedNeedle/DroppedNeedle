@@ -108,6 +108,7 @@ def _manifest(*files: ExpectedFile, task_id="t1", rg="rg-1", is_track=False) -> 
         source_username="peer",
         release_group_mbid=rg,
         artist_name="Radiohead",
+        artist_mbid="a74b1b7f-71a5-4011-9441-d0b5e4122711",
         album_title="OK Computer",
         naming_template=_TEMPLATE,
         target_files=list(files),
@@ -719,6 +720,7 @@ async def test_fingerprint_mismatch_holds_file_for_review(tmp_path: Path):
     assert len(held) == 1
     assert held[0].release_group_mbid == "rg-1"
     assert held[0].source_task_id == task.id
+    assert held[0].artist_mbid == "a74b1b7f-71a5-4011-9441-d0b5e4122711"  # kept for "import anyway"
     assert held[0].evidence_artist == "Coldplay"  # what AcoustID thought it was
     assert held[0].held_path.startswith(str(held_dir))
     assert Path(held[0].held_path).exists()  # copied into the held area (survives cleanup)
@@ -739,6 +741,7 @@ async def test_place_held_file_imports_bypassing_verify(tmp_path: Path):
         release_mbid="rel-9", recording_mbid="rec-3", track_number=3, disc_number=1,
         track_title="You Shook Me", artist_name="Led Zeppelin", album_title="Led Zeppelin I",
         year=1969, naming_template=_TEMPLATE,
+        artist_mbid="678d88b2-87b0-403b-b63d-5da7465aecc3",
     )
 
     target = await fp.place_held_file(held)
@@ -747,4 +750,7 @@ async def test_place_held_file_imports_bypassing_verify(tmp_path: Path):
     assert "0103" in Path(target).name  # placed at disc 1 / track 3 per the naming template
     tag, _ = AudioTagger().read_tags(Path(target))
     assert tag.musicbrainz_release_group_id == "rg-9"  # album MBID stamped -> rescan-safe
+    # album-artist MBID stamped too, so the library never invents a synthetic
+    # artist id that would split this artist into two entries
+    assert tag.musicbrainz_album_artist_id == "678d88b2-87b0-403b-b63d-5da7465aecc3"
     assert await manager.has_album("rg-9") is True

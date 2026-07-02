@@ -31,6 +31,16 @@ def _synth_artist_mbid(name: str | None) -> str:
     return hashlib.sha1(label.lower().encode("utf-8")).hexdigest()[:32]
 
 
+def _real_mbid(value: str | None) -> str | None:
+    """The value if it is a real (dashed) MusicBrainz id, else None - synthetic
+    Q14 ids are dashless and must never leave the library layer as if real."""
+    return value if value and "-" in value else None
+
+
+def _tag_is_compilation(tag: AudioTag) -> bool:
+    return bool(tag.compilation or tag.album_artist == "Various Artists")
+
+
 _AUDIO_SUFFIXES = {".flac", ".mp3", ".m4a", ".m4b", ".mp4", ".ogg", ".oga", ".opus", ".wav"}
 # files imported within this window are protected from a reconcile race with the
 # orchestrator that may have just moved them
@@ -68,6 +78,11 @@ class LibraryTrack(AppStruct):
     bit_depth: int | None = None
     duration_seconds: float | None = None
     file_size_bytes: int = 0
+    # Quality-upgrade annotations (CollectionManagement Feature B): the file's tier
+    # and whether it sits below the active cutoff while upgrades are on. Drives the
+    # admin/trusted per-track upgrade affordance on the album page.
+    current_tier: str | None = None
+    below_cutoff: bool = False
 
 
 class LibraryTrackListItem(AppStruct):
@@ -162,6 +177,28 @@ class LibraryManager(LibraryStub):
         tiers = [tier_for(row.get("file_format") or "", row.get("bit_rate")) for row in rows]
         return min(tiers, key=tier_rank) if tiers else None
 
+    async def list_cutoff_unmet(self, cutoff: str) -> list[dict]:
+        """The upgrade worklist: albums whose worst held tier is below ``cutoff``,
+        each row annotated with its ``current_tier`` key."""
+        from services.native.quality_tiers import TIER_KEYS, tier_rank
+
+        rows = await self._db.list_cutoff_unmet(tier_rank(cutoff))
+        rank_to_key = tuple(reversed(TIER_KEYS))  # rank index -> tier key
+        for row in rows:
+            row["current_tier"] = rank_to_key[int(row.pop("worst_rank"))]
+        return rows
+
+    async def recording_quality_tier(self, recording_mbid: str) -> str | None:
+        """The BEST held tier for one recording, or ``None`` when it isn't in the
+        library. A per-track upgrade must beat the best copy the library already has
+        (unlike ``album_quality_tier``, whose worst-track semantics measure album
+        completeness, not what a single track's replacement must exceed)."""
+        from services.native.quality_tiers import tier_for, tier_rank
+
+        rows = await self._db.get_library_files_for_recording(recording_mbid)
+        tiers = [tier_for(row.get("file_format") or "", row.get("bit_rate")) for row in rows]
+        return max(tiers, key=tier_rank) if tiers else None
+
     async def has_track(self, recording_mbid: str) -> bool:
         return await self._db.has_recording(recording_mbid)
 
@@ -245,14 +282,22 @@ class LibraryManager(LibraryStub):
         sort_by: str = "name",
         sort_order: str = "asc",
         q: str | None = None,
+        include_synthetic_mbids: bool = False,
     ) -> tuple[list[LibraryArtistSummary], int]:
+        """``include_synthetic_mbids`` is for the compat layer, whose browse-by-id
+        keys off the Q14 ids; the native API must not expose them - the UI would
+        link a synthetic id to a MusicBrainz-backed artist page that can only 404."""
         rows, total = await self._db.get_artists_aggregated(
             limit=limit, offset=offset, sort_by=sort_by, sort_order=sort_order, q=q
         )
         artists = [
             LibraryArtistSummary(
                 artist_name=str(row.get("artist_name") or ""),
-                artist_mbid=row.get("artist_mbid"),
+                artist_mbid=(
+                    row.get("artist_mbid")
+                    if include_synthetic_mbids
+                    else _real_mbid(row.get("artist_mbid"))
+                ),
                 album_count=int(row.get("album_count") or 0),
                 track_count=int(row.get("track_count") or 0),
                 date_added=row.get("date_added"),
@@ -279,8 +324,23 @@ class LibraryManager(LibraryStub):
         rows = await self._db.get_library_files_for_album(release_group_mbid)
         return [self._to_track(row) for row in rows]
 
-    async def get_album_status(self, release_group_mbid: str) -> LibraryAlbumStatus:
+    async def get_album_status(
+        self,
+        release_group_mbid: str,
+        *,
+        quality_cutoff: str | None = None,
+        upgrade_allowed: bool = False,
+    ) -> LibraryAlbumStatus:
+        from services.native.quality_tiers import tier_for, tier_rank
+
         tracks = await self.get_tracks(release_group_mbid)
+        for track in tracks:
+            track.current_tier = tier_for(track.file_format or "", track.bit_rate)
+            track.below_cutoff = (
+                upgrade_allowed
+                and quality_cutoff is not None
+                and tier_rank(track.current_tier) < tier_rank(quality_cutoff)
+            )
         return LibraryAlbumStatus(
             in_library=bool(tracks),
             track_count=len(tracks),
@@ -313,6 +373,18 @@ class LibraryManager(LibraryStub):
             raise ValueError(
                 "upsert_file requires release_group_mbid unless source='manual_review'"
             )
+        # one album, one album-artist identity: a file whose tags carry no real
+        # album-artist MBID inherits the identity its release group already resolved
+        # to, instead of synthesizing a name-hash id that splits the artist in two
+        album_artist_override = None
+        if (
+            release_group_mbid
+            and _real_mbid(tag.musicbrainz_album_artist_id) is None
+            and not _tag_is_compilation(tag)
+        ):
+            album_artist_override = await self._db.get_album_artist_for_release_group(
+                release_group_mbid
+            )
         row = self._build_row(
             audio_path,
             tag,
@@ -325,6 +397,7 @@ class LibraryManager(LibraryStub):
             download_task_id=download_task_id,
             source_path=source_path,
             file_mtime=file_mtime,
+            album_artist_override=album_artist_override,
         )
         async with self._library_write_lock:
             file_id = await self._db.upsert_library_file(row)
@@ -524,8 +597,9 @@ class LibraryManager(LibraryStub):
         download_task_id: str | None,
         source_path: str | None = None,
         file_mtime: float | None = None,
+        album_artist_override: tuple[str, str] | None = None,
     ) -> dict:
-        is_compilation = tag.compilation or tag.album_artist == "Various Artists"
+        is_compilation = _tag_is_compilation(tag)
         album_artist_name = (
             "Various Artists" if is_compilation else (tag.album_artist or tag.artist)
         )
@@ -541,6 +615,10 @@ class LibraryManager(LibraryStub):
         album_artist_mbid = tag.musicbrainz_album_artist_id or _synth_artist_mbid(
             album_artist_name
         )
+        if album_artist_override is not None and not is_compilation:
+            # both mbid AND name, mirroring set_album_artist: the album's files must
+            # aggregate under one (id, display name) pair
+            album_artist_mbid, album_artist_name = album_artist_override
         return {
             "release_group_mbid": release_group_mbid,
             "release_mbid": release_mbid,

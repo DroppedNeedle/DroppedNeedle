@@ -189,8 +189,9 @@ class AlbumPreflightScorer:
         *,
         auto_accept_threshold: float = 0.70,
         manual_threshold: float = 0.50,
+        held_tier: str | None = None,
     ) -> list[ScoredCandidate]:
-        context = await build_context(self._store)
+        context = await build_context(self._store, held_tier=held_tier)
         policy = self._policy
         # Soulseek quarantine is file-granular (a peer may have just one bad file): apply
         # it as a pool pre-filter via the shared spec, so a quarantined file is dropped

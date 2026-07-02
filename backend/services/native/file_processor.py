@@ -28,6 +28,8 @@ from rapidfuzz import fuzz
 from infrastructure.msgspec_fastapi import AppStruct
 from models.audio import AudioInfo, AudioTag
 from models.download_manifest import DownloadManifest, ExpectedFile, ExpectedTrack
+from services.native.quality_tiers import tier_for, tier_rank
+from services.native.recycle_bin import recycle
 from services.native.title_match import names_different_album
 
 if TYPE_CHECKING:
@@ -299,6 +301,16 @@ def _basename(filename: str) -> str:
     return filename.replace("\\", "/").rsplit("/", 1)[-1]
 
 
+def _row_tier(row: dict) -> str:
+    """A library_files row's quality tier, judged exactly like the scanner/gate."""
+    return tier_for(row.get("file_format") or "", row.get("bit_rate"))
+
+
+def _is_strict_upgrade(existing_tier: str, info: AudioInfo) -> bool:
+    """Strictly-better only (D4): equal or worse NEVER replaces."""
+    return tier_rank(tier_for(info.file_format or "", info.bitrate)) > tier_rank(existing_tier)
+
+
 class FileProcessor:
     def __init__(
         self,
@@ -313,6 +325,7 @@ class FileProcessor:
         verify_downloads: bool = True,
         download_store: "DownloadStore | None" = None,
         held_dir: Path | None = None,
+        recycle_bin: Path | None = None,
     ) -> None:
         self._tagger = tagger
         self._naming = naming_engine
@@ -328,6 +341,10 @@ class FileProcessor:
         # "import anyway" review instead of being silently dropped.
         self._download_store = download_store
         self._held_dir = held_dir
+        # Where an upgrade-replaced file is MOVED instead of deleted (D4/D19). None
+        # disables replace-on-import entirely - an upgrade must never destroy the
+        # only copy of the old bytes.
+        self._recycle_bin = recycle_bin
 
     def verify_downloaded_file(
         self,
@@ -522,16 +539,23 @@ class FileProcessor:
             manifest.naming_template, target_tag, info.file_format
         )
 
+        # Position-dedup seam: an upgrade import that strictly beats the occupying
+        # file falls THROUGH (so the AcoustID check below still runs, D10) and
+        # retires the old file after publishing; anything else keeps the existing
+        # copy exactly as before.
+        replace_old: Path | None = None
         if target_tag.track_number:
             present = await self._library.get_file_at_position(
                 manifest.release_group_mbid, target_tag.disc_number or 1, target_tag.track_number
             )
             if present is not None and present.get("file_path") != str(target_path):
-                try:
-                    source.unlink()
-                except OSError:
-                    logger.warning("Could not remove duplicate source %s", source)
-                return Path(present["file_path"])
+                replace_old = self._position_upgrade_target(manifest.origin, present, info)
+                if replace_old is None:
+                    try:
+                        source.unlink()
+                    except OSError:
+                        logger.warning("Could not remove duplicate source %s", source)
+                    return Path(present["file_path"])
 
         if self._verify_downloads and self._fingerprinter is not None:
             fp = await self._fingerprinter.fingerprint(source)
@@ -550,12 +574,20 @@ class FileProcessor:
         try:
             target_path.parent.mkdir(parents=True, exist_ok=True)
             if target_path.exists():
-                try:
-                    source.unlink()
-                except OSError:
-                    logger.warning("Could not remove leftover source %s", source)
+                if await self._same_path_upgrade_applies(manifest.origin, target_path, info):
+                    await self._replace_same_path(source, target_path, target_tag)
+                else:
+                    try:
+                        source.unlink()
+                    except OSError:
+                        logger.warning("Could not remove leftover source %s", source)
             else:
                 await asyncio.to_thread(self._import_into_library, source, target_path, target_tag)
+            # Retire on BOTH branches: a crash between publish and retire leaves the
+            # target present on the re-run, and the old file must still be replaced
+            # (else two active rows share one (disc, track) slot).
+            if replace_old is not None:
+                await self._retire_replaced_file(replace_old)
             await self._library.upsert_file(
                 target_path, target_tag, info,
                 release_group_mbid=manifest.release_group_mbid,
@@ -569,6 +601,80 @@ class FileProcessor:
                 f"Import failed for {source.name}: {exc}", reason=IMPORT_FAILED, filename=source.name
             ) from exc
         return target_path
+
+    # --- Replace-on-import (CollectionManagement D4/D18/D19) --------------------
+    # Fires ONLY for an origin='upgrade' import, and only strictly-better. Two
+    # shapes: same-path (mp3_192 -> mp3_320, identical filename - recycle BEFORE the
+    # in-place publish) and different-path (mp3 -> flac - publish, soft-delete the
+    # old row, recycle the old file). Everything else keeps today's add-only skips.
+
+    def _position_upgrade_target(self, origin: str, present: dict, info: AudioInfo) -> Path | None:
+        """The occupied slot's old file path when this upgrade import may replace it
+        (strictly better + a recycle bin to preserve the old bytes), else ``None``
+        (the caller keeps the existing file - today's dedup behaviour)."""
+        if origin != "upgrade" or self._recycle_bin is None:
+            return None
+        if _is_strict_upgrade(_row_tier(present), info):
+            return Path(present["file_path"])
+        return None
+
+    async def _existing_tier_at(self, path: Path) -> str | None:
+        """Tier of the file currently at ``path``: the library row when it has one,
+        else the file's own tags. ``None`` = undeterminable - the caller must then
+        KEEP the existing file (never replace what we can't judge)."""
+        rows = await self._library.get_attributions_for_paths([str(path)])
+        row = rows.get(str(path))
+        if row is not None and row.get("file_format"):
+            return _row_tier(row)
+        try:
+            _tag, info = await asyncio.to_thread(self._tagger.read_tags, path)
+        except Exception:  # noqa: BLE001 - unreadable existing file -> don't touch it
+            return None
+        return tier_for(info.file_format or "", info.bitrate)
+
+    async def _same_path_upgrade_applies(
+        self, origin: str, target_path: Path, info: AudioInfo
+    ) -> bool:
+        if origin != "upgrade" or self._recycle_bin is None:
+            return False
+        existing_tier = await self._existing_tier_at(target_path)
+        return existing_tier is not None and _is_strict_upgrade(existing_tier, info)
+
+    async def _replace_same_path(
+        self, source: Path, target_path: Path, target_tag: AudioTag
+    ) -> None:
+        """Same-path replace: recycle the current file BEFORE the in-place
+        ``os.replace`` publish (publishing first would destroy the old bytes with
+        nothing left to recycle); restore it if the import then fails."""
+        recycled = await asyncio.to_thread(recycle, target_path, self._recycle_bin)
+        logger.info(
+            "process.upgrade_replaced",
+            extra={"target": target_path.name, "recycled_to": str(recycled)},
+        )
+        try:
+            await asyncio.to_thread(self._import_into_library, source, target_path, target_tag)
+        except BaseException:
+            try:
+                await asyncio.to_thread(shutil.move, str(recycled), str(target_path))
+            except OSError:
+                logger.error(
+                    "Upgrade import failed AND the old file could not be restored; "
+                    "it is preserved at %s", recycled,
+                )
+            raise
+
+    async def _retire_replaced_file(self, old_path: Path) -> None:
+        """Different-path replace, after the new file is published: soft-delete the
+        old row, then recycle the old file (order per plan - the row must go first
+        so a crash between the two can't leave an active row for a recycled file)."""
+        await self._library.soft_delete_file(str(old_path))
+        try:
+            await asyncio.to_thread(recycle, old_path, self._recycle_bin)
+            logger.info("process.upgrade_replaced", extra={"replaced": str(old_path)})
+        except OSError as exc:
+            # Import succeeded and the row is gone; a stranded old file may be
+            # re-adopted by a later reconcile - surface it rather than fail the import.
+            logger.warning("Upgrade-replaced file %s could not be recycled: %s", old_path, exc)
 
     async def _hold_for_review(
         self,
@@ -602,6 +708,7 @@ class FileProcessor:
                 held_path=str(held_path),
                 reason="fingerprint_mismatch",
                 source=task.source or "soulseek",
+                origin=manifest.origin,
                 source_task_id=manifest.task_id,
                 release_group_mbid=manifest.release_group_mbid,
                 release_mbid=manifest.release_mbid,
@@ -610,6 +717,7 @@ class FileProcessor:
                 disc_number=disc_number,
                 track_title=track_title,
                 artist_name=manifest.artist_name,
+                artist_mbid=manifest.artist_mbid,
                 album_title=manifest.album_title,
                 year=manifest.year,
                 original_filename=source.name,
@@ -659,15 +767,43 @@ class FileProcessor:
             musicbrainz_release_id=held.release_mbid,
             musicbrainz_recording_id=held.recording_mbid or tag.musicbrainz_recording_id,
             musicbrainz_artist_id=tag.musicbrainz_artist_id,
+            musicbrainz_album_artist_id=held.artist_mbid or tag.musicbrainz_album_artist_id,
         )
         target_path = self._library_paths[0] / self._naming.format_path(
             held.naming_template or "", target_tag, info.file_format
         )
+        # D10 confirm-replace: an upgrade's held file (AcoustID disagreed, a human
+        # judged it correct) performs the same strictly-better replace as a normal
+        # upgrade import. Non-upgrade held imports keep today's behaviour exactly.
+        origin = held.origin
+        if origin == "user" and self._download_store is not None and held.source_task_id:
+            # legacy rows (held before origin was persisted) fall back to the task,
+            # which may since have been cleared - the persisted column is authoritative
+            task = await self._download_store.get_task(held.source_task_id)
+            if task is not None:
+                origin = task.origin
+        replace_old: Path | None = None
+        if origin == "upgrade" and held.track_number and held.release_group_mbid:
+            present = await self._library.get_file_at_position(
+                held.release_group_mbid, held.disc_number or 1, held.track_number
+            )
+            if present is not None and present.get("file_path") != str(target_path):
+                replace_old = self._position_upgrade_target(origin, present, info)
+                if replace_old is None:
+                    # equal/worse never replaces (D4) - keep the existing copy
+                    source.unlink(missing_ok=True)
+                    return Path(present["file_path"])
         target_path.parent.mkdir(parents=True, exist_ok=True)
         if target_path.exists():
-            source.unlink(missing_ok=True)
+            if await self._same_path_upgrade_applies(origin, target_path, info):
+                await self._replace_same_path(source, target_path, target_tag)
+            else:
+                source.unlink(missing_ok=True)
         else:
             await asyncio.to_thread(self._import_into_library, source, target_path, target_tag)
+        # retire on both branches (see _place_matched_file: crash-rerun safety)
+        if replace_old is not None:
+            await self._retire_replaced_file(replace_old)
         await self._library.upsert_file(
             target_path,
             target_tag,
@@ -785,6 +921,10 @@ class FileProcessor:
         # but the files themselves never were) and skips fingerprinting a copy we
         # discard. Known track numbers only; an untagged file (track 0) falls through to
         # the path check below.
+        # An upgrade import that strictly beats the occupying file falls through (the
+        # fingerprint check below still runs first, D10) and retires the old file
+        # after publishing; anything else keeps the existing copy exactly as before.
+        replace_old: Path | None = None
         if target_tag.track_number:
             present = await self._library.get_file_at_position(
                 manifest.release_group_mbid,
@@ -792,23 +932,25 @@ class FileProcessor:
                 target_tag.track_number,
             )
             if present is not None and present.get("file_path") != str(target_path):
-                logger.info(
-                    "process.duplicate_position",
-                    extra={
-                        "task_id": manifest.task_id,
-                        "file": _basename(expected.filename),
-                        "disc": target_tag.disc_number or 1,
-                        "track": target_tag.track_number,
-                    },
-                )
-                # the track is already in the library from another source - drop the
-                # redundant slskd copy and keep the existing import (counted a success)
-                try:
-                    source.unlink()
-                except OSError:
-                    logger.warning("Could not remove duplicate source %s", source)
-                self._prune_empty_source_dirs(source)
-                return Path(present["file_path"])
+                replace_old = self._position_upgrade_target(manifest.origin, present, info)
+                if replace_old is None:
+                    logger.info(
+                        "process.duplicate_position",
+                        extra={
+                            "task_id": manifest.task_id,
+                            "file": _basename(expected.filename),
+                            "disc": target_tag.disc_number or 1,
+                            "track": target_tag.track_number,
+                        },
+                    )
+                    # the track is already in the library from another source - drop the
+                    # redundant slskd copy and keep the existing import (counted a success)
+                    try:
+                        source.unlink()
+                    except OSError:
+                        logger.warning("Could not remove duplicate source %s", source)
+                    self._prune_empty_source_dirs(source)
+                    return Path(present["file_path"])
 
         # duration sanity, always on: catches "right filename, wrong audio".
         # Tolerance is the larger of 15s or 10% of the expected length, so normal
@@ -850,15 +992,19 @@ class FileProcessor:
             target_path.parent.mkdir(parents=True, exist_ok=True)
 
             if target_path.exists():
-                # already imported on a prior run; drop the leftover slskd source
-                logger.info(
-                    "Target %s already present; skipping import (already imported)", target_path
-                )
-                try:
-                    source.unlink()
-                except OSError:
-                    logger.warning("Could not remove leftover source %s", source)
-                self._prune_empty_source_dirs(source)
+                if await self._same_path_upgrade_applies(manifest.origin, target_path, info):
+                    # _import_into_library consumes the source + prunes its dirs
+                    await self._replace_same_path(source, target_path, target_tag)
+                else:
+                    # already imported on a prior run; drop the leftover slskd source
+                    logger.info(
+                        "Target %s already present; skipping import (already imported)", target_path
+                    )
+                    try:
+                        source.unlink()
+                    except OSError:
+                        logger.warning("Could not remove leftover source %s", source)
+                    self._prune_empty_source_dirs(source)
             else:
                 # copy/tag/rename are blocking I/O -> run off the event loop
                 await asyncio.to_thread(
@@ -879,6 +1025,10 @@ class FileProcessor:
                         "target": target_path.name,
                     },
                 )
+
+            # retire on both branches (see _place_matched_file: crash-rerun safety)
+            if replace_old is not None:
+                await self._retire_replaced_file(replace_old)
 
             await self._library.upsert_file(
                 target_path,

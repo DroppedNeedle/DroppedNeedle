@@ -46,6 +46,21 @@ _USENET_SETTLE_SECONDS = 20.0
 _PASSWORD_MARKERS = ("password", "passworded", "encrypt")
 
 
+async def _upgrade_held_tier(library, task) -> "str | None":  # noqa: ANN001
+    """The held library tier an ``origin='upgrade'`` task must strictly beat, resolved
+    with the right scope (D12): the recording's BEST copy for a per-track upgrade, the
+    album's WORST tier otherwise. ``None`` for every non-upgrade origin - a retry of a
+    partially-imported user download must NOT inherit a floor from the partial files,
+    or the retry would reject the very candidates that complete the album."""
+    if library is None or task.origin != "upgrade":
+        return None
+    if task.download_type == "track" and task.recording_mbid:
+        return await library.recording_quality_tier(task.recording_mbid)
+    if task.release_group_mbid:
+        return await library.album_quality_tier(task.release_group_mbid)
+    return None
+
+
 @runtime_checkable
 class SourceStrategy(Protocol):
     """One acquisition source's behaviour. The orchestrator holds a ``{name: strategy}``
@@ -112,7 +127,7 @@ class SoulseekStrategy:
 
     def __init__(  # noqa: ANN001
         self, *, indexer, scorer, track_matcher, client, store, file_processor,
-        staging, manifest_codec, naming_template,
+        staging, manifest_codec, naming_template, library=None,
     ):
         self._indexer = indexer
         self._scorer = scorer
@@ -123,6 +138,8 @@ class SoulseekStrategy:
         self._staging = Path(staging)
         self._manifest_codec = manifest_codec
         self._naming_template = naming_template
+        # Resolves the held tier an origin='upgrade' run must beat (upgrade-floor, D12).
+        self._library = library
 
     @property
     def client(self):  # noqa: ANN201
@@ -145,28 +162,33 @@ class SoulseekStrategy:
         return
 
     async def search_and_score(self, task, *, timeout, auto, manual):  # noqa: ANN001, ANN201
+        held_tier = await _upgrade_held_tier(self._library, task)
         if task.download_type == "track":
             target = TargetTrack(
                 artist_name=task.artist_name, track_title=task.track_title or "",
                 album_title=task.album_title, duration_seconds=task.track_duration_seconds,
+                recording_mbid=task.recording_mbid,
             )
             indexer_results = await self._indexer.search_track(
                 task.artist_name, task.track_title or "", task.album_title, timeout=timeout
             )
             results = [r.soulseek for r in indexer_results if r.soulseek is not None]
             return await self._track_matcher.rank(
-                target, results, auto_accept_threshold=auto, manual_threshold=manual
+                target, results, auto_accept_threshold=auto, manual_threshold=manual,
+                held_tier=held_tier,
             )
         target = TargetAlbum(
             artist_name=task.artist_name, album_title=task.album_title,
             year=task.year, track_count=task.track_count,
+            release_group_mbid=task.release_group_mbid,
         )
         indexer_results = await self._indexer.search_album(
             task.artist_name, task.album_title, task.year, task.track_count, timeout=timeout
         )
         results = [r.soulseek for r in indexer_results if r.soulseek is not None]
         return await self._scorer.rank(
-            target, results, auto_accept_threshold=auto, manual_threshold=manual
+            target, results, auto_accept_threshold=auto, manual_threshold=manual,
+            held_tier=held_tier,
         )
 
     async def enqueue(self, task, candidate, *, strict_track_duration):  # noqa: ANN001, ANN201
@@ -203,6 +225,7 @@ class SoulseekStrategy:
                 username=candidate.username,
                 filenames=[f.filename for f in candidate.files],
             ),
+            origin=task.origin,
             release_group_mbid=task.release_group_mbid,
             release_mbid=task.release_mbid,
             artist_mbid=task.artist_mbid,
@@ -289,7 +312,7 @@ class UsenetStrategy:
     def __init__(  # noqa: ANN001
         self, *, indexer, scorer, client, store, file_processor, import_settle_seconds,
         staging, manifest_codec, naming_template, album_service,
-        category, priority, post_processing, min_release_age_seconds,
+        category, priority, post_processing, min_release_age_seconds, library=None,
     ):
         self._indexer = indexer
         self._scorer = scorer
@@ -301,6 +324,8 @@ class UsenetStrategy:
         self._manifest_codec = manifest_codec
         self._naming_template = naming_template
         self._album_service = album_service
+        # Resolves the held tier an origin='upgrade' run must beat (upgrade-floor, D12).
+        self._library = library
         self._category = category
         self._priority = priority
         self._post_processing = post_processing
@@ -382,9 +407,13 @@ class UsenetStrategy:
         )
 
     async def search_and_score(self, task, *, timeout, auto, manual):  # noqa: ANN001, ANN201
+        # A track upgrade still fetches the album NZB (D4), but its floor is the
+        # RECORDING's held tier - _upgrade_held_tier scopes by download_type.
+        held_tier = await _upgrade_held_tier(self._library, task)
         target = TargetAlbum(
             artist_name=task.artist_name, album_title=task.album_title,
             year=task.year, track_count=task.track_count,
+            release_group_mbid=task.release_group_mbid,
         )
         indexer_results = await self._indexer.search_album(
             task.artist_name, task.album_title, task.year, task.track_count, timeout=timeout
@@ -393,6 +422,7 @@ class UsenetStrategy:
         return await self._scorer.rank(
             target, releases, auto_accept_threshold=auto,
             manual_threshold=manual, track_count=task.track_count,
+            held_tier=held_tier,
         )
 
     async def enqueue(self, task, candidate, *, strict_track_duration):  # noqa: ANN001, ANN201
@@ -422,6 +452,7 @@ class UsenetStrategy:
         manifest = DownloadManifest(
             task_id=task.id,
             handle=TaskHandle(source="usenet", job_name=job_name),
+            origin=task.origin,
             release_group_mbid=task.release_group_mbid,
             release_mbid=task.release_mbid,
             artist_mbid=task.artist_mbid,

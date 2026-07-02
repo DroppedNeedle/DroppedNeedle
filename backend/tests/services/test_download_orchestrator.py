@@ -113,6 +113,18 @@ class _FakeLibrary:
     async def has_track(self, recording_mbid):
         return recording_mbid in self.present_tracks or bool(self.rows)
 
+    async def album_quality_tier(self, release_group_mbid):
+        # worst held tier for the upgrade floor; None = album not held
+        from services.native.quality_tiers import tier_for, tier_rank
+
+        tiers = [
+            tier_for(r.get("file_format") or "", r.get("bit_rate")) for r in self.rows
+        ]
+        return min(tiers, key=tier_rank) if tiers else None
+
+    async def recording_quality_tier(self, recording_mbid):
+        return None
+
 
 class _StubIndexer:
     """Search half of the split (D2). The orchestrator unwraps ``.soulseek`` then
@@ -335,6 +347,21 @@ async def test_process_task_no_match_fails(tmp_path: Path):
     final = await store.get_task(task.id)
     assert final.status == "failed"
     assert "No matching release" in (final.error_message or "")
+
+
+@pytest.mark.asyncio
+async def test_upgrade_task_with_no_candidates_ends_non_failed(tmp_path: Path):
+    """No candidate beat the upgrade floor: the library is intact, so the task ends
+    quietly (cancelled + 'No better copy found'), never in the failed bucket
+    (CollectionManagement Feature B §6)."""
+    store, orch, *_ = _build(tmp_path, scorer_result=[])
+    task = await _new_task(store, origin="upgrade")
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "cancelled"
+    assert "No better copy found" in (final.error_message or "")
 
 
 @pytest.mark.asyncio
@@ -861,6 +888,33 @@ async def test_retry_task_creates_new_clean_task(tmp_path: Path):
     assert new_task.retry_count == 1
     assert new_task.status == "queued"
     orch.dispatch.assert_called_once_with(new_id)
+
+
+@pytest.mark.asyncio
+async def test_retry_task_sets_retry_origin(tmp_path: Path):
+    """A retried user task becomes origin='retry' so quota counts ignore it
+    (CollectionManagement D20)."""
+    store, orch, *_ = _build(tmp_path)
+    orch.dispatch = MagicMock()
+    task = await _new_task(store, status="failed")
+    assert task.origin == "user"
+
+    new_id = await orch.retry_task(task.id, "user-a", "user")
+
+    assert (await store.get_task(new_id)).origin == "retry"
+
+
+@pytest.mark.asyncio
+async def test_retry_task_propagates_upgrade_origin(tmp_path: Path):
+    """An upgrade's retry must stay an upgrade - the origin-aware gate and
+    replace-on-import key off origin='upgrade' (CollectionManagement D18)."""
+    store, orch, *_ = _build(tmp_path)
+    orch.dispatch = MagicMock()
+    task = await _new_task(store, status="failed", origin="upgrade")
+
+    new_id = await orch.retry_task(task.id, "user-a", "user")
+
+    assert (await store.get_task(new_id)).origin == "upgrade"
 
 
 @pytest.mark.asyncio

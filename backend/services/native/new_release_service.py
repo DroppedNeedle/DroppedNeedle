@@ -228,6 +228,7 @@ class NewReleaseService:
                 artist_name=artist.artist_name,
                 album_title=title,
                 artist_mbid=artist.artist_mbid,
+                origin="user",
             )
         except ConfigurationError:
             logger.info(

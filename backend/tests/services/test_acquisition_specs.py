@@ -30,6 +30,7 @@ from services.native.acquisition.specs.quarantine import quarantine
 from services.native.acquisition.specs.retention import retention
 from services.native.acquisition.specs.sample import sample
 from services.native.acquisition.specs.terms import ignored_terms, required_terms
+from services.native.acquisition.specs.upgrade_floor import upgrade_floor
 from services.native.acquisition.specs.wrong_album import wrong_album
 from services.native.acquisition.specs.wrong_edition import wrong_edition
 
@@ -362,6 +363,54 @@ def test_free_space_accepts_ample():
     ctx = DecisionContext(free_bytes=10_000 * _MB)
     cand = Candidate(source="usenet", size_bytes=1_000 * _MB)
     assert isinstance(free_space(cand, _TARGET, ctx, _POLICY), Accept)
+
+
+# --- upgrade_floor spec (CollectionManagement D12) ----------------------------
+
+def test_upgrade_floor_passes_when_not_an_upgrade_run():
+    # held_tier None = not an upgrade run (or target not held): everything passes,
+    # so a first acquisition is never wrongly rejected. This is also the reconcile
+    # point with the origin-aware album gate: a satisfied album never reaches the
+    # spec, and an unheld one arrives here with held_tier None.
+    ctx = DecisionContext(held_tier=None)
+    cand = Candidate(source="soulseek", tier="mp3_192")
+    assert isinstance(upgrade_floor(cand, _TARGET, ctx, _POLICY), Accept)
+
+
+def test_upgrade_floor_rejects_equal_and_worse():
+    ctx = DecisionContext(held_tier="mp3_320")
+    for tier in ("mp3_320", "mp3_256", "mp3_192", "low"):
+        decision = upgrade_floor(Candidate(source="soulseek", tier=tier), _TARGET, ctx, _POLICY)
+        assert isinstance(decision, Reject), tier
+        assert decision.code is RejectCode.NOT_AN_UPGRADE
+        assert decision.disposition is Disposition.PERMANENT
+
+
+def test_upgrade_floor_accepts_strictly_better():
+    ctx = DecisionContext(held_tier="mp3_320")
+    cand = Candidate(source="soulseek", tier="lossless")
+    assert isinstance(upgrade_floor(cand, _TARGET, ctx, _POLICY), Accept)
+
+
+def test_upgrade_floor_unknown_tier_defers_to_import_guard():
+    # Usenet titles can hide the codec; the strictly-better check re-runs at
+    # placement, so an unknown tier passes here (mirrors quality_range).
+    ctx = DecisionContext(held_tier="mp3_320")
+    for tier in ("unknown", ""):
+        cand = Candidate(source="usenet", tier=tier)
+        assert isinstance(upgrade_floor(cand, _TARGET, ctx, _POLICY), Accept), tier
+
+
+def test_upgrade_floor_registered_in_pipeline():
+    # A held mp3_320 album: an equal-tier candidate must be dropped by the shared
+    # pipeline (not just the standalone spec).
+    ctx = DecisionContext(held_tier="mp3_320")
+    decision = pipeline.run(
+        Candidate(source="soulseek", tier="mp3_320", match_text="Radiohead - OK Computer"),
+        _TARGET, ctx, _POLICY,
+    )
+    assert isinstance(decision, Reject)
+    assert decision.code is RejectCode.NOT_AN_UPGRADE
 
 
 # --- build_context (the single I/O step) -------------------------------------

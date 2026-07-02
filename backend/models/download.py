@@ -116,6 +116,10 @@ class DownloadTask(AppStruct):
     # soulseek→slskd, usenet→sabnzbd. Drives the "via album NZB" UI label and
     # source-scoped failover. Defaulted so old rows decode as soulseek.
     source: str = "soulseek"
+    # Why the task exists: "user" (a request), "retry" (re-dispatch of a failed task)
+    # or "upgrade" (a curator-triggered quality upgrade). Orthogonal to ``source``;
+    # defaulted so old rows decode as user requests.
+    origin: str = "user"
     source_username: str | None = None
     source_directory: str | None = None
     search_query: str | None = None

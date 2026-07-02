@@ -87,3 +87,23 @@ async def test_match_prefers_flac_over_better_matched_mp3():
     candidate = await TrackMatcher(_store()).match(_TARGET, [mp3, flac])
     assert candidate is not None
     assert candidate.files[0].username == "bob"  # FLAC tier wins absolutely
+
+
+@pytest.mark.asyncio
+async def test_rank_held_tier_floor_keeps_only_strictly_better():
+    """Per-track upgrade floor (D12): with held_tier set, only files STRICTLY above
+    the recording's held tier survive - an equal-tier copy is never a wasted grab."""
+    results = [
+        _file("A/Airbag.flac", "A", ext="flac", bitrate=900, username="flac-peer"),
+        _file("B/Airbag.mp3", "B", ext="mp3", bitrate=320, username="mp3320-peer"),
+        _file("C/Airbag.mp3", "C", ext="mp3", bitrate=192, username="mp3192-peer"),
+    ]
+    matcher = TrackMatcher(_store(), quality_min="low")
+
+    ranked = await matcher.rank(_TARGET, results, held_tier="mp3_320")
+
+    assert [c.username for c in ranked] == ["flac-peer"]  # only lossless beats mp3_320
+
+    # no floor (not an upgrade run): everything in range still ranks
+    ranked = await matcher.rank(_TARGET, results)
+    assert {c.username for c in ranked} == {"flac-peer", "mp3320-peer", "mp3192-peer"}

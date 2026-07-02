@@ -7,11 +7,12 @@ from api.v1.schemas.request import (
     BatchRequestResponse,
     RequestAcceptedResponse,
 )
-from core.exceptions import ExternalServiceError
+from core.exceptions import ExternalServiceError, ValidationError
 from services.native.download_service import ALREADY_IN_LIBRARY
 
 if TYPE_CHECKING:
     from services.native.download_service import DownloadService
+    from services.quota_service import QuotaService
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +26,11 @@ class RequestService:
         self,
         request_history: RequestHistoryStore,
         download_service: "DownloadService",
+        quota_service: "QuotaService | None" = None,
     ):
         self._request_history = request_history
         self._download_service = download_service
+        self._quota = quota_service
 
     async def request_album(
         self,
@@ -68,6 +71,16 @@ class RequestService:
                     musicbrainz_id=musicbrainz_id,
                     status="awaiting_approval",
                 )
+            # Request-count quota at SUBMIT (Feature C layer 1, D20): the ask is
+            # recorded here long before a download task exists, so this is the only
+            # honest place to count it. The byte caps ALSO fail fast here
+            # (task-creation keeps the enforcement backstop): without this, a user's
+            # ask sits awaiting approval and then dies at approve time. After the
+            # dedup early-returns, so re-asking for an in-flight album keeps its
+            # friendly answer even while over quota.
+            if self._quota is not None:
+                await self._quota.check_request_quota(user_id, user_role)
+                await self._quota.check_storage_admission(user_id or "", "user")
             await self._request_history.async_record_request(
                 musicbrainz_id=musicbrainz_id,
                 artist_name=artist or "Unknown",
@@ -80,6 +93,8 @@ class RequestService:
                 requested_by_name=requested_by_name,
                 initial_status=initial_status,
             )
+        except ValidationError:
+            raise  # a quota/cap rejection carries its own user-facing message
         except Exception as e:  # noqa: BLE001
             logger.error("Failed to record request history for %s: %s", musicbrainz_id, e)
             raise ExternalServiceError(f"Failed to record request: {e}")
@@ -103,7 +118,19 @@ class RequestService:
                 album_title=album or "Unknown",
                 year=year,
                 artist_mbid=artist_mbid,
+                origin="user",
             )
+        except ValidationError as e:
+            # cap/quota said no at dispatch (a race past the submit-time check):
+            # surface the reason verbatim as a 400 rather than a wrapped 503
+            try:
+                await self._request_history.async_update_status(
+                    musicbrainz_id, "failed",
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            raise
         except Exception as e:  # noqa: BLE001
             logger.error("Failed to dispatch download for %s: %s", musicbrainz_id, e)
             try:
@@ -162,6 +189,13 @@ class RequestService:
                     skipped=skipped,
                 )
 
+            # A batch of N counts as N asks (A4); over-quota rejects the WHOLE batch
+            # (partial acceptance would silently drop albums the user asked for).
+            # Byte caps fail fast here too (see request_album).
+            if self._quota is not None:
+                await self._quota.check_request_quota(user_id, user_role, len(new_items))
+                await self._quota.check_storage_admission(user_id or "", "user")
+
             await self._request_history.async_bulk_record_requests(
                 new_items,
                 monitor_artist=monitor_artist,
@@ -193,6 +227,7 @@ class RequestService:
                         album_title=item.get("album_title") or "Unknown",
                         year=item.get("year"),
                         artist_mbid=item.get("artist_mbid"),
+                        origin="user",
                     )
                 except Exception as e:  # noqa: BLE001 - one bad item must not sink the batch
                     logger.error("Batch download dispatch failed for %s: %s", mbid, e)
@@ -214,7 +249,7 @@ class RequestService:
                 skipped=skipped,
                 overflow=0,
             )
-        except ExternalServiceError:
+        except (ExternalServiceError, ValidationError):
             raise
         except Exception as e:  # noqa: BLE001
             logger.error("Batch request failed: %s", e)

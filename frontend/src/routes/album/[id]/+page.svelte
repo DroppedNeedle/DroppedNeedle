@@ -65,6 +65,7 @@
 				downloadClientConfigured={$integrationStore.download_client}
 				libraryInLibrary={state.libraryInLibrary}
 				libraryTrackCount={state.libraryTrackCount}
+				libraryBelowCutoff={state.libraryBelowCutoff}
 				mbTrackCount={state.tracksInfo?.total_tracks ?? 0}
 				releaseGroupMbid={album.musicbrainz_id}
 				onrequest={state.handleRequest}

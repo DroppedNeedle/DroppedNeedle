@@ -60,8 +60,10 @@ class LibraryViewService:
         q: str | None = None,
         user: "UserRecord | None" = None,
     ) -> tuple[list[ViewArtist], int]:
+        # synthetic (Q14) ids stay: compat browse-by-id keys off them for MBID-less artists
         items, total = await self._lm.get_artists(
-            limit=limit, offset=offset, sort_by=sort_by, sort_order=sort_order, q=q
+            limit=limit, offset=offset, sort_by=sort_by, sort_order=sort_order, q=q,
+            include_synthetic_mbids=True,
         )
         artists = [self._artist_from_summary(s) for s in items]
         await self._overlay_favorites(artists, "artist", lambda a: a.artist_mbid, user)

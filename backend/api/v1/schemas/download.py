@@ -260,8 +260,54 @@ class TrackRequestBody(AppStruct):
     duration_seconds: int | None = None
     release_group_mbid: str | None = None
     artist_mbid: str | None = None
+    # MB RELEASE mbid (an edition): a SOFT acquisition target (D14) threaded into
+    # DownloadTask.release_mbid - same value, two names (release_id on the wire).
+    release_id: str | None = None
 
 
 class TrackRequestResponse(AppStruct):
     status: str  # "queued" | "already_in_library"
+    task_id: str | None = None
+
+
+class CutoffUnmetItem(AppStruct):
+    """One upgrade-worklist row: an album whose worst held tier is below the cutoff."""
+
+    release_group_mbid: str
+    current_tier: str
+    track_count: int
+    artist_name: str | None = None
+    artist_mbid: str | None = None
+    album_title: str | None = None
+    year: int | None = None
+
+
+class CutoffUnmetResponse(AppStruct):
+    items: list[CutoffUnmetItem]
+    cutoff: str
+    upgrade_allowed: bool
+
+
+class UpgradeAlbumRequestBody(AppStruct):
+    release_group_mbid: str
+    artist_name: str
+    album_title: str
+    year: int | None = None
+    artist_mbid: str | None = None
+
+
+class UpgradeTrackRequestBody(AppStruct):
+    recording_mbid: str
+    artist_name: str
+    track_title: str
+    album_title: str | None = None
+    duration_seconds: int | None = None
+    release_group_mbid: str | None = None
+    artist_mbid: str | None = None
+
+
+class UpgradeRequestResponse(AppStruct):
+    # "queued" = an upgrade task was created (or an active one already exists);
+    # "satisfied" = nothing to upgrade (at/above cutoff, or upgrades are off).
+    status: str
     task_id: str | None = None

@@ -73,6 +73,26 @@ class SetRoleRequest(AppStruct):
     role: str
 
 
+class UserQuotaOverrideBody(AppStruct):
+    """Per-user quota override (CollectionManagement Feature C). ``None`` inherits
+    the global default from the download policy; 0 = unlimited."""
+
+    request_quota_count: int | None = None
+    request_quota_days: int | None = None
+    storage_quota_gb: int | None = None
+
+
+class UserQuotaResponse(AppStruct):
+    user_id: str
+    override: UserQuotaOverrideBody
+    effective_request_quota_count: int
+    effective_request_quota_days: int
+    effective_storage_quota_gb: int
+    requests_in_window: int
+    storage_bytes: int
+    exempt: bool
+
+
 class ImportCandidateResponse(AppStruct):
     provider: str
     provider_uid: str

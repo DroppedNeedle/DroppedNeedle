@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, Depends
 
 from api.v1.schemas.download import TrackRequestBody, TrackRequestResponse
-from core.dependencies import get_download_service
+from core.dependencies import get_download_service, get_quota_service
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from middleware import CurrentUserDep
 from services.native.download_service import ALREADY_IN_LIBRARY
@@ -26,7 +26,12 @@ async def request_track(
     current_user: CurrentUserDep,
     body: TrackRequestBody = MsgSpecBody(TrackRequestBody),
     service=Depends(get_download_service),
+    quota=Depends(get_quota_service),
 ):
+    # Track asks bypass the approval queue (existing behaviour) but still count
+    # toward the rolling request quota (Feature C layer 1, D20) - their download
+    # task IS the ask, so the gate runs at this submit point.
+    await quota.check_request_quota(current_user.id, current_user.role)
     task_id = await service.request_track(
         user_id=current_user.id,
         recording_mbid=recording_mbid,
@@ -36,6 +41,7 @@ async def request_track(
         duration_seconds=body.duration_seconds,
         release_group_mbid=body.release_group_mbid,
         artist_mbid=body.artist_mbid,
+        release_mbid=body.release_id,
     )
     if task_id == ALREADY_IN_LIBRARY:
         return TrackRequestResponse(status="already_in_library")

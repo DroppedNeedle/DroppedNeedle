@@ -256,6 +256,8 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 
 	const libraryInLibrary = $derived(libraryStatus?.in_library ?? false);
 	const libraryTrackCount = $derived(libraryStatus?.track_count ?? 0);
+	// any held track below the quality cutoff -> the header's curator "Upgrade quality" affordance
+	const libraryBelowCutoff = $derived((libraryStatus?.tracks ?? []).some((t) => t.below_cutoff));
 
 	$effect(() => {
 		const artist = album?.artist_name;
@@ -984,6 +986,9 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		},
 		get libraryTrackCount() {
 			return libraryTrackCount;
+		},
+		get libraryBelowCutoff() {
+			return libraryBelowCutoff;
 		},
 		get refreshing() {
 			return refreshing;

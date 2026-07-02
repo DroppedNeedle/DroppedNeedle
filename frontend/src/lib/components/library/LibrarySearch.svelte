@@ -3,6 +3,8 @@
 	import { fly, fade } from 'svelte/transition';
 	import { getLibrarySearchQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import ArtistImage from '$lib/components/ArtistImage.svelte';
+	import { isValidMbid } from '$lib/utils/formatting';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
@@ -202,18 +204,32 @@
 							Artists
 						</div>
 						{#each results.artists as artist (artist.artist_name + (artist.artist_mbid ?? ''))}
+							{@const artistLinkable = isValidMbid(artist.artist_mbid)}
 							<svelte:element
-								this={artist.artist_mbid ? 'a' : 'div'}
-								href={artist.artist_mbid ? artistHref(artist.artist_mbid) : undefined}
-								class="flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-base-content/5 {artist.artist_mbid
+								this={artistLinkable ? 'a' : 'div'}
+								href={artistLinkable && artist.artist_mbid
+									? artistHref(artist.artist_mbid)
+									: undefined}
+								class="flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-base-content/5 {artistLinkable
 									? ''
 									: 'cursor-default opacity-80'}"
 							>
-								<div
-									class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent ring-1 ring-accent/25"
-								>
-									<Users class="h-5 w-5" />
-								</div>
+								{#if artistLinkable}
+									<div class="h-10 w-10 shrink-0 overflow-hidden rounded-full">
+										<ArtistImage
+											mbid={artist.artist_mbid ?? ''}
+											alt={artist.artist_name}
+											size="xs"
+											className="h-full w-full object-cover"
+										/>
+									</div>
+								{:else}
+									<div
+										class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent ring-1 ring-accent/25"
+									>
+										<Users class="h-5 w-5" />
+									</div>
+								{/if}
 								<div class="min-w-0 flex-1">
 									<div class="truncate text-sm font-semibold">{artist.artist_name}</div>
 									<div class="truncate text-xs text-base-content/50">
@@ -222,7 +238,7 @@
 										{artist.track_count === 1 ? 'track' : 'tracks'}
 									</div>
 								</div>
-								{#if artist.artist_mbid}
+								{#if artistLinkable}
 									<ArrowUpRight class="h-4 w-4 shrink-0 text-base-content/30" />
 								{/if}
 							</svelte:element>

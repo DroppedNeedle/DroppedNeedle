@@ -28,6 +28,47 @@ class AlbumTracksInfo(AppStruct):
     country: str | None = None
 
 
+class AlbumEditionItem(AppStruct):
+    """One edition (MB release) of a release group, for the Edition picker
+    (CollectionManagement Feature E)."""
+
+    release_mbid: str
+    track_count: int
+    title: str | None = None
+    disambiguation: str | None = None
+    date: str | None = None
+    country: str | None = None
+    packaging: str | None = None
+    status: str | None = None
+    is_owned: bool = False
+    is_pinned: bool = False
+
+
+class AlbumEditionsResponse(AppStruct):
+    items: list[AlbumEditionItem] = []
+    pinned_release_mbid: str | None = None
+    owned_release_mbid: str | None = None
+
+
+class EditionPinBody(AppStruct):
+    release_mbid: str
+
+
+class EditionPinResponse(AppStruct):
+    pinned_release_mbid: str | None = None
+
+
+class EditionAcquireResponse(AppStruct):
+    """'Acquire this edition' outcome: how many tracks were requested (missing),
+    queued for upgrade (below cutoff), or needed nothing."""
+
+    release_mbid: str
+    total_tracks: int
+    requested: int
+    upgrades: int
+    skipped: int
+
+
 class LastFmAlbumEnrichment(AppStruct):
     summary: str | None = None
     tags: list[LastFmTagSchema] = []

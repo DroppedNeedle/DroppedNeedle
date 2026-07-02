@@ -61,10 +61,13 @@ class TrackMatcher:
         auto_accept_threshold: float = 0.70,
         manual_threshold: float = 0.50,
         limit: int = 20,
+        held_tier: str | None = None,
     ) -> list[ScoredCandidate]:
         """Rank candidate files for a single track, best first, one per peer so the
         orchestrator can fail over to a different source. Each is wrapped as a
-        one-file ``ScoredCandidate`` (consumed identically to an album candidate)."""
+        one-file ``ScoredCandidate`` (consumed identically to an album candidate).
+        ``held_tier`` (an origin='upgrade' run) keeps only files that STRICTLY beat
+        the recording's best held copy (D12; the track path has no spec pipeline)."""
         quarantined = await self._store.load_quarantine_set()
         filtered = [
             r for r in results
@@ -79,6 +82,10 @@ class TrackMatcher:
             for r in filtered
             if in_range(file_tier(r), self._quality_min, self._quality_max)
         ]
+        if held_tier is not None:
+            filtered = [
+                r for r in filtered if tier_rank(file_tier(r)) > tier_rank(held_tier)
+            ]
         if not filtered:
             return []
 

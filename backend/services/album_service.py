@@ -16,6 +16,7 @@ from services.audiodb_image_service import AudioDBImageService
 from repositories.audiodb_models import AudioDBAlbumImages
 
 if TYPE_CHECKING:
+    from infrastructure.persistence.album_release_pin_store import AlbumReleasePinStore
     from services.audiodb_browse_queue import AudioDBBrowseQueue
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ class AlbumService:
         preferences_service: PreferencesService,
         audiodb_image_service: AudioDBImageService | None = None,
         audiodb_browse_queue: 'AudioDBBrowseQueue | None' = None,
+        release_pin_store: 'AlbumReleasePinStore | None' = None,
     ):
         self._library_repo = library_repo
         self._mb_repo = mb_repo
@@ -41,6 +43,9 @@ class AlbumService:
         self._preferences_service = preferences_service
         self._audiodb_image_service = audiodb_image_service
         self._audiodb_browse_queue = audiodb_browse_queue
+        # Per-album edition pins (CollectionManagement Feature E, D16); None in
+        # constructions that predate the feature (tests) -> pure auto behaviour.
+        self._release_pins = release_pin_store
         self._album_in_flight: dict[str, asyncio.Future[AlbumInfo]] = {}
 
     async def _get_audiodb_album_thumb(self, release_group_id: str, artist_name: str | None = None, album_name: str | None = None, *, allow_fetch: bool = False) -> str | None:
@@ -365,14 +370,101 @@ class AlbumService:
         return AlbumInfo(**build_album_basic_info(release_group, release_group_id, artist_name, artist_id, in_library))
     
     async def _owned_release_id(self, release_group_id: str) -> str | None:
-        """The release edition the library's files belong to, so an owned album shows
-        what's on disc rather than the top-ranked release - often a deluxe/multi-disc
-        variant with extra tracks. ``None`` when nothing is owned: fall back to ranking."""
+        """The release edition the album page follows: the admin/trusted PIN when one
+        is set (Feature E, D16), else the edition the library's files belong to (an
+        owned album shows what's on disc rather than the top-ranked release).
+        ``None`` when neither exists: fall back to ranking. A pinned release that has
+        vanished from MusicBrainz fails open downstream - the pinned id simply fails
+        its fetch and the ranked candidates take over."""
+        pinned = await self._pinned_release_id(release_group_id)
+        if pinned:
+            return pinned
         try:
             return await self._library_db.get_album_release_mbid(release_group_id)
         except Exception as e:  # noqa: BLE001
             logger.warning("Owned-release lookup failed for %s: %s", release_group_id[:8], e)
             return None
+
+    async def _pinned_release_id(self, release_group_id: str) -> str | None:
+        if self._release_pins is None:
+            return None
+        try:
+            return await self._release_pins.get(release_group_id)
+        except Exception as e:  # noqa: BLE001 - a pin lookup failure must never break the page
+            logger.warning("Edition-pin lookup failed for %s: %s", release_group_id[:8], e)
+            return None
+
+    async def resolve_edition(self, release_group_id: str) -> str | None:
+        """The edition acquisition should target: pin first, else owned (public
+        wrapper for the download layer's 'acquire this edition')."""
+        return await self._owned_release_id(release_group_id)
+
+    async def list_editions(self, release_group_id: str) -> dict:
+        """All of a release group's editions for the picker (Feature E §1), flagged
+        with which one is owned (mode-over-files) and which is pinned."""
+        release_group_id = validate_mbid(release_group_id, "album")
+        # a dedicated fetch: the shared _fetch_release_group omits the "media"
+        # include, and the picker needs per-release track counts
+        release_group = await self._mb_repo.get_release_group_by_id(
+            release_group_id, includes=["releases", "media"]
+        )
+        if not release_group:
+            raise ResourceNotFoundError(f"Release group {release_group_id} not found")
+        releases = release_group.get("releases") or release_group.get("release-list", [])
+        owned = await self._library_db.get_album_release_mbid(release_group_id)
+        pinned = await self._pinned_release_id(release_group_id)
+        items = []
+        for rel in releases:
+            rel_id = rel.get("id")
+            if not rel_id:
+                continue
+            track_count = sum(int(m.get("track-count") or 0) for m in (rel.get("media") or []))
+            items.append(
+                {
+                    "release_mbid": rel_id,
+                    "title": rel.get("title"),
+                    "disambiguation": rel.get("disambiguation") or None,
+                    "date": rel.get("date") or None,
+                    "country": rel.get("country") or None,
+                    "packaging": rel.get("packaging") or None,
+                    "status": rel.get("status") or None,
+                    "track_count": track_count,
+                    "is_owned": rel_id == owned,
+                    "is_pinned": rel_id == pinned,
+                }
+            )
+        return {"items": items, "pinned_release_mbid": pinned, "owned_release_mbid": owned}
+
+    async def _bust_album_caches(self, release_group_id: str) -> None:
+        """The pin changes the served tracklist/disambiguation, so the cached album
+        payloads must go (mirrors refresh_album/_build_scan_invalidation)."""
+        await self._cache.delete(f"{ALBUM_INFO_PREFIX}{release_group_id}")
+        await self._cache.delete(f"{LIBRARY_ALBUM_DETAILS_PREFIX}{release_group_id}")
+        await self._disk_cache.delete_album(release_group_id)
+        self._album_in_flight.pop(release_group_id, None)
+
+    async def set_edition_pin(
+        self, release_group_id: str, release_mbid: str, user_id: str | None
+    ) -> None:
+        """Pin an edition (admin/trusted; the route guards the role). Validates the
+        release belongs to this group before pinning, then busts the album caches."""
+        release_group_id = validate_mbid(release_group_id, "album")
+        if self._release_pins is None:
+            raise ResourceNotFoundError("Edition pinning is unavailable")
+        editions = await self.list_editions(release_group_id)
+        if not any(item["release_mbid"] == release_mbid for item in editions["items"]):
+            raise ResourceNotFoundError("That edition does not belong to this album")
+        await self._release_pins.set(release_group_id, release_mbid, user_id)
+        await self._bust_album_caches(release_group_id)
+
+    async def clear_edition_pin(self, release_group_id: str) -> bool:
+        release_group_id = validate_mbid(release_group_id, "album")
+        if self._release_pins is None:
+            return False
+        cleared = await self._release_pins.clear(release_group_id)
+        if cleared:
+            await self._bust_album_caches(release_group_id)
+        return cleared
 
     async def _enrich_with_release_details(
         self,

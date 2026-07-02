@@ -117,6 +117,27 @@ vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 	discardHeldTrack: () => ({ mutate: vi.fn(), isPending: false })
 }));
 
+vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
+	getAlbumEditionsQuery: () => ({
+		get data() {
+			return undefined;
+		}
+	}),
+	setEditionPin: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	clearEditionPin: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	acquireEdition: () => ({ mutateAsync: vi.fn(), isPending: false })
+}));
+
+vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
+	getCutoffUnmetQuery: () => ({
+		get data() {
+			return undefined;
+		}
+	}),
+	requestUpgradeAlbum: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	requestUpgradeTrack: () => ({ mutateAsync: vi.fn(), isPending: false })
+}));
+
 vi.mock('$lib/queries/downloads/HeldQueries.svelte', () => ({
 	getHeldImportsQuery: () => ({
 		get data() {

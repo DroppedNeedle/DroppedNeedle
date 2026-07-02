@@ -70,6 +70,9 @@ class DownloadManifest(AppStruct):
     # track length (from MusicBrainz). A duration mismatch then means "wrong track for
     # this request" (fail over to another source), not a corrupt file to quarantine.
     is_track: bool = False
+    # The owning task's origin ('user' | 'retry' | 'upgrade'). Replace-on-import fires
+    # only for 'upgrade' (D18); legacy manifests decode as 'user' (add-only, unchanged).
+    origin: str = "user"
 
     def __post_init__(self) -> None:
         # In-flight back-fill: a legacy manifest decodes with handle=None and

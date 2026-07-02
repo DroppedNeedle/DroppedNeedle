@@ -27,7 +27,7 @@ from services.native.acquisition.status import DownloadStatus
 from services.native.album_preflight_scorer import AlbumPreflightScorer
 from services.native.download_orchestrator import DownloadOrchestrator
 from services.native.library_manager import LibraryManager
-from services.native.quality_tiers import should_acquire
+from services.native.quality_tiers import should_acquire, tier_for, tier_rank
 
 if TYPE_CHECKING:
     from models.held_import import HeldImport
@@ -95,6 +95,8 @@ class DownloadService:
         soulseek_enabled: bool = True,  # the slskd enable toggle (separate from is_configured)
         upgrade_allowed: bool = False,
         quality_cutoff: str = "lossless",
+        quota_service=None,  # QuotaService | None - byte-cap admission (Feature C layer 2)
+        release_pin_store=None,  # AlbumReleasePinStore | None - edition pins (Feature E)
     ):
         self._client = download_client
         self._indexer = indexer
@@ -118,6 +120,8 @@ class DownloadService:
         self._auto = auto_accept_threshold
         self._manual = manual_threshold
         self._enabled = enabled
+        self._quota = quota_service
+        self._pins = release_pin_store
 
     def _ensure_enabled(self) -> None:
         # flag captured at construction; the config-save PUT clears the
@@ -127,12 +131,20 @@ class DownloadService:
                 "The download client is disabled. Enable it in Settings to start downloads."
             )
 
-    async def _already_satisfied(self, release_group_mbid: str) -> bool:
-        """True when the library already holds this album at a quality we won't improve on -
-        the tier-aware replacement for the binary ``has_album`` gate (step 8). With upgrades
-        off (the default) any held copy satisfies, exactly as before; with upgrades on it
-        satisfies only once the held quality reaches the cutoff."""
+    async def _already_satisfied(self, release_group_mbid: str, origin: str = "user") -> bool:
+        """True when the library already holds this album at a quality this request won't
+        improve on. Origin-aware (D18): only an ``origin='upgrade'`` request may treat a
+        below-cutoff held album as not-satisfied - replace-on-import fires only for
+        upgrades, so re-fetching for any other origin would download bytes that are then
+        skipped at placement. Every non-upgrade origin sees any held copy as satisfied."""
         held = await self._library.album_quality_tier(release_group_mbid)
+        if origin != "upgrade":
+            return held is not None
+        if held is None:
+            # An upgrade of nothing is not an upgrade: an un-held album must go
+            # through the normal (quota/cap-checked) request path, never the
+            # exempt upgrade path - and with upgrades off nothing may pass either.
+            return True
         return not should_acquire(held, self._quality_cutoff, self._upgrade_allowed)
 
     async def _ensure_track_count(
@@ -282,6 +294,11 @@ class DownloadService:
             raise ValidationError("Invalid candidate index")
         candidate = candidates[candidate_index]
 
+        # Byte-cap admission (Feature C layer 2): the manual-pick path creates a
+        # task directly, bypassing request_album, so it needs its own gate.
+        if self._quota is not None:
+            await self._quota.check_storage_admission(user_id, "user")
+
         # Route a picked Usenet candidate to SABnzbd, not the slskd default (D2/D16).
         task = await self._store.create_task(
             user_id=user_id,
@@ -292,6 +309,7 @@ class DownloadService:
             album_title=job.album_title,
             year=job.year,
             track_count=job.track_count,
+            origin="user",
             source=candidate.source,
             download_client=_CLIENT_FOR_SOURCE.get(candidate.source, "slskd"),
             source_username=candidate.username,
@@ -320,6 +338,8 @@ class DownloadService:
         track_duration_seconds: float | None = None,
         download_type: str = "album",
         artist_mbid: str | None = None,
+        origin: str = "user",
+        release_mbid: str | None = None,
     ) -> str:
         """Create a download task and dispatch the orchestrator. Returns the new
         task id, the existing active task id (dedup), or the ``already_in_library``
@@ -327,7 +347,7 @@ class DownloadService:
         self._ensure_enabled()
         # skipped for orphan-track requests, which download a track whose album
         # isn't in the library yet
-        if download_type == "album" and await self._already_satisfied(release_group_mbid):
+        if download_type == "album" and await self._already_satisfied(release_group_mbid, origin):
             return ALREADY_IN_LIBRARY
 
         # track tasks dedup on the recording (not the album) so a different track of
@@ -338,6 +358,24 @@ class DownloadService:
             existing = await self._store.get_active_task_for_album(release_group_mbid, user_id)
         if existing:
             return existing.id
+
+        # Byte-cap admission (Feature C layer 2, D11): global cap + per-user storage
+        # quota before any bytes are committed. After dedup (re-asking for an active
+        # task must keep returning it), before the MusicBrainz backfills (don't spend
+        # external calls on a rejected request). Upgrades are exempt (size-neutral).
+        if self._quota is not None:
+            await self._quota.check_storage_admission(user_id, origin)
+
+        # Edition pin (Feature E, D14): when no explicit release was asked for, the
+        # album's pinned edition becomes the task's release_mbid - a SOFT target
+        # (scoring hint + tag stamp), never a hard filter. Resolving it here covers
+        # every path (requests, upgrades, auto-download) without threading it through
+        # each caller.
+        if release_mbid is None and self._pins is not None and release_group_mbid:
+            try:
+                release_mbid = await self._pins.get(release_group_mbid)
+            except Exception:  # noqa: BLE001 - the pin is best-effort, never block a request
+                logger.warning("Edition-pin lookup failed for %s", release_group_mbid)
 
         # A manual re-request is an explicit "try again" - clear this album's blocklist so
         # releases quarantined by an earlier failed attempt are reconsidered (otherwise the
@@ -380,6 +418,7 @@ class DownloadService:
             user_id=user_id,
             download_type=download_type,
             release_group_mbid=release_group_mbid,
+            release_mbid=release_mbid,
             recording_mbid=recording_mbid,
             artist_mbid=artist_mbid,
             artist_name=artist_name,
@@ -388,6 +427,7 @@ class DownloadService:
             year=year,
             track_count=track_count,
             track_duration_seconds=track_duration_seconds,
+            origin=origin,
         )
         self._orchestrator.dispatch(task.id)
         return task.id
@@ -402,13 +442,25 @@ class DownloadService:
         duration_seconds: int | None = None,
         release_group_mbid: str | None = None,
         artist_mbid: str | None = None,
+        origin: str = "user",
+        release_mbid: str | None = None,
     ) -> str:
         """Request a single track. Orphan tracks (album not in the library) resolve
         the release group via MusicBrainz, auto-create the album folder, and download
         the one track; the album appears partially present."""
         self._ensure_enabled()
-        if recording_mbid and await self._library.has_track(recording_mbid):
-            return ALREADY_IN_LIBRARY
+        if recording_mbid:
+            if origin == "upgrade":
+                # per-recording floor (D12): a track upgrade must beat the BEST held
+                # copy of that recording, and only while upgrades are on + below cutoff.
+                # An un-held recording is no upgrade target (see _already_satisfied).
+                held = await self._library.recording_quality_tier(recording_mbid)
+                if held is None or not should_acquire(
+                    held, self._quality_cutoff, self._upgrade_allowed
+                ):
+                    return ALREADY_IN_LIBRARY
+            elif await self._library.has_track(recording_mbid):
+                return ALREADY_IN_LIBRARY
 
         if not release_group_mbid:
             if self._matcher is None:
@@ -443,7 +495,173 @@ class DownloadService:
             track_duration_seconds=duration_seconds,
             download_type="track",
             artist_mbid=artist_mbid,
+            origin=origin,
+            release_mbid=release_mbid,
         )
+
+    @property
+    def upgrade_allowed(self) -> bool:
+        return self._upgrade_allowed
+
+    @property
+    def quality_cutoff(self) -> str:
+        return self._quality_cutoff
+
+    async def list_cutoff_unmet(self) -> list[dict]:
+        """The admin/trusted upgrade worklist (D7): albums whose worst held tier is
+        below the cutoff. Empty when upgrades are off - the worklist is an upgrade
+        surface, not a general quality report."""
+        if not self._upgrade_allowed:
+            return []
+        return await self._library.list_cutoff_unmet(self._quality_cutoff)
+
+    async def request_upgrade_album(
+        self,
+        user_id: str,
+        release_group_mbid: str,
+        artist_name: str,
+        album_title: str,
+        year: int | None = None,
+        artist_mbid: str | None = None,
+    ) -> str:
+        """Enqueue an album quality upgrade (origin='upgrade', D18). The route guards
+        the admin/trusted role; the origin-aware gate returns ALREADY_IN_LIBRARY when
+        the album is at/above cutoff or upgrades are off."""
+        return await self.request_album(
+            user_id=user_id,
+            release_group_mbid=release_group_mbid,
+            artist_name=artist_name,
+            album_title=album_title,
+            year=year,
+            artist_mbid=artist_mbid,
+            origin="upgrade",
+        )
+
+    async def request_upgrade_track(
+        self,
+        user_id: str,
+        recording_mbid: str,
+        artist_name: str,
+        track_title: str,
+        album_title: str | None = None,
+        duration_seconds: int | None = None,
+        release_group_mbid: str | None = None,
+        artist_mbid: str | None = None,
+    ) -> str:
+        """Enqueue a per-track quality upgrade (origin='upgrade', per-recording floor D12)."""
+        return await self.request_track(
+            user_id=user_id,
+            recording_mbid=recording_mbid,
+            artist_name=artist_name,
+            track_title=track_title,
+            album_title=album_title,
+            duration_seconds=duration_seconds,
+            release_group_mbid=release_group_mbid,
+            artist_mbid=artist_mbid,
+            origin="upgrade",
+        )
+
+    async def acquire_edition(self, user_id: str, release_group_mbid: str) -> dict:
+        """'Acquire this edition' (Feature E, D13; the route guards admin/trusted):
+        for the pinned (else owned) edition's tracklist, request the MISSING tracks
+        (origin='user', release as soft target D14) and upgrade the owned tracks that
+        sit below the cutoff (origin='upgrade', per-recording floor). Scoped strictly
+        to the edition's tracklist - a low-tier bonus track outside it never triggers
+        anything. Existing files are never retagged (D15)."""
+        self._ensure_enabled()
+        if self._album_service is None or self._mb is None:
+            raise ValidationError("Edition acquisition is unavailable")
+        release_id = await self._album_service.resolve_edition(release_group_mbid)
+        if not release_id:
+            raise ValidationError("No edition is pinned or owned for this album")
+        try:
+            release = await self._mb.get_release_by_id(release_id, includes=["recordings"])
+        except Exception as exc:  # noqa: BLE001 - MB hiccup -> clean 400, not a 500
+            raise ValidationError("Could not load that edition from MusicBrainz") from exc
+        if not release:
+            raise ValidationError("Could not load that edition from MusicBrainz")
+        from services.album_utils import extract_tracks
+
+        tracks, _total_length = extract_tracks(release)
+        if not tracks:
+            raise ValidationError("That edition has no tracklist")
+
+        artist_name = ""
+        artist_mbid: str | None = None
+        album_title = ""
+        try:
+            meta = await self._mb.get_release_group(release_group_mbid)
+        except Exception:  # noqa: BLE001 - names are labels only, never block the acquire
+            meta = None
+        if meta is not None:
+            artist_name = meta.artist_name
+            artist_mbid = meta.artist_id
+            album_title = meta.title
+
+        rows = await self._library.get_file_rows_for_album(release_group_mbid)
+        by_recording = {r["recording_mbid"]: r for r in rows if r.get("recording_mbid")}
+        # positional fallback is best-effort and lossy across editions (a deluxe's
+        # position N != the standard's), so recording matching is preferred
+        by_position = {
+            (int(r.get("disc_number") or 1), int(r.get("track_number") or 0)): r for r in rows
+        }
+
+        requested = upgraded = skipped = 0
+        for track in tracks:
+            row = by_recording.get(track.recording_id) or by_position.get(
+                (track.disc_number or 1, track.position)
+            )
+            duration = round(track.length / 1000) if track.length else None
+            if row is None:
+                if not track.recording_id:
+                    skipped += 1  # can't request a track MB gave no recording for
+                    continue
+                result = await self.request_track(
+                    user_id=user_id,
+                    recording_mbid=track.recording_id,
+                    artist_name=artist_name,
+                    track_title=track.title,
+                    album_title=album_title,
+                    duration_seconds=duration,
+                    release_group_mbid=release_group_mbid,
+                    artist_mbid=artist_mbid,
+                    release_mbid=release_id,
+                )
+                if result == ALREADY_IN_LIBRARY:
+                    skipped += 1
+                else:
+                    requested += 1
+                continue
+            if not self._upgrade_allowed:
+                continue
+            held_tier = tier_for(row.get("file_format") or "", row.get("bit_rate"))
+            if tier_rank(held_tier) >= tier_rank(self._quality_cutoff):
+                continue
+            recording = row.get("recording_mbid") or track.recording_id
+            if not recording:
+                skipped += 1
+                continue
+            result = await self.request_upgrade_track(
+                user_id=user_id,
+                recording_mbid=recording,
+                artist_name=artist_name,
+                track_title=track.title,
+                album_title=album_title,
+                duration_seconds=duration,
+                release_group_mbid=release_group_mbid,
+                artist_mbid=artist_mbid,
+            )
+            if result == ALREADY_IN_LIBRARY:
+                skipped += 1
+            else:
+                upgraded += 1
+        return {
+            "release_mbid": release_id,
+            "total_tracks": len(tracks),
+            "requested": requested,
+            "upgrades": upgraded,
+            "skipped": skipped,
+        }
 
     async def get_task(self, task_id: str, user_id: str, user_role: str):
         """One task, ownership-scoped: 404 if missing, 403 if not owner (non-admin)."""

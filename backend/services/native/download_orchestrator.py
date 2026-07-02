@@ -216,7 +216,7 @@ class DownloadOrchestrator:
                 indexer=indexer, scorer=scorer, track_matcher=track_matcher,
                 client=client, store=download_store, file_processor=file_processor,
                 staging=self._staging, manifest_codec=manifest_codec,
-                naming_template=naming_template,
+                naming_template=naming_template, library=library_manager,
             ),
         }
         # Created whenever a SABnzbd client exists (not gated on the indexer), so a Usenet
@@ -232,6 +232,7 @@ class DownloadOrchestrator:
                 category=usenet_category, priority=usenet_priority,
                 post_processing=usenet_post_processing,
                 min_release_age_seconds=usenet_min_release_age_minutes * 60.0,
+                library=library_manager,
             )
 
     def dispatch(self, task_id: str) -> "asyncio.Task":
@@ -420,6 +421,19 @@ class DownloadOrchestrator:
             return False
 
         await self._store.update_search_job_status(job.id, "completed")
+        if task.origin == "upgrade":
+            # No candidate beat the upgrade floor: NOT a failure - the library is
+            # intact and nothing was attempted. End quietly (never enters the failed
+            # bucket; upgrades are excluded from auto-retry anyway).
+            await self._store.update_status(
+                task.id, DownloadStatus.CANCELLED,
+                error_message="No better copy found", cancelled_at=time.time(),
+            )
+            await self._bus.publish(
+                f"download:{task.id}", "complete",
+                {"status": DownloadStatus.CANCELLED, "error": "no better copy found"},
+            )
+            return False
         await self._store.update_status(
             task.id, DownloadStatus.FAILED, error_message=self._no_match_message()
         )
@@ -1248,6 +1262,10 @@ class DownloadOrchestrator:
             track_count=task.track_count,
             track_duration_seconds=task.track_duration_seconds,
             search_query=task.search_query,
+            # An upgrade's retry must stay an upgrade (keeps the origin-aware gate,
+            # replace-on-import and cap/quota exemptions working across retries);
+            # everything else becomes 'retry' so quota counts ignore it.
+            origin=task.origin if task.origin == "upgrade" else "retry",
             retry_count=task.retry_count + 1,
         )
         await self._relink_request(task, new_task.id)

@@ -347,6 +347,32 @@ def get_download_store() -> "DownloadStore":
 
 
 @singleton
+def get_album_release_pin_store() -> "AlbumReleasePinStore":
+    from infrastructure.persistence.album_release_pin_store import AlbumReleasePinStore
+
+    from .cache_providers import get_persistence_write_lock
+
+    settings = get_settings()
+    return AlbumReleasePinStore(
+        db_path=settings.library_db_path,
+        write_lock=get_persistence_write_lock(),
+    )
+
+
+@singleton
+def get_user_quota_store() -> "UserQuotaStore":
+    from infrastructure.persistence.user_quota_store import UserQuotaStore
+
+    from .cache_providers import get_persistence_write_lock
+
+    settings = get_settings()
+    return UserQuotaStore(
+        db_path=settings.library_db_path,
+        write_lock=get_persistence_write_lock(),
+    )
+
+
+@singleton
 def get_slskd_client() -> "SlskdClient":
     from repositories.slskd.slskd_client import SlskdClient
 

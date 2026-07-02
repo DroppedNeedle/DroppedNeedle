@@ -48,6 +48,8 @@ from .repo_providers import (  # noqa: F401
     get_follow_store,
     get_github_repository,
     get_download_store,
+    get_user_quota_store,
+    get_album_release_pin_store,
     get_slskd_client,
     get_slskd_repository,
     get_slskd_indexer,
@@ -112,6 +114,7 @@ from .service_providers import (  # noqa: F401
     get_download_manifest_codec,
     get_download_orchestrator,
     get_download_service,
+    get_quota_service,
 )
 
 from .type_aliases import (  # noqa: F401

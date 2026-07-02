@@ -261,6 +261,18 @@ def _get_current_admin(request: Request) -> UserRecord:
     return user
 
 
+def _get_current_curator(request: Request) -> UserRecord:
+    """Like _get_current_user but requires the admin OR trusted role - the curator
+    surfaces (quality upgrades, edition pins; CollectionManagement D18)."""
+    user = _get_current_user(request)
+    if user.role not in ("admin", "trusted"):
+        raise HTTPException(
+            status_code = status.HTTP_403_FORBIDDEN,
+            detail = "Admin or trusted access required",
+        )
+    return user
+
+
 def _get_current_token(request: Request) -> TokenRecord:
     """Extract the already verified token record from request.state."""
     token = getattr(request.state, "token", None)
@@ -275,4 +287,5 @@ def _get_current_token(request: Request) -> TokenRecord:
 
 CurrentUserDep = Annotated[UserRecord, Depends(_get_current_user)]
 CurrentAdminDep = Annotated[UserRecord, Depends(_get_current_admin)]
+CurrentCuratorDep = Annotated[UserRecord, Depends(_get_current_curator)]
 CurrentTokenDep = Annotated[TokenRecord, Depends(_get_current_token)]

@@ -287,3 +287,101 @@ def test_held_audio_not_owned_is_404():
     service.get_held = AsyncMock(return_value=None)  # ownership check failed / unknown id
     resp = build_test_client(_app(service)).get("/downloads/held/1/audio")
     assert resp.status_code == 404
+
+
+# --- Quality upgrades (CollectionManagement Feature B, admin/trusted D18) ------
+
+def _curator_app(service, *, role: str = "admin") -> FastAPI:
+    from middleware import _get_current_curator
+
+    app = _app(service)
+    app.dependency_overrides[_get_current_curator] = lambda: mock_user(
+        role=role, user_id="u1"
+    )
+    return app
+
+
+def test_curator_dep_rejects_plain_user_with_403():
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+    import pytest as _pytest
+
+    from middleware import _get_current_curator
+
+    request = SimpleNamespace(state=SimpleNamespace(user=mock_user(role="user")))
+    with _pytest.raises(HTTPException) as exc:
+        _get_current_curator(request)
+    assert exc.value.status_code == 403
+
+    for role in ("admin", "trusted"):
+        request = SimpleNamespace(state=SimpleNamespace(user=mock_user(role=role)))
+        assert _get_current_curator(request).role == role
+
+
+def test_upgrade_routes_require_authentication():
+    # no auth state at all -> the curator dependency 401s before the service runs
+    service = AsyncMock()
+    client = build_test_client(_app(service))
+    assert client.get("/downloads/cutoff-unmet").status_code == 401
+    assert client.post(
+        "/downloads/upgrade/album",
+        json={"release_group_mbid": "rg", "artist_name": "A", "album_title": "B"},
+    ).status_code == 401
+    assert client.post(
+        "/downloads/upgrade/track",
+        json={"recording_mbid": "rec", "artist_name": "A", "track_title": "T"},
+    ).status_code == 401
+    service.list_cutoff_unmet.assert_not_awaited()
+    service.request_upgrade_album.assert_not_awaited()
+
+
+def test_cutoff_unmet_returns_worklist_for_curator():
+    service = AsyncMock()
+    service.list_cutoff_unmet.return_value = [
+        {
+            "release_group_mbid": "rg-1", "current_tier": "mp3_192", "track_count": 10,
+            "artist_name": "Radiohead", "artist_mbid": "am-1",
+            "album_title": "OK Computer", "year": 1997,
+        }
+    ]
+    service.quality_cutoff = "lossless"
+    service.upgrade_allowed = True
+
+    resp = build_test_client(_curator_app(service, role="trusted")).get("/downloads/cutoff-unmet")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cutoff"] == "lossless"
+    assert body["upgrade_allowed"] is True
+    assert body["items"][0]["release_group_mbid"] == "rg-1"
+    assert body["items"][0]["current_tier"] == "mp3_192"
+
+
+def test_upgrade_album_route_queues_and_maps_sentinel():
+    from services.native.download_service import ALREADY_IN_LIBRARY
+
+    service = AsyncMock()
+    service.request_upgrade_album.return_value = "task-9"
+    client = build_test_client(_curator_app(service))
+    body = {"release_group_mbid": "rg-1", "artist_name": "A", "album_title": "B"}
+
+    resp = client.post("/downloads/upgrade/album", json=body)
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "queued", "task_id": "task-9"}
+
+    service.request_upgrade_album.return_value = ALREADY_IN_LIBRARY
+    resp = client.post("/downloads/upgrade/album", json=body)
+    assert resp.json()["status"] == "satisfied"
+
+
+def test_upgrade_track_route_queues():
+    service = AsyncMock()
+    service.request_upgrade_track.return_value = "task-t"
+    resp = build_test_client(_curator_app(service)).post(
+        "/downloads/upgrade/track",
+        json={"recording_mbid": "rec-1", "artist_name": "A", "track_title": "T"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "queued", "task_id": "task-t"}
+    assert service.request_upgrade_track.call_args.kwargs["recording_mbid"] == "rec-1"

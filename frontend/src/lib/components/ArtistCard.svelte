@@ -9,14 +9,23 @@
 	}
 
 	let { artist }: Props = $props();
+
+	// an artist without a MusicBrainz id has no artist page to open - render a
+	// plain card instead of a link that can only 404
+	const linkable = $derived(!!artist.musicbrainz_id);
 </script>
 
-<a
-	href={artistHref(artist.musicbrainz_id)}
-	class="card bg-base-100 w-full shadow-sm shrink-0 transition-all hover:scale-105 hover:glow-primary group relative"
-	aria-label="Open {artist.title}"
+<svelte:element
+	this={linkable ? 'a' : 'div'}
+	href={linkable ? artistHref(artist.musicbrainz_id) : undefined}
+	class="card bg-base-100 w-full shadow-sm shrink-0 transition-all group relative {linkable
+		? 'hover:scale-105 hover:glow-primary'
+		: ''}"
+	aria-label={linkable ? `Open ${artist.title}` : undefined}
 >
-	<ArtistCardDownloadButton artistName={artist.title} artistMbid={artist.musicbrainz_id} />
+	{#if linkable}
+		<ArtistCardDownloadButton artistName={artist.title} artistMbid={artist.musicbrainz_id} />
+	{/if}
 	<figure class="aspect-square p-3">
 		<ArtistImage
 			mbid={artist.musicbrainz_id}
@@ -30,4 +39,4 @@
 	<div class="card-body p-2 pt-0 items-center text-center">
 		<h2 class="card-title text-xs line-clamp-1 min-h-[1.25rem]">{artist.title}</h2>
 	</div>
-</a>
+</svelte:element>

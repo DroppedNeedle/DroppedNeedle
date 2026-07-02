@@ -113,8 +113,9 @@ class NewznabReleaseScorer:
         auto_accept_threshold: float = 0.70,
         manual_threshold: float = 0.50,
         track_count: int | None = None,
+        held_tier: str | None = None,
     ) -> list[ScoredCandidate]:
-        context = await build_context(self._store)
+        context = await build_context(self._store, held_tier=held_tier)
         policy = self._policy
         tracks = track_count if track_count is not None else target.track_count
         scored: list[ScoredCandidate] = []

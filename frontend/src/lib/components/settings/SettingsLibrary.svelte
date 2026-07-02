@@ -1,20 +1,37 @@
 <script lang="ts">
 	import { AlertTriangle } from 'lucide-svelte';
-	import { getLibrarySettingsQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import {
+		getLibrarySettingsQuery,
+		getLibraryStatsQuery
+	} from '$lib/queries/library/LibraryQueries.svelte';
 	import { saveLibrarySettings } from '$lib/queries/library/LibraryMutations.svelte';
+	import {
+		getDownloadPolicyQuery,
+		saveDownloadPolicy
+	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import LibraryPathEditor from '$lib/components/library/LibraryPathEditor.svelte';
 	import LibraryNamingPreview from '$lib/components/library/LibraryNamingPreview.svelte';
 	import LibraryScanButton from '$lib/components/library/LibraryScanButton.svelte';
 	import LibraryForceRescanButton from '$lib/components/library/LibraryForceRescanButton.svelte';
 	import LibraryScanScheduleControl from '$lib/components/library/LibraryScanScheduleControl.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 
 	const settingsQuery = getLibrarySettingsQuery();
 	const save = saveLibrarySettings();
 
+	// Global storage cap (CollectionManagement Feature C): the value is download
+	// policy, the usage side comes from the library stats. Admin-only - the policy
+	// endpoint 403s for plain users, and only admins may set the cap.
+	const policyQuery = getDownloadPolicyQuery(() => authStore.isAdmin);
+	const savePolicy = saveDownloadPolicy();
+	const statsQuery = getLibraryStatsQuery();
+
 	let template = $state('');
 	let acoustidKey = $state('');
 	let seeded = $state(false);
+	let maxLibraryGb = $state<number | null>(0);
+	let capSeeded = $state(false);
 
 	// Seed the editable fields once from the server; later refetches (after a
 	// path add/remove) must not clobber unsaved template/key edits.
@@ -26,6 +43,32 @@
 			seeded = true;
 		}
 	});
+
+	$effect(() => {
+		const p = policyQuery.data;
+		if (p && !capSeeded) {
+			maxLibraryGb = p.max_library_size_gb;
+			capSeeded = true;
+		}
+	});
+
+	const usedBytes = $derived(statsQuery.data?.total_size_bytes ?? 0);
+	const usedGb = $derived(usedBytes / 1024 ** 3);
+	const capPercent = $derived(
+		maxLibraryGb && maxLibraryGb > 0 ? Math.min(100, (usedGb / maxLibraryGb) * 100) : 0
+	);
+
+	async function handleSaveCap() {
+		const p = policyQuery.data;
+		if (!p) return;
+		try {
+			// a cleared number input binds null; treat it as 0 (= unlimited)
+			await savePolicy.mutateAsync({ ...p, max_library_size_gb: maxLibraryGb ?? 0 });
+			toastStore.show({ message: 'Storage cap saved', type: 'success' });
+		} catch {
+			toastStore.show({ message: 'Could not save the storage cap', type: 'error' });
+		}
+	}
 
 	const paths = $derived(settingsQuery.data?.library_paths ?? []);
 	const hasKey = $derived(!!settingsQuery.data?.acoustid_api_key);
@@ -112,6 +155,60 @@
 				Save settings
 			</button>
 		</div>
+
+		{#if authStore.isAdmin}
+			<div class="divider my-1"></div>
+
+			<section class="space-y-2">
+				<h3 class="font-semibold">Storage cap</h3>
+				<p class="text-xs text-base-content/60">
+					Block new downloads once the library reaches this size. 0 = unlimited. Nothing is ever
+					deleted, and quality upgrades are exempt since they replace existing files.
+				</p>
+				<div class="flex flex-wrap items-end gap-3">
+					<label class="form-control">
+						<span class="label-text text-xs">Maximum library size (GB)</span>
+						<input
+							type="number"
+							min="0"
+							max="1000000"
+							class="input input-bordered input-sm w-40"
+							bind:value={maxLibraryGb}
+						/>
+					</label>
+					<button
+						class="btn btn-primary btn-sm"
+						onclick={handleSaveCap}
+						disabled={savePolicy.isPending || !capSeeded}
+					>
+						Save cap
+					</button>
+				</div>
+				{#if maxLibraryGb && maxLibraryGb > 0}
+					<div class="max-w-md space-y-1">
+						<progress
+							class="progress w-full {capPercent >= 100
+								? 'progress-error'
+								: capPercent >= 85
+									? 'progress-warning'
+									: 'progress-primary'}"
+							value={capPercent}
+							max="100"
+						></progress>
+						<p class="text-xs text-base-content/60">
+							{usedGb.toFixed(1)} GB of {maxLibraryGb} GB used
+							{#if capPercent >= 100}
+								- new downloads are blocked
+							{/if}
+						</p>
+					</div>
+				{:else}
+					<p class="text-xs text-base-content/40">
+						Library size: {usedGb.toFixed(1)} GB (no cap set)
+					</p>
+				{/if}
+			</section>
+		{/if}
 
 		<div class="divider my-1"></div>
 

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { QUALITY_TIERS as TIERS, tierIndex as idxOf } from './qualityTiers';
+
 	// accepted band is min..max; scorer prefers the highest tier absolutely.
 	// codec-agnostic lossy bands (MP3/AAC/OGG/Opus map in by bitrate)
 	interface Props {
@@ -7,19 +9,7 @@
 	}
 	let { minKey = $bindable('mp3_320'), maxKey = $bindable('lossless') }: Props = $props();
 
-	// left to right = worst to best; mirrors backend services.native.quality_tiers
-	const TIERS = [
-		{ key: 'low', label: '<192', full: 'below 192 kbps' },
-		{ key: 'mp3_192', label: '192', full: '192 kbps' },
-		{ key: 'mp3_256', label: '256', full: '256 kbps' },
-		{ key: 'mp3_320', label: '320', full: '320 kbps' },
-		{ key: 'lossless', label: 'FLAC', full: 'FLAC / lossless' }
-	];
 	const LAST = TIERS.length - 1;
-	const idxOf = (key: string) => {
-		const i = TIERS.findIndex((t) => t.key === key);
-		return i < 0 ? 0 : i;
-	};
 
 	const minIdx = $derived(idxOf(minKey));
 	const maxIdx = $derived(idxOf(maxKey));

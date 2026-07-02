@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS held_imports (
     disc_number INTEGER,
     track_title TEXT,
     artist_name TEXT,
+    artist_mbid TEXT,
     album_title TEXT,
     year INTEGER,
     held_path TEXT NOT NULL,
@@ -86,6 +87,9 @@ CREATE TABLE IF NOT EXISTS held_imports (
     evidence_score REAL,
     source TEXT NOT NULL DEFAULT 'soulseek',
     source_task_id TEXT,
+    -- The owning task's origin, persisted here because the task itself is deletable
+    -- (clear_finished): the D10 confirm-replace must survive a cleared queue.
+    origin TEXT NOT NULL DEFAULT 'user',
     naming_template TEXT,
     status TEXT NOT NULL DEFAULT 'held'
         CHECK(status IN ('held','imported','discarded')),
@@ -155,6 +159,7 @@ _TASK_COLUMNS = (
     "track_duration_seconds",
     "download_client",
     "source",
+    "origin",
     "source_username",
     "source_directory",
     "search_query",
@@ -219,6 +224,10 @@ class DownloadStore(PersistenceBase):
                     track_duration_seconds REAL,
                     download_client TEXT NOT NULL DEFAULT 'slskd',
                     source TEXT NOT NULL DEFAULT 'soulseek',
+                    -- Why the task exists ('user' | 'retry' | 'upgrade'); orthogonal to
+                    -- source. Drives the origin-aware album gate, replace-on-import and
+                    -- cap/quota exemptions (CollectionManagement D18/D19).
+                    origin TEXT NOT NULL DEFAULT 'user',
                     source_username TEXT,
                     source_directory TEXT,
                     search_query TEXT,
@@ -287,6 +296,7 @@ class DownloadStore(PersistenceBase):
             for column, ddl in (
                 ("track_duration_seconds", "REAL"),
                 ("source", "TEXT NOT NULL DEFAULT 'soulseek'"),
+                ("origin", "TEXT NOT NULL DEFAULT 'user'"),
             ):
                 try:
                     conn.execute(f"ALTER TABLE download_tasks ADD COLUMN {column} {ddl}")
@@ -298,6 +308,14 @@ class DownloadStore(PersistenceBase):
                 pass  # duplicate column - already present
             self._migrate_quarantine(conn)
             conn.executescript(_HELD_IMPORTS_DDL)
+            for column, ddl in (
+                ("artist_mbid", "TEXT"),
+                ("origin", "TEXT NOT NULL DEFAULT 'user'"),
+            ):
+                try:
+                    conn.execute(f"ALTER TABLE held_imports ADD COLUMN {column} {ddl}")
+                except sqlite3.OperationalError:
+                    pass  # duplicate column - already present
             conn.commit()
         finally:
             conn.close()
@@ -357,6 +375,7 @@ class DownloadStore(PersistenceBase):
         track_duration_seconds: float | None = None,
         download_client: str = "slskd",
         source: str = "soulseek",
+        origin: str = "user",
         search_query: str | None = None,
         search_job_id: str | None = None,
         candidate_index: int | None = None,
@@ -385,6 +404,7 @@ class DownloadStore(PersistenceBase):
             track_duration_seconds=track_duration_seconds,
             download_client=download_client,
             source=source,
+            origin=origin,
             search_query=search_query,
             search_job_id=search_job_id,
             candidate_index=candidate_index,
@@ -757,6 +777,7 @@ class DownloadStore(PersistenceBase):
         disc_number: int | None,
         track_title: str | None,
         artist_name: str | None,
+        artist_mbid: str | None,
         album_title: str | None,
         year: int | None,
         original_filename: str | None,
@@ -766,6 +787,7 @@ class DownloadStore(PersistenceBase):
         evidence_artist: str | None,
         evidence_score: float | None,
         naming_template: str | None,
+        origin: str = "user",
     ) -> int | None:
         """Hold a verify-rejected file for review. De-duped on (album, disc, track): if that
         track is already held, returns None so the caller can drop its extra copy instead of
@@ -786,15 +808,16 @@ class DownloadStore(PersistenceBase):
             cur = conn.execute(
                 """INSERT INTO held_imports
                    (user_id, release_group_mbid, release_mbid, recording_mbid, track_number,
-                    disc_number, track_title, artist_name, album_title, year, held_path,
-                    original_filename, file_format, duration_seconds, reason, evidence_title,
-                    evidence_artist, evidence_score, source, source_task_id, naming_template,
-                    status, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'held',?)""",
+                    disc_number, track_title, artist_name, artist_mbid, album_title, year,
+                    held_path, original_filename, file_format, duration_seconds, reason,
+                    evidence_title, evidence_artist, evidence_score, source, source_task_id,
+                    origin, naming_template, status, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'held',?)""",
                 (user_id, release_group_mbid, release_mbid, recording_mbid, track_number,
-                 disc_number, track_title, artist_name, album_title, year, held_path,
-                 original_filename, file_format, duration_seconds, reason, evidence_title,
-                 evidence_artist, evidence_score, source, source_task_id, naming_template, now),
+                 disc_number, track_title, artist_name, artist_mbid, album_title, year,
+                 held_path, original_filename, file_format, duration_seconds, reason,
+                 evidence_title, evidence_artist, evidence_score, source, source_task_id,
+                 origin, naming_template, now),
             )
             return cur.lastrowid
 
@@ -986,6 +1009,23 @@ class DownloadStore(PersistenceBase):
 
         return await self._write(operation)
 
+    async def count_user_track_requests_since(self, user_id: str, since_epoch: float) -> int:
+        """Track asks in the rolling request-quota window (D20). Tracks bypass the
+        approval queue and have no request_history row, so their download task IS
+        the ask - counted only for origin='user' (retries/upgrades aren't new asks).
+        ``created_at`` is an epoch float (time.time()), so the window compares epoch."""
+
+        def operation(conn: sqlite3.Connection) -> int:
+            row = conn.execute(
+                """SELECT COUNT(*) FROM download_tasks
+                   WHERE user_id = ? AND download_type = 'track'
+                     AND origin = 'user' AND created_at >= ?""",
+                (user_id, since_epoch),
+            ).fetchone()
+            return int(row[0])
+
+        return await self._read(operation)
+
     async def get_search_job_for_task(self, task_id: str) -> SearchJob | None:
         def operation(conn: sqlite3.Connection) -> SearchJob | None:
             row = conn.execute(
@@ -1012,9 +1052,13 @@ class DownloadStore(PersistenceBase):
         backoff (which depends on each task's own ``retry_count``). Ordered
         oldest-first so the most overdue retry goes first."""
         def operation(conn: sqlite3.Connection) -> list[DownloadTask]:
+            # origin='upgrade' is excluded on BOTH sides (D18): outer, so a failed
+            # upgrade never auto-retries; inner, so a newer upgrade task can't
+            # suppress a user task's legitimate retry (and vice-versa).
             rows = conn.execute(
                 """SELECT * FROM download_tasks t
                    WHERE t.status IN ('failed', 'partial')
+                     AND t.origin != 'upgrade'
                      AND t.retry_count < ?
                      AND NOT EXISTS (
                          SELECT 1 FROM download_tasks n
@@ -1022,6 +1066,7 @@ class DownloadStore(PersistenceBase):
                            AND n.download_type = t.download_type
                            AND n.release_group_mbid = t.release_group_mbid
                            AND COALESCE(n.recording_mbid, '') = COALESCE(t.recording_mbid, '')
+                           AND n.origin != 'upgrade'
                            AND (n.created_at > t.created_at
                                 OR (n.created_at = t.created_at AND n.rowid > t.rowid))
                      )

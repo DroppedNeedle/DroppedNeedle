@@ -1406,6 +1406,8 @@ export interface LibraryTrack {
 	bit_depth: number | null;
 	duration_seconds: number | null;
 	file_size_bytes: number;
+	current_tier: string | null;
+	below_cutoff: boolean;
 }
 
 export type LibraryFileMeta = LibraryTrack;
@@ -1414,6 +1416,54 @@ export interface LibraryAlbumStatus {
 	in_library: boolean;
 	track_count: number;
 	tracks: LibraryTrack[];
+}
+
+export interface AlbumEditionItem {
+	release_mbid: string;
+	track_count: number;
+	title: string | null;
+	disambiguation: string | null;
+	date: string | null;
+	country: string | null;
+	packaging: string | null;
+	status: string | null;
+	is_owned: boolean;
+	is_pinned: boolean;
+}
+
+export interface AlbumEditionsResponse {
+	items: AlbumEditionItem[];
+	pinned_release_mbid: string | null;
+	owned_release_mbid: string | null;
+}
+
+export interface EditionAcquireResponse {
+	release_mbid: string;
+	total_tracks: number;
+	requested: number;
+	upgrades: number;
+	skipped: number;
+}
+
+export interface CutoffUnmetItem {
+	release_group_mbid: string;
+	current_tier: string;
+	track_count: number;
+	artist_name: string | null;
+	artist_mbid: string | null;
+	album_title: string | null;
+	year: number | null;
+}
+
+export interface CutoffUnmetResponse {
+	items: CutoffUnmetItem[];
+	cutoff: string;
+	upgrade_allowed: boolean;
+}
+
+export interface UpgradeRequestResponse {
+	status: 'queued' | 'satisfied';
+	task_id: string | null;
 }
 
 export interface LibraryStats {
@@ -1642,6 +1692,15 @@ export interface DownloadPolicySettings {
 	auto_retry_max_attempts: number;
 	auto_retry_base_interval_minutes: number;
 	usenet_min_release_age_minutes: number;
+	quality_cutoff: string;
+	upgrade_allowed: boolean;
+	max_library_size_gb: number;
+	default_request_quota_count: number;
+	default_request_quota_days: number;
+	default_storage_quota_gb: number;
+	background_upgrade_scan_enabled: boolean;
+	background_upgrade_scan_interval_hours: number;
+	background_upgrade_max_per_run: number;
 }
 
 export interface DownloadSearchResultFile {

@@ -26,6 +26,7 @@ from core.dependencies import (
     get_library_service,
     get_library_manager,
     get_library_scanner,
+    get_preferences_service,
 )
 from core.exceptions import ExternalServiceError
 from infrastructure.msgspec_fastapi import MsgSpecRoute, MsgSpecBody
@@ -221,7 +222,12 @@ async def get_native_album_status(
     library_manager: LibraryManager = Depends(get_library_manager),
 ):
     # live download progress comes from GET /downloads?release_group_mbid=..., not here
-    return await library_manager.get_album_status(mbid)
+    policy = get_preferences_service().get_download_policy()
+    return await library_manager.get_album_status(
+        mbid,
+        quality_cutoff=policy.quality_cutoff,
+        upgrade_allowed=policy.upgrade_allowed,
+    )
 
 
 @router.get("/tracks/{file_id}/tags", response_model=AudioTag)

@@ -24,10 +24,11 @@ from .specs.quarantine import quarantine
 from .specs.retention import retention
 from .specs.sample import sample
 from .specs.terms import ignored_terms, required_terms
+from .specs.upgrade_floor import upgrade_floor
 from .specs.wrong_edition import wrong_edition
 from .specs.wrong_album import wrong_album
 
-# The ordered, source-agnostic spec list (Lidarr-style: cheap + decisive first —
+# The ordered, source-agnostic spec list (Lidarr-style: cheap + decisive first -
 # blocklist, then identity/product, then user policy, then quality/size/age/space).
 # Specs whose config/context is off or unknown (terms empty, sizes 0, no usenet_date,
 # free_bytes None) short-circuit to Accept, so an unconfigured install is unchanged.
@@ -40,6 +41,7 @@ SPECS = (
     ignored_terms,
     required_terms,
     quality_range,
+    upgrade_floor,
     max_size,
     retention,
     min_age,

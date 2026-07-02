@@ -2,14 +2,25 @@ import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from core.exceptions import ClientDisconnectedError
-from api.v1.schemas.album import AlbumInfo, AlbumBasicInfo, AlbumTracksInfo, LastFmAlbumEnrichment
+from api.v1.schemas.album import (
+    AlbumBasicInfo,
+    AlbumEditionItem,
+    AlbumEditionsResponse,
+    AlbumInfo,
+    AlbumTracksInfo,
+    EditionAcquireResponse,
+    EditionPinBody,
+    EditionPinResponse,
+    LastFmAlbumEnrichment,
+)
 from api.v1.schemas.discovery import SimilarAlbumsResponse, MoreByArtistResponse
-from core.dependencies import get_album_service, get_album_discovery_service, get_album_enrichment_service, get_navidrome_library_service
+from core.dependencies import get_album_service, get_album_discovery_service, get_album_enrichment_service, get_download_service, get_navidrome_library_service
 from services.album_service import AlbumService
 from services.album_discovery_service import AlbumDiscoveryService
 from services.album_enrichment_service import AlbumEnrichmentService
 from services.navidrome_library_service import NavidromeLibraryService
-from middleware import CurrentUserDep
+from middleware import CurrentCuratorDep, CurrentUserDep
+from infrastructure.msgspec_fastapi import MsgSpecBody
 from infrastructure.validators import is_unknown_mbid
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.degradation import try_get_degradation_context
@@ -172,3 +183,75 @@ async def get_album_lastfm_enrichment(
     if result is None:
         return LastFmAlbumEnrichment()
     return result
+
+# --- Album edition selection (CollectionManagement Feature E) -------------------
+
+
+@router.get("/{album_id}/editions", response_model=AlbumEditionsResponse)
+async def list_album_editions(
+    album_id: str,
+    current_user: CurrentUserDep,
+    album_service: AlbumService = Depends(get_album_service),
+):
+    """Every edition (MB release) of this album, flagged with the owned and pinned
+    ones - the Edition picker's data source. Viewing is open to all roles."""
+    try:
+        data = await album_service.list_editions(album_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid album request"
+        )
+    return AlbumEditionsResponse(
+        items=[AlbumEditionItem(**item) for item in data["items"]],
+        pinned_release_mbid=data["pinned_release_mbid"],
+        owned_release_mbid=data["owned_release_mbid"],
+    )
+
+
+@router.put("/{album_id}/edition", response_model=EditionPinResponse)
+async def set_album_edition(
+    album_id: str,
+    current_user: CurrentCuratorDep,
+    body: EditionPinBody = MsgSpecBody(EditionPinBody),
+    album_service: AlbumService = Depends(get_album_service),
+):
+    """Pin an edition (admin/trusted, D16): the album page and acquisition follow it
+    until cleared. Busts the album caches."""
+    try:
+        await album_service.set_edition_pin(album_id, body.release_mbid, current_user.id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid album request"
+        )
+    return EditionPinResponse(pinned_release_mbid=body.release_mbid)
+
+
+@router.delete("/{album_id}/edition", response_model=EditionPinResponse)
+async def clear_album_edition(
+    album_id: str,
+    current_user: CurrentCuratorDep,
+    album_service: AlbumService = Depends(get_album_service),
+):
+    """Clear the pin (back to auto: owned edition, else ranked)."""
+    try:
+        await album_service.clear_edition_pin(album_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid album request"
+        )
+    return EditionPinResponse(pinned_release_mbid=None)
+
+
+@router.post("/{album_id}/edition/acquire", response_model=EditionAcquireResponse)
+async def acquire_album_edition(
+    album_id: str,
+    current_user: CurrentCuratorDep,
+    download_service=Depends(get_download_service),
+):
+    """Fill the pinned/owned edition's missing tracks + upgrade its below-cutoff
+    owned tracks (admin/trusted, D13). Never retags existing files (D15)."""
+    result = await download_service.acquire_edition(current_user.id, album_id)
+    return EditionAcquireResponse(**result)

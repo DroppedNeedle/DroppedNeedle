@@ -126,6 +126,7 @@ def get_file_processor() -> "FileProcessor":
 
     from core.config import get_settings
     from services.native.file_processor import FileProcessor
+    from services.native.recycle_bin import resolve_bin_path
 
     from .repo_providers import get_download_client_repository, get_download_store
 
@@ -142,6 +143,7 @@ def get_file_processor() -> "FileProcessor":
         verify_downloads=policy.verify_downloads,
         download_store=get_download_store(),
         held_dir=Path(get_settings().cache_dir) / "held",
+        recycle_bin=resolve_bin_path(policy.recycle_bin_path, lib.library_paths),
     )
 
 
@@ -220,10 +222,34 @@ def get_album_service() -> "AlbumService":
     library_db = get_library_db()
     memory_cache = get_cache()
     disk_cache = get_disk_cache()
+    from .repo_providers import get_album_release_pin_store
+
     preferences_service = get_preferences_service()
     audiodb_image_service = get_audiodb_image_service()
     browse_queue = get_audiodb_browse_queue()
-    return AlbumService(library_repo, mb_repo, library_db, memory_cache, disk_cache, preferences_service, audiodb_image_service, browse_queue)
+    return AlbumService(
+        library_repo, mb_repo, library_db, memory_cache, disk_cache, preferences_service,
+        audiodb_image_service, browse_queue,
+        release_pin_store=get_album_release_pin_store(),
+    )
+
+
+@singleton
+def get_quota_service() -> "QuotaService":
+    from services.quota_service import QuotaService
+
+    from .auth_providers import get_auth_store
+    from .cache_providers import get_library_db
+    from .repo_providers import get_download_store, get_user_quota_store
+
+    return QuotaService(
+        preferences=get_preferences_service(),
+        user_quotas=get_user_quota_store(),
+        request_history=get_request_history_store(),
+        download_store=get_download_store(),
+        library_db=get_library_db(),
+        auth_store=get_auth_store(),
+    )
 
 
 @singleton
@@ -231,7 +257,9 @@ def get_request_service() -> "RequestService":
     from services.request_service import RequestService
 
     request_history = get_request_history_store()
-    return RequestService(request_history, get_download_service())
+    return RequestService(
+        request_history, get_download_service(), quota_service=get_quota_service()
+    )
 
 
 def _build_scan_invalidation(memory_cache, disk_cache):
@@ -869,6 +897,7 @@ def get_download_service() -> "DownloadService":
     from services.native.download_service import DownloadService
 
     from .repo_providers import (
+        get_album_release_pin_store,
         get_download_client_repository,
         get_download_store,
         get_newznab_indexer,
@@ -902,4 +931,6 @@ def get_download_service() -> "DownloadService":
         soulseek_enabled=dc.enabled,
         upgrade_allowed=policy.upgrade_allowed,
         quality_cutoff=policy.quality_cutoff,
+        quota_service=get_quota_service(),
+        release_pin_store=get_album_release_pin_store(),
     )

@@ -3,7 +3,7 @@
 A spec is a pure function ``(candidate, target, context, policy) -> Decision``.
 ``Decision`` is ``Accept | Reject``; ``Reject`` carries a typed ``code`` and a
 ``disposition`` that later steps map DIRECTLY onto failover/blocklist/retry
-behaviour (design principle #3 — structured outcomes, not Lidarr's loose strings).
+behaviour (design principle #3 - structured outcomes, not Lidarr's loose strings).
 
 Nothing here does I/O or imports the API ``DownloadPolicySettings`` schema: this is
 the vocabulary the pure specs speak, decoupled so they stay unit-testable with zero
@@ -28,6 +28,7 @@ class RejectCode(enum.Enum):
     IGNORED_TERM = "ignored_term"
     REQUIRED_TERM_MISSING = "required_term_missing"
     QUALITY_REJECTED = "quality_rejected"
+    NOT_AN_UPGRADE = "not_an_upgrade"
     MAX_SIZE_EXCEEDED = "max_size_exceeded"
     RETENTION_EXCEEDED = "retention_exceeded"
     TOO_YOUNG = "too_young"
@@ -38,10 +39,10 @@ class Disposition(enum.Enum):
     """What a rejection means for retry/failover (principle #3).
 
     - ``permanent``: this exact candidate can never become acceptable (wrong album,
-      out-of-range quality, blocklisted) — skip it and fail over to the next.
-    - ``temporary``: could succeed later (Usenet propagation, a transient stall) —
+      out-of-range quality, blocklisted) - skip it and fail over to the next.
+    - ``temporary``: could succeed later (Usenet propagation, a transient stall) -
       eligible for a future retry, never permanently blocklisted.
-    - ``local_fault``: OUR side failed (disk full, write rejected) — never blame or
+    - ``local_fault``: OUR side failed (disk full, write rejected) - never blame or
       blocklist the source.
     """
 
@@ -67,21 +68,21 @@ Decision = Accept | Reject
 
 
 class Candidate(msgspec.Struct, frozen=True, kw_only=True):
-    """The normalised grab-time decision unit — the source-agnostic projection of a
+    """The normalised grab-time decision unit - the source-agnostic projection of a
     Soulseek folder group or a Usenet release that the pure specs read.
 
     Until ``SourceStrategy`` lands (step 4) each scorer builds this from its own raw
     shape; the specs never see ``DownloadSearchResult`` / ``UsenetRelease`` directly.
 
-    - ``source``   — ``"soulseek"`` | ``"usenet"`` (the quarantine namespace).
-    - ``identity`` — the per-source quarantine identity string (see
+    - ``source``   - ``"soulseek"`` | ``"usenet"`` (the quarantine namespace).
+    - ``identity`` - the per-source quarantine identity string (see
       ``models.download_identity``); ``""`` when the unit carries none (a Soulseek
       folder, whose quarantine is applied per-file before grouping).
-    - ``match_text`` — the folder/title text the name-based specs read.
-    - ``tier`` — the quality tier (``""`` / ``"unknown"`` when undetermined).
-    - ``size_bytes`` — the unit's total byte size (folder audio sum / release size).
-    - ``usenet_date`` — release post time (unix); ``None`` for Soulseek (no age concept).
-    - ``password`` — Newznab password flag (0/absent = none); always 0 for Soulseek.
+    - ``match_text`` - the folder/title text the name-based specs read.
+    - ``tier`` - the quality tier (``""`` / ``"unknown"`` when undetermined).
+    - ``size_bytes`` - the unit's total byte size (folder audio sum / release size).
+    - ``usenet_date`` - release post time (unix); ``None`` for Soulseek (no age concept).
+    - ``password`` - Newznab password flag (0/absent = none); always 0 for Soulseek.
     """
 
     source: str
@@ -94,7 +95,7 @@ class Candidate(msgspec.Struct, frozen=True, kw_only=True):
 
 
 class SpecPolicy(msgspec.Struct, frozen=True, kw_only=True):
-    """The config a spec reads — decoupled from the API ``DownloadPolicySettings``
+    """The config a spec reads - decoupled from the API ``DownloadPolicySettings``
     schema so specs stay pure and independently testable. Grows per migration step.
 
     ``ignored_terms`` / ``required_terms`` are tuples (frozen-struct-safe). Each term

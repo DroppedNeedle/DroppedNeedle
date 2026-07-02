@@ -165,3 +165,75 @@ async def test_cancel_batch_user_missing_record_counts_as_failed():
     assert response.cancelled == 0
     assert response.failed == 1
     assert response.success is False
+
+
+# --- Request-count quota at submit (CollectionManagement Feature C, D20) --------
+
+
+def _make_service_with_quota() -> tuple[RequestService, MagicMock, MagicMock, MagicMock]:
+    service, request_history, download_service = _make_service()
+    quota = MagicMock()
+    quota.check_request_quota = AsyncMock()
+    quota.check_storage_admission = AsyncMock()
+    service._quota = quota
+    return service, request_history, download_service, quota
+
+
+@pytest.mark.asyncio
+async def test_request_album_over_quota_rejected_before_recording():
+    from core.exceptions import ValidationError
+
+    service, request_history, _dl, quota = _make_service_with_quota()
+    quota.check_request_quota.side_effect = ValidationError("Request limit reached (2 per 7 days)")
+
+    with pytest.raises(ValidationError):
+        await service.request_album("rg-1", user_id="u1", user_role="user")
+
+    request_history.async_record_request.assert_not_awaited()
+    quota.check_request_quota.assert_awaited_once_with("u1", "user")
+
+
+@pytest.mark.asyncio
+async def test_request_batch_counts_n_and_rejects_whole_batch():
+    from core.exceptions import ValidationError
+
+    service, request_history, _dl, quota = _make_service_with_quota()
+    quota.check_request_quota.side_effect = ValidationError("Request limit reached")
+    items = [{"musicbrainz_id": "rg-1"}, {"musicbrainz_id": "rg-2"}, {"musicbrainz_id": "rg-3"}]
+
+    with pytest.raises(ValidationError):
+        await service.request_batch(items, user_id="u1", user_role="user")
+
+    request_history.async_bulk_record_requests.assert_not_awaited()
+    assert quota.check_request_quota.await_args.args == ("u1", "user", 3)
+
+
+@pytest.mark.asyncio
+async def test_request_batch_quota_counts_only_new_items():
+    service, request_history, _dl, quota = _make_service_with_quota()
+    # rg-1 is already active -> only 1 NEW ask is counted against the quota
+    request_history.async_get_active_mbids = AsyncMock(return_value={"rg-1"})
+    items = [{"musicbrainz_id": "RG-1"}, {"musicbrainz_id": "rg-2", "artist_name": "A"}]
+
+    response = await service.request_batch(items, user_id="u1", user_role="user")
+
+    assert response.success is True
+    assert quota.check_request_quota.await_args.args == ("u1", "user", 1)
+
+
+@pytest.mark.asyncio
+async def test_request_album_over_storage_cap_rejected_at_submit():
+    """The byte caps fail fast at submit so a
+    user's ask never sits in the approval queue only to die at approve time."""
+    from core.exceptions import ValidationError
+
+    service, request_history, _dl, quota = _make_service_with_quota()
+    quota.check_storage_admission = AsyncMock(
+        side_effect=ValidationError("Library storage limit reached (12.0 / 10 GB)")
+    )
+
+    with pytest.raises(ValidationError):
+        await service.request_album("rg-1", user_id="u1", user_role="user")
+
+    request_history.async_record_request.assert_not_awaited()
+    quota.check_storage_admission.assert_awaited_once_with("u1", "user")

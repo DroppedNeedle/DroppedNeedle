@@ -419,25 +419,62 @@ class SlskdRepository:
     def _album_query_ladder(artist: str, album: str, year: int | None) -> list[str]:
         """Most-specific-first album queries: artist+album+year -> artist+album
         -> artist. The broadest rung relies on the preflight scorer to narrow
-        the larger result set back down by title."""
+        the larger result set back down by title.
+
+        Each rung is followed by a blocked-artist variant with the artist's
+        first letters wildcarded (see ``_wildcard_artist``). Exact goes first
+        because wildcards degrade matching on some clients; the wildcard
+        sibling comes before broadening so a blocked artist still gets the
+        most specific query that can return anything."""
+        wc = SlskdRepository._wildcard_artist(SlskdRepository._sanitize_query(artist))
         return SlskdRepository._dedupe_queries(
             [
                 SlskdRepository._build_album_query(artist, album, year),
+                SlskdRepository._build_album_query(wc, album, year),
                 SlskdRepository._build_album_query(artist, album, None),
+                SlskdRepository._build_album_query(wc, album, None),
                 SlskdRepository._sanitize_query(artist),
+                wc,
             ]
         )
 
     @staticmethod
     def _track_query_ladder(artist: str, track: str, album: str | None) -> list[str]:
         """Most-specific-first track queries: artist+track+album -> artist+track.
-        Keeps the track title at every rung so the TrackMatcher can match."""
+        Keeps the track title at every rung so the TrackMatcher can match.
+        Wildcard blocked-artist variants interleave as in ``_album_query_ladder``."""
+        wc = SlskdRepository._wildcard_artist(SlskdRepository._sanitize_query(artist))
         return SlskdRepository._dedupe_queries(
             [
                 SlskdRepository._build_track_query(artist, track, album),
+                SlskdRepository._build_track_query(wc, track, album),
                 SlskdRepository._build_track_query(artist, track, None),
+                SlskdRepository._build_track_query(wc, track, None),
             ]
         )
+
+    @staticmethod
+    def _wildcard_artist(artist: str) -> str:
+        """Blocked-artist workaround: Soulseek's server filters searches that
+        contain certain artist terms (DMCA), returning 0 results no matter what
+        else is in the query ("Enter Shikari" -> nothing). Replacing the first
+        letter of each word with Soulseek's leading wildcard defeats the filter
+        while matching the same files ("*nter *hikari" -> lots). An apostrophe
+        right after the first letter is absorbed into the wildcard (D'Angelo ->
+        *Angelo) so matching no longer depends on the peer's apostrophe form."""
+        return " ".join(
+            SlskdRepository._wildcard_word(w) for w in artist.split()
+        )
+
+    @staticmethod
+    def _wildcard_word(word: str) -> str:
+        if not word[:1].isalpha():
+            return word
+        rest = word[1:]
+        if rest[:1] in ("'", "’"):
+            rest = rest[1:]
+        # keep short words exact: "*" plus a lone char matches far too much
+        return f"*{rest}" if len(rest) >= 2 else word
 
     @staticmethod
     def _dedupe_queries(queries: list[str]) -> list[str]:
@@ -453,7 +490,10 @@ class SlskdRepository:
     def _sanitize_query(query: str) -> str:
         """Strip Soulseek operators (space-surrounded hyphens, parentheses)
         that confuse the search, while preserving hyphens inside names like
-        ``AC-DC`` / ``Jay-Z``."""
+        ``AC-DC`` / ``Jay-Z``. Typographic apostrophes are normalised to the
+        straight ASCII form: MusicBrainz metadata uses ’ but shared files
+        are almost always named with ``'``."""
+        query = re.sub(r"[‘’‛ʼ]", "'", query)
         query = re.sub(r"\s-\s", " ", query)
         for op in ("(", ")"):
             query = query.replace(op, " ")

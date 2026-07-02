@@ -26,9 +26,12 @@ from api.v1.schemas.auth import (
     UserListResponse,
     UserResponse,
     import_candidate_to_response,
+    UserQuotaOverrideBody,
+    UserQuotaResponse,
     session_to_response,
     user_to_response,
 )
+from core.dependencies import get_quota_service
 from core.dependencies.auth_providers import get_auth_service, get_plex_user_auth_service, get_jellyfin_user_auth_service, get_oidc_user_auth_service, get_user_import_service
 from core.exceptions import AuthenticationError, ConfigurationError, ExternalServiceError, RegistrationError
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
@@ -288,6 +291,49 @@ async def admin_set_role(
     except AuthenticationError as e:
         logger.debug(f"Role update failed for user {user_id[:8]}: {e}")
         raise HTTPException(status_code = status.HTTP_400_BAD_REQUEST, detail = "Could not update role")
+
+
+@router.get("/admin/users/{user_id}/quota", response_model = UserQuotaResponse)
+async def admin_get_user_quota(
+    user_id: str,
+    _admin: CurrentAdminDep,
+    quota_service = Depends(get_quota_service),
+) -> UserQuotaResponse:
+    """One user's quota override, effective values and current usage
+    (CollectionManagement Feature C; drives the SettingsUsers editor + bars)."""
+    override = await quota_service.get_override(user_id)
+    usage = await quota_service.usage_for(user_id)
+    return UserQuotaResponse(
+        user_id = user_id,
+        override = UserQuotaOverrideBody(
+            request_quota_count = override.request_quota_count if override else None,
+            request_quota_days = override.request_quota_days if override else None,
+            storage_quota_gb = override.storage_quota_gb if override else None,
+        ),
+        effective_request_quota_count = usage.quota.request_quota_count,
+        effective_request_quota_days = usage.quota.request_quota_days,
+        effective_storage_quota_gb = usage.quota.storage_quota_gb,
+        requests_in_window = usage.requests_in_window,
+        storage_bytes = usage.storage_bytes,
+        exempt = usage.exempt,
+    )
+
+
+@router.put("/admin/users/{user_id}/quota", response_model = UserQuotaResponse)
+async def admin_set_user_quota(
+    user_id: str,
+    _admin: CurrentAdminDep,
+    body: UserQuotaOverrideBody = MsgSpecBody(UserQuotaOverrideBody),
+    quota_service = Depends(get_quota_service),
+) -> UserQuotaResponse:
+    """Set (or clear, with all-null) a user's quota overrides; returns fresh state."""
+    await quota_service.set_override(
+        user_id,
+        request_quota_count = body.request_quota_count,
+        request_quota_days = body.request_quota_days,
+        storage_quota_gb = body.storage_quota_gb,
+    )
+    return await admin_get_user_quota(user_id, _admin, quota_service)
 
 
 @router.delete("/admin/users/{user_id}/sessions", status_code = status.HTTP_204_NO_CONTENT)
