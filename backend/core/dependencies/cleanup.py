@@ -6,7 +6,7 @@ import asyncio
 import logging
 
 from core.config import get_settings
-from infrastructure.crypto import init_crypto
+from infrastructure.crypto import decrypt, init_crypto
 from infrastructure.http.client import close_http_clients
 
 from ._registry import clear_all_singletons
@@ -59,6 +59,18 @@ def clear_listenbrainz_dependent_caches() -> None:
 async def init_app_state(app) -> None:
     settings = get_settings()
     await asyncio.to_thread(init_crypto, settings.root_app_dir / "config")
+    # config.json stores lidarr_api_key encrypted at rest, but
+    # Settings.load_from_file() copies it in verbatim (it runs before
+    # crypto is up), so the Lidarr client sends Fernet ciphertext as
+    # X-Api-Key and gets 401s until the next settings save. Decrypt in
+    # place now that crypto is initialised; plaintext values pass through
+    # untouched (decrypt flags InvalidToken instead of raising).
+    for field in ("lidarr_api_key", "audiodb_api_key"):
+        value = getattr(settings, field, "")
+        if value:
+            plaintext, was_plaintext = decrypt(value)
+            if not was_plaintext:
+                setattr(settings, field, plaintext)
 
 
 async def cleanup_app_state() -> None:
