@@ -56,6 +56,7 @@ from api.v1.routes import lastfm as lastfm_routes
 from api.v1.routes import scrobble as scrobble_routes
 from api.v1.routes import me_connections as me_connections_routes
 from api.v1.routes import system as system_routes
+from api.v1.routes import spotify as spotify_routes
 from api.v1.routes import now_playing as now_playing_routes
 from api.v1.routes import plex_library as plex_library_routes
 from api.v1.routes import plex_auth as plex_auth_routes
@@ -675,6 +676,7 @@ v1_router.include_router(lastfm_routes.router)
 v1_router.include_router(scrobble_routes.router)
 v1_router.include_router(me_connections_routes.router)
 v1_router.include_router(system_routes.router)
+v1_router.include_router(spotify_routes.router)
 v1_router.include_router(now_playing_routes.router)
 v1_router.include_router(profile.router)
 v1_router.include_router(playlists.router)
@@ -713,5 +715,12 @@ app.add_middleware(
     CompatPathCaseMiddleware,
     routes=[*subsonic_router.routes, *jellyfin_router.routes],
 )
+
+# Trust X-Forwarded-Proto / X-Forwarded-Host from the reverse proxy so that
+# request.base_url reflects https:// when TLS is terminated upstream.
+# Must be outermost (added last) so it rewrites the scope before any other
+# middleware or route handler sees the request.
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware  # noqa: E402
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 mount_frontend(app)

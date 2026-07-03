@@ -27,6 +27,7 @@
 	import SettingsIndexers from '$lib/components/settings/SettingsIndexers.svelte';
 	import SettingsConnectApps from '$lib/components/settings/SettingsConnectApps.svelte';
 	import SettingsOnboardingChecklist from '$lib/components/settings/SettingsOnboardingChecklist.svelte';
+	import SettingsSpotify from '$lib/components/settings/SettingsSpotify.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getUpdateCheckQuery } from '$lib/queries/VersionQuery.svelte';
 	import {
@@ -51,6 +52,7 @@
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
+	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
 
 	const integration = fromStore(integrationStore);
 
@@ -95,6 +97,9 @@
 		{ id: 'plex', label: 'Plex', tier: 'setup', icon: PlexIcon },
 		{ id: 'youtube', label: 'YouTube', tier: 'setup', icon: Youtube },
 		...(authStore.isAdmin ? [{ id: 'lastfm', label: 'Last.fm', tier: 'setup', icon: Radio }] : []),
+		...(authStore.isAdmin
+			? [{ id: 'spotify', label: 'Spotify', tier: 'setup', icon: SpotifyIcon }]
+			: []),
 		{ id: 'settings', label: 'Release Types', tier: 'personalize', icon: Settings2 },
 		{ id: 'home', label: 'Home', tier: 'personalize', icon: Home },
 		{ id: 'discover', label: 'Discover', tier: 'personalize', icon: Compass },
@@ -275,6 +280,8 @@
 					<SettingsYouTube />
 				{:else if activeTab === 'lastfm' && authStore.isAdmin}
 					<SettingsLastFmApp />
+				{:else if activeTab === 'spotify' && authStore.isAdmin}
+					<SettingsSpotify />
 				{:else if activeTab === 'musicbrainz'}
 					<SettingsMusicBrainz />
 				{:else if activeTab === 'advanced'}

@@ -100,6 +100,7 @@ from .service_providers import (  # noqa: F401
     get_youtube_service,
     get_lastfm_auth_service,
     get_per_user_client_factory,
+    get_spotify_import_service,
     get_scrobble_service,
     get_discover_service,
     get_discover_queue_manager,

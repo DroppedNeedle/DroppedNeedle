@@ -191,3 +191,14 @@ export async function resolvePlaylistSources(id: string): Promise<Record<string,
 	);
 	return data.sources;
 }
+
+export interface BatchRequestResult {
+	success: boolean;
+	message: string;
+	requested: number;
+	skipped: number;
+}
+
+export async function requestMissingTracks(id: string): Promise<BatchRequestResult> {
+	return api.global.post<BatchRequestResult>(API.playlists.requestMissing(id));
+}

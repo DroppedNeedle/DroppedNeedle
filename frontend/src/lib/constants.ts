@@ -279,7 +279,10 @@ export const API = {
 		sectionPrefs: () => '/api/v1/me/section-prefs',
 		lastfmAuthToken: () => '/api/v1/me/connections/lastfm/auth/token',
 		lastfmAuthSession: () => '/api/v1/me/connections/lastfm/auth/session',
-		listenbrainz: () => '/api/v1/me/connections/listenbrainz'
+		listenbrainz: () => '/api/v1/me/connections/listenbrainz',
+		spotifyAuthUrl: () => '/api/v1/me/connections/spotify/auth/url',
+		spotifyPlaylists: () => '/api/v1/me/spotify/playlists',
+		spotifyImport: (playlistId: string) => `/api/v1/me/spotify/playlists/${playlistId}/import`
 	},
 	scrobble: {
 		nowPlaying: () => '/api/v1/scrobble/now-playing',
@@ -305,7 +308,8 @@ export const API = {
 		deleteCover: (id: string) => `/api/v1/playlists/${id}/cover`,
 		checkTracks: () => '/api/v1/playlists/check-tracks',
 		resolveSources: (id: string) => `/api/v1/playlists/${id}/resolve-sources`,
-		share: (id: string) => `/api/v1/playlists/${id}/share`
+		share: (id: string) => `/api/v1/playlists/${id}/share`,
+		requestMissing: (id: string) => `/api/v1/playlists/${id}/request-missing`
 	},
 	stream: {
 		jellyfin: (itemId: string) => `/api/v1/stream/jellyfin/${itemId}`,

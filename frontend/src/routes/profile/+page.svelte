@@ -40,6 +40,13 @@
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import type { ProfileServiceConnection } from '$lib/queries/profile/types';
 	import ScrobblingDiscoveryCard from '$lib/components/profile/ScrobblingDiscoveryCard.svelte';
+	import SpotifyConnectionCard from '$lib/components/profile/SpotifyConnectionCard.svelte';
+	import { page } from '$app/state';
+	import { browser } from '$app/environment';
+	import { onMount } from 'svelte';
+	import { toastStore } from '$lib/stores/toast';
+	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
+	import { ConnectionsQueryKeyFactory } from '$lib/queries/connections/ConnectionsQueryKeyFactory';
 
 	const userId = authStore.user?.id ?? '';
 	const profileQuery = getProfileQuery(userId);
@@ -83,6 +90,20 @@
 	let avatarFile: File | null = $state(null);
 	let draggingOver = $state(false);
 	let fileInput: HTMLInputElement | undefined = $state();
+
+	onMount(async () => {
+		const spotify = page.url.searchParams.get('spotify');
+		if (spotify === 'connected') {
+			toastStore.show({ message: 'Spotify connected successfully', type: 'success' });
+			await invalidateQueriesWithPersister({
+				queryKey: ConnectionsQueryKeyFactory.list(authStore.user?.id)
+			});
+			if (browser) history.replaceState({}, '', '/profile');
+		} else if (spotify === 'error') {
+			toastStore.show({ message: 'Spotify connection failed. Please try again.', type: 'error' });
+			if (browser) history.replaceState({}, '', '/profile');
+		}
+	});
 
 	function errMessage(e: unknown): string {
 		return e instanceof ApiError ? e.message : 'Could not reach the server';
@@ -684,6 +705,10 @@
 
 				<div id="scrobbling" class="scroll-mt-20">
 					<ScrobblingDiscoveryCard />
+				</div>
+
+				<div id="spotify" class="scroll-mt-20">
+					<SpotifyConnectionCard />
 				</div>
 
 				{#if profile.library_stats.length > 0}

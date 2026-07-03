@@ -303,6 +303,13 @@ ACOUSTID_KEY_MASK = "acoustid****"
 DOWNLOAD_CLIENT_API_KEY_MASK = "slskd****"
 INDEXER_API_KEY_MASK = "indexer****"
 SABNZBD_API_KEY_MASK = "sabnzbd****"
+SPOTIFY_SECRET_MASK = "spotify****"
+
+
+class SpotifySettings(AppStruct):
+    client_id: str = ""
+    client_secret: str = ""
+    enabled: bool = False
 
 # keep in sync with NamingTemplateEngine.DEFAULT (services/native/naming.py)
 DEFAULT_NAMING_TEMPLATE = "{albumartist}/{album} ({year})/{disc:02d}{track:02d} {title}.{ext}"

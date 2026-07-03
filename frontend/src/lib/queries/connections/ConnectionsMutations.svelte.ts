@@ -48,4 +48,12 @@ export const createDisconnectMutation = () =>
 		onSuccess: invalidateConnections
 	}));
 
+export const createConnectSpotifyMutation = () =>
+	createMutation(() => ({
+		mutationFn: async () => {
+			const data = await api.global.get<{ auth_url: string }>(CONNECTIONS_ENDPOINTS.spotifyAuthUrl);
+			window.location.href = data.auth_url;
+		}
+	}));
+
 type ConnectionStatusResponse = { service: string; enabled: boolean; username: string };
