@@ -1163,16 +1163,15 @@ class DownloadOrchestrator:
 
         return await self._create_retry_task(task)
 
-    async def reimport_task(self, task_id: str, user_id: str, user_role: str):  # noqa: ANN201
+    async def reimport_task(self, task_id: str):  # noqa: ANN201
         """Re-run only the import half of the pipeline for a ``failed``/``partial``
         task whose download the user finished by hand in slskd (e.g. resumed a
         stalled/errored transfer in slskd's own UI after DroppedNeedle had already
-        given up). This re-resolves the SAME candidate slskd already picked."""
+        given up). This re-resolves the SAME candidate slskd already picked.
+        Admin-gated at the route (``CurrentAdminDep``)."""
         task = await self._store.get_task(task_id)
         if task is None:
             raise ResourceNotFoundError("Download task not found")
-        if user_role != "admin":
-            raise PermissionDeniedError("Only admins can reimport downloads")
         if task.status not in ("failed", "partial"):
             raise ValidationError("Only failed or partial downloads can be reimported")
         if (

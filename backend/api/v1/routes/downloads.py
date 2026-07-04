@@ -43,7 +43,7 @@ from api.v1.schemas.download import (
 )
 from core.dependencies import get_download_service, get_sse_publisher
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
-from middleware import CurrentCuratorDep, CurrentUserDep
+from middleware import CurrentAdminDep, CurrentCuratorDep, CurrentUserDep
 from services.native.download_service import ALREADY_IN_LIBRARY
 
 logger = logging.getLogger(__name__)
@@ -377,9 +377,9 @@ async def stream_held_audio(
 
 @router.post("/{task_id}/reimport", response_model=ReimportDownloadResponse)
 async def reimport_download(
-    task_id: str, current_user: CurrentUserDep, service=Depends(get_download_service)
+    task_id: str, _admin: CurrentAdminDep, service=Depends(get_download_service)
 ):
-    task = await service.reimport_task(task_id, current_user.id, current_user.role)
+    task = await service.reimport_task(task_id)
     return ReimportDownloadResponse(
         success=task.status in ("completed", "partial"),
         status=task.status,
