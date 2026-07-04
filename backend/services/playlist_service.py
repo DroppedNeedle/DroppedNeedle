@@ -447,6 +447,8 @@ class PlaylistService:
         }
         if new_plex_rating_key_resolved:
             repo_kwargs["plex_rating_key"] = new_plex_rating_key
+        if normalized_source == "local" and new_track_source_id is not None:
+            repo_kwargs["library_file_id"] = new_track_source_id
 
         result = await self._repo.update_track_source(
             playlist_id, track_id, normalized_source, normalized_available_sources,

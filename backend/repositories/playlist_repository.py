@@ -718,6 +718,7 @@ class PlaylistRepository:
         available_sources: Optional[list[str]] = None,
         track_source_id: Optional[str] = None,
         plex_rating_key: Optional[str] = _UNSET,
+        library_file_id: Optional[str] = _UNSET,
     ) -> Optional[PlaylistTrackRecord]:
         with self._write_lock:
             conn = self._get_connection()
@@ -740,13 +741,18 @@ class PlaylistRepository:
                 if plex_rating_key is not _UNSET
                 else (row["plex_rating_key"] if "plex_rating_key" in row.keys() else None)
             )
+            new_library_file_id = (
+                library_file_id
+                if library_file_id is not _UNSET
+                else (row["library_file_id"] if "library_file_id" in row.keys() else None)
+            )
 
             conn.execute(
                 "UPDATE playlist_tracks SET source_type = ?, available_sources = ?, "
-                "track_source_id = ?, plex_rating_key = ? "
+                "track_source_id = ?, plex_rating_key = ?, library_file_id = ? "
                 "WHERE id = ? AND playlist_id = ?",
                 (new_source_type, new_available, new_track_source_id, new_plex_rating_key,
-                 track_id, playlist_id),
+                 new_library_file_id, track_id, playlist_id),
             )
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
@@ -772,6 +778,7 @@ class PlaylistRepository:
             duration=row["duration"],
             created_at=row["created_at"],
             plex_rating_key=new_plex_rating_key,
+            library_file_id=new_library_file_id,
         )
 
     def get_tracks(self, playlist_id: str) -> list[PlaylistTrackRecord]:

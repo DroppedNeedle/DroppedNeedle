@@ -89,10 +89,11 @@ class AsyncPlaylistRepository:
         available_sources: Optional[list[str]] = None,
         track_source_id: Optional[str] = None,
         plex_rating_key: Optional[str] = _UNSET,
+        library_file_id: Optional[str] = _UNSET,
     ) -> Optional[PlaylistTrackRecord]:
         return await asyncio.to_thread(
             self._repo.update_track_source, playlist_id, track_id,
-            source_type, available_sources, track_source_id, plex_rating_key,
+            source_type, available_sources, track_source_id, plex_rating_key, library_file_id,
         )
 
     async def batch_update_available_sources(
