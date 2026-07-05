@@ -80,6 +80,7 @@ class AlbumCoverFetcher:
         file_path: Path,
         priority: RequestPriority = RequestPriority.IMAGE_FETCH,
         is_disconnected: DisconnectCallable | None = None,
+        include_best_release: bool = True,
     ) -> tuple[bytes, str, str] | None:
         size_int = int(size) if size and size.isdigit() else 500
         await check_disconnected(is_disconnected)
@@ -126,6 +127,11 @@ class AlbumCoverFetcher:
             raise
         except Exception as e:  # noqa: BLE001
             logger.debug(f"Failed to fetch cover via release group: {e}")
+        # The best-release fallback costs two more serial archive.org calls (release-group
+        # metadata -> representative release front). The app's hot path defers it to the
+        # background (include_best_release=False); compat/prewarm callers run it inline.
+        if not include_best_release:
+            return None
         await check_disconnected(is_disconnected)
         return await self._get_cover_from_best_release(release_group_id, size, file_path, priority=priority, is_disconnected=is_disconnected)
 

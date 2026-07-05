@@ -43,7 +43,7 @@ function renderComponent(
 	} as Parameters<typeof render<typeof BaseImage>>[1]);
 }
 
-describe('BaseImage.svelte — remoteUrl', () => {
+describe('BaseImage.svelte - remoteUrl', () => {
 	beforeEach(() => {
 		mockDirectRemoteEnabled = true;
 	});
@@ -108,5 +108,38 @@ describe('BaseImage.svelte — remoteUrl', () => {
 		await expect
 			.element(page.getByAltText('Test Image'))
 			.toHaveAttribute('src', `/api/v1/covers/artist/${validMbid}?size=250`);
+	});
+});
+
+describe('BaseImage.svelte - warming skeleton', () => {
+	beforeEach(() => {
+		mockDirectRemoteEnabled = true;
+	});
+
+	it('shows a shimmer skeleton while the cover is loading', async () => {
+		renderComponent({ imageType: 'album' });
+
+		await expect.element(page.getByTestId('cover-skeleton')).toBeInTheDocument();
+	});
+
+	it('holds the skeleton on the lazy path (placeholder gif load must not hide it)', async () => {
+		// The lazy <img> mounts with a 1x1 data-URI gif whose load fires immediately; it must not
+		// count as the cover loading, or the skeleton would vanish on the default grid path.
+		renderComponent({ imageType: 'album', lazy: true });
+
+		await expect.element(page.getByTestId('cover-skeleton')).toBeInTheDocument();
+	});
+
+	it('holds the skeleton after a warming error instead of dropping to the placeholder', async () => {
+		renderComponent({ imageType: 'album', lazy: false });
+
+		const img = page.getByAltText('Test Image');
+		await expect.element(img).toBeInTheDocument();
+
+		// A cold cover comes back as 202 (warming) -> the <img> fires error. We must keep the
+		// skeleton and poll it in, not settle on the static placeholder.
+		img.element().dispatchEvent(new Event('error'));
+
+		await expect.element(page.getByTestId('cover-skeleton')).toBeInTheDocument();
 	});
 });

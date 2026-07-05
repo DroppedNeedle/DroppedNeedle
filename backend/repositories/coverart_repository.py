@@ -250,6 +250,11 @@ class CoverArtRepository:
             audiodb_service=audiodb_service,
             audiodb_browse_queue=audiodb_browse_queue,
         )
+        # Release groups / artists whose expensive fallback (CAA best-release / Wikidata) is
+        # being resolved in the background (hot-path defer), so concurrent misses don't each
+        # spawn a resolver.
+        self._deferred_rg_inflight: set[str] = set()
+        self._deferred_artist_inflight: set[str] = set()
 
         try:
             task = asyncio.create_task(self._disk_cache.enforce_size_limit(force=True))
@@ -378,8 +383,12 @@ class CoverArtRepository:
             self._raise_retryable_status(response, source, url)
             return response
 
+    # Only ONE retry (max_attempts=2), not three: covers ride a short-budget client, and a
+    # cover that fails twice isn't worth a third 6s attempt on the user's hot path - it degrades
+    # to the placeholder and is warmed in the background. Three attempts x the old 10s client is
+    # exactly how a hung archive.org fetch became a 25-30s request tail.
     @with_retry(
-        max_attempts=3,
+        max_attempts=2,
         circuit_breaker=_coverart_circuit_breaker,
         retriable_exceptions=(httpx.HTTPError, ExternalServiceError, RateLimitedError),
     )
@@ -516,7 +525,7 @@ class CoverArtRepository:
 
         return None
     
-    async def get_artist_image(self, artist_id: str, size: Optional[int] = None, priority: RequestPriority = RequestPriority.IMAGE_FETCH, is_disconnected: DisconnectCallable | None = None) -> Optional[tuple[bytes, str, str]]:
+    async def get_artist_image(self, artist_id: str, size: Optional[int] = None, priority: RequestPriority = RequestPriority.IMAGE_FETCH, is_disconnected: DisconnectCallable | None = None, defer_wikidata: bool = False) -> Optional[tuple[bytes, str, str]]:
         try:
             artist_id = validate_mbid(artist_id, "artist")
         except ValueError as e:
@@ -555,23 +564,57 @@ class CoverArtRepository:
         if await self._disk_cache.is_negative(file_path):
             return None
 
-        dedupe_key = f"artist:img:{artist_id}:{size}"
+        # The dedupe key MUST encode the defer mode. The fast (deferred) hot path and the full
+        # background resolve run DIFFERENT fetches; if they shared a key, a hot request arriving
+        # while a slow full Wikidata/MusicBrainz resolve is in flight would coalesce onto it as a
+        # follower and block for the whole resolve (seen live: a 55s cover request) - exactly the
+        # stall deferring exists to avoid. Separate keys keep hot requests fast (they coalesce
+        # only with each other) while background/compat full fetches coalesce among themselves.
+        dedupe_key = f"artist:img:{artist_id}:{size}:{'deferred' if defer_wikidata else 'full'}"
         try:
             result = await _deduplicator.dedupe(
                 dedupe_key,
-                lambda: self._artist_fetcher.fetch_artist_image(artist_id, size, file_path, priority=priority, is_disconnected=is_disconnected)
+                lambda: self._artist_fetcher.fetch_artist_image(artist_id, size, file_path, priority=priority, is_disconnected=is_disconnected, include_wikidata=not defer_wikidata)
             )
         except ClientDisconnectedError:
             raise
         except (TransientImageFetchError, CircuitOpenError, httpx.HTTPError, ExternalServiceError, RateLimitedError) as e:
+            # Transient failure: fail soft WITHOUT caching a negative (the artist may well have
+            # an image; it was just a blip) and without deferring - the next request retries.
             _record_degradation(f"Artist image fetch failed for {artist_id[:8]}: {e}")
             return None
 
+        if result is None and defer_wikidata:
+            # Hot path: AudioDB cache + local missed. Resolve the Wikidata chain (MusicBrainz
+            # 1/s) in the background so the artist grid never serialises on it - placeholder
+            # now, fills in on the next visit. No negative here or the resolve is short-circuited.
+            self._spawn_deferred_artist_resolve(artist_id, size)
+            return None
         if result is None:
             await self._disk_cache.write_negative(file_path, ttl_seconds=COVER_NEGATIVE_TTL_SECONDS)
         else:
             await self._memory_set_from_result(identifier, "img", result)
         return result
+
+    def _spawn_deferred_artist_resolve(self, artist_id: str, size: Optional[int]) -> None:
+        """Background full resolve of an artist image (the Wikidata/MusicBrainz chain the hot
+        path skipped), deduped so concurrent misses spawn only one resolver. BACKGROUND_SYNC
+        yields to live users; the result is banked to the disk cache for the next request."""
+        key = f"{artist_id}:{size}"
+        if key in self._deferred_artist_inflight:
+            return
+        self._deferred_artist_inflight.add(key)
+
+        async def _resolve() -> None:
+            try:
+                await self.get_artist_image(
+                    artist_id, size, priority=RequestPriority.BACKGROUND_SYNC,
+                )
+            finally:
+                self._deferred_artist_inflight.discard(key)
+
+        task = asyncio.create_task(_resolve())
+        task.add_done_callback(_log_task_error)
 
     async def get_release_group_cover(
         self,
@@ -579,6 +622,7 @@ class CoverArtRepository:
         size: Optional[str] = "500",
         priority: RequestPriority = RequestPriority.IMAGE_FETCH,
         is_disconnected: DisconnectCallable | None = None,
+        defer_best_release: bool = False,
     ) -> Optional[tuple[bytes, str, str]]:
         try:
             release_group_id = validate_mbid(release_group_id, "release-group")
@@ -604,11 +648,24 @@ class CoverArtRepository:
         if await self._disk_cache.is_negative(file_path):
             return None
 
-        dedupe_key = f"cover:rg:{release_group_id}:{size}"
+        # Key encodes the defer mode so a fast (deferred) hot request never coalesces onto an
+        # in-flight slow full best-release resolve and blocks on it. See get_artist_image.
+        dedupe_key = f"cover:rg:{release_group_id}:{size}:{'deferred' if defer_best_release else 'full'}"
         result = await _deduplicator.dedupe(
             dedupe_key,
-            lambda: self._album_fetcher.fetch_release_group_cover(release_group_id, size, file_path, priority=priority, is_disconnected=is_disconnected)
+            lambda: self._album_fetcher.fetch_release_group_cover(
+                release_group_id, size, file_path, priority=priority,
+                is_disconnected=is_disconnected,
+                include_best_release=not defer_best_release,
+            )
         )
+        if result is None and defer_best_release:
+            # Hot path: the cheap sources missed. Finish the expensive best-release fallback
+            # (+ embedded art + negative marker) in the background so this request returns the
+            # placeholder now and the cover fills in on the next visit - never write a negative
+            # here or the background resolve would be short-circuited by it.
+            self._spawn_deferred_rg_resolve(release_group_id, size)
+            return None
         if result is None:
             # Last resort: every external source missed - serve art embedded in a
             # local library file for this album, if any has some. Beats the
@@ -619,6 +676,44 @@ class CoverArtRepository:
         else:
             await self._memory_set_from_result(identifier, suffix, result)
         return result
+
+    def _spawn_deferred_rg_resolve(self, release_group_id: str, size: Optional[str]) -> None:
+        """Background full resolve of a release-group cover (the CAA best-release fallback the
+        hot path skipped), deduped so concurrent misses spawn only one resolver. Runs at
+        BACKGROUND_SYNC so it yields to live users and banks the result to the disk cache."""
+        key = f"{release_group_id}:{size or 'orig'}"
+        if key in self._deferred_rg_inflight:
+            return
+        self._deferred_rg_inflight.add(key)
+
+        async def _resolve() -> None:
+            try:
+                await self.get_release_group_cover(
+                    release_group_id, size, priority=RequestPriority.BACKGROUND_SYNC,
+                )
+            finally:
+                self._deferred_rg_inflight.discard(key)
+
+        task = asyncio.create_task(_resolve())
+        task.add_done_callback(_log_task_error)
+
+    def is_rg_cover_warming(self, release_group_id: str, size: Optional[str]) -> bool:
+        """True while a deferred best-release resolve is in flight for this cover, i.e. the
+        placeholder the route would serve is temporary and the real cover will land shortly.
+        Lets the route signal 'warming, poll me' (202) vs 'no art' (placeholder)."""
+        try:
+            release_group_id = validate_mbid(release_group_id, "release-group")
+        except ValueError:
+            return False
+        return f"{release_group_id}:{size or 'orig'}" in self._deferred_rg_inflight
+
+    def is_artist_cover_warming(self, artist_id: str, size: Optional[int]) -> bool:
+        """True while a deferred Wikidata resolve is in flight for this artist image."""
+        try:
+            artist_id = validate_mbid(artist_id, "artist")
+        except ValueError:
+            return False
+        return f"{artist_id}:{size}" in self._deferred_artist_inflight
 
     async def _embedded_album_cover(
         self,

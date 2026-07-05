@@ -132,6 +132,7 @@ class ArtistImageFetcher:
         file_path: Path,
         priority: RequestPriority = RequestPriority.IMAGE_FETCH,
         is_disconnected: DisconnectCallable | None = None,
+        include_wikidata: bool = True,
     ) -> tuple[bytes, str, str] | None:
         result = None
         had_transient_failure = False
@@ -161,15 +162,20 @@ class ArtistImageFetcher:
             )
         if result:
             return result
-        try:
-            await check_disconnected(is_disconnected)
-            result = await self._fetch_from_wikidata(artist_id, size, file_path, priority=priority)
-        except TRANSIENT_FETCH_EXCEPTIONS as exc:
-            had_transient_failure = True
-            last_transient_error = exc
-            result = None
-        if result:
-            return result
+        # The Wikidata branch is the expensive one: MusicBrainz relations at a hard 1 req/s,
+        # then Wikidata + Commons. The app's hot path defers it to the background
+        # (include_wikidata=False) so a cold artist grid never serialises on MusicBrainz;
+        # compat/prewarm callers run it inline.
+        if include_wikidata:
+            try:
+                await check_disconnected(is_disconnected)
+                result = await self._fetch_from_wikidata(artist_id, size, file_path, priority=priority)
+            except TRANSIENT_FETCH_EXCEPTIONS as exc:
+                had_transient_failure = True
+                last_transient_error = exc
+                result = None
+            if result:
+                return result
         if had_transient_failure:
             raise TransientImageFetchError(
                 f"Transient failure while fetching artist image for {artist_id}"

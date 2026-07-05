@@ -56,6 +56,77 @@ def _log_task_error(task: "asyncio.Task[None]") -> None:
         logger.error("Discover background task failed: %s", exc, exc_info=exc)
 
 
+# Ceilings on how many covers one prewarm pass fetches, so a huge grid can't turn a warm
+# cycle into an unbounded background crawl. First-seen order (top picks, then rows top-to-
+# bottom) means the covers most likely on screen warm first.
+_PREWARM_MAX_ALBUMS = 120
+_PREWARM_MAX_ARTISTS = 60
+
+
+def _collect_cover_prewarm_mbids(response: DiscoverResponse) -> tuple[list[str], list[str]]:
+    """Album and artist MBIDs across every visible Discover section, de-duped in first-seen
+    (visual-priority) order. Tracks/genres carry no cover of their own and are skipped."""
+    album_mbids: list[str] = []
+    artist_mbids: list[str] = []
+    seen_albums: set[str] = set()
+    seen_artists: set[str] = set()
+
+    def add_album(mbid: str | None) -> None:
+        if mbid and mbid not in seen_albums:
+            seen_albums.add(mbid)
+            album_mbids.append(mbid)
+
+    def add_artist(mbid: str | None) -> None:
+        if mbid and mbid not in seen_artists:
+            seen_artists.add(mbid)
+            artist_mbids.append(mbid)
+
+    def walk_section(section: HomeSection | None) -> None:
+        if section is None:
+            return
+        for item in section.items:
+            if isinstance(item, HomeAlbum):
+                add_album(item.mbid)
+            elif isinstance(item, HomeArtist):
+                add_artist(item.mbid)
+
+    if response.top_picks:
+        for pick in response.top_picks.items:
+            add_album(pick.album.mbid)
+    for bylt in response.because_you_listen_to:
+        add_artist(bylt.seed_artist_mbid)
+        walk_section(bylt.section)
+    for section in (
+        response.fresh_releases,
+        response.missing_essentials,
+        response.rediscover,
+        response.artists_you_might_like,
+        response.popular_in_your_genres,
+        response.globally_trending,
+        response.lastfm_weekly_artist_chart,
+        response.lastfm_weekly_album_chart,
+        response.lastfm_recent_scrobbles,
+        response.listeners_like_you,
+        response.anniversaries,
+        response.new_from_followed,
+        response.unexplored_genres,
+        response.genre_list,
+    ):
+        walk_section(section)
+    for section in response.daily_mixes:
+        walk_section(section)
+    for section in response.radio_sections:
+        walk_section(section)
+    # Weekly Exploration is a bespoke shape (tracks, not HomeSection items) but its rows still
+    # render album + artist covers through our endpoint, so warm those too.
+    if response.weekly_exploration is not None:
+        for track in response.weekly_exploration.tracks:
+            add_album(track.release_group_mbid)
+            add_artist(track.artist_mbid)
+
+    return album_mbids[:_PREWARM_MAX_ALBUMS], artist_mbids[:_PREWARM_MAX_ARTISTS]
+
+
 DISCOVER_CACHE_TTL = 43200  # 12 hours
 # stale-while-revalidate: serve a cached response immediately but rebuild it in the
 # background once it's older than this. Kept comfortably above a build's duration so
@@ -346,35 +417,63 @@ class DiscoverHomepageService:
             self._built_at[cache_key] = time.time()
 
     def _spawn_cover_prewarm(self, user_id: str, response: DiscoverResponse) -> None:
-        """Warm Top Picks covers so the scored deck paints instantly (mirrors the
-        queue manager's prewarm; BACKGROUND_SYNC keeps user requests ahead of it)."""
-        if self._cover_repo is None or not response.top_picks:
+        """Warm covers for the WHOLE Discover grid (albums + artists) so the page paints from
+        disk instead of a burst of cold, rate-limited external fetches on the user's next visit.
+        BACKGROUND_SYNC keeps live user requests ahead of it, and the proactive warmer drives
+        this ahead of the visit entirely - the single biggest lever against cold cover grids."""
+        if self._cover_repo is None:
             return
-        mbids = [i.album.mbid for i in response.top_picks.items if i.album.mbid]
-        if not mbids:
+        album_mbids, artist_mbids = _collect_cover_prewarm_mbids(response)
+        # The Top Picks featured card renders at 500; every grid renders at 250. Warming both
+        # sizes for the picks (a handful) and 250 for the rest matches what the UI requests.
+        top_pick_mbids = (
+            [i.album.mbid for i in response.top_picks.items if i.album.mbid]
+            if response.top_picks
+            else []
+        )
+        if not album_mbids and not artist_mbids:
             return
         from core.task_registry import TaskRegistry
+
+        registry = TaskRegistry.get_instance()
+        # Distinct from the queue manager's "discover-cover-prewarm-{uid}" (which warms the
+        # deck): this warms the full Discover grid, and the two must not share a registry name.
+        task_name = f"discover-grid-cover-prewarm-{user_id}"
+        if registry.is_running(task_name):
+            return  # a grid prewarm for this user is already draining - don't stack another
 
         async def _warm() -> None:
             from infrastructure.queue.priority_queue import RequestPriority
 
             semaphore = asyncio.Semaphore(4)
 
-            async def one(mbid: str) -> None:
+            async def warm_album(mbid: str, size: str) -> None:
                 async with semaphore:
                     try:
                         await self._cover_repo.get_release_group_cover(
-                            mbid, size="500", priority=RequestPriority.BACKGROUND_SYNC
+                            mbid, size=size, priority=RequestPriority.BACKGROUND_SYNC
                         )
                     except Exception as exc:  # noqa: BLE001
-                        logger.debug("Top picks cover prewarm failed for %s: %s", mbid[:8], exc)
+                        logger.debug("Discover cover prewarm (album %s) failed: %s", mbid[:8], exc)
 
-            await asyncio.gather(*(one(m) for m in mbids), return_exceptions=True)
+            async def warm_artist(mbid: str) -> None:
+                async with semaphore:
+                    try:
+                        await self._cover_repo.get_artist_image(
+                            mbid, size=250, priority=RequestPriority.BACKGROUND_SYNC
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("Discover cover prewarm (artist %s) failed: %s", mbid[:8], exc)
+
+            jobs = [warm_album(m, "250") for m in album_mbids]
+            jobs += [warm_album(m, "500") for m in top_pick_mbids]
+            jobs += [warm_artist(m) for m in artist_mbids]
+            await asyncio.gather(*jobs, return_exceptions=True)
 
         task = asyncio.create_task(_warm())
         task.add_done_callback(_log_task_error)
         try:
-            TaskRegistry.get_instance().register(f"top-picks-cover-prewarm-{user_id}", task)
+            registry.register(task_name, task)
         except RuntimeError:
             pass
 

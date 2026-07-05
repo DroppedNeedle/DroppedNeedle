@@ -724,6 +724,11 @@ textarea {
 		opacity: 1 !important;
 		transform: none !important;
 	}
+	/* skeleton loaders (incl. cover art) settle to a static tint instead of a moving sheen */
+	.skeleton-shimmer::after {
+		animation: none !important;
+		opacity: 0 !important;
+	}
 	.scroll-reveal {
 		opacity: 1 !important;
 		transform: none !important;

@@ -10,6 +10,7 @@
 		className?: string;
 		rounded?: 'none' | 'sm' | 'md' | 'lg' | 'xl' | 'full';
 		remoteUrl?: string | null;
+		onload?: () => void;
 	}
 
 	let {
@@ -20,7 +21,8 @@
 		showPlaceholder = true,
 		className = '',
 		rounded = 'full',
-		remoteUrl = null
+		remoteUrl = null,
+		onload = undefined
 	}: Props = $props();
 </script>
 
@@ -33,5 +35,6 @@
 	{className}
 	{rounded}
 	{remoteUrl}
+	{onload}
 	imageType="artist"
 />

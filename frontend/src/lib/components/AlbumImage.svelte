@@ -11,6 +11,7 @@
 		rounded?: 'none' | 'sm' | 'md' | 'lg' | 'xl' | 'full';
 		customUrl?: string | null;
 		remoteUrl?: string | null;
+		onload?: () => void;
 	}
 
 	let {
@@ -22,7 +23,8 @@
 		className = '',
 		rounded = 'lg',
 		customUrl = null,
-		remoteUrl = null
+		remoteUrl = null,
+		onload = undefined
 	}: Props = $props();
 </script>
 
@@ -36,5 +38,6 @@
 	{rounded}
 	{customUrl}
 	{remoteUrl}
+	{onload}
 	imageType="album"
 />

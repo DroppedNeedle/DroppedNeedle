@@ -11,6 +11,24 @@ router = APIRouter(route_class=MsgSpecRoute, prefix="/covers", tags=["covers"])
 _ALLOWED_SIZES = {"250", "500", "1200"}
 _SIZE_ALIAS_NONE = {"", "original", "full", "max", "largest"}
 
+# Placeholders are cached only briefly (not a day): a cover that misses on a cold visit is
+# warmed in the background, and a long-lived placeholder in the browser cache would mask the
+# real cover for that whole window. 5 minutes lets it fill in on the next visit while still
+# sparing the server a placeholder request on every scroll.
+_PLACEHOLDER_CACHE_CONTROL = "public, max-age=300"
+
+
+def _warming_response() -> Response:
+    """A cover whose real art is being resolved in the background right now. 202 + empty body
+    makes the browser's <img> fire onerror, which the frontend's image component treats as
+    'still warming' - it holds a shimmer skeleton and polls until the cover lands, rather than
+    settling on the placeholder. no-store so each poll actually re-requests."""
+    return Response(
+        status_code=202,
+        content=b"",
+        headers={"Cache-Control": "no-store", "X-Cover-Source": "warming"},
+    )
+
 
 def _quote_etag(content_hash: str) -> str:
     return f'"{content_hash}"'
@@ -68,8 +86,12 @@ async def cover_from_release_group(
             },
         )
 
-    result = await coverart_repo.get_release_group_cover(release_group_id, desired_size, is_disconnected=request.is_disconnected)
-    
+    # defer_best_release: skip the expensive two-call CAA best-release fallback on the request
+    # and resolve it in the background. While that runs we return 202 (warming) so the frontend
+    # holds a skeleton and polls the cover in live. Compat/streaming clients call the repo
+    # directly without this flag and keep the full inline path.
+    result = await coverart_repo.get_release_group_cover(release_group_id, desired_size, is_disconnected=request.is_disconnected, defer_best_release=True)
+
     if result:
         image_data, content_type, source = result
         if not etag_header:
@@ -83,7 +105,10 @@ async def cover_from_release_group(
                 "ETag": etag_header,
             }
         )
-    
+
+    if coverart_repo.is_rg_cover_warming(release_group_id, desired_size):
+        return _warming_response()
+
     placeholder_svg = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
         <rect fill="#374151" width="200" height="200"/>
         <circle cx="100" cy="100" r="70" fill="#1f2937" stroke="#4B5563" stroke-width="2"/>
@@ -96,7 +121,7 @@ async def cover_from_release_group(
         content=placeholder_svg.encode(),
         media_type="image/svg+xml",
         headers={
-            "Cache-Control": "public, max-age=86400",
+            "Cache-Control": _PLACEHOLDER_CACHE_CONTROL,
             "X-Cover-Source": "placeholder",
         }
     )
@@ -153,7 +178,7 @@ async def cover_from_release(
         content=placeholder_svg.encode(),
         media_type="image/svg+xml",
         headers={
-            "Cache-Control": "public, max-age=86400",
+            "Cache-Control": _PLACEHOLDER_CACHE_CONTROL,
             "X-Cover-Source": "placeholder",
         }
     )
@@ -177,9 +202,14 @@ async def get_artist_cover(
             },
         )
 
-    result = await coverart_repo.get_artist_image(artist_id, size, is_disconnected=request.is_disconnected)
-    
+    # defer_wikidata: keep the MusicBrainz->Wikidata->Commons chain (MusicBrainz 1/s) off the
+    # request. AudioDB cache + local art still resolve inline; a cold artist returns 202
+    # (warming) while the image resolves in the background, and the frontend polls it in live.
+    result = await coverart_repo.get_artist_image(artist_id, size, is_disconnected=request.is_disconnected, defer_wikidata=True)
+
     if not result:
+        if coverart_repo.is_artist_cover_warming(artist_id, size):
+            return _warming_response()
         placeholder_svg = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
             <rect fill="#374151" width="200" height="200"/>
             <circle cx="100" cy="80" r="30" fill="#6B7280"/>
@@ -189,7 +219,7 @@ async def get_artist_cover(
             content=placeholder_svg.encode(),
             media_type="image/svg+xml",
             headers={
-                "Cache-Control": "public, max-age=86400",
+                "Cache-Control": _PLACEHOLDER_CACHE_CONTROL,
                 "X-Cover-Source": "placeholder",
             }
         )

@@ -21,6 +21,7 @@
 		customUrl?: string | null;
 		remoteUrl?: string | null;
 		imageType?: 'album' | 'artist';
+		onload?: () => void;
 	}
 
 	let {
@@ -33,13 +34,19 @@
 		rounded = 'lg',
 		customUrl = null,
 		remoteUrl = null,
-		imageType = 'album'
+		imageType = 'album',
+		onload = undefined
 	}: Props = $props();
 
-	const MAX_RETRIES = 3;
-	const RETRY_DELAYS = [2000, 4000, 8000];
+	// A cold cover comes back as 202 (warming) while it resolves in the background; the <img>
+	// fires onerror, and we poll it in with a widening backoff (a rate-limited artist warm can
+	// take a while) until it lands, holding a shimmer skeleton the whole time. Only after this
+	// budget do we settle on the static placeholder.
+	const MAX_RETRIES = 6;
+	const RETRY_DELAYS = [1500, 3000, 5000, 8000, 12000, 20000];
 
 	let imgError = $state(false);
+	let failed = $state(false);
 	let imgLoaded = $state(false);
 	let remoteError = $state(false);
 	let imgElement: HTMLImageElement | null = $state(null);
@@ -125,6 +132,7 @@
 				retryTimer = null;
 			}
 			retryCount = 0;
+			failed = false;
 			if (imgError) {
 				imgError = false;
 				imgLoaded = false;
@@ -154,7 +162,10 @@
 
 	function onImgError() {
 		if (retryCount < MAX_RETRIES) {
+			// Hide the img so it re-creates and re-requests on the next tick; hold the skeleton
+			// (imgLoaded false, failed false) until it either lands or we give up.
 			imgError = true;
+			imgLoaded = false;
 			const delay = RETRY_DELAYS[retryCount] + Math.random() * 1000 - 500;
 			retryTimer = setTimeout(() => {
 				retryTimer = null;
@@ -164,12 +175,19 @@
 			}, delay);
 		} else {
 			imgError = true;
+			failed = true;
 		}
 	}
 
 	function onImgLoad(e: Event) {
+		const el = e.currentTarget as HTMLImageElement;
+		// The lazy <img> mounts with a 1x1 data-URI gif before the IntersectionObserver swaps in
+		// the real URL; that gif's load event must NOT mark the cover loaded, or imgLoaded flips
+		// true and hides the shimmer skeleton while the cover is still warming (202 + poll).
+		if (el.currentSrc.startsWith('data:')) return;
 		imgLoaded = true;
-		(e.currentTarget as HTMLImageElement).classList.remove('opacity-0');
+		el.classList.remove('opacity-0');
+		onload?.();
 	}
 
 	function bindImgElement(img: HTMLImageElement) {
@@ -189,14 +207,21 @@
 </script>
 
 <div class="relative overflow-hidden shrink-0 bg-base-200 {sizeClass} {roundedClass} {className}">
-	{#if showPlaceholder && (!imgLoaded || imgError || !hasSource)}
-		<div class="absolute inset-0 w-full h-full flex items-center justify-center">
-			{#if imageType === 'album'}
-				<Disc3 class="h-1/3 w-1/3 text-base-content/20" />
-			{:else}
-				<Users class="h-1/3 w-1/3 text-base-content/20" />
-			{/if}
-		</div>
+	{#if showPlaceholder && (!imgLoaded || !hasSource)}
+		{#if !hasSource || failed}
+			<div class="absolute inset-0 w-full h-full flex items-center justify-center">
+				{#if imageType === 'album'}
+					<Disc3 class="h-1/3 w-1/3 text-base-content/20" />
+				{:else}
+					<Users class="h-1/3 w-1/3 text-base-content/20" />
+				{/if}
+			</div>
+		{:else}
+			<div
+				class="skeleton skeleton-shimmer absolute inset-0 w-full h-full"
+				data-testid="cover-skeleton"
+			></div>
+		{/if}
 	{/if}
 	{#if useRemoteUrl && resolvedRemoteUrl && !remoteError}
 		<img

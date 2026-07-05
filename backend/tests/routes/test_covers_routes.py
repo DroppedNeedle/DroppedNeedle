@@ -20,6 +20,10 @@ def mock_cover_repo():
     mock.get_release_cover_etag = AsyncMock(return_value='etag-rel')
     mock.get_artist_image_etag = AsyncMock(return_value='etag-artist')
     mock.debug_artist_image = AsyncMock(side_effect=lambda _artist_id, debug_info: debug_info)
+    # sync warming checks default to "not warming" so a None cover renders the placeholder;
+    # tests that exercise the warming (202) path flip these explicitly.
+    mock.is_rg_cover_warming = MagicMock(return_value=False)
+    mock.is_artist_cover_warming = MagicMock(return_value=False)
     return mock
 
 
@@ -73,6 +77,28 @@ def test_artist_uses_placeholder_header_when_missing(client, mock_cover_repo):
     assert response.headers['x-cover-source'] == 'placeholder'
 
 
+def test_release_group_returns_202_warming_while_resolving(client, mock_cover_repo):
+    mock_cover_repo.get_release_group_cover = AsyncMock(return_value=None)
+    mock_cover_repo.is_rg_cover_warming = MagicMock(return_value=True)
+
+    response = client.get('/covers/release-group/44444444-4444-4444-4444-444444444444?size=250')
+
+    assert response.status_code == 202
+    assert response.headers['x-cover-source'] == 'warming'
+    assert response.headers['cache-control'] == 'no-store'
+
+
+def test_artist_returns_202_warming_while_resolving(client, mock_cover_repo):
+    mock_cover_repo.get_artist_image = AsyncMock(return_value=None)
+    mock_cover_repo.is_artist_cover_warming = MagicMock(return_value=True)
+
+    response = client.get('/covers/artist/55555555-5555-5555-5555-555555555555')
+
+    assert response.status_code == 202
+    assert response.headers['x-cover-source'] == 'warming'
+    assert response.headers['cache-control'] == 'no-store'
+
+
 def test_release_group_original_size_maps_to_none(client, mock_cover_repo):
     response = client.get('/covers/release-group/66666666-6666-6666-6666-666666666666?size=original')
 
@@ -81,6 +107,7 @@ def test_release_group_original_size_maps_to_none(client, mock_cover_repo):
         '66666666-6666-6666-6666-666666666666',
         None,
         is_disconnected=ANY,
+        defer_best_release=True,
     )
 
 

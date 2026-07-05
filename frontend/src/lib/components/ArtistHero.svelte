@@ -1,11 +1,9 @@
 <script lang="ts">
-	import { run } from 'svelte/legacy';
-
 	import { Check, RefreshCw } from 'lucide-svelte';
 	import type { ArtistInfo } from '$lib/types';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
-	import { appendAudioDBSizeSuffix } from '$lib/utils/imageSuffix';
 	import { imageSettingsStore } from '$lib/stores/imageSettings';
+	import ArtistImage from './ArtistImage.svelte';
 	import ArtistLinks from './ArtistLinks.svelte';
 	import FollowControl from './FollowControl.svelte';
 	import BackButton from './BackButton.svelte';
@@ -23,17 +21,6 @@
 
 	let heroGradient = $state(DEFAULT_GRADIENT);
 	let heroImageLoaded = $state(false);
-	let avatarRemoteError = $state(false);
-
-	let useRemoteAvatar = $derived(artist.thumb_url && $imageSettingsStore.directRemoteImagesEnabled);
-	let resolvedRemoteAvatar = $derived(
-		artist.thumb_url ? appendAudioDBSizeSuffix(artist.thumb_url, 'hero') : null
-	);
-	run(() => {
-		if (artist.musicbrainz_id) {
-			avatarRemoteError = false;
-		}
-	});
 
 	let resolvedBackdropUrl = $derived.by(() => {
 		if ($imageSettingsStore.directRemoteImagesEnabled) {
@@ -100,54 +87,14 @@
 						<div
 							class="w-40 h-40 sm:w-52 sm:h-52 lg:w-64 lg:h-64 rounded-full overflow-hidden shadow-2xl ring-4 ring-base-100/20 bg-neutral"
 						>
-							{#if !heroImageLoaded}
-								<div class="absolute inset-0 flex items-center justify-center">
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 200 200"
-										class="w-full h-full"
-									>
-										<rect fill="var(--color-neutral)" width="200" height="200" />
-										<circle cx="100" cy="80" r="30" fill="var(--color-neutral-content)" />
-										<path
-											d="M60 120 Q100 140 140 120 L140 160 Q100 180 60 160 Z"
-											fill="var(--color-neutral-content)"
-										/>
-									</svg>
-								</div>
-							{/if}
-							{#if useRemoteAvatar && resolvedRemoteAvatar && !avatarRemoteError}
-								<img
-									src={resolvedRemoteAvatar}
-									alt={artist.name}
-									class="w-full h-full object-cover transition-opacity duration-300 {heroImageLoaded
-										? 'opacity-100'
-										: 'opacity-0'}"
-									loading="lazy"
-									decoding="async"
-									referrerpolicy="no-referrer"
-									onload={onHeroImageLoad}
-									onerror={() => {
-										avatarRemoteError = true;
-										heroImageLoaded = false;
-									}}
-								/>
-							{:else}
-								<img
-									src={getApiUrl(`/api/v1/covers/artist/${artist.musicbrainz_id}?size=500`)}
-									alt={artist.name}
-									class="w-full h-full object-cover transition-opacity duration-300 {heroImageLoaded
-										? 'opacity-100'
-										: 'opacity-0'}"
-									loading="lazy"
-									decoding="async"
-									onload={onHeroImageLoad}
-									onerror={(e) => {
-										const target = e.currentTarget as HTMLImageElement;
-										target.style.display = 'none';
-									}}
-								/>
-							{/if}
+							<ArtistImage
+								mbid={artist.musicbrainz_id}
+								remoteUrl={artist.thumb_url}
+								alt={artist.name}
+								size="hero"
+								rounded="none"
+								onload={onHeroImageLoad}
+							/>
 						</div>
 						{#if artist.in_library}
 							<div class="absolute -bottom-2 -right-2 badge badge-success badge-lg gap-1 shadow-lg">

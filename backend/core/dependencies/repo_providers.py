@@ -9,6 +9,7 @@ import httpx
 from core.config import get_settings
 from infrastructure.http.client import (
     HttpClientFactory,
+    get_coverart_http_client,
     get_http_client,
     get_listenbrainz_http_client,
 )
@@ -347,7 +348,10 @@ def get_coverart_repository() -> "CoverArtRepository":
     jellyfin_repo = get_jellyfin_repository()
     audiodb_service = get_audiodb_image_service()
     audiodb_browse_queue = get_audiodb_browse_queue()
-    http_client = _get_configured_http_client()
+    # Covers get their own short-budget client, not the shared 10s default (see
+    # get_coverart_http_client): a cover that can't be fetched fast degrades to a
+    # placeholder + background warm rather than holding the request open.
+    http_client = get_coverart_http_client(settings)
     cache_dir = settings.cache_dir / "covers"
     return CoverArtRepository(
         http_client,

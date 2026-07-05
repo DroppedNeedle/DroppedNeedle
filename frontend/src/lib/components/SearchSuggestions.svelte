@@ -77,6 +77,10 @@
 				);
 				if (generation !== fetchGeneration) return;
 				suggestions = data.results ?? [];
+				// Clear stale cover-fetch errors: a cold cover now returns 202 (not a decodable
+				// placeholder), so onerror fires and would otherwise pin the icon fallback for a
+				// result that has since warmed and reappears in a later search.
+				imageErrors = {};
 				showDropdown = suggestions.length > 0 || loading;
 			} catch (e) {
 				if (isAbortError(e)) return;

@@ -26,7 +26,12 @@ class PriorityQueueManager:
             return
         
         self._user_semaphore = asyncio.Semaphore(20)
-        self._image_semaphore = asyncio.Semaphore(10)
+        # Cover Art Archive imposes no upstream rate limit and serves bytes via the Internet
+        # Archive CDN, so this cap is purely our own self-throttle. A page load fires a burst of
+        # ~50-100 cold covers at ~1.5s each; a 10-wide lane forced them to drain in long waves
+        # (~8s average queue wait). 24 shrinks that wait without hammering the CDN (the short-
+        # budget cover client + circuit breaker + 429/Retry-After remain the real governors).
+        self._image_semaphore = asyncio.Semaphore(24)
         self._background_semaphore = asyncio.Semaphore(5)
         self._user_activity_flag = False
         self._user_activity_timestamp = 0.0
