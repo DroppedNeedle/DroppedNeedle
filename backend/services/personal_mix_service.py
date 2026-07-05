@@ -35,7 +35,7 @@ _RECOMMENDATION_PATCHES = ("weekly-jams", "weekly-exploration")
 _MAX_SEED_ARTISTS = 8
 _SIMILAR_LIMIT = 10
 _ALBUMS_PER_SEED = 2
-_TRACK_CAP = 40
+_TRACK_CAP = 100
 
 
 class PersonalMixResult(msgspec.Struct, frozen=True):
@@ -62,6 +62,9 @@ class _MixTrack(msgspec.Struct, frozen=True):
     artist_mbid: str | None
     recording_mbid: str | None
     in_library: bool
+    library_file_id: str | None = None
+    track_number: int | None = None
+    disc_number: int = 1
 
 
 class PersonalMixService:
@@ -116,6 +119,7 @@ class PersonalMixService:
                 user_id=user_id, skipped=True, reason="no_tracks",
                 playlist_id=existing.id if existing else None,
             )
+        mix = await self._match_library_files(mix)
 
         owner = await self._auth_store.get_user_by_id(user_id)
         if owner is None:
@@ -231,6 +235,36 @@ class PersonalMixService:
                 ))
         return tracks[:_TRACK_CAP]
 
+    async def _match_library_files(self, mix: list[_MixTrack]) -> list[_MixTrack]:
+        rg_mbids = {t.release_group_mbid for t in mix if t.in_library}
+        if not rg_mbids:
+            return mix
+
+        rg_mbids = list(rg_mbids)
+        results = await asyncio.gather(
+            *(self._library_repo.get_tracks(rg) for rg in rg_mbids),
+            return_exceptions=True,
+        )
+        by_rg_recording: dict[tuple[str, str], Any] = {}
+        for rg, album_tracks in zip(rg_mbids, results):
+            if isinstance(album_tracks, BaseException):
+                logger.debug(f"Personal mix: library lookup failed for {rg}", exc_info=album_tracks)
+                continue
+            for lt in album_tracks:
+                if lt.recording_mbid:
+                    by_rg_recording[(rg, lt.recording_mbid)] = lt
+
+        matched: list[_MixTrack] = []
+        for t in mix:
+            lt = by_rg_recording.get((t.release_group_mbid, t.recording_mbid)) if t.recording_mbid else None
+            if lt is None:
+                matched.append(t)
+                continue
+            matched.append(msgspec.structs.replace(
+                t, library_file_id=lt.id, track_number=lt.track_number, disc_number=lt.disc_number,
+            ))
+        return matched
+
     @staticmethod
     def _pick_seed_artists(tracks: list[_MixTrack]) -> list[str]:
         seen: list[str] = []
@@ -314,9 +348,12 @@ class PersonalMixService:
                 "album_name": t.album_name,
                 "album_id": t.release_group_mbid,
                 "artist_id": t.artist_mbid,
-                "track_source_id": t.recording_mbid,
+                "track_source_id": t.library_file_id or t.recording_mbid,
                 "cover_url": release_group_cover_url(t.release_group_mbid, size=250),
-                "source_type": "",
+                "source_type": "local" if t.library_file_id else "",
+                "track_number": t.track_number,
+                "disc_number": t.disc_number,
+                "library_file_id": t.library_file_id,
             }
             for t in mix
         ]

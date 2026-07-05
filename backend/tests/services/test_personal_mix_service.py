@@ -187,6 +187,52 @@ async def test_owned_track_is_marked_in_library_and_not_requested(svc):
 
 
 @pytest.mark.asyncio
+async def test_owned_track_is_linked_to_its_local_file(svc):
+    svc.library_repo.get_library_mbids.return_value = {RG1}
+    svc.library_repo.get_tracks = AsyncMock(
+        return_value=[
+            SimpleNamespace(id="file-1", recording_mbid="rec-1", track_number=3, disc_number=1),
+        ]
+    )
+    _set_recommendation_tracks(
+        svc, jams=[_mix_track("Jam Song", "Artist A", "Album A", "caa-1111-1111-1111-111111111111", ARTIST_A, "rec-1")],
+    )
+
+    await svc.service.build_for_user("user-a")
+
+    track_dicts = svc.playlist_service.add_tracks.await_args.args[2]
+    assert len(track_dicts) == 1
+    track = track_dicts[0]
+    assert track["source_type"] == "local"
+    assert track["library_file_id"] == "file-1"
+    assert track["track_source_id"] == "file-1"
+    assert track["track_number"] == 3
+    assert track["disc_number"] == 1
+
+
+@pytest.mark.asyncio
+async def test_recording_mbid_collision_on_another_owned_album_is_not_cross_matched(svc):
+    svc.library_repo.get_library_mbids.return_value = {RG1}
+    svc.library_repo.get_tracks = AsyncMock(
+        return_value=[
+            SimpleNamespace(id="file-1", recording_mbid="rec-1", track_number=1, disc_number=1),
+        ]
+    )
+    _set_recommendation_tracks(
+        svc, jams=[_mix_track("Song", "Artist B", "Album B", "caa-2222-2222-2222-222222222222", ARTIST_B, "rec-1")],
+    )
+
+    await svc.service.build_for_user("user-a")
+
+    track_dicts = svc.playlist_service.add_tracks.await_args.args[2]
+    assert len(track_dicts) == 1
+    track = track_dicts[0]
+    assert track["album_id"] == RG2
+    assert track["source_type"] == ""
+    assert track["library_file_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_existing_playlist_is_replaced_not_recreated(svc):
     svc.playlist_service.get_by_source_ref.return_value = _playlist_record(updated_at=_stale_iso())
     svc.playlist_service.get_tracks.return_value = [_track_record("old-1"), _track_record("old-2")]
