@@ -19,6 +19,7 @@ from api.v1.schemas.me_connections import (
     ConnectionsResponse,
     ConnectionStatus,
     ListenBrainzConnectRequest,
+    PersonalMixRefreshResponse,
     ScrobblePreferences,
     ScrobblePreferencesUpdate,
     SpotifyAuthUrlResponse,
@@ -39,6 +40,7 @@ from core.dependencies import (
     get_lastfm_auth_service,
     get_now_playing_service,
     get_per_user_client_factory,
+    get_personal_mix_service,
     get_preferences_service,
     get_settings_service,
     get_user_connections_store,
@@ -58,6 +60,7 @@ from infrastructure.persistence.user_section_prefs_store import UserSectionPrefs
 from middleware import CurrentUserDep
 from services.lastfm_auth_service import LastFmAuthService
 from services.per_user_client_factory import PerUserClientFactory
+from services.personal_mix_service import PersonalMixService
 from services.preferences_service import PreferencesService
 from services.section_catalog import Page, sections_for, valid_keys
 from services.settings_service import SettingsService
@@ -95,6 +98,7 @@ async def get_scrobble_preferences(
         scrobble_to_listenbrainz=prefs.scrobble_to_listenbrainz,
         primary_music_source=prefs.primary_music_source,
         now_playing_visibility=prefs.now_playing_visibility,
+        auto_request_personal_mix=prefs.auto_request_personal_mix,
     )
 
 
@@ -111,6 +115,7 @@ async def update_scrobble_preferences(
         scrobble_to_listenbrainz=body.scrobble_to_listenbrainz,
         primary_music_source=body.primary_music_source,
         now_playing_visibility=body.now_playing_visibility,
+        auto_request_personal_mix=body.auto_request_personal_mix,
     )
     # apply the privacy change to the live presence feed immediately
     if body.now_playing_visibility is not None:
@@ -123,6 +128,24 @@ async def update_scrobble_preferences(
         scrobble_to_listenbrainz=prefs.scrobble_to_listenbrainz,
         primary_music_source=prefs.primary_music_source,
         now_playing_visibility=prefs.now_playing_visibility,
+        auto_request_personal_mix=prefs.auto_request_personal_mix,
+    )
+
+
+@router.post("/personal-mix/refresh", response_model=PersonalMixRefreshResponse)
+async def refresh_personal_mix(
+    current_user: CurrentUserDep,
+    personal_mix_service: PersonalMixService = Depends(get_personal_mix_service),
+) -> PersonalMixRefreshResponse:
+    result = await personal_mix_service.build_for_user(current_user.id, force=True)
+    if result.skipped and result.reason == "listenbrainz_not_linked":
+        raise HTTPException(status_code=400, detail="Connect ListenBrainz first to build Your Weekly Mix")
+    return PersonalMixRefreshResponse(
+        playlist_id=result.playlist_id,
+        track_count=result.track_count,
+        requested_albums=result.requested_albums,
+        skipped=result.skipped,
+        reason=result.reason,
     )
 
 

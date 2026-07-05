@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Radio, Music, Loader2, ExternalLink, RadioTower, Check } from 'lucide-svelte';
+	import { Radio, Music, Loader2, ExternalLink, RadioTower, Check, Sparkles } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/client';
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
 	import {
@@ -9,7 +9,10 @@
 		createLastFmRequestTokenMutation
 	} from '$lib/queries/connections/ConnectionsMutations.svelte';
 	import { getScrobblePreferencesQuery } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
-	import { createUpdateScrobblePreferencesMutation } from '$lib/queries/scrobble-preferences/ScrobblePreferencesMutations.svelte';
+	import {
+		createRefreshPersonalMixMutation,
+		createUpdateScrobblePreferencesMutation
+	} from '$lib/queries/scrobble-preferences/ScrobblePreferencesMutations.svelte';
 	import type {
 		NowPlayingVisibility,
 		ScrobblePreferencesUpdate
@@ -30,6 +33,7 @@
 	const connectLbMutation = createConnectListenBrainzMutation();
 	const disconnectMutation = createDisconnectMutation();
 	const updatePrefsMutation = createUpdateScrobblePreferencesMutation();
+	const refreshMixMutation = createRefreshPersonalMixMutation();
 
 	const loading = $derived(connectionsQuery.isPending || prefsQuery.isPending);
 
@@ -51,12 +55,15 @@
 	let scrobbleListenbrainz = $state(false);
 	let primarySource = $state<MusicSource>('listenbrainz');
 	let nowPlayingVisibility = $state<NowPlayingVisibility>('full');
+	let autoRequestPersonalMix = $state(false);
+	let mixRefreshMessage = $state<string | null>(null);
 	$effect(() => {
 		if (prefs) {
 			scrobbleLastfm = prefs.scrobble_to_lastfm;
 			scrobbleListenbrainz = prefs.scrobble_to_listenbrainz;
 			primarySource = (prefs.primary_music_source as MusicSource) ?? 'listenbrainz';
 			nowPlayingVisibility = (prefs.now_playing_visibility as NowPlayingVisibility) ?? 'full';
+			autoRequestPersonalMix = prefs.auto_request_personal_mix;
 		}
 	});
 
@@ -122,6 +129,7 @@
 				scrobbleListenbrainz = prefs.scrobble_to_listenbrainz;
 				primarySource = (prefs.primary_music_source as MusicSource) ?? 'listenbrainz';
 				nowPlayingVisibility = (prefs.now_playing_visibility as NowPlayingVisibility) ?? 'full';
+				autoRequestPersonalMix = prefs.auto_request_personal_mix;
 			}
 		}
 	}
@@ -130,6 +138,23 @@
 		if (src === primarySource) return;
 		primarySource = src;
 		await savePrefs({ primary_music_source: src });
+	}
+
+	async function refreshPersonalMix() {
+		mixRefreshMessage = null;
+		try {
+			const result = await refreshMixMutation.mutateAsync();
+			if (result.skipped) {
+				mixRefreshMessage =
+					result.reason === 'fresh'
+						? 'Your Weekly Mix was already refreshed recently.'
+						: "Couldn't build Your Weekly Mix yet, listen to a bit more first.";
+			} else {
+				mixRefreshMessage = `Your Weekly Mix updated: ${result.track_count} tracks${result.requested_albums ? `, ${result.requested_albums} album(s) requested` : ''}.`;
+			}
+		} catch (e) {
+			mixRefreshMessage = errorMessage(e, "Couldn't refresh Your Weekly Mix.");
+		}
 	}
 </script>
 
@@ -409,6 +434,51 @@
 					<option value="track_hidden">Show I'm listening, hide the track</option>
 					<option value="offline">Don't show my activity</option>
 				</select>
+			</div>
+
+			<div class="section-divider-glow my-1"></div>
+
+			<div class="space-y-2 px-1">
+				<div class="flex items-center gap-2">
+					<Sparkles class="h-4 w-4 text-accent" />
+					<span class="text-sm font-semibold">Your Weekly Mix</span>
+				</div>
+				<p class="text-xs text-base-content/40">
+					A playlist built from your ListenBrainz listening history, refreshed weekly.
+				</p>
+				<label
+					class="flex cursor-pointer items-center justify-between gap-4 rounded-lg py-2 transition-colors hover:bg-base-300/20"
+				>
+					<div>
+						<span class="text-sm font-medium">Auto-request missing music from Your Weekly Mix</span>
+						{#if !lb}
+							<p class="text-xs text-base-content/40">Link ListenBrainz above to enable.</p>
+						{/if}
+					</div>
+					<input
+						type="checkbox"
+						class="toggle toggle-primary toggle-sm"
+						bind:checked={autoRequestPersonalMix}
+						disabled={!lb || updatePrefsMutation.isPending}
+						onchange={() => savePrefs({ auto_request_personal_mix: autoRequestPersonalMix })}
+					/>
+				</label>
+				<div class="flex items-center gap-3">
+					<button
+						type="button"
+						class="btn btn-ghost btn-xs gap-1 rounded-full"
+						onclick={refreshPersonalMix}
+						disabled={!lb || refreshMixMutation.isPending}
+					>
+						{#if refreshMixMutation.isPending}
+							<Loader2 class="h-3.5 w-3.5 animate-spin" />
+						{/if}
+						Refresh my mix
+					</button>
+					{#if mixRefreshMessage}
+						<p class="text-xs text-base-content/50">{mixRefreshMessage}</p>
+					{/if}
+				</div>
 			</div>
 		{/if}
 	</div>

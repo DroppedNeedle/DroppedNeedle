@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from infrastructure.persistence.youtube_store import YouTubeStore
     from services.requests_page_service import RequestsPageService
     from services.native.new_release_service import NewReleaseService
+    from services.personal_mix_service import PersonalMixService
     from repositories.coverart_disk_cache import CoverDiskCache
 
 logger = logging.getLogger(__name__)
@@ -921,6 +922,37 @@ def start_poll_new_releases_task(
         poll_followed_artists_new_releases(new_release_service)
     )
     TaskRegistry.get_instance().register("follow-new-release-poll", task)
+    return task
+
+
+_PERSONAL_MIX_REFRESH_INTERVAL = 86400
+_PERSONAL_MIX_INITIAL_DELAY = 300
+
+
+async def refresh_personal_mixes_periodically(
+    personal_mix_service: 'PersonalMixService',
+    interval: int = _PERSONAL_MIX_REFRESH_INTERVAL,
+) -> None:
+    await asyncio.sleep(_PERSONAL_MIX_INITIAL_DELAY)
+
+    while True:
+        try:
+            await personal_mix_service.run_for_all_users()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error("Personal mix refresh failed: %s", e, exc_info=True)
+
+        await asyncio.sleep(interval)
+
+
+def start_personal_mix_refresh_task(
+    personal_mix_service: 'PersonalMixService',
+) -> asyncio.Task:
+    task = asyncio.create_task(
+        refresh_personal_mixes_periodically(personal_mix_service)
+    )
+    TaskRegistry.get_instance().register("personal-mix-refresh", task)
     return task
 
 

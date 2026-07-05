@@ -13,7 +13,7 @@ from core.dependencies import (
     init_app_state, 
     cleanup_app_state
 )
-from core.tasks import start_cache_cleanup_task, start_library_auto_scan_task, start_disk_cache_cleanup_task, start_genre_cache_warming_task, start_artist_discovery_cache_warming_task, start_audiodb_sweep_task, start_request_status_sync_task, start_memory_maintenance_task, start_poll_new_releases_task, start_discover_home_warmer_task
+from core.tasks import start_cache_cleanup_task, start_library_auto_scan_task, start_disk_cache_cleanup_task, start_genre_cache_warming_task, start_artist_discovery_cache_warming_task, start_audiodb_sweep_task, start_request_status_sync_task, start_memory_maintenance_task, start_poll_new_releases_task, start_discover_home_warmer_task, start_personal_mix_refresh_task
 from core.task_registry import TaskRegistry
 from core.config import get_settings
 from core.dependencies.auth_providers import get_auth_service, get_auth_store
@@ -525,6 +525,9 @@ async def lifespan(app: FastAPI):
 
     from core.dependencies import get_new_release_service
     start_poll_new_releases_task(get_new_release_service())
+
+    from core.dependencies import get_personal_mix_service
+    start_personal_mix_refresh_task(get_personal_mix_service())
 
     from core.tasks import start_orphan_cover_demotion_task, start_store_prune_task
     from core.dependencies import get_request_history_store, get_mbid_store, get_youtube_store

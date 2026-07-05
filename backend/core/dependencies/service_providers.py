@@ -215,6 +215,23 @@ def get_new_release_service() -> "NewReleaseService":
 
 
 @singleton
+def get_personal_mix_service() -> "PersonalMixService":
+    from services.personal_mix_service import PersonalMixService
+    from core.dependencies.auth_providers import get_auth_store
+
+    return PersonalMixService(
+        client_factory=get_per_user_client_factory(),
+        mb_repo=get_musicbrainz_repository(),
+        library_repo=get_library_repository(),
+        playlist_service=get_playlist_service(),
+        download_service=get_download_service(),
+        listening_prefs_store=get_user_listening_prefs_store(),
+        connections_store=get_user_connections_store(),
+        auth_store=get_auth_store(),
+    )
+
+
+@singleton
 def get_album_service() -> "AlbumService":
     from services.album_service import AlbumService
 

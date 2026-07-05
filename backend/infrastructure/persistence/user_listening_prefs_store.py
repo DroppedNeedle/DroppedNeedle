@@ -27,6 +27,7 @@ class UserListeningPrefsRecord(msgspec.Struct, frozen=True):
     scrobble_to_listenbrainz: bool
     primary_music_source: str
     now_playing_visibility: str
+    auto_request_personal_mix: bool
     updated_at: str
 
 
@@ -67,6 +68,14 @@ class UserListeningPrefsStore:
                 conn.execute(
                     "ALTER TABLE user_listening_prefs "
                     "ADD COLUMN now_playing_visibility TEXT NOT NULL DEFAULT 'full'"
+                )
+            except sqlite3.OperationalError:
+                pass  # column already present
+            # additive, idempotent: DBs created before the personal-mix feature lack the column
+            try:
+                conn.execute(
+                    "ALTER TABLE user_listening_prefs "
+                    "ADD COLUMN auto_request_personal_mix INTEGER NOT NULL DEFAULT 0"
                 )
             except sqlite3.OperationalError:
                 pass  # column already present
@@ -114,6 +123,7 @@ class UserListeningPrefsStore:
                 scrobble_to_listenbrainz=False,
                 primary_music_source=_DEFAULT_SOURCE,
                 now_playing_visibility=_DEFAULT_VISIBILITY,
+                auto_request_personal_mix=False,
                 updated_at="",
             )
         return UserListeningPrefsRecord(
@@ -122,6 +132,7 @@ class UserListeningPrefsStore:
             scrobble_to_listenbrainz=bool(row["scrobble_to_listenbrainz"]),
             primary_music_source=row["primary_music_source"],
             now_playing_visibility=row["now_playing_visibility"],
+            auto_request_personal_mix=bool(row["auto_request_personal_mix"]),
             updated_at=row["updated_at"],
         )
 
@@ -133,6 +144,7 @@ class UserListeningPrefsStore:
         scrobble_to_listenbrainz: bool | None = None,
         primary_music_source: str | None = None,
         now_playing_visibility: str | None = None,
+        auto_request_personal_mix: bool | None = None,
     ) -> None:
         """Partial upsert: only the provided fields change; others are preserved."""
         now = datetime.now(timezone.utc).isoformat()
@@ -143,24 +155,32 @@ class UserListeningPrefsStore:
         ins_visibility = (
             now_playing_visibility if now_playing_visibility is not None else _DEFAULT_VISIBILITY
         )
+        ins_auto_request = (
+            int(auto_request_personal_mix) if auto_request_personal_mix is not None else 0
+        )
         # on UPDATE, NULL keeps the existing column value via COALESCE
         upd_lastfm = int(scrobble_to_lastfm) if scrobble_to_lastfm is not None else None
         upd_lb = int(scrobble_to_listenbrainz) if scrobble_to_listenbrainz is not None else None
         upd_source = primary_music_source
         upd_visibility = now_playing_visibility
+        upd_auto_request = (
+            int(auto_request_personal_mix) if auto_request_personal_mix is not None else None
+        )
 
         def operation(conn: sqlite3.Connection) -> None:
             conn.execute(
                 """
                 INSERT INTO user_listening_prefs (
                     user_id, scrobble_to_lastfm, scrobble_to_listenbrainz,
-                    primary_music_source, now_playing_visibility, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    primary_music_source, now_playing_visibility,
+                    auto_request_personal_mix, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET
                     scrobble_to_lastfm = COALESCE(?, scrobble_to_lastfm),
                     scrobble_to_listenbrainz = COALESCE(?, scrobble_to_listenbrainz),
                     primary_music_source = COALESCE(?, primary_music_source),
                     now_playing_visibility = COALESCE(?, now_playing_visibility),
+                    auto_request_personal_mix = COALESCE(?, auto_request_personal_mix),
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -169,11 +189,13 @@ class UserListeningPrefsStore:
                     ins_lb,
                     ins_source,
                     ins_visibility,
+                    ins_auto_request,
                     now,
                     upd_lastfm,
                     upd_lb,
                     upd_source,
                     upd_visibility,
+                    upd_auto_request,
                 ),
             )
 

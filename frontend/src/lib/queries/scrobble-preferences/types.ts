@@ -9,6 +9,7 @@ export interface ScrobblePreferences {
 	scrobble_to_listenbrainz: boolean;
 	primary_music_source: string;
 	now_playing_visibility: string;
+	auto_request_personal_mix: boolean;
 }
 
 export interface ScrobblePreferencesUpdate {
@@ -16,4 +17,13 @@ export interface ScrobblePreferencesUpdate {
 	scrobble_to_listenbrainz?: boolean;
 	primary_music_source?: MusicSource;
 	now_playing_visibility?: NowPlayingVisibility;
+	auto_request_personal_mix?: boolean;
+}
+
+export interface PersonalMixRefreshResponse {
+	playlist_id: string | null;
+	track_count: number;
+	requested_albums: number;
+	skipped: boolean;
+	reason: string;
 }

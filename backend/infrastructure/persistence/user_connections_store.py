@@ -195,6 +195,16 @@ class UserConnectionsStore:
                 return str(token)
         return None
 
+    async def list_user_ids_for_service(self, service: str) -> list[str]:
+        def operation(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+            return conn.execute(
+                "SELECT user_id FROM user_connections WHERE service = ? AND enabled = 1",
+                (service,),
+            ).fetchall()
+
+        rows = await self._read(operation)
+        return [row["user_id"] for row in rows]
+
     async def set_enabled(self, user_id: str, service: str, enabled: bool) -> None:
         now = datetime.now(timezone.utc).isoformat()
 

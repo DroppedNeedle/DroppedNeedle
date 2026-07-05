@@ -285,7 +285,8 @@ export const API = {
 		listenbrainz: () => '/api/v1/me/connections/listenbrainz',
 		spotifyAuthUrl: () => '/api/v1/me/connections/spotify/auth/url',
 		spotifyPlaylists: () => '/api/v1/me/spotify/playlists',
-		spotifyImport: (playlistId: string) => `/api/v1/me/spotify/playlists/${playlistId}/import`
+		spotifyImport: (playlistId: string) => `/api/v1/me/spotify/playlists/${playlistId}/import`,
+		personalMixRefresh: () => '/api/v1/me/personal-mix/refresh'
 	},
 	scrobble: {
 		nowPlaying: () => '/api/v1/scrobble/now-playing',

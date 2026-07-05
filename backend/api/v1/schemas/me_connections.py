@@ -25,6 +25,7 @@ class ScrobblePreferences(AppStruct):
     primary_music_source: str = "listenbrainz"
     # now-playing presence visibility to other users
     now_playing_visibility: str = "full"
+    auto_request_personal_mix: bool = False
 
 
 class ScrobblePreferencesUpdate(AppStruct):
@@ -32,6 +33,15 @@ class ScrobblePreferencesUpdate(AppStruct):
     scrobble_to_listenbrainz: bool | None = None
     primary_music_source: Literal["listenbrainz", "lastfm"] | None = None
     now_playing_visibility: Literal["full", "track_hidden", "offline"] | None = None
+    auto_request_personal_mix: bool | None = None
+
+
+class PersonalMixRefreshResponse(AppStruct):
+    playlist_id: str | None = None
+    track_count: int = 0
+    requested_albums: int = 0
+    skipped: bool = False
+    reason: str = ""
 
 
 class ListenBrainzConnectRequest(AppStruct):

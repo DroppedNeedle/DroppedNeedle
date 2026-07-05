@@ -83,6 +83,7 @@ from .service_providers import (  # noqa: F401
     get_artist_service,
     get_follow_service,
     get_new_release_service,
+    get_personal_mix_service,
     get_album_service,
     get_request_service,
     get_requests_page_service,
