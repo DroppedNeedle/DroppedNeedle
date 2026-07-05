@@ -414,6 +414,12 @@ class LidarrAlbumRepository(LidarrHistoryRepository):
             if not is_monitored:
                 album_obj = await self._update_album(album_id, {"monitored": True})
 
+            if not artist.get("monitored"):
+                await self._put(
+                    "/api/v1/artist/editor",
+                    {"artistIds": [artist_id], "monitored": True, "monitorNewItems": "none"},
+                )
+
             try:
                 await self._post_command({"name": "AlbumSearch", "albumIds": [album_id]})
             except ExternalServiceError:
