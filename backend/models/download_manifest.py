@@ -60,8 +60,12 @@ class DownloadManifest(AppStruct):
     target_files: list[ExpectedFile]
     source_username: str | None = None
     handle: TaskHandle | None = None
-    # Expected MusicBrainz tracklist for the folder-based Usenet import (D18); empty
-    # for the slskd path (which keys the import on ``target_files`` filenames instead).
+    # Expected MusicBrainz tracklist. The folder-based Usenet import matches enumerated
+    # files against it (D18). The slskd path keys the import on ``target_files``
+    # filenames instead, but carries the ONE expected track here when the download
+    # targets a single known recording (a track download or a 1-track single) - it arms
+    # the AcoustID title check and the import-time tag verification (2026-07-05
+    # wrong-single incident). Defaulted, so pre-existing on-disk manifests still decode.
     expected_tracks: list[ExpectedTrack] = []
     release_mbid: str | None = None
     artist_mbid: str | None = None
@@ -70,6 +74,11 @@ class DownloadManifest(AppStruct):
     # track length (from MusicBrainz). A duration mismatch then means "wrong track for
     # this request" (fail over to another source), not a corrupt file to quarantine.
     is_track: bool = False
+    # Set by the last-resort track re-pull (every candidate failed the canonical-
+    # duration gate, so the MB length is suspect): a gate failure then HOLDS the file
+    # for human review instead of silently importing with the gate off (D9) or
+    # discarding it. Defaulted - pre-existing on-disk manifests decode unchanged.
+    hold_on_wrong_track: bool = False
     # The owning task's origin ('user' | 'retry' | 'upgrade'). Replace-on-import fires
     # only for 'upgrade' (D18); legacy manifests decode as 'user' (add-only, unchanged).
     origin: str = "user"

@@ -28,12 +28,22 @@
 	let done = $state(false);
 	const busy = $derived(importMut.isPending || discardMut.isPending || done);
 
-	// what AcoustID heard - the reason we couldn't auto-confirm it, so the human decides informed
+	// what the rejecting check SAW - the reason we couldn't auto-confirm it, so the human
+	// decides informed. The evidence source depends on the hold reason: AcoustID's
+	// identification (fingerprint_mismatch), the file's own tags (tag_mismatch), or the
+	// measured length vs the expected recording (wrong_track).
 	const evidence = $derived.by(() => {
 		const title = held.evidence_title?.trim();
 		const artist = held.evidence_artist?.trim();
+		if (held.reason === 'wrong_track') {
+			const tagged = title ? `, tagged “${title}”${artist ? ` by ${artist}` : ''}` : '';
+			return `Every source had the wrong length for this recording. This is the closest copy${tagged}`;
+		}
 		if (!title && !artist) return null;
 		const by = artist ? ` by ${artist}` : '';
+		if (held.reason === 'tag_mismatch') {
+			return `The file's own tags say “${title ?? 'unknown'}”${by}`;
+		}
 		const pct = held.evidence_score != null ? ` (${Math.round(held.evidence_score * 100)}%)` : '';
 		return `AcoustID heard “${title ?? 'a different recording'}”${by}${pct}`;
 	});

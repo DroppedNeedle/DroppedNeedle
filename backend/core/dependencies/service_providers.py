@@ -964,6 +964,7 @@ def get_download_service() -> "DownloadService":
         matcher=get_musicbrainz_matcher(),
         musicbrainz=get_musicbrainz_repository(),
         album_service=get_album_service(),
+        track_matcher=get_track_matcher(),
         auto_accept_threshold=policy.preflight_score_auto_accept,
         manual_threshold=policy.preflight_score_manual_min,
         enabled=dc.enabled or usenet_enabled,

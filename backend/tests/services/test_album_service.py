@@ -102,7 +102,7 @@ def _release_with_tracks(n: int) -> dict:
 
 
 def _release_by_owned_or_deluxe(owned_id: str, owned_n: int, deluxe_n: int):
-    async def _get(release_id: str, includes=None) -> dict:
+    async def _get(release_id: str, includes=None, priority=None) -> dict:
         return _release_with_tracks(owned_n if release_id == owned_id else deluxe_n)
 
     return _get
@@ -157,3 +157,95 @@ async def test_get_album_tracks_info_prefers_owned_release_edition():
 
     assert result.total_tracks == 12
     assert len(result.tracks) == 12
+
+
+# -- P5: annotate_album_coverage (shared matcher on the album page) --
+
+
+def _lib_track(id, *, disc=1, track=0, title="", recording=None, duration=None):
+    from services.native.library_manager import LibraryTrack
+
+    return LibraryTrack(
+        id=id, recording_mbid=recording, disc_number=disc, track_number=track,
+        track_title=title, duration_seconds=duration,
+    )
+
+
+def _status(tracks):
+    from services.native.library_manager import LibraryAlbumStatus
+
+    return LibraryAlbumStatus(in_library=bool(tracks), track_count=len(tracks), tracks=tracks)
+
+
+def _svc_self(tracks_info):
+    """Bind the real method to a minimal fake self (AlbumService's ctor is heavy)."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    return SimpleNamespace(get_album_tracks_info=AsyncMock(return_value=tracks_info))
+
+
+def _mb_tracks(*specs):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        tracks=[
+            SimpleNamespace(
+                position=p, disc_number=d, title=t, recording_id=r, length=ln
+            )
+            for (p, d, t, r, ln) in specs
+        ],
+        total_tracks=len(specs),
+    )
+
+
+@pytest.mark.asyncio
+async def test_annotate_coverage_incident_shape_all_orphans():
+    """The incident's exact library state: one wrong file (position 2, 137 s, no
+    recording) against a 1-track release - covered 0/1, the file is an orphan."""
+    from services.album_service import AlbumService
+
+    status = _status([
+        _lib_track("f-wrong", track=2, title="Arrival in Ashford", duration=137.24)
+    ])
+    info = _mb_tracks((1, 1, "the arrival", "rec-180ceef5", 155556))
+
+    out = await AlbumService.annotate_album_coverage(_svc_self(info), "rg-1", status)
+
+    assert out.expected_tracks == 1
+    assert out.covered_tracks == 0
+    assert out.matched_file_ids == []
+    assert [o.id for o in out.orphans] == ["f-wrong"]
+
+
+@pytest.mark.asyncio
+async def test_annotate_coverage_full_album_no_orphans():
+    from services.album_service import AlbumService
+
+    status = _status([
+        _lib_track("f1", track=1, title="A", recording="rec-1", duration=200.0),
+        _lib_track("f2", track=2, title="B", duration=210.0),
+    ])
+    info = _mb_tracks((1, 1, "A", "rec-1", 200000), (2, 1, "B", None, 210000))
+
+    out = await AlbumService.annotate_album_coverage(_svc_self(info), "rg-1", status)
+
+    assert (out.covered_tracks, out.expected_tracks) == (2, 2)
+    assert sorted(out.matched_file_ids) == ["f1", "f2"]
+    assert out.orphans == []
+
+
+@pytest.mark.asyncio
+async def test_annotate_coverage_fails_open_on_mb_error():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from services.album_service import AlbumService
+
+    status = _status([_lib_track("f1", track=1, title="A")])
+    fake = SimpleNamespace(get_album_tracks_info=AsyncMock(side_effect=RuntimeError("down")))
+
+    out = await AlbumService.annotate_album_coverage(fake, "rg-1", status)
+
+    assert out.expected_tracks == 0  # zeroed -> page falls back to presence-only
+    assert out.orphans == []

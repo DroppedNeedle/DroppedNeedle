@@ -44,6 +44,7 @@ def _candidate() -> ScoredCandidate:
 def _make_service(
     owner_id="u1", *, in_library=False, enabled=True,
     upgrade_allowed=False, quality_cutoff="lossless", held_tier=None,
+    album_service=None, track_matcher=None,
 ):
     client = AsyncMock()
     # Search is the indexer's job after the split (D2); it returns IndexerResults,
@@ -68,6 +69,9 @@ def _make_service(
     )
     store.get_search_job_candidates.return_value = [_candidate()]
     store.create_task.return_value = DownloadTask(id="task1", user_id=owner_id)
+    # No orchestrator task parked on the job unless a test says otherwise (the pick
+    # path resumes a parked task in preference to creating a new one).
+    store.get_parked_task_for_search_job.return_value = None
     bus = AsyncMock()
     # dispatch() is sync (returns an asyncio.Task); cancel/retry are async
     orchestrator = MagicMock()
@@ -76,6 +80,7 @@ def _make_service(
     service = DownloadService(
         client, indexer, scorer, library, store, bus, orchestrator, enabled=enabled,
         upgrade_allowed=upgrade_allowed, quality_cutoff=quality_cutoff,
+        album_service=album_service, track_matcher=track_matcher,
     )
     # The 4th element is the search source (indexer) - the only thing tests poke for
     # search behaviour now that search is split off the download client.
@@ -249,6 +254,154 @@ async def test_pick_candidate_missing_job_raises_not_found():
     store.get_search_job.return_value = None
     with pytest.raises(ResourceNotFoundError):
         await service.pick_candidate("u1", "job1", 0)
+
+
+# --- single-track identity threading + parked-task resume (2026-07-05 incident, P1) ---
+
+
+def _single_album_service(*, tracks=None, total=1, fail=False):
+    """AlbumService stub: get_album_tracks_info -> a 1-track release by default.
+    MusicBrainz track lengths are MILLISECONDS."""
+    svc = AsyncMock()
+    if fail:
+        svc.get_album_tracks_info.side_effect = RuntimeError("MB down")
+        return svc
+    if tracks is None:
+        tracks = [
+            SimpleNamespace(
+                position=1, disc_number=1, title="the arrival",
+                recording_id="rec-180ceef5", length=155556,
+            )
+        ]
+    svc.get_album_tracks_info.return_value = SimpleNamespace(
+        tracks=tracks, total_tracks=total
+    )
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_request_album_threads_single_track_identity():
+    """A 1-track release request carries the recording identity onto the task -
+    title, recording MBID, canonical duration (ms -> s) - so search scores per-file
+    and import verifies the canonical length."""
+    service, store, *_ = _make_service(album_service=_single_album_service())
+    store.get_active_task_for_album.return_value = None
+
+    await service.request_album("u1", "rg", "Yan Qing", "the arrival")
+
+    kwargs = store.create_task.await_args.kwargs
+    assert kwargs["track_count"] == 1
+    assert kwargs["track_title"] == "the arrival"
+    assert kwargs["recording_mbid"] == "rec-180ceef5"
+    assert kwargs["track_duration_seconds"] == pytest.approx(155.556)
+
+
+@pytest.mark.asyncio
+async def test_request_album_multi_track_release_threads_nothing():
+    tracks = [SimpleNamespace(position=i, disc_number=1, title=f"T{i}",
+                              recording_id=f"r{i}", length=200000) for i in (1, 2, 3)]
+    service, store, *_ = _make_service(
+        album_service=_single_album_service(tracks=tracks, total=3)
+    )
+    store.get_active_task_for_album.return_value = None
+
+    await service.request_album("u1", "rg", "A", "B")
+
+    kwargs = store.create_task.await_args.kwargs
+    assert kwargs["track_count"] == 3
+    assert kwargs["track_title"] is None
+    assert kwargs["recording_mbid"] is None
+    assert kwargs["track_duration_seconds"] is None
+
+
+@pytest.mark.asyncio
+async def test_request_album_mb_failure_never_blocks_the_download():
+    # Identity threading is best-effort: MB down -> fields stay None, task still
+    # created (the un-threaded task falls back to the album scorer).
+    service, store, *_ = _make_service(album_service=_single_album_service(fail=True))
+    store.get_active_task_for_album.return_value = None
+
+    result = await service.request_album("u1", "rg", "A", "B")
+
+    assert result == "task1"
+    kwargs = store.create_task.await_args.kwargs
+    assert kwargs["track_title"] is None
+    assert kwargs["track_duration_seconds"] is None
+
+
+@pytest.mark.asyncio
+async def test_pick_candidate_resumes_parked_task_not_a_new_one():
+    """R1 (incident review blocker): a pick on a parked orchestrator task must RESUME
+    the original task - a fresh task drops the threaded identity (the import gates
+    never arm) and the request linkage (terminal sync matches on the task id)."""
+    service, store, _bus, _client, _scorer, orchestrator = _make_service()
+    store.get_parked_task_for_search_job.return_value = DownloadTask(
+        id="parked1", user_id="u1", download_type="album", track_count=1,
+        track_title="the arrival", track_duration_seconds=155.556,
+    )
+
+    task_id = await service.pick_candidate("u1", "job1", 0)
+
+    assert task_id == "parked1"
+    store.create_task.assert_not_called()
+    link = store.link_picked_candidate.await_args.kwargs
+    assert link["task_id"] == "parked1"
+    assert link["candidate_index"] == 0
+    assert link["source_username"] == "alice"
+    orchestrator.dispatch.assert_called_once_with("parked1")
+
+
+@pytest.mark.asyncio
+async def test_pick_candidate_standalone_single_rethreads_identity():
+    # A standalone manual-search job (no parked task) carries no identity columns -
+    # the pick re-resolves them so the canonical-duration/title gates still arm.
+    service, store, *_ = _make_service(album_service=_single_album_service())
+    store.get_search_job.return_value = SearchJob(
+        id="job1", user_id="u1", artist_name="Yan Qing", album_title="the arrival",
+        release_group_mbid="rg", track_count=1,
+    )
+
+    await service.pick_candidate("u1", "job1", 0)
+
+    kwargs = store.create_task.await_args.kwargs
+    assert kwargs["track_title"] == "the arrival"
+    assert kwargs["recording_mbid"] == "rec-180ceef5"
+    assert kwargs["track_duration_seconds"] == pytest.approx(155.556)
+
+
+@pytest.mark.asyncio
+async def test_search_soulseek_single_scores_via_track_matcher():
+    """The manual-search lane applies the same 1-track rule as the auto path: a
+    single scores per-file (track matcher), not with the folder scorer's
+    count_ratio freebie."""
+    track_matcher = MagicMock()
+    track_matcher.rank = AsyncMock(return_value=[])
+    service, _store, _bus, indexer, scorer, _orch = _make_service(
+        track_matcher=track_matcher
+    )
+
+    from models.download import TargetAlbum
+
+    target = TargetAlbum(artist_name="Yan Qing", album_title="the arrival", track_count=1)
+    await service._search_soulseek(target, ("rec-180ceef5", "the arrival", 155.556))
+
+    track_matcher.rank.assert_awaited_once()
+    scorer.rank.assert_not_awaited()
+    track_target = track_matcher.rank.await_args.args[0]
+    assert track_target.track_title == "the arrival"
+    assert track_target.duration_seconds == pytest.approx(155.556)
+
+
+@pytest.mark.asyncio
+async def test_search_soulseek_without_identity_uses_folder_scorer():
+    service, _store, _bus, _indexer, scorer, _orch = _make_service()
+
+    from models.download import TargetAlbum
+
+    target = TargetAlbum(artist_name="A", album_title="B", track_count=1)
+    await service._search_soulseek(target, None)
+
+    scorer.rank.assert_awaited_once()
 
 
 @pytest.mark.asyncio

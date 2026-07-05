@@ -190,6 +190,9 @@ backend-test-cache-cleanup: $(BACKEND_VENV_STAMP) ## Run cache cleanup tests
 backend-test-config-validation: $(BACKEND_VENV_STAMP) ## Run config validation tests
 	$(PYTEST) tests/test_config_validation.py
 
+test-acquisition-corpus: $(BACKEND_VENV_STAMP) ## Replay the acquisition scoring corpus (2026-07-05 incident + legit priors)
+	$(PYTEST) tests/services/test_acquisition_corpus.py tests/services/test_album_preflight_scorer.py tests/services/test_track_matcher.py tests/services/test_title_match.py -v
+
 backend-test-coverart-audiodb: $(BACKEND_VENV_STAMP) ## Run AudioDB coverart provider tests
 	$(PYTEST) tests/repositories/test_coverart_album_fetcher.py tests/repositories/test_coverart_audiodb_provider.py tests/repositories/test_coverart_repository_memory_cache.py tests/services/test_audiodb_byte_caching_integration.py
 

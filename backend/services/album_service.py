@@ -11,6 +11,7 @@ from infrastructure.cache.cache_keys import ALBUM_INFO_PREFIX, LIBRARY_ALBUM_DET
 from infrastructure.cache.memory_cache import CacheInterface
 from infrastructure.cache.disk_cache import DiskMetadataCache
 from infrastructure.validators import validate_mbid
+from infrastructure.queue.priority_queue import RequestPriority
 from core.exceptions import ResourceNotFoundError
 from services.audiodb_image_service import AudioDBImageService
 from repositories.audiodb_models import AudioDBAlbumImages
@@ -267,13 +268,21 @@ class AlbumService:
             logger.error(f"Failed to get basic album info for {release_group_id}: {e}")
             raise ResourceNotFoundError(f"Failed to get album info: {e}")
     
-    async def get_album_tracks_info(self, release_group_id: str) -> AlbumTracksInfo:
+    async def get_album_tracks_info(
+        self,
+        release_group_id: str,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
+    ) -> AlbumTracksInfo:
+        """``priority`` (P4): background callers - the orchestrator's completion-time
+        coverage check - pass BACKGROUND_SYNC so a cold-cache finalize never jumps the
+        MusicBrainz queue ahead of a user's page load (honest-priority house rule).
+        Normally warm: the request flow fetched this at task creation."""
         try:
             release_group_id = validate_mbid(release_group_id, "album")
         except ValueError as e:
             logger.error(f"Invalid album MBID: {e}")
             raise
-        
+
         try:
             cache_key = f"{ALBUM_INFO_PREFIX}{release_group_id}"
             cached_album_info = await self._get_cached_album_info(release_group_id, cache_key)
@@ -286,8 +295,8 @@ class AlbumService:
                     barcode=cached_album_info.barcode,
                     country=cached_album_info.country,
                 )
-            
-            release_group = await self._fetch_release_group(release_group_id)
+
+            release_group = await self._fetch_release_group(release_group_id, priority=priority)
             ranked_releases = get_ranked_releases(release_group)
             
             if not ranked_releases:
@@ -305,7 +314,12 @@ class AlbumService:
                 candidate_ids = [owned_release_id, *(cid for cid in candidate_ids if cid != owned_release_id)]
             if candidate_ids:
                 release_results = await asyncio.gather(
-                    *(self._mb_repo.get_release_by_id(rid, includes=["recordings", "labels"]) for rid in candidate_ids),
+                    *(
+                        self._mb_repo.get_release_by_id(
+                            rid, includes=["recordings", "labels"], priority=priority
+                        )
+                        for rid in candidate_ids
+                    ),
                     return_exceptions=True,
                 )
                 failures = [r for r in release_results if isinstance(r, Exception)]
@@ -341,10 +355,53 @@ class AlbumService:
             logger.error(f"Failed to get album tracks for {release_group_id}: {e}")
             raise ResourceNotFoundError(f"Failed to get album tracks: {e}")
 
-    async def _fetch_release_group(self, release_group_id: str) -> dict:
+    async def annotate_album_coverage(self, release_group_id: str, status):  # noqa: ANN001
+        """Fill a ``LibraryAlbumStatus``'s coverage fields (P5, 2026-07-05 incident):
+        which held files actually COVER the release's expected tracks, and which are
+        orphans ("doesn't match this album"). Uses the same shared matcher as the
+        download completeness gate, so the album page and the orchestrator can never
+        disagree about what "In Library" means. Fail-open: any tracklist failure
+        leaves the coverage fields zeroed and the page falls back to presence-only."""
+        if not status.tracks:
+            return status
+        try:
+            info = await self.get_album_tracks_info(release_group_id)
+        except Exception:  # noqa: BLE001 - coverage is an annotation, never a page-breaker
+            logger.warning(f"Album coverage annotation failed for {release_group_id[:8]}")
+            return status
+        tracks = list(info.tracks or [])
+        if not tracks:
+            return status
+        from services.native.coverage import match_rows_to_tracks
+
+        rows = [
+            {
+                "id": t.id,
+                "recording_mbid": t.recording_mbid,
+                "disc_number": t.disc_number,
+                "track_number": t.track_number,
+                "track_title": t.track_title,
+                "duration_seconds": t.duration_seconds,
+            }
+            for t in status.tracks
+        ]
+        covered, orphan_rows, matched_ids = match_rows_to_tracks(rows, tracks)
+        orphan_ids = {r["id"] for r in orphan_rows if r.get("id")}
+        status.expected_tracks = len(tracks)
+        status.covered_tracks = covered
+        status.matched_file_ids = matched_ids
+        status.orphans = [t for t in status.tracks if t.id in orphan_ids]
+        return status
+
+    async def _fetch_release_group(
+        self,
+        release_group_id: str,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
+    ) -> dict:
         rg_result = await self._mb_repo.get_release_group_by_id(
             release_group_id,
-            includes=["artists", "releases", "tags"]
+            includes=["artists", "releases", "tags"],
+            priority=priority,
         )
         
         if not rg_result:

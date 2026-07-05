@@ -142,11 +142,22 @@ class UnmatchedFile(AppStruct):
 
 
 class LibraryAlbumStatus(AppStruct):
-    """Combined album-page payload."""
+    """Combined album-page payload.
+
+    The coverage fields (P5, 2026-07-05 incident) measure the held files against
+    the requested release's MusicBrainz tracklist via the shared matcher:
+    ``expected_tracks == 0`` means the tracklist was unavailable and the page must
+    fall back to the presence-only reading. ``orphans`` are held rows that cover
+    NO expected track ("doesn't match this album") - surfaced for review, and
+    excluded from Play All by ``matched_file_ids``."""
 
     in_library: bool
     track_count: int = 0
     tracks: list[LibraryTrack] = []
+    expected_tracks: int = 0
+    covered_tracks: int = 0
+    matched_file_ids: list[str] = []
+    orphans: list[LibraryTrack] = []
 
 
 class LibraryManager(LibraryStub):

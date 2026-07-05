@@ -1,0 +1,81 @@
+{
+ "name": "clairo-pretty-girl-single",
+ "kind": "single",
+ "target": {
+  "artist_name": "Clairo",
+  "album_title": "Pretty Girl",
+  "year": 2017,
+  "track_count": 1,
+  "track_title": "Pretty Girl",
+  "duration_seconds": null,
+  "recording_mbid": null
+ },
+ "groups": [
+  {
+   "username": "peer12",
+   "parent_directory": "Pretty Girl (2017)",
+   "files": [
+    {
+     "username": "peer12",
+     "filename": "C\\Clairo\\Pretty Girl (2017)\\01 - Pretty Girl.flac",
+     "parent_directory": "Pretty Girl (2017)",
+     "size": 35310403,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 24,
+     "sample_rate": 48000,
+     "duration": 166.0,
+     "has_free_slot": true,
+     "upload_speed": 5503600
+    }
+   ],
+   "original_final_score": 0.9405487804878048,
+   "original_tier": "auto"
+  },
+  {
+   "username": "peer13",
+   "parent_directory": "Clairo - Pretty Girl (2017) [16B-44.1kHz]",
+   "files": [
+    {
+     "username": "peer13",
+     "filename": "shared\\Music\\Clairo\\Clairo - Pretty Girl (2017) [16B-44.1kHz]\\01. Pretty Girl.flac",
+     "parent_directory": "Clairo - Pretty Girl (2017) [16B-44.1kHz]",
+     "size": 15454297,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 16,
+     "sample_rate": 44100,
+     "duration": 178.0,
+     "has_free_slot": true,
+     "upload_speed": 6385880
+    }
+   ],
+   "original_final_score": 0.9503048780487804,
+   "original_tier": "auto"
+  },
+  {
+   "username": "peer14",
+   "parent_directory": "Clairo - Pretty Girl (2017) [FLAC 16bit]",
+   "files": [
+    {
+     "username": "peer14",
+     "filename": "music\\Clairo\\Single\\Clairo - Pretty Girl (2017) [FLAC 16bit]\\01-01 - Pretty Girl.flac",
+     "parent_directory": "Clairo - Pretty Girl (2017) [FLAC 16bit]",
+     "size": 15688129,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 16,
+     "sample_rate": 44100,
+     "duration": 178.0,
+     "has_free_slot": true,
+     "upload_speed": 126102
+    }
+   ],
+   "original_final_score": 0.9503048780487804,
+   "original_tier": "auto"
+  }
+ ],
+ "expect": {
+  "top_auto": true
+ }
+}

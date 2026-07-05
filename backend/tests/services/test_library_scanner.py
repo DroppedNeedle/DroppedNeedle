@@ -1075,3 +1075,20 @@ async def test_scan_invalidates_changed_albums_but_not_an_unchanged_rescan(tmp_p
     calls.clear()
     await scanner.scan([music])  # unchanged: incremental skip -> no write -> no invalidation
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_weakly_verified_download_rows_are_reidentifiable(tmp_path):
+    """P7 (D7): a download import stamped BELOW-sticky confidence stays anchored
+    (source='download' resists non-improving churn) but yields to a clearly-better
+    scan identification - unlike the pre-P7 hardcoded 1.0, which froze a wrong
+    import at fake-perfect confidence forever."""
+    scanner, *_ = _build(tmp_path)
+    scanner._album_identifier.release_group_type = AsyncMock(
+        return_value=("album", frozenset())
+    )
+    weak_dl = {"release_group_mbid": "rg-a", "confidence": 0.6, "source": "download"}
+    # anchored: a merely-comparable match never churns it
+    assert await scanner._should_keep_prior(weak_dl, "rg-b", 0.55) is True
+    # re-identifiable: a clearly-better identification (+0.05 margin) wins
+    assert await scanner._should_keep_prior(weak_dl, "rg-b", 0.70) is False

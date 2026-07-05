@@ -158,7 +158,10 @@ vi.mock('$lib/queries/downloads/DownloadSSE.svelte', () => ({
 vi.mock('$lib/queries/library/LibraryMutations.svelte', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/queries/library/LibraryMutations.svelte')>()),
 	rescanAlbum: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	reidentifyAlbum: () => ({ mutateAsync: vi.fn(), isPending: false })
+	reidentifyAlbum: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	// the orphan-review section (P5) creates its removal mutation at init - stub it
+	// so the page renders without a QueryClientProvider
+	removeLibraryTrack: () => ({ mutate: vi.fn(), isPending: false })
 }));
 
 vi.mock('$lib/utils/albumRequest', () => ({

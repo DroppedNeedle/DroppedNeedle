@@ -26,10 +26,12 @@ from core.exceptions import (
 )
 from core.task_registry import TaskRegistry
 from infrastructure.persistence.download_store import DownloadStore
+from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.sse_publisher import SSEPublisher
 from models.download_manifest import (
     DownloadManifest,
     ExpectedFile,
+    ExpectedTrack,
     ManifestCodec,
 )
 from repositories.protocols.download_client import (
@@ -44,6 +46,7 @@ from services.native.acquisition.strategy import (
     UsenetStrategy,
 )
 from services.native.album_preflight_scorer import AlbumPreflightScorer
+from services.native.coverage import match_rows_to_tracks
 from services.native.file_processor import (
     DOWNLOADS_MOUNT_UNAVAILABLE,
     IMPORT_FAILED,
@@ -180,6 +183,10 @@ class DownloadOrchestrator:
         self._source_priority = source_priority or ["soulseek", "usenet"]
         self._store = download_store
         self._library = library_manager
+        # Coverage completeness (P4): the requested release's expected tracklist,
+        # cache-aside via the album page's own resolver. None in minimal test
+        # constructions -> the count-based check below is the fallback.
+        self._album_service = album_service
         self._manifest_codec = manifest_codec
         self._bus = event_bus
         self._staging = Path(staging_path)
@@ -454,14 +461,15 @@ class DownloadOrchestrator:
         return self._strategy(task.source).client
 
     async def _enqueue(  # noqa: ANN001 - DownloadTask
-        self, task, *, strict_track_duration: bool = True
+        self, task, *, strict_track_duration: bool = True, hold_on_wrong_track: bool = False
     ) -> None:
         candidates = await self._store.get_search_job_candidates(task.search_job_id)
         if task.candidate_index is None or task.candidate_index >= len(candidates):
             raise OrchestrationError("candidate no longer available")
         candidate = candidates[task.candidate_index]
         await self._strategies[task.source].enqueue(
-            task, candidate, strict_track_duration=strict_track_duration
+            task, candidate, strict_track_duration=strict_track_duration,
+            hold_on_wrong_track=hold_on_wrong_track,
         )
 
     async def _poll_until_done(self, task, *, expect_materialization: bool = False):  # noqa: ANN001, ANN201
@@ -733,8 +741,11 @@ class DownloadOrchestrator:
 
     async def _fallback_track_repull(self, task) -> None:  # noqa: ANN001 - DownloadTask
         """Last resort for a per-track download whose every candidate was rejected on
-        duration: re-pull the top-ranked source with the strict duration gate OFF so
-        the user still gets the track (better the closest match than nothing)."""
+        duration (the MB length is suspect): re-pull the top-ranked source and HOLD its
+        file for human review on a repeat gate failure (D9) - the held-imports panel's
+        "import anyway" is the path to the closest match, never a silent unverified import.
+        A file that passes the gate on the re-pull (transient earlier failure) still
+        imports normally."""
         candidates = await self._store.get_search_job_candidates(task.search_job_id)
         if not candidates:
             await self._settle_incomplete(task, False)
@@ -748,7 +759,7 @@ class DownloadOrchestrator:
         task = await self._store.get_task(task.id)
         logger.info("download.track_duration_fallback", extra={"task_id": task.id})
         try:
-            await self._enqueue(task, strict_track_duration=False)
+            await self._enqueue(task, hold_on_wrong_track=True)
         except OrchestrationError:
             await self._settle_incomplete(task, False)
             return
@@ -856,15 +867,65 @@ class DownloadOrchestrator:
             return 1
         return task.track_count or 0
 
+    async def _coverage(self, task, *, context: str) -> "tuple[int, int, list[str]] | None":  # noqa: ANN001
+        """``(covered, expected_total, orphan_row_ids)`` for an album task, measured
+        against the requested release's MusicBrainz tracklist - or ``None`` when the
+        tracklist is unavailable (MB down, no album service wired, empty/free-text
+        release group), falling the caller back to the count check. Each expected
+        track is covered by at most one library row (recording MBID -> position +
+        duration -> containment title, via ``row_covers_track``); rows covering
+        nothing are the ORPHANS the ``download.coverage`` event surfaces (P4/P5).
+        Fail-open by design: coverage is an upgrade over counting, never a blocker."""
+        if self._album_service is None or not task.release_group_mbid:
+            return None
+        try:
+            info = await self._album_service.get_album_tracks_info(
+                task.release_group_mbid, priority=RequestPriority.BACKGROUND_SYNC
+            )
+        except Exception:  # noqa: BLE001 - MB failure must never block completion
+            logger.warning(
+                "coverage.tracklist_unavailable",
+                extra={"task_id": task.id, "release_group_mbid": task.release_group_mbid},
+            )
+            return None
+        tracks = list(info.tracks or [])
+        if not tracks:
+            return None
+        try:
+            rows = await self._library.get_file_rows_for_album(task.release_group_mbid)
+        except Exception:  # noqa: BLE001 - completeness check must not crash the task
+            return None
+
+        covered, orphan_rows, _matched = match_rows_to_tracks(rows, tracks)
+        orphans = [str(r.get("id")) for r in orphan_rows if r.get("id")]
+        logger.info(
+            "download.coverage",
+            extra={
+                "task_id": task.id,
+                "context": context,
+                "expected": len(tracks),
+                "covered": covered,
+                "orphan_row_ids": orphans,
+            },
+        )
+        return covered, len(tracks), orphans
+
     async def _download_is_complete(self, task, imported_any: bool, result=None) -> bool:  # noqa: ANN001
         """Whether the download has delivered what it set out to. A per-track
         download is one file - complete the moment it imports (Soulseek rips rarely
         carry the recording MBID, so a tag-based check can't be trusted). An album is
-        complete once the library holds at least ``track_count`` distinct tracks,
-        which is cumulative across failover attempts (a partial harvest plus a later
-        re-pull from a better source)."""
+        complete once the library COVERS the requested release's tracklist (P4:
+        recording/position+duration/title matching - a wrong file at some position
+        can no longer satisfy the request the way the 2026-07-05 single was
+        satisfied), cumulative across failover attempts. When the tracklist is
+        unavailable the pre-P4 count check is the fallback: at least ``track_count``
+        distinct positions present."""
         if task.download_type == "track":
             return imported_any
+        coverage = await self._coverage(task, context="completeness")
+        if coverage is not None:
+            covered, expected_total, _orphans = coverage
+            return covered >= expected_total
         expected = self._expected_track_count(task)
         present = await self._imported_track_count(task)
         if expected > 0:
@@ -916,6 +977,13 @@ class DownloadOrchestrator:
             return
         expected = self._expected_track_count(task)
         present = 1 if task.download_type == "track" else await self._imported_track_count(task)
+        # D8: the human's "import anyway" is the escape hatch, so the DECISION stays
+        # count-based (a force-imported file may deliberately not match MusicBrainz) -
+        # but the coverage event still records honestly what is and isn't covered,
+        # never a silent COMPLETED. (The force-import stamps the expected recording
+        # MBID onto the file, so it usually covers anyway.)
+        if task.download_type != "track":
+            await self._coverage(task, context="manual_import")
         if expected and present >= expected:
             await self._finalize(task, DownloadStatus.COMPLETED)
         else:
@@ -1186,7 +1254,12 @@ class DownloadOrchestrator:
             raise ValidationError("Original source is no longer available")
         candidate = candidates[task.candidate_index]
 
-        use_canonical = task.download_type == "track" and bool(task.track_duration_seconds)
+        # A 1-track album (a single) reimports under the same canonical-duration
+        # verification as a track download (2026-07-05 wrong-single incident).
+        is_single = task.download_type == "album" and task.track_count == 1
+        use_canonical = (
+            task.download_type == "track" or is_single
+        ) and bool(task.track_duration_seconds)
         manifest = DownloadManifest(
             task_id=task.id,
             source_username=candidate.username,
@@ -1206,6 +1279,19 @@ class DownloadOrchestrator:
                 )
                 for f in candidate.files
             ],
+            expected_tracks=(
+                [
+                    ExpectedTrack(
+                        track_number=task.track_number or 1,
+                        disc_number=task.disc_number or 1,
+                        duration_seconds=task.track_duration_seconds,
+                        recording_mbid=task.recording_mbid,
+                        title=task.track_title,
+                    )
+                ]
+                if task.track_title and len(candidate.files) == 1
+                else []
+            ),
         )
 
         await self._store.update_status(task.id, DownloadStatus.PROCESSING)

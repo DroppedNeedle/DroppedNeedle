@@ -30,7 +30,7 @@ from infrastructure.cache.memory_cache import CacheInterface
 from infrastructure.cache.disk_cache import DiskMetadataCache
 from infrastructure.cover_urls import prefer_release_group_cover_url
 from infrastructure.serialization import clone_with_updates
-from core.exceptions import ExternalServiceError
+from core.exceptions import ExternalServiceError, ResourceNotFoundError
 from infrastructure.resilience.retry import CircuitOpenError
 from services.cache_status_service import CacheStatusService
 from services.library_precache_service import LibraryPrecacheService
@@ -634,6 +634,44 @@ class LibraryService:
         except Exception as e:  # noqa: BLE001
             logger.error(f"Couldn't remove album {album_mbid}: {e}")
             raise ExternalServiceError(f"Couldn't remove this album: {e}")
+
+    async def remove_file(self, file_id: str) -> "StatusMessageResponse":
+        """Remove ONE library file - the album page's orphan-review action (P5,
+        2026-07-05 incident): a held file that matches none of the album's expected
+        tracks. Soft-deletes the row (recoverable via re-import) and unlinks the
+        audio; the ghost ``library_albums`` row is dropped when this was the album's
+        last active file, and album caches are invalidated so the page, badge, and
+        Play All converge immediately."""
+        from api.v1.schemas.common import StatusMessageResponse
+
+        row = await self._library_db.get_library_file_by_id(file_id)
+        if row is None or row.get("deleted_at"):
+            raise ResourceNotFoundError("Library file not found")
+        try:
+            await self._library_db.soft_delete_library_file(row["file_path"])
+            await asyncio.to_thread(self._unlink_paths, [row["file_path"]])
+
+            album_mbid = row.get("release_group_mbid")
+            if album_mbid:
+                remaining = await self._library_db.get_library_files_for_album(album_mbid)
+                if not remaining:
+                    # mirror remove_album: /basic derives in_library from this row
+                    await self._library_db.delete_album_by_mbid(album_mbid)
+                artist_mbid = row.get("album_artist_mbid") or row.get("artist_mbid")
+                try:
+                    await self._invalidate_caches_after_removal(
+                        album_mbid, artist_mbid, artist_removed=False
+                    )
+                except Exception as e:  # noqa: BLE001 - removal succeeded; stale cache only
+                    logger.warning(
+                        f"File {file_id} removed but cache invalidation failed: {e}"
+                    )
+            return StatusMessageResponse(status="ok", message="File removed")
+        except ResourceNotFoundError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Couldn't remove library file {file_id}: {e}")
+            raise ExternalServiceError("Couldn't remove this file")
 
     async def _invalidate_caches_after_removal(self, album_mbid: str, artist_mbid: str | None, *, artist_removed: bool = False) -> None:
         # do NOT call library_db.clear() here: it would wipe unrelated sync_state and

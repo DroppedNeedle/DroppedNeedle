@@ -16,6 +16,7 @@
 		Disc3,
 		Square,
 		TrendingUp,
+		TriangleAlert,
 		ChevronDown,
 		Pin
 	} from 'lucide-svelte';
@@ -47,6 +48,8 @@
 		libraryTrackCount?: number;
 		mbTrackCount?: number;
 		libraryBelowCutoff?: boolean;
+		coverageExpected?: number;
+		coverageCovered?: number;
 		releaseGroupMbid?: string;
 		onrequest: () => void;
 		ondelete: () => void;
@@ -68,6 +71,8 @@
 		libraryTrackCount = 0,
 		mbTrackCount = 0,
 		libraryBelowCutoff = false,
+		coverageExpected = 0,
+		coverageCovered = 0,
 		releaseGroupMbid = '',
 		onrequest,
 		ondelete,
@@ -92,8 +97,18 @@
 	}
 
 	const rescan = rescanAlbum();
+	// Coverage-aware library state (P5, 2026-07-05 incident): with a known tracklist,
+	// "In Library" means COVERED - a wrong file squatting under the album reads
+	// "Unmatched files", never owned. coverageExpected === 0 (tracklist unavailable)
+	// falls back to the pre-P5 presence counting.
+	const coverageKnown = $derived(coverageExpected > 0);
 	const libraryComplete = $derived(
-		libraryInLibrary && mbTrackCount > 0 && libraryTrackCount >= mbTrackCount
+		coverageKnown
+			? libraryInLibrary && coverageCovered >= coverageExpected
+			: libraryInLibrary && mbTrackCount > 0 && libraryTrackCount >= mbTrackCount
+	);
+	const libraryUnmatchedOnly = $derived(
+		coverageKnown && libraryInLibrary && libraryTrackCount > 0 && coverageCovered === 0
 	);
 
 	async function handleRescan() {
@@ -385,9 +400,21 @@
 
 			{#if libraryInLibrary}
 				<div class="flex flex-wrap items-center gap-2">
-					<span class="badge badge-sm gap-1 {libraryComplete ? 'badge-success' : 'badge-warning'}">
+					<span
+						class="badge badge-sm gap-1 {libraryComplete
+							? 'badge-success'
+							: libraryUnmatchedOnly
+								? 'badge-error'
+								: 'badge-warning'}"
+					>
 						<Disc3 class="h-3.5 w-3.5" />
-						{libraryComplete ? 'In Library' : `${libraryTrackCount}/${mbTrackCount}`}
+						{libraryComplete
+							? 'In Library'
+							: libraryUnmatchedOnly
+								? 'Unmatched files'
+								: coverageKnown
+									? `${coverageCovered}/${coverageExpected}`
+									: `${libraryTrackCount}/${mbTrackCount}`}
 					</span>
 					{#if authStore.isAdmin}
 						<button
@@ -450,13 +477,22 @@
 					{/if}
 					<div class="flex flex-wrap items-start gap-3">
 						{#if inLibrary || libraryInLibrary}
-							<div
-								class="badge badge-lg gap-2"
-								style="background-color: {colors.accent}; color: {colors.secondary};"
-							>
-								<Check class="h-4 w-4" />
-								In Library
-							</div>
+							{#if libraryUnmatchedOnly}
+								<div class="badge badge-lg badge-error gap-2">
+									<TriangleAlert class="h-4 w-4" />
+									Unmatched files only
+								</div>
+							{:else}
+								<div
+									class="badge badge-lg gap-2"
+									style="background-color: {colors.accent}; color: {colors.secondary};"
+								>
+									<Check class="h-4 w-4" />
+									{libraryComplete || !coverageKnown
+										? 'In Library'
+										: `In Library • ${coverageCovered}/${coverageExpected}`}
+								</div>
+							{/if}
 							{#if authStore.isAdmin}
 								<button class="btn btn-sm btn-error btn-outline gap-1" onclick={ondelete}>
 									<Trash2 class="h-4 w-4" />

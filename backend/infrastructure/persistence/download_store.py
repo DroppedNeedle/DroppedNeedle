@@ -438,6 +438,24 @@ class DownloadStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def get_parked_task_for_search_job(self, search_job_id: str) -> DownloadTask | None:
+        """The orchestrator task PARKED on this search job awaiting review: linked to
+        the job, no candidate picked, still queued. ``pick_candidate`` RESUMES it - a
+        fresh task would drop the threaded single-track identity (search_jobs carries
+        none) and the request linkage (terminal sync matches on the task id). See
+        .dev-notes/Bugs/2026-07-05-wrong-single-remediation-plan.md, P1.4."""
+
+        def operation(conn: sqlite3.Connection) -> DownloadTask | None:
+            row = conn.execute(
+                "SELECT * FROM download_tasks WHERE search_job_id = ?"
+                " AND candidate_index IS NULL AND status = 'queued'"
+                " ORDER BY created_at DESC LIMIT 1",
+                (search_job_id,),
+            ).fetchone()
+            return _row_to_task(row)
+
+        return await self._read(operation)
+
     async def get_reimportable_task_ids(self, task_ids: list[str]) -> set[str]:
         if not task_ids:
             return set()

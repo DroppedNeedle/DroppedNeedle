@@ -312,7 +312,8 @@ class MusicBrainzAlbumMixin:
     async def get_release_by_id(
         self,
         release_id: str,
-        includes: list[str] | None = None
+        includes: list[str] | None = None,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> dict | None:
         if includes is None:
             includes = ["recordings", "labels"]
@@ -325,20 +326,24 @@ class MusicBrainzAlbumMixin:
 
         includes_str = "+".join(sorted(includes))
         dedupe_key = f"{MB_RELEASE_DETAIL_PREFIX}{release_id}:{includes_str}"
-        return await mb_deduplicator.dedupe(dedupe_key, lambda: self._fetch_release_by_id(release_id, includes, cache_key))
+        return await mb_deduplicator.dedupe(
+            dedupe_key,
+            lambda: self._fetch_release_by_id(release_id, includes, cache_key, priority),
+        )
 
     async def _fetch_release_by_id(
         self,
         release_id: str,
         includes: list[str],
-        cache_key: str
+        cache_key: str,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> dict | None:
         try:
             inc_str = "+".join(sorted(includes))
             result = await mb_api_get(
                 f"/release/{release_id}",
                 params={"inc": inc_str},
-                priority=RequestPriority.USER_INITIATED,
+                priority=priority,
             )
             if not result:
                 return None

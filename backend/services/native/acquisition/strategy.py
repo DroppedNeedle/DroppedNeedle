@@ -106,8 +106,12 @@ class SourceStrategy(Protocol):
         """Search this source for ``task`` and return its scored candidates (best first)."""
         ...
 
-    async def enqueue(self, task, candidate, *, strict_track_duration: bool) -> None:  # noqa: ANN001
-        """Build + persist the crash-recovery manifest, then hand the pick to the client."""
+    async def enqueue(
+        self, task, candidate, *, strict_track_duration: bool, hold_on_wrong_track: bool = False  # noqa: ANN001
+    ) -> None:
+        """Build + persist the crash-recovery manifest, then hand the pick to the client.
+        ``hold_on_wrong_track`` (the last-resort track re-pull, D9): a canonical-duration
+        failure at import then holds the file for review instead of failing it."""
         ...
 
     async def import_files(
@@ -177,6 +181,29 @@ class SoulseekStrategy:
                 target, results, auto_accept_threshold=auto, manual_threshold=manual,
                 held_tier=held_tier,
             )
+        # A 1-track release (a single requested as an album) scores per-file via the
+        # track matcher, not the folder scorer: folder coherence hands a lone
+        # fuzzy-matched file a perfect count_ratio, and only the per-file path carries
+        # the canonical duration + the artist-evidence auto gate (2026-07-05
+        # wrong-single incident). The SEARCH stays search_album (the album query
+        # ladder) - its per-file results are exactly the track matcher's input shape.
+        # Falls back to the folder scorer when identity threading failed (track_title
+        # is None - MusicBrainz was down at request time).
+        if task.track_count == 1 and task.track_title:
+            target = TargetTrack(
+                artist_name=task.artist_name, track_title=task.track_title,
+                album_title=task.album_title, duration_seconds=task.track_duration_seconds,
+                recording_mbid=task.recording_mbid,
+            )
+            indexer_results = await self._indexer.search_album(
+                task.artist_name, task.album_title, task.year, task.track_count,
+                timeout=timeout,
+            )
+            results = [r.soulseek for r in indexer_results if r.soulseek is not None]
+            return await self._track_matcher.rank(
+                target, results, auto_accept_threshold=auto, manual_threshold=manual,
+                held_tier=held_tier,
+            )
         target = TargetAlbum(
             artist_name=task.artist_name, album_title=task.album_title,
             year=task.year, track_count=task.track_count,
@@ -191,13 +218,16 @@ class SoulseekStrategy:
             held_tier=held_tier,
         )
 
-    async def enqueue(self, task, candidate, *, strict_track_duration):  # noqa: ANN001, ANN201
-        # For a per-track download, verify the imported file against the CANONICAL track
-        # length so a wrong-length recording fails over instead of being imported and
-        # mislabelled. strict_track_duration is turned off for the last-resort fallback so
-        # the user is never stranded by a bad MB duration.
+    async def enqueue(self, task, candidate, *, strict_track_duration, hold_on_wrong_track=False):  # noqa: ANN001, ANN201
+        # For a per-track download - or a 1-track album (a single, whose identity was
+        # threaded at request time) - verify the imported file against the CANONICAL
+        # track length so a wrong-length recording fails over instead of being imported
+        # and mislabelled (2026-07-05 wrong-single incident). The last-resort track
+        # fallback keeps the gate ON but sets hold_on_wrong_track, so the closest match
+        # is captured for human review rather than imported unverified (D9).
+        is_single = task.download_type == "album" and task.track_count == 1
         use_canonical = (
-            task.download_type == "track"
+            (task.download_type == "track" or is_single)
             and strict_track_duration
             and bool(task.track_duration_seconds)
         )
@@ -233,6 +263,7 @@ class SoulseekStrategy:
             album_title=task.album_title,
             year=task.year,
             is_track=use_canonical,
+            hold_on_wrong_track=hold_on_wrong_track,
             naming_template=self._naming_template,
             target_files=[
                 ExpectedFile(
@@ -242,6 +273,23 @@ class SoulseekStrategy:
                 )
                 for f in candidate.files
             ],
+            # The expected track identity, when this download targets exactly one
+            # known track (a track download or a 1-track single): arms the AcoustID
+            # TITLE check and the import-time tag verification, which the per-file
+            # slskd path otherwise runs artist-only (2026-07-05 wrong-single incident).
+            expected_tracks=(
+                [
+                    ExpectedTrack(
+                        track_number=task.track_number or 1,
+                        disc_number=task.disc_number or 1,
+                        duration_seconds=task.track_duration_seconds,
+                        recording_mbid=task.recording_mbid,
+                        title=task.track_title,
+                    )
+                ]
+                if task.track_title and len(candidate.files) == 1
+                else []
+            ),
         )
         self._staging.joinpath(task.id).mkdir(parents=True, exist_ok=True)
         (self._staging / task.id / "manifest.json").write_bytes(
@@ -425,10 +473,12 @@ class UsenetStrategy:
             held_tier=held_tier,
         )
 
-    async def enqueue(self, task, candidate, *, strict_track_duration):  # noqa: ANN001, ANN201
+    async def enqueue(self, task, candidate, *, strict_track_duration, hold_on_wrong_track=False):  # noqa: ANN001, ANN201, ARG002
         # Hand the chosen album NZB to SABnzbd. The manifest carries the expected MB
         # tracklist (not pre-known filenames) - the folder import matches the unpacked files
         # to it (D18). For a per-track grab (D4) the tracklist is the single track.
+        # hold_on_wrong_track is a slskd re-pull concern; the folder import has its own
+        # per-track matcher, so it is accepted for protocol conformance and unused.
         release = candidate.usenet_release
         if release is None:
             raise OrchestrationError("usenet candidate has no release")

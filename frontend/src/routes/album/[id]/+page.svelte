@@ -8,6 +8,8 @@
 	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
 	import { createAlbumPageState } from './albumPageState.svelte';
 	import AlbumHeader from './AlbumHeader.svelte';
+	import UnmatchedFilesSection from './UnmatchedFilesSection.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import AlbumSourceBars from './AlbumSourceBars.svelte';
 	import AlbumTrackList from './AlbumTrackList.svelte';
 	import AlbumDiscovery from './AlbumDiscovery.svelte';
@@ -66,6 +68,8 @@
 				libraryInLibrary={state.libraryInLibrary}
 				libraryTrackCount={state.libraryTrackCount}
 				libraryBelowCutoff={state.libraryBelowCutoff}
+				coverageExpected={state.coverageExpected}
+				coverageCovered={state.coverageCovered}
 				mbTrackCount={state.tracksInfo?.total_tracks ?? 0}
 				releaseGroupMbid={album.musicbrainz_id}
 				onrequest={state.handleRequest}
@@ -113,7 +117,7 @@
 						trackLinks={state.trackLinks}
 						albumLink={state.albumLink}
 						jellyfinMatch={state.jellyfinMatch}
-						localMatch={state.localMatch}
+						localMatch={state.localMatchForPlayback}
 						navidromeMatch={state.navidromeMatch}
 						plexMatch={state.plexMatch}
 						loadingJellyfin={state.loadingJellyfin}
@@ -169,6 +173,12 @@
 						onTrackGenerated={state.handleTrackGenerated}
 						onQuotaUpdate={state.handleQuotaUpdate}
 						getTrackContextMenuItems={state.getTrackContextMenuItems}
+					/>
+
+					<UnmatchedFilesSection
+						orphans={state.libraryOrphans}
+						albumMbid={album.musicbrainz_id}
+						canRemove={authStore.isTrusted}
 					/>
 
 					<AddToPlaylistModal bind:this={state.playlistModalRef} />

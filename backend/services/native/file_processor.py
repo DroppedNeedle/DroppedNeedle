@@ -30,7 +30,7 @@ from models.audio import AudioInfo, AudioTag
 from models.download_manifest import DownloadManifest, ExpectedFile, ExpectedTrack
 from services.native.quality_tiers import tier_for, tier_rank
 from services.native.recycle_bin import recycle
-from services.native.title_match import names_different_album
+from services.native.title_match import names_different_album, title_containment_score
 
 if TYPE_CHECKING:
     from infrastructure.audio.fingerprinter import AudioFingerprinter
@@ -171,6 +171,125 @@ def _title_conflicts(candidate: _FolderCandidate, track: ExpectedTrack) -> bool:
     return fuzz.token_set_ratio(tag_title, track.title) < _TITLE_CONFLICT_RATIO
 
 
+def _import_confidence(*, tag, info, expected_track, canonical_duration, fp) -> float:  # noqa: ANN001
+    """Attribution confidence for a download import, on the SCANNER's existing scale
+    (P7/D7 - the hardcoded 1.0 meant "we trust the album identity", not "this audio is
+    the requested recording", and froze wrong imports at fake-perfect forever):
+
+    - **1.0** - recording identity positively confirmed: the file's own recording-MBID
+      tag, or a confident AcoustID hit, names the expected recording.
+    - **0.9** - the canonical MusicBrainz length validated the audio (the strict
+      duration gate passed).
+    - **0.8** - title/tag agreement only (containment-strong title, no measurable
+      duration) - below the scanner's 0.85 sticky line, so a better scan match may
+      later re-identify it (``source='download'`` still anchors it meanwhile).
+    - **0.6** - imported with no identity corroboration (a multi-file album import
+      that merely didn't conflict).
+
+    The held-import "import anyway" path deliberately stays 1.0 - a human attribution
+    decision outranks every heuristic (D8)."""
+    expected_rec = (
+        (expected_track.recording_mbid or "").strip().lower() if expected_track else ""
+    )
+    if expected_rec:
+        tag_rec = (tag.musicbrainz_recording_id or "").strip().lower()
+        if tag_rec and tag_rec == expected_rec:
+            return 1.0
+        fp_rec = (getattr(fp, "recording_id", None) or "").strip().lower() if fp else ""
+        if fp_rec and getattr(fp, "status", None) == "pass" and fp_rec == expected_rec:
+            return 1.0
+    if canonical_duration and info.duration_seconds and abs(
+        info.duration_seconds - canonical_duration
+    ) <= max(15.0, 0.10 * canonical_duration):
+        return 0.9
+    expected_title = expected_track.title if expected_track else None
+    tag_title = (tag.title or "").strip()
+    if expected_title and tag_title and (
+        title_containment_score(expected_title, tag_title) >= _TAG_TITLE_WEAK
+    ):
+        return 0.8
+    return 0.6
+
+
+def row_covers_track(
+    row: dict,
+    *,
+    recording_mbid: str | None,
+    title: str | None,
+    duration_seconds: float | None,
+) -> bool:
+    """Whether a ``library_files`` row is plausibly THE expected track (P4 coverage,
+    shared by the completeness gate and the position-dedup guard): recording MBID
+    match, else duration within the standard tolerance, else a containment-strong
+    title. An untagged row with no measurable signal counts as covering (D18
+    fail-open - absence of evidence is unknown, not a mismatch); a row that
+    POSITIVELY disagrees on every known signal does not."""
+    row_rec = (row.get("recording_mbid") or "").strip().lower()
+    if recording_mbid and row_rec:
+        return row_rec == recording_mbid.strip().lower()
+    row_dur = row.get("duration_seconds")
+    if duration_seconds and row_dur:
+        return abs(row_dur - duration_seconds) <= max(15.0, 0.10 * duration_seconds)
+    row_title = (row.get("track_title") or "").strip()
+    if title and row_title:
+        return title_containment_score(title, row_title) >= _TAG_TITLE_WEAK
+    return True
+
+
+_TAG_ARTIST_CONFLICT_RATIO = 55  # below: the artist TAG names someone else. token_set is
+# subset-tolerant, so feat. credits score 100 and never conflict; classical
+# composer-vs-performer pairs DO conflict, which is why the hold needs a second signal.
+_TAG_TITLE_WEAK = 0.60  # containment below: the title tag doesn't name the expected track
+
+
+def _tag_conflict_reason(tag, info, manifest, expected_track) -> str | None:  # noqa: ANN001
+    """``"tag_mismatch"`` when the file's OWN embedded tags clearly name different
+    content than the request, else ``None`` (P2, 2026-07-05 wrong-single incident -
+    the file was tagged "Dan Romer / Arrival in Ashford / track 2" and imported anyway).
+
+    Works when AcoustID has no coverage (its exact fail-open hole). Fail-open rules
+    mirror the folder path's D18: untagged fields never conflict, various-artists
+    albums skip the artist check, and an artist conflict ALONE never holds - classical
+    tags carry the composer while the album artist is the performer, so a hold needs a
+    weak/conflicting title or a conflicting duration on top."""
+    expected_artist = manifest.artist_name or ""
+    tag_artist = (tag.artist or "").strip()
+    artist_conflict = bool(
+        tag_artist
+        and expected_artist
+        and "various" not in expected_artist.lower()
+        and fuzz.token_set_ratio(tag_artist, expected_artist) < _TAG_ARTIST_CONFLICT_RATIO
+    )
+    tag_title = (tag.title or "").strip()
+
+    if expected_track is not None and expected_track.title:
+        # A real title tag naming a clearly different SONG rejects on its own
+        # (same rule as the folder path's _title_conflicts).
+        if tag_title and fuzz.token_set_ratio(tag_title, expected_track.title) < _TITLE_CONFLICT_RATIO:
+            return "tag_mismatch"
+        if artist_conflict:
+            title_weak = bool(tag_title) and (
+                title_containment_score(expected_track.title, tag_title) < _TAG_TITLE_WEAK
+            )
+            expected_dur = expected_track.duration_seconds
+            duration_conflict = bool(
+                expected_dur
+                and info.duration_seconds
+                and abs(info.duration_seconds - expected_dur) > max(15.0, 0.10 * expected_dur)
+            )
+            if title_weak or duration_conflict:
+                return "tag_mismatch"
+        return None
+
+    # No expected track (a multi-file album import, or identity threading failed):
+    # the ALBUM tag is the only per-file cross-check - hold only on the pair.
+    if artist_conflict:
+        tag_album = (tag.album or "").strip()
+        if tag_album and title_containment_score(manifest.album_title or "", tag_album) < _TAG_TITLE_WEAK:
+            return "tag_mismatch"
+    return None
+
+
 def _fingerprint_disagrees(fp, expected_track, expected_artist: str | None) -> bool:
     """True only when AcoustID CONFIDENTLY (status=pass) identified the audio as a clearly
     different SONG, or a clearly different ARTIST, than expected. Release-group/edition is
@@ -195,11 +314,21 @@ def _fingerprint_disagrees(fp, expected_track, expected_artist: str | None) -> b
     return False
 
 
-def _pair_score(candidate: _FolderCandidate, track: ExpectedTrack) -> float | None:
+def _pair_score(
+    candidate: _FolderCandidate, track: ExpectedTrack, *, sole_track: bool = False
+) -> float | None:
     """Score a (file, MB-track) pair, or ``None`` if they can't be the same track.
     **Duration gates** the match and a conflicting title tag vetoes it; tags + filename
     break ties (so a rip with shifted track numbers - e.g. merged tracks - still matches
-    the right songs by duration + title, not by the misleading position)."""
+    the right songs by duration + title, not by the misleading position).
+
+    ``sole_track``: the release expects exactly ONE track (a single). When its MB
+    length is also unknown - the common state for brand-new releases - the duration
+    gate is disarmed and "track 1 of the wrong album" would match on position alone
+    with only the loose <50 title veto (token_set scores "Arrival" a perfect 100
+    against "the arrival"). A tagged title must then positively NAME the expected
+    track (containment), not merely fail to conflict (2026-07-05 incident, P2.5).
+    Untagged files still fall through to the position match (D18)."""
     file_dur = candidate.info.duration_seconds
     track_dur = track.duration_seconds
     disc_ok = _candidate_disc(candidate) == (track.disc_number or 1)
@@ -215,6 +344,11 @@ def _pair_score(candidate: _FolderCandidate, track: ExpectedTrack) -> float | No
         candidate_track = candidate.tag.track_number or _filename_track_number(candidate.path)
         if candidate_track != track.track_number or not disc_ok:
             return None
+        tag_title = (candidate.tag.title or "").strip()
+        if sole_track and track.title and tag_title and (
+            title_containment_score(track.title, tag_title) < _TAG_TITLE_WEAK
+        ):
+            return None  # positional coincidence: the tag names other content
         score += 50.0
 
     # Title corroboration (Lidarr matches by metadata, not duration alone): a real title tag
@@ -276,9 +410,10 @@ def _match_folder_to_tracklist(
     match no position (bonus tracks, samples, a merged-track file) are simply not
     returned → dropped (owner Q1)."""
     scored: list[tuple[float, int, int]] = []
+    sole_track = len(expected) == 1
     for ci, candidate in enumerate(candidates):
         for ti, track in enumerate(expected):
-            score = _pair_score(candidate, track)
+            score = _pair_score(candidate, track, sole_track=sole_track)
             if score is not None:
                 scored.append((score, ci, ti))
     scored.sort(key=lambda item: item[0], reverse=True)
@@ -543,12 +678,37 @@ class FileProcessor:
         # file falls THROUGH (so the AcoustID check below still runs, D10) and
         # retires the old file after publishing; anything else keeps the existing
         # copy exactly as before.
+        # EXCEPTION (P4 livelock fix, R3): an occupying row that does NOT cover the
+        # matched MB track is a squatter from an earlier wrong grab, not a duplicate
+        # of this verified file - import alongside, keep the squatter for review (D5).
+        # Upgrade runs are exempt: replace-at-position is their OWNED semantics
+        # (CollectionMgmt D4/D18), and the strictly-better rule already governs.
         replace_old: Path | None = None
         if target_tag.track_number:
             present = await self._library.get_file_at_position(
                 manifest.release_group_mbid, target_tag.disc_number or 1, target_tag.track_number
             )
-            if present is not None and present.get("file_path") != str(target_path):
+            occupied_by_other = (
+                manifest.origin != "upgrade"
+                and present is not None
+                and not row_covers_track(
+                    present,
+                    recording_mbid=track.recording_mbid,
+                    title=track.title,
+                    duration_seconds=track.duration_seconds,
+                )
+            )
+            if occupied_by_other:
+                logger.info(
+                    "process.position_occupied_by_noncovering",
+                    extra={
+                        "task_id": manifest.task_id,
+                        "disc": target_tag.disc_number or 1,
+                        "track": target_tag.track_number,
+                        "occupying_path": present.get("file_path"),
+                    },
+                )
+            elif present is not None and present.get("file_path") != str(target_path):
                 replace_old = self._position_upgrade_target(manifest.origin, present, info)
                 if replace_old is None:
                     try:
@@ -557,11 +717,16 @@ class FileProcessor:
                         logger.warning("Could not remove duplicate source %s", source)
                     return Path(present["file_path"])
 
+        fp = None
         if self._verify_downloads and self._fingerprinter is not None:
             fp = await self._fingerprinter.fingerprint(source)
             if _fingerprint_disagrees(fp, track, manifest.artist_name):
                 await self._hold_for_review(
-                    source=source, manifest=manifest, fp=fp,
+                    source=source, manifest=manifest,
+                    reason="fingerprint_mismatch",
+                    evidence_title=getattr(fp, "title", None),
+                    evidence_artist=getattr(fp, "artist", None),
+                    evidence_score=getattr(fp, "score", None),
                     track_number=track.track_number, disc_number=track.disc_number or 1,
                     track_title=track.title, recording_mbid=track.recording_mbid,
                     duration_seconds=info.duration_seconds, file_format=info.file_format,
@@ -593,7 +758,11 @@ class FileProcessor:
                 release_group_mbid=manifest.release_group_mbid,
                 release_mbid=manifest.release_mbid,
                 recording_mbid=target_tag.musicbrainz_recording_id,
-                confidence=1.0, source="download",
+                confidence=_import_confidence(
+                    tag=tag, info=info, expected_track=track,
+                    canonical_duration=track.duration_seconds, fp=fp,
+                ),
+                source="download",
                 download_task_id=manifest.task_id, source_path=str(source),
             )
         except Exception as exc:  # noqa: BLE001 - import I/O or DB error -> per-file failure
@@ -681,7 +850,10 @@ class FileProcessor:
         *,
         source: Path,
         manifest: DownloadManifest,
-        fp,  # noqa: ANN001 - FingerprintResult
+        reason: str,
+        evidence_title: str | None,
+        evidence_artist: str | None,
+        evidence_score: float | None,
         track_number: int | None,
         disc_number: int,
         track_title: str | None,
@@ -690,10 +862,13 @@ class FileProcessor:
         file_format: str | None,
     ) -> None:
         """Copy a verify-rejected file into the held area and record it for an "import anyway"
-        review. AcoustID said the audio isn't the expected recording, but that's frequently
-        just wrong MusicBrainz crowd metadata - so rather than drop the track, we keep it for
-        a human decision. Fully fail-open: any error here just means it isn't held (exactly
-        today's behaviour), never a broken import."""
+        review. The verifier said the audio/tags aren't the expected recording, but that's
+        frequently just wrong crowd metadata - so rather than drop the track, we keep it for
+        a human decision. Evidence fields carry what the rejecting check SAW (AcoustID's
+        identification for ``fingerprint_mismatch``, the file's own tags for
+        ``tag_mismatch``, the measured length for ``wrong_track``). Fully fail-open: any
+        error here just means it isn't held (exactly today's behaviour), never a broken
+        import."""
         if self._download_store is None or self._held_dir is None:
             return
         try:
@@ -706,7 +881,7 @@ class FileProcessor:
             held_id = await self._download_store.record_held_import(
                 user_id=task.user_id,
                 held_path=str(held_path),
-                reason="fingerprint_mismatch",
+                reason=reason,
                 source=task.source or "soulseek",
                 origin=manifest.origin,
                 source_task_id=manifest.task_id,
@@ -723,9 +898,9 @@ class FileProcessor:
                 original_filename=source.name,
                 file_format=file_format,
                 duration_seconds=duration_seconds,
-                evidence_title=getattr(fp, "title", None),
-                evidence_artist=getattr(fp, "artist", None),
-                evidence_score=getattr(fp, "score", None),
+                evidence_title=evidence_title,
+                evidence_artist=evidence_artist,
+                evidence_score=evidence_score,
                 naming_template=manifest.naming_template,
             )
             if held_id is None:
@@ -738,8 +913,9 @@ class FileProcessor:
                     extra={
                         "task_id": manifest.task_id,
                         "track": track_title,
-                        "acoustid_title": getattr(fp, "title", None),
-                        "acoustid_artist": getattr(fp, "artist", None),
+                        "reason": reason,
+                        "evidence_title": evidence_title,
+                        "evidence_artist": evidence_artist,
                     },
                 )
         except Exception as exc:  # noqa: BLE001 - holding is best-effort
@@ -811,6 +987,9 @@ class FileProcessor:
             release_group_mbid=held.release_group_mbid,
             release_mbid=held.release_mbid,
             recording_mbid=target_tag.musicbrainz_recording_id,
+            # Deliberately 1.0 (P7/D8): a human reviewed the evidence and said
+            # "import anyway" - that attribution decision outranks every heuristic,
+            # and the rescanner must never second-guess it.
             confidence=1.0,
             source="download",
             download_task_id=held.source_task_id,
@@ -915,6 +1094,10 @@ class FileProcessor:
             manifest.naming_template, target_tag, info.file_format
         )
 
+        expected_track = (
+            manifest.expected_tracks[0] if len(manifest.expected_tracks) == 1 else None
+        )
+
         # Position-level dedup, before the expensive verification below: if the album
         # already holds a file at this (disc, track), don't write a second copy. Stops
         # the flac-vs-mp3 / failover re-pull duplicate (completeness dedupes by position,
@@ -924,6 +1107,13 @@ class FileProcessor:
         # An upgrade import that strictly beats the occupying file falls through (the
         # fingerprint check below still runs first, D10) and retires the old file
         # after publishing; anything else keeps the existing copy exactly as before.
+        # EXCEPTION (P4 livelock fix, incident review R3): when the occupying row does
+        # NOT cover the expected track - a wrong file from an earlier grab squatting on
+        # the slot - the verified new file is not its duplicate. Import alongside (the
+        # naming template yields a distinct filename); the squatter stays for human
+        # review (D5: never auto-delete). Without this, the correct re-download was
+        # unlinked as a "duplicate" of the wrong file, forever. Upgrade runs are
+        # exempt: replace-at-position is their owned semantics (CollectionMgmt D4/D18).
         replace_old: Path | None = None
         if target_tag.track_number:
             present = await self._library.get_file_at_position(
@@ -931,7 +1121,29 @@ class FileProcessor:
                 target_tag.disc_number or 1,
                 target_tag.track_number,
             )
-            if present is not None and present.get("file_path") != str(target_path):
+            occupied_by_other = (
+                manifest.origin != "upgrade"
+                and expected_track is not None
+                and present is not None
+                and not row_covers_track(
+                    present,
+                    recording_mbid=expected_track.recording_mbid,
+                    title=expected_track.title,
+                    duration_seconds=expected_track.duration_seconds,
+                )
+            )
+            if occupied_by_other:
+                logger.info(
+                    "process.position_occupied_by_noncovering",
+                    extra={
+                        "task_id": manifest.task_id,
+                        "file": _basename(expected.filename),
+                        "disc": target_tag.disc_number or 1,
+                        "track": target_tag.track_number,
+                        "occupying_path": present.get("file_path"),
+                    },
+                )
+            elif present is not None and present.get("file_path") != str(target_path):
                 replace_old = self._position_upgrade_target(manifest.origin, present, info)
                 if replace_old is None:
                     logger.info(
@@ -960,22 +1172,72 @@ class FileProcessor:
         if expected.duration and info.duration_seconds and abs(
             info.duration_seconds - expected.duration
         ) > max(15.0, 0.10 * expected.duration):
+            # A relaxed re-pull (every candidate failed this gate - the MB length is
+            # suspect) captures the closest match for HUMAN review instead of
+            # importing it silently with the gate off (D9) or discarding it.
+            if manifest.hold_on_wrong_track:
+                await self._hold_for_review(
+                    source=source, manifest=manifest,
+                    reason=WRONG_TRACK,
+                    evidence_title=tag.title,
+                    evidence_artist=tag.artist,
+                    evidence_score=None,
+                    track_number=tag.track_number, disc_number=tag.disc_number or 1,
+                    track_title=(expected_track.title if expected_track else tag.title),
+                    recording_mbid=(
+                        expected_track.recording_mbid if expected_track
+                        else tag.musicbrainz_recording_id
+                    ),
+                    duration_seconds=info.duration_seconds, file_format=info.file_format,
+                )
             raise VerificationFailed(
                 f"Duration mismatch ({info.duration_seconds:.0f}s vs "
                 f"{expected.duration:.0f}s)",
                 reason=WRONG_TRACK if manifest.is_track else "duration_mismatch",
                 filename=expected.filename,
             )
+        # The file's OWN tags vs the requested identity (P2): catches a tagged-wrong
+        # file even when AcoustID has no coverage (its fail-open hole - the 2026-07-05
+        # incident file was tagged "Dan Romer / Arrival in Ashford"). Runs before the
+        # fingerprint so a clearly-mislabelled file never spends an AcoustID call.
+        if self._verify_downloads and _tag_conflict_reason(
+            tag, info, manifest, expected_track
+        ):
+            await self._hold_for_review(
+                source=source, manifest=manifest,
+                reason="tag_mismatch",
+                evidence_title=tag.title,
+                evidence_artist=tag.artist,
+                evidence_score=None,
+                track_number=tag.track_number, disc_number=tag.disc_number or 1,
+                track_title=(expected_track.title if expected_track else tag.title),
+                recording_mbid=(
+                    expected_track.recording_mbid if expected_track
+                    else tag.musicbrainz_recording_id
+                ),
+                duration_seconds=info.duration_seconds, file_format=info.file_format,
+            )
+            raise VerificationFailed(
+                "File tags name different content than requested",
+                reason="tag_mismatch",
+                filename=expected.filename,
+            )
         # AcoustID recording-identity check, only when verify is on and a fingerprinter is
-        # wired. fail-open: the fingerprinter never raises, a non-pass/empty result skips,
-        # and only a confidently different ARTIST is rejected (the slskd path has no per-file
-        # expected title). NOT a release-group check - that false-rejects valid reissue/
-        # compilation tracks whose AcoustID RG coverage is incomplete.
+        # wired. fail-open: the fingerprinter never raises, a non-pass/empty result skips.
+        # When the manifest carries the single expected track (a track download or a
+        # 1-track single), its TITLE is checked too; otherwise only a confidently
+        # different ARTIST is rejected. NOT a release-group check - that false-rejects
+        # valid reissue/compilation tracks whose AcoustID RG coverage is incomplete.
+        fp = None
         if self._verify_downloads and self._fingerprinter is not None:
             fp = await self._fingerprinter.fingerprint(source)
-            if _fingerprint_disagrees(fp, None, manifest.artist_name):
+            if _fingerprint_disagrees(fp, expected_track, manifest.artist_name):
                 await self._hold_for_review(
-                    source=source, manifest=manifest, fp=fp,
+                    source=source, manifest=manifest,
+                    reason="fingerprint_mismatch",
+                    evidence_title=getattr(fp, "title", None),
+                    evidence_artist=getattr(fp, "artist", None),
+                    evidence_score=getattr(fp, "score", None),
                     track_number=tag.track_number, disc_number=tag.disc_number or 1,
                     track_title=tag.title, recording_mbid=tag.musicbrainz_recording_id,
                     duration_seconds=info.duration_seconds, file_format=info.file_format,
@@ -1037,7 +1299,14 @@ class FileProcessor:
                 release_group_mbid=manifest.release_group_mbid,
                 release_mbid=manifest.release_mbid,
                 recording_mbid=tag.musicbrainz_recording_id,
-                confidence=1.0,
+                confidence=_import_confidence(
+                    tag=tag, info=info, expected_track=expected_track,
+                    # expected.duration is the CANONICAL length only when the strict
+                    # gate was armed (is_track); a peer-advertised length verifies
+                    # nothing about identity.
+                    canonical_duration=expected.duration if manifest.is_track else None,
+                    fp=fp,
+                ),
                 source="download",
                 download_task_id=manifest.task_id,
                 source_path=str(source),

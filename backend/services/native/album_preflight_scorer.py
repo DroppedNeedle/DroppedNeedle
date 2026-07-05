@@ -1,7 +1,10 @@
 """Two-phase album preflight scorer.
 
 Group candidate files by ``(username, parent_directory)``, score folder
-coherence, then rank by coherence + per-file confidence + peer-quality signals.
+coherence, then rank by identity (coherence + per-file confidence) alone; peer
+availability (speed / free slots) is a banded tiebreaker that can never buy
+acceptance, and ``tier='auto'`` additionally requires the requested artist to be
+named somewhere in the folder's remote paths (D2/D3, 2026-07-05 incident).
 
 Below-threshold groups are kept (``tier='rejected'``, top ~50 by score) so the
 Review tab's "Show all results anyway" needs no re-search. Quarantined
@@ -36,6 +39,7 @@ from services.native.acquisition.decision import (
     SpecPolicy,
 )
 from services.native.acquisition.specs.quarantine import quarantine
+from services.native.title_match import artist_evidence, title_containment_score
 from services.native.quality_tiers import (
     DEFAULT_QUALITY_MAX,
     DEFAULT_QUALITY_MIN,
@@ -122,22 +126,45 @@ def _file_confidence(
     target_artist: str,
     target_duration: float | None,
     file: DownloadSearchResult,
+    *,
+    strict_title: bool = False,
 ) -> float:
     """Per-file confidence (shared by the album scorer and the track matcher).
 
     ``(0.55*title + 0.20*artist + 0.25*duration) * version_penalty`` when a target
     duration is available, else the duration term drops and weights redistribute
-    to ``0.65*title + 0.35*artist``."""
+    to ``0.65*title + 0.35*artist``.
+
+    ``strict_title`` (the track matcher + 1-track album fallbacks, P3.4): the title
+    term becomes CONTAINMENT-based - a filename must name the target and nothing
+    else. ``token_set_ratio`` ignored extra tokens, so "the arrival" scored 0.78
+    against "02. Arrival in Ashford" and 1.0 against "Arrival - The Waking Hour" -
+    both real auto-tier candidates in the 2026-07-05 incident's search job. The
+    artist's own words are excluded from the foreign-token penalty ("01 - Yan Qing -
+    the arrival.flac" is not naming another work). Deliberately OFF for multi-track
+    albums: their per-file names are TRACK titles, and comparing those to the ALBUM
+    title is uniform noise under any metric - the replay corpus showed containment's
+    lower noise floor demoting legitimate albums (Inferno, 0.801 -> 0.698), so the
+    calibrated token_set noise stays. CJK titles always keep token_set (containment
+    tokenisation needs word boundaries)."""
     file_title = re.split(r"[\\/]", file.filename)[-1]
     file_title = re.sub(r"\.\w+$", "", file_title)
 
-    title_score = (
-        fuzz.token_set_ratio(
-            _normalize_for_match(_strip_edition_suffix(target_title)),
-            _normalize_for_match(_strip_edition_suffix(file_title)),
+    if strict_title and not (_has_cjk(target_title) or _has_cjk(file_title)):
+        artist_words = frozenset(
+            t for t in _normalize_for_match(target_artist).split() if len(t) >= 2
         )
-        / 100.0
-    )
+        title_score = title_containment_score(
+            _strip_edition_suffix(target_title), file_title, ignore=artist_words
+        )
+    else:
+        title_score = (
+            fuzz.token_set_ratio(
+                _normalize_for_match(_strip_edition_suffix(target_title)),
+                _normalize_for_match(_strip_edition_suffix(file_title)),
+            )
+            / 100.0
+        )
 
     file_artist = _artist_from_path(file.parent_directory, target_artist)
     artist_score = (
@@ -248,26 +275,68 @@ class AlbumPreflightScorer:
                 pipeline_drops[decision.code] += 1
                 continue
 
-            coherence = self._coherence(target, audio, parent)
+            # For a 1-track release (a single that fell back here because identity
+            # threading failed - the normal path scores via the TrackMatcher), a lone
+            # spuriously-matched file must not read as a "complete" album: only files
+            # whose names actually contain the title count toward count_ratio (P3.3).
+            # Deliberately NOT applied to 2+-track releases: their per-file names are
+            # TRACK titles, unjudgeable against the album title without a tracklist
+            # (a legit B-side would disqualify) - the artist-evidence gate covers the
+            # wrong-artist EP class instead.
+            qualified_count = None
+            if target.track_count == 1:
+                artist_words = frozenset(
+                    t for t in _normalize_for_match(target.artist_name).split() if len(t) >= 2
+                )
+                qualified_count = sum(
+                    1
+                    for f in audio
+                    if title_containment_score(
+                        _strip_edition_suffix(target.album_title),
+                        re.sub(r"\.\w+$", "", re.split(r"[\\/]", f.filename)[-1]),
+                        ignore=artist_words,
+                    )
+                    >= 0.60
+                )
+
+            coherence = self._coherence(target, audio, parent, qualified_count=qualified_count)
             confidences = [
-                _file_confidence(target.album_title, target.artist_name, target.duration_seconds, f)
+                _file_confidence(
+                    target.album_title, target.artist_name, target.duration_seconds, f,
+                    strict_title=target.track_count == 1,
+                )
                 for f in audio
             ]
             avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
-            speed_signal = min(1.0, max((f.upload_speed for f in audio), default=0) / 1000.0)
-            free_slot = 1.0 if any(f.has_free_slot for f in audio) else 0.0
 
-            final = (
-                0.50 * coherence
-                + 0.30 * avg_confidence
-                + 0.10 * speed_signal
-                + 0.10 * free_slot
+            # Identity-only score (P3.2/D3): peer availability (speed, free slots) can
+            # RANK candidates but never buy acceptance - 20% of the old formula was
+            # availability, which is how the incident candidate crossed 0.70. The 5:3
+            # coherence:confidence ratio is preserved and the scale stays 0..1, so the
+            # persisted preflight_score_auto_accept keeps meaning what it always meant.
+            final = 0.625 * coherence + 0.375 * avg_confidence
+
+            # Auto-acceptance must be EARNED by identity evidence (D2): a folder whose
+            # full remote paths never name the requested artist caps at 'manual' - one
+            # human click in Review instead of a silent wrong grab. Various-artists
+            # requests skip the gate (the album artist legitimately differs per track).
+            has_evidence = "various" in (target.artist_name or "").lower() or any(
+                artist_evidence(target.artist_name, f.filename) for f in audio
             )
 
-            if final >= auto_accept_threshold:
+            if final >= auto_accept_threshold and has_evidence:
                 tier = "auto"
             elif final >= manual_threshold and coherence >= manual_threshold:
                 tier = "manual"
+                if final >= auto_accept_threshold:
+                    logger.info(
+                        "preflight.evidence_capped",
+                        extra={
+                            "parent_directory": parent,
+                            "final_score": round(final, 4),
+                            "artist": target.artist_name,
+                        },
+                    )
             else:
                 tier = "rejected"
 
@@ -283,10 +352,23 @@ class AlbumPreflightScorer:
                 )
             )
 
-        # highest tier first (any decent FLAC beats any MP3), then hi-res before 16/44 within
-        # the tier (H1), then best match within that.
+        def _availability(c: ScoredCandidate) -> float:
+            speed = min(1.0, max((f.upload_speed for f in c.files), default=0) / 1000.0)
+            slot = 1.0 if any(f.has_free_slot for f in c.files) else 0.0
+            return 0.5 * speed + 0.5 * slot
+
+        # highest tier first (any decent FLAC beats any MP3), then hi-res before 16/44
+        # within the tier (H1), then best match - with availability as a BANDED
+        # tiebreaker only (D3): candidates within the same 0.05 identity band order by
+        # peer speed/slots, but availability can never outrank a better identity match.
         scored.sort(
-            key=lambda c: (tier_rank(candidate_tier(c.files)), *folder_hires_key(c.files), c.final_score),
+            key=lambda c: (
+                tier_rank(candidate_tier(c.files)),
+                *folder_hires_key(c.files),
+                int(c.final_score / 0.05),
+                _availability(c),
+                c.final_score,
+            ),
             reverse=True,
         )
         ranked = scored[:50]
@@ -313,9 +395,15 @@ class AlbumPreflightScorer:
         target: TargetAlbum,
         files: list[DownloadSearchResult],
         parent_directory: str,
+        *,
+        qualified_count: int | None = None,
     ) -> float:
+        """``qualified_count`` (1-track releases only, P3.3): how many files actually
+        NAME the requested title - a lone token-coincidence file must not present as a
+        complete single (count_ratio was a 0.40-weight freebie in the incident)."""
+        counted = len(files) if qualified_count is None else qualified_count
         if target.track_count and target.track_count > 0:
-            count_ratio = min(1.0, len(files) / target.track_count)
+            count_ratio = min(1.0, counted / target.track_count)
         else:
             count_ratio = 0.5
 

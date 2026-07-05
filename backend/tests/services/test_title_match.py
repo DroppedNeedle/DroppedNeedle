@@ -6,7 +6,15 @@ Out Door...) - the failure that made the picker burn a download per wrong album 
 before reaching the one requested. Cases below are drawn from real Newznab/Soulseek titles.
 """
 
-from services.native.title_match import fold, names_different_album, strip_featuring
+import pytest
+
+from services.native.title_match import (
+    artist_evidence,
+    fold,
+    names_different_album,
+    strip_featuring,
+    title_containment_score,
+)
 
 
 def test_fold_accents_and_case_but_keeps_cjk():
@@ -131,3 +139,115 @@ def test_numbered_sequel_still_rejected_after_edition_additions():
     # The discrimination that matters must still hold.
     assert names_different_album("Led Zeppelin", "Led Zeppelin", "Led Zeppelin Led Zeppelin II")
     assert names_different_album("OK Computer", "Radiohead", "Radiohead Kid A")
+
+
+# --- title_containment_score: names the expected title AND NOTHING ELSE (P2/P3.4) ----
+
+
+def test_containment_exact_and_numbered():
+    assert title_containment_score("the arrival", "the arrival") == 1.0
+    assert title_containment_score("the arrival", "01 - the arrival") == 1.0  # digits never extra
+
+
+def test_containment_edition_tokens_are_not_extra():
+    assert title_containment_score("the arrival", "the arrival (Deluxe)") == 1.0
+    assert title_containment_score("the arrival", "the arrival [Remastered Version]") == 1.0
+
+
+def test_containment_penalises_the_incident_pair():
+    # token_set_ratio scores this 0.78 (it ignores "in ashford") - the exact hole
+    # the wrong single slipped through. Containment reads it as a different work.
+    score = title_containment_score("the arrival", "02. Arrival in Ashford")
+    assert score == pytest.approx(0.5)
+
+
+def test_containment_penalises_the_other_live_false_matches():
+    # both were real tier=auto candidates in the incident's search job
+    assert title_containment_score(
+        "the arrival", "07. Arrival - The Waking Hour"
+    ) == pytest.approx(1 / 3)
+    assert title_containment_score(
+        "the arrival", "05 Throbbing Gristle - Dead on Arrival"
+    ) < 0.5  # gristle/throbbing/dead all foreign ("the"/"on" are stopwords)
+
+
+def test_containment_classical_long_titles_stay_strong():
+    score = title_containment_score(
+        "Symphony No. 9 in D minor, Op. 125",
+        "Symphony No. 9 in D Minor, Op. 125 'Choral'",
+    )
+    assert score >= 0.8  # one extra word on a long title is not a different work
+
+
+def test_containment_ignore_set_excludes_artist_words_in_filenames():
+    with_artist = "01 - Yan Qing - the arrival"
+    assert title_containment_score("the arrival", with_artist) < 1.0
+    assert title_containment_score(
+        "the arrival", with_artist, ignore=frozenset({"yan", "qing"})
+    ) == 1.0
+
+
+def test_containment_degenerate_title_falls_back_to_fuzzy():
+    # single-character title: no distinctive words to contain
+    assert title_containment_score("X", "X") == 1.0
+
+
+def test_containment_missing_expected_words_lower_coverage():
+    assert title_containment_score("Houses of the Holy", "Houses") == pytest.approx(0.5)
+
+
+# --- artist_evidence: the tier='auto' identity gate (D2, 2026-07-05 incident) ---------
+
+
+def test_artist_evidence_incident_wrong_artist_path_is_not_evidence():
+    # The exact path that auto-accepted the wrong single: no trace of "Yan Qing".
+    path = (
+        "@@yuqfj\\Fab \\Dan Romer\\Dan Romer - A Knight of the Seven Kingdoms "
+        "(Season 1)_2026_FLAC 24bit-48kHz\\02. Arrival in Ashford.flac"
+    )
+    assert not artist_evidence("Yan Qing", path)
+
+
+def test_artist_evidence_bare_obfuscated_folder_is_unknown_not_evidence():
+    # R4 pin: _artist_from_path fabricates the target artist for folders without
+    # "Artist - Album"; evidence must treat an artist-less path as UNKNOWN (False),
+    # never as a self-match.
+    assert not artist_evidence("Yan Qing", "@@abc\\the arrival\\the arrival.flac")
+
+
+def test_artist_evidence_artist_album_folder():
+    assert artist_evidence(
+        "Yan Qing", "@@abc\\Yan Qing - the arrival (2026)\\01. the arrival.flac"
+    )
+
+
+def test_artist_evidence_nested_share_layout_artist_as_grandparent():
+    # The Artist/Album share layout: the artist is a directory level, not the parent
+    # folder name - only a full-path scan carries it.
+    assert artist_evidence(
+        "Yan Qing", "@@hcbuf\\Music\\Yan Qing\\the arrival\\01 - the arrival.flac"
+    )
+
+
+def test_artist_evidence_accent_folded():
+    assert artist_evidence("Sigur Rós", "@@x\\Sigur Ros\\( )\\01 untitled.flac")
+
+
+def test_artist_evidence_majority_of_distinctive_words():
+    # {florence, machine} after stopword filtering; one of two suffices (majority rule).
+    assert artist_evidence(
+        "Florence and the Machine", "@@x\\Florence + The Machine\\Lungs\\01.flac"
+    )
+    assert artist_evidence("Florence and the Machine", "@@x\\florence\\Lungs\\01.flac")
+
+
+def test_artist_evidence_stopword_artist_needs_distinctive_word():
+    # "The Who" must not count the ubiquitous "the" as evidence.
+    assert not artist_evidence("The Who", "@@x\\the arrival\\the arrival.flac")
+    assert artist_evidence("The Who", "@@x\\The Who\\Tommy\\01 Overture.flac")
+
+
+def test_artist_evidence_all_stopword_artist_falls_back_to_full_name():
+    # "The The" is entirely stopwords - fall back to the raw words rather than
+    # having no evidence path at all.
+    assert artist_evidence("The The", "@@x\\The The\\Soul Mining\\01.flac")

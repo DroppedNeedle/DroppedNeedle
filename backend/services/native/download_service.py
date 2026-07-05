@@ -20,7 +20,13 @@ from core.exceptions import (
 from core.task_registry import TaskRegistry
 from infrastructure.persistence.download_store import DownloadStore
 from infrastructure.sse_publisher import SSEPublisher
-from models.download import DownloadsMountStatus, ScoredCandidate, SearchJob, TargetAlbum
+from models.download import (
+    DownloadsMountStatus,
+    ScoredCandidate,
+    SearchJob,
+    TargetAlbum,
+    TargetTrack,
+)
 from repositories.protocols.download_client import DownloadClientProtocol
 from repositories.protocols.indexer import IndexerProtocol
 from services.native.acquisition.status import DownloadStatus
@@ -35,6 +41,7 @@ if TYPE_CHECKING:
     from services.album_service import AlbumService
     from services.native.file_processor import FileProcessor
     from services.native.musicbrainz_matcher import MusicBrainzMatcher
+    from services.native.track_matcher import TrackMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +93,7 @@ class DownloadService:
         matcher: "MusicBrainzMatcher | None" = None,
         musicbrainz: "MusicBrainzRepository | None" = None,
         album_service: "AlbumService | None" = None,
+        track_matcher: "TrackMatcher | None" = None,
         auto_accept_threshold: float = 0.70,
         manual_threshold: float = 0.50,
         enabled: bool = True,
@@ -117,6 +125,9 @@ class DownloadService:
         self._matcher = matcher
         self._mb = musicbrainz
         self._album_service = album_service
+        # Per-file scorer for 1-track releases in the manual-search lane (the auto path
+        # branches inside SoulseekStrategy; this covers _search_soulseek + pick).
+        self._track_matcher = track_matcher
         self._auto = auto_accept_threshold
         self._manual = manual_threshold
         self._enabled = enabled
@@ -173,6 +184,35 @@ class DownloadService:
             return None
         return info.total_tracks or None
 
+    async def _single_track_identity(
+        self, release_group_mbid: str | None
+    ) -> "tuple[str | None, str | None, float | None]":
+        """``(recording_mbid, track_title, duration_seconds)`` of a release's only
+        track, when the resolved tracklist has exactly one; ``(None, None, None)``
+        otherwise. Threading this onto a 1-track album task arms the per-track
+        verification (track-matcher scoring, canonical-duration import gate, AcoustID
+        title check) that the folder path lacks - without it a fuzzy-matched wrong
+        file imports unchecked (the 2026-07-05 wrong-single incident). Best-effort
+        like the track-count backfill: a MusicBrainz failure must never block the
+        download; an un-threaded task just falls back to the album scorer."""
+        if not release_group_mbid or self._album_service is None:
+            return None, None, None
+        try:
+            info = await self._album_service.get_album_tracks_info(release_group_mbid)
+        except Exception:  # noqa: BLE001 - identity is best-effort, never block
+            logger.warning(
+                "Single-track identity backfill failed for %s; downloading without "
+                "recording identity",
+                release_group_mbid,
+            )
+            return None, None, None
+        if len(info.tracks) != 1:
+            return None, None, None
+        track = info.tracks[0]
+        # MusicBrainz track lengths are MILLISECONDS (see UsenetStrategy._expected_tracks).
+        duration = (track.length / 1000.0) if track.length else None
+        return track.recording_id, track.title, duration
+
     async def search_album(
         self,
         user_id: str,
@@ -188,6 +228,14 @@ class DownloadService:
             return ALREADY_IN_LIBRARY
 
         track_count = await self._ensure_track_count(release_group_mbid, track_count)
+        # For a 1-track release the manual lane scores per-file too (same rule as the
+        # auto path in SoulseekStrategy) - resolved here because the background search
+        # has no task to read identity from.
+        single_identity = (
+            await self._single_track_identity(release_group_mbid)
+            if track_count == 1
+            else None
+        )
         job = await self._store.create_search_job(
             user_id=user_id,
             artist_name=artist_name,
@@ -198,7 +246,9 @@ class DownloadService:
             search_query=f"{artist_name} - {album_title}",
         )
         task = asyncio.create_task(
-            self._run_search(job.id, artist_name, album_title, year, track_count)
+            self._run_search(
+                job.id, artist_name, album_title, year, track_count, single_identity
+            )
         )
         task.add_done_callback(self._log_task_exception)
         TaskRegistry.get_instance().register(f"search-{job.id}", task)
@@ -211,6 +261,7 @@ class DownloadService:
         album: str,
         year: int | None,
         track_count: int | None,
+        single_identity: "tuple[str | None, str | None, float | None] | None" = None,
     ) -> None:
         await self._bus.publish(f"search:{job_id}", "status", {"status": "searching"})
         target = TargetAlbum(
@@ -224,7 +275,7 @@ class DownloadService:
         soulseek_ok = True
         if self._soulseek_enabled:
             try:
-                candidates.extend(await self._search_soulseek(target))
+                candidates.extend(await self._search_soulseek(target, single_identity))
             except Exception:
                 logger.exception("soulseek album search failed for job %s", job_id)
                 soulseek_ok = False
@@ -250,11 +301,34 @@ class DownloadService:
             },
         )
 
-    async def _search_soulseek(self, target: TargetAlbum) -> list[ScoredCandidate]:
+    async def _search_soulseek(
+        self,
+        target: TargetAlbum,
+        single_identity: "tuple[str | None, str | None, float | None] | None" = None,
+    ) -> list[ScoredCandidate]:
         indexer_results = await self._indexer.search_album(
             target.artist_name, target.album_title, target.year, target.track_count
         )
         results = [r.soulseek for r in indexer_results if r.soulseek is not None]
+        # A 1-track release scores per-file via the track matcher (canonical duration +
+        # artist-evidence auto gate) - same branch as SoulseekStrategy.search_and_score,
+        # or a manual search would keep folder-scoring singles with the count_ratio
+        # freebie (2026-07-05 wrong-single incident). Falls back to the folder scorer
+        # when identity resolution failed or the matcher isn't wired.
+        if single_identity is not None and self._track_matcher is not None:
+            recording_mbid, track_title, duration_seconds = single_identity
+            if track_title:
+                track_target = TargetTrack(
+                    artist_name=target.artist_name,
+                    track_title=track_title,
+                    album_title=target.album_title,
+                    duration_seconds=duration_seconds,
+                    recording_mbid=recording_mbid,
+                )
+                return await self._track_matcher.rank(
+                    track_target, results,
+                    auto_accept_threshold=self._auto, manual_threshold=self._manual,
+                )
         return await self._scorer.rank(
             target, results, auto_accept_threshold=self._auto, manual_threshold=self._manual
         )
@@ -281,8 +355,8 @@ class DownloadService:
         return job, candidates
 
     async def pick_candidate(self, user_id: str, job_id: str, candidate_index: int) -> str:
-        """User picked a manual-tier candidate -> create the linked queued task and
-        dispatch the orchestrator."""
+        """User picked a manual-tier candidate -> resume the parked orchestrator task
+        when one exists, else create a linked queued task; dispatch either way."""
         self._ensure_enabled()
         job = await self._store.get_search_job(job_id)
         if job is None:
@@ -294,10 +368,41 @@ class DownloadService:
             raise ValidationError("Invalid candidate index")
         candidate = candidates[candidate_index]
 
-        # Byte-cap admission (Feature C layer 2): the manual-pick path creates a
-        # task directly, bypassing request_album, so it needs its own gate.
+        # Byte-cap admission (Feature C layer 2): the manual-pick path creates or
+        # resumes a task outside request_album, so it needs its own gate.
         if self._quota is not None:
             await self._quota.check_storage_admission(user_id, "user")
+
+        # An orchestrator task parked on this job (auto search found no auto-tier
+        # candidate) is RESUMED, not replaced: a fresh task would drop the threaded
+        # single-track identity (search_jobs carries none - the import gates would
+        # never arm) and the request linkage (terminal sync matches on the task id),
+        # and would leave the parked task dangling forever. The 2026-07-05 incident
+        # review found a force-pick re-imported the wrong file ungated this way.
+        parked = await self._store.get_parked_task_for_search_job(job_id)
+        if parked is not None and parked.user_id == user_id:
+            await self._store.link_picked_candidate(
+                task_id=parked.id,
+                search_job_id=job_id,
+                candidate_index=candidate_index,
+                source_username=candidate.username,
+                source_directory=candidate.parent_directory,
+                preflight_score=candidate.final_score,
+                source=candidate.source,
+                download_client=_CLIENT_FOR_SOURCE.get(candidate.source, "slskd"),
+            )
+            self._orchestrator.dispatch(parked.id)
+            return parked.id
+
+        # Standalone manual-search job (no parked task): create the task, re-resolving
+        # the single-track identity - the job rows don't carry it, and without it the
+        # canonical-duration and title gates never arm on this download.
+        recording_mbid = track_title = None
+        track_duration_seconds = None
+        if job.track_count == 1:
+            recording_mbid, track_title, track_duration_seconds = (
+                await self._single_track_identity(job.release_group_mbid)
+            )
 
         # Route a picked Usenet candidate to SABnzbd, not the slskd default (D2/D16).
         task = await self._store.create_task(
@@ -309,6 +414,9 @@ class DownloadService:
             album_title=job.album_title,
             year=job.year,
             track_count=job.track_count,
+            recording_mbid=recording_mbid,
+            track_title=track_title,
+            track_duration_seconds=track_duration_seconds,
             origin="user",
             source=candidate.source,
             download_client=_CLIENT_FOR_SOURCE.get(candidate.source, "slskd"),
@@ -413,6 +521,21 @@ class DownloadService:
         # scorer can tell a partial source from a full one. Skipped for per-track
         # downloads, which already carry track_count=1.
         track_count = await self._ensure_track_count(release_group_mbid, track_count)
+
+        # A 1-track release (a single) also gets its recording identity threaded onto
+        # the task (title / recording MBID / canonical length) so search scores
+        # per-file and import verifies the canonical duration - the folder path
+        # otherwise imports a fuzzy-matched wrong file unchecked
+        # (.dev-notes/Bugs/2026-07-05-wrong-single-remediation-plan.md, P1.1). The
+        # tracks info was just fetched by _ensure_track_count, so this is a cache hit.
+        if (
+            download_type == "album"
+            and track_count == 1
+            and not (recording_mbid or track_title or track_duration_seconds)
+        ):
+            recording_mbid, track_title, track_duration_seconds = (
+                await self._single_track_identity(release_group_mbid)
+            )
 
         task = await self._store.create_task(
             user_id=user_id,

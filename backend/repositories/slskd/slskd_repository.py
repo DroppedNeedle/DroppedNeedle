@@ -418,8 +418,11 @@ class SlskdRepository:
     @staticmethod
     def _album_query_ladder(artist: str, album: str, year: int | None) -> list[str]:
         """Most-specific-first album queries: artist+album+year -> artist+album
-        -> artist. The broadest rung relies on the preflight scorer to narrow
-        the larger result set back down by title.
+        -> artist. The broadest rung relies on the preflight scorer to narrow the
+        larger result set back down - by containment title matching, and auto-accept
+        additionally requires the artist to be named in a candidate's remote path
+        (title tokens alone are NOT enough: a broad rung once matched a wrong-artist
+        soundtrack on the bare token "arrival", 2026-07-05 incident).
 
         Each rung is followed by a blocked-artist variant with the artist's
         first letters wildcarded (see ``_wildcard_artist``). Exact goes first

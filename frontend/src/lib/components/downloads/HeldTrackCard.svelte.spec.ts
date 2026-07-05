@@ -83,4 +83,34 @@ describe('HeldTrackCard', () => {
 		await expect.element(page.getByRole('slider', { name: /Scrub preview/ })).toBeVisible();
 		await expect.element(page.getByText('0:00 / 6:28')).toBeVisible(); // 388s duration
 	});
+
+	// evidence copy is reason-aware: tags for tag_mismatch, length for wrong_track
+	// (the AcoustID wording above stays reserved for fingerprint_mismatch)
+
+	it('describes tag_mismatch evidence as the file’s own tags, not AcoustID', async () => {
+		renderCard(
+			held({
+				reason: 'tag_mismatch',
+				evidence_title: 'Arrival in Ashford',
+				evidence_artist: 'Dan Romer',
+				evidence_score: null
+			})
+		);
+		await expect.element(page.getByText(/file's own tags/i)).toBeVisible();
+		await expect.element(page.getByText(/Arrival in Ashford/)).toBeVisible();
+		await expect.element(page.getByText(/Dan Romer/)).toBeVisible();
+	});
+
+	it('describes wrong_track evidence as a length mismatch, closest match kept', async () => {
+		renderCard(
+			held({
+				reason: 'wrong_track',
+				evidence_title: 'the arrival',
+				evidence_artist: null,
+				evidence_score: null
+			})
+		);
+		await expect.element(page.getByText(/wrong length/i)).toBeVisible();
+		await expect.element(page.getByText(/closest copy/i)).toBeVisible();
+	});
 });

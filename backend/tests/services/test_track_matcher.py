@@ -107,3 +107,61 @@ async def test_rank_held_tier_floor_keeps_only_strictly_better():
     # no floor (not an upgrade run): everything in range still ranks
     ranked = await matcher.rank(_TARGET, results)
     assert {c.username for c in ranked} == {"flac-peer", "mp3320-peer", "mp3192-peer"}
+
+
+# --- tier='auto' requires artist evidence (D2, 2026-07-05 wrong-single incident) ------
+
+
+@pytest.mark.asyncio
+async def test_auto_requires_artist_evidence_in_path():
+    """A wrong-artist file with an exact title + matching duration clears 0.70 on
+    score alone (0.55 title + fabricated/low artist + 0.25 duration) - without the
+    evidence gate it would silently auto-download. It must cap at 'manual'."""
+    wrong = _file(
+        "Dan Romer - Some Soundtrack/Airbag.flac", "Dan Romer - Some Soundtrack"
+    )
+    ranked = await TrackMatcher(_store()).rank(_TARGET, [wrong])
+    assert len(ranked) == 1
+    assert ranked[0].tier == "manual"
+
+
+@pytest.mark.asyncio
+async def test_auto_kept_when_artist_is_a_grandparent_dir():
+    # Artist/Album share layout: evidence lives in the full remote path, not the
+    # parent folder name.
+    nested = _file("@@x\\Radiohead\\OK Computer\\Airbag.flac", "OK Computer")
+    ranked = await TrackMatcher(_store()).rank(_TARGET, [nested])
+    assert ranked[0].tier == "auto"
+
+
+@pytest.mark.asyncio
+async def test_obfuscated_folder_caps_at_manual_not_fabricated_auto():
+    """R4 pin: an artist-less folder used to score a FABRICATED artist match of 1.0
+    (``_artist_from_path`` falls back to the target artist). Score may stay high,
+    but the tier must be 'manual' - absence of evidence is unknown, not a match."""
+    bare = _file("@@abc\\the arrival\\Airbag.flac", "the arrival")
+    ranked = await TrackMatcher(_store()).rank(_TARGET, [bare])
+    assert ranked[0].tier == "manual"
+
+
+@pytest.mark.asyncio
+async def test_incident_candidate_replay_never_auto():
+    """The 2026-07-05 candidate byte-for-byte: 'the arrival' by Yan Qing (155.556 s
+    canonical) vs the Dan Romer soundtrack file (137 s advertised). Under the P3.4
+    containment title term ("in ashford" is a foreign work marker, not ignorable
+    extra tokens) it sinks to the REJECTED band - and the evidence gate would cap
+    it below auto regardless."""
+    target = TargetTrack(
+        artist_name="Yan Qing", track_title="the arrival", duration_seconds=155.556
+    )
+    incident = _file(
+        "@@yuqfj\\Fab \\Dan Romer\\Dan Romer - A Knight of the Seven Kingdoms "
+        "(Season 1)_2026_FLAC 24bit-48kHz\\02. Arrival in Ashford.flac",
+        "Dan Romer - A Knight of the Seven Kingdoms (Season 1)_2026_FLAC 24bit-48kHz",
+        duration=137.0,
+        username="Fabrizio83a",
+    )
+    ranked = await TrackMatcher(_store()).rank(target, [incident])
+    assert len(ranked) == 1
+    assert ranked[0].tier != "auto"
+    assert ranked[0].final_score < 0.70

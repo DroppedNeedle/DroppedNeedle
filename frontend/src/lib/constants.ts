@@ -183,6 +183,7 @@ export const API = {
 		reidentifyAlbum: (mbid: string) => `/api/v1/library/albums/${mbid}/reidentify`,
 		updateTrackTags: (fileId: string) => `/api/v1/library/tracks/${fileId}`,
 		trackTags: (fileId: string) => `/api/v1/library/tracks/${fileId}/tags`,
+		removeTrack: (fileId: string) => `/api/v1/library/tracks/${fileId}`,
 		scanStart: () => '/api/v1/library/scan/start',
 		scanCancel: () => '/api/v1/library/scan/cancel',
 		scanStatus: () => '/api/v1/library/scan/status',

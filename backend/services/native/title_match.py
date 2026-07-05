@@ -34,6 +34,7 @@ Design (validated against real Newznab/Soulseek result sets):
 import re
 import unicodedata
 
+from rapidfuzz import fuzz
 from unidecode import unidecode
 
 # A leading Usenet part counter: ``[002/113] "`` (and the opening quote of the real name).
@@ -133,6 +134,81 @@ def _artist_present(tokens: list[str], artist: set[str]) -> bool:
     if not artist:
         return False
     return sum(1 for a in artist if a in tokens) >= max(1, (len(artist) + 1) // 2)
+
+
+def title_containment_score(
+    expected_title: str, candidate: str, *, ignore: frozenset[str] = frozenset()
+) -> float:
+    """0..1: how well ``candidate`` names ``expected_title`` - and NOTHING ELSE.
+
+    ``token_set_ratio`` ignores extra tokens, so "the arrival" scores 0.78 against
+    "02. Arrival in Ashford" and a full 1.0 against "Arrival - The Waking Hour" -
+    exactly how the 2026-07-05 wrong single fuzzy-matched. This score multiplies
+    coverage of the expected title's distinctive words by a penalty per EXTRA
+    distinctive word the candidate carries (a foreign word means a different work):
+
+        "the arrival" vs "01 - the arrival"          -> 1.00 (extras: none)
+        "the arrival" vs "the arrival (Deluxe)"      -> 1.00 (edition token, not extra)
+        "the arrival" vs "02. Arrival in Ashford"    -> 0.50 (extra: ashford)
+        "the arrival" vs "Arrival - The Waking Hour" -> 0.33 (extra: waking, hour)
+
+    Digit tokens (track numbers, years) and edition/format/sidecar tokens are never
+    "extra"; ``ignore`` lets callers exclude the artist's words when scoring full
+    filenames ("01 - Yan Qing - the arrival.flac" must not read qing as foreign).
+    Token matching is typo-tolerant (per-token Levenshtein >= 85, so "Arival" still
+    counts as "arrival" - and a candidate's near-miss token is not read as foreign).
+    Degenerate expected titles (single characters / all stopwords) fall back to
+    ``token_set_ratio`` - there are no distinctive words to contain."""
+    expected_tokens = _tokens(expected_title)
+    core = {
+        t for t in expected_tokens
+        if len(t) >= 2 and (t.isalpha() or t.isdigit())
+        and t not in _STOP and t not in _EDITION
+    }
+    if not core:
+        return fuzz.token_set_ratio(fold(expected_title), fold(candidate)) / 100.0
+    cand_tokens = set(_tokens(candidate.replace("\\", "/")))
+
+    def matches_core(token: str) -> bool:
+        return token in core or any(fuzz.ratio(token, c) >= 85 for c in core)
+
+    covered = sum(
+        1 for t in core
+        if t in cand_tokens or any(fuzz.ratio(t, c) >= 85 for c in cand_tokens)
+    )
+    coverage = covered / len(core)
+    extra = {
+        t for t in cand_tokens
+        if t.isalpha() and len(t) >= 2 and not matches_core(t) and t not in ignore
+        and t not in _STOP and t not in _EDITION and t not in _BOUNDARY
+        and t not in _SIDECAR
+    }
+    penalty = len(core) / (len(core) + len(extra))
+    return coverage * penalty
+
+
+def artist_evidence(artist_name: str, candidate_path: str) -> bool:
+    """POSITIVE evidence that the requested artist is named somewhere in a candidate's
+    full remote path (all folder levels + filename): a majority of the artist's
+    distinctive words appear as path tokens.
+
+    Used to gate ``tier='auto'`` (D2, 2026-07-05 wrong-single incident): auto-acceptance
+    must be earned by identity evidence, so ABSENCE of evidence is False - an obfuscated
+    path is *unknown*, not a match. Deliberately NOT built on the scorers'
+    ``_artist_from_path``, whose target-artist fallback fabricates a perfect self-match
+    for every folder without an ``"Artist - Album"`` shape (the common Soulseek layout).
+    Scanning the full path (not just the parent folder) is what carries the
+    ``Artist/Album/track`` share layouts, where the artist is a grandparent directory.
+
+    Stopwords are dropped from the artist's words so "The Who" needs "who", not the
+    ubiquitous "the" (fallback to all words when the name is entirely stopwords)."""
+    words = {t for t in _tokens(artist_name) if t.isalpha() and len(t) >= 2 and t not in _STOP}
+    if not words:
+        words = {t for t in _tokens(artist_name) if t.isalpha() and len(t) >= 2}
+    # Soulseek remote paths are backslash-delimited; ``_SEP_RE`` (calibrated for release
+    # TITLES) doesn't split on backslash, so normalise to '/' before tokenising or every
+    # directory level glues to its neighbour and the artist token is never seen.
+    return _artist_present(_tokens(candidate_path.replace("\\", "/")), words)
 
 
 def names_different_album(album_title: str, artist_name: str, candidate_title: str) -> bool:

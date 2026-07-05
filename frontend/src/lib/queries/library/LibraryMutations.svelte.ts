@@ -2,9 +2,11 @@ import { createMutation } from '@tanstack/svelte-query';
 import { API } from '$lib/constants';
 import { api } from '$lib/api/client';
 import { invalidateQueriesWithPersister } from '../QueryClient';
+import { LOCAL_KEYS } from '../local/LocalQueries.svelte';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import type {
 	LibraryActionResponse,
+	StatusMessageResponse,
 	LibraryScanSchedule,
 	LibrarySettings,
 	LibraryTrack,
@@ -138,5 +140,23 @@ export function removeLibraryPath() {
 	return createMutation(() => ({
 		mutationFn: (path: string) => api.global.delete<LibrarySettings>(API.library.removePath(path)),
 		onSuccess: () => invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.settings() })
+	}));
+}
+
+// Remove ONE library file - the album page's orphan-review action (P5): a held
+// file that matches none of the album's expected tracks. Admin/trusted only
+// (the route enforces it). Invalidates the album's coverage/status AND the
+// local-library lists (cross-domain: sizes and sidebars change with the file).
+export function removeLibraryTrack() {
+	return createMutation(() => ({
+		mutationFn: ({ fileId }: { fileId: string; albumMbid: string }) =>
+			api.global.delete<StatusMessageResponse>(API.library.removeTrack(fileId)),
+		onSuccess: async (_data, { albumMbid }) => {
+			await invalidateQueriesWithPersister({
+				queryKey: LibraryQueryKeyFactory.album(albumMbid)
+			});
+			await invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.stats() });
+			await invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root });
+		}
 	}));
 }

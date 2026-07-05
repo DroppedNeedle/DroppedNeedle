@@ -41,6 +41,7 @@ const COVERAGE: Array<[string, string, string]> = [
 	// library admin (tags + scan control)
 	['track tags', API.library.trackTags('F1'), '/api/v1/library/tracks/F1/tags'],
 	['update track tags', API.library.updateTrackTags('F1'), '/api/v1/library/tracks/F1'],
+	['remove library track', API.library.removeTrack('F1'), '/api/v1/library/tracks/F1'],
 	['rescan album', API.library.rescanAlbum('M1'), '/api/v1/library/albums/M1/rescan'],
 	['scan start', API.library.scanStart(), '/api/v1/library/scan/start'],
 	['scan cancel', API.library.scanCancel(), '/api/v1/library/scan/cancel'],

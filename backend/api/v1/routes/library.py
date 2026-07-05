@@ -22,6 +22,7 @@ from api.v1.schemas.library import (
     TrackTagUpdateRequest,
 )
 from core.dependencies import (
+    get_album_service,
     get_download_service,
     get_library_service,
     get_library_manager,
@@ -30,8 +31,9 @@ from core.dependencies import (
 )
 from core.exceptions import ExternalServiceError
 from infrastructure.msgspec_fastapi import MsgSpecRoute, MsgSpecBody
-from middleware import CurrentAdminDep, CurrentUserDep
+from middleware import CurrentAdminDep, CurrentCuratorDep, CurrentUserDep
 from models.audio import AudioTag
+from services.album_service import AlbumService
 from services.library_service import LibraryService
 from services.native.library_manager import LibraryManager
 from services.native.library_scanner import LibraryScanner
@@ -222,14 +224,31 @@ async def get_native_album_status(
     mbid: str,
     current_user: CurrentUserDep,
     library_manager: LibraryManager = Depends(get_library_manager),
+    album_service: AlbumService = Depends(get_album_service),
 ):
     # live download progress comes from GET /downloads?release_group_mbid=..., not here
     policy = get_preferences_service().get_download_policy()
-    return await library_manager.get_album_status(
+    status = await library_manager.get_album_status(
         mbid,
         quality_cutoff=policy.quality_cutoff,
         upgrade_allowed=policy.upgrade_allowed,
     )
+    # P5 coverage annotation: which held files COVER the release's expected tracks
+    # (drives the honest In-Library badge, matched-only Play All, and the orphan
+    # review section). Fail-open - a MB hiccup leaves the presence-only reading.
+    return await album_service.annotate_album_coverage(mbid, status)
+
+
+@router.delete("/tracks/{file_id}", response_model=StatusMessageResponse)
+async def remove_library_track(
+    file_id: str,
+    current_user: CurrentCuratorDep,
+    library_service: LibraryService = Depends(get_library_service),
+):
+    """Remove one library file - the album page's orphan-review action (P5): a held
+    file matching none of the album's expected tracks. Admin/trusted only, matching
+    the album-delete gate."""
+    return await library_service.remove_file(file_id)
 
 
 @router.get("/tracks/{file_id}/tags", response_model=AudioTag)

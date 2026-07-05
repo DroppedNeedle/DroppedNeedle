@@ -345,6 +345,42 @@ async def test_link_picked_candidate_is_atomic(store):
 
 
 @pytest.mark.asyncio
+async def test_get_parked_task_for_search_job(store):
+    """The pick path RESUMES the orchestrator task parked on a search job (linked,
+    no candidate, still queued) - resuming preserves the threaded single-track
+    identity and the request linkage (2026-07-05 incident review, R1)."""
+    job = await store.create_search_job("user-a", "A", "B", None, None, "rg", "q")
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg", artist_name="A", album_title="B",
+        track_title="the arrival", track_duration_seconds=155.556,
+    )
+    # not linked yet -> nothing parked on the job
+    assert await store.get_parked_task_for_search_job(job.id) is None
+
+    # parked: linked with candidate_index=None (the awaiting-review signature)
+    await store.set_search_job_id_and_candidate(task.id, job.id, None)
+    parked = await store.get_parked_task_for_search_job(job.id)
+    assert parked is not None
+    assert parked.id == task.id
+    assert parked.track_title == "the arrival"  # identity rides the resumed task
+
+    # once a candidate is picked, it is no longer parked
+    await store.link_picked_candidate(task.id, job.id, 0, "alice", "Folder", 0.82)
+    assert await store.get_parked_task_for_search_job(job.id) is None
+
+
+@pytest.mark.asyncio
+async def test_get_parked_task_ignores_non_queued(store):
+    job = await store.create_search_job("user-a", "A", "B", None, None, "rg", "q")
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg", artist_name="A", album_title="B"
+    )
+    await store.set_search_job_id_and_candidate(task.id, job.id, None)
+    await store.update_status(task.id, "cancelled")
+    assert await store.get_parked_task_for_search_job(job.id) is None
+
+
+@pytest.mark.asyncio
 async def test_update_search_job_status(store):
     job = await store.create_search_job("user-a", "A", "B", None, None, None, "q")
     assert job.status == "searching"

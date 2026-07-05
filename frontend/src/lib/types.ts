@@ -1469,6 +1469,13 @@ export interface LibraryAlbumStatus {
 	in_library: boolean;
 	track_count: number;
 	tracks: LibraryTrack[];
+	// Coverage vs the release's MB tracklist (P5): expected_tracks === 0 means the
+	// tracklist was unavailable and the UI falls back to the presence-only reading.
+	expected_tracks: number;
+	covered_tracks: number;
+	matched_file_ids: string[];
+	// held files that match NONE of the album's expected tracks ("doesn't match")
+	orphans: LibraryTrack[];
 }
 
 export interface AlbumEditionItem {
@@ -1630,6 +1637,12 @@ export interface TrackTagUpdate {
 export type UnmatchedResolution = 'accept' | 'reject' | 'manual_id';
 
 export interface LibraryActionResponse {
+	status: string;
+	message: string;
+}
+
+// mirrors backend api/v1/schemas/common.py StatusMessageResponse
+export interface StatusMessageResponse {
 	status: string;
 	message: string;
 }

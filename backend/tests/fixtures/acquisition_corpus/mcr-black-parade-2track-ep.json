@@ -1,0 +1,79 @@
+{
+ "name": "mcr-black-parade-2track-ep",
+ "kind": "album",
+ "target": {
+  "artist_name": "My Chemical Romance",
+  "album_title": "Welcome to the Black Parade",
+  "year": 2006,
+  "track_count": 2
+ },
+ "groups": [
+  {
+   "username": "peer28",
+   "parent_directory": "My Chemical Romance - 2006 - The Black Parade [Vinyl FLAC]",
+   "files": [
+    {
+     "username": "peer28",
+     "filename": "Music\\My Chemical Romance\\My Chemical Romance - 2006 - The Black Parade [Vinyl FLAC]\\05. Welcome to the Black Parade.flac",
+     "parent_directory": "My Chemical Romance - 2006 - The Black Parade [Vinyl FLAC]",
+     "size": 222984138,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 24,
+     "sample_rate": 192000,
+     "duration": 314.0,
+     "has_free_slot": true,
+     "upload_speed": 9049830
+    }
+   ],
+   "original_final_score": 0.8506720430107526,
+   "original_tier": "auto"
+  },
+  {
+   "username": "peer29",
+   "parent_directory": "The Black Parade (2006)",
+   "files": [
+    {
+     "username": "peer29",
+     "filename": "music\\My Chemical Romance\\The Black Parade (2006)\\01-05 - Welcome to the Black Parade.flac",
+     "parent_directory": "The Black Parade (2006)",
+     "size": 222367162,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 24,
+     "sample_rate": 192000,
+     "duration": 314.0,
+     "has_free_slot": true,
+     "upload_speed": 6335399
+    }
+   ],
+   "original_final_score": 0.8445512820512819,
+   "original_tier": "auto"
+  },
+  {
+   "username": "peer30",
+   "parent_directory": "The Black Parade (2006)",
+   "files": [
+    {
+     "username": "peer30",
+     "filename": "music\\My Chemical Romance\\The Black Parade (2006)\\My Chemical Romance - The Black Parade - 05 - Welcome to the Black Parade.flac",
+     "parent_directory": "The Black Parade (2006)",
+     "size": 222604860,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 24,
+     "sample_rate": 192000,
+     "duration": 314.0,
+     "has_free_slot": true,
+     "upload_speed": 21540574
+    }
+   ],
+   "original_final_score": 0.8445512820512819,
+   "original_tier": "auto"
+  }
+ ],
+ "expect": {
+  "picked_not_rejected": true,
+  "picked_parent": "The Black Parade (2006)"
+ }
+}

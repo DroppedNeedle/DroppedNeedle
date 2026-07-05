@@ -213,7 +213,7 @@ def _build(
     imported_rows=None, library=None, stall_minutes=30.0, queued_minutes=120.0, max_failover=3,
     max_concurrent=3, request_history=None, on_import=None,
     auto_retry_enabled=True, auto_retry_max_attempts=6, auto_retry_base_interval_minutes=15.0,
-    soulseek_enabled=True,
+    soulseek_enabled=True, album_service=None,
 ):
     db_path = tmp_path / "library.db"
     store = DownloadStore(db_path=db_path, write_lock=threading.Lock())
@@ -260,6 +260,7 @@ def _build(
         request_history=request_history,
         on_import_callback=on_import,
         soulseek_enabled=soulseek_enabled,
+        album_service=album_service,
     )
     return store, orch, file_processor, library
 
@@ -773,16 +774,26 @@ async def test_track_wrong_duration_fails_over_to_right_source(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_track_duration_fallback_accepts_best_when_all_sources_rejected(tmp_path: Path):
-    """If EVERY source fails the duration gate (the MusicBrainz length is probably
-    wrong), the fallback re-pulls the best source with the gate off so the user isn't
-    left empty-handed."""
+async def test_track_duration_fallback_repulls_gate_on_and_fails_honestly(tmp_path: Path):
+    """D9: if EVERY source fails the duration gate (the MusicBrainz length is probably
+    wrong), the fallback re-pulls the best source with the gate STILL ON and
+    hold_on_wrong_track set - the FileProcessor holds the closest match for human
+    review ("import anyway" is the escape hatch), and the task fails honestly. It
+    must never silently import an unverified file (the pre-D9 behaviour)."""
     client = _FailoverClient({"wrongpeer1": "complete", "wrongpeer2": "complete"})
     store, orch, fp, lib = _build(tmp_path, client=client, max_failover=3)
     orch._strategies["soulseek"]._track_matcher.rank = AsyncMock(return_value=[
         _candidate(0.9, username="wrongpeer1"), _candidate(0.85, username="wrongpeer2"),
     ])
     _duration_gate_fp(fp, lib)
+    seen_manifests = []
+    inner = fp.process_downloaded.side_effect
+
+    async def _spy(manifest, only_filenames=None):
+        seen_manifests.append(manifest)
+        return await inner(manifest, only_filenames)
+
+    fp.process_downloaded = AsyncMock(side_effect=_spy)
     task = await _new_task(
         store, download_type="track", recording_mbid="rec-1",
         track_title="Song", track_count=1, track_duration_seconds=200.0,
@@ -790,7 +801,97 @@ async def test_track_duration_fallback_accepts_best_when_all_sources_rejected(tm
 
     await orch.process_task(task.id)
 
-    assert (await store.get_task(task.id)).status == "completed"   # fallback delivered it
+    assert (await store.get_task(task.id)).status == "failed"   # honest, not silent
+    assert lib.rows == []                                       # nothing imported
+    # the re-pull (last import) ran with the gate ON and the hold flag set (the hold
+    # itself is the FileProcessor's job - covered in test_file_processor)
+    assert seen_manifests[-1].is_track is True
+    assert seen_manifests[-1].hold_on_wrong_track is True
+    # ordinary failover attempts never set the hold flag
+    assert all(m.hold_on_wrong_track is False for m in seen_manifests[:-1])
+
+
+@pytest.mark.asyncio
+async def test_track_duration_fallback_still_imports_when_gate_passes_on_repull(tmp_path: Path):
+    """The re-pull is not a death sentence: a file that PASSES the gate the second
+    time (transient earlier failure) imports normally and completes the task."""
+    client = _FailoverClient({"rightpeer": "complete"})
+    store, orch, fp, lib = _build(tmp_path, client=client, max_failover=1)
+    orch._strategies["soulseek"]._track_matcher.rank = AsyncMock(return_value=[
+        _candidate(0.9, username="rightpeer"),
+    ])
+
+    # first import attempt rejects (transient), the re-pull's succeeds
+    calls = {"n": 0}
+
+    async def _proc(manifest, only_filenames=None):
+        calls["n"] += 1
+        fname = manifest.target_files[0].filename
+        if calls["n"] == 1:
+            return ProcessResult(
+                succeeded=[], failed=[FileFailure(filename=fname, reason=WRONG_TRACK)]
+            )
+        path = f"/lib/{fname}"
+        lib.rows.append({"file_path": path, "track_number": 1, "disc_number": 1})
+        return ProcessResult(succeeded=[path], failed=[])
+
+    fp.process_downloaded = AsyncMock(side_effect=_proc)
+    task = await _new_task(
+        store, download_type="track", recording_mbid="rec-1",
+        track_title="Song", track_count=1, track_duration_seconds=200.0,
+    )
+
+    await orch.process_task(task.id)
+
+    assert (await store.get_task(task.id)).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_single_album_task_with_identity_completes_via_track_path(tmp_path: Path):
+    """A 1-track album task (a single) with threaded identity routes through the
+    track matcher and imports under the canonical-duration gate - the happy path of
+    the 2026-07-05 wrong-single fix."""
+    client = _StubClient(_status("completed", files_completed=1, succeeded=["peer/01.flac"]))
+    store, orch, fp, lib = _build(tmp_path, client=client, track_result=_candidate(0.9))
+    _duration_gate_fp(fp, lib)
+    task = await _new_task(
+        store, download_type="album", track_count=1,
+        track_title="the arrival", recording_mbid="rec-1",
+        track_duration_seconds=155.556,
+    )
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "completed"
+    # the folder scorer was never consulted - the single scored per-file
+    orch._strategies["soulseek"]._scorer.rank.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_single_album_task_never_enters_relaxed_track_repull(tmp_path: Path):
+    """When EVERY source fails the canonical-duration gate for a SINGLE, the task
+    must fail honestly - the gate-off repull is a track-download-only escape hatch
+    (D1's accidental dodge, pinned: an album-typed single re-importing the closest
+    wrong file with the gate off would be the incident all over again)."""
+    client = _FailoverClient({"wrongpeer1": "complete", "wrongpeer2": "complete"})
+    store, orch, fp, lib = _build(tmp_path, client=client, max_failover=3)
+    orch._strategies["soulseek"]._track_matcher.rank = AsyncMock(return_value=[
+        _candidate(0.9, username="wrongpeer1"), _candidate(0.85, username="wrongpeer2"),
+    ])
+    _duration_gate_fp(fp, lib)
+    task = await _new_task(
+        store, download_type="album", track_count=1,
+        track_title="the arrival", recording_mbid="rec-1",
+        track_duration_seconds=155.556,
+    )
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "failed"          # honest failure, no relaxed re-pull
+    assert lib.rows == []                    # nothing imported
+    assert await store.load_quarantine_set() == set()  # WRONG_TRACK never quarantines
 
 
 @pytest.mark.asyncio
@@ -1665,3 +1766,145 @@ async def test_reimport_task_mount_fault_does_not_cancel_transfers(tmp_path: Pat
     assert result.status == "failed"
     assert result.error_message == DOWNLOADS_MOUNT_UNAVAILABLE
     orch._cancel_transfers.assert_not_awaited()
+
+
+# -- P4: coverage-based completeness (2026-07-05 incident, last line of defense) --
+
+
+def _album_service_with(tracks):
+    """AlbumService stub returning a fixed MB tracklist (models.album.Track shape)."""
+    from types import SimpleNamespace
+
+    svc = MagicMock()
+    svc.get_album_tracks_info = AsyncMock(
+        return_value=SimpleNamespace(tracks=tracks, total_tracks=len(tracks))
+    )
+    return svc
+
+
+def _mb_track(position, *, title, recording_id=None, length=None, disc=1):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        position=position, disc_number=disc, title=title,
+        recording_id=recording_id, length=length,
+    )
+
+
+@pytest.mark.asyncio
+async def test_coverage_wrong_file_cannot_satisfy_the_request(tmp_path: Path):
+    """The incident's terminal shape: a wrong file occupies the album (position 2,
+    wrong duration, no recording MBID) while the request expects ONE canonical
+    track. The pre-P4 count check read '1 position >= 1 expected -> imported'; the
+    coverage gate must read 0/1 -> never completed, settle PARTIAL."""
+    album_service = _album_service_with(
+        [_mb_track(1, title="the arrival", recording_id="rec-180ceef5", length=155556)]
+    )
+    wrong_row = {
+        "id": "row-wrong", "file_path": "/lib/wrong.flac", "disc_number": 1,
+        "track_number": 2, "track_title": "Arrival in Ashford",
+        "recording_mbid": None, "duration_seconds": 137.24,
+    }
+    client = _StubClient(_status("completed", files_completed=1, succeeded=["peer/01.flac"]))
+    store, orch, fp, lib = _build(
+        tmp_path, client=client, scorer_result=[_candidate(0.9)],
+        library=_FakeLibrary([wrong_row]), max_failover=1, album_service=album_service,
+    )
+    # the import "succeeds" but only ever lands the wrong row (already in the library)
+    fp.process_downloaded = AsyncMock(return_value=ProcessResult(succeeded=["/lib/wrong.flac"], failed=[]))
+    task = await _new_task(store, track_count=1)
+
+    await orch.process_task(task.id)
+
+    assert (await store.get_task(task.id)).status == "partial"   # honest, never "completed"
+
+
+@pytest.mark.asyncio
+async def test_coverage_complete_via_recording_ids(tmp_path: Path):
+    album_service = _album_service_with([
+        _mb_track(1, title="A", recording_id="rec-1", length=200000),
+        _mb_track(2, title="B", recording_id="rec-2", length=210000),
+    ])
+    rows = [
+        {"id": "r1", "recording_mbid": "REC-1", "disc_number": 1, "track_number": 9,
+         "track_title": "whatever", "duration_seconds": 500.0},
+        {"id": "r2", "recording_mbid": "rec-2", "disc_number": 1, "track_number": 2,
+         "track_title": "B", "duration_seconds": 210.0},
+    ]
+    client = _StubClient(_status("completed", files_completed=2, succeeded=["p/1", "p/2"]))
+    store, orch, fp, lib = _build(
+        tmp_path, client=client, scorer_result=[_candidate(0.9, files=2)],
+        library=_FakeLibrary(rows), album_service=album_service,
+    )
+    fp.process_downloaded = AsyncMock(return_value=ProcessResult(succeeded=["p/1", "p/2"], failed=[]))
+    task = await _new_task(store, track_count=2)
+
+    await orch.process_task(task.id)
+
+    # recording identity covers regardless of position/duration (case-insensitive)
+    assert (await store.get_task(task.id)).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_coverage_positional_squatter_does_not_shadow_shifted_correct_file(tmp_path: Path):
+    """A wrong file at the track's POSITION plus the correct file at a shifted
+    position: the correct file must cover (title+duration rescue), the squatter must
+    not block it - and completion proceeds."""
+    album_service = _album_service_with(
+        [_mb_track(1, title="the arrival", recording_id="rec-1", length=155556)]
+    )
+    rows = [
+        {"id": "squat", "disc_number": 1, "track_number": 1, "recording_mbid": "rec-OTHER",
+         "track_title": "Arrival in Ashford", "duration_seconds": 137.0},
+        {"id": "right", "disc_number": 1, "track_number": 7, "recording_mbid": None,
+         "track_title": "the arrival", "duration_seconds": 155.0},
+    ]
+    client = _StubClient(_status("completed", files_completed=1, succeeded=["p/1"]))
+    store, orch, fp, lib = _build(
+        tmp_path, client=client, scorer_result=[_candidate(0.9)],
+        library=_FakeLibrary(rows), album_service=album_service,
+    )
+    fp.process_downloaded = AsyncMock(return_value=ProcessResult(succeeded=["p/1"], failed=[]))
+    task = await _new_task(store, track_count=1)
+
+    await orch.process_task(task.id)
+
+    assert (await store.get_task(task.id)).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_coverage_null_length_untagged_row_covers_failopen(tmp_path: Path):
+    # Brand-new release with no MB length + an untagged rip at the right position:
+    # no measurable signal is UNKNOWN, not a mismatch (D18) - it covers.
+    album_service = _album_service_with([_mb_track(1, title="the arrival")])
+    rows = [{"id": "r1", "disc_number": 1, "track_number": 1, "recording_mbid": None,
+             "track_title": None, "duration_seconds": None}]
+    client = _StubClient(_status("completed", files_completed=1, succeeded=["p/1"]))
+    store, orch, fp, lib = _build(
+        tmp_path, client=client, scorer_result=[_candidate(0.9)],
+        library=_FakeLibrary(rows), album_service=album_service,
+    )
+    fp.process_downloaded = AsyncMock(return_value=ProcessResult(succeeded=["p/1"], failed=[]))
+    task = await _new_task(store, track_count=1)
+
+    await orch.process_task(task.id)
+
+    assert (await store.get_task(task.id)).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_coverage_mb_failure_fails_open_to_count_check(tmp_path: Path):
+    # MusicBrainz down at completion time: coverage must never block - the pre-P4
+    # count check governs and the download completes exactly as before.
+    album_service = MagicMock()
+    album_service.get_album_tracks_info = AsyncMock(side_effect=RuntimeError("MB down"))
+    client = _StubClient(_status("completed", files_completed=1, succeeded=["peer/01.flac"]))
+    store, orch, fp, lib = _build(
+        tmp_path, client=client, scorer_result=[_candidate(0.9)], album_service=album_service,
+    )
+    _coupled_fp(fp, lib)
+    task = await _new_task(store, track_count=1)
+
+    await orch.process_task(task.id)
+
+    assert (await store.get_task(task.id)).status == "completed"

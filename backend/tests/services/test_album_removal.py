@@ -208,3 +208,60 @@ async def test_soft_delete_album_files_returns_affected_paths(db, tmp_path):
     assert set(paths) == {str(f1), str(f2)}
     # idempotent: nothing left to soft-delete
     assert await db.soft_delete_album_files("rg-1") == []
+
+
+# -- P5: single-file removal (the album page's orphan-review action) --
+
+
+@pytest.mark.asyncio
+async def test_remove_file_soft_deletes_row_and_unlinks(db, tmp_path):
+    from core.exceptions import ResourceNotFoundError
+
+    manager = LibraryManager(db)
+    keep = tmp_path / "keep.flac"
+    orphan = tmp_path / "orphan.flac"
+    await _seed(manager, keep, rg="rg-1", artist_mbid="am-1", track=1)
+    await _seed(manager, orphan, rg="rg-1", artist_mbid="am-1", track=2)
+    rows = await db.get_library_files_for_album("rg-1")
+    orphan_id = next(r["id"] for r in rows if r["file_path"] == str(orphan))
+    service = _service(db)
+
+    result = await service.remove_file(orphan_id)
+
+    assert result.status == "ok"
+    assert not orphan.exists()                       # audio unlinked
+    assert keep.exists()                             # sibling untouched
+    remaining = await db.get_library_files_for_album("rg-1")
+    assert [r["file_path"] for r in remaining] == [str(keep)]
+    # soft-deleted, not hard-deleted (recoverable via re-import)
+    raw = await db.get_library_file_by_id(orphan_id)
+    assert raw is not None and raw["deleted_at"] is not None
+    # a second removal of the same id is a 404, not a crash
+    with pytest.raises(ResourceNotFoundError):
+        await service.remove_file(orphan_id)
+
+
+@pytest.mark.asyncio
+async def test_remove_file_last_file_drops_ghost_album_row(db, tmp_path):
+    manager = LibraryManager(db)
+    only = tmp_path / "only.flac"
+    await _seed(manager, only, rg="rg-solo", artist_mbid="am-2")
+    await db.upsert_album(
+        {"mbid": "rg-solo", "artist_mbid": "am-2", "artist_name": "Artist", "title": "Album"}
+    )
+    rows = await db.get_library_files_for_album("rg-solo")
+    service = _service(db)
+
+    await service.remove_file(rows[0]["id"])
+
+    # the materialised ledger row is gone too, so /basic stops saying In Library
+    assert await db.get_album_by_mbid("rg-solo") is None
+
+
+@pytest.mark.asyncio
+async def test_remove_file_unknown_id_raises_not_found(db):
+    from core.exceptions import ResourceNotFoundError
+
+    service = _service(db)
+    with pytest.raises(ResourceNotFoundError):
+        await service.remove_file("no-such-file")

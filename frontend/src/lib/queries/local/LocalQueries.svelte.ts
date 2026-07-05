@@ -11,7 +11,7 @@ import type {
 	LocalStorageStats
 } from '$lib/types';
 
-const LOCAL_KEYS = {
+export const LOCAL_KEYS = {
 	root: ['local'] as const,
 	albums: (sort: string, decade: number | null) => ['local', 'albums', sort, decade] as const,
 	recent: () => ['local', 'recent'] as const,

@@ -5,7 +5,11 @@ against the target track and wraps the best as a one-file ``ScoredCandidate`` so
 the orchestrator's track branch and the Review tab consume it identically to an
 album candidate. Reuses the album scorer's ``_file_confidence`` and the shared
 quarantine + quality-tier filters (codec/tier gate + absolute highest-tier
-preference).
+preference). ``tier='auto'`` additionally requires the requested artist to be
+named somewhere in the candidate's remote path (``title_match.artist_evidence``,
+D2) - score alone cannot silently accept a wrong-artist file. Also serves
+1-track album tasks (singles), which the Soulseek strategy routes here instead
+of the folder scorer (2026-07-05 wrong-single incident).
 """
 
 from infrastructure.persistence.download_store import DownloadStore
@@ -13,6 +17,7 @@ from models.download import ScoredCandidate, TargetTrack
 from models.download_identity import soulseek_identity
 from repositories.protocols.download_client import DownloadSearchResult
 from services.native.album_preflight_scorer import _file_confidence
+from services.native.title_match import artist_evidence
 from services.native.quality_tiers import (
     DEFAULT_QUALITY_MAX,
     DEFAULT_QUALITY_MIN,
@@ -91,8 +96,11 @@ class TrackMatcher:
 
         scored: list[tuple[int, float, DownloadSearchResult]] = []
         for file in filtered:
+            # strict_title: a track title is directly comparable to a filename, so the
+            # containment metric applies (unlike the album path's title-vs-album noise).
             score = _file_confidence(
-                target.track_title, target.artist_name, target.duration_seconds, file
+                target.track_title, target.artist_name, target.duration_seconds, file,
+                strict_title=True,
             )
             scored.append((tier_rank(file_tier(file)), score, file))
         # prefer the higher tier, then the better match
@@ -104,7 +112,14 @@ class TrackMatcher:
             if file.username in seen_peers:
                 continue  # one candidate per peer - failover skips same-peer anyway
             seen_peers.add(file.username)
-            if score >= auto_accept_threshold:
+            # Auto-acceptance must be EARNED by identity evidence (D2, 2026-07-05
+            # wrong-single incident): a wrong-artist file with an exact title +
+            # plausible duration clears 0.70 on score alone, so a candidate whose
+            # full remote path never names the requested artist caps at 'manual'
+            # (one human click in Review) instead of downloading silently.
+            if score >= auto_accept_threshold and artist_evidence(
+                target.artist_name, file.filename
+            ):
                 tier = "auto"
             elif score >= manual_threshold:
                 tier = "manual"

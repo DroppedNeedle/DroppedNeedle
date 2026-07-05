@@ -11,7 +11,7 @@ import pytest
 from infrastructure.audio.tagger import AudioTagger
 from infrastructure.persistence.library_db import LibraryDB
 from models.audio import AudioInfo, AudioTag, FingerprintResult
-from models.download_manifest import DownloadManifest, ExpectedFile
+from models.download_manifest import DownloadManifest, ExpectedFile, ExpectedTrack
 from services.native.file_processor import (
     DOWNLOADS_MOUNT_UNAVAILABLE,
     QUARANTINE_REASONS,
@@ -102,7 +102,9 @@ def _place(downloads: Path, rel: str) -> None:
     shutil.copy(_FLAC, dest)
 
 
-def _manifest(*files: ExpectedFile, task_id="t1", rg="rg-1", is_track=False) -> DownloadManifest:
+def _manifest(
+    *files: ExpectedFile, task_id="t1", rg="rg-1", is_track=False, expected_tracks=()
+) -> DownloadManifest:
     return DownloadManifest(
         task_id=task_id,
         source_username="peer",
@@ -114,6 +116,7 @@ def _manifest(*files: ExpectedFile, task_id="t1", rg="rg-1", is_track=False) -> 
         target_files=list(files),
         year=1997,
         is_track=is_track,
+        expected_tracks=list(expected_tracks),
     )
 
 
@@ -404,6 +407,57 @@ async def test_process_downloaded_fingerprint_mismatch_on_wrong_artist(tmp_path:
 
     assert result.succeeded == []
     assert result.failed[0].reason == "fingerprint_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_process_downloaded_fingerprint_title_check_armed_for_single(tmp_path: Path):
+    """When the manifest carries the ONE expected track (a track download or a
+    1-track single), a confident AcoustID hit naming a clearly different SONG is
+    rejected even when the artist matches - the per-file path used to run
+    artist-only (2026-07-05 wrong-single incident, P1.4)."""
+    fingerprinter = MagicMock()
+    fingerprinter.fingerprint = AsyncMock(
+        return_value=FingerprintResult(
+            status="pass", score=0.95, artist="Radiohead", title="Completely Other Song"
+        )
+    )
+    fp, _manager, _client, _library, downloads = _make_processor(
+        tmp_path, fingerprinter=fingerprinter, verify=True
+    )
+    _place(downloads, "A/track.flac")
+    manifest = _manifest(
+        ExpectedFile(filename="A/track.flac", size=1),
+        expected_tracks=[ExpectedTrack(track_number=1, title="Airbag")],
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert result.succeeded == []
+    assert result.failed[0].reason == "fingerprint_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_process_downloaded_fingerprint_title_check_skipped_without_expected_track(
+    tmp_path: Path,
+):
+    # No expected track on the manifest (a multi-file album import) -> artist-only,
+    # exactly the pre-existing behaviour.
+    fingerprinter = MagicMock()
+    fingerprinter.fingerprint = AsyncMock(
+        return_value=FingerprintResult(
+            status="pass", score=0.95, artist="Radiohead", title="Completely Other Song"
+        )
+    )
+    fp, manager, _client, _library, downloads = _make_processor(
+        tmp_path, fingerprinter=fingerprinter, verify=True
+    )
+    _place(downloads, "A/track.flac")
+    manifest = _manifest(ExpectedFile(filename="A/track.flac", size=1))
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1  # artist agrees -> imported
+    assert await manager.has_album("rg-1") is True
 
 
 @pytest.mark.asyncio
@@ -754,3 +808,527 @@ async def test_place_held_file_imports_bypassing_verify(tmp_path: Path):
     # artist id that would split this artist into two entries
     assert tag.musicbrainz_album_artist_id == "678d88b2-87b0-403b-b63d-5da7465aecc3"
     assert await manager.has_album("rg-9") is True
+
+
+# -- P2: the file's OWN tags vs the requested identity (2026-07-05 wrong-single) --
+
+
+def _retag(downloads: Path, rel: str, **tags) -> None:
+    """Overwrite tags on a placed fixture with raw mutagen (house rule: never
+    validate the tagger against its own round-trip)."""
+    from mutagen.flac import FLAC
+
+    audio = FLAC(downloads / rel)
+    for key, value in tags.items():
+        if value is None:
+            audio.pop(key, None)
+        else:
+            audio[key] = value
+    audio.save()
+
+
+def _held_wired_processor(tmp_path: Path, *, verify=True, fingerprinter=None):
+    """A processor with download_store + held_dir armed (the tag/duration holds need
+    them), plus a real task row so _hold_for_review can resolve the owner."""
+    import sqlite3 as _sqlite
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    lock = threading.Lock()
+    db_path = tmp_path / "library.db"
+    conn = _sqlite.connect(db_path)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS auth_users (id TEXT PRIMARY KEY, username TEXT, role TEXT)"
+    )
+    conn.execute("INSERT OR IGNORE INTO auth_users VALUES ('user-a','alice','user')")
+    conn.commit()
+    conn.close()
+    store = DownloadStore(db_path=db_path, write_lock=lock)
+    held_dir = tmp_path / "held"
+    library = tmp_path / "library"
+    library.mkdir()
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    manager = LibraryManager(LibraryDB(db_path=db_path, write_lock=lock))
+    fp = FileProcessor(
+        AudioTagger(), naming_engine=NamingTemplateEngine(), library_manager=manager,
+        library_paths=[library], client=_StubClient(downloads), slskd_downloads_path=downloads,
+        fingerprinter=fingerprinter, verify_downloads=verify,
+        download_store=store, held_dir=held_dir,
+    )
+    return fp, store, manager, downloads
+
+
+def _single_manifest(task_id, *, expected_duration=None, hold_on_wrong_track=False,
+                     canonical=None, expected_title="the arrival"):
+    """A 1-track single manifest as the P1 enqueue writes it (Yan Qing / the arrival)."""
+    return DownloadManifest(
+        task_id=task_id,
+        source_username="Fabrizio83a",
+        release_group_mbid="rg-single",
+        artist_name="Yan Qing",
+        album_title="the arrival",
+        naming_template=_TEMPLATE,
+        target_files=[ExpectedFile(filename="A/track.flac", size=1, duration=expected_duration)],
+        year=2026,
+        is_track=expected_duration is not None,
+        hold_on_wrong_track=hold_on_wrong_track,
+        expected_tracks=[
+            ExpectedTrack(
+                track_number=1, title=expected_title,
+                recording_mbid="rec-180ceef5", duration_seconds=canonical,
+            )
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_tagged_wrong_file_held_without_acoustid(tmp_path: Path):
+    """The incident file (tagged Dan Romer / Arrival in Ashford) on a NULL-length
+    single: no AcoustID coverage, duration gate unarmed - the file's own tags are the
+    only signal, and they must hold it. This is the exact fail-open hole P2 closes."""
+    fp, store, manager, downloads = _held_wired_processor(tmp_path)
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-single", artist_name="Yan Qing",
+        album_title="the arrival",
+    )
+    _place(downloads, "A/track.flac")
+    _retag(downloads, "A/track.flac", title="Arrival in Ashford", artist="Dan Romer",
+           album="A Knight of the Seven Kingdoms (Season 1)")
+
+    result = await fp.process_downloaded(_single_manifest(task.id))
+
+    assert result.succeeded == []
+    assert result.failed[0].reason == "tag_mismatch"
+    assert await manager.has_album("rg-single") is False
+    held = await store.list_held_imports("user-a", "user")
+    assert len(held) == 1
+    assert held[0].reason == "tag_mismatch"
+    assert held[0].evidence_artist == "Dan Romer"        # what the tags said
+    assert held[0].evidence_title == "Arrival in Ashford"
+    assert held[0].track_title == "the arrival"           # what was requested
+
+
+@pytest.mark.asyncio
+async def test_feat_credit_artist_tag_imports(tmp_path: Path):
+    # token_set is subset-tolerant: a featuring credit is the same artist, not a
+    # conflict (all three known-legit cases in the library share this shape).
+    fp, store, manager, downloads = _held_wired_processor(tmp_path)
+    await store.create_task(
+        user_id="user-a", release_group_mbid="rg-1", artist_name="Radiohead",
+        album_title="OK Computer",
+    )
+    _place(downloads, "A/track.flac")
+    _retag(downloads, "A/track.flac", artist="Radiohead feat. Someone Else")
+    manifest = _manifest(ExpectedFile(filename="A/track.flac", size=1))
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1
+
+
+@pytest.mark.asyncio
+async def test_classical_composer_tag_imports(tmp_path: Path):
+    """Classical rips tag the COMPOSER as artist while the album artist is the
+    performer - an artist conflict alone must never hold; the strong title +
+    agreeable duration carve-out is load-bearing."""
+    fp, store, _manager, downloads = _held_wired_processor(tmp_path)
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-sym", artist_name="Berliner Philharmoniker",
+        album_title="Beethoven: Symphony No. 9",
+    )
+    _place(downloads, "A/track.flac")
+    _retag(downloads, "A/track.flac", artist="Ludwig van Beethoven",
+           title="Symphony No. 9 in D minor, Op. 125 'Choral'")
+    manifest = DownloadManifest(
+        task_id=task.id, source_username="peer", release_group_mbid="rg-sym",
+        artist_name="Berliner Philharmoniker", album_title="Beethoven: Symphony No. 9",
+        naming_template=_TEMPLATE,
+        target_files=[ExpectedFile(filename="A/track.flac", size=1)],
+        expected_tracks=[
+            ExpectedTrack(track_number=1, title="Symphony No. 9 in D minor, Op. 125")
+        ],
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1
+    assert await store.list_held_imports("user-a", "user") == []
+
+
+@pytest.mark.asyncio
+async def test_untagged_file_never_tag_held(tmp_path: Path):
+    # Fully untagged rips fall through to duration/filename matching (D18) -
+    # absence of tags is unknown, not a conflict.
+    fp, store, _manager, downloads = _held_wired_processor(tmp_path)
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-single", artist_name="Yan Qing",
+        album_title="the arrival",
+    )
+    _place(downloads, "A/track.flac")
+    from mutagen.flac import FLAC
+
+    audio = FLAC(downloads / "A/track.flac")
+    audio.delete()
+    audio.save()
+
+    result = await fp.process_downloaded(_single_manifest(task.id))
+
+    assert len(result.succeeded) == 1
+
+
+@pytest.mark.asyncio
+async def test_degraded_manifest_album_tag_conflict_held(tmp_path: Path):
+    """Identity threading failed (MB down at request time): no expected track, but a
+    wrong-artist file whose ALBUM tag names other content still holds - the degraded
+    task must not silently lose all protection (review should-fix #8)."""
+    fp, store, _manager, downloads = _held_wired_processor(tmp_path)
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-single", artist_name="Yan Qing",
+        album_title="the arrival",
+    )
+    _place(downloads, "A/track.flac")
+    _retag(downloads, "A/track.flac", title="Arrival in Ashford", artist="Dan Romer",
+           album="A Knight of the Seven Kingdoms (Season 1)")
+    manifest = DownloadManifest(
+        task_id=task.id, source_username="peer", release_group_mbid="rg-single",
+        artist_name="Yan Qing", album_title="the arrival", naming_template=_TEMPLATE,
+        target_files=[ExpectedFile(filename="A/track.flac", size=1)],
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert result.failed and result.failed[0].reason == "tag_mismatch"
+    held = await store.list_held_imports("user-a", "user")
+    assert len(held) == 1
+
+
+@pytest.mark.asyncio
+async def test_verify_off_skips_tag_check(tmp_path: Path):
+    fp, store, _manager, downloads = _held_wired_processor(tmp_path, verify=False)
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-single", artist_name="Yan Qing",
+        album_title="the arrival",
+    )
+    _place(downloads, "A/track.flac")
+    _retag(downloads, "A/track.flac", title="Arrival in Ashford", artist="Dan Romer")
+
+    result = await fp.process_downloaded(_single_manifest(task.id))
+
+    assert len(result.succeeded) == 1  # verification is the owner's existing toggle
+
+
+@pytest.mark.asyncio
+async def test_repull_duration_mismatch_holds_for_review(tmp_path: Path):
+    """D9: the last-resort re-pull keeps the gate ON and captures the closest match
+    in held-imports ('import anyway' is the human path), instead of importing an
+    unverified file silently."""
+    fp, store, manager, downloads = _held_wired_processor(tmp_path)
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-single", artist_name="Yan Qing",
+        album_title="the arrival",
+    )
+    _place(downloads, "A/track.flac")  # fixture is 0.3s vs expected 155.556s
+
+    result = await fp.process_downloaded(
+        _single_manifest(
+            task.id, expected_duration=155.556, canonical=155.556, hold_on_wrong_track=True
+        )
+    )
+
+    assert result.failed and result.failed[0].reason == WRONG_TRACK
+    assert await manager.has_album("rg-single") is False
+    held = await store.list_held_imports("user-a", "user")
+    assert len(held) == 1
+    assert held[0].reason == WRONG_TRACK
+    assert held[0].track_title == "the arrival"
+    assert held[0].recording_mbid == "rec-180ceef5"
+
+
+@pytest.mark.asyncio
+async def test_ordinary_wrong_track_failover_does_not_hold(tmp_path: Path):
+    # Without the re-pull flag a WRONG_TRACK failure just fails over - holding a copy
+    # of every failover candidate would spam the held area.
+    fp, store, _manager, downloads = _held_wired_processor(tmp_path)
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-single", artist_name="Yan Qing",
+        album_title="the arrival",
+    )
+    _place(downloads, "A/track.flac")
+
+    result = await fp.process_downloaded(
+        _single_manifest(task.id, expected_duration=155.556, canonical=155.556)
+    )
+
+    assert result.failed and result.failed[0].reason == WRONG_TRACK
+    assert await store.list_held_imports("user-a", "user") == []
+
+
+# -- P2.5: usenet NULL-length singles - a tagged title must NAME the expected track --
+
+
+def _pair(tag_title, *, track_number=1):
+    from models.audio import AudioInfo, AudioTag
+    from services.native.file_processor import _FolderCandidate
+
+    tag = AudioTag(title=tag_title, artist="X", album="Y", track_number=track_number)
+    info = AudioInfo(
+        duration_seconds=0.0, bitrate=900, sample_rate=44100, channels=2,
+        file_format="flac", file_size_bytes=1,
+    )
+    return _FolderCandidate(Path(f"{track_number:02d} - file.flac"), tag, info)
+
+
+def test_pair_score_sole_track_null_length_requires_containment_title():
+    from services.native.file_processor import _pair_score
+
+    track = ExpectedTrack(track_number=1, title="the arrival")  # no MB length
+
+    # positional coincidence, tag names other content -> vetoed
+    assert _pair_score(_pair("Arrival in Ashford"), track, sole_track=True) is None
+    # correct tag -> matches
+    assert _pair_score(_pair("the arrival"), track, sole_track=True) is not None
+    # untagged falls through to the position match (D18)
+    assert _pair_score(_pair(""), track, sole_track=True) is not None
+    # multi-track releases keep today's looser semantics (the <50 veto only)
+    assert _pair_score(_pair("Arrival in Ashford"), track, sole_track=False) is not None
+
+
+# -- P4: position-dedup livelock fix (incident review R3) + row_covers_track --
+
+
+def _seed_library_row(db_path: Path, *, track_number, track_title, duration,
+                      recording_mbid=None, file_path="/lib/squatter.flac", rg="rg-single"):
+    import sqlite3 as _sqlite
+    import time as _time
+    import uuid as _uuid
+
+    conn = _sqlite.connect(db_path)
+    conn.execute(
+        """INSERT INTO library_files
+           (id, release_group_mbid, recording_mbid, disc_number, track_number,
+            track_title, album_title, file_path, file_size_bytes, file_mtime,
+            duration_seconds, file_format, source, imported_at)
+           VALUES (?, ?, ?, 1, ?, ?, 'the arrival', ?, 1, 0, ?, 'flac', 'download', ?)""",
+        (_uuid.uuid4().hex, rg, recording_mbid, track_number, track_title,
+         file_path, duration, _time.time()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_row_covers_track_table():
+    from services.native.file_processor import row_covers_track
+
+    expected = {"recording_mbid": "rec-1", "title": "the arrival", "duration_seconds": 155.556}
+    # recording identity decides when both sides know it
+    assert row_covers_track({"recording_mbid": "REC-1"}, **expected)
+    assert not row_covers_track({"recording_mbid": "rec-other"}, **expected)
+    # duration decides next
+    assert row_covers_track({"duration_seconds": 154.0}, **expected)
+    assert not row_covers_track({"duration_seconds": 137.24}, **expected)
+    # containment title decides next ("in ashford" is a different work)
+    assert row_covers_track({"track_title": "01 - the arrival"}, **expected | {"duration_seconds": None})
+    assert not row_covers_track(
+        {"track_title": "Arrival in Ashford"}, **expected | {"duration_seconds": None}
+    )
+    # nothing measurable on either side -> unknown, counts as covering (D18)
+    assert row_covers_track({}, recording_mbid=None, title=None, duration_seconds=None)
+
+
+@pytest.mark.asyncio
+async def test_wrong_squatter_does_not_swallow_correct_import(tmp_path: Path):
+    """R3 livelock regression: a wrong file squatting on the expected track's
+    position must NOT cause the verified new file to be unlinked as its
+    'duplicate'. The new file imports alongside; the squatter stays (D5)."""
+    fp, store, manager, downloads = _held_wired_processor(tmp_path)
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-single", artist_name="Radiohead",
+        album_title="the arrival",
+    )
+    _seed_library_row(
+        tmp_path / "library.db", track_number=1,
+        track_title="Arrival in Ashford", duration=137.24,
+    )
+    _place(downloads, "A/track.flac")  # the fixture: Airbag by Radiohead, track 1
+
+    manifest = DownloadManifest(
+        task_id=task.id, source_username="peer", release_group_mbid="rg-single",
+        artist_name="Radiohead", album_title="the arrival", naming_template=_TEMPLATE,
+        target_files=[ExpectedFile(filename="A/track.flac", size=1)],
+        expected_tracks=[ExpectedTrack(track_number=1, title="Airbag")],
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1
+    imported = Path(result.succeeded[0])
+    assert imported.exists()                      # the correct file LANDED
+    assert imported.name != "squatter.flac"       # alongside, not swallowed
+    rows = await manager.get_file_rows_for_album("rg-single")
+    paths = {r["file_path"] for r in rows}
+    assert "/lib/squatter.flac" in paths          # squatter kept for review (D5)
+    assert str(imported) in paths
+
+
+@pytest.mark.asyncio
+async def test_covering_occupant_still_dedupes(tmp_path: Path):
+    # The pre-existing dedup semantics are preserved when the occupying row IS the
+    # expected track (a flac-vs-mp3 / re-pull duplicate).
+    fp, store, manager, downloads = _held_wired_processor(tmp_path)
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-single", artist_name="Radiohead",
+        album_title="the arrival",
+    )
+    squatter = tmp_path / "library" / "existing.flac"
+    squatter.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(_FLAC, squatter)
+    _seed_library_row(
+        tmp_path / "library.db", track_number=1, track_title="Airbag",
+        duration=0.3, file_path=str(squatter),
+    )
+    _place(downloads, "A/track.flac")
+    manifest = DownloadManifest(
+        task_id=task.id, source_username="peer", release_group_mbid="rg-single",
+        artist_name="Radiohead", album_title="the arrival", naming_template=_TEMPLATE,
+        target_files=[ExpectedFile(filename="A/track.flac", size=1)],
+        expected_tracks=[ExpectedTrack(track_number=1, title="Airbag", duration_seconds=0.3)],
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert result.succeeded == [str(squatter)]    # kept the existing copy
+    assert not (downloads / "A/track.flac").exists()  # redundant source dropped
+
+
+# -- P7 (D7): real attribution confidence at import, on the scanner's scale --
+
+
+def _row_confidence(manager_db: Path, rg: str) -> float:
+    import sqlite3 as _sqlite
+
+    conn = _sqlite.connect(manager_db)
+    row = conn.execute(
+        "SELECT confidence FROM library_files WHERE release_group_mbid=? AND deleted_at IS NULL",
+        (rg,),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    return row[0]
+
+
+@pytest.mark.asyncio
+async def test_confidence_1_0_when_recording_tag_confirms(tmp_path: Path):
+    # the fixture carries musicbrainz_trackid rec-airbag-0001 - positive identity
+    fp, store, _manager, downloads = _held_wired_processor(tmp_path)
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-c1", artist_name="Radiohead",
+        album_title="OK Computer",
+    )
+    _place(downloads, "A/track.flac")
+    manifest = DownloadManifest(
+        task_id=task.id, source_username="peer", release_group_mbid="rg-c1",
+        artist_name="Radiohead", album_title="OK Computer", naming_template=_TEMPLATE,
+        target_files=[ExpectedFile(filename="A/track.flac", size=1)],
+        expected_tracks=[
+            ExpectedTrack(track_number=1, title="Airbag", recording_mbid="rec-airbag-0001")
+        ],
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1
+    assert _row_confidence(tmp_path / "library.db", "rg-c1") == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_confidence_0_9_when_canonical_duration_validated(tmp_path: Path):
+    fp, store, _manager, downloads = _held_wired_processor(tmp_path)
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-c2", artist_name="Radiohead",
+        album_title="the arrival",
+    )
+    _place(downloads, "A/track.flac")  # real duration ~0.3s
+    manifest = DownloadManifest(
+        task_id=task.id, source_username="peer", release_group_mbid="rg-c2",
+        artist_name="Radiohead", album_title="the arrival", naming_template=_TEMPLATE,
+        is_track=True,  # strict gate armed: duration IS the canonical length
+        target_files=[ExpectedFile(filename="A/track.flac", size=1, duration=0.3)],
+        expected_tracks=[
+            # no title (unknown) and a NON-matching recording MBID, so neither the
+            # 1.0 nor the 0.8 tier can fire - the canonical duration is the evidence
+            ExpectedTrack(track_number=1, title=None, recording_mbid="rec-none",
+                          duration_seconds=0.3)
+        ],
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1
+    assert _row_confidence(tmp_path / "library.db", "rg-c2") == pytest.approx(0.9)
+
+
+@pytest.mark.asyncio
+async def test_confidence_0_8_when_title_only_agrees(tmp_path: Path):
+    fp, store, _manager, downloads = _held_wired_processor(tmp_path)
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-c3", artist_name="Radiohead",
+        album_title="OK Computer",
+    )
+    _place(downloads, "A/track.flac")
+    manifest = DownloadManifest(
+        task_id=task.id, source_username="peer", release_group_mbid="rg-c3",
+        artist_name="Radiohead", album_title="OK Computer", naming_template=_TEMPLATE,
+        target_files=[ExpectedFile(filename="A/track.flac", size=1)],  # no canonical duration
+        expected_tracks=[
+            ExpectedTrack(track_number=1, title="Airbag", recording_mbid="rec-a-different-one")
+        ],
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1
+    assert _row_confidence(tmp_path / "library.db", "rg-c3") == pytest.approx(0.8)
+
+
+@pytest.mark.asyncio
+async def test_confidence_0_6_when_uncorroborated(tmp_path: Path):
+    # a plain multi-file album import: no expected track, no canonical duration -
+    # merely "didn't conflict" is not identity evidence
+    fp, store, _manager, downloads = _held_wired_processor(tmp_path)
+    task = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-c4", artist_name="Radiohead",
+        album_title="OK Computer",
+    )
+    _place(downloads, "A/track.flac")
+    manifest = DownloadManifest(
+        task_id=task.id, source_username="peer", release_group_mbid="rg-c4",
+        artist_name="Radiohead", album_title="OK Computer", naming_template=_TEMPLATE,
+        target_files=[ExpectedFile(filename="A/track.flac", size=1)],
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1
+    assert _row_confidence(tmp_path / "library.db", "rg-c4") == pytest.approx(0.6)
+
+
+@pytest.mark.asyncio
+async def test_import_anyway_stays_full_confidence(tmp_path: Path):
+    # D8: the human's decision outranks the heuristics - place_held_file stamps 1.0
+    from models.held_import import HeldImport
+
+    fp, store, manager, downloads = _held_wired_processor(tmp_path)
+    held_file = tmp_path / "held_src.flac"
+    shutil.copy(_FLAC, held_file)
+    held = HeldImport(
+        id=1, user_id="user-a", held_path=str(held_file), reason="tag_mismatch",
+        source="soulseek", status="held", created_at=0.0, release_group_mbid="rg-c5",
+        release_mbid=None, recording_mbid="rec-x", track_number=1, disc_number=1,
+        track_title="the arrival", artist_name="Yan Qing", album_title="the arrival",
+        year=2026, naming_template=_TEMPLATE, artist_mbid=None,
+    )
+
+    await fp.place_held_file(held)
+
+    assert _row_confidence(tmp_path / "library.db", "rg-c5") == pytest.approx(1.0)

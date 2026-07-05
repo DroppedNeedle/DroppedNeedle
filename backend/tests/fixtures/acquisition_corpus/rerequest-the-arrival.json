@@ -1,0 +1,250 @@
+{
+ "name": "rerequest-the-arrival",
+ "kind": "single",
+ "target": {
+  "artist_name": "Yan Qing",
+  "album_title": "the arrival",
+  "year": 2026,
+  "track_count": 1,
+  "track_title": "the arrival",
+  "duration_seconds": 155.556,
+  "recording_mbid": "180ceef5-acf5-4f36-8d45-fc3a1eafbf6a"
+ },
+ "groups": [
+  {
+   "username": "peer06",
+   "parent_directory": "Forrest Fang - 2026 - Radiance and the Receding Light - [Flac]\uff12",
+   "files": [
+    {
+     "username": "peer06",
+     "filename": "@@share\\FLACOLLECTION\\AMBIENT\\FORREST FANG\\Forrest Fang - 2026 - Radiance and the Receding Light - [Flac]\uff12\\07 - Arrival - The Waking Hour - Forrest Fang.flac",
+     "parent_directory": "Forrest Fang - 2026 - Radiance and the Receding Light - [Flac]\uff12",
+     "size": 50664692,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": null,
+     "sample_rate": null,
+     "duration": null,
+     "has_free_slot": true,
+     "upload_speed": 164927
+    }
+   ],
+   "original_final_score": 0.755,
+   "original_tier": "manual"
+  },
+  {
+   "username": "peer09",
+   "parent_directory": "Tuomas Kantelinen (2026) Orchestral Film Music vol.01 @flac",
+   "files": [
+    {
+     "username": "peer09",
+     "filename": "@@share\\MUSIC LIBRARY 1 (OST)\\ORCHESTRAL FILM MUSIC\\TUOMAS KANTELINEN\\Tuomas Kantelinen (2026) Orchestral Film Music vol.01 @flac\\10 - Iron Sky ~The Coming Race - The Arrival of Russian Refugees.flac",
+     "parent_directory": "Tuomas Kantelinen (2026) Orchestral Film Music vol.01 @flac",
+     "size": 3898006,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 16,
+     "sample_rate": 48000,
+     "duration": 34.0,
+     "has_free_slot": true,
+     "upload_speed": 984305
+    }
+   ],
+   "original_final_score": 0.75,
+   "original_tier": "manual"
+  },
+  {
+   "username": "peer02",
+   "parent_directory": "2026 Radiance and the Receding Light (WEB)",
+   "files": [
+    {
+     "username": "peer02",
+     "filename": "@@share\\#Ambient, Traditional Electronic#\\Forrest Fang FLAC\\Albums\\2026 Radiance and the Receding Light (WEB)\\07. Arrival - The Waking Hour.flac",
+     "parent_directory": "2026 Radiance and the Receding Light (WEB)",
+     "size": 50662661,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 16,
+     "sample_rate": 44100,
+     "duration": 561.0,
+     "has_free_slot": true,
+     "upload_speed": 658725
+    }
+   ],
+   "original_final_score": 0.75,
+   "original_tier": "manual"
+  },
+  {
+   "username": "peer10",
+   "parent_directory": "new lows 2026",
+   "files": [
+    {
+     "username": "peer10",
+     "filename": "@@share\\new lows 2026\\Disc 1\\04. The Arrival - Landing on Mars.flac",
+     "parent_directory": "new lows 2026",
+     "size": 33346995,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 16,
+     "sample_rate": 44100,
+     "duration": 441.0,
+     "has_free_slot": true,
+     "upload_speed": 406447
+    }
+   ],
+   "original_final_score": 0.75,
+   "original_tier": "manual"
+  },
+  {
+   "username": "peer03",
+   "parent_directory": "D.o.A. The Third and Final Report Of The Throbbing Gristle (1978)",
+   "files": [
+    {
+     "username": "peer03",
+     "filename": "@@share\\public\\2026-01_downloads\\D.o.A. The Third and Final Report Of The Throbbing Gristle (1978)\\05 Throbbing Gristle - Dead on Arrival.flac",
+     "parent_directory": "D.o.A. The Third and Final Report Of The Throbbing Gristle (1978)",
+     "size": 36925222,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 16,
+     "sample_rate": 44100,
+     "duration": 370.0,
+     "has_free_slot": true,
+     "upload_speed": 950344
+    }
+   ],
+   "original_final_score": 0.6277777777777778,
+   "original_tier": "manual"
+  },
+  {
+   "username": "peer04",
+   "parent_directory": "Radiance and the Receding Light - 2026",
+   "files": [
+    {
+     "username": "peer04",
+     "filename": "@@share\\Radiance and the Receding Light - 2026\\Forrest Fang - Radiance and the Receding Light - 08 Arrival - The Waking Hour.flac",
+     "parent_directory": "Radiance and the Receding Light - 2026",
+     "size": 50660784,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 16,
+     "sample_rate": 44100,
+     "duration": 561.0,
+     "has_free_slot": true,
+     "upload_speed": 525194
+    }
+   ],
+   "original_final_score": 0.6012820512820514,
+   "original_tier": "manual"
+  },
+  {
+   "username": "peer01",
+   "parent_directory": "Dan Romer - A Knight of the Seven Kingdoms (Season 1)_2026_FLAC 24bit-48kHz",
+   "files": [
+    {
+     "username": "peer01",
+     "filename": "@@share\\Fab \\Dan Romer\\Dan Romer - A Knight of the Seven Kingdoms (Season 1)_2026_FLAC 24bit-48kHz\\02. Arrival in Ashford.flac",
+     "parent_directory": "Dan Romer - A Knight of the Seven Kingdoms (Season 1)_2026_FLAC 24bit-48kHz",
+     "size": 26984685,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 24,
+     "sample_rate": 48000,
+     "duration": 137.0,
+     "has_free_slot": true,
+     "upload_speed": 3960986
+    }
+   ],
+   "original_final_score": 0.5998366013071895,
+   "original_tier": "manual"
+  },
+  {
+   "username": "peer11",
+   "parent_directory": "Dan Romer - A Knight of the Seven Kingdoms Season 1 (2025)\u2714",
+   "files": [
+    {
+     "username": "peer11",
+     "filename": "@@share\\290 MARSH 2026 (I)\\Dan Romer - A Knight of the Seven Kingdoms Season 1 (2025)\u2714\\02. Arrival in Ashford.flac",
+     "parent_directory": "Dan Romer - A Knight of the Seven Kingdoms Season 1 (2025)\u2714",
+     "size": 26556512,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": null,
+     "sample_rate": null,
+     "duration": null,
+     "has_free_slot": true,
+     "upload_speed": 18454248
+    }
+   ],
+   "original_final_score": 0.5879084967320262,
+   "original_tier": "manual"
+  },
+  {
+   "username": "peer05",
+   "parent_directory": "2026 - Forrest Fang - Radiance and the Receding Light  (flac)",
+   "files": [
+    {
+     "username": "peer05",
+     "filename": "@@share\\Electronic Music\\F\\Forrest Fang\\2026 - Forrest Fang - Radiance and the Receding Light  (flac)\\CD1\\07 Arrival - The Waking Hour.flac",
+     "parent_directory": "2026 - Forrest Fang - Radiance and the Receding Light  (flac)",
+     "size": 50662607,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 16,
+     "sample_rate": 44100,
+     "duration": 561.0,
+     "has_free_slot": true,
+     "upload_speed": 1152311
+    }
+   ],
+   "original_final_score": 0.55,
+   "original_tier": "manual"
+  },
+  {
+   "username": "peer07",
+   "parent_directory": "Devon Allman - Nightvision (2026) FLAC",
+   "files": [
+    {
+     "username": "peer07",
+     "filename": "@@share\\Soulseek Incoming\\2026\\06 - Juni\\Devon Allman\\Devon Allman - Nightvision (2026) FLAC\\03 - Arabia (Part II - The Arrival).flac",
+     "parent_directory": "Devon Allman - Nightvision (2026) FLAC",
+     "size": 19840251,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 16,
+     "sample_rate": 44100,
+     "duration": 195.0,
+     "has_free_slot": true,
+     "upload_speed": 1491844
+    }
+   ],
+   "original_final_score": 0.335,
+   "original_tier": "rejected"
+  },
+  {
+   "username": "peer08",
+   "parent_directory": "2011 - Dance Classics - New Jack Swing Vol. 4 [2CD]",
+   "files": [
+    {
+     "username": "peer08",
+     "filename": "@@share\\0000 Soulseek\\2026\\Dance Classics - New Jack Swing\\2011 - Dance Classics - New Jack Swing Vol. 4 [2CD]\\CD2\\208-r.j.s_latest_arrival-off_the_hook_(with_your_love).flac",
+     "parent_directory": "2011 - Dance Classics - New Jack Swing Vol. 4 [2CD]",
+     "size": 44900609,
+     "extension": "flac",
+     "bitrate": null,
+     "bit_depth": 16,
+     "sample_rate": 44100,
+     "duration": 371.0,
+     "has_free_slot": true,
+     "upload_speed": 82467
+    }
+   ],
+   "original_final_score": 0.16923076923076924,
+   "original_tier": "rejected"
+  }
+ ],
+ "expect": {
+  "no_auto": true,
+  "album_no_auto": true
+ }
+}

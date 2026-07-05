@@ -8,13 +8,13 @@ import pytest
 from fastapi import FastAPI, HTTPException
 
 from api.v1.routes.library import router
-from core.dependencies import get_library_manager, get_library_scanner
+from core.dependencies import get_album_service, get_library_manager, get_library_scanner
 from core.exceptions import ResourceNotFoundError
 from infrastructure.persistence.library_db import LibraryDB
-from middleware import _get_current_admin
+from middleware import _get_current_admin, _get_current_curator
 from models.audio import AudioInfo, AudioTag
 from services.native.library_manager import LibraryManager, LibraryTrack
-from tests.helpers import build_test_client, override_admin_auth, override_user_auth
+from tests.helpers import build_test_client, mock_user, override_admin_auth, override_user_auth
 
 
 @pytest.fixture
@@ -23,11 +23,23 @@ def manager(tmp_path) -> LibraryManager:
     return LibraryManager(db)
 
 
+def _passthrough_album_service():
+    """The status route's coverage annotation, stubbed to identity (P5)."""
+    svc = AsyncMock()
+
+    async def _annotate(mbid, status):
+        return status
+
+    svc.annotate_album_coverage = AsyncMock(side_effect=_annotate)
+    return svc
+
+
 @pytest.fixture
 def app(manager):
     application = FastAPI()
     application.include_router(router)
     application.dependency_overrides[get_library_manager] = lambda: manager
+    application.dependency_overrides[get_album_service] = _passthrough_album_service
     return application
 
 
@@ -308,3 +320,85 @@ def test_remove_album_succeeds_even_if_stopping_retries_fails(app):
     assert resp.status_code == 200
     assert resp.json()["success"] is True
     download_service.purge_album_downloads.assert_awaited_once_with("rg-ok")
+
+
+# -- P5: coverage fields on the wire + the orphan-remove endpoint --
+
+
+@pytest.mark.asyncio
+async def test_album_status_carries_coverage_fields(app, manager):
+    """The route hands the status through the AlbumService coverage annotation and
+    the enriched fields serialise onto the wire (drives the honest badge, the
+    matched-only Play All, and the orphan section)."""
+    await _seed_album(manager)
+
+    async def _annotate(mbid, status):
+        status.expected_tracks = 1
+        status.covered_tracks = 0
+        status.matched_file_ids = []
+        status.orphans = list(status.tracks)
+        return status
+
+    svc = AsyncMock()
+    svc.annotate_album_coverage = AsyncMock(side_effect=_annotate)
+    app.dependency_overrides[get_album_service] = lambda: svc
+    override_user_auth(app, role="user")
+    client = build_test_client(app)
+
+    body = client.get("/library/albums/rg-ok/status").json()
+
+    assert body["expected_tracks"] == 1
+    assert body["covered_tracks"] == 0
+    assert body["matched_file_ids"] == []
+    assert len(body["orphans"]) == 1
+    assert body["orphans"][0]["track_title"] == "Airbag"
+
+
+def _remove_app(service=None, *, curator=True):
+    from core.dependencies import get_library_service as _get_lib_svc
+
+    application = FastAPI()
+    application.include_router(router)
+    if service is not None:
+        application.dependency_overrides[_get_lib_svc] = lambda: service
+    override_user_auth(application, role="user")
+    if curator:
+        application.dependency_overrides[_get_current_curator] = lambda: mock_user(
+            role="trusted", user_id="cur-1"
+        )
+    return application
+
+
+def test_remove_track_requires_curator():
+    # auth matrix: plain user (no curator/admin) never reaches the service
+    service = AsyncMock()
+    client = build_test_client(_remove_app(service, curator=False))
+    resp = client.delete("/library/tracks/file-1")
+    assert resp.status_code in (401, 403)
+    service.remove_file.assert_not_called()
+
+
+def test_remove_track_unauthenticated_401():
+    application = FastAPI()
+    application.include_router(router)
+    client = build_test_client(application)
+    assert client.delete("/library/tracks/file-1").status_code == 401
+
+
+def test_remove_track_curator_ok():
+    from api.v1.schemas.common import StatusMessageResponse
+
+    service = AsyncMock()
+    service.remove_file.return_value = StatusMessageResponse(status="ok", message="File removed")
+    client = build_test_client(_remove_app(service))
+    resp = client.delete("/library/tracks/file-1")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    service.remove_file.assert_awaited_once_with("file-1")
+
+
+def test_remove_track_missing_404():
+    service = AsyncMock()
+    service.remove_file.side_effect = ResourceNotFoundError("Library file not found")
+    client = build_test_client(_remove_app(service))
+    assert client.delete("/library/tracks/nope").status_code == 404
