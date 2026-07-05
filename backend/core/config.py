@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     cache_dir: Path = Field(default=Path("/app/cache"), description="Root directory for all cache files")
     library_db_path: Path = Field(default=Path("/app/cache/library.db"), description="SQLite library database path")
     cover_cache_max_size_mb: int = Field(default=500, description="Maximum cover cache size in MB")
+    trusted_proxy_ips: str = Field(
+        default="*",
+        description="Comma-separated IPs/CIDRs trusted as reverse proxies for X-Forwarded-* headers. Use '*' to trust all (default, safe behind a single-host Docker setup). Restrict to your proxy's IP in production.",
+    )
     slskd_downloads_path: Path = Field(
         default=Path("/data/downloads/slskd"),
         description="Mounted slskd downloads directory (read-write, same filesystem as the library); import source for completed downloads.",

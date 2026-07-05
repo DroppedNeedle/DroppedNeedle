@@ -19,6 +19,7 @@ services:
       - PORT=8688            # Must match the container-side port under "ports" below.
       - TZ=Etc/UTC           # e.g. America/New_York, Europe/London
       - SLSKD_DOWNLOADS_PATH=/slskd-downloads  # container path of the slskd downloads mount below
+      # - TRUSTED_PROXY_IPS=172.17.0.1  # IP of your reverse proxy (nginx, Traefik, etc.). Defaults to * (trust all), which is fine for single-host Docker setups.
     ports:
       - "8688:8688"          # host:container. Change the left side to use a different host port.
     volumes:

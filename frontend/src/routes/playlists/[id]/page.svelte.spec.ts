@@ -35,7 +35,8 @@ vi.mock('$lib/api/playlists', () => ({
 	uploadPlaylistCover: (...args: unknown[]) => mockUploadPlaylistCover(...args),
 	deletePlaylistCover: (...args: unknown[]) => mockDeletePlaylistCover(...args),
 	checkTrackMembership: (...args: unknown[]) => mockCheckTrackMembership(...args),
-	resolvePlaylistSources: (...args: unknown[]) => mockResolvePlaylistSources(...args)
+	resolvePlaylistSources: (...args: unknown[]) => mockResolvePlaylistSources(...args),
+	requestMissingTracks: vi.fn()
 }));
 
 // The detail page consumes the user-scoped TanStack detail query + share mutation;

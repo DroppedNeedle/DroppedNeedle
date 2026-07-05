@@ -614,6 +614,18 @@ def get_per_user_client_factory() -> "PerUserClientFactory":
 
 
 @singleton
+def get_spotify_import_service() -> "SpotifyImportService":
+    from services.spotify_import_service import SpotifyImportService
+
+    return SpotifyImportService(
+        client_factory=get_per_user_client_factory(),
+        playlist_repo=get_playlist_repository(),
+        mb_repo=get_musicbrainz_repository(),
+        playlist_service=get_playlist_service(),
+    )
+
+
+@singleton
 def get_scrobble_service() -> "ScrobbleService":
     from services.scrobble_service import ScrobbleService
 

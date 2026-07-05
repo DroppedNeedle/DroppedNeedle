@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import {
 		deletePlaylist,
 		resolvePlaylistSources,
+		requestMissingTracks,
 		isRedactedPlaylist,
 		type PlaylistDetail,
 		type PlaylistDetailItem,
@@ -20,7 +22,7 @@
 	import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import { getApiUrl } from '$lib/api/api-utils';
-	import { Music, Lock } from 'lucide-svelte';
+	import { Music, Lock, Download, Loader2 } from 'lucide-svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import type { PageData } from './$types';
@@ -59,6 +61,32 @@
 
 	let isOwner = $derived(playlist?.is_owner ?? false);
 	let canDelete = $derived((playlist?.is_owner ?? false) || authStore.isAdmin);
+
+	let missingAlbumCount = $derived.by(() => {
+		if (!playlist) return 0;
+		const seen = new SvelteSet<string>();
+		for (const t of playlist.tracks) {
+			if (t.album_id && (!t.available_sources || t.available_sources.length === 0)) {
+				seen.add(t.album_id);
+			}
+		}
+		return seen.size;
+	});
+
+	let requesting = $state(false);
+
+	async function handleRequestMissing() {
+		if (requesting || !playlist) return;
+		requesting = true;
+		try {
+			const result = await requestMissingTracks(playlist.id);
+			toastStore.show({ message: result.message, type: 'success' });
+		} catch {
+			toastStore.show({ message: "Couldn't submit requests", type: 'error' });
+		} finally {
+			requesting = false;
+		}
+	}
 
 	// Source-resolution cache is namespaced per user so two accounts on a shared
 	// browser never read each other's resolved sources (AMU-5).
@@ -345,6 +373,30 @@
 					/>
 				</div>
 			</div>
+
+			{#if isOwner && missingAlbumCount > 0}
+				<div
+					class="flex items-center gap-3 rounded-xl border border-base-300/40 bg-base-200/40 px-4 py-3"
+				>
+					<Download class="h-4 w-4 shrink-0 text-base-content/50" />
+					<p class="flex-1 text-sm text-base-content/70">
+						{missingAlbumCount}
+						{missingAlbumCount === 1 ? 'album' : 'albums'} not in your library
+					</p>
+					<button
+						class="btn btn-accent btn-sm"
+						onclick={() => void handleRequestMissing()}
+						disabled={requesting}
+					>
+						{#if requesting}
+							<Loader2 class="h-3.5 w-3.5 animate-spin" />
+						{:else}
+							<Download class="h-3.5 w-3.5" />
+						{/if}
+						Request {missingAlbumCount === 1 ? 'album' : missingAlbumCount + ' albums'}
+					</button>
+				</div>
+			{/if}
 
 			<PlaylistTrackList
 				bind:this={trackList}

@@ -27,9 +27,12 @@ const VOLUME_KEY = 'droppedneedle_sampler_volume';
 const STATION_CLIPS_PER_ALBUM = 2;
 
 function storedVolume(): number {
-	if (typeof localStorage === 'undefined') return 0.7;
-	const raw = Number(localStorage.getItem(VOLUME_KEY));
-	return Number.isFinite(raw) && raw > 0 && raw <= 1 ? raw : 0.7;
+	try {
+		const raw = Number(localStorage.getItem(VOLUME_KEY));
+		return Number.isFinite(raw) && raw > 0 && raw <= 1 ? raw : 0.7;
+	} catch {
+		return 0.7;
+	}
 }
 
 export type SamplerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
@@ -352,8 +355,10 @@ function createDeckSampler() {
 		setVolume(v: number): void {
 			volume = Math.min(1, Math.max(0, v));
 			if (activeEl) activeEl.volume = volume;
-			if (typeof localStorage !== 'undefined') {
+			try {
 				localStorage.setItem(VOLUME_KEY, String(volume));
+			} catch {
+				/* ignore */
 			}
 		},
 

@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import msgspec
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from api.v1.schemas.settings import (
     UserPreferences,
     LibrarySyncSettings,
@@ -26,6 +26,8 @@ from api.v1.schemas.settings import (
     OIDCConnectionSettings,
     LibrarySettings,
     LibraryPathRequest,
+    SpotifySettings,
+    HomeSettings,
     ACOUSTID_KEY_MASK,
 )
 from api.v1.schemas.plex import PlexLibrarySectionInfo
@@ -38,7 +40,7 @@ from core.dependencies import (
 )
 from services.oidc_user_auth_service import OIDCUserAuthService
 from core.exceptions import ConfigurationError
-from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
+from infrastructure.msgspec_fastapi import AppStruct, MsgSpecBody, MsgSpecRoute
 from middleware import CurrentAdminDep
 from services.preferences_service import PreferencesService
 from services.settings_service import SettingsService
@@ -421,6 +423,59 @@ async def verify_youtube_connection(
 ):
     result = await settings_service.verify_youtube(settings)
     return VerifyConnectionResponse(valid=result.valid, message=result.message)
+
+
+@router.get("/spotify", response_model=SpotifySettings, dependencies=[Depends(_admin_guard)])
+async def get_spotify_settings(
+    preferences_service: PreferencesService = Depends(get_preferences_service),
+):
+    return preferences_service.get_spotify_settings()
+
+
+@router.put("/spotify", response_model=SpotifySettings, dependencies=[Depends(_admin_guard)])
+async def update_spotify_settings(
+    settings: SpotifySettings = MsgSpecBody(SpotifySettings),
+    preferences_service: PreferencesService = Depends(get_preferences_service),
+):
+    preferences_service.save_spotify_settings(settings)
+    return preferences_service.get_spotify_settings()
+
+
+class SpotifyRedirectUriResponse(AppStruct):
+    redirect_uri: str
+
+
+@router.get(
+    "/spotify/redirect-uri",
+    response_model=SpotifyRedirectUriResponse,
+    dependencies=[Depends(_admin_guard)],
+)
+async def get_spotify_redirect_uri(request: Request) -> SpotifyRedirectUriResponse:
+    redirect_uri = str(request.base_url).rstrip("/") + "/api/v1/me/connections/spotify/auth/callback"
+    return SpotifyRedirectUriResponse(redirect_uri=redirect_uri)
+
+
+@router.get("/home", response_model=HomeSettings, dependencies=[Depends(_admin_guard)])
+async def get_home_settings(
+    preferences_service: PreferencesService = Depends(get_preferences_service),
+):
+    return preferences_service.get_home_settings()
+
+
+@router.put("/home", response_model=HomeSettings, dependencies=[Depends(_admin_guard)])
+async def update_home_settings(
+    settings: HomeSettings = MsgSpecBody(HomeSettings),
+    preferences_service: PreferencesService = Depends(get_preferences_service),
+    settings_service: SettingsService = Depends(get_settings_service),
+):
+    try:
+        preferences_service.save_home_settings(settings)
+        await settings_service.clear_home_cache()
+        return settings
+    except ConfigurationError as e:
+        logger.warning(f"Configuration error updating home settings: {e}")
+        raise HTTPException(status_code=400, detail="Home settings are incomplete or invalid")
+
 
 
 @router.get("/lastfm", response_model=LastFmConnectionSettingsResponse)

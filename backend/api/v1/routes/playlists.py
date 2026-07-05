@@ -1,4 +1,4 @@
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from api.v1.schemas.common import StatusMessageResponse
@@ -22,7 +22,8 @@ from api.v1.schemas.playlists import (
     UpdatePlaylistRequest,
     UpdateTrackRequest,
 )
-from core.dependencies import JellyfinLibraryServiceDep, LocalFilesServiceDep, NavidromeLibraryServiceDep, PlexLibraryServiceDep, PlaylistServiceDep
+from api.v1.schemas.request import BatchRequestResponse
+from core.dependencies import JellyfinLibraryServiceDep, LocalFilesServiceDep, NavidromeLibraryServiceDep, PlexLibraryServiceDep, PlaylistServiceDep, get_request_service
 from core.dependencies.type_aliases import CurrentUserDep
 from core.exceptions import PlaylistNotFoundError
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
@@ -405,3 +406,49 @@ async def remove_cover(
 ) -> StatusMessageResponse:
     await service.remove_cover(playlist_id, current_user)
     return StatusMessageResponse(status="ok", message="Cover removed")
+
+
+@router.post(
+    "/{playlist_id}/request-missing",
+    response_model=BatchRequestResponse,
+    status_code=202,
+)
+async def request_missing_tracks(
+    playlist_id: str,
+    service: PlaylistServiceDep,
+    current_user: CurrentUserDep,
+    request_service=Depends(get_request_service),
+) -> BatchRequestResponse:
+    result = await service.get_playlist_with_tracks(playlist_id, current_user)
+    if isinstance(result, RedactedDetailView):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    seen: set[str] = set()
+    items: list[dict] = []
+    for track in result.tracks:
+        mbid = track.album_id
+        if not mbid or mbid in seen:
+            continue
+        if track.available_sources and len(track.available_sources) > 0:
+            continue
+        seen.add(mbid)
+        items.append(
+            {
+                "musicbrainz_id": mbid,
+                "artist_name": track.artist_name or "Unknown",
+                "album_title": track.album_name or "Unknown",
+            }
+        )
+
+    if not items:
+        return BatchRequestResponse(
+            success=True,
+            message="No missing albums found, all tracks already have a source",
+        )
+
+    return await request_service.request_batch(
+        items=items,
+        user_id=current_user.id,
+        user_role=current_user.role,
+        requested_by_name=current_user.display_name,
+    )

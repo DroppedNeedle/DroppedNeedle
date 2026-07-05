@@ -140,6 +140,12 @@ class AuthStore:
                     expires_at TEXT NOT NULL,
                     code_verifier TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS spotify_oauth_states (
+                    state TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                );
             """)
             # Migration: add code_verifier (PKCE) to pre-existing auth_oidc_states.
             have = {row[1] for row in conn.execute("PRAGMA table_info(auth_oidc_states)")}
@@ -681,6 +687,34 @@ class AuthStore:
                 return False, None
             conn.execute("DELETE FROM auth_oidc_states WHERE state = ?", (state,))
             return True, row["code_verifier"]
+
+        return await self._write(operation)
+
+    async def store_spotify_state(self, state: str, user_id: str, ttl_seconds: int = 600) -> None:
+        now = _now_iso()
+        expiry = (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)).isoformat()
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.execute("DELETE FROM spotify_oauth_states WHERE expires_at < ?", (now,))
+            conn.execute(
+                "INSERT INTO spotify_oauth_states (state, user_id, expires_at) VALUES (?, ?, ?)",
+                (state, user_id, expiry),
+            )
+
+        await self._write(operation)
+
+    async def consume_spotify_state(self, state: str) -> str | None:
+        now = _now_iso()
+
+        def operation(conn: sqlite3.Connection) -> str | None:
+            row = conn.execute(
+                "SELECT user_id FROM spotify_oauth_states WHERE state = ? AND expires_at > ?",
+                (state, now),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute("DELETE FROM spotify_oauth_states WHERE state = ?", (state,))
+            return row["user_id"]
 
         return await self._write(operation)
 

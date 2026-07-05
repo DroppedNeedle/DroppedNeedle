@@ -6,5 +6,6 @@ export const CONNECTIONS_ENDPOINTS = {
 	connection: (service: string) => API.me.connection(service),
 	lastfmAuthToken: API.me.lastfmAuthToken(),
 	lastfmAuthSession: API.me.lastfmAuthSession(),
-	listenbrainz: API.me.listenbrainz()
+	listenbrainz: API.me.listenbrainz(),
+	spotifyAuthUrl: API.me.spotifyAuthUrl()
 } as const;

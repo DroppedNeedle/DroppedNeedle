@@ -20,6 +20,9 @@ vi.mock('$lib/queries/playlists/PlaylistQuery.svelte', () => ({
 vi.mock('$lib/queries/playlists/PlaylistMutations.svelte', () => ({
 	createCreatePlaylistMutation: () => ({ mutateAsync: mockMutateAsync, isPending: false })
 }));
+vi.mock('$lib/queries/connections/ConnectionsQuery.svelte', () => ({
+	getConnectionsQuery: () => ({ data: undefined, isPending: false })
+}));
 
 // PlaylistCard pulls these in; the list tests never trigger them.
 vi.mock('$lib/api/playlists', async (importOriginal) => ({

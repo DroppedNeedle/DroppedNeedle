@@ -1620,8 +1620,6 @@ async def test_reimport_task_rejects_wrong_status(tmp_path: Path):
         await orch.reimport_task(task.id)
 
 
-# The admin gate now lives at the route (CurrentAdminDep), not the service - see the
-# route test and the security auth-matrix. The service only rejects a missing task.
 @pytest.mark.asyncio
 async def test_reimport_task_rejects_missing_task(tmp_path: Path):
     store, orch, *_ = _build(tmp_path)

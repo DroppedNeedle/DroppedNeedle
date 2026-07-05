@@ -188,7 +188,7 @@ def test_disconnect(ctx):
 
 
 def test_disconnect_unknown_service_404(ctx):
-    resp = ctx.client.delete("/me/connections/spotify")
+    resp = ctx.client.delete("/me/connections/unknown_service")
     assert resp.status_code == 404
 
 

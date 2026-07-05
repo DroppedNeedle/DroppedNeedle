@@ -8,12 +8,19 @@
 	} from '$lib/api/playlists';
 	import { toastStore } from '$lib/stores/toast';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
 	import { getPlaylistListQuery } from '$lib/queries/playlists/PlaylistQuery.svelte';
 	import { createCreatePlaylistMutation } from '$lib/queries/playlists/PlaylistMutations.svelte';
 	import { ListMusic, Plus, Lock } from 'lucide-svelte';
+	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
 	import PlaylistCard from '$lib/components/PlaylistCard.svelte';
 	import RedactedPlaylistCard from '$lib/components/RedactedPlaylistCard.svelte';
 	import PlaylistCardSkeleton from '$lib/components/PlaylistCardSkeleton.svelte';
+
+	const connectionsQuery = getConnectionsQuery();
+	const spotifyLinked = $derived(
+		connectionsQuery.data?.connections.some((c) => c.service === 'spotify') ?? false
+	);
 
 	const query = getPlaylistListQuery(() => authStore.isAuthenticated);
 	const createMutation = createCreatePlaylistMutation();
@@ -78,17 +85,28 @@
 </svelte:head>
 
 <div class="space-y-6 px-4 sm:px-6 lg:px-8">
-	<div class="flex items-center justify-between">
+	<div class="flex items-center justify-between gap-3">
 		<h1 class="text-2xl font-bold sm:text-3xl">Playlists</h1>
-		<button
-			class="btn btn-accent btn-sm"
-			onclick={() => {
-				showNewInput = true;
-			}}
-		>
-			<Plus class="h-4 w-4" />
-			New Playlist
-		</button>
+		<div class="flex items-center gap-2">
+			{#if spotifyLinked}
+				<a
+					href="/playlists/spotify"
+					class="btn btn-sm gap-1.5 bg-green-600 text-white hover:bg-green-500"
+				>
+					<SpotifyIcon class="h-3.5 w-3.5" />
+					Import from Spotify
+				</a>
+			{/if}
+			<button
+				class="btn btn-accent btn-sm"
+				onclick={() => {
+					showNewInput = true;
+				}}
+			>
+				<Plus class="h-4 w-4" />
+				New Playlist
+			</button>
+		</div>
 	</div>
 
 	{#if showNewInput}

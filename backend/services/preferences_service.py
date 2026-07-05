@@ -34,6 +34,8 @@ from api.v1.schemas.settings import (
     DownloadPolicySettings,
     NewznabIndexerSettings,
     SabnzbdConnectionSettings,
+    SpotifySettings,
+    SPOTIFY_SECRET_MASK,
     DEFAULT_NAMING_TEMPLATE,
 )
 from api.v1.schemas.advanced_settings import AdvancedSettings
@@ -693,6 +695,47 @@ class PreferencesService:
     def is_lastfm_enabled(self) -> bool:
         settings = self.get_lastfm_connection()
         return settings.enabled and bool(settings.api_key) and bool(settings.shared_secret)
+
+    def get_spotify_settings(self) -> SpotifySettings:
+        config = self._load_config()
+        data = config.get("spotify_settings", {})
+        client_secret = self._read_secret(("spotify_settings", "client_secret"), data.get("client_secret", ""))
+        return SpotifySettings(
+            client_id=data.get("client_id", ""),
+            client_secret=SPOTIFY_SECRET_MASK if client_secret else "",
+            enabled=data.get("enabled", False),
+        )
+
+    def get_spotify_settings_raw(self) -> SpotifySettings:
+        config = self._load_config()
+        data = config.get("spotify_settings", {})
+        client_secret = self._read_secret(("spotify_settings", "client_secret"), data.get("client_secret", ""))
+        return SpotifySettings(
+            client_id=data.get("client_id", ""),
+            client_secret=client_secret,
+            enabled=data.get("enabled", False),
+        )
+
+    def save_spotify_settings(self, settings: SpotifySettings) -> None:
+        try:
+            current_raw = self.get_spotify_settings_raw()
+            client_secret = settings.client_secret
+            if client_secret == SPOTIFY_SECRET_MASK:
+                client_secret = current_raw.client_secret
+            config = self._load_config().copy()
+            config["spotify_settings"] = {
+                "client_id": settings.client_id.strip(),
+                "client_secret": encrypt(client_secret) if client_secret else "",
+                "enabled": settings.enabled,
+            }
+            self._save_config(config)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to save Spotify settings: {e}")
+            raise ConfigurationError("Failed to save Spotify settings")
+
+    def is_spotify_enabled(self) -> bool:
+        raw = self.get_spotify_settings_raw()
+        return raw.enabled and bool(raw.client_id) and bool(raw.client_secret)
 
     def _library_settings_section(self) -> LibrarySettings:
         """Decoded library_settings section, seeding library_paths once from the

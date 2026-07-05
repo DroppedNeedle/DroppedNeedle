@@ -1094,6 +1094,30 @@ export type LastFmConnectionSettingsResponse = {
 	enabled: boolean;
 };
 
+export type SpotifySettings = {
+	client_id: string;
+	client_secret: string;
+	enabled: boolean;
+};
+
+export type SpotifyPlaylistItem = {
+	id: string;
+	name: string;
+	description: string;
+	track_count: number;
+	cover_url: string | null;
+	owner: string;
+	imported_playlist_id: string | null;
+};
+
+export type SpotifyPlaylistListResponse = {
+	playlists: SpotifyPlaylistItem[];
+};
+
+export type SpotifyImportResponse = {
+	playlist_id: string;
+};
+
 export type ScrobbleSettings = {
 	scrobble_to_lastfm: boolean;
 	scrobble_to_listenbrainz: boolean;

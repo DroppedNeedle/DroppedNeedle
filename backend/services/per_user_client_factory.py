@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 _LISTENBRAINZ = "listenbrainz"
 _LASTFM = "lastfm"
+_SPOTIFY = "spotify"
 
 
 class PerUserClientFactory:
@@ -119,3 +120,40 @@ class PerUserClientFactory:
             return False
         lf = self._preferences_service.get_lastfm_connection()
         return bool(lf.api_key and lf.shared_secret)
+
+    async def resolve_spotify(self, user_id: str) -> "SpotifyClient | None":
+        data = await self._connections_store.get(user_id, _SPOTIFY)
+        if not data:
+            return None
+        access_token = data.get("access_token", "")
+        refresh_token = data.get("refresh_token", "")
+        if not access_token and not refresh_token:
+            return None
+        settings = self._preferences_service.get_spotify_settings_raw()
+        if not settings.client_id or not settings.client_secret:
+            return None
+
+        from services.spotify_client import SpotifyClient
+
+        return SpotifyClient(
+            client_id=settings.client_id,
+            client_secret=settings.client_secret,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=data.get("expires_at", ""),
+            user_id=user_id,
+            connections_store=self._connections_store,
+            spotify_user_id=data.get("spotify_user_id", ""),
+        )
+
+    async def is_spotify_linked(self, user_id: str) -> bool:
+        data = await self._connections_store.get(user_id, _SPOTIFY)
+        if not data:
+            return False
+        settings = self._preferences_service.get_spotify_settings_raw()
+        return bool(
+            settings.enabled
+            and settings.client_id
+            and settings.client_secret
+            and (data.get("access_token") or data.get("refresh_token"))
+        )

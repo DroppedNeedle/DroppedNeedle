@@ -37,3 +37,7 @@ class ScrobblePreferencesUpdate(AppStruct):
 class ListenBrainzConnectRequest(AppStruct):
     user_token: str
     username: str = ""
+
+
+class SpotifyAuthUrlResponse(AppStruct):
+    auth_url: str
