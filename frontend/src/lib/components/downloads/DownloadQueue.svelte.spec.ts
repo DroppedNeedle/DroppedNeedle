@@ -143,10 +143,10 @@ describe('DownloadQueue.svelte', () => {
 		await expect.element(page.getByText('In Rainbows').first()).toBeVisible();
 	});
 
-	it('shows a scheduled-retry album in the Wanted section with its ladder and countdown', async () => {
+	it('shows a scheduled-retry album in the Still hunting section with its ladder and countdown', async () => {
 		h.items = [wanted()];
 		render(DownloadQueue);
-		await expect.element(page.getByRole('heading', { name: /Wanted/ })).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: /Still hunting/ })).toBeVisible();
 		await expect.element(page.getByText('Kid A').first()).toBeVisible();
 		await expect.element(page.getByText(/retry 2 of 6/)).toBeVisible();
 		// the next-attempt countdown ("10:00") and a ladder rung
@@ -157,7 +157,7 @@ describe('DownloadQueue.svelte', () => {
 		h.items = [task({ id: 'a', status: 'downloading' }), wanted()];
 		render(DownloadQueue);
 		await expect.element(page.getByText('spinning').first()).toBeVisible();
-		await expect.element(page.getByText('wanted').first()).toBeVisible();
+		await expect.element(page.getByText('still hunting').first()).toBeVisible();
 	});
 
 	it('collapses terminal downloads into an expandable History section', async () => {

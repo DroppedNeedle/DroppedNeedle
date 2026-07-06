@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, untrack } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { page } from '$app/state';
 	import { fade, fly } from 'svelte/transition';
 	import RequestCard from '$lib/components/RequestCard.svelte';
@@ -13,6 +14,7 @@
 		Clock,
 		Download,
 		History,
+		Radar,
 		Search,
 		ShieldCheck,
 		Check,
@@ -21,6 +23,15 @@
 		Sparkles,
 		TrendingUp
 	} from 'lucide-svelte';
+	import WantedWatchCard from '$lib/components/WantedWatchCard.svelte';
+	import WantedRetryingCard from '$lib/components/WantedRetryingCard.svelte';
+	import { getWantedWatchesQuery } from '$lib/queries/wanted/WantedQuery.svelte';
+	import {
+		createStopWatchMutation,
+		createResumeWatchMutation,
+		createMarkWantedSeenMutation
+	} from '$lib/queries/wanted/WantedMutations.svelte';
+	import type { WantedWatchItem } from '$lib/queries/wanted/types';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import {
 		fetchActiveRequests,
@@ -52,8 +63,51 @@
 	} from '$lib/queries/downloads/UpgradeQueries.svelte';
 	import { QUALITY_TIERS } from '$lib/components/settings/qualityTiers';
 
-	type RequestsTab = 'active' | 'history' | 'approvals' | 'auto-download' | 'upgrades';
+	type RequestsTab = 'active' | 'history' | 'wanted' | 'approvals' | 'auto-download' | 'upgrades';
 	let activeTab = $state<RequestsTab>('active');
+
+	// Wanted watches (availability re-search). TanStack per current convention;
+	// fetched on the Wanted tab AND on History (whose failed rows show a
+	// still-hunting/watchlist chip), refreshed by the wanted_* SSE events.
+	const wantedQuery = getWantedWatchesQuery(
+		() => activeTab === 'wanted' || activeTab === 'history'
+	);
+	const wantedItems = $derived(wantedQuery.data?.items ?? []);
+	const wantedRetrying = $derived(wantedQuery.data?.retrying ?? []);
+	const wantedActiveCount = $derived(
+		wantedItems.filter((i) => i.state === 'watching' || i.state === 'dormant').length +
+			wantedRetrying.length
+	);
+	// mbid (lowercased) -> chip state for History rows: a terminal-looking request
+	// that's actually still being worked on must never read as dead
+	const wantedStates = $derived.by(() => {
+		const map = new SvelteMap<string, 'retrying' | 'watching'>();
+		for (const entry of wantedRetrying) {
+			map.set(entry.release_group_mbid.toLowerCase(), 'retrying');
+		}
+		for (const watch of wantedItems) {
+			if (watch.state === 'watching' || watch.state === 'dormant') {
+				map.set(watch.release_group_mbid.toLowerCase(), 'watching');
+			}
+		}
+		return map;
+	});
+	const stopWatch = createStopWatchMutation();
+	const resumeWatch = createResumeWatchMutation();
+	const markWantedSeen = createMarkWantedSeenMutation();
+	const wantedBusy = $derived(stopWatch.isPending || resumeWatch.isPending);
+
+	function handleWantedStop(item: WantedWatchItem) {
+		stopWatch.mutate({ mbid: item.release_group_mbid, albumTitle: item.album_title });
+	}
+
+	function handleWantedResume(item: WantedWatchItem) {
+		resumeWatch.mutate({ mbid: item.release_group_mbid, albumTitle: item.album_title });
+	}
+
+	function handleWantedSeen(item: WantedWatchItem) {
+		markWantedSeen.mutate({ mbid: item.release_group_mbid, albumTitle: item.album_title });
+	}
 
 	// Cutoff-unmet worklist (admin/trusted curators, CollectionManagement D7/D18).
 	const cutoffUnmetQuery = getCutoffUnmetQuery(
@@ -420,6 +474,8 @@
 		const tabParam = page.url.searchParams.get('tab');
 		if (tabParam === 'approvals' && authStore.isAdmin) {
 			switchTab('approvals');
+		} else if (tabParam === 'wanted') {
+			switchTab('wanted');
 		} else {
 			startPolling();
 			if (authStore.isAdmin) void loadApprovals();
@@ -434,12 +490,14 @@
 			tabSyncReady = true;
 			return;
 		}
-		const target: 'active' | 'history' | 'approvals' =
+		const target: 'active' | 'history' | 'wanted' | 'approvals' =
 			tabParam === 'approvals' && authStore.isAdmin
 				? 'approvals'
 				: tabParam === 'history'
 					? 'history'
-					: 'active';
+					: tabParam === 'wanted'
+						? 'wanted'
+						: 'active';
 		if (untrack(() => activeTab) !== target) {
 			switchTab(target);
 		}
@@ -458,7 +516,9 @@
 	<div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
 		<div>
 			<h1 class="text-2xl sm:text-3xl font-bold text-base-content">Requests</h1>
-			<p class="text-base-content/50 text-sm mt-0.5">Track your album requests and downloads</p>
+			<p class="text-base-content/50 text-sm mt-0.5">
+				What you've asked for and where each one stands
+			</p>
 		</div>
 		{#if activeCount > 0}
 			<div class="flex items-center gap-3 text-xs text-base-content/50">
@@ -478,7 +538,10 @@
 		{/if}
 	</div>
 
-	<div class="flex items-center gap-1 mb-6 border-b border-base-content/5 pb-px" role="tablist">
+	<div
+		class="flex items-center gap-1 mb-6 border-b border-base-content/5 pb-px overflow-x-auto"
+		role="tablist"
+	>
 		<button
 			role="tab"
 			class="tab-btn"
@@ -513,6 +576,23 @@
 					class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-base-content/8 text-base-content/50 text-xs font-medium tabular-nums"
 				>
 					{historyTotal}
+				</span>
+			{/if}
+		</button>
+		<button
+			role="tab"
+			class="tab-btn"
+			class:tab-btn-active={activeTab === 'wanted'}
+			aria-selected={activeTab === 'wanted'}
+			onclick={() => switchTab('wanted')}
+		>
+			<Radar class="h-4 w-4" />
+			Wanted
+			{#if wantedActiveCount > 0}
+				<span
+					class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-base-content/8 text-base-content/50 text-xs font-medium tabular-nums"
+				>
+					{wantedActiveCount}
 				</span>
 			{/if}
 		</button>
@@ -716,6 +796,9 @@
 						<RequestCard
 							{item}
 							mode="history"
+							watchState={['failed', 'incomplete', 'cancelled'].includes(item.status)
+								? wantedStates.get(item.musicbrainz_id.toLowerCase())
+								: undefined}
 							onretry={authStore.isAdmin || item.user_id === authStore.user?.id
 								? handleRetry
 								: undefined}
@@ -735,6 +818,86 @@
 						/>
 					</div>
 				{/if}
+			{/if}
+		</div>
+	{:else if activeTab === 'wanted'}
+		<div in:fade={{ duration: 150 }}>
+			{#if wantedQuery.isError}
+				<div class="alert alert-warning mb-4">
+					<TriangleAlert class="h-5 w-5" />
+					<span>Could not load the watchlist.</span>
+					<button class="btn btn-sm" onclick={() => void wantedQuery.refetch()}>Retry</button>
+				</div>
+			{:else if wantedQuery.isPending}
+				<div class="flex flex-col gap-2.5">
+					{#each Array(3) as _, i (`wanted-loading-${i}`)}
+						<div
+							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box animate-pulse"
+							style="animation-delay: {i * 100}ms"
+						>
+							<div class="w-14 h-14 sm:w-16 sm:h-16 bg-base-300 rounded-lg"></div>
+							<div class="flex-1">
+								<div class="h-4 bg-base-300 rounded w-44 mb-2"></div>
+								<div class="h-3 bg-base-300 rounded w-28 mb-1"></div>
+								<div class="h-2.5 bg-base-300 rounded w-52"></div>
+							</div>
+							<div class="flex gap-2">
+								<div class="h-8 bg-base-300 rounded-btn w-24"></div>
+								<div class="h-8 bg-base-300 rounded-btn w-16"></div>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{:else if wantedItems.length === 0 && wantedRetrying.length === 0}
+				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
+					<div
+						class="w-16 h-16 rounded-full bg-base-content/3 flex items-center justify-center mb-4"
+					>
+						<Radar class="h-8 w-8 text-base-content/15" />
+					</div>
+					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">
+						Nothing on the watchlist
+					</h2>
+					<p class="text-base-content/30 text-sm max-w-xs">
+						When a request can't be found anywhere, DroppedNeedle keeps checking for it and lists it
+						here.
+					</p>
+				</div>
+			{:else}
+				<p class="text-xs text-base-content/40 mb-3">
+					Albums that couldn't be found are re-checked on a schedule. A copy that passes
+					verification downloads by itself; near misses show up as candidates for you to review.
+				</p>
+				<div class="flex flex-col gap-2.5">
+					{#each wantedRetrying as item, i (`retrying-${item.release_group_mbid}`)}
+						<div in:fly={{ y: 12, duration: 200, delay: i * 30 }}>
+							<WantedRetryingCard
+								{item}
+								ownerName={authStore.isAdmin && item.user_id !== authStore.user?.id
+									? (item.user_name ?? undefined)
+									: undefined}
+							/>
+						</div>
+					{/each}
+					{#each wantedItems as item, i (item.release_group_mbid)}
+						<div in:fly={{ y: 12, duration: 200, delay: (wantedRetrying.length + i) * 30 }}>
+							<WantedWatchCard
+								{item}
+								busy={wantedBusy}
+								ownerName={authStore.isAdmin && item.user_id !== authStore.user?.id
+									? (item.user_name ?? undefined)
+									: undefined}
+								onstop={authStore.isAdmin || item.user_id === authStore.user?.id
+									? handleWantedStop
+									: undefined}
+								onresume={authStore.isAdmin || item.user_id === authStore.user?.id
+									? handleWantedResume
+									: undefined}
+								onseen={handleWantedSeen}
+							/>
+						</div>
+					{/each}
+				</div>
 			{/if}
 		</div>
 	{:else if activeTab === 'approvals' && authStore.isAdmin}

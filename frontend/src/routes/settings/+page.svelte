@@ -24,6 +24,7 @@
 	import SettingsSabnzbd from '$lib/components/settings/SettingsSabnzbd.svelte';
 	import SettingsSourcePriority from '$lib/components/settings/SettingsSourcePriority.svelte';
 	import SettingsDownloadPolicy from '$lib/components/settings/SettingsDownloadPolicy.svelte';
+	import SettingsWanted from '$lib/components/settings/SettingsWanted.svelte';
 	import SettingsIndexers from '$lib/components/settings/SettingsIndexers.svelte';
 	import SettingsConnectApps from '$lib/components/settings/SettingsConnectApps.svelte';
 	import SettingsOnboardingChecklist from '$lib/components/settings/SettingsOnboardingChecklist.svelte';
@@ -266,6 +267,7 @@
 							</p>
 						</div>
 						<SettingsDownloadPolicy />
+						<SettingsWanted />
 						<SettingsSourcePriority />
 						<SettingsDownloadClient />
 						<SettingsSabnzbd />

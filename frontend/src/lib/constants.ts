@@ -352,7 +352,8 @@ export const API = {
 		sabnzbd: () => '/api/v1/download-clients/sabnzbd',
 		sabnzbdTest: () => '/api/v1/download-clients/sabnzbd/test',
 		policy: () => '/api/v1/download-clients/policy',
-		sourcePriority: () => '/api/v1/download-clients/source-priority'
+		sourcePriority: () => '/api/v1/download-clients/source-priority',
+		wanted: () => '/api/v1/download-clients/wanted'
 	},
 	connectApps: {
 		settings: () => '/api/v1/connect-apps/settings',
@@ -363,6 +364,7 @@ export const API = {
 		searchAlbum: () => '/api/v1/downloads/search/album',
 		searchJob: (jobId: string) => `/api/v1/downloads/search/${jobId}`,
 		pick: (jobId: string) => `/api/v1/downloads/search/${jobId}/pick`,
+		dismissReview: (jobId: string) => `/api/v1/downloads/search/${jobId}/dismiss`,
 		cancelSearch: (jobId: string) => `/api/v1/downloads/search/${jobId}/cancel`,
 		searchStream: (jobId: string) => `/api/v1/downloads/search/stream?job_id=${jobId}`,
 		quarantine: () => '/api/v1/downloads/quarantine',
@@ -411,7 +413,11 @@ export const API = {
 		rejectPersonalMix: (userId: string) =>
 			`/api/v1/requests/personal-mix-approvals/${userId}/reject`,
 		revokePersonalMix: (userId: string) =>
-			`/api/v1/requests/personal-mix-approvals/${userId}/revoke`
+			`/api/v1/requests/personal-mix-approvals/${userId}/revoke`,
+		wanted: () => '/api/v1/requests/wanted',
+		wantedStop: (mbid: string) => `/api/v1/requests/wanted/${mbid}/stop`,
+		wantedResume: (mbid: string) => `/api/v1/requests/wanted/${mbid}/resume`,
+		wantedSeen: (mbid: string) => `/api/v1/requests/wanted/${mbid}/seen`
 	},
 	tracks: {
 		request: (recordingMbid: string) => `/api/v1/tracks/${recordingMbid}/request`

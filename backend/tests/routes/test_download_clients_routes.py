@@ -10,6 +10,7 @@ from api.v1.schemas.settings import (
     SABNZBD_API_KEY_MASK,
     DownloadPolicySettings,
     SabnzbdConnectionSettings,
+    WantedWatcherSettings,
 )
 from core.dependencies import get_preferences_service
 from middleware import _get_current_admin
@@ -28,6 +29,8 @@ def _prefs():
     prefs.get_download_policy.return_value = DownloadPolicySettings()
     prefs.save_sabnzbd_connection.return_value = None
     prefs.save_download_policy.return_value = None
+    prefs.get_wanted_settings.return_value = WantedWatcherSettings()
+    prefs.save_wanted_settings.return_value = None
     return prefs
 
 
@@ -62,6 +65,48 @@ def test_get_policy_admin():
     resp = build_test_client(app).get("/download-clients/policy")
     assert resp.status_code == 200
     assert resp.json()["preflight_score_auto_accept"] == 0.70
+
+
+def test_get_wanted_settings_admin():
+    app = _app()
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    resp = build_test_client(app).get("/download-clients/wanted")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["enabled"] is True
+    assert body["auto_download_on_find"] is True
+    assert body["max_checks_per_sweep"] == 3
+
+
+def test_get_wanted_settings_non_admin_forbidden():
+    app = _app()
+    app.dependency_overrides[_get_current_admin] = _deny_admin
+    assert build_test_client(app).get("/download-clients/wanted").status_code == 403
+
+
+def test_put_wanted_settings_saves_and_echoes():
+    prefs = _prefs()
+    saved = WantedWatcherSettings(enabled=False, max_checks_per_sweep=5)
+    prefs.get_wanted_settings.return_value = saved
+    app = _app(prefs)
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    resp = build_test_client(app).put(
+        "/download-clients/wanted",
+        json={"enabled": False, "max_checks_per_sweep": 5},
+    )
+    assert resp.status_code == 200
+    prefs.save_wanted_settings.assert_called_once()
+    assert prefs.save_wanted_settings.call_args.args[0].enabled is False
+    assert resp.json()["enabled"] is False
+
+
+def test_put_wanted_settings_rejects_out_of_range():
+    app = _app()
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    resp = build_test_client(app).put(
+        "/download-clients/wanted", json={"max_checks_per_sweep": 0}
+    )
+    assert resp.status_code in (400, 422)
 
 
 def test_test_sabnzbd_reports_version_and_categories(monkeypatch):

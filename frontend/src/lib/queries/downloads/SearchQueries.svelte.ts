@@ -3,7 +3,15 @@ import { createMutation, createQuery, queryOptions } from '@tanstack/svelte-quer
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-import type { PickResponse, SearchAlbumResponse, SearchJobView } from '$lib/types';
+import { WantedQueryKeyFactory } from '$lib/queries/wanted/WantedQueryKeyFactory';
+import { authStore } from '$lib/stores/authStore.svelte';
+import { toastStore } from '$lib/stores/toast';
+import type {
+	DismissReviewResponse,
+	PickResponse,
+	SearchAlbumResponse,
+	SearchJobView
+} from '$lib/types';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 
@@ -41,6 +49,33 @@ export function pickSearchCandidate() {
 			}),
 		onSuccess: (_data: PickResponse, input: { jobId: string; candidate_index: number }) =>
 			invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.searchJob(input.jobId) })
+	}));
+}
+
+// "None of these - keep watching": rejects every parked candidate, ends the
+// attempt, and puts the album on the wanted watchlist (rejected copies are
+// remembered so they never badge again).
+export function dismissReview() {
+	return createMutation(() => ({
+		mutationFn: (jobId: string) =>
+			api.global.post<DismissReviewResponse>(API.downloads.dismissReview(jobId), {}),
+		onSuccess: (_data: DismissReviewResponse, jobId: string) => {
+			toastStore.show({
+				message: 'On the watchlist - DroppedNeedle will keep checking for it.',
+				type: 'success'
+			});
+			void invalidateQueriesWithPersister({
+				queryKey: DownloadQueryKeyFactory.searchJob(jobId)
+			});
+			// the parked task just went terminal, and a watch row appeared
+			void invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.tasks() });
+			void invalidateQueriesWithPersister({
+				queryKey: WantedQueryKeyFactory.list(authStore.user?.id)
+			});
+		},
+		onError: () => {
+			toastStore.show({ message: "Couldn't move that to the watchlist.", type: 'error' });
+		}
 	}));
 }
 

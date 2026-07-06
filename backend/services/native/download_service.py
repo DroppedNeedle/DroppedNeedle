@@ -19,6 +19,7 @@ from core.exceptions import (
 )
 from core.task_registry import TaskRegistry
 from infrastructure.persistence.download_store import DownloadStore
+from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.sse_publisher import SSEPublisher
 from models.download import (
     DownloadsMountStatus,
@@ -159,7 +160,10 @@ class DownloadService:
         return not should_acquire(held, self._quality_cutoff, self._upgrade_allowed)
 
     async def _ensure_track_count(
-        self, release_group_mbid: str | None, track_count: int | None
+        self,
+        release_group_mbid: str | None,
+        track_count: int | None,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> int | None:
         """Backfill an album's track count from MusicBrainz when the request omitted
         it (every request/auto-download path does today). Without it the preflight
@@ -174,7 +178,9 @@ class DownloadService:
         ):
             return track_count
         try:
-            info = await self._album_service.get_album_tracks_info(release_group_mbid)
+            info = await self._album_service.get_album_tracks_info(
+                release_group_mbid, priority=priority
+            )
         except Exception:  # noqa: BLE001 - track count is best-effort, never block
             logger.warning(
                 "Track-count backfill failed for %s; downloading without a "
@@ -185,7 +191,9 @@ class DownloadService:
         return info.total_tracks or None
 
     async def _single_track_identity(
-        self, release_group_mbid: str | None
+        self,
+        release_group_mbid: str | None,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> "tuple[str | None, str | None, float | None]":
         """``(recording_mbid, track_title, duration_seconds)`` of a release's only
         track, when the resolved tracklist has exactly one; ``(None, None, None)``
@@ -198,7 +206,9 @@ class DownloadService:
         if not release_group_mbid or self._album_service is None:
             return None, None, None
         try:
-            info = await self._album_service.get_album_tracks_info(release_group_mbid)
+            info = await self._album_service.get_album_tracks_info(
+                release_group_mbid, priority=priority
+            )
         except Exception:  # noqa: BLE001 - identity is best-effort, never block
             logger.warning(
                 "Single-track identity backfill failed for %s; downloading without "
@@ -342,6 +352,49 @@ class DownloadService:
             target, releases, auto_accept_threshold=self._auto,
             manual_threshold=self._manual, track_count=target.track_count,
         )
+
+    async def scout_album(
+        self,
+        artist_name: str,
+        album_title: str,
+        year: int | None = None,
+        track_count: int | None = None,
+        release_group_mbid: str | None = None,
+    ) -> list[ScoredCandidate]:
+        """The wanted watcher's re-search (Wanted D10): run the manual lane's
+        search + scoring verbatim across all enabled sources and return the
+        pooled ranked candidates - creating NO ``search_jobs`` row and NO task,
+        which is what makes review-tab spam structurally impossible. All
+        MusicBrainz backfills ride at BACKGROUND_SYNC (a scheduled sweep must
+        never jump a user's page load). A source erroring only drops its group,
+        mirroring ``_run_search``."""
+        self._ensure_enabled()
+        track_count = await self._ensure_track_count(
+            release_group_mbid, track_count, priority=RequestPriority.BACKGROUND_SYNC
+        )
+        single_identity = (
+            await self._single_track_identity(
+                release_group_mbid, priority=RequestPriority.BACKGROUND_SYNC
+            )
+            if track_count == 1
+            else None
+        )
+        target = TargetAlbum(
+            artist_name=artist_name, album_title=album_title,
+            year=year, track_count=track_count,
+        )
+        candidates: list[ScoredCandidate] = []
+        if self._soulseek_enabled:
+            try:
+                candidates.extend(await self._search_soulseek(target, single_identity))
+            except Exception:
+                logger.exception("soulseek scout search failed for %s", release_group_mbid)
+        if self._usenet_enabled:
+            try:
+                candidates.extend(await self._search_usenet(target))
+            except Exception:
+                logger.exception("usenet scout search failed for %s", release_group_mbid)
+        return candidates
 
     async def get_search_job(
         self, user_id: str, job_id: str
@@ -488,8 +541,10 @@ class DownloadService:
         # A manual re-request is an explicit "try again" - clear this album's blocklist so
         # releases quarantined by an earlier failed attempt are reconsidered (otherwise the
         # scorer keeps filtering them and the re-request finds nothing). Album-scoped only;
-        # a per-track retry must not wipe the whole album's blocklist.
-        if download_type == "album" and release_group_mbid:
+        # a per-track retry must not wipe the whole album's blocklist. The wanted watcher's
+        # dispatches never clear (Wanted D5): the blocklist records verified-bad releases
+        # and only an explicit human re-request/retry may reset it.
+        if download_type == "album" and release_group_mbid and origin != "wanted":
             cleared = await self._store.delete_quarantine_for_album(release_group_mbid)
             if cleared:
                 logger.info(

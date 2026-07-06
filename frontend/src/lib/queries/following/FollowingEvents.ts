@@ -4,12 +4,14 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
 import { FollowQueryKeyFactory } from '$lib/queries/following/FollowQueryKeyFactory';
+import { WantedQueryKeyFactory } from '$lib/queries/wanted/WantedQueryKeyFactory';
 
 // SSEPublisher replays its last payload to every new subscriber, so toasting
 // events arrive again on each reconnect. De-dupe them by id, persisted per
 // session, so each one toasts at most once.
 const SEEN_KEY = 'msr:auto_download_toasts';
 const MIX_SEEN_KEY = 'msr:personal_mix_toasts';
+const WANTED_SEEN_KEY = 'msr:wanted_toasts';
 
 function loadSeen(key: string): Set<string> {
 	try {
@@ -40,6 +42,8 @@ export function createFollowingEvents() {
 	// sessionStorage like auto_download_enqueued - in-memory alone would replay the
 	// retained event's toast on every page load.
 	let mixSeen = new Set<string>();
+	// Wanted watcher events toast (auto-dispatch/fulfilled) - same persisted de-dupe.
+	let wantedSeen = new Set<string>();
 
 	function handlePlaylistImported(event: Event): void {
 		let data: Record<string, unknown>;
@@ -122,15 +126,57 @@ export function createFollowingEvents() {
 		});
 	}
 
+	function invalidateWantedList(): void {
+		void invalidateQueriesWithPersister({
+			queryKey: WantedQueryKeyFactory.list(authStore.user?.id)
+		});
+	}
+
+	// badge-only: the new-candidates count lives in the wanted list data, so a
+	// refetch is the whole reaction (idempotent - no de-dupe needed)
+	function handleWantedNewCandidates(): void {
+		invalidateWantedList();
+	}
+
+	function makeWantedToastHandler(message: (album: string) => string) {
+		return (event: Event): void => {
+			let data: Record<string, unknown>;
+			try {
+				data = JSON.parse((event as MessageEvent).data) as Record<string, unknown>;
+			} catch {
+				return;
+			}
+			invalidateWantedList();
+			const eventId = typeof data.event_id === 'string' ? data.event_id : '';
+			if (!eventId || wantedSeen.has(eventId)) return;
+			wantedSeen.add(eventId);
+			persistSeen(WANTED_SEEN_KEY, wantedSeen);
+			const album =
+				typeof data.album_title === 'string' && data.album_title ? data.album_title : 'an album';
+			toastStore.show({ message: message(album), type: 'success' });
+		};
+	}
+
+	const handleWantedAutoDispatched = makeWantedToastHandler(
+		(album) => `Found a copy of ${album} - downloading it now.`
+	);
+	const handleWantedFulfilled = makeWantedToastHandler(
+		(album) => `${album} is now in your library.`
+	);
+
 	function start(): void {
 		stop();
 		seen = loadSeen(SEEN_KEY);
 		importsSeen = new Set();
 		mixSeen = loadSeen(MIX_SEEN_KEY);
+		wantedSeen = loadSeen(WANTED_SEEN_KEY);
 		source = new EventSource(API.following.events());
 		source.addEventListener('auto_download_enqueued', handleEnqueued);
 		source.addEventListener('playlist_imported', handlePlaylistImported);
 		source.addEventListener('personal_mix_refreshed', handlePersonalMixRefreshed);
+		source.addEventListener('wanted_new_candidates', handleWantedNewCandidates);
+		source.addEventListener('wanted_auto_dispatched', handleWantedAutoDispatched);
+		source.addEventListener('wanted_fulfilled', handleWantedFulfilled);
 	}
 
 	function stop(): void {

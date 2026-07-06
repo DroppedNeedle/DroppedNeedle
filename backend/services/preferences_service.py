@@ -39,6 +39,7 @@ from api.v1.schemas.settings import (
     DEFAULT_NAMING_TEMPLATE,
     WrappedSettings,
     WRAPPED_API_KEY_MASK,
+    WantedWatcherSettings,
 )
 from api.v1.schemas.advanced_settings import AdvancedSettings
 from core.config import Settings
@@ -263,6 +264,18 @@ class PreferencesService:
         except Exception as e:  # noqa: BLE001
             logger.error("Failed to save download policy: %s", e)
             raise ConfigurationError(f"Failed to save download policy: {e}")
+
+    # --- Wanted watcher (Wanted plan §5.4) - mask-free, no secrets -------------------
+
+    def get_wanted_settings(self) -> WantedWatcherSettings:
+        return self._get_section("wanted", WantedWatcherSettings)
+
+    def save_wanted_settings(self, settings: WantedWatcherSettings) -> None:
+        try:
+            self._save_section("wanted", settings)
+        except Exception as e:  # noqa: BLE001
+            logger.error("Failed to save wanted watcher settings: %s", e)
+            raise ConfigurationError(f"Failed to save wanted watcher settings: {e}")
 
     # --- Source priority (D3/D19) - the order sources are tried in -------------------
 

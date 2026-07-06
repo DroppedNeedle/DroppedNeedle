@@ -66,6 +66,7 @@
 		Info,
 		X,
 		UserRound,
+		Inbox,
 		ListMusic,
 		ArrowUpCircle,
 		LogOut,
@@ -634,7 +635,7 @@
 										class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 										data-tip="Requests"
 									>
-										<Download class="h-6 w-6" />
+										<Inbox class="h-6 w-6" />
 										<span class="is-drawer-close:hidden">Requests</span>
 									</a>
 								</li>

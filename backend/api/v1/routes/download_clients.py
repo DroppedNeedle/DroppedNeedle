@@ -15,6 +15,7 @@ from api.v1.schemas.settings import (
     SABNZBD_API_KEY_MASK,
     DownloadPolicySettings,
     SabnzbdConnectionSettings,
+    WantedWatcherSettings,
 )
 from core.dependencies import build_sabnzbd_download_client, get_preferences_service
 from core.exceptions import ExternalServiceError
@@ -132,3 +133,21 @@ async def update_policy(
     preferences.save_download_policy(policy)
     _clear_download_client_cache()
     return preferences.get_download_policy()
+
+
+@router.get("/wanted", response_model=WantedWatcherSettings)
+async def get_wanted_watcher_settings(
+    _: CurrentAdminDep, preferences=Depends(get_preferences_service)
+):
+    return preferences.get_wanted_settings()
+
+
+@router.put("/wanted", response_model=WantedWatcherSettings)
+async def update_wanted_watcher_settings(
+    _: CurrentAdminDep,
+    settings: WantedWatcherSettings = MsgSpecBody(WantedWatcherSettings),
+    preferences=Depends(get_preferences_service),
+):
+    # no singleton clearing needed: the watcher re-reads this section every sweep
+    preferences.save_wanted_settings(settings)
+    return preferences.get_wanted_settings()

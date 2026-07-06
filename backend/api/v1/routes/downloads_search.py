@@ -15,13 +15,18 @@ from fastapi.responses import StreamingResponse
 
 from api.v1.schemas.common import StatusMessageResponse
 from api.v1.schemas.download import (
+    DismissReviewResponse,
     PickRequest,
     PickResponse,
     SearchAlbumRequest,
     SearchAlbumResponse,
     SearchJobResponse,
 )
-from core.dependencies import get_download_service, get_sse_publisher
+from core.dependencies import (
+    get_download_service,
+    get_sse_publisher,
+    get_wanted_watcher_service,
+)
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from middleware import CurrentUserDep
 from services.native.download_service import ALREADY_IN_LIBRARY
@@ -109,6 +114,19 @@ async def pick_candidate(
 ):
     task_id = await service.pick_candidate(current_user.id, job_id, body.candidate_index)
     return PickResponse(task_id=task_id)
+
+
+@router.post("/search/{job_id}/dismiss", response_model=DismissReviewResponse)
+async def dismiss_review(
+    job_id: str,
+    current_user: CurrentUserDep,
+    watcher=Depends(get_wanted_watcher_service),
+):
+    """'None of these - keep watching': reject every parked candidate, cancel the
+    attempt, and put the album on the wanted watchlist (candidates recorded as
+    seen so they never badge again)."""
+    watch = await watcher.dismiss_review(job_id, current_user.id, current_user.role)
+    return DismissReviewResponse(success=True, state=watch.state)
 
 
 @router.post("/search/{job_id}/cancel", response_model=StatusMessageResponse)

@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock
 from fastapi import APIRouter, FastAPI, HTTPException
 
 from api.v1.routes import download_client as download_client_routes
+from api.v1.routes import download_clients as download_clients_routes
 from api.v1.routes import downloads as downloads_routes
 from api.v1.routes import downloads_search as downloads_search_routes
 from api.v1.routes import following as following_routes
@@ -29,6 +30,7 @@ from api.v1.routes import library_scan as library_scan_routes
 from api.v1.routes import me_connections as me_routes
 from api.v1.routes import playlists as playlists_routes
 from api.v1.routes import quarantine as quarantine_routes
+from api.v1.routes import requests_page as requests_page_routes
 from api.v1.routes import settings as settings_routes
 from api.v1.routes import spotify as spotify_routes
 from api.v1.routes import system as system_routes
@@ -51,6 +53,7 @@ from core.dependencies import (
     get_playlist_service,
     get_preferences_service,
     get_request_service,
+    get_requests_page_service,
     get_scan_state_store,
     get_settings_service,
     get_spotify_import_service,
@@ -58,6 +61,7 @@ from core.dependencies import (
     get_user_connections_store,
     get_user_listening_prefs_store,
     get_user_section_prefs_store,
+    get_wanted_watcher_service,
 )
 from middleware import _get_current_admin, _get_current_user
 from tests.helpers import build_test_client, mock_admin_user, mock_user
@@ -80,6 +84,7 @@ _SERVICE_PROVIDERS = (
     get_playlist_service,
     get_preferences_service,
     get_request_service,
+    get_requests_page_service,
     get_scan_state_store,
     get_settings_service,
     get_spotify_import_service,
@@ -87,6 +92,7 @@ _SERVICE_PROVIDERS = (
     get_user_connections_store,
     get_user_listening_prefs_store,
     get_user_section_prefs_store,
+    get_wanted_watcher_service,
 )
 
 # (method, path, body-or-None). Path params use dummy values; bodies are valid so
@@ -113,6 +119,9 @@ _ADMIN_ENDPOINTS = [
     ("PUT", "/api/v1/settings/spotify", {}),
     ("GET", "/api/v1/settings/home", None),
     ("PUT", "/api/v1/settings/home", {}),
+    # Wanted watcher settings (admin, download-clients router)
+    ("GET", "/api/v1/download-clients/wanted", None),
+    ("PUT", "/api/v1/download-clients/wanted", {}),
 ]
 
 _USER_ENDPOINTS = [
@@ -126,6 +135,7 @@ _USER_ENDPOINTS = [
     ("POST", "/api/v1/downloads/search/album", {"artist_name": "A", "album_title": "B"}),
     ("GET", "/api/v1/downloads/search/job-1", None),
     ("POST", "/api/v1/downloads/search/job-1/pick", {"candidate_index": 0}),
+    ("POST", "/api/v1/downloads/search/job-1/dismiss", None),
     ("POST", "/api/v1/downloads/search/job-1/cancel", None),
     ("POST", "/api/v1/tracks/rec-1/request", {"artist_name": "A", "track_title": "T"}),
     ("GET", "/api/v1/library/artists", None),
@@ -156,6 +166,12 @@ _USER_ENDPOINTS = [
     ("GET", "/api/v1/following/new-releases", None),
     ("GET", "/api/v1/following/new-releases/unseen-count", None),
     ("POST", "/api/v1/following/new-releases/seen", None),
+    # Wanted watches (requests page). Ownership (403 non-owner) is covered by
+    # tests/routes/test_wanted_routes.py; here: 401 unauth / user admitted.
+    ("GET", "/api/v1/requests/wanted", None),
+    ("POST", "/api/v1/requests/wanted/22222222-2222-2222-2222-222222222222/stop", None),
+    ("POST", "/api/v1/requests/wanted/22222222-2222-2222-2222-222222222222/resume", None),
+    ("POST", "/api/v1/requests/wanted/22222222-2222-2222-2222-222222222222/seen", None),
 ]
 
 _ALL_ENDPOINTS = _ADMIN_ENDPOINTS + _USER_ENDPOINTS
@@ -174,6 +190,7 @@ def _client(scenario: str):
     for router in (
         library_scan_routes.router,
         download_client_routes.router,
+        download_clients_routes.router,
         quarantine_routes.router,
         downloads_search_routes.router,
         downloads_routes.router,
@@ -184,6 +201,7 @@ def _client(scenario: str):
         discovery_batches_routes.router,
         system_routes.router,
         playlists_routes.router,
+        requests_page_routes.router,
         settings_routes.router,
         spotify_routes.router,
     ):

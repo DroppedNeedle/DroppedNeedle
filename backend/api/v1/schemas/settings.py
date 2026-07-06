@@ -233,6 +233,21 @@ class DownloadPolicySettings(AppStruct):
             self.quality_cutoff = self.quality_max
 
 
+class WantedWatcherSettings(AppStruct):
+    """The wanted watcher (Wanted plan §5.4): granular opt-out toggles, no secrets.
+    Cadence stays code constants on purpose - fewer knobs."""
+
+    enabled: bool = True                 # master switch (rollback lever, read per sweep)
+    auto_download_on_find: bool = True   # D2; off = badge-only even for auto-tier finds
+    watch_partial_albums: bool = True    # D6
+    max_checks_per_sweep: int = 3
+    dormant_after_days: int = 365
+
+    def __post_init__(self) -> None:
+        _validate_range(self.max_checks_per_sweep, "max_checks_per_sweep", 1, 20)
+        _validate_range(self.dormant_after_days, "dormant_after_days", 30, 3650)
+
+
 class SabnzbdConnectionSettings(AppStruct):
     """SABnzbd download-client connection (D5). ``api_key`` is the FULL key (the add-only
     nzbkey can't do queue/history/delete); encrypted at rest, masked on read. ``category``

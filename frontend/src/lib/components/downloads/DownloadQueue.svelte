@@ -53,7 +53,7 @@
 	const pulse = $derived(
 		[
 			{ n: sections.now_spinning.length, label: 'spinning', cls: 'text-primary' },
-			{ n: sections.wanted.length, label: 'wanted', cls: 'text-warning' },
+			{ n: sections.wanted.length, label: 'still hunting', cls: 'text-warning' },
 			{ n: sections.needs_you.length, label: 'needs you', cls: 'text-info' },
 			{ n: held.length, label: 'to verify', cls: 'text-warning' },
 			{ n: sections.cueing.length, label: 'cueing up', cls: 'text-base-content/70' },
@@ -105,19 +105,19 @@
 			</section>
 		{/if}
 
-		<!-- WANTED -->
+		<!-- STILL HUNTING (auto-retry ladder; "Wanted" is the requests page's word) -->
 		{#if sections.wanted.length > 0}
 			<section class="space-y-3">
 				<div class="flex items-center justify-between gap-2">
 					<h2 class="dl-eyebrow">
-						Wanted <span class="text-base-content/35">· still hunting</span>
+						Still hunting <span class="text-base-content/35">· auto-retrying</span>
 						<span class="dl-count">{sections.wanted.length}</span>
 					</h2>
 					<button
 						class="btn btn-ghost btn-xs text-base-content/60 hover:text-error"
 						onclick={() => stopAll.mutate()}
 						disabled={stopAll.isPending}
-						title="Stop auto-retrying every wanted album"
+						title="Stop auto-retrying every still-hunting album - they won't be watched for later either"
 					>
 						<TimerOff class="h-3.5 w-3.5" /> Stop all
 					</button>

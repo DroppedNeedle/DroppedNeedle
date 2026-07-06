@@ -100,6 +100,10 @@ _OUT_NO_TRANSFER = "no_transfer"  # a fresh enqueue produced no transfer record
 # The "no source" wording is built per-task from the enabled sources (see
 # _no_source_message) so a Usenet download never wrongly blames Soulseek.
 _NO_SOURCE_MSG = "No working source found"
+# Prefix of _no_match_message. Module-level (like _NO_SOURCE_MSG) so the wanted
+# watcher's enrolment classifier IMPORTS it instead of copying the string - the
+# tie-test in test_wanted_watcher_service fails loudly if either side drifts.
+_NO_MATCH_MSG = "No matching release found"
 _FILES_NOT_FOUND_MSG = (
     "Files downloaded, but couldn't be found in the slskd downloads folder - check "
     "the slskd downloads path points to where slskd saves completed files"
@@ -358,7 +362,7 @@ class DownloadOrchestrator:
         misleading "...on any source"."""
         names = self._enabled_source_names()
         joined = " or ".join(names) if names else "any source"
-        return f"No matching release found on {joined}"
+        return f"{_NO_MATCH_MSG} on {joined}"
 
     async def _search_and_score(self, task, source: str):  # noqa: ANN001, ANN201
         """Search ONE source and return its scored candidates (tagged with ``source``),
