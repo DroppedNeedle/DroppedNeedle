@@ -7,6 +7,12 @@ and topped up with a similar-artist expansion (reusing
 ``radio_service.py`` uses). Missing albums are optionally auto-requested
 through the native download engine, mirroring the auto-download dispatch in
 ``new_release_service.py``.
+
+Auto-request is gated by a standing grant mirroring follow auto-download
+(``follow_service.py``): admins are approved by role with no approval row; a
+non-admin enabling the toggle enters a pending approval that an admin reviews
+on the requests page. Dispatch requires intent on AND (admin role OR an
+approved grant).
 """
 
 import asyncio
@@ -18,6 +24,7 @@ import msgspec
 
 from core.exceptions import ConfigurationError
 from infrastructure.cover_urls import release_group_cover_url
+from infrastructure.persistence.user_listening_prefs_store import PersonalMixApproval
 from repositories.listenbrainz_models import ListenBrainzArtist
 from services.discover.mbid_resolution_service import MbidResolutionService
 from services.discover.queue_strategies import (
@@ -36,6 +43,9 @@ _MAX_SEED_ARTISTS = 8
 _SIMILAR_LIMIT = 10
 _ALBUMS_PER_SEED = 2
 _TRACK_CAP = 100
+# per-refresh ceiling on auto-requested albums: exploration + expansion tracks are
+# missing-by-construction, so an uncapped walk would request most of the mix weekly
+_MAX_AUTO_REQUESTS = 5
 
 
 class PersonalMixResult(msgspec.Struct, frozen=True):
@@ -87,8 +97,17 @@ class PersonalMixService:
         self._prefs = listening_prefs_store
         self._connections_store = connections_store
         self._auth_store = auth_store
+        # serializes concurrent builds per user (manual refresh vs the daily sweep):
+        # both would see no existing playlist and race to create it, and the loser
+        # dies on the (user_id, source_ref) unique index. Single-process invariant.
+        self._build_locks: dict[str, asyncio.Lock] = {}
 
     async def build_for_user(self, user_id: str, *, force: bool = False) -> PersonalMixResult:
+        lock = self._build_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            return await self._build_for_user_locked(user_id, force=force)
+
+    async def _build_for_user_locked(self, user_id: str, *, force: bool) -> PersonalMixResult:
         lb_repo = await self._client_factory.resolve_listenbrainz(user_id)
         if lb_repo is None:
             return PersonalMixResult(user_id=user_id, skipped=True, reason="listenbrainz_not_linked")
@@ -106,11 +125,11 @@ class PersonalMixService:
         }
 
         lb_tracks = await self._from_recommendation_playlists(lb_repo, username, owned)
-        seed_mbids = self._pick_seed_artists(lb_tracks)
+        seed_artists = self._pick_seed_artists(lb_tracks)
         expansion_tracks: list[_MixTrack] = []
-        if seed_mbids and len(lb_tracks) < _TRACK_CAP:
+        if seed_artists and len(lb_tracks) < _TRACK_CAP:
             expansion_tracks = await self._from_similar_artists(
-                lb_repo, seed_mbids, owned, needed=_TRACK_CAP - len(lb_tracks),
+                lb_repo, seed_artists, owned, needed=_TRACK_CAP - len(lb_tracks),
             )
 
         mix = (lb_tracks + expansion_tracks)[:_TRACK_CAP]
@@ -129,7 +148,9 @@ class PersonalMixService:
 
         requested = 0
         prefs = await self._prefs.get(user_id)
-        if prefs.auto_request_personal_mix:
+        if prefs.auto_request_personal_mix and await self._auto_request_granted(
+            user_id, owner.role
+        ):
             requested = await self._auto_request_missing(user_id, mix)
 
         return PersonalMixResult(
@@ -266,24 +287,26 @@ class PersonalMixService:
         return matched
 
     @staticmethod
-    def _pick_seed_artists(tracks: list[_MixTrack]) -> list[str]:
-        seen: list[str] = []
+    def _pick_seed_artists(tracks: list[_MixTrack]) -> list[tuple[str, str]]:
+        """First ``_MAX_SEED_ARTISTS`` distinct ``(artist_mbid, artist_name)`` pairs."""
+        seen: dict[str, str] = {}
         for t in tracks:
             if t.artist_mbid and t.artist_mbid not in seen:
-                seen.append(t.artist_mbid)
+                seen[t.artist_mbid] = t.artist_name
             if len(seen) >= _MAX_SEED_ARTISTS:
                 break
-        return seen
+        return list(seen.items())
 
     async def _from_similar_artists(
-        self, lb_repo, seed_mbids: list[str], owned: set[str], needed: int,
+        self, lb_repo, seed_artists: list[tuple[str, str]], owned: set[str], needed: int,
     ) -> list[_MixTrack]:
         mbid_svc = MbidResolutionService(
             musicbrainz_repo=self._mb_repo, library_repo=self._library_repo, listenbrainz_repo=lb_repo,
         )
+        # the name rides along into the pool items' "Similar to <name>" reason
         seeds = [
-            ListenBrainzArtist(artist_name=mbid, artist_mbids=[mbid], listen_count=0)
-            for mbid in seed_mbids
+            ListenBrainzArtist(artist_name=name, artist_mbids=[mbid], listen_count=0)
+            for mbid, name in seed_artists
         ]
         try:
             pools = await build_similar_artist_pools(
@@ -364,6 +387,8 @@ class PersonalMixService:
         requested = 0
         seen_rgs: set[str] = set()
         for t in mix:
+            if requested >= _MAX_AUTO_REQUESTS:
+                break
             if t.in_library or t.release_group_mbid in seen_rgs:
                 continue
             seen_rgs.add(t.release_group_mbid)
@@ -389,3 +414,54 @@ class PersonalMixService:
             if task_id and task_id != ALREADY_IN_LIBRARY:
                 requested += 1
         return requested
+
+    # auto-request standing grant: mirrors FollowService's approval flow
+
+    async def _auto_request_granted(self, user_id: str, role: str) -> bool:
+        # admins are granted by role with no approval row (DD3) so a later
+        # demotion correctly drops them
+        if role == "admin":
+            return True
+        return await self._prefs.get_approval_state(user_id) == "approved"
+
+    async def get_auto_request_state(self, user_id: str, role: str) -> str:
+        """Display state (none|pending|approved|rejected|revoked) with the admin
+        role override applied. Intent-on with no approval row reads "none",
+        matching follow_store._derive_state - only a demoted admin lands there,
+        and the startup backfill queues them on the next restart."""
+        prefs = await self._prefs.get(user_id)
+        approval_state = await self._prefs.get_approval_state(user_id)
+        if role == "admin" and prefs.auto_request_personal_mix:
+            return "approved"
+        if prefs.auto_request_personal_mix:
+            return approval_state or "none"
+        if approval_state in ("rejected", "revoked"):
+            return approval_state
+        return "none"
+
+    async def on_auto_request_toggled(self, user_id: str, role: str, enabled: bool) -> None:
+        """Grant bookkeeping after the intent flag itself was persisted: a non-admin
+        enabling re-enters the pending queue (matching follows, where re-enabling
+        re-queues even over a prior grant); disabling leaves the row intact."""
+        if enabled and role != "admin":
+            await self._prefs.upsert_approval(user_id, "pending")
+
+    async def list_pending_approvals(self) -> list[PersonalMixApproval]:
+        return await self._prefs.list_pending_approvals()
+
+    async def approve_auto_request(self, user_id: str, reviewer: tuple[str, str | None]) -> bool:
+        return await self._prefs.set_approval_state(user_id, "approved", reviewer)
+
+    async def reject_auto_request(self, user_id: str, reviewer: tuple[str, str | None]) -> bool:
+        # deny and flip intent off, mirroring FollowService.reject
+        updated = await self._prefs.set_approval_state(user_id, "rejected", reviewer)
+        if updated:
+            await self._prefs.upsert(user_id, auto_request_personal_mix=False)
+        return updated
+
+    async def revoke_auto_request(self, user_id: str, reviewer: tuple[str, str | None]) -> bool:
+        # revoke a prior grant and flip intent off, mirroring FollowService.revoke
+        updated = await self._prefs.set_approval_state(user_id, "revoked", reviewer)
+        if updated:
+            await self._prefs.upsert(user_id, auto_request_personal_mix=False)
+        return updated

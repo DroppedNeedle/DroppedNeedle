@@ -11,7 +11,11 @@ import pytest
 from fastapi import FastAPI
 
 from api.v1.routes.requests_page import router as requests_router
-from core.dependencies import get_follow_service, get_requests_page_service
+from core.dependencies import (
+    get_follow_service,
+    get_personal_mix_service,
+    get_requests_page_service,
+)
 from infrastructure.persistence.follow_store import FollowStore
 from services.follow_service import FollowService
 from tests.helpers import build_test_client, override_admin_auth
@@ -53,9 +57,14 @@ def ctx(tmp_path: Path):
     mb_repo.get_artist_by_id.return_value = {"name": "Radiohead"}
     service = FollowService(store, mb_repo)
 
+    # the pending count also sums Weekly Mix grants; keep them empty here
+    personal_mix_service = AsyncMock()
+    personal_mix_service.list_pending_approvals = AsyncMock(return_value=[])
+
     app = FastAPI()
     app.include_router(requests_router)
     app.dependency_overrides[get_follow_service] = lambda: service
+    app.dependency_overrides[get_personal_mix_service] = lambda: personal_mix_service
     override_admin_auth(app)
     return SimpleNamespace(client=build_test_client(app), store=store, app=app)
 

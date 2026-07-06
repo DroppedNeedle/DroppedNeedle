@@ -98,3 +98,14 @@ class AutoDownloadApprovalItem(AppStruct):
 class AutoDownloadApprovalsResponse(AppStruct):
     items: list[AutoDownloadApprovalItem]
     count: int
+
+
+class PersonalMixApprovalItem(AppStruct):
+    user_id: str
+    requested_at: float  # epoch seconds
+    user_name: str | None = None
+
+
+class PersonalMixApprovalsResponse(AppStruct):
+    items: list[PersonalMixApprovalItem]
+    count: int

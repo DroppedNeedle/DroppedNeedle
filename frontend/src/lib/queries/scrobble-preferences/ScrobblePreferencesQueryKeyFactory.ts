@@ -3,5 +3,8 @@
 export const ScrobblePreferencesQueryKeyFactory = {
 	prefix: ['me', 'scrobble-preferences'] as const,
 	get: (userId: string | undefined) =>
-		[...ScrobblePreferencesQueryKeyFactory.prefix, userId ?? 'anon'] as const
+		[...ScrobblePreferencesQueryKeyFactory.prefix, userId ?? 'anon'] as const,
+	// admin-only queue (no user dimension, matching FollowQueryKeyFactory.adminApprovals)
+	personalMixApprovals: () =>
+		[...ScrobblePreferencesQueryKeyFactory.prefix, 'personal-mix-approvals'] as const
 };

@@ -4,9 +4,11 @@ Endpoints are self-scoped to ``CurrentUserDep``; the encrypted ``connection_data
 ciphertext is never serialized out - only service/enabled/username.
 """
 
+import asyncio
 import base64
 import logging
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -43,6 +45,7 @@ from core.dependencies import (
     get_personal_mix_service,
     get_preferences_service,
     get_settings_service,
+    get_sse_publisher,
     get_user_connections_store,
     get_user_listening_prefs_store,
     get_user_section_prefs_store,
@@ -52,6 +55,7 @@ from core.exceptions import (
     ExternalServiceError,
     TokenNotAuthorizedError,
 )
+from core.task_registry import TaskRegistry
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from infrastructure.persistence.auth_store import AuthStore
 from infrastructure.persistence.user_connections_store import UserConnectionsStore
@@ -91,6 +95,7 @@ async def list_connections(
 async def get_scrobble_preferences(
     current_user: CurrentUserDep,
     prefs_store: UserListeningPrefsStore = Depends(get_user_listening_prefs_store),
+    personal_mix_service: PersonalMixService = Depends(get_personal_mix_service),
 ) -> ScrobblePreferences:
     prefs = await prefs_store.get(current_user.id)
     return ScrobblePreferences(
@@ -99,6 +104,9 @@ async def get_scrobble_preferences(
         primary_music_source=prefs.primary_music_source,
         now_playing_visibility=prefs.now_playing_visibility,
         auto_request_personal_mix=prefs.auto_request_personal_mix,
+        auto_request_state=await personal_mix_service.get_auto_request_state(
+            current_user.id, current_user.role
+        ),
     )
 
 
@@ -108,7 +116,9 @@ async def update_scrobble_preferences(
     body: ScrobblePreferencesUpdate = MsgSpecBody(ScrobblePreferencesUpdate),
     prefs_store: UserListeningPrefsStore = Depends(get_user_listening_prefs_store),
     now_playing_service=Depends(get_now_playing_service),
+    personal_mix_service: PersonalMixService = Depends(get_personal_mix_service),
 ) -> ScrobblePreferences:
+    before = await prefs_store.get(current_user.id)
     await prefs_store.upsert(
         current_user.id,
         scrobble_to_lastfm=body.scrobble_to_lastfm,
@@ -122,6 +132,17 @@ async def update_scrobble_preferences(
         await now_playing_service.set_visibility(
             current_user.id, body.now_playing_visibility
         )
+    # standing-grant bookkeeping: a non-admin enabling auto-request enters the
+    # admin approval queue (mirrors follow auto-download). Only a real value
+    # change counts - a full-object PUT resending true must not re-queue (and
+    # thereby silently suspend) an already-approved grant.
+    if (
+        body.auto_request_personal_mix is not None
+        and body.auto_request_personal_mix != before.auto_request_personal_mix
+    ):
+        await personal_mix_service.on_auto_request_toggled(
+            current_user.id, current_user.role, body.auto_request_personal_mix
+        )
     prefs = await prefs_store.get(current_user.id)
     return ScrobblePreferences(
         scrobble_to_lastfm=prefs.scrobble_to_lastfm,
@@ -129,24 +150,68 @@ async def update_scrobble_preferences(
         primary_music_source=prefs.primary_music_source,
         now_playing_visibility=prefs.now_playing_visibility,
         auto_request_personal_mix=prefs.auto_request_personal_mix,
+        auto_request_state=await personal_mix_service.get_auto_request_state(
+            current_user.id, current_user.role
+        ),
     )
+
+
+async def _background_mix_refresh(svc: PersonalMixService, user_id: str) -> None:
+    try:
+        result = await svc.build_for_user(user_id, force=True)
+    except Exception:  # noqa: BLE001 - background task; log, never raise
+        logger.error(
+            "Background personal-mix refresh failed for user %s", user_id, exc_info=True
+        )
+        return
+    # tell the profile card + playlist views the build finished; the event_id lets
+    # the client de-dupe the SSEPublisher's replay-to-new-subscribers
+    try:
+        await get_sse_publisher().publish(
+            f"user:{user_id}",
+            "personal_mix_refreshed",
+            {
+                "playlist_id": result.playlist_id,
+                "track_count": result.track_count,
+                "requested_albums": result.requested_albums,
+                "skipped": result.skipped,
+                "reason": result.reason,
+                "event_id": uuid.uuid4().hex,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "Failed to signal personal-mix refresh completion for %s", user_id, exc_info=True
+        )
 
 
 @router.post("/personal-mix/refresh", response_model=PersonalMixRefreshResponse)
 async def refresh_personal_mix(
     current_user: CurrentUserDep,
     personal_mix_service: PersonalMixService = Depends(get_personal_mix_service),
+    client_factory: PerUserClientFactory = Depends(get_per_user_client_factory),
 ) -> PersonalMixRefreshResponse:
-    result = await personal_mix_service.build_for_user(current_user.id, force=True)
-    if result.skipped and result.reason == "listenbrainz_not_linked":
-        raise HTTPException(status_code=400, detail="Connect ListenBrainz first to build Your Weekly Mix")
-    return PersonalMixRefreshResponse(
-        playlist_id=result.playlist_id,
-        track_count=result.track_count,
-        requested_albums=result.requested_albums,
-        skipped=result.skipped,
-        reason=result.reason,
+    # a cold build sits behind the MusicBrainz 1/s limiter for minutes, far past
+    # proxy timeouts - answer fast and build in the background (spotify.py pattern)
+    if not await client_factory.is_listenbrainz_linked(current_user.id):
+        raise HTTPException(
+            status_code=400, detail="Connect ListenBrainz first to build Your Weekly Mix"
+        )
+    task_key = f"personal-mix:refresh:{current_user.id}"
+    registry = TaskRegistry.get_instance()
+    if registry.is_running(task_key):
+        return PersonalMixRefreshResponse(status="already_running")
+    task = asyncio.create_task(
+        _background_mix_refresh(personal_mix_service, current_user.id)
     )
+    try:
+        registry.register(task_key, task)
+    except RuntimeError:
+        # lost a concurrent-POST race: an incumbent build already holds the key,
+        # so drop this duplicate instead of running it untracked
+        task.cancel()
+        return PersonalMixRefreshResponse(status="already_running")
+    return PersonalMixRefreshResponse(status="started")
 
 
 @router.post("/connections/lastfm/auth/token", response_model=LastFmAuthTokenResponse)

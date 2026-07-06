@@ -99,7 +99,29 @@ const COVERAGE: Array<[string, string, string]> = [
 		API.following.markNewReleasesSeen(),
 		'/api/v1/following/new-releases/seen'
 	],
-	['following events', API.following.events(), '/api/v1/following/events']
+	['following events', API.following.events(), '/api/v1/following/events'],
+	// Weekly Mix (user-scoped refresh + admin standing-grant queue)
+	['personal mix refresh', API.me.personalMixRefresh(), '/api/v1/me/personal-mix/refresh'],
+	[
+		'personal mix approvals',
+		API.requests.personalMixApprovals(),
+		'/api/v1/requests/personal-mix-approvals'
+	],
+	[
+		'personal mix approve',
+		API.requests.approvePersonalMix('U1'),
+		'/api/v1/requests/personal-mix-approvals/U1/approve'
+	],
+	[
+		'personal mix reject',
+		API.requests.rejectPersonalMix('U1'),
+		'/api/v1/requests/personal-mix-approvals/U1/reject'
+	],
+	[
+		'personal mix revoke',
+		API.requests.revokePersonalMix('U1'),
+		'/api/v1/requests/personal-mix-approvals/U1/revoke'
+	]
 ];
 
 // Routes whose builder takes query params - assert the path prefix only.

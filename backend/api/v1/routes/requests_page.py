@@ -9,14 +9,21 @@ from api.v1.schemas.requests_page import (
     AutoDownloadApprovalsResponse,
     CancelRequestResponse,
     ClearHistoryResponse,
+    PersonalMixApprovalItem,
+    PersonalMixApprovalsResponse,
     RequestHistoryResponse,
     RetryRequestResponse,
 )
-from core.dependencies import get_follow_service, get_requests_page_service
+from core.dependencies import (
+    get_follow_service,
+    get_personal_mix_service,
+    get_requests_page_service,
+)
 from core.dependencies.type_aliases import CurrentUserDep, CurrentAdminDep
 from infrastructure.validators import validate_mbid
 from infrastructure.msgspec_fastapi import MsgSpecRoute
 from services.follow_service import FollowService
+from services.personal_mix_service import PersonalMixService
 from services.requests_page_service import RequestsPageService
 
 router = APIRouter(route_class=MsgSpecRoute, prefix="/requests", tags=["requests-page"])
@@ -115,10 +122,12 @@ async def get_pending_approval_count(
     _admin: CurrentAdminDep,
     service: RequestsPageService = Depends(get_requests_page_service),
     follow_service: FollowService = Depends(get_follow_service),
+    personal_mix_service: PersonalMixService = Depends(get_personal_mix_service),
 ):
     count = await service.get_pending_approval_count()
     auto_download = await follow_service.list_pending_approvals()
-    return ActiveCountResponse(count=count + len(auto_download))
+    personal_mix = await personal_mix_service.list_pending_approvals()
+    return ActiveCountResponse(count=count + len(auto_download) + len(personal_mix))
 
 
 @router.post("/approve/{musicbrainz_id}", response_model=ApprovalActionResponse)
@@ -224,3 +233,65 @@ async def revoke_auto_download(
     if not ok:
         return ApprovalActionResponse(success=False, message="No matching approval found")
     return ApprovalActionResponse(success=True, message="Auto-download revoked")
+
+
+@router.get("/personal-mix-approvals", response_model=PersonalMixApprovalsResponse)
+async def list_personal_mix_approvals(
+    _admin: CurrentAdminDep,
+    personal_mix_service: PersonalMixService = Depends(get_personal_mix_service),
+):
+    approvals = await personal_mix_service.list_pending_approvals()
+    items = [
+        PersonalMixApprovalItem(
+            user_id=a.user_id,
+            user_name=a.user_name,
+            requested_at=a.requested_at,
+        )
+        for a in approvals
+    ]
+    return PersonalMixApprovalsResponse(items=items, count=len(items))
+
+
+@router.post(
+    "/personal-mix-approvals/{user_id}/approve",
+    response_model=ApprovalActionResponse,
+)
+async def approve_personal_mix_auto_request(
+    admin: CurrentAdminDep,
+    user_id: str,
+    personal_mix_service: PersonalMixService = Depends(get_personal_mix_service),
+):
+    ok = await personal_mix_service.approve_auto_request(user_id, (admin.id, admin.display_name))
+    if not ok:
+        return ApprovalActionResponse(success=False, message="No matching approval found")
+    return ApprovalActionResponse(success=True, message="Weekly Mix auto-request approved")
+
+
+@router.post(
+    "/personal-mix-approvals/{user_id}/reject",
+    response_model=ApprovalActionResponse,
+)
+async def reject_personal_mix_auto_request(
+    admin: CurrentAdminDep,
+    user_id: str,
+    personal_mix_service: PersonalMixService = Depends(get_personal_mix_service),
+):
+    ok = await personal_mix_service.reject_auto_request(user_id, (admin.id, admin.display_name))
+    if not ok:
+        return ApprovalActionResponse(success=False, message="No matching approval found")
+    return ApprovalActionResponse(success=True, message="Weekly Mix auto-request rejected")
+
+
+@router.post(
+    "/personal-mix-approvals/{user_id}/revoke",
+    response_model=ApprovalActionResponse,
+)
+async def revoke_personal_mix_auto_request(
+    admin: CurrentAdminDep,
+    user_id: str,
+    personal_mix_service: PersonalMixService = Depends(get_personal_mix_service),
+):
+    ok = await personal_mix_service.revoke_auto_request(user_id, (admin.id, admin.display_name))
+    if not ok:
+        return ApprovalActionResponse(success=False, message="No matching approval found")
+    return ApprovalActionResponse(success=True, message="Weekly Mix auto-request revoked")

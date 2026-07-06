@@ -13,11 +13,17 @@ def _seed_auth_users(db_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS auth_users (id TEXT PRIMARY KEY, username TEXT, role TEXT)"
+            "CREATE TABLE IF NOT EXISTS auth_users "
+            "(id TEXT PRIMARY KEY, username TEXT, display_name TEXT, role TEXT)"
         )
         conn.executemany(
-            "INSERT OR IGNORE INTO auth_users (id, username, role) VALUES (?, ?, ?)",
-            [("user-a", "alice", "user"), ("user-b", "bob", "user")],
+            "INSERT OR IGNORE INTO auth_users (id, username, display_name, role) "
+            "VALUES (?, ?, ?, ?)",
+            [
+                ("user-a", "alice", "Alice", "user"),
+                ("user-b", "bob", "Bob", "user"),
+                ("admin-x", "admin", "Admin X", "admin"),
+            ],
         )
         conn.commit()
     finally:
@@ -94,3 +100,69 @@ async def test_cascade_on_user_delete(store: UserListeningPrefsStore, tmp_path: 
     finally:
         conn.close()
     assert remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_auto_request_roundtrip_and_partial_preserve(store: UserListeningPrefsStore):
+    await store.upsert("user-a", auto_request_personal_mix=True)
+    assert (await store.get("user-a")).auto_request_personal_mix is True
+    # a later partial update of another field keeps it via COALESCE
+    await store.upsert("user-a", primary_music_source="lastfm")
+    prefs = await store.get("user-a")
+    assert prefs.auto_request_personal_mix is True
+    assert prefs.primary_music_source == "lastfm"
+    await store.upsert("user-a", auto_request_personal_mix=False)
+    assert (await store.get("user-a")).auto_request_personal_mix is False
+
+
+@pytest.mark.asyncio
+async def test_approval_upsert_and_state(store: UserListeningPrefsStore):
+    assert await store.get_approval_state("user-a") is None
+    await store.upsert_approval("user-a", "pending")
+    assert await store.get_approval_state("user-a") == "pending"
+
+    ok = await store.set_approval_state("user-a", "approved", ("admin-x", "Admin X"))
+    assert ok is True
+    assert await store.get_approval_state("user-a") == "approved"
+
+    # review transition on a missing row reports failure
+    assert await store.set_approval_state("user-z", "approved", ("admin-x", "Admin X")) is False
+
+
+@pytest.mark.asyncio
+async def test_reenable_requeues_as_fresh_pending(store: UserListeningPrefsStore):
+    # matches follows: re-enabling re-queues even over a prior grant
+    await store.upsert_approval("user-a", "pending")
+    await store.set_approval_state("user-a", "approved", ("admin-x", "Admin X"))
+    await store.upsert_approval("user-a", "pending")
+    assert await store.get_approval_state("user-a") == "pending"
+
+
+@pytest.mark.asyncio
+async def test_list_pending_approvals_joins_user_name(store: UserListeningPrefsStore):
+    await store.upsert_approval("user-a", "pending")
+    await store.upsert_approval("user-b", "pending")
+    await store.set_approval_state("user-b", "rejected", ("admin-x", "Admin X"))
+    pending = await store.list_pending_approvals()
+    assert [p.user_id for p in pending] == ["user-a"]
+    assert pending[0].user_name == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_backfill_queues_pre_gate_optins_once(tmp_path: Path):
+    db_path = tmp_path / "library.db"
+    lock = threading.Lock()
+    store = UserListeningPrefsStore(db_path=db_path, write_lock=lock)
+    _seed_auth_users(db_path)
+    # user-a (role user) and admin-x opted in before the approval gate existed
+    await store.upsert("user-a", auto_request_personal_mix=True)
+    await store.upsert("admin-x", auto_request_personal_mix=True)
+
+    UserListeningPrefsStore(db_path=db_path, write_lock=lock)  # re-run _ensure_tables
+    assert await store.get_approval_state("user-a") == "pending"
+    assert await store.get_approval_state("admin-x") is None  # admins granted by role
+
+    # idempotent: a rejected row is not resurrected by later restarts
+    await store.set_approval_state("user-a", "rejected", ("admin-x", "Admin X"))
+    UserListeningPrefsStore(db_path=db_path, write_lock=lock)
+    assert await store.get_approval_state("user-a") == "rejected"

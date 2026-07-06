@@ -404,7 +404,14 @@ export const API = {
 		rejectAutoDownload: (userId: string, mbid: string) =>
 			`/api/v1/requests/auto-download-approvals/${userId}/${mbid}/reject`,
 		revokeAutoDownload: (userId: string, mbid: string) =>
-			`/api/v1/requests/auto-download-approvals/${userId}/${mbid}/revoke`
+			`/api/v1/requests/auto-download-approvals/${userId}/${mbid}/revoke`,
+		personalMixApprovals: () => '/api/v1/requests/personal-mix-approvals',
+		approvePersonalMix: (userId: string) =>
+			`/api/v1/requests/personal-mix-approvals/${userId}/approve`,
+		rejectPersonalMix: (userId: string) =>
+			`/api/v1/requests/personal-mix-approvals/${userId}/reject`,
+		revokePersonalMix: (userId: string) =>
+			`/api/v1/requests/personal-mix-approvals/${userId}/revoke`
 	},
 	tracks: {
 		request: (recordingMbid: string) => `/api/v1/tracks/${recordingMbid}/request`

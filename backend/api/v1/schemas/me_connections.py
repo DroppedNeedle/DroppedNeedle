@@ -26,6 +26,9 @@ class ScrobblePreferences(AppStruct):
     # now-playing presence visibility to other users
     now_playing_visibility: str = "full"
     auto_request_personal_mix: bool = False
+    # standing-grant state for auto-request (none|pending|approved|rejected|revoked);
+    # admins read 'approved' by role whenever the toggle is on
+    auto_request_state: str = "none"
 
 
 class ScrobblePreferencesUpdate(AppStruct):
@@ -37,11 +40,9 @@ class ScrobblePreferencesUpdate(AppStruct):
 
 
 class PersonalMixRefreshResponse(AppStruct):
-    playlist_id: str | None = None
-    track_count: int = 0
-    requested_albums: int = 0
-    skipped: bool = False
-    reason: str = ""
+    # the build runs in the background; the outcome arrives on the per-user SSE
+    # stream as a personal_mix_refreshed event
+    status: str = "started"  # started | already_running
 
 
 class ListenBrainzConnectRequest(AppStruct):

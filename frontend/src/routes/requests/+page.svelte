@@ -18,6 +18,7 @@
 		Check,
 		X,
 		Heart,
+		Sparkles,
 		TrendingUp
 	} from 'lucide-svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
@@ -37,6 +38,11 @@
 		createApproveAutoDownloadMutation,
 		createRejectAutoDownloadMutation
 	} from '$lib/queries/following/AdminApprovalsMutations.svelte';
+	import { getPersonalMixApprovalsQuery } from '$lib/queries/scrobble-preferences/PersonalMixApprovalsQuery.svelte';
+	import {
+		createApprovePersonalMixMutation,
+		createRejectPersonalMixMutation
+	} from '$lib/queries/scrobble-preferences/ScrobblePreferencesMutations.svelte';
 	import { isAbortError } from '$lib/utils/errorHandling';
 	import { libraryStore } from '$lib/stores/library';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -87,9 +93,19 @@
 		() => authStore.isAdmin && activeTab === 'auto-download'
 	);
 	const autoApprovals = $derived(autoApprovalsQuery.data?.items ?? []);
-	const autoApprovalCount = $derived(autoApprovalsQuery.data?.count ?? 0);
 	const approveAuto = createApproveAutoDownloadMutation();
 	const rejectAuto = createRejectAutoDownloadMutation();
+
+	// Weekly Mix auto-request standing approvals share the auto-download tab.
+	const mixApprovalsQuery = getPersonalMixApprovalsQuery(
+		() => authStore.isAdmin && activeTab === 'auto-download'
+	);
+	const mixApprovals = $derived(mixApprovalsQuery.data?.items ?? []);
+	const autoApprovalCount = $derived(
+		(autoApprovalsQuery.data?.count ?? 0) + (mixApprovalsQuery.data?.count ?? 0)
+	);
+	const approveMix = createApprovePersonalMixMutation();
+	const rejectMix = createRejectPersonalMixMutation();
 
 	function approvalTimeAgo(epochSeconds: number): string {
 		const diff = Date.now() / 1000 - epochSeconds;
@@ -935,14 +951,19 @@
 		</div>
 	{:else if activeTab === 'auto-download' && authStore.isAdmin}
 		<div in:fade={{ duration: 150 }}>
-			{#if autoApprovalsQuery.isError}
+			{#if autoApprovalsQuery.isError || mixApprovalsQuery.isError}
 				<div class="alert alert-warning mb-4">
 					<TriangleAlert class="h-5 w-5" />
 					<span>Could not load auto-download approvals.</span>
-					<button class="btn btn-sm" onclick={() => void autoApprovalsQuery.refetch()}>Retry</button
+					<button
+						class="btn btn-sm"
+						onclick={() => {
+							void autoApprovalsQuery.refetch();
+							void mixApprovalsQuery.refetch();
+						}}>Retry</button
 					>
 				</div>
-			{:else if autoApprovalsQuery.isPending}
+			{:else if autoApprovalsQuery.isPending || mixApprovalsQuery.isPending}
 				<div class="flex flex-col gap-2.5">
 					{#each Array(3) as _, i (`auto-approval-loading-${i}`)}
 						<div
@@ -961,16 +982,15 @@
 						</div>
 					{/each}
 				</div>
-			{:else if autoApprovals.length === 0}
+			{:else if autoApprovals.length === 0 && mixApprovals.length === 0}
 				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
 					<div class="w-16 h-16 rounded-full bg-success/5 flex items-center justify-center mb-4">
 						<Heart class="h-8 w-8 text-success/30" />
 					</div>
-					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">
-						No pending auto-download approvals
-					</h2>
+					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">No pending approvals</h2>
 					<p class="text-base-content/30 text-sm max-w-xs">
-						When a user turns on auto-download for an artist, it appears here for your review.
+						When a user turns on artist auto-download or Weekly Mix auto-requests, it appears here
+						for your review.
 					</p>
 				</div>
 			{:else}
@@ -1024,6 +1044,46 @@
 											mbid: item.artist_mbid,
 											artistName: item.artist_name
 										})}
+								>
+									<X class="h-3.5 w-3.5" />
+									Reject
+								</button>
+							</div>
+						</div>
+					{/each}
+					{#each mixApprovals as item (item.user_id)}
+						<div
+							in:fly={{ y: 12, duration: 200 }}
+							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box"
+						>
+							<div
+								class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg bg-base-300 flex items-center justify-center"
+							>
+								<Sparkles class="h-6 w-6 text-accent/60" />
+							</div>
+							<div class="flex-1 min-w-0">
+								<span class="block font-semibold text-sm truncate">Weekly Mix auto-requests</span>
+								<div class="flex items-center gap-1.5 flex-wrap text-xs text-base-content/40">
+									<span>{item.user_name ?? 'A user'}</span>
+									<span class="text-base-content/20">•</span>
+									<span>requested {approvalTimeAgo(item.requested_at)}</span>
+								</div>
+							</div>
+							<div class="flex gap-2 shrink-0">
+								<button
+									class="btn btn-success btn-sm gap-1"
+									disabled={approveMix.isPending || rejectMix.isPending}
+									onclick={() =>
+										approveMix.mutate({ userId: item.user_id, userName: item.user_name })}
+								>
+									<Check class="h-3.5 w-3.5" />
+									Approve
+								</button>
+								<button
+									class="btn btn-error btn-sm btn-outline gap-1"
+									disabled={approveMix.isPending || rejectMix.isPending}
+									onclick={() =>
+										rejectMix.mutate({ userId: item.user_id, userName: item.user_name })}
 								>
 									<X class="h-3.5 w-3.5" />
 									Reject

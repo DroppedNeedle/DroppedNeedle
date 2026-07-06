@@ -72,12 +72,17 @@ def svc():
     listening_prefs_store.get = AsyncMock(
         return_value=SimpleNamespace(auto_request_personal_mix=False)
     )
+    # default: an approved standing grant, so opt-in tests exercise the dispatch
+    # path; the gating tests override this (and the owner's role) explicitly
+    listening_prefs_store.get_approval_state = AsyncMock(return_value="approved")
 
     connections_store = AsyncMock()
     connections_store.list_user_ids_for_service = AsyncMock(return_value=[])
 
     auth_store = AsyncMock()
-    auth_store.get_user_by_id = AsyncMock(return_value=SimpleNamespace(id="user-a"))
+    auth_store.get_user_by_id = AsyncMock(
+        return_value=SimpleNamespace(id="user-a", role="user", display_name="Alice")
+    )
 
     lb_repo = AsyncMock()
     lb_repo.get_recommendation_playlists = AsyncMock(return_value=[])
@@ -324,3 +329,123 @@ async def test_run_for_all_users_aggregates_and_isolates_errors(monkeypatch, svc
     assert summary.errors == 1
     assert summary.skipped == 1
     assert summary.built == 1
+
+
+@pytest.mark.asyncio
+async def test_user_role_without_grant_is_not_dispatched(svc):
+    svc.listening_prefs_store.get.return_value = SimpleNamespace(auto_request_personal_mix=True)
+    svc.listening_prefs_store.get_approval_state.return_value = None  # no standing grant
+    _set_recommendation_tracks(
+        svc, jams=[_mix_track("Song", "Artist A", "Album A", "caa-1111-1111-1111-111111111111", ARTIST_A, "rec-1")],
+    )
+    result = await svc.service.build_for_user("user-a")
+    assert result.requested_albums == 0
+    svc.download_service.request_album.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_role_dispatches_without_grant_row(svc):
+    svc.auth_store.get_user_by_id.return_value = SimpleNamespace(
+        id="user-a", role="admin", display_name="Alice"
+    )
+    svc.listening_prefs_store.get.return_value = SimpleNamespace(auto_request_personal_mix=True)
+    svc.listening_prefs_store.get_approval_state.return_value = None
+    _set_recommendation_tracks(
+        svc, jams=[_mix_track("Song", "Artist A", "Album A", "caa-1111-1111-1111-111111111111", ARTIST_A, "rec-1")],
+    )
+    result = await svc.service.build_for_user("user-a")
+    assert result.requested_albums == 1
+
+
+@pytest.mark.asyncio
+async def test_auto_request_capped_per_refresh(svc):
+    svc.listening_prefs_store.get.return_value = SimpleNamespace(auto_request_personal_mix=True)
+    tracks = [
+        _mix_track(f"Song {i}", "Artist A", f"Album {i}", f"caa-{i:04d}-1111-1111-111111111111", ARTIST_A, f"rec-{i}")
+        for i in range(8)
+    ]
+    _set_recommendation_tracks(svc, jams=tracks)
+    result = await svc.service.build_for_user("user-a")
+    assert result.track_count == 8
+    assert result.requested_albums == 5  # _MAX_AUTO_REQUESTS
+    assert svc.download_service.request_album.await_count == 5
+
+
+@pytest.mark.asyncio
+async def test_toggle_on_as_user_enters_pending_queue(svc):
+    await svc.service.on_auto_request_toggled("user-a", "user", True)
+    svc.listening_prefs_store.upsert_approval.assert_awaited_once_with("user-a", "pending")
+
+
+@pytest.mark.asyncio
+async def test_toggle_on_as_admin_needs_no_grant_row(svc):
+    await svc.service.on_auto_request_toggled("user-a", "admin", True)
+    svc.listening_prefs_store.upsert_approval.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_toggle_off_leaves_grant_row(svc):
+    await svc.service.on_auto_request_toggled("user-a", "user", False)
+    svc.listening_prefs_store.upsert_approval.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_request_state_derivation(svc):
+    prefs_on = SimpleNamespace(auto_request_personal_mix=True)
+    prefs_off = SimpleNamespace(auto_request_personal_mix=False)
+
+    svc.listening_prefs_store.get.return_value = prefs_off
+    svc.listening_prefs_store.get_approval_state.return_value = None
+    assert await svc.service.get_auto_request_state("user-a", "user") == "none"
+
+    svc.listening_prefs_store.get.return_value = prefs_on
+    # intent on with no row reads "none" (matches follows; only demotion lands here)
+    assert await svc.service.get_auto_request_state("user-a", "user") == "none"
+    assert await svc.service.get_auto_request_state("user-a", "admin") == "approved"
+
+    svc.listening_prefs_store.get_approval_state.return_value = "pending"
+    assert await svc.service.get_auto_request_state("user-a", "user") == "pending"
+
+    svc.listening_prefs_store.get_approval_state.return_value = "approved"
+    assert await svc.service.get_auto_request_state("user-a", "user") == "approved"
+
+    svc.listening_prefs_store.get.return_value = prefs_off
+    svc.listening_prefs_store.get_approval_state.return_value = "rejected"
+    assert await svc.service.get_auto_request_state("user-a", "user") == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_reject_flips_intent_off(svc):
+    svc.listening_prefs_store.set_approval_state.return_value = True
+    ok = await svc.service.reject_auto_request("user-a", ("admin-x", "Admin X"))
+    assert ok is True
+    svc.listening_prefs_store.upsert.assert_awaited_once_with(
+        "user-a", auto_request_personal_mix=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_revoke_missing_row_does_not_touch_intent(svc):
+    svc.listening_prefs_store.set_approval_state.return_value = False
+    ok = await svc.service.revoke_auto_request("user-z", ("admin-x", "Admin X"))
+    assert ok is False
+    svc.listening_prefs_store.upsert.assert_not_called()
+
+
+def test_pick_seed_artists_pairs_mbid_with_name():
+    from services.personal_mix_service import PersonalMixService, _MixTrack
+
+    tracks = [
+        _MixTrack(
+            track_name="T1", artist_name="Artist A", album_name="Al",
+            release_group_mbid=RG1, artist_mbid=ARTIST_A, recording_mbid="rec-1",
+            in_library=False,
+        ),
+        _MixTrack(
+            track_name="T2", artist_name="Artist B", album_name="Al2",
+            release_group_mbid=RG2, artist_mbid=ARTIST_B, recording_mbid="rec-2",
+            in_library=False,
+        ),
+    ]
+    seeds = PersonalMixService._pick_seed_artists(tracks)
+    assert seeds == [(ARTIST_A, "Artist A"), (ARTIST_B, "Artist B")]

@@ -57,6 +57,7 @@
 	let nowPlayingVisibility = $state<NowPlayingVisibility>('full');
 	let autoRequestPersonalMix = $state(false);
 	let mixRefreshMessage = $state<string | null>(null);
+	const autoRequestState = $derived(prefs?.auto_request_state ?? 'none');
 	$effect(() => {
 		if (prefs) {
 			scrobbleLastfm = prefs.scrobble_to_lastfm;
@@ -144,14 +145,12 @@
 		mixRefreshMessage = null;
 		try {
 			const result = await refreshMixMutation.mutateAsync();
-			if (result.skipped) {
-				mixRefreshMessage =
-					result.reason === 'fresh'
-						? 'Your Weekly Mix was already refreshed recently.'
-						: "Couldn't build Your Weekly Mix yet, listen to a bit more first.";
-			} else {
-				mixRefreshMessage = `Your Weekly Mix updated: ${result.track_count} tracks${result.requested_albums ? `, ${result.requested_albums} album(s) requested` : ''}.`;
-			}
+			// the build runs in the background; completion arrives as a toast via
+			// the personal_mix_refreshed SSE event
+			mixRefreshMessage =
+				result.status === 'already_running'
+					? 'A refresh is already running - hang tight.'
+					: "Refreshing in the background - we'll let you know when it's ready.";
 		} catch (e) {
 			mixRefreshMessage = errorMessage(e, "Couldn't refresh Your Weekly Mix.");
 		}
@@ -453,6 +452,12 @@
 						<span class="text-sm font-medium">Auto-request missing music from Your Weekly Mix</span>
 						{#if !lb}
 							<p class="text-xs text-base-content/40">Link ListenBrainz above to enable.</p>
+						{:else if autoRequestPersonalMix && autoRequestState === 'pending'}
+							<p class="text-xs text-warning/80">Waiting for an admin to approve auto-requests.</p>
+						{:else if autoRequestState === 'rejected' || autoRequestState === 'revoked'}
+							<p class="text-xs text-base-content/40">
+								An admin declined auto-requests for your mix.
+							</p>
 						{/if}
 					</div>
 					<input

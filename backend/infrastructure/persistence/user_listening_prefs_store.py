@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sqlite3
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -29,6 +30,19 @@ class UserListeningPrefsRecord(msgspec.Struct, frozen=True):
     now_playing_visibility: str
     auto_request_personal_mix: bool
     updated_at: str
+
+
+class PersonalMixApproval(msgspec.Struct, frozen=True):
+    """Standing grant for personal-mix auto-request (one per user), mirroring
+    ``follow_store.Approval``. The role override is applied in the service layer."""
+
+    user_id: str
+    state: str
+    requested_at: float
+    reviewed_by_id: str | None = None
+    reviewed_by_name: str | None = None
+    reviewed_at: float | None = None
+    user_name: str | None = None
 
 
 class UserListeningPrefsStore:
@@ -79,6 +93,47 @@ class UserListeningPrefsStore:
                 )
             except sqlite3.OperationalError:
                 pass  # column already present
+            # standing grants for personal-mix auto-request, one row per user,
+            # mirroring auto_download_approvals (follow_store)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS personal_mix_approvals (
+                    user_id          TEXT NOT NULL PRIMARY KEY
+                                     REFERENCES auth_users(id) ON DELETE CASCADE,
+                    state            TEXT NOT NULL DEFAULT 'pending',
+                    requested_at     REAL NOT NULL,
+                    reviewed_by_id   TEXT,
+                    reviewed_by_name TEXT,
+                    reviewed_at      REAL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pma_pending "
+                "ON personal_mix_approvals(state) WHERE state = 'pending'"
+            )
+            # backfill, re-run at every startup: non-admin users with intent on but no
+            # approval row (pre-gate opt-ins, demoted admins) enter the pending queue.
+            # Idempotent (NOT EXISTS); rejected/revoked rows can't be resurrected
+            # because their row exists.
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO personal_mix_approvals (user_id, state, requested_at)
+                    SELECT ulp.user_id, 'pending', ?
+                    FROM user_listening_prefs ulp
+                    JOIN auth_users au ON au.id = ulp.user_id
+                    WHERE ulp.auto_request_personal_mix = 1
+                      AND au.role != 'admin'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM personal_mix_approvals pma
+                        WHERE pma.user_id = ulp.user_id
+                      )
+                    """,
+                    (time.time(),),
+                )
+            except sqlite3.OperationalError:
+                pass  # fresh DB without auth_users yet -> nothing to backfill
             conn.commit()
         finally:
             conn.close()
@@ -200,3 +255,89 @@ class UserListeningPrefsStore:
             )
 
         await self._write(operation)
+
+    async def upsert_approval(
+        self,
+        user_id: str,
+        state: str,
+        reviewer: tuple[str, str | None] | None = None,
+    ) -> None:
+        # requested_at is refreshed so a re-request surfaces fresh in the admin
+        # queue; reviewer fields are cleared unless a reviewer is given.
+        now = time.time()
+        reviewed_by_id = reviewer[0] if reviewer else None
+        reviewed_by_name = reviewer[1] if reviewer else None
+        reviewed_at = now if reviewer else None
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                """
+                INSERT INTO personal_mix_approvals (
+                    user_id, state, requested_at,
+                    reviewed_by_id, reviewed_by_name, reviewed_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    state = excluded.state,
+                    requested_at = excluded.requested_at,
+                    reviewed_by_id = excluded.reviewed_by_id,
+                    reviewed_by_name = excluded.reviewed_by_name,
+                    reviewed_at = excluded.reviewed_at
+                """,
+                (user_id, state, now, reviewed_by_id, reviewed_by_name, reviewed_at),
+            )
+
+        await self._write(operation)
+
+    async def set_approval_state(
+        self,
+        user_id: str,
+        state: str,
+        reviewer: tuple[str, str | None],
+    ) -> bool:
+        # admin review transition; leaves requested_at untouched
+        now = time.time()
+        reviewed_by_id, reviewed_by_name = reviewer
+
+        def operation(conn: sqlite3.Connection) -> bool:
+            cursor = conn.execute(
+                "UPDATE personal_mix_approvals SET state = ?, reviewed_by_id = ?, "
+                "reviewed_by_name = ?, reviewed_at = ? WHERE user_id = ?",
+                (state, reviewed_by_id, reviewed_by_name, now, user_id),
+            )
+            return cursor.rowcount > 0
+
+        return await self._write(operation)
+
+    async def get_approval_state(self, user_id: str) -> str | None:
+        def operation(conn: sqlite3.Connection) -> sqlite3.Row | None:
+            return conn.execute(
+                "SELECT state FROM personal_mix_approvals WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+
+        row = await self._read(operation)
+        return row["state"] if row else None
+
+    async def list_pending_approvals(self) -> list[PersonalMixApproval]:
+        def operation(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+            return conn.execute(
+                """
+                SELECT pma.user_id AS user_id, pma.state AS state,
+                       pma.requested_at AS requested_at, au.display_name AS user_name
+                FROM personal_mix_approvals pma
+                JOIN auth_users au ON au.id = pma.user_id
+                WHERE pma.state = 'pending'
+                ORDER BY pma.requested_at ASC
+                """
+            ).fetchall()
+
+        rows = await self._read(operation)
+        return [
+            PersonalMixApproval(
+                user_id=row["user_id"],
+                state=row["state"],
+                requested_at=row["requested_at"],
+                user_name=row["user_name"],
+            )
+            for row in rows
+        ]

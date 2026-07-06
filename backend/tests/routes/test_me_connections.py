@@ -1,5 +1,6 @@
 """Per-user /me connection + scrobble-preference routes (AMU-2/AMU-3/AMU-6)."""
 
+import asyncio
 import sqlite3
 import threading
 from pathlib import Path
@@ -12,6 +13,8 @@ from fastapi import FastAPI
 from api.v1.routes.me_connections import router as me_router
 from core.dependencies import (
     get_lastfm_auth_service,
+    get_per_user_client_factory,
+    get_personal_mix_service,
     get_preferences_service,
     get_settings_service,
     get_user_connections_store,
@@ -20,6 +23,7 @@ from core.dependencies import (
 from infrastructure.crypto import init_crypto
 from infrastructure.persistence.user_connections_store import UserConnectionsStore
 from infrastructure.persistence.user_listening_prefs_store import UserListeningPrefsStore
+from services.personal_mix_service import PersonalMixResult, PersonalMixService
 from tests.helpers import build_test_client, override_user_auth
 
 
@@ -60,6 +64,21 @@ def ctx(tmp_path: Path):
     prefs_service = MagicMock()
     prefs_service.get_lastfm_connection.return_value = SimpleNamespace(api_key="appkey", shared_secret="appsecret")
 
+    # real grant logic against the real prefs store; everything else mocked
+    personal_mix_service = PersonalMixService(
+        client_factory=AsyncMock(),
+        mb_repo=AsyncMock(),
+        library_repo=AsyncMock(),
+        playlist_service=AsyncMock(),
+        download_service=AsyncMock(),
+        listening_prefs_store=prefs_store,
+        connections_store=conn_store,
+        auth_store=AsyncMock(),
+    )
+
+    client_factory = AsyncMock()
+    client_factory.is_listenbrainz_linked = AsyncMock(return_value=True)
+
     app = FastAPI()
     app.include_router(me_router)
     app.dependency_overrides[get_user_connections_store] = lambda: conn_store
@@ -67,11 +86,14 @@ def ctx(tmp_path: Path):
     app.dependency_overrides[get_lastfm_auth_service] = lambda: lastfm_auth
     app.dependency_overrides[get_settings_service] = lambda: settings_service
     app.dependency_overrides[get_preferences_service] = lambda: prefs_service
+    app.dependency_overrides[get_personal_mix_service] = lambda: personal_mix_service
+    app.dependency_overrides[get_per_user_client_factory] = lambda: client_factory
     override_user_auth(app, user_id="user-a")
     client = build_test_client(app)
     return SimpleNamespace(
         client=client, app=app, conn_store=conn_store, prefs_store=prefs_store,
-        settings_service=settings_service,
+        settings_service=settings_service, personal_mix_service=personal_mix_service,
+        client_factory=client_factory,
     )
 
 
@@ -196,3 +218,75 @@ def test_connections_do_not_leak_across_users(ctx):
     ctx.client.post("/me/connections/lastfm/auth/session", json={"token": "tok-1"})
     override_user_auth(ctx.app, user_id="user-b")
     assert ctx.client.get("/me/connections").json()["connections"] == []
+
+
+def test_auto_request_defaults_to_none_state(ctx):
+    data = ctx.client.get("/me/scrobble-preferences").json()
+    assert data["auto_request_personal_mix"] is False
+    assert data["auto_request_state"] == "none"
+
+
+def test_auto_request_toggle_as_user_enters_pending(ctx):
+    resp = ctx.client.put(
+        "/me/scrobble-preferences", json={"auto_request_personal_mix": True}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["auto_request_personal_mix"] is True
+    assert data["auto_request_state"] == "pending"
+
+
+def test_auto_request_toggle_as_admin_reads_approved(ctx):
+    override_user_auth(ctx.app, role="admin", user_id="user-a")
+    resp = ctx.client.put(
+        "/me/scrobble-preferences", json={"auto_request_personal_mix": True}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["auto_request_state"] == "approved"
+
+
+def test_toggle_off_keeps_grant_row_for_reenable(ctx):
+    ctx.client.put("/me/scrobble-preferences", json={"auto_request_personal_mix": True})
+    resp = ctx.client.put(
+        "/me/scrobble-preferences", json={"auto_request_personal_mix": False}
+    )
+    assert resp.json()["auto_request_state"] == "none"
+    # the pending row survives the disable (mirrors follows)
+    assert asyncio.run(ctx.prefs_store.get_approval_state("user-a")) == "pending"
+
+
+def test_resending_true_does_not_requeue_an_approved_grant(ctx):
+    # a full-object PUT that resends the unchanged toggle must not suspend the grant
+    ctx.client.put("/me/scrobble-preferences", json={"auto_request_personal_mix": True})
+    asyncio.run(
+        ctx.prefs_store.set_approval_state("user-a", "approved", ("admin-x", "Admin X"))
+    )
+    resp = ctx.client.put(
+        "/me/scrobble-preferences",
+        json={"auto_request_personal_mix": True, "scrobble_to_lastfm": True},
+    )
+    assert resp.json()["auto_request_state"] == "approved"
+
+
+def test_personal_mix_refresh_requires_listenbrainz(ctx):
+    ctx.client_factory.is_listenbrainz_linked.return_value = False
+    resp = ctx.client.post("/me/personal-mix/refresh")
+    assert resp.status_code == 400
+
+
+def test_personal_mix_refresh_starts_background_build(ctx, monkeypatch):
+    build = AsyncMock(return_value=PersonalMixResult(user_id="user-a", track_count=3))
+    monkeypatch.setattr(ctx.personal_mix_service, "build_for_user", build)
+    resp = ctx.client.post("/me/personal-mix/refresh")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "started"
+
+
+def test_personal_mix_refresh_reports_already_running(ctx, monkeypatch):
+    from core.task_registry import TaskRegistry
+
+    registry = TaskRegistry.get_instance()
+    monkeypatch.setattr(registry, "is_running", lambda key: True)
+    resp = ctx.client.post("/me/personal-mix/refresh")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "already_running"
