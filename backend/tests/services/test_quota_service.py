@@ -279,3 +279,16 @@ async def test_storage_admission_exempts_retries(env: _Env):
     await env.quota.check_storage_admission("u1", "retry")  # no raise
     with pytest.raises(ValidationError):
         await env.quota.check_storage_admission("u1", "user")
+
+
+@pytest.mark.asyncio
+async def test_storage_admission_exempts_wanted_dispatches(env: _Env):
+    """The wanted watcher re-dispatches an already-admitted ask (Wanted D8) -
+    same reasoning as 'retry'."""
+    await env.add_user("u1")
+    env.set_policy(max_library_size_gb=1)
+    await env.add_library_file("/m/a/01.mp3", size=1024**3, rg="rg-1", track=1)
+
+    await env.quota.check_storage_admission("u1", "wanted")  # no raise
+    with pytest.raises(ValidationError):
+        await env.quota.check_storage_admission("u1", "user")

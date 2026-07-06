@@ -1,6 +1,9 @@
 <script lang="ts">
+	import { Radar } from 'lucide-svelte';
+
 	import { cancelDownload } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import {
+		dismissReview,
 		getSearchJobQuery,
 		pickSearchCandidate
 	} from '$lib/queries/downloads/SearchQueries.svelte';
@@ -13,6 +16,7 @@
 	const jobQuery = getSearchJobQuery(() => task.search_job_id ?? '');
 	const pick = pickSearchCandidate();
 	const cancel = cancelDownload();
+	const dismiss = dismissReview();
 
 	let showAll = $state(false);
 	let pickingIndex = $state<number | null>(null);
@@ -20,6 +24,14 @@
 	// moves it out of Review - keep every pick locked in that window so a second click can't
 	// fire a duplicate download.
 	let picked = $state(false);
+	// mirrors `picked` for the "None of these" path: locked once the album moved
+	// to the watchlist, until the next poll drops the card
+	let dismissed = $state(false);
+
+	function handleDismiss() {
+		if (!task.search_job_id || dismissed || picked) return;
+		dismiss.mutate(task.search_job_id, { onSuccess: () => (dismissed = true) });
+	}
 
 	const candidates = $derived(jobQuery.data?.candidates ?? []);
 	// Keep each candidate's ORIGINAL index - the backend's candidate_index is into the
@@ -63,6 +75,10 @@
 	{:else if candidates.length === 0}
 		<p class="text-sm text-base-content/60">No candidates available to review.</p>
 	{:else}
+		<p class="text-xs text-base-content/40">
+			Not sure? Picking is safe - every file is verified before it reaches your library, and
+			anything that can't be verified is held for you to listen to first.
+		</p>
 		{#each groups as group (group.key)}
 			{@const visible = showAll ? group.items : group.items.slice(0, 3)}
 			<div class="space-y-2">
@@ -89,13 +105,25 @@
 			{:else}
 				<span></span>
 			{/if}
-			<button
-				class="btn btn-ghost btn-xs text-error"
-				onclick={() => cancel.mutate(task.id)}
-				disabled={cancel.isPending}
-			>
-				Cancel request
-			</button>
+			<div class="flex items-center gap-1">
+				<button
+					class="btn btn-ghost btn-xs text-info"
+					onclick={handleDismiss}
+					disabled={dismissed || picked || dismiss.isPending}
+					title="Reject all of these and put the album on the watchlist - it'll be re-checked on a schedule"
+				>
+					<Radar class="h-3.5 w-3.5" />
+					{dismissed ? 'On the watchlist' : 'None of these - keep watching'}
+				</button>
+				<button
+					class="btn btn-ghost btn-xs text-error"
+					onclick={() => cancel.mutate(task.id)}
+					disabled={dismissed || cancel.isPending}
+					title="Give up on this album entirely - it won't be watched"
+				>
+					Cancel request
+				</button>
+			</div>
 		</div>
 	{/if}
 </div>

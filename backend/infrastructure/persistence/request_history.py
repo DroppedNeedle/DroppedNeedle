@@ -616,18 +616,31 @@ class RequestHistoryStore:
         return await self._write(operation)
 
     async def prune_old_terminal_requests(self, days: int) -> int:
-        """Delete terminal requests older than `days` days. Active requests are never touched."""
+        """Delete terminal requests older than `days` days. Active requests are never
+        touched. Rows with a live wanted watch (state watching/dormant) are kept even
+        past retention - pruning them would orphan the watch and break its status-flip
+        linkage (Wanted plan §4.4). ``wanted_watches`` lives in the same database file;
+        a DB from before the table existed falls back to the unguarded delete."""
         import time as _time
         from datetime import timezone
         cutoff_iso = datetime.fromtimestamp(_time.time() - days * 86400, tz=timezone.utc).isoformat()
         terminal_statuses = ("imported", "failed", "cancelled", "incomplete", "rejected")
+        base = (
+            f"DELETE FROM request_history WHERE status IN ({','.join('?' for _ in terminal_statuses)}) "
+            "AND COALESCE(completed_at, requested_at) < ?"
+        )
+        watch_guard = (
+            " AND musicbrainz_id_lower NOT IN (SELECT release_group_mbid_lower"
+            " FROM wanted_watches WHERE state IN ('watching','dormant'))"
+        )
 
         def operation(conn: sqlite3.Connection) -> int:
-            cursor = conn.execute(
-                f"DELETE FROM request_history WHERE status IN ({','.join('?' for _ in terminal_statuses)}) "
-                "AND COALESCE(completed_at, requested_at) < ?",
-                (*terminal_statuses, cutoff_iso),
-            )
+            try:
+                cursor = conn.execute(base + watch_guard, (*terminal_statuses, cutoff_iso))
+            except sqlite3.OperationalError:
+                # no wanted_watches table yet (fresh DB before the store's first
+                # construction) - nothing can be watched, prune unguarded
+                cursor = conn.execute(base, (*terminal_statuses, cutoff_iso))
             return cursor.rowcount
 
         return await self._write(operation)

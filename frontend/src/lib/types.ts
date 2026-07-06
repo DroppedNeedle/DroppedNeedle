@@ -1769,6 +1769,15 @@ export interface DownloadPolicySettings {
 	background_upgrade_max_per_run: number;
 }
 
+// Hand-mirrors backend WantedWatcherSettings (api/v1/schemas/settings.py).
+export interface WantedWatcherSettings {
+	enabled: boolean;
+	auto_download_on_find: boolean;
+	watch_partial_albums: boolean;
+	max_checks_per_sweep: number;
+	dormant_after_days: number;
+}
+
 export interface DownloadSearchResultFile {
 	username: string;
 	filename: string;
@@ -1829,6 +1838,13 @@ export interface SearchJobView {
 
 export interface PickResponse {
 	task_id: string;
+}
+
+// Hand-mirrors backend DismissReviewResponse (api/v1/schemas/download.py):
+// "None of these - keep watching" put the album on the wanted watchlist.
+export interface DismissReviewResponse {
+	success: boolean;
+	state: string;
 }
 
 export type DownloadStatus =

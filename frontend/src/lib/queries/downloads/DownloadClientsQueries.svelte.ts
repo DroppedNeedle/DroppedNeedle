@@ -8,7 +8,8 @@ import type {
 	DownloadPolicySettings,
 	SabnzbdConnectionSettings,
 	SabnzbdTestResult,
-	SourcePriority
+	SourcePriority,
+	WantedWatcherSettings
 } from '$lib/types';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
@@ -83,5 +84,24 @@ export function saveDownloadPolicy() {
 		mutationFn: (policy: DownloadPolicySettings) =>
 			api.global.put<DownloadPolicySettings>(API.downloadClients.policy(), policy),
 		onSuccess: () => invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.policy() })
+	}));
+}
+
+const wantedSettingsOptions = () =>
+	queryOptions({
+		staleTime: CACHE_TTL.LIBRARY_NATIVE,
+		queryKey: DownloadQueryKeyFactory.wantedSettings(),
+		queryFn: ({ signal }) =>
+			api.global.get<WantedWatcherSettings>(API.downloadClients.wanted(), { signal })
+	});
+
+export const getWantedSettingsQuery = () => createQuery(() => wantedSettingsOptions());
+
+export function saveWantedSettings() {
+	return createMutation(() => ({
+		mutationFn: (settings: WantedWatcherSettings) =>
+			api.global.put<WantedWatcherSettings>(API.downloadClients.wanted(), settings),
+		onSuccess: () =>
+			invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.wantedSettings() })
 	}));
 }

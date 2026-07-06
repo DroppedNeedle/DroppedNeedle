@@ -28,6 +28,11 @@ const COVERAGE: Array<[string, string, string]> = [
 	['search album', API.downloads.searchAlbum(), '/api/v1/downloads/search/album'],
 	['search job', API.downloads.searchJob('J1'), '/api/v1/downloads/search/J1'],
 	['search pick', API.downloads.pick('J1'), '/api/v1/downloads/search/J1/pick'],
+	[
+		'search dismiss review',
+		API.downloads.dismissReview('J1'),
+		'/api/v1/downloads/search/J1/dismiss'
+	],
 	['search cancel', API.downloads.cancelSearch('J1'), '/api/v1/downloads/search/J1/cancel'],
 	// quarantine (admin)
 	['quarantine list', API.downloads.quarantine(), '/api/v1/downloads/quarantine'],
@@ -121,7 +126,13 @@ const COVERAGE: Array<[string, string, string]> = [
 		'personal mix revoke',
 		API.requests.revokePersonalMix('U1'),
 		'/api/v1/requests/personal-mix-approvals/U1/revoke'
-	]
+	],
+	// Wanted watches (availability re-search, user-scoped with admin visibility)
+	['wanted list', API.requests.wanted(), '/api/v1/requests/wanted'],
+	['wanted stop', API.requests.wantedStop('M1'), '/api/v1/requests/wanted/M1/stop'],
+	['wanted resume', API.requests.wantedResume('M1'), '/api/v1/requests/wanted/M1/resume'],
+	['wanted mark seen', API.requests.wantedSeen('M1'), '/api/v1/requests/wanted/M1/seen'],
+	['wanted watcher settings', API.downloadClients.wanted(), '/api/v1/download-clients/wanted']
 ];
 
 // Routes whose builder takes query params - assert the path prefix only.

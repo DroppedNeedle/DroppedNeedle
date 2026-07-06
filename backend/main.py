@@ -530,7 +530,12 @@ async def lifespan(app: FastAPI):
     start_personal_mix_refresh_task(get_personal_mix_service())
 
     from core.tasks import start_orphan_cover_demotion_task, start_store_prune_task
-    from core.dependencies import get_request_history_store, get_mbid_store, get_youtube_store
+    from core.dependencies import (
+        get_request_history_store,
+        get_mbid_store,
+        get_youtube_store,
+        get_wanted_store,
+    )
 
     start_orphan_cover_demotion_task(
         cover_disk_cache,
@@ -538,6 +543,9 @@ async def lifespan(app: FastAPI):
         interval=advanced_settings.orphan_cover_demote_interval_hours * 3600,
     )
 
+    # get_wanted_store() here (before the prune task) also guarantees the
+    # wanted_watches table exists before the request-history prune's
+    # watch-exclusion subquery ever runs (Wanted plan §5.5)
     start_store_prune_task(
         get_request_history_store(),
         get_mbid_store(),
@@ -545,6 +553,7 @@ async def lifespan(app: FastAPI):
         request_retention_days=advanced_settings.request_history_retention_days,
         ignored_retention_days=advanced_settings.ignored_releases_retention_days,
         interval=advanced_settings.store_prune_interval_hours * 3600,
+        wanted_store=get_wanted_store(),
     )
 
     from core.tasks import start_background_upgrade_scan_task, start_recycle_bin_prune_task
@@ -559,6 +568,13 @@ async def lifespan(app: FastAPI):
     start_background_upgrade_scan_task(
         get_download_service, get_auth_store(), preferences_service
     )
+
+    from core.tasks import start_wanted_watcher_task
+    from core.dependencies import get_wanted_watcher_service
+
+    # provider, not an instance: each sweep resolves the current watcher (whose
+    # DownloadService is itself resolved fresh - settings saves rebuild it)
+    start_wanted_watcher_task(get_wanted_watcher_service)
     
     logger.info("DroppedNeedle started successfully")
     

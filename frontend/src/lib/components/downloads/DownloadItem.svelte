@@ -202,7 +202,7 @@
 					class="btn btn-ghost btn-xs text-base-content/60 hover:text-error"
 					onclick={() => stopRetry.mutate(task.id)}
 					disabled={stopRetry.isPending}
-					title="Stop auto-retrying"
+					title="Stop auto-retrying - it won't be watched for later either"
 					aria-label="Stop auto-retrying this download"
 				>
 					<TimerOff class="h-3.5 w-3.5" /> Stop retrying

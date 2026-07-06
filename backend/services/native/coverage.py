@@ -21,54 +21,70 @@ from services.native.file_processor import _TAG_TITLE_WEAK, row_covers_track
 from services.native.title_match import title_containment_score
 
 
-def match_rows_to_tracks(
-    rows: list[dict], tracks: list  # noqa: ANN001 - Track shape, no import cycle on models
-) -> tuple[int, list[dict], list[str]]:
-    """``(covered_count, orphan_rows, matched_row_ids)``."""
-
-    def _find_cover(remaining, track, expected_seconds):  # noqa: ANN001
-        want_rec = (track.recording_id or "").strip().lower()
-        for i, row in remaining:
-            row_rec = (row.get("recording_mbid") or "").strip().lower()
-            if want_rec and row_rec and row_rec == want_rec:
-                return i
-        for i, row in remaining:
-            if (row.get("disc_number") or 1, row.get("track_number")) == (
-                track.disc_number or 1,
-                track.position,
-            ) and row_covers_track(
-                row,
-                recording_mbid=track.recording_id,
-                title=track.title,
-                duration_seconds=expected_seconds,
-            ):
-                return i
-        for i, row in remaining:
-            row_title = (row.get("track_title") or "").strip()
-            row_dur = row.get("duration_seconds")
-            if not (track.title and row_title):
-                continue
-            if title_containment_score(track.title, row_title) < _TAG_TITLE_WEAK:
-                continue
-            if expected_seconds and not (
-                row_dur and abs(row_dur - expected_seconds) <= max(15.0, 0.10 * expected_seconds)
-            ):
-                continue
+def _find_cover(remaining, track, expected_seconds):  # noqa: ANN001
+    want_rec = (track.recording_id or "").strip().lower()
+    for i, row in remaining:
+        row_rec = (row.get("recording_mbid") or "").strip().lower()
+        if want_rec and row_rec and row_rec == want_rec:
             return i
-        return None
+    for i, row in remaining:
+        if (row.get("disc_number") or 1, row.get("track_number")) == (
+            track.disc_number or 1,
+            track.position,
+        ) and row_covers_track(
+            row,
+            recording_mbid=track.recording_id,
+            title=track.title,
+            duration_seconds=expected_seconds,
+        ):
+            return i
+    for i, row in remaining:
+        row_title = (row.get("track_title") or "").strip()
+        row_dur = row.get("duration_seconds")
+        if not (track.title and row_title):
+            continue
+        if title_containment_score(track.title, row_title) < _TAG_TITLE_WEAK:
+            continue
+        if expected_seconds and not (
+            row_dur and abs(row_dur - expected_seconds) <= max(15.0, 0.10 * expected_seconds)
+        ):
+            continue
+        return i
+    return None
 
+
+def _match(rows: list[dict], tracks: list):  # noqa: ANN001, ANN202
+    """``(covered_track_indices, orphan_rows, matched_row_ids)`` - the shared core."""
     remaining = list(enumerate(rows))
-    covered = 0
+    covered_indices: list[int] = []
     matched_ids: list[str] = []
-    for track in tracks:
+    for index, track in enumerate(tracks):
         # MusicBrainz track lengths are MILLISECONDS; library rows store seconds.
         expected_seconds = (track.length / 1000.0) if track.length else None
         hit = _find_cover(remaining, track, expected_seconds)
         if hit is None:
             continue
-        covered += 1
+        covered_indices.append(index)
         row_id = rows[hit].get("id")
         if row_id:
             matched_ids.append(str(row_id))
         remaining = [(j, r) for j, r in remaining if j != hit]
-    return covered, [r for _, r in remaining], matched_ids
+    return covered_indices, [r for _, r in remaining], matched_ids
+
+
+def match_rows_to_tracks(
+    rows: list[dict], tracks: list  # noqa: ANN001 - Track shape, no import cycle on models
+) -> tuple[int, list[dict], list[str]]:
+    """``(covered_count, orphan_rows, matched_row_ids)``."""
+    covered_indices, orphan_rows, matched_ids = _match(rows, tracks)
+    return len(covered_indices), orphan_rows, matched_ids
+
+
+def uncovered_tracks(rows: list[dict], tracks: list) -> list:  # noqa: ANN001
+    """The expected tracks the library does NOT cover, by the same matching the
+    completeness gate uses - the wanted watcher's per-track dispatch set (D9).
+    Same core as ``match_rows_to_tracks``, so 'incomplete' and 'which tracks'
+    can never disagree."""
+    covered_indices, _orphans, _matched = _match(rows, tracks)
+    covered = set(covered_indices)
+    return [track for index, track in enumerate(tracks) if index not in covered]

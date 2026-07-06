@@ -264,6 +264,15 @@ def get_request_history_store() -> "RequestHistoryStore":
 
 
 @singleton
+def get_wanted_store() -> "WantedStore":
+    from infrastructure.persistence.wanted_store import WantedStore
+    from .cache_providers import get_persistence_write_lock
+
+    settings = get_settings()
+    return WantedStore(db_path=settings.library_db_path, write_lock=get_persistence_write_lock())
+
+
+@singleton
 def get_user_connections_store() -> "UserConnectionsStore":
     from infrastructure.persistence.user_connections_store import UserConnectionsStore
     from .cache_providers import get_persistence_write_lock

@@ -10,6 +10,7 @@ from core.config import Settings, get_settings
 from infrastructure.cache.memory_cache import CacheInterface
 from infrastructure.cache.disk_cache import DiskMetadataCache
 from infrastructure.persistence.request_history import RequestHistoryStore
+from infrastructure.persistence.wanted_store import WantedStore
 from middleware import CurrentUserDep as CurrentUserDep, CurrentAdminDep as CurrentAdminDep, CurrentTokenDep as CurrentTokenDep
 from repositories.protocols import LibraryRepositoryProtocol
 from repositories.musicbrainz_repository import MusicBrainzRepository
@@ -72,6 +73,7 @@ from .repo_providers import (
     get_lastfm_repository,
     get_playlist_repository,
     get_request_history_store,
+    get_wanted_store,
     get_navidrome_repository,
     get_plex_repository,
     get_github_repository,
@@ -135,6 +137,7 @@ DiscoverQueueManagerDep = Annotated[DiscoverQueueManager, Depends(get_discover_q
 YouTubeRepositoryDep = Annotated[YouTubeRepository, Depends(get_youtube_repo)]
 YouTubeServiceDep = Annotated[YouTubeService, Depends(get_youtube_service)]
 RequestHistoryStoreDep = Annotated[RequestHistoryStore, Depends(get_request_history_store)]
+WantedStoreDep = Annotated[WantedStore, Depends(get_wanted_store)]
 RequestsPageServiceDep = Annotated[RequestsPageService, Depends(get_requests_page_service)]
 JellyfinPlaybackServiceDep = Annotated[JellyfinPlaybackService, Depends(get_jellyfin_playback_service)]
 LocalFilesServiceDep = Annotated[LocalFilesService, Depends(get_local_files_service)]

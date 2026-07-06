@@ -15,6 +15,7 @@ from core.exceptions import (
     ValidationError,
 )
 from core.task_registry import TaskRegistry
+from infrastructure.queue.priority_queue import RequestPriority
 from models.download import DownloadTask, ScoredCandidate, SearchJob
 from repositories.protocols.download_client import DownloadSearchResult
 from services.native.download_service import (
@@ -595,7 +596,11 @@ async def test_request_album_backfills_track_count_from_musicbrainz():
 
     await service.request_album("u1", "rg", "Artist", "Album", year=1999)
 
-    album_service.get_album_tracks_info.assert_awaited_once_with("rg")
+    # user-path backfills stay at USER_INITIATED priority (the wanted scout is the
+    # only caller that passes BACKGROUND_SYNC)
+    album_service.get_album_tracks_info.assert_awaited_once_with(
+        "rg", priority=RequestPriority.USER_INITIATED
+    )
     assert store.create_task.await_args.kwargs["track_count"] == 12
 
 

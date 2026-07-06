@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from infrastructure.persistence.request_history import RequestHistoryStore
     from infrastructure.persistence.mbid_store import MBIDStore
     from infrastructure.persistence.youtube_store import YouTubeStore
+    from infrastructure.persistence.wanted_store import WantedStore
     from services.requests_page_service import RequestsPageService
     from services.native.new_release_service import NewReleaseService
     from services.personal_mix_service import PersonalMixService
@@ -891,6 +892,34 @@ def start_download_auto_retry_task(get_orchestrator) -> asyncio.Task:
     return task
 
 
+_WANTED_WATCHER_INTERVAL = 900
+_WANTED_WATCHER_INITIAL_DELAY = 240
+
+
+async def run_wanted_watcher_periodically(
+    get_wanted_watcher, interval: int = _WANTED_WATCHER_INTERVAL
+) -> None:
+    """Sweep the wanted-watch registry: enrol availability-dead requests and
+    re-search due watches (Wanted plan §5.3). Resolves the watcher fresh each
+    sweep - the enabled toggle and the DownloadService it dispatches through
+    are re-read/rebuilt without a restart."""
+    await asyncio.sleep(_WANTED_WATCHER_INITIAL_DELAY)
+    while True:
+        try:
+            await get_wanted_watcher().run_sweep()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:  # noqa: BLE001
+            logger.error("Wanted watcher sweep failed: %s", e, exc_info=True)
+        await asyncio.sleep(interval)
+
+
+def start_wanted_watcher_task(get_wanted_watcher) -> asyncio.Task:
+    task = asyncio.create_task(run_wanted_watcher_periodically(get_wanted_watcher))
+    TaskRegistry.get_instance().register("wanted-watcher", task)
+    return task
+
+
 _FOLLOW_POLL_INTERVAL = 86400  # 24h, hardcoded for v1 (L2)
 _FOLLOW_POLL_INITIAL_DELAY = 300
 
@@ -1006,6 +1035,7 @@ async def prune_stores_periodically(
     request_retention_days: int = 180,
     ignored_retention_days: int = 365,
     interval: int = 21600,
+    wanted_store: 'WantedStore | None' = None,
 ) -> None:
     await asyncio.sleep(600)
     while True:
@@ -1013,6 +1043,10 @@ async def prune_stores_periodically(
             await request_history.prune_old_terminal_requests(request_retention_days)
             await mbid_store.prune_old_ignored_releases(ignored_retention_days)
             await youtube_store.delete_orphaned_track_links()
+            if wanted_store is not None:
+                # terminal (stopped/fulfilled) watches age out on the same window
+                # as requests; orphaned seen-candidate rows go with them (§5.1)
+                await wanted_store.prune(request_retention_days)
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -1028,6 +1062,7 @@ def start_store_prune_task(
     request_retention_days: int = 180,
     ignored_retention_days: int = 365,
     interval: int = 21600,
+    wanted_store: 'WantedStore | None' = None,
 ) -> asyncio.Task:
     task = asyncio.create_task(
         prune_stores_periodically(
@@ -1035,6 +1070,7 @@ def start_store_prune_task(
             request_retention_days=request_retention_days,
             ignored_retention_days=ignored_retention_days,
             interval=interval,
+            wanted_store=wanted_store,
         )
     )
     TaskRegistry.get_instance().register("store-prune", task)

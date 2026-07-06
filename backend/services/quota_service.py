@@ -136,8 +136,10 @@ class QuotaService:
         ``origin='retry'`` skips both too - a retry re-attempts an ask that was
         already admitted at its original submit, and gating it here would make the
         two retry buttons (requests page vs downloads queue) behave differently.
+        ``origin='wanted'`` skips both for the same reason as retry: the wanted
+        watcher re-dispatches an ask that was already admitted (Wanted D8).
         Raises ``ValidationError`` at/over."""
-        if origin in ("upgrade", "retry"):
+        if origin in ("upgrade", "retry", "wanted"):
             return
         policy = self._preferences.get_download_policy()
         if policy.max_library_size_gb > 0:

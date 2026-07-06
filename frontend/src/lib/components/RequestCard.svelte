@@ -21,12 +21,16 @@
 		Ban,
 		Pause,
 		Music,
+		Radar,
 		Upload
 	} from 'lucide-svelte';
 
 	interface Props {
 		item: ActiveRequestItem | RequestHistoryItem;
 		mode: 'active' | 'history';
+		// still being worked on despite the terminal status: 'retrying' = auto-retry
+		// ladder, 'watching' = wanted watcher. Renders a chip linking to the Wanted tab.
+		watchState?: 'retrying' | 'watching';
 		oncancel?: (mbid: string) => void;
 		onretry?: (mbid: string) => void;
 		onclear?: (mbid: string) => void;
@@ -34,7 +38,8 @@
 		onreimported?: () => void;
 	}
 
-	let { item, mode, oncancel, onretry, onclear, onremoved, onreimported }: Props = $props();
+	let { item, mode, watchState, oncancel, onretry, onclear, onremoved, onreimported }: Props =
+		$props();
 
 	const reimport = reimportDownload();
 
@@ -281,6 +286,19 @@
 				<statusConfig.icon class="h-3 w-3" />
 				{statusConfig.label}
 			</span>
+
+			{#if !isActive && watchState}
+				<a
+					href="/requests?tab=wanted"
+					class="badge badge-sm badge-outline gap-1 border-info/30 text-info/80 hover:bg-info/10"
+					title={watchState === 'retrying'
+						? 'Auto-retrying - see the Wanted tab'
+						: 'The watcher keeps checking for this - see the Wanted tab'}
+				>
+					<Radar class="h-3 w-3" />
+					{watchState === 'retrying' ? 'Still hunting' : 'On the watchlist'}
+				</a>
+			{/if}
 
 			{#if hasProgress}
 				<div

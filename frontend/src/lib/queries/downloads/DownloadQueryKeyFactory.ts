@@ -13,5 +13,6 @@ export const DownloadQueryKeyFactory = {
 	indexers: () => [...DownloadQueryKeyFactory.all, 'indexers'] as const,
 	sabnzbd: () => [...DownloadQueryKeyFactory.all, 'sabnzbd'] as const,
 	policy: () => [...DownloadQueryKeyFactory.all, 'policy'] as const,
+	wantedSettings: () => [...DownloadQueryKeyFactory.all, 'wanted-settings'] as const,
 	cutoffUnmet: () => [...DownloadQueryKeyFactory.all, 'cutoff-unmet'] as const
 };

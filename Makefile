@@ -31,6 +31,7 @@ NPM    ?= pnpm
 	backend-test-audiodb-prewarm \
 	backend-test-audiodb-settings \
 	backend-test-cache-cleanup \
+	backend-test-wanted \
 	backend-test-config-validation \
 	backend-test-coverart-audiodb \
 	backend-test-dedup-cancellation \
@@ -183,6 +184,9 @@ backend-test-audiodb-prewarm: $(BACKEND_VENV_STAMP) ## Run AudioDB prewarm tests
 
 backend-test-audiodb-settings: $(BACKEND_VENV_STAMP) ## Run AudioDB settings tests
 	$(PYTEST) tests/test_audiodb_settings.py tests/test_advanced_settings_roundtrip.py tests/routes/test_settings_audiodb_key.py
+
+backend-test-wanted: $(BACKEND_VENV_STAMP) ## Wanted watcher: store, service, loop, prune + quota seams
+	$(PYTEST) tests/infrastructure/test_wanted_store.py tests/infrastructure/test_wanted_watcher_task.py tests/services/test_wanted_watcher_service.py tests/infrastructure/test_request_history_prune.py tests/services/test_quota_service.py -v
 
 backend-test-cache-cleanup: $(BACKEND_VENV_STAMP) ## Run cache cleanup tests
 	$(PYTEST) tests/test_cache_cleanup.py -v

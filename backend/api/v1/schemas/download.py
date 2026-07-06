@@ -92,6 +92,14 @@ class PickResponse(AppStruct):
     task_id: str
 
 
+class DismissReviewResponse(AppStruct):
+    """'None of these - keep watching': the review's candidates were all rejected
+    and the album is now on the wanted watchlist. ``state`` is the watch's state."""
+
+    success: bool
+    state: str
+
+
 class OperationResult(AppStruct):
     success: bool
 

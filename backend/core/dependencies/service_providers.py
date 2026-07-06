@@ -215,6 +215,31 @@ def get_new_release_service() -> "NewReleaseService":
 
 
 @singleton
+def get_wanted_watcher_service() -> "WantedWatcherService":
+    from services.native.wanted_watcher_service import WantedWatcherService
+
+    from .repo_providers import (
+        get_download_store,
+        get_request_history_store,
+        get_wanted_store,
+    )
+
+    return WantedWatcherService(
+        wanted_store=get_wanted_store(),
+        request_history=get_request_history_store(),
+        download_store=get_download_store(),
+        # provider, not an instance: a settings save rebuilds the DownloadService
+        # singleton and the watcher must always dispatch through the current one
+        get_download_service=get_download_service,
+        library_manager=get_library_repository(),
+        album_service=get_album_service(),
+        mb_repo=get_musicbrainz_repository(),
+        sse_publisher=get_sse_publisher(),
+        preferences=get_preferences_service(),
+    )
+
+
+@singleton
 def get_personal_mix_service() -> "PersonalMixService":
     from services.personal_mix_service import PersonalMixService
     from core.dependencies.auth_providers import get_auth_store

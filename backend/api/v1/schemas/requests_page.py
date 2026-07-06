@@ -109,3 +109,63 @@ class PersonalMixApprovalItem(AppStruct):
 class PersonalMixApprovalsResponse(AppStruct):
     items: list[PersonalMixApprovalItem]
     count: int
+
+
+class WantedWatchItem(AppStruct):
+    """One album-level availability watch (Wanted plan §6 Phase 2).
+
+    ``kind``: 'missing' | 'partial'. ``state``: 'watching' | 'dormant' |
+    'stopped' | 'fulfilled'. ``last_outcome``: no_results | seen_only |
+    new_manual | auto_dispatched | satisfied | error | None (never checked).
+    Timestamps are epoch seconds."""
+
+    release_group_mbid: str
+    artist_name: str
+    album_title: str
+    kind: str
+    state: str
+    check_count: int
+    next_check_at: float
+    new_candidate_count: int
+    created_at: float
+    artist_mbid: str | None = None
+    year: int | None = None
+    cover_url: str | None = None
+    first_release_date: str | None = None
+    last_checked_at: float | None = None
+    last_outcome: str | None = None
+    user_id: str | None = None
+    # display name of the requester the watch acts for; resolved only for admin
+    # callers (the "watched by" chip - non-admins only ever see their own watches)
+    user_name: str | None = None
+
+
+class WantedRetryingItem(AppStruct):
+    """A request still in its auto-retry ladder, shown read-only on the Wanted
+    tab before the watcher takes over. ``retry_count`` is retries already spent;
+    the upcoming attempt is ``retry_count + 1`` of ``max_attempts``."""
+
+    release_group_mbid: str
+    artist_name: str
+    album_title: str
+    retry_count: int
+    max_attempts: int
+    next_retry_at: float  # epoch seconds
+    artist_mbid: str | None = None
+    year: int | None = None
+    cover_url: str | None = None
+    user_id: str | None = None
+    user_name: str | None = None
+
+
+class WantedWatchesResponse(AppStruct):
+    items: list[WantedWatchItem]
+    count: int
+    # albums still auto-retrying (read-only rows; they graduate into items
+    # when the ladder exhausts and the watcher enrols them)
+    retrying: list[WantedRetryingItem] = []
+
+
+class WantedActionResponse(AppStruct):
+    success: bool
+    state: str  # the watch's state after the action
