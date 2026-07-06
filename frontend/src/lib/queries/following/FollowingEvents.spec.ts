@@ -35,6 +35,11 @@ const mockInvalidate = vi.mocked(invalidateQueriesWithPersister);
 beforeEach(() => {
 	vi.clearAllMocks();
 	FakeEventSource.instances = [];
+	// FollowingEvents persists its seen-id de-dupe sets to sessionStorage; in
+	// environments where a real (non-jsdom) sessionStorage global is present
+	// (e.g. Node's built-in Web Storage), state leaks across tests/files
+	// unless cleared - reset it so each test starts from a clean de-dupe state.
+	if (typeof sessionStorage !== 'undefined') sessionStorage.clear();
 });
 
 describe('FollowingEvents', () => {
