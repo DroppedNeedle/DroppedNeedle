@@ -12,6 +12,8 @@
 		if (s === 'listenbrainz') return 'ListenBrainz';
 		if (s === 'lastfm') return 'Last.fm';
 		if (s === 'musicbrainz') return 'MusicBrainz';
+		if (s === 'audiodb') return 'TheAudioDB';
+		if (s === 'wikidata') return 'Wikipedia';
 		return s.charAt(0).toUpperCase() + s.slice(1);
 	}
 
@@ -31,8 +33,13 @@
 		if (key && key !== notifiedKey) {
 			notifiedKey = key;
 			const names = [...new Set(degraded.map((d) => serviceLabel(d.service)))].join(', ');
+			// only claim "using a fallback" when every degraded service has one; most
+			// (MusicBrainz, Last.fm, Wikipedia) don't, and the blanket line would lie
+			const tail = degraded.every((d) => d.fallback)
+				? 'using a fallback for now.'
+				: 'auto-retrying.';
 			toastStore.show({
-				message: `${names} degraded - using a fallback for now.`,
+				message: `Trouble reaching ${names} - ${tail}`,
 				type: 'info'
 			});
 		} else if (!key) {

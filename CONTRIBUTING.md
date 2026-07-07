@@ -4,11 +4,11 @@ Thanks for your interest. Bug reports, feature requests, and pull requests are a
 
 ## Reporting Bugs
 
-Use the [bug report template](https://github.com/habirabbu/musicseerr/issues/new?template=bug.yml). Include your DroppedNeedle version, steps to reproduce, and relevant logs from `docker compose logs droppedneedle`. The more detail you give, the faster things get fixed.
+Use the [bug report template](https://github.com/HabiRabbu/DroppedNeedle/issues/new?template=bug.yml). Include your DroppedNeedle version, steps to reproduce, and relevant logs from `docker compose logs droppedneedle`. The more detail you give, the faster things get fixed.
 
 ## Requesting Features
 
-Use the [feature request template](https://github.com/habirabbu/musicseerr/issues/new?template=feature.yml). Check existing issues first to avoid duplicates.
+Use the [feature request template](https://github.com/HabiRabbu/DroppedNeedle/issues/new?template=feature.yml). Check existing issues first to avoid duplicates.
 
 ## Development Setup
 
@@ -77,4 +77,4 @@ You're still responsible for understanding and testing the code you submit.
 
 ## Questions?
 
-Open a thread in [Discord](https://discord.gg/B5suDg7gu2) or start a [GitHub Discussion](https://github.com/habirabbu/musicseerr/discussions).
+Open a thread in [Discord](https://discord.gg/B5suDg7gu2) or start a [GitHub Discussion](https://github.com/HabiRabbu/DroppedNeedle/discussions).

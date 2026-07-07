@@ -628,7 +628,7 @@ See the [CONTRIBUTING](CONTRIBUTING.md) guide for instructions on setting up a d
 
 Documentation is at [droppedneedle.com](https://www.droppedneedle.com/).
 
-For questions, help, or just to chat, join the [Discord](https://discord.gg/B5suDg7gu2). Bug reports and feature requests go on [GitHub Issues](https://github.com/habirabbu/musicseerr/issues).
+For questions, help, or just to chat, join the [Discord](https://discord.gg/B5suDg7gu2). Bug reports and feature requests go on [GitHub Issues](https://github.com/HabiRabbu/DroppedNeedle/issues).
 
 If you find DroppedNeedle useful, consider supporting development:
 

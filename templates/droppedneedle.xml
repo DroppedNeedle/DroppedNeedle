@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Container version="2">
+    <Name>droppedneedle</Name>
+    <Repository>habirabbu/droppedneedle:latest</Repository>
+    <Registry>https://hub.docker.com/r/habirabbu/droppedneedle</Registry>
+    <Network>bridge</Network>
+    <Privileged>false</Privileged>
+    <Support>https://github.com/HabiRabbu/DroppedNeedle/issues</Support>
+    <Project>https://github.com/HabiRabbu/DroppedNeedle</Project>
+    <Overview>DroppedNeedle is a self-hosted, multi-user music request and discovery app with a native library engine (scan, tag, fingerprint, organise) and multi-source acquisition from Soulseek (via a slskd instance) and Usenet (via SABnzbd with native Newznab indexers). Search the full MusicBrainz catalogue, request albums and individual tracks, discover new music from your listening history, and scrobble to ListenBrainz and Last.fm. It can also emulate Subsonic- and Jellyfin-compatible server APIs so external client apps can stream your library. No Lidarr required.</Overview>
+    <Category>MediaApp:Music MediaServer:Music</Category>
+    <WebUI>http://[IP]:[PORT:8688]</WebUI>
+    <TemplateURL>https://raw.githubusercontent.com/HabiRabbu/DroppedNeedle/main/templates/droppedneedle.xml</TemplateURL>
+    <Icon>https://raw.githubusercontent.com/HabiRabbu/DroppedNeedle/main/Images/logo_icon.png</Icon>
+    <Requires>Runs standalone. To acquire music, connect a slskd (Soulseek) and/or SABnzbd (Usenet) instance in Settings &gt; Download Client. Streaming to external Subsonic/Jellyfin client apps and scrobbling are optional.</Requires>
+    <ExtraSearchTerms>music request discovery soulseek slskd usenet sabnzbd newznab subsonic jellyfin navidrome musicbrainz listenbrainz lastfm scrobble</ExtraSearchTerms>
+    <Screenshot>https://raw.githubusercontent.com/HabiRabbu/DroppedNeedle/main/Images/Home.webp</Screenshot>
+    <Screenshot>https://raw.githubusercontent.com/HabiRabbu/DroppedNeedle/main/Images/Discover.webp</Screenshot>
+    <Screenshot>https://raw.githubusercontent.com/HabiRabbu/DroppedNeedle/main/Images/Library.webp</Screenshot>
+    <Screenshot>https://raw.githubusercontent.com/HabiRabbu/DroppedNeedle/main/Images/Settings.webp</Screenshot>
+    <Config Name="WebUI Port" Target="8688" Default="8688" Mode="tcp" Description="Port the DroppedNeedle web interface listens on." Type="Port" Display="always" Required="true" Mask="false">8688</Config>
+    <Config Name="Config" Target="/app/config" Default="/mnt/user/appdata/droppedneedle/config" Mode="rw" Description="Persistent application configuration and database." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/droppedneedle/config</Config>
+    <Config Name="Cache" Target="/app/cache" Default="/mnt/user/appdata/droppedneedle/cache" Mode="rw" Description="Cover art and metadata cache." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/droppedneedle/cache</Config>
+    <Config Name="Music Library" Target="/music" Default="/mnt/user/Music" Mode="rw" Description="Your music library root. Imported downloads land here, so it is read-write. Keep it on the same filesystem as the downloads mounts below for fast atomic-rename imports." Type="Path" Display="always" Required="false" Mask="false">/mnt/user/Music</Config>
+    <Config Name="slskd Downloads" Target="/slskd-downloads" Default="" Mode="rw" Description="slskd's COMPLETED-downloads directory (its Options &gt; Directories &gt; downloads path, often a .../complete folder). Must be the exact folder, not a parent. Keep it on the same filesystem as /music. Leave empty if you do not use Soulseek." Type="Path" Display="always" Required="false" Mask="false"></Config>
+    <Config Name="SABnzbd Downloads" Target="/sabnzbd-downloads" Default="" Mode="rw" Description="Optional (Usenet): SABnzbd's completed-downloads directory (its complete_dir). Must match the Downloads mount set in Settings &gt; Download Client &gt; SABnzbd. Keep it on the same filesystem as /music. Leave empty if you do not use Usenet." Type="Path" Display="advanced" Required="false" Mask="false"></Config>
+    <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID for file permissions inside the container. Run 'id' on your Unraid terminal to find your value." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+    <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID for file permissions inside the container. Run 'id' on your Unraid terminal to find your value." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+    <Config Name="Timezone" Target="TZ" Default="Europe/London" Mode="" Description="Your timezone. Examples: America/New_York, Europe/Berlin, Asia/Tokyo." Type="Variable" Display="always" Required="false" Mask="false">Europe/London</Config>
+    <Config Name="UMASK" Target="UMASK" Default="002" Mode="" Description="Umask for file creation permissions inside the container." Type="Variable" Display="advanced" Required="false" Mask="false">002</Config>
+</Container>

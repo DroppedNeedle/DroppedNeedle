@@ -8,6 +8,7 @@ from infrastructure.resilience.retry import with_retry, CircuitBreaker
 from infrastructure.resilience.rate_limiter import TokenBucketRateLimiter
 from infrastructure.queue.priority_queue import RequestPriority, get_priority_queue
 from infrastructure.http.deduplication import RequestDeduplicator
+from infrastructure.service_health import report_breaker_health
 
 _mb_api_base: str = "https://musicbrainz.org/ws/2"
 
@@ -24,7 +25,13 @@ mb_circuit_breaker = CircuitBreaker(
     failure_threshold=5,
     success_threshold=2,
     timeout=60.0,
-    name="musicbrainz"
+    name="musicbrainz",
+    on_state_change=report_breaker_health(
+        "musicbrainz",
+        "metadata",
+        message="MusicBrainz, our main source for music data, is having trouble - "
+        "search and album or artist details may be incomplete for now.",
+    ),
 )
 
 mb_rate_limiter = TokenBucketRateLimiter(rate=1.0, capacity=6)

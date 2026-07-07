@@ -23,7 +23,7 @@ from openai import OpenAI
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
 DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "max")
-REVIEWER_NAME = "musicseerr-ai-reviewer[bot]"
+REVIEWER_NAME = "droppedneedle-ai-reviewer[bot]"
 
 GITHUB_REPOSITORY = os.environ["GITHUB_REPOSITORY"]
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
@@ -217,7 +217,7 @@ def filter_diff_by_files(diff_text: str, file_list: list[str]) -> str:
 
 def build_system_prompt(guidelines: str, mode: str) -> str:
     base = textwrap.dedent(f"""\
-    You are an AI code reviewer for the **Musicseerr** project, a self-hosted music
+    You are an AI code reviewer for the **DroppedNeedle** project, a self-hosted music
     request and discovery web application built with FastAPI (Python backend) and
     SvelteKit (TypeScript frontend).
 
@@ -469,7 +469,7 @@ async def post_review(
             f"{summary}\n\n"
             f"{findings_summary}\n\n"
             f"---\n"
-            f"*Incremental review by MusicSeerr AI Reviewer. "
+            f"*Incremental review by DroppedNeedle AI Reviewer. "
             f"See `.github/review_guidelines.md` for review criteria.*"
         )
     else:
@@ -477,7 +477,7 @@ async def post_review(
             f"{summary}\n\n"
             f"{findings_summary}\n\n"
             f"---\n"
-            f"*Automated review by MusicSeerr AI Reviewer. "
+            f"*Automated review by DroppedNeedle AI Reviewer. "
             f"See `.github/review_guidelines.md` for review criteria.*"
         )
 

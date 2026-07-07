@@ -14,7 +14,7 @@ genuine outage rather than a blip.
 """
 
 import time
-from typing import Callable
+from typing import Any, Callable
 
 import msgspec
 
@@ -92,3 +92,54 @@ class ServiceHealthRegistry:
 
 
 service_health = ServiceHealthRegistry()
+
+
+def report_breaker_health(
+    service: str,
+    capability: str,
+    *,
+    message: str,
+    fallback: str | None = None,
+    severity: str = "degraded",
+    ttl_seconds: float = 300.0,
+    registry: ServiceHealthRegistry | None = None,
+    also: Callable[..., None] | None = None,
+) -> Callable[..., None]:
+    """Build a circuit-breaker ``on_state_change`` callback that mirrors a breaker's
+    OPEN/CLOSED state into the health registry, so a sustained outage of ``service``
+    surfaces in the header status indicator and auto-heals when the breaker recovers.
+
+    A breaker only OPENs after ``failure_threshold`` consecutive failures (each already
+    retried), so this is a genuine sustained outage - matching this registry's signal-
+    driven contract of never flagging a single transient blip. Under live traffic the
+    entry re-marks on every failed half-open probe (~every breaker ``timeout``), sliding
+    the TTL, and clears the moment the breaker closes. If the traffic that opened the
+    breaker then stops entirely, no probe fires to close it, so the entry rides its TTL
+    out instead - kept at the registry's own 300s default so a no-longer-exercised
+    capability self-heals promptly. ``also`` composes an existing callback (e.g. a
+    logging one). The optional ``registry`` is for tests; production uses the singleton.
+    """
+    target = registry if registry is not None else service_health
+
+    def _on_state_change(
+        breaker: Any,
+        previous_state: Any,
+        new_state: Any,
+        reason: str,
+    ) -> None:
+        state = getattr(new_state, "value", new_state)
+        if state == "open":
+            target.mark_degraded(
+                service,
+                capability,
+                message=message,
+                fallback=fallback,
+                severity=severity,
+                ttl_seconds=ttl_seconds,
+            )
+        elif state == "closed":
+            target.heal(service, capability)
+        if also is not None:
+            also(breaker, previous_state, new_state, reason)
+
+    return _on_state_change

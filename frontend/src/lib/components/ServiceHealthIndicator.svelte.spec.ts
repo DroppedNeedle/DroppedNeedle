@@ -47,4 +47,56 @@ describe('ServiceHealthIndicator', () => {
 		await expect.element(page.getByText('ListenBrainz', { exact: true })).toBeVisible();
 		await expect.element(page.getByText(/Using .*Last\.fm.* instead/i)).toBeVisible();
 	});
+
+	it('renders friendly labels for the metadata/enrichment services', async () => {
+		queryState.data = {
+			degraded: [
+				{
+					service: 'musicbrainz',
+					capability: 'metadata',
+					severity: 'degraded',
+					message: 'MusicBrainz is having issues.',
+					fallback: null,
+					degraded_seconds: 30
+				},
+				{
+					service: 'wikidata',
+					capability: 'artist info',
+					severity: 'degraded',
+					message: 'Artist bios and images (Wikipedia) are temporarily unavailable.',
+					fallback: null,
+					degraded_seconds: 10
+				}
+			]
+		};
+
+		render(ServiceHealthIndicator);
+
+		await page.getByRole('button', { name: /service status/i }).click();
+		await expect.element(page.getByText('MusicBrainz', { exact: true })).toBeVisible();
+		await expect.element(page.getByText('Wikipedia', { exact: true })).toBeVisible();
+	});
+
+	it('toast omits the fallback claim when a degraded service has none', async () => {
+		toast.show.mockClear();
+		queryState.data = {
+			degraded: [
+				{
+					service: 'musicbrainz',
+					capability: 'metadata',
+					severity: 'degraded',
+					message: 'MusicBrainz is having issues.',
+					fallback: null,
+					degraded_seconds: 5
+				}
+			]
+		};
+
+		render(ServiceHealthIndicator);
+
+		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
+		const msg = toast.show.mock.calls[0][0].message as string;
+		expect(msg).toContain('auto-retrying');
+		expect(msg).not.toContain('fallback');
+	});
 });

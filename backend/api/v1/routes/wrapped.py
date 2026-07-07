@@ -31,7 +31,7 @@ async def verify_wrapped_api_key(
     response_model=WrappedUsersResponse,
     dependencies=[Depends(verify_wrapped_api_key)],
     description=(
-        "List every Musicseerr user with their ListenBrainz link status. "
+        "List every DroppedNeedle user with their ListenBrainz link status. "
         "Callers should match users by email and only request /user/{user_id} "
         "for those with has_listenbrainz=true."
     ),

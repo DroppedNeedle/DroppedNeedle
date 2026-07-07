@@ -41,6 +41,7 @@ from repositories.lastfm_models import (
 )
 from infrastructure.degradation import try_get_degradation_context
 from infrastructure.integration_result import IntegrationResult
+from infrastructure.service_health import report_breaker_health
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,12 @@ _lastfm_circuit_breaker = CircuitBreaker(
     success_threshold=2,
     timeout=60.0,
     name="lastfm",
+    on_state_change=report_breaker_health(
+        "lastfm",
+        "music data",
+        message="Last.fm is temporarily unavailable - some listening stats and "
+        "recommendations may be missing.",
+    ),
 )
 
 _lastfm_rate_limiter = TokenBucketRateLimiter(rate=5.0, capacity=10)

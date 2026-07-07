@@ -9,7 +9,7 @@ from infrastructure.cache.memory_cache import CacheInterface
 
 logger = logging.getLogger(__name__)
 
-GITHUB_API_URL = "https://api.github.com/repos/HabiRabbu/Musicseerr/releases"
+GITHUB_API_URL = "https://api.github.com/repos/HabiRabbu/DroppedNeedle/releases"
 GITHUB_RELEASES_CACHE_KEY = f"{GITHUB_RELEASES_PREFIX}all"
 GITHUB_RELEASES_CACHE_TTL = 3600
 

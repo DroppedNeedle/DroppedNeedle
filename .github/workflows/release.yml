@@ -105,7 +105,9 @@ jobs:
               echo "habirabbu/dn-beta:$TAG"
               echo "habirabbu/dn-beta:beta"
             else
-              # stable (active once beta -> main at Phase 6): public name + old name, Docker Hub
+              # stable (active once beta -> main at Phase 6): public name + old name, on ghcr + Docker Hub
+              echo "ghcr.io/habirabbu/droppedneedle:$TAG"
+              echo "ghcr.io/habirabbu/musicseerr:$TAG"
               echo "habirabbu/droppedneedle:$TAG"
               echo "habirabbu/musicseerr:$TAG"
             fi
@@ -133,6 +135,8 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           docker buildx imagetools create \
+            -t "ghcr.io/habirabbu/droppedneedle:latest" \
+            -t "ghcr.io/habirabbu/musicseerr:latest" \
             -t "habirabbu/droppedneedle:latest" \
             -t "habirabbu/musicseerr:latest" \
             "habirabbu/droppedneedle:${TAG}"

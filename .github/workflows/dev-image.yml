@@ -112,10 +112,16 @@ jobs:
         run: |
           {
             echo "TAGS<<EOF"
-            echo "habirabbu/musicseerr:dev"
-            echo "habirabbu/musicseerr:dev-$SHORT_SHA"
-            echo "habirabbu/droppedneedle:dev"
-            echo "habirabbu/droppedneedle:dev-$SHORT_SHA"
+            echo "ghcr.io/habirabbu/musicseerr:dev"
+            echo "ghcr.io/habirabbu/musicseerr:dev-$SHORT_SHA"
+            echo "ghcr.io/habirabbu/droppedneedle:dev"
+            echo "ghcr.io/habirabbu/droppedneedle:dev-$SHORT_SHA"
+            if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+              echo "habirabbu/musicseerr:dev"
+              echo "habirabbu/musicseerr:dev-$SHORT_SHA"
+              echo "habirabbu/droppedneedle:dev"
+              echo "habirabbu/droppedneedle:dev-$SHORT_SHA"
+            fi
             echo "EOF"
           } >> "$GITHUB_ENV"
 

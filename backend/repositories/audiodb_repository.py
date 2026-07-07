@@ -15,6 +15,7 @@ from repositories.audiodb_models import (
 from services.preferences_service import PreferencesService
 from infrastructure.degradation import try_get_degradation_context
 from infrastructure.integration_result import IntegrationResult
+from infrastructure.service_health import report_breaker_health
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,12 @@ _audiodb_circuit_breaker = CircuitBreaker(
     success_threshold=2,
     timeout=60.0,
     name="audiodb",
-    on_state_change=_log_circuit_state_change,
+    on_state_change=report_breaker_health(
+        "audiodb",
+        "artist info",
+        message="Extra artist artwork (TheAudioDB) is temporarily unavailable.",
+        also=_log_circuit_state_change,
+    ),
 )
 
 AUDIODB_FREE_KEY = "123"

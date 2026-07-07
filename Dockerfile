@@ -28,8 +28,8 @@ ARG BUILD_DATE
 
 LABEL org.opencontainers.image.title="DroppedNeedle" \
       org.opencontainers.image.description="Music request and discovery app with a built-in native library + download engine" \
-      org.opencontainers.image.url="https://github.com/habirabbu/musicseerr" \
-      org.opencontainers.image.source="https://github.com/habirabbu/musicseerr" \
+      org.opencontainers.image.url="https://github.com/HabiRabbu/DroppedNeedle" \
+      org.opencontainers.image.source="https://github.com/HabiRabbu/DroppedNeedle" \
       org.opencontainers.image.version="${COMMIT_TAG}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.licenses="AGPL-3.0"

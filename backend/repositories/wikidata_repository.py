@@ -12,6 +12,7 @@ from infrastructure.cache.cache_keys import (
 from infrastructure.resilience.retry import with_retry, CircuitBreaker
 from infrastructure.degradation import try_get_degradation_context
 from infrastructure.integration_result import IntegrationResult
+from infrastructure.service_health import report_breaker_health
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,12 @@ _wikidata_circuit_breaker = CircuitBreaker(
     failure_threshold=5,
     success_threshold=2,
     timeout=60.0,
-    name="wikidata"
+    name="wikidata",
+    on_state_change=report_breaker_health(
+        "wikidata",
+        "artist info",
+        message="Artist bios and images (Wikipedia) are temporarily unavailable.",
+    ),
 )
 
 
