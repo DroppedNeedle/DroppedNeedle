@@ -452,9 +452,11 @@
 							type="url"
 							bind:value={oidcForm.data.redirect_uri}
 							class="input input-bordered w-full"
-							placeholder="https://droppedneedle.example.com/auth/callback"
+							placeholder="https://droppedneedle.example.com/api/v1/auth/oidc/callback"
 						/>
 						<p class="text-xs text-base-content/50 mt-1.5 ml-1">
+							This must point to the DroppedNeedle <strong>backend API</strong> (it ends in
+							<code class="text-xs">/api/v1/auth/oidc/callback</code>), not the web app page.
 							Register this exact URL as a redirect/callback URI with your provider.
 						</p>
 					</div>

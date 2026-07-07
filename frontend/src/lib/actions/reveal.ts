@@ -8,10 +8,12 @@ if (typeof window !== 'undefined') {
 }
 
 export function reveal(node: HTMLElement, options?: { threshold?: number; stagger?: number }) {
-	const threshold = options?.threshold ?? 0.2;
+	// threshold 0, not a ratio: a ratio is unreachable for elements taller than
+	// 1/ratio viewports, leaving them invisible while still occupying layout space.
+	const threshold = options?.threshold ?? 0;
 	const stagger = options?.stagger ?? 50;
 
-	if (reducedMotion) {
+	if (reducedMotion || typeof IntersectionObserver === 'undefined') {
 		node.classList.add('revealed');
 		return { destroy() {} };
 	}
