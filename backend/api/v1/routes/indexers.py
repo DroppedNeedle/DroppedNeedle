@@ -9,6 +9,7 @@ search or the ``t=search`` fallback will be used).
 """
 
 import logging
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends
 
@@ -20,7 +21,7 @@ from api.v1.schemas.download import (
 )
 from api.v1.schemas.settings import INDEXER_API_KEY_MASK, NewznabIndexerSettings
 from core.dependencies import build_newznab_client, get_preferences_service
-from core.exceptions import ExternalServiceError
+from core.exceptions import ExternalServiceError, NewznabAuthError, RateLimitedError
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from middleware import CurrentAdminDep
 
@@ -46,6 +47,28 @@ def _clear_indexer_cache() -> None:
         get_download_service,
     ):
         provider.cache_clear()
+
+
+def _api_path_suggestion(url: str) -> str | None:
+    """A bare site URL (no path) is almost never the newznab endpoint itself - the
+    API lives at ``/api`` (nzbgeek, ninjacentral, DrunkenSlug, and the *arr "Generic
+    Newznab" convention all do this). Offer ``<url>/api`` only when the path is empty."""
+    if urlsplit(url).path.strip("/"):
+        return None
+    return f"{url.rstrip('/')}/api"
+
+
+async def _reaches_newznab(url: str, api_key: str) -> bool:
+    """Did ``url`` answer as a real newznab endpoint? A caps hit, an auth error, or a
+    rate-limit all mean we reached the API; an HTML page / unreachable host raises a
+    plain NewznabApiError. Used to confirm a ``/api`` suggestion before offering it."""
+    try:
+        await build_newznab_client(url, api_key).caps()
+    except (NewznabAuthError, RateLimitedError):
+        return True
+    except ExternalServiceError:
+        return False
+    return True
 
 
 @router.get("", response_model=list[NewznabIndexerSettings])
@@ -116,6 +139,13 @@ async def test_indexer(
     try:
         caps = await client.caps()
     except ExternalServiceError as exc:
+        suggestion = _api_path_suggestion(settings.url)
+        if suggestion and await _reaches_newznab(suggestion, api_key):
+            return IndexerTestResponse(
+                valid=False,
+                message="That's the site's homepage, not the API endpoint.",
+                suggested_url=suggestion,
+            )
         return IndexerTestResponse(valid=False, message=str(exc))
     return IndexerTestResponse(
         valid=True,

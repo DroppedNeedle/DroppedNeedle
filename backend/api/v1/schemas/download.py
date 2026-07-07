@@ -15,13 +15,16 @@ class TestConnectionResponse(AppStruct):
 
 class IndexerTestResponse(AppStruct):
     """Result of testing a Newznab indexer's caps. ``supports_audio_search`` tells the
-    user whether structured music search will be used or the ``t=search`` fallback."""
+    user whether structured music search will be used or the ``t=search`` fallback.
+    ``suggested_url`` is set when the URL looks like the site homepage but ``/api``
+    responds as a real newznab endpoint - a 'did you mean' the UI can one-click apply."""
 
     valid: bool
     version: str | None = None
     message: str = ""
     supports_audio_search: bool = False
     category_count: int = 0
+    suggested_url: str | None = None
 
 
 class IndexerSavedResponse(AppStruct):

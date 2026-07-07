@@ -118,6 +118,12 @@
 		}
 	}
 
+	async function applySuggestion(url: string) {
+		if (!draft) return;
+		draft.url = url;
+		await runTest();
+	}
+
 	async function removeIndexer(indexer: IndexerSettings) {
 		try {
 			await remove.mutateAsync(indexer.id);
@@ -383,6 +389,16 @@
 					{/if}
 					{result.message}
 				</span>
+			{/if}
+			{#if result?.suggested_url}
+				<button
+					type="button"
+					class="btn btn-outline btn-sm font-mono"
+					onclick={() => applySuggestion(result.suggested_url!)}
+					disabled={test.isPending}
+				>
+					Use {result.suggested_url}
+				</button>
 			{/if}
 			<div class="flex-1"></div>
 			{#if editingId !== NEW}

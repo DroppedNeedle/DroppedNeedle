@@ -66,4 +66,25 @@ describe('SettingsIndexers.svelte', () => {
 		// The result line reports the caps verdict (text-search fallback for DrunkenSlug).
 		await expect.element(page.getByText(/DS OK - text search/)).toBeInTheDocument();
 	});
+
+	it('offers a "did you mean /api" fix when the site URL is pasted and applies it', async () => {
+		indexersData = [];
+		// First Test (site URL) returns the suggestion; the retry after applying it passes.
+		testMutate.mockResolvedValueOnce({
+			valid: false,
+			message: "That's the site's homepage, not the API endpoint.",
+			suggested_url: 'https://idx.test/api',
+			supports_audio_search: false,
+			category_count: 0
+		});
+		render(SettingsIndexers);
+		await page.getByRole('button', { name: 'Add indexer' }).click();
+		await page.getByPlaceholder('https://indexer.example/api').fill('https://idx.test');
+		await page.getByRole('button', { name: 'Test' }).click();
+		// The suggestion button appears; clicking it re-tests against the /api URL.
+		await page.getByRole('button', { name: 'Use https://idx.test/api' }).click();
+		expect(testMutate).toHaveBeenLastCalledWith(
+			expect.objectContaining({ url: 'https://idx.test/api' })
+		);
+	});
 });

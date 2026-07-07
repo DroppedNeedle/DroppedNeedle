@@ -129,3 +129,83 @@ def test_test_indexer_reports_failure_on_bad_caps(monkeypatch):
     )
     assert response.status_code == 200
     assert response.json()["valid"] is False
+
+
+def test_test_indexer_suggests_api_path_when_site_url_pasted(monkeypatch):
+    """The user pastes the site URL (no /api) -> caps hits an HTML page and fails, but
+    /api answers as a real newznab endpoint, so we return a 'did you mean' suggestion."""
+    import httpx
+
+    from repositories.newznab.newznab_client import NewznabClient
+    from tests.mocks import newznab_mock
+
+    def homepage_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<!doctype html><head><title>Site</title></head>",
+                              headers={"Content-Type": "text/html"})
+
+    def _build(url, api_key):
+        handler = newznab_mock.drunkenslug_handler if url.endswith("/api") else homepage_handler
+        return NewznabClient(newznab_mock.client_for(handler), url, api_key)
+
+    monkeypatch.setattr(indexers, "build_newznab_client", _build)
+    app = _app()
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    response = build_test_client(app).post(
+        "/indexers/test", json={"url": "https://idx.test", "api_key": "KEY"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is False
+    assert body["suggested_url"] == "https://idx.test/api"
+
+
+def test_test_indexer_suggests_api_path_even_when_key_is_wrong(monkeypatch):
+    """Site URL pasted AND a bad key: /api answers with an auth error, which still
+    proves the endpoint - so we suggest the URL fix (the key error comes next)."""
+    import httpx
+
+    from repositories.newznab.newznab_client import NewznabClient
+    from tests.mocks import newznab_mock
+
+    def homepage_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<!doctype html><head></head>",
+                              headers={"Content-Type": "text/html"})
+
+    def _build(url, api_key):
+        handler = newznab_mock.auth_error_handler if url.endswith("/api") else homepage_handler
+        return NewznabClient(newznab_mock.client_for(handler), url, api_key)
+
+    monkeypatch.setattr(indexers, "build_newznab_client", _build)
+    app = _app()
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    response = build_test_client(app).post(
+        "/indexers/test", json={"url": "https://idx.test", "api_key": "WRONG"}
+    )
+    assert response.status_code == 200
+    assert response.json()["suggested_url"] == "https://idx.test/api"
+
+
+def test_test_indexer_no_suggestion_when_url_already_has_path(monkeypatch):
+    """A URL that already carries a path gets no /api suggestion - we don't guess."""
+    import httpx
+
+    from repositories.newznab.newznab_client import NewznabClient
+    from tests.mocks import newznab_mock
+
+    def homepage_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<!doctype html><head></head>",
+                              headers={"Content-Type": "text/html"})
+
+    monkeypatch.setattr(
+        indexers, "build_newznab_client",
+        lambda url, api_key: NewznabClient(newznab_mock.client_for(homepage_handler), url, api_key),
+    )
+    app = _app()
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    response = build_test_client(app).post(
+        "/indexers/test", json={"url": "https://idx.test/newznab", "api_key": "KEY"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is False
+    assert body["suggested_url"] is None

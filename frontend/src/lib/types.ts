@@ -1724,6 +1724,7 @@ export interface IndexerTestResult {
 	message: string;
 	supports_audio_search: boolean;
 	category_count: number;
+	suggested_url?: string | null;
 }
 
 export interface IndexerSavedResponse {
