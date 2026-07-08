@@ -204,6 +204,19 @@ async def test_error_when_fpcalc_nonzero_exit(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_nonzero_exit_with_fingerprint_still_passes(monkeypatch):
+    # fpcalc exits non-zero ("End of file") on sub-120s tracks but still emits a
+    # valid FINGERPRINT= line; the emitted fingerprint must be used, not discarded.
+    _patch_fpcalc(monkeypatch, returncode=2, stdout=_FP_OK)
+    http = _http_client(_pass_payload())
+    fp = _make(http)
+    res = await fp.fingerprint(Path("/short.flac"))
+    assert res.status == FingerprintStatus.PASS
+    _, kwargs = http.post.call_args
+    assert kwargs["data"]["fingerprint"] == "AQADtMmSaEkSRYkG"
+
+
+@pytest.mark.asyncio
 async def test_error_when_fpcalc_output_has_no_fingerprint(monkeypatch):
     _patch_fpcalc(monkeypatch, stdout=b"DURATION=100\n")
     fp = _make(_http_client(_pass_payload()))
