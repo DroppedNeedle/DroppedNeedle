@@ -61,7 +61,7 @@
 	];
 	const SUBSONIC_CLIENTS = 'Symfonium, Feishin, Amperfy, DSub, Substreamer, play:Sub, Tempo';
 	const JELLYFIN_CLIENTS = 'Finamp, Jellify, Manet Music (iOS), Symfonium (Jellyfin mode)';
-	const CLIENT_NODES = ['Finamp', 'Symfonium', 'Amperfy', 'Feishin'];
+	const CLIENT_NODES = ['Feishin', 'Manet', 'Arpeggi'];
 
 	async function handleCreate() {
 		const name = newName.trim();

@@ -165,7 +165,7 @@
 
 				{#if transcodingEnabled}
 					<div class="grid gap-4 sm:grid-cols-2">
-						<label class="form-control">
+						<label class="flex flex-col">
 							<span class="label-text mb-1">Default format</span>
 							<select
 								class="select select-bordered"
@@ -176,7 +176,7 @@
 								<option value="opus">Opus</option>
 							</select>
 						</label>
-						<label class="form-control">
+						<label class="flex flex-col">
 							<span class="label-text mb-1">Max bitrate (kbps)</span>
 							<input
 								type="number"
@@ -190,7 +190,7 @@
 					</div>
 				{/if}
 
-				<label class="form-control">
+				<label class="flex flex-col">
 					<span class="label-text mb-1">Similar-songs discovery</span>
 					<select
 						class="select select-bordered"
