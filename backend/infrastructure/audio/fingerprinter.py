@@ -138,9 +138,20 @@ class AudioFingerprinter:
             # shorter than ``-length`` seconds, but still writes a valid FINGERPRINT= line to
             # stdout. Only treat a non-zero exit as a real failure when NO fingerprint was
             # produced; otherwise use the fingerprint it emitted so sub-120s tracks still match.
-            if proc.returncode != 0 and "FINGERPRINT=" not in output:
-                raise subprocess.CalledProcessError(
-                    proc.returncode or -1, "fpcalc", stderr=stderr.decode("utf-8", "ignore")
+            if proc.returncode != 0:
+                stderr_text = stderr.decode("utf-8", "ignore").strip()
+                if "FINGERPRINT=" not in output:
+                    raise subprocess.CalledProcessError(
+                        proc.returncode or -1, "fpcalc", stderr=stderr_text
+                    )
+                # Tolerated non-zero exit (typically the sub-120s EOF case). Preserve
+                # fpcalc's stderr so a changed/unexpected error is still visible, and
+                # record that a short-track fingerprint was used for observability.
+                logger.warning(
+                    "fpcalc exited %s but emitted a fingerprint for %s; using it (stderr: %s)",
+                    proc.returncode,
+                    path,
+                    stderr_text or "<empty>",
                 )
             return self._parse_fpcalc_output(output)
 
