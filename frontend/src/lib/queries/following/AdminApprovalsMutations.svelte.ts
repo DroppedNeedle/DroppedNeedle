@@ -49,3 +49,43 @@ export const createRejectAutoDownloadMutation = () =>
 		onError: (err) =>
 			toastStore.show({ message: errorMessage(err, 'Reject failed'), type: 'error' })
 	}));
+
+// Bulk "Lidarr Import" approval batches (LidarrImport D3). Invalidating the adminApprovals
+// prefix sweeps the nested batches key too.
+interface BatchActionVars {
+	batchId: string;
+	userName: string;
+	artistCount: number;
+}
+
+export const createApproveAutoDownloadBatchMutation = () =>
+	createMutation(() => ({
+		mutationFn: (vars: BatchActionVars) =>
+			api.global.post<ApprovalActionResponse>(FOLLOW_ENDPOINTS.approveBatch(vars.batchId)),
+		onSuccess: async (_data, vars) => {
+			toastStore.show({
+				message: `Auto-download approved for ${vars.userName}'s ${vars.artistCount} artists`,
+				type: 'success'
+			});
+			await invalidateApprovals();
+			notifyPendingApprovalCountChanged();
+		},
+		onError: (err) =>
+			toastStore.show({ message: errorMessage(err, 'Approve failed'), type: 'error' })
+	}));
+
+export const createRejectAutoDownloadBatchMutation = () =>
+	createMutation(() => ({
+		mutationFn: (vars: BatchActionVars) =>
+			api.global.post<ApprovalActionResponse>(FOLLOW_ENDPOINTS.rejectBatch(vars.batchId)),
+		onSuccess: async (_data, vars) => {
+			toastStore.show({
+				message: `Auto-download rejected for ${vars.userName}'s ${vars.artistCount} artists`,
+				type: 'info'
+			});
+			await invalidateApprovals();
+			notifyPendingApprovalCountChanged();
+		},
+		onError: (err) =>
+			toastStore.show({ message: errorMessage(err, 'Reject failed'), type: 'error' })
+	}));

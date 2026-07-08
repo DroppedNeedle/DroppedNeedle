@@ -199,6 +199,20 @@ def get_follow_service() -> "FollowService":
 
 
 @singleton
+def get_lidarr_import_service() -> "LidarrImportService":
+    from services.lidarr_import_service import LidarrImportService
+
+    from .repo_providers import get_lidarr_import_repository
+
+    return LidarrImportService(
+        repo=get_lidarr_import_repository(),
+        preferences=get_preferences_service(),
+        follow_store=get_follow_store(),
+        follow_service=get_follow_service(),
+    )
+
+
+@singleton
 def get_new_release_service() -> "NewReleaseService":
     from services.native.new_release_service import NewReleaseService
 

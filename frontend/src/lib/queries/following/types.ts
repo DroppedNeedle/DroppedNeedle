@@ -50,6 +50,23 @@ export interface AutoDownloadApprovalsResponse {
 	count: number;
 }
 
+// mirrors backend api/v1/schemas/requests_page.py (ApprovalBatchItem/ListResponse) -
+// the bulk "Lidarr Import" approval card (LidarrImport D3)
+export interface ApprovalBatch {
+	batch_id: string;
+	user_id: string;
+	artist_count: number;
+	sample_names: string[];
+	requested_at: number;
+	source: string; // e.g. "lidarr_import"
+	user_name?: string | null;
+}
+
+export interface ApprovalBatchListResponse {
+	batches: ApprovalBatch[];
+	count: number;
+}
+
 export interface ApprovalActionResponse {
 	success: boolean;
 	message: string;

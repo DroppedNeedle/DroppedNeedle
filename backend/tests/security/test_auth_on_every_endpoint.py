@@ -25,6 +25,7 @@ from api.v1.routes import downloads as downloads_routes
 from api.v1.routes import downloads_search as downloads_search_routes
 from api.v1.routes import following as following_routes
 from api.v1.routes import library as library_routes
+from api.v1.routes import lidarr_import as lidarr_import_routes
 from api.v1.routes import discovery_batches as discovery_batches_routes
 from api.v1.routes import library_scan as library_scan_routes
 from api.v1.routes import me_connections as me_routes
@@ -49,6 +50,8 @@ from core.dependencies import (
     get_library_manager,
     get_library_scanner,
     get_library_service,
+    get_lidarr_import_repository,
+    get_lidarr_import_service,
     get_now_playing_service,
     get_per_user_client_factory,
     get_personal_mix_service,
@@ -82,6 +85,8 @@ _SERVICE_PROVIDERS = (
     get_library_manager,
     get_library_scanner,
     get_library_service,
+    get_lidarr_import_repository,
+    get_lidarr_import_service,
     get_now_playing_service,
     get_per_user_client_factory,
     get_personal_mix_service,
@@ -131,6 +136,14 @@ _ADMIN_ENDPOINTS = [
     ("PUT", "/api/v1/settings/events", {}),
     ("POST", "/api/v1/settings/events/test-ticketmaster", {}),
     ("POST", "/api/v1/settings/events/test-skiddle", {}),
+    # Lidarr import: connection config + Test are admin-only (LidarrImport).
+    ("GET", "/api/v1/lidarr-import/config", None),
+    ("PUT", "/api/v1/lidarr-import/config", {}),
+    ("POST", "/api/v1/lidarr-import/test", {}),
+    # Bulk auto-download approval batches (admin, requests router)
+    ("GET", "/api/v1/requests/auto-download-approval-batches", None),
+    ("POST", "/api/v1/requests/auto-download-approval-batches/batch-1/approve", None),
+    ("POST", "/api/v1/requests/auto-download-approval-batches/batch-1/reject", None),
 ]
 
 _USER_ENDPOINTS = [
@@ -189,6 +202,11 @@ _USER_ENDPOINTS = [
     ("POST", "/api/v1/requests/wanted/22222222-2222-2222-2222-222222222222/stop", None),
     ("POST", "/api/v1/requests/wanted/22222222-2222-2222-2222-222222222222/resume", None),
     ("POST", "/api/v1/requests/wanted/22222222-2222-2222-2222-222222222222/seen", None),
+    # Lidarr import: any authenticated user reads candidates + imports into their OWN
+    # follows (no target-user param - the caller can only ever import to themselves).
+    ("GET", "/api/v1/lidarr-import/status", None),
+    ("GET", "/api/v1/lidarr-import/artists", None),
+    ("POST", "/api/v1/lidarr-import/import", {"selected_mbids": []}),
 ]
 
 _ALL_ENDPOINTS = _ADMIN_ENDPOINTS + _USER_ENDPOINTS
@@ -219,6 +237,7 @@ def _client(scenario: str):
         system_routes.router,
         playlists_routes.router,
         requests_page_routes.router,
+        lidarr_import_routes.router,
         settings_routes.router,
         spotify_routes.router,
     ):

@@ -194,6 +194,11 @@ test-events: $(BACKEND_VENV_STAMP) ## Upcoming Events: store, repos, watcher, lo
 	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project server src/lib/queries/following
 	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client src/lib/components/following/EventCityManager.svelte.spec.ts src/routes/following/page.svelte.spec.ts
 
+test-lidarr-import: $(BACKEND_VENV_STAMP) ## Lidarr import: repo, store bulk-follow/approval, service (D9), routes, batches + frontend data layer & components
+	$(PYTEST) tests/repositories/test_lidarr_import_repository.py tests/infrastructure/test_follow_store_lidarr_import.py tests/services/test_lidarr_import_service.py tests/routes/test_lidarr_import_routes.py tests/routes/test_follow_approval_batches_routes.py tests/test_phase1_brownout.py tests/repositories/test_lidarr_directory_empty.py -v
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project server src/lib/queries/lidarr-import
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client src/lib/components/settings/SettingsLidarrImport.svelte.spec.ts src/lib/components/following/LidarrImportModal.svelte.spec.ts
+
 backend-test-cache-cleanup: $(BACKEND_VENV_STAMP) ## Run cache cleanup tests
 	$(PYTEST) tests/test_cache_cleanup.py -v
 

@@ -359,6 +359,13 @@ export const API = {
 		reorder: () => '/api/v1/indexers/reorder',
 		test: () => '/api/v1/indexers/test'
 	},
+	lidarrImport: {
+		config: () => '/api/v1/lidarr-import/config',
+		test: () => '/api/v1/lidarr-import/test',
+		status: () => '/api/v1/lidarr-import/status',
+		artists: () => '/api/v1/lidarr-import/artists',
+		import: () => '/api/v1/lidarr-import/import'
+	},
 	downloadClients: {
 		sabnzbd: () => '/api/v1/download-clients/sabnzbd',
 		sabnzbdTest: () => '/api/v1/download-clients/sabnzbd/test',
@@ -418,6 +425,11 @@ export const API = {
 			`/api/v1/requests/auto-download-approvals/${userId}/${mbid}/reject`,
 		revokeAutoDownload: (userId: string, mbid: string) =>
 			`/api/v1/requests/auto-download-approvals/${userId}/${mbid}/revoke`,
+		autoDownloadApprovalBatches: () => '/api/v1/requests/auto-download-approval-batches',
+		approveAutoDownloadBatch: (batchId: string) =>
+			`/api/v1/requests/auto-download-approval-batches/${batchId}/approve`,
+		rejectAutoDownloadBatch: (batchId: string) =>
+			`/api/v1/requests/auto-download-approval-batches/${batchId}/reject`,
 		personalMixApprovals: () => '/api/v1/requests/personal-mix-approvals',
 		approvePersonalMix: (userId: string) =>
 			`/api/v1/requests/personal-mix-approvals/${userId}/approve`,

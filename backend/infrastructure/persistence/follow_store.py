@@ -49,6 +49,19 @@ class Approval(msgspec.Struct, frozen=True):
     user_name: str | None = None
 
 
+class ApprovalBatch(msgspec.Struct, frozen=True):
+    """A grouped bulk auto-download approval (LidarrImport D3): N per-artist
+    ``auto_download_approvals`` rows sharing a ``batch_id``, presented as one admin card."""
+
+    batch_id: str
+    user_id: str
+    artist_count: int
+    sample_names: list[str]
+    requested_at: float
+    source: str
+    user_name: str | None = None
+
+
 class DistinctFollowedArtist(msgspec.Struct, frozen=True):
     artist_mbid: str
     artist_mbid_lower: str
@@ -127,6 +140,8 @@ class FollowStore:
                     reviewed_by_id    TEXT,
                     reviewed_by_name  TEXT,
                     reviewed_at       REAL,
+                    batch_id          TEXT,
+                    source            TEXT,
                     PRIMARY KEY (user_id, artist_mbid_lower)
                 );
                 CREATE INDEX IF NOT EXISTS idx_ada_pending
@@ -165,9 +180,30 @@ class FollowStore:
                 );
                 """
             )
+            # Additive ratchet for DBs created before the LidarrImport bulk-approval columns
+            # (LidarrImport DR5). Idempotent: a no-op once the columns exist.
+            self._safe_alter(
+                conn, "ALTER TABLE auto_download_approvals ADD COLUMN batch_id TEXT"
+            )
+            self._safe_alter(
+                conn, "ALTER TABLE auto_download_approvals ADD COLUMN source TEXT"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ada_batch "
+                "ON auto_download_approvals(batch_id) WHERE batch_id IS NOT NULL"
+            )
             conn.commit()
         finally:
             conn.close()
+
+    @staticmethod
+    def _safe_alter(conn: sqlite3.Connection, sql: str) -> None:
+        """Idempotent additive migration: an ``ADD COLUMN`` that already ran raises
+        ``OperationalError: duplicate column name`` - swallow only that."""
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass
 
     def _execute(self, operation, write: bool):
         if write:
@@ -248,6 +284,73 @@ class FollowStore:
             )
 
         await self._write(operation)
+
+    async def follow_artists_bulk(
+        self, user_id: str, artists: list[tuple[str, str]]
+    ) -> None:
+        """Bulk follow (LidarrImport DR2): one transaction, names supplied by the caller
+        (0 MusicBrainz calls). Reuses ``follow_artist``'s idempotent UPSERT semantics -
+        existing rows keep their ``auto_download`` intent + ``followed_at`` and only refresh
+        the name snapshot + ``updated_at`` (D6/DR4). ``artists`` = [(artist_mbid, name)]."""
+        if not artists:
+            return
+        now = time.time()
+        rows = [(user_id, mbid, mbid.lower(), name, now, now) for mbid, name in artists]
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.executemany(
+                """
+                INSERT INTO user_followed_artists (
+                    user_id, artist_mbid, artist_mbid_lower, artist_name,
+                    auto_download, followed_at, updated_at
+                ) VALUES (?, ?, ?, ?, 0, ?, ?)
+                ON CONFLICT(user_id, artist_mbid_lower) DO UPDATE SET
+                    artist_name = excluded.artist_name,
+                    updated_at = excluded.updated_at
+                """,
+                rows,
+            )
+
+        await self._write(operation)
+
+    async def set_auto_download_intent_bulk(
+        self, user_id: str, artist_mbids: list[str], enabled: bool
+    ) -> None:
+        """Flip auto-download intent on/off for many followed artists in one transaction."""
+        if not artist_mbids:
+            return
+        now = time.time()
+        value = 1 if enabled else 0
+        rows = [(value, now, user_id, mbid.lower()) for mbid in artist_mbids]
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.executemany(
+                "UPDATE user_followed_artists SET auto_download = ?, updated_at = ? "
+                "WHERE user_id = ? AND artist_mbid_lower = ?",
+                rows,
+            )
+
+        await self._write(operation)
+
+    async def existing_followed_lower(
+        self, user_id: str, artist_mbids_lower: list[str]
+    ) -> set[str]:
+        """The subset of ``artist_mbids_lower`` this user already follows. The pre-read the
+        importer does BEFORE any write, to compute real imported/already-following counts and
+        the D9 brand-new-only auto-download subset (LidarrImport DR6)."""
+        if not artist_mbids_lower:
+            return set()
+
+        def operation(conn: sqlite3.Connection) -> set[str]:
+            placeholders = ",".join("?" * len(artist_mbids_lower))
+            rows = conn.execute(
+                f"SELECT artist_mbid_lower FROM user_followed_artists "
+                f"WHERE user_id = ? AND artist_mbid_lower IN ({placeholders})",
+                (user_id, *artist_mbids_lower),
+            ).fetchall()
+            return {row["artist_mbid_lower"] for row in rows}
+
+        return await self._read(operation)
 
     async def get_follow_state(self, user_id: str, artist_mbid: str) -> FollowState:
         mbid_lower = artist_mbid.lower()
@@ -408,7 +511,7 @@ class FollowStore:
                        ada.requested_at AS requested_at, au.display_name AS user_name
                 FROM auto_download_approvals ada
                 JOIN auth_users au ON au.id = ada.user_id
-                WHERE ada.state = 'pending'
+                WHERE ada.state = 'pending' AND ada.batch_id IS NULL
                 ORDER BY ada.requested_at ASC
                 """
             ).fetchall()
@@ -425,6 +528,136 @@ class FollowStore:
             )
             for row in rows
         ]
+
+    async def create_import_approval_batch(
+        self,
+        user_id: str,
+        artists: list[tuple[str, str]],
+        batch_id: str,
+        source: str = "lidarr_import",
+    ) -> None:
+        """Create one grouped pending approval batch (LidarrImport D3): N per-artist rows
+        sharing ``batch_id``. Guarded conflict clause NEVER downgrades an already-``approved``
+        row (D9 defence-in-depth) - only non-approved rows are (re-)armed to this batch.
+        ``artists`` = [(artist_mbid, name)]. One transaction."""
+        if not artists:
+            return
+        now = time.time()
+        rows = [
+            (user_id, mbid, mbid.lower(), name, now, batch_id, source)
+            for mbid, name in artists
+        ]
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.executemany(
+                """
+                INSERT INTO auto_download_approvals (
+                    user_id, artist_mbid, artist_mbid_lower, artist_name,
+                    state, requested_at, reviewed_by_id, reviewed_by_name, reviewed_at,
+                    batch_id, source
+                ) VALUES (?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, ?, ?)
+                ON CONFLICT(user_id, artist_mbid_lower) DO UPDATE SET
+                    artist_name = excluded.artist_name,
+                    state = 'pending',
+                    requested_at = excluded.requested_at,
+                    reviewed_by_id = NULL,
+                    reviewed_by_name = NULL,
+                    reviewed_at = NULL,
+                    batch_id = excluded.batch_id,
+                    source = excluded.source
+                WHERE auto_download_approvals.state != 'approved'
+                """,
+                rows,
+            )
+
+        await self._write(operation)
+
+    async def list_pending_approval_batches(self) -> list[ApprovalBatch]:
+        """Grouped pending batches (LidarrImport D3), oldest first. Batched rows are grouped
+        by ``(batch_id, user_id)``; ``sample_names`` carries up to 5 names for the card."""
+
+        def operation(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+            return conn.execute(
+                """
+                SELECT ada.batch_id AS batch_id, ada.user_id AS user_id,
+                       ada.artist_name AS artist_name, ada.requested_at AS requested_at,
+                       ada.source AS source, au.display_name AS user_name
+                FROM auto_download_approvals ada
+                JOIN auth_users au ON au.id = ada.user_id
+                WHERE ada.state = 'pending' AND ada.batch_id IS NOT NULL
+                ORDER BY ada.requested_at ASC, ada.artist_name ASC
+                """
+            ).fetchall()
+
+        rows = await self._read(operation)
+        grouped: dict[tuple[str, str], dict] = {}
+        for row in rows:
+            key = (row["batch_id"], row["user_id"])
+            entry = grouped.get(key)
+            if entry is None:
+                entry = {
+                    "batch_id": row["batch_id"],
+                    "user_id": row["user_id"],
+                    "user_name": row["user_name"],
+                    "source": row["source"] or "lidarr_import",
+                    "requested_at": row["requested_at"],
+                    "count": 0,
+                    "names": [],
+                }
+                grouped[key] = entry
+            entry["count"] += 1
+            entry["requested_at"] = min(entry["requested_at"], row["requested_at"])
+            if len(entry["names"]) < 5:
+                entry["names"].append(row["artist_name"])
+        batches = [
+            ApprovalBatch(
+                batch_id=e["batch_id"],
+                user_id=e["user_id"],
+                user_name=e["user_name"],
+                artist_count=e["count"],
+                sample_names=e["names"],
+                requested_at=e["requested_at"],
+                source=e["source"],
+            )
+            for e in grouped.values()
+        ]
+        batches.sort(key=lambda b: b.requested_at)
+        return batches
+
+    async def set_batch_approval_state(
+        self,
+        batch_id: str,
+        state: str,
+        reviewer: tuple[str, str | None],
+    ) -> int:
+        """Approve/reject/revoke every still-pending row of a batch in ONE transaction.
+        For reject/revoke, also flips ``auto_download`` intent off for that batch's artists
+        (matching the single-row reject contract). Returns rows affected."""
+        now = time.time()
+        reviewed_by_id, reviewed_by_name = reviewer
+
+        def operation(conn: sqlite3.Connection) -> int:
+            cursor = conn.execute(
+                "UPDATE auto_download_approvals SET state = ?, reviewed_by_id = ?, "
+                "reviewed_by_name = ?, reviewed_at = ? "
+                "WHERE batch_id = ? AND state = 'pending'",
+                (state, reviewed_by_id, reviewed_by_name, now, batch_id),
+            )
+            affected = cursor.rowcount
+            if affected and state in ("rejected", "revoked"):
+                conn.execute(
+                    """
+                    UPDATE user_followed_artists SET auto_download = 0, updated_at = ?
+                    WHERE (user_id, artist_mbid_lower) IN (
+                        SELECT user_id, artist_mbid_lower FROM auto_download_approvals
+                        WHERE batch_id = ?
+                    )
+                    """,
+                    (now, batch_id),
+                )
+            return affected
+
+        return await self._write(operation)
 
     async def list_distinct_followed_artists(self) -> list[DistinctFollowedArtist]:
         def operation(conn: sqlite3.Connection) -> list[sqlite3.Row]:

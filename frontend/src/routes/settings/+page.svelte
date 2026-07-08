@@ -26,6 +26,7 @@
 	import SettingsDownloadPolicy from '$lib/components/settings/SettingsDownloadPolicy.svelte';
 	import SettingsWanted from '$lib/components/settings/SettingsWanted.svelte';
 	import SettingsIndexers from '$lib/components/settings/SettingsIndexers.svelte';
+	import SettingsLidarrImport from '$lib/components/settings/SettingsLidarrImport.svelte';
 	import SettingsConnectApps from '$lib/components/settings/SettingsConnectApps.svelte';
 	import SettingsOnboardingChecklist from '$lib/components/settings/SettingsOnboardingChecklist.svelte';
 	import SettingsSpotify from '$lib/components/settings/SettingsSpotify.svelte';
@@ -52,6 +53,7 @@
 		HardDriveDownload,
 		Waypoints,
 		CalendarClock,
+		DownloadCloud,
 		Gift
 	} from 'lucide-svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
@@ -93,7 +95,8 @@
 						tier: 'setup',
 						icon: HardDriveDownload
 					},
-					{ id: 'indexers', label: 'Indexers', tier: 'setup', icon: Search }
+					{ id: 'indexers', label: 'Indexers', tier: 'setup', icon: Search },
+					{ id: 'lidarr-import', label: 'Lidarr Import', tier: 'setup', icon: DownloadCloud }
 				]
 			: []),
 		{ id: 'connect-apps', label: 'Connect Apps', tier: 'setup', icon: Waypoints },
@@ -280,6 +283,8 @@
 					</div>
 				{:else if activeTab === 'indexers' && authStore.isAdmin}
 					<SettingsIndexers />
+				{:else if activeTab === 'lidarr-import' && authStore.isAdmin}
+					<SettingsLidarrImport />
 				{:else if activeTab === 'jellyfin'}
 					<SettingsJellyfin />
 				{:else if activeTab === 'navidrome'}

@@ -68,6 +68,7 @@ from .repo_providers import (  # noqa: F401
     get_sabnzbd_client,
     get_sabnzbd_download_client,
     build_sabnzbd_download_client,
+    get_lidarr_import_repository,
     get_download_client,
     get_download_client_for_source,
 )
@@ -87,6 +88,7 @@ from .service_providers import (  # noqa: F401
     get_search_enrichment_service,
     get_artist_service,
     get_follow_service,
+    get_lidarr_import_service,
     get_new_release_service,
     get_personal_mix_service,
     get_wanted_watcher_service,

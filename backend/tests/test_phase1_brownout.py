@@ -30,9 +30,17 @@ def test_app_boots_and_health_ok():
     assert resp.json()["status"] == "ok"
 
 
-def test_no_lidarr_route_paths_mounted():
-    paths = [getattr(route, "path", "") for route in main.app.routes]
-    assert not any("lidarr" in path for path in paths)
+def test_only_sanctioned_lidarr_routes_mounted():
+    """The old Lidarr *management* integration stays deleted (LidarrImport D8). The only
+    permitted Lidarr route paths are the read-only migration importer under
+    ``/lidarr-import`` - any other ``lidarr`` path would mean the management surface came back."""
+    lidarr_paths = [
+        path
+        for route in main.app.routes
+        if "lidarr" in (path := getattr(route, "path", ""))
+    ]
+    assert lidarr_paths, "expected the lidarr-import routes to be mounted"
+    assert all("/lidarr-import" in path for path in lidarr_paths), lidarr_paths
 
 
 def test_download_client_settings_route_mounted():

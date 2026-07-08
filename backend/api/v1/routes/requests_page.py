@@ -5,6 +5,8 @@ from api.v1.schemas.requests_page import (
     ActiveCountResponse,
     ActiveRequestsResponse,
     ApprovalActionResponse,
+    ApprovalBatchItem,
+    ApprovalBatchListResponse,
     AutoDownloadApprovalItem,
     AutoDownloadApprovalsResponse,
     CancelRequestResponse,
@@ -240,8 +242,13 @@ async def get_pending_approval_count(
 ):
     count = await service.get_pending_approval_count()
     auto_download = await follow_service.list_pending_approvals()
+    batches = await follow_service.list_pending_batches()
     personal_mix = await personal_mix_service.list_pending_approvals()
-    return ActiveCountResponse(count=count + len(auto_download) + len(personal_mix))
+    # Each batch counts as one unit; individual approvals already exclude batched rows
+    # (the batch_id IS NULL filter in list_pending_approvals), so nothing is double-counted.
+    return ActiveCountResponse(
+        count=count + len(auto_download) + len(batches) + len(personal_mix)
+    )
 
 
 @router.post("/approve/{musicbrainz_id}", response_model=ApprovalActionResponse)
@@ -347,6 +354,67 @@ async def revoke_auto_download(
     if not ok:
         return ApprovalActionResponse(success=False, message="No matching approval found")
     return ApprovalActionResponse(success=True, message="Auto-download revoked")
+
+
+@router.get(
+    "/auto-download-approval-batches", response_model=ApprovalBatchListResponse
+)
+async def list_auto_download_approval_batches(
+    _admin: CurrentAdminDep,
+    follow_service: FollowService = Depends(get_follow_service),
+):
+    batches = await follow_service.list_pending_batches()
+    items = [
+        ApprovalBatchItem(
+            batch_id=b.batch_id,
+            user_id=b.user_id,
+            user_name=b.user_name,
+            artist_count=b.artist_count,
+            sample_names=b.sample_names,
+            requested_at=b.requested_at,
+            source=b.source,
+        )
+        for b in batches
+    ]
+    return ApprovalBatchListResponse(batches=items, count=len(items))
+
+
+@router.post(
+    "/auto-download-approval-batches/{batch_id}/approve",
+    response_model=ApprovalActionResponse,
+)
+async def approve_auto_download_batch(
+    admin: CurrentAdminDep,
+    batch_id: str,
+    follow_service: FollowService = Depends(get_follow_service),
+):
+    affected = await follow_service.approve_batch(
+        batch_id, (admin.id, admin.display_name)
+    )
+    if not affected:
+        return ApprovalActionResponse(success=False, message="No matching batch found")
+    return ApprovalActionResponse(
+        success=True, message=f"Auto-download approved for {affected} artists"
+    )
+
+
+@router.post(
+    "/auto-download-approval-batches/{batch_id}/reject",
+    response_model=ApprovalActionResponse,
+)
+async def reject_auto_download_batch(
+    admin: CurrentAdminDep,
+    batch_id: str,
+    follow_service: FollowService = Depends(get_follow_service),
+):
+    affected = await follow_service.reject_batch(
+        batch_id, (admin.id, admin.display_name)
+    )
+    if not affected:
+        return ApprovalActionResponse(success=False, message="No matching batch found")
+    return ApprovalActionResponse(
+        success=True, message=f"Auto-download rejected for {affected} artists"
+    )
 
 
 @router.get("/personal-mix-approvals", response_model=PersonalMixApprovalsResponse)

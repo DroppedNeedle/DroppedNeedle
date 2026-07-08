@@ -32,5 +32,9 @@ export const FollowQueryKeyFactory = {
 	citySearch: (userId: string | undefined, q: string) =>
 		[...FollowQueryKeyFactory.followingPrefix, 'city-search', userId ?? 'anon', q] as const,
 	// admin queue is global (not per-user) - admins review every pending grant
-	adminApprovals: () => [...FollowQueryKeyFactory.followingPrefix, 'admin-approvals'] as const
+	adminApprovals: () => [...FollowQueryKeyFactory.followingPrefix, 'admin-approvals'] as const,
+	// bulk "Lidarr Import" approval cards, nested under admin-approvals so its prefix
+	// invalidation sweeps both (LidarrImport D3)
+	adminApprovalBatches: () =>
+		[...FollowQueryKeyFactory.followingPrefix, 'admin-approvals', 'batches'] as const
 };

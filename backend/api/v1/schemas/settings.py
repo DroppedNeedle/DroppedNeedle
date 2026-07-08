@@ -291,6 +291,31 @@ class NewznabIndexerSettings(AppStruct):
         self.url = self.url.rstrip("/")
 
 
+class LidarrImportConnectionSettings(AppStruct):
+    """Read-only Lidarr *import* connection (LidarrImport D5): a single admin-configured
+    Lidarr the monitored-artist importer reads from. NOT a management integration - the old
+    Lidarr surface stays deleted (D8). ``api_key`` is a Fernet-encrypted secret, masked on
+    read, preserved on a masked save."""
+
+    url: str = ""
+    api_key: str = ""
+
+    def __post_init__(self) -> None:
+        # Normalise the base URL to a bare origin we can append /api/v1 to ourselves:
+        # default a scheme-less host to http:// (Lidarr is a plain-http LAN service - do NOT
+        # copy SABnzbd's https-forcing, see 02-lidarr-api.md), strip a trailing '/', then strip
+        # a trailing '/api/v1' or '/api' if the user pasted the full API path. Because this
+        # normalises silently, the Test route needs no "did you mean /api" suggestion.
+        self.url = self.url.strip()
+        if self.url and not self.url.startswith(("http://", "https://")):
+            self.url = f"http://{self.url}"
+        self.url = self.url.rstrip("/")
+        for suffix in ("/api/v1", "/api"):
+            if self.url.endswith(suffix):
+                self.url = self.url[: -len(suffix)].rstrip("/")
+                break
+
+
 class JellyfinConnectionSettings(AppStruct):
     jellyfin_url: str = "http://jellyfin:8096"
     api_key: str = ""
@@ -318,6 +343,7 @@ ACOUSTID_KEY_MASK = "acoustid****"
 DOWNLOAD_CLIENT_API_KEY_MASK = "slskd****"
 INDEXER_API_KEY_MASK = "indexer****"
 SABNZBD_API_KEY_MASK = "sabnzbd****"
+LIDARR_IMPORT_API_KEY_MASK = "lidarr****"
 SPOTIFY_SECRET_MASK = "spotify****"
 
 

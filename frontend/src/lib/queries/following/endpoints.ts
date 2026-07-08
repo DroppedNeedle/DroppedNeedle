@@ -17,5 +17,8 @@ export const FOLLOW_ENDPOINTS = {
 	markConcertsSeen: () => API.following.markConcertsSeen(),
 	adminApprovals: () => API.requests.autoDownloadApprovals(),
 	approve: (userId: string, mbid: string) => API.requests.approveAutoDownload(userId, mbid),
-	reject: (userId: string, mbid: string) => API.requests.rejectAutoDownload(userId, mbid)
+	reject: (userId: string, mbid: string) => API.requests.rejectAutoDownload(userId, mbid),
+	adminApprovalBatches: () => API.requests.autoDownloadApprovalBatches(),
+	approveBatch: (batchId: string) => API.requests.approveAutoDownloadBatch(batchId),
+	rejectBatch: (batchId: string) => API.requests.rejectAutoDownloadBatch(batchId)
 } as const;

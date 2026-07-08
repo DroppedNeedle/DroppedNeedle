@@ -151,7 +151,29 @@ const COVERAGE: Array<[string, string, string]> = [
 	['wanted stop', API.requests.wantedStop('M1'), '/api/v1/requests/wanted/M1/stop'],
 	['wanted resume', API.requests.wantedResume('M1'), '/api/v1/requests/wanted/M1/resume'],
 	['wanted mark seen', API.requests.wantedSeen('M1'), '/api/v1/requests/wanted/M1/seen'],
-	['wanted watcher settings', API.downloadClients.wanted(), '/api/v1/download-clients/wanted']
+	['wanted watcher settings', API.downloadClients.wanted(), '/api/v1/download-clients/wanted'],
+	// Lidarr import (LidarrImport): admin config/test, user status/artists/import
+	['lidarr-import config', API.lidarrImport.config(), '/api/v1/lidarr-import/config'],
+	['lidarr-import test', API.lidarrImport.test(), '/api/v1/lidarr-import/test'],
+	['lidarr-import status', API.lidarrImport.status(), '/api/v1/lidarr-import/status'],
+	['lidarr-import artists', API.lidarrImport.artists(), '/api/v1/lidarr-import/artists'],
+	['lidarr-import import', API.lidarrImport.import(), '/api/v1/lidarr-import/import'],
+	// Bulk auto-download approval batches (admin, requests router)
+	[
+		'auto-download approval batches',
+		API.requests.autoDownloadApprovalBatches(),
+		'/api/v1/requests/auto-download-approval-batches'
+	],
+	[
+		'approve approval batch',
+		API.requests.approveAutoDownloadBatch('B1'),
+		'/api/v1/requests/auto-download-approval-batches/B1/approve'
+	],
+	[
+		'reject approval batch',
+		API.requests.rejectAutoDownloadBatch('B1'),
+		'/api/v1/requests/auto-download-approval-batches/B1/reject'
+	]
 ];
 
 // Routes whose builder takes query params - assert the path prefix only.

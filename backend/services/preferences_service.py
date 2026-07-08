@@ -31,7 +31,9 @@ from api.v1.schemas.settings import (
     DOWNLOAD_CLIENT_API_KEY_MASK,
     INDEXER_API_KEY_MASK,
     SABNZBD_API_KEY_MASK,
+    LIDARR_IMPORT_API_KEY_MASK,
     DownloadPolicySettings,
+    LidarrImportConnectionSettings,
     NewznabIndexerSettings,
     SabnzbdConnectionSettings,
     SpotifySettings,
@@ -354,6 +356,53 @@ class PreferencesService:
         except Exception as e:  # noqa: BLE001
             logger.error("Failed to save SABnzbd settings: %s", e)
             raise ConfigurationError(f"Failed to save SABnzbd settings: {e}")
+
+    # --- Lidarr import connection (LidarrImport D5) - read-only migration aid ------
+
+    def get_lidarr_import_connection(self) -> LidarrImportConnectionSettings:
+        """Lidarr import connection with the ``api_key`` MASKED (safe for API responses)."""
+        data = self._load_config().get("lidarr_import", {})
+        settings = (
+            msgspec.convert(data, type=LidarrImportConnectionSettings)
+            if data
+            else LidarrImportConnectionSettings()
+        )
+        if settings.api_key:
+            settings.api_key = LIDARR_IMPORT_API_KEY_MASK
+        return settings
+
+    def get_lidarr_import_connection_raw(self) -> LidarrImportConnectionSettings:
+        """Lidarr import connection with the ``api_key`` DECRYPTED (for the client)."""
+        data = self._load_config().get("lidarr_import", {})
+        settings = (
+            msgspec.convert(data, type=LidarrImportConnectionSettings)
+            if data
+            else LidarrImportConnectionSettings()
+        )
+        stored = data.get("api_key", "")
+        settings.api_key = decrypt(stored)[0].strip() if stored else ""
+        return settings
+
+    def save_lidarr_import_connection(self, settings: LidarrImportConnectionSettings) -> None:
+        try:
+            config = self._load_config().copy()
+            current = config.get("lidarr_import", {})
+            api_key = settings.api_key.strip()
+            if api_key == LIDARR_IMPORT_API_KEY_MASK:
+                api_key = current.get("api_key", "")  # preserve on masked sentinel
+            elif api_key:
+                api_key = encrypt(api_key)
+            config["lidarr_import"] = {"url": settings.url, "api_key": api_key}
+            self._save_config(config)
+            logger.info("Saved Lidarr import connection settings")
+        except Exception as e:  # noqa: BLE001
+            logger.error("Failed to save Lidarr import settings: %s", e)
+            raise ConfigurationError(f"Failed to save Lidarr import settings: {e}")
+
+    def is_lidarr_import_configured(self) -> bool:
+        """True iff a Lidarr import URL + API key are both stored (the non-admin gate)."""
+        raw = self.get_lidarr_import_connection_raw()
+        return bool(raw.url and raw.api_key)
 
     # --- Newznab indexers (D6) - a list, each with its own encrypted api_key ------
 

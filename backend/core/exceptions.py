@@ -169,6 +169,19 @@ class NewznabAuthError(NewznabApiError):
     pass
 
 
+class LidarrImportError(ExternalServiceError):
+    """Transport/HTTP/decode error talking to the read-only Lidarr importer's Lidarr
+    instance (LidarrImport). Mapped to HTTP 503 ``EXTERNAL_SERVICE_UNAVAILABLE`` by the
+    registered ``ExternalServiceError`` handler - no separate handler needed. The finer
+    reachable/bad-key/version distinctions are carried in the ``LidarrTestResponse`` body
+    (``auth`` flags a rejected API key), never a leaked exception body (5xx bodies stay
+    generic)."""
+
+    def __init__(self, message: str, details: Any = None, *, auth: bool = False) -> None:
+        super().__init__(message, details)
+        self.auth = auth
+
+
 class TicketmasterApiError(ExternalServiceError):
     """Transport/HTTP/decode error talking to the Ticketmaster Discovery API.
 

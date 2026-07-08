@@ -583,6 +583,18 @@ def build_slskd_repository(url: str, api_key: str) -> "SlskdRepository":
 
 
 @singleton
+def get_lidarr_import_repository() -> "LidarrImportRepository":
+    """Read-only Lidarr import client (LidarrImport). Stateless w.r.t. credentials - its
+    methods take url/api_key per call (from submitted creds for Test, from PreferencesService
+    for import), so a connection save needs no cache_clear here. Dedicated client name so the
+    first-caller-wins timeout doesn't leak from another repo."""
+    from repositories.lidarr_import import LidarrImportRepository
+
+    http = HttpClientFactory.get_client(name="lidarr_import", timeout=30.0, connect_timeout=5.0)
+    return LidarrImportRepository(http)
+
+
+@singleton
 def get_sabnzbd_client() -> "SabnzbdClient":
     from repositories.sabnzbd.sabnzbd_client import SabnzbdClient
 

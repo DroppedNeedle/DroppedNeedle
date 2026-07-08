@@ -6,11 +6,13 @@ lives here because the store is role-agnostic.
 """
 
 import logging
+import uuid
 
 import msgspec
 
 from infrastructure.persistence.follow_store import (
     Approval,
+    ApprovalBatch,
     FollowedArtist,
     FollowState,
     FollowStore,
@@ -134,3 +136,27 @@ class FollowService:
         if updated:
             await self._store.set_auto_download_intent(user_id, artist_mbid, False)
         return updated
+
+    # --- Bulk "Lidarr Import" approval batches (LidarrImport D3) ------------------
+
+    async def create_import_batch(
+        self, user_id: str, artists: list[tuple[str, str]]
+    ) -> str:
+        """Create one grouped pending approval batch over ``artists`` = [(mbid, name)] and
+        return its ``batch_id``. Called by LidarrImportService for non-admin importers."""
+        batch_id = uuid.uuid4().hex
+        await self._store.create_import_approval_batch(user_id, artists, batch_id)
+        return batch_id
+
+    async def list_pending_batches(self) -> list[ApprovalBatch]:
+        return await self._store.list_pending_approval_batches()
+
+    async def approve_batch(
+        self, batch_id: str, reviewer: tuple[str, str | None]
+    ) -> int:
+        return await self._store.set_batch_approval_state(batch_id, "approved", reviewer)
+
+    async def reject_batch(
+        self, batch_id: str, reviewer: tuple[str, str | None]
+    ) -> int:
+        return await self._store.set_batch_approval_state(batch_id, "rejected", reviewer)
