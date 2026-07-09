@@ -138,7 +138,7 @@ class AuthStore:
                     state TEXT PRIMARY KEY,
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL,
-                    code_verifier TEXT
+                    code_verifier TEXT -- PKCE; NULL on rows stored before it existed
                 );
 
                 CREATE TABLE IF NOT EXISTS spotify_oauth_states (
@@ -147,10 +147,11 @@ class AuthStore:
                     expires_at TEXT NOT NULL
                 );
             """)
-            # Migration: add code_verifier (PKCE) to pre-existing auth_oidc_states.
-            have = {row[1] for row in conn.execute("PRAGMA table_info(auth_oidc_states)")}
-            if "code_verifier" not in have:
+            # PKCE column ratchet: pre-PKCE databases lack it; additive, idempotent.
+            try:
                 conn.execute("ALTER TABLE auth_oidc_states ADD COLUMN code_verifier TEXT")
+            except sqlite3.OperationalError:
+                pass  # duplicate column - already present
             # Username login (D3): additive, idempotent. `username` is the lowercased
             # login identifier; `username_display` preserves preferred casing. The
             # partial unique index lets pre-backfill NULL rows coexist.
@@ -679,34 +680,36 @@ class AuthStore:
             logger.info(f"Cleaned up {count} expired auth token(s)")
         return count
 
-    async def store_oidc_state(
-        self, state: str, ttl_seconds: int = 600, code_verifier: str | None = None
-    ) -> None:
+    async def store_oidc_state(self, state: str, ttl_seconds: int = 600, code_verifier: str | None = None) -> None:
         now = _now_iso()
         expiry = (datetime.now(timezone.utc) + timedelta(seconds = ttl_seconds)).isoformat()
 
         def operation(conn: sqlite3.Connection) -> None:
-            # Also prune stale states opportunistically
+            # Piggyback a sweep of already-expired states on every insert.
             conn.execute("DELETE FROM auth_oidc_states WHERE expires_at < ?", (now,))
             conn.execute(
-                "INSERT INTO auth_oidc_states (state, created_at, expires_at, code_verifier) VALUES (?, ?, ?, ?)",
-                (state, now, expiry, code_verifier),
+                "INSERT INTO auth_oidc_states (state, code_verifier, created_at, expires_at)"
+                " VALUES (?, ?, ?, ?)",
+                (state, code_verifier, now, expiry),
             )
 
         await self._write(operation)
 
-    async def consume_oidc_state(self, state: str) -> tuple[bool, str | None]:
+    async def consume_oidc_state(self, state: str) -> tuple[bool, str | None]:  # (valid, code_verifier)
         now = _now_iso()
 
         def operation(conn: sqlite3.Connection) -> tuple[bool, str | None]:
-            row = conn.execute(
-                "SELECT code_verifier FROM auth_oidc_states WHERE state = ? AND expires_at > ?",
+            # Look up and delete inside one _write closure, so the state is
+            # single-use: a replayed callback finds nothing.
+            found = conn.execute(
+                "SELECT code_verifier FROM auth_oidc_states"
+                " WHERE state = ? AND expires_at > ?",
                 (state, now),
             ).fetchone()
-            if row is None:
+            if found is None:
                 return False, None
             conn.execute("DELETE FROM auth_oidc_states WHERE state = ?", (state,))
-            return True, row["code_verifier"]
+            return True, found["code_verifier"]
 
         return await self._write(operation)
 

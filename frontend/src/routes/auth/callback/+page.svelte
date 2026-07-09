@@ -20,10 +20,10 @@
 		try {
 			const data = await oidcExchange.mutateAsync({ code });
 			authStore.setUser(toAuthUser(data.user));
-			// Full reload (not goto) so the layout re-hydrates auth from the just-set
-			// session cookie. A client-side nav races the cookie and bounces to /login
-			// on the first sign-in.
-			window.location.href = '/';
+			// hard navigation on purpose: the exchange call just set the session
+			// cookie, and a soft goto() can outrun it and bounce the first
+			// sign-in back to /login
+			window.location.assign('/');
 		} catch (e) {
 			error =
 				e instanceof ApiError

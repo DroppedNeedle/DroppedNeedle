@@ -642,6 +642,6 @@ If you find DroppedNeedle useful, consider supporting development:
 
 ## License
 
-DroppedNeedle is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). Copyright (c) 2025 Harvey Bragg.
+DroppedNeedle is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). Copyright (c) 2025 Harvey Bragg and contributors.
 
-Commercial licensing options are available from the copyright holder.
+For commercial licensing enquiries, contact the maintainer.

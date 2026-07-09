@@ -1,55 +1,69 @@
-"""Tests for OIDC PKCE: challenge derivation and verifier persistence."""
+"""PKCE (RFC 7636) coverage for the OIDC login flow.
+
+Written against the spec, not the implementation: section 4.1 constrains the
+code verifier, section 4.2 defines the S256 challenge, and the verifier must
+survive the round trip from authorize-redirect to callback via AuthStore.
+"""
 
 import base64
 import hashlib
+import string
 
 import pytest
 
 from infrastructure.persistence.auth_store import AuthStore
-from services.oidc_user_auth_service import _make_pkce
+from services.oidc_user_auth_service import _pkce_pair
+
+_UNRESERVED = set(string.ascii_letters + string.digits + "-._~")
 
 
-def test_make_pkce_format_and_challenge():
-    verifier, challenge = _make_pkce()
-
-    # RFC 7636: verifier is 43-128 chars from the unreserved set.
-    assert 43 <= len(verifier) <= 128
-    assert all(c.isalnum() or c in "-._~" for c in verifier)
-
-    # challenge == base64url(SHA256(verifier)), unpadded.
-    expected = (
-        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
-        .rstrip(b"=")
-        .decode()
-    )
-    assert challenge == expected
-    assert "=" not in challenge
+def test_verifier_meets_rfc7636_section_4_1():
+    code_verifier, _ = _pkce_pair()
+    assert 43 <= len(code_verifier) <= 128
+    assert set(code_verifier) <= _UNRESERVED
 
 
-def test_make_pkce_is_random():
-    assert _make_pkce()[0] != _make_pkce()[0]
+def test_challenge_is_unpadded_s256_of_verifier():
+    code_verifier, code_challenge = _pkce_pair()
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    assert code_challenge == base64.urlsafe_b64encode(digest).decode().rstrip("=")
+    assert not code_challenge.endswith("=")
 
 
-@pytest.mark.asyncio
-async def test_oidc_state_roundtrips_verifier(tmp_path):
-    store = AuthStore(tmp_path / "auth.db")
-    await store.store_oidc_state("state-1", code_verifier="verifier-abc")
-
-    valid, verifier = await store.consume_oidc_state("state-1")
-    assert valid is True
-    assert verifier == "verifier-abc"
-
-    # Single-use: a second consume fails and yields no verifier.
-    valid2, verifier2 = await store.consume_oidc_state("state-1")
-    assert valid2 is False
-    assert verifier2 is None
+def test_every_pair_is_fresh():
+    verifiers = {_pkce_pair()[0] for _ in range(8)}
+    assert len(verifiers) == 8
 
 
 @pytest.mark.asyncio
-async def test_oidc_state_without_verifier(tmp_path):
-    store = AuthStore(tmp_path / "auth.db")
-    await store.store_oidc_state("state-2")
+async def test_verifier_survives_state_round_trip(tmp_path):
+    store = AuthStore(tmp_path / "pkce.db")
+    await store.store_oidc_state("st", code_verifier="cv-123")
 
-    valid, verifier = await store.consume_oidc_state("state-2")
-    assert valid is True
-    assert verifier is None
+    assert await store.consume_oidc_state("st") == (True, "cv-123")
+
+
+@pytest.mark.asyncio
+async def test_state_is_single_use(tmp_path):
+    store = AuthStore(tmp_path / "pkce.db")
+    await store.store_oidc_state("st", code_verifier="cv-123")
+
+    await store.consume_oidc_state("st")
+    assert await store.consume_oidc_state("st") == (False, None)
+
+
+@pytest.mark.asyncio
+async def test_pre_pkce_state_rows_still_validate(tmp_path):
+    # A state stored without a verifier (pre-PKCE deployment) must stay loginable.
+    store = AuthStore(tmp_path / "pkce.db")
+    await store.store_oidc_state("st")
+
+    assert await store.consume_oidc_state("st") == (True, None)
+
+
+@pytest.mark.asyncio
+async def test_expired_state_is_rejected(tmp_path):
+    store = AuthStore(tmp_path / "pkce.db")
+    await store.store_oidc_state("st", ttl_seconds=-1, code_verifier="cv-123")
+
+    assert await store.consume_oidc_state("st") == (False, None)
