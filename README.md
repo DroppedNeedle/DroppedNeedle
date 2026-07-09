@@ -97,7 +97,7 @@ The engine talks only to a user-supplied slskd instance over its local HTTP API.
 
 DroppedNeedle ships no indexers, no tracker lists, and no sources of any kind. It searches MusicBrainz, an open metadata database that hosts no audio. Every source it can reach is one you configured yourself: your own slskd instance, or your own Newznab indexers and your own SABnzbd.
 
-The engine acquires whatever the operator directs it to acquire. Uses it is built for include public-domain and Creative Commons recordings, releases artists distribute themselves through Bandcamp or the Internet Archive's Live Music Archive, live-taping collections, and re-acquiring media you already own. Holding the rights to what you download, and to whatever your download client shares back, is your responsibility as the operator.
+The engine acquires whatever the operator directs it to acquire. It is built for public-domain and Creative Commons recordings, for releases artists distribute themselves through Bandcamp or the Internet Archive's Live Music Archive, for live-taping collections, and for re-acquiring media you already own. Holding the rights to what you download, and to whatever your download client shares back, is your responsibility as the operator.
 
 ### Architecture
 
