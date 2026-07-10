@@ -61,18 +61,33 @@ describe('fetchLyrics', () => {
 		expect(mockGet).not.toHaveBeenCalled();
 	});
 
-	it('returns null for plex source type', async () => {
+	it('fetches plex lyrics via the metadata LRCLIB lookup', async () => {
+		mockGet.mockResolvedValueOnce({ text: 'Plex lyrics', is_synced: false, lines: [] });
+
 		const np = makeNowPlaying({ sourceType: 'plex' });
+		const result = await fetchLyrics(np, signal);
+
+		expect(result).toEqual({ text: 'Plex lyrics', is_synced: false, lines: [] });
+		expect(mockGet).toHaveBeenCalledOnce();
+		expect(mockGet.mock.calls[0][0]).toContain('/api/v1/lyrics/lookup');
+	});
+
+	it('returns null for plex tracks without a track name (no lookup possible)', async () => {
+		const np = makeNowPlaying({ sourceType: 'plex', trackName: '' });
 		const result = await fetchLyrics(np, signal);
 		expect(result).toBeNull();
 		expect(mockGet).not.toHaveBeenCalled();
 	});
 
-	it('returns null for local source type', async () => {
+	it('fetches local lyrics from the library track endpoint', async () => {
+		mockGet.mockResolvedValueOnce({ text: 'Local lyrics', is_synced: true, lines: [] });
+
 		const np = makeNowPlaying({ sourceType: 'local' });
 		const result = await fetchLyrics(np, signal);
-		expect(result).toBeNull();
-		expect(mockGet).not.toHaveBeenCalled();
+
+		expect(result).toEqual({ text: 'Local lyrics', is_synced: true, lines: [] });
+		expect(mockGet).toHaveBeenCalledOnce();
+		expect(mockGet.mock.calls[0][0]).toBe('/api/v1/library/tracks/track-1/lyrics');
 	});
 
 	it('normalizes Navidrome response correctly', async () => {

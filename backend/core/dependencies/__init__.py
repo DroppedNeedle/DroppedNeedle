@@ -129,6 +129,7 @@ from .service_providers import (  # noqa: F401
     get_jellyfin_playback_service,
     get_local_files_service,
     get_local_lyrics_service,
+    get_lyrics_lookup_service,
     get_jellyfin_library_service,
     get_navidrome_library_service,
     get_navidrome_playback_service,

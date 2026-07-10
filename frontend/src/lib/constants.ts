@@ -188,6 +188,7 @@ export const API = {
 			if (q) url += `&q=${encodeURIComponent(q)}`;
 			return url;
 		},
+		trackLyrics: (fileId: string) => `/api/v1/library/tracks/${fileId}/lyrics`,
 		artists: (limit = 50, offset = 0, sortBy = 'name', sortOrder = 'asc', q?: string) => {
 			let url = `/api/v1/library/artists?limit=${limit}&offset=${offset}&sort_by=${sortBy}&sort_order=${sortOrder}`;
 			if (q) url += `&q=${encodeURIComponent(q)}`;
@@ -215,6 +216,15 @@ export const API = {
 		removeAlbumPreview: (mbid: string) => `/api/v1/library/album/${mbid}/removal-preview`,
 		removeAlbum: (mbid: string) => `/api/v1/library/album/${mbid}`,
 		resolveTracks: () => '/api/v1/library/resolve-tracks'
+	},
+	lyrics: {
+		// metadata-only LRCLIB lookup (Plex playback: no local file to read lyrics from)
+		lookup: (artist: string, track: string, album?: string, durationSeconds?: number) => {
+			let url = `/api/v1/lyrics/lookup?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}`;
+			if (album) url += `&album=${encodeURIComponent(album)}`;
+			if (durationSeconds) url += `&duration=${Math.round(durationSeconds)}`;
+			return url;
+		}
 	},
 	search: {
 		artists: (query: string) => `/api/v1/search/artists?q=${encodeURIComponent(query)}`,

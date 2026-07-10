@@ -32,6 +32,28 @@ export async function fetchLyrics(np: NowPlaying, signal: AbortSignal): Promise<
 				lines: data.lines ?? []
 			};
 		}
+		if (np.sourceType === 'local') {
+			// DroppedNeedle's own library: embedded tags + sidecar .lrc, read off disk
+			const url = API.library.trackLyrics(np.trackSourceId!);
+			const data = await api.global.get<LyricsData>(url, { signal });
+			return {
+				text: data.text ?? '',
+				is_synced: data.is_synced ?? false,
+				lines: data.lines ?? []
+			};
+		}
+		if (np.sourceType === 'plex') {
+			// Plex streams have no DroppedNeedle library file: metadata-only LRCLIB
+			// lookup, gated server-side on the lyrics fetch setting (off -> 404 -> null)
+			if (!np.trackName) return null;
+			const url = API.lyrics.lookup(np.artistName, np.trackName, np.albumName || undefined);
+			const data = await api.global.get<LyricsData>(url, { signal });
+			return {
+				text: data.text ?? '',
+				is_synced: data.is_synced ?? false,
+				lines: data.lines ?? []
+			};
+		}
 		return null;
 	} catch (e) {
 		if (e instanceof ApiError && e.status === 404) return null;
@@ -53,6 +75,10 @@ export const getLyricsQuery = (getNowPlaying: Getter<NowPlaying | null>) =>
 			),
 			queryFn: ({ signal }: { signal: AbortSignal }) => fetchLyrics(np!, signal),
 			enabled:
-				!!np?.trackSourceId && (np.sourceType === 'navidrome' || np.sourceType === 'jellyfin')
+				!!np?.trackSourceId &&
+				(np.sourceType === 'navidrome' ||
+					np.sourceType === 'jellyfin' ||
+					np.sourceType === 'local' ||
+					np.sourceType === 'plex')
 		};
 	});

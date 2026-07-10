@@ -52,6 +52,7 @@ from api.v1.routes import stream as stream_routes
 from api.v1.routes import jellyfin_library as jellyfin_library_routes
 from api.v1.routes import navidrome_library as navidrome_library_routes
 from api.v1.routes import local_library as local_library_routes
+from api.v1.routes import lyrics as lyrics_routes
 from api.v1.routes import lastfm as lastfm_routes
 from api.v1.routes import scrobble as scrobble_routes
 from api.v1.routes import me_connections as me_connections_routes
@@ -740,6 +741,7 @@ v1_router.include_router(navidrome_library_routes.router)
 v1_router.include_router(plex_library_routes.router)
 v1_router.include_router(plex_auth_routes.router)
 v1_router.include_router(local_library_routes.router)
+v1_router.include_router(lyrics_routes.router)
 v1_router.include_router(lastfm_routes.router)
 v1_router.include_router(scrobble_routes.router)
 v1_router.include_router(me_connections_routes.router)

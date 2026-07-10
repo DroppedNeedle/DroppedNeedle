@@ -967,6 +967,18 @@ def get_local_lyrics_service() -> "LocalLyricsService":
 
 
 @singleton
+def get_lyrics_lookup_service() -> "LyricsLookupService":
+    from services.lyrics_lookup_service import LyricsLookupService
+
+    from .repo_providers import get_lrclib_repository
+
+    return LyricsLookupService(
+        get_preferences_service(),
+        get_lrclib_repository(),
+    )
+
+
+@singleton
 def get_jellyfin_library_service() -> "JellyfinLibraryService":
     from services.jellyfin_library_service import JellyfinLibraryService
 
