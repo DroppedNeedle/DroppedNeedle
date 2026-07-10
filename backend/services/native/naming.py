@@ -91,9 +91,15 @@ class NamingTemplateEngine:
                 result.append(self._INVALID_FS_CHARS.sub("_", value))
             else:
                 result.append(part)
+        rendered = "".join(result)
+        # An empty variable leaves bracket litter from its template decoration -
+        # "{album} ({year})" with no year renders "Album ()". Collapse empty
+        # (), [] and {} groups (and their leading spaces) instead of shipping
+        # them into folder names.
+        rendered = re.sub(r"\s*(\(\s*\)|\[\s*\]|\{\s*\})", "", rendered)
         # Literals already carry the "/" separators; Path() splits them into
         # components, which _normalize then cleans individually.
-        return Path("".join(result))
+        return Path(rendered)
 
     def _lookup(self, var: str, tag: AudioTag, ext: str) -> str:
         match var:

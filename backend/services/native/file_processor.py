@@ -27,6 +27,7 @@ from rapidfuzz import fuzz
 
 from infrastructure.msgspec_fastapi import AppStruct
 from models.audio import AudioInfo, AudioTag
+from infrastructure.audio.fingerprinter import split_artist_credit
 from models.download_manifest import DownloadManifest, ExpectedFile, ExpectedTrack
 from services.native.quality_tiers import tier_for, tier_rank
 from services.native.recycle_bin import recycle
@@ -309,8 +310,26 @@ def _fingerprint_disagrees(fp, expected_track, expected_artist: str | None) -> b
     # Wrong artist - but skip for various-artists compilations, where the album artist
     # legitimately differs from a track's performing artist.
     if fp_artist and expected_artist and "various" not in expected_artist.lower():
-        if fuzz.token_set_ratio(fp_artist, expected_artist) < 55:
-            return True
+        # A collab credit ("Artist A; Artist B") is NOT a wrong artist when the
+        # requested artist is any credited member - compare every credit token on
+        # both sides plus the full strings (token_set_ratio alone scores "Artist A"
+        # vs "Artist A; Artist B" under the gate: the separator glues tokens).
+        # This wires split_artist_credit into the verify path, per its plan note.
+        fp_credits = split_artist_credit(fp_artist) + [fp_artist]
+        expected_credits = split_artist_credit(expected_artist) + [expected_artist]
+        best = max(
+            fuzz.token_set_ratio(fp_credit, expected_credit)
+            for fp_credit in fp_credits
+            for expected_credit in expected_credits
+        )
+        if best < 55:
+            # Remix: AcoustID credits the ORIGINAL artist - "Song (Artist B
+            # remix)" carries the credit of "Song"'s artist. The requested artist
+            # named in the track title is positive evidence of the right
+            # recording, not a wrong-artist hit.
+            titles = f"{expected_title or ''} {fp_title or ''}".lower()
+            if expected_artist.lower() not in titles:
+                return True
     return False
 
 
