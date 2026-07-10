@@ -291,6 +291,36 @@ def _tag_conflict_reason(tag, info, manifest, expected_track) -> str | None:  # 
     return None
 
 
+# Keywords that mark a bracketed title group as a remix/credit annotation.
+# "feat"/"ft"/"featuring" cover explicit guest credits ("Song (feat. Artist)").
+_REMIX_CREDIT_WORDS = frozenset(
+    {"remix", "mix", "edit", "bootleg", "rework", "vip", "flip", "dub",
+     "feat", "ft", "featuring"}
+)
+_TITLE_BRACKET_GROUP = re.compile(r"[(\[]([^)\]]*)[)\]]")
+
+
+def _title_credits_artist(artist: str, *titles: str | None) -> bool:
+    """True when a bracketed group in any title names ``artist`` as whole words
+    alongside a remix/credit keyword - "Song (Artist remix)", "Song (feat.
+    Artist)". AcoustID credits remixes to the ORIGINAL artist, so such a credit
+    is positive evidence the audio is the requested remix, not a wrong-artist
+    recording. A bare substring is deliberately NOT enough: expected artist
+    "Air" must not match the title "Airbag"."""
+    name = re.escape(artist.strip().lower())
+    if not name:
+        return False
+    whole_word = re.compile(rf"(?<!\w){name}(?!\w)")
+    for title in titles:
+        if not title:
+            continue
+        for group in _TITLE_BRACKET_GROUP.findall(title.lower()):
+            group_words = set(re.findall(r"[a-z0-9]+", group))
+            if group_words & _REMIX_CREDIT_WORDS and whole_word.search(group):
+                return True
+    return False
+
+
 def _fingerprint_disagrees(fp, expected_track, expected_artist: str | None) -> bool:
     """True only when AcoustID CONFIDENTLY (status=pass) identified the audio as a clearly
     different SONG, or a clearly different ARTIST, than expected. Release-group/edition is
@@ -324,11 +354,11 @@ def _fingerprint_disagrees(fp, expected_track, expected_artist: str | None) -> b
         )
         if best < 55:
             # Remix: AcoustID credits the ORIGINAL artist - "Song (Artist B
-            # remix)" carries the credit of "Song"'s artist. The requested artist
-            # named in the track title is positive evidence of the right
-            # recording, not a wrong-artist hit.
-            titles = f"{expected_title or ''} {fp_title or ''}".lower()
-            if expected_artist.lower() not in titles:
+            # remix)" carries the credit of "Song"'s artist. Only an explicit
+            # bracketed remix/credit naming the requested artist counts as
+            # evidence (see _title_credits_artist) - a bare substring would let
+            # common-word artist names waive confident wrong-artist results.
+            if not _title_credits_artist(expected_artist, expected_title, fp_title):
                 return True
     return False
 

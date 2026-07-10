@@ -724,12 +724,41 @@ def test_fingerprint_allows_requested_collab_when_credit_names_one_member():
 
 def test_fingerprint_allows_remix_credited_to_original_artist():
     # AcoustID credits the original performer of a remix; the requested artist
-    # (the remixer) is named in the track title - that's the right recording.
+    # (the remixer) is named in a bracketed remix credit - right recording.
     from models.download_manifest import ExpectedTrack
     from services.native.file_processor import _fingerprint_disagrees
     track = ExpectedTrack(track_number=1, title="Higher Love (Kygo Remix)")
     fp = _fp(title="Higher Love (Kygo remix)", artist="Whitney Houston")
     assert _fingerprint_disagrees(fp, track, "Kygo") is False
+
+
+def test_fingerprint_allows_bracketed_feat_credit():
+    # "(feat. Artist)" is an explicit guest credit - same evidence as a remix.
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+    track = ExpectedTrack(track_number=1, title="Some Song (feat. Air)")
+    fp = _fp(title="Some Song (feat. Air)", artist="Lead Performer")
+    assert _fingerprint_disagrees(fp, track, "Air") is False
+
+
+def test_fingerprint_rejects_substring_artist_match_in_title():
+    # A bare substring is NOT remix evidence: expected artist "Air" appearing
+    # inside the word "Airbag" must not waive a confident wrong-artist result.
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+    track = ExpectedTrack(track_number=1, title="Airbag")
+    fp = _fp(title="Airbag", artist="Radiohead")
+    assert _fingerprint_disagrees(fp, track, "Air")
+
+
+def test_fingerprint_rejects_bracketed_artist_without_credit_keyword():
+    # The artist's name in brackets with no remix/feat keyword is ambiguous -
+    # not enough to overrule AcoustID's confident different-artist verdict.
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+    track = ExpectedTrack(track_number=1, title="Some Song (Air)")
+    fp = _fp(title="Some Song (Air)", artist="Radiohead")
+    assert _fingerprint_disagrees(fp, track, "Air")
 
 
 def test_fingerprint_still_rejects_unrelated_artist_with_matching_title():
