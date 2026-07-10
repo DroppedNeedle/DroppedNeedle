@@ -41,6 +41,9 @@ class DiskMetadataCache:
         self._recent_audiodb_albums_dir = self.base_path / "recent" / "audiodb_albums"
         self._persistent_audiodb_artists_dir = self.base_path / "persistent" / "audiodb_artists"
         self._persistent_audiodb_albums_dir = self.base_path / "persistent" / "audiodb_albums"
+        # per-user Discover pages: persistent so a restart reloads them instantly
+        self._recent_discover_dir = self.base_path / "recent" / "discover"
+        self._persistent_discover_dir = self.base_path / "persistent" / "discover"
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
@@ -54,6 +57,8 @@ class DiskMetadataCache:
             self._recent_audiodb_albums_dir,
             self._persistent_audiodb_artists_dir,
             self._persistent_audiodb_albums_dir,
+            self._recent_discover_dir,
+            self._persistent_discover_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
@@ -86,6 +91,11 @@ class DiskMetadataCache:
             return (
                 self._recent_audiodb_albums_dir / f"{cache_hash}.json",
                 self._persistent_audiodb_albums_dir / f"{cache_hash}.json",
+            )
+        if entity_type == "discover":
+            return (
+                self._recent_discover_dir / f"{cache_hash}.json",
+                self._persistent_discover_dir / f"{cache_hash}.json",
             )
         raise ValueError(f"Unsupported entity type: {entity_type}")
 
@@ -293,6 +303,20 @@ class DiskMetadataCache:
 
     async def get_audiodb_album(self, identifier: str) -> dict[str, Any] | None:
         return await self._get_entity("audiodb_album", identifier)
+
+    async def set_discover(
+        self,
+        identifier: str,
+        payload: Any,
+        ttl_seconds: int | None = None,
+    ) -> None:
+        """Persist a built per-user Discover page. Always stored on the persistent side
+        (it must survive restarts) but with an explicit TTL, matching the discover
+        cache's freshness semantics."""
+        await self._set_entity("discover", identifier, payload, is_monitored=True, ttl_seconds=ttl_seconds)
+
+    async def get_discover(self, identifier: str) -> dict[str, Any] | None:
+        return await self._get_entity("discover", identifier)
 
     async def delete_album(self, musicbrainz_id: str) -> None:
         recent_path, persistent_path = self._entity_paths("album", musicbrainz_id)

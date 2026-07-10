@@ -1,11 +1,12 @@
 import asyncio
 import hashlib
 import logging
+import math
 import random
 from types import SimpleNamespace
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterable
 
 from api.v1.schemas.discover import (
     DiscoverResponse,
@@ -38,8 +39,20 @@ from services.home_transformers import HomeDataTransformers
 from services.home.integration_helpers import resolve_source_value
 from services.per_user_client_factory import PerUserClientFactory
 from infrastructure.persistence.user_listening_prefs_store import UserListeningPrefsStore
+from services.discover.genre_balance import (
+    EMPTY_GENRE_PREFS,
+    GENRE_SHARE_CAP,
+    GenrePrefs,
+    balanced_seed_selection,
+    cap_genre_share,
+    diverse_genre_selection,
+    genre_family,
+    genres_lookup,
+    primary_family,
+)
 from services.discover.integration_helpers import IntegrationHelpers
 from services.discover.mbid_resolution_service import MbidResolutionService, discover_build_thorough
+from services.discover.response_codec import decode_discover_response, encode_discover_response
 from services.discover.queue_strategies import build_similar_artist_pools, build_similar_artist_pools_lastfm, discover_by_genres, queue_item_to_home_album, round_robin_dedup_select
 from repositories.listenbrainz_repository import lb_popularity_degraded
 from services.discover.top_picks import TopPickCandidate, score_candidates
@@ -174,6 +187,18 @@ DISCOVER_PICKS_CACHE_TTL = 14400  # 4 hours
 DISCOVER_PICKS_DEGRADED_TTL = 300  # 5 minutes
 UNEXPLORED_GENRES_THRESHOLD = 2
 UNEXPLORED_GENRES_MAX = 8
+# Genre-balance seeding: how many seeds the zones use, and how many candidates we
+# collect before balancing across genre FAMILIES (so a 40% K-pop library doesn't
+# yield 90% K-pop seeds). Pool only widens when a genre index exists to balance with.
+SEED_ARTIST_COUNT = 3
+SEED_CANDIDATE_POOL = 10
+# At most this many daily-mix clusters may come from one genre family
+# ("k-pop" + "korean pop" + "kpop" count as ONE family).
+DAILY_MIX_MAX_CLUSTERS_PER_FAMILY = 2
+# Budget for the cold-path first paint: only library-derived zones (no external charts /
+# similarity) run under it, so a cold cache still returns SOMETHING within ~2s while the
+# full build streams in via the cache in the background.
+QUICK_ZONE_BUDGET_SECONDS = 1.5
 
 
 class DiscoverHomepageService:
@@ -195,6 +220,8 @@ class DiscoverHomepageService:
         library_db: Any = None,
         follow_service: Any = None,
         cover_repo: Any = None,
+        disk_cache: Any = None,
+        genre_prefs_store: Any = None,
     ) -> None:
         self._lb_repo = listenbrainz_repo
         self._jf_repo = jellyfin_repo
@@ -212,6 +239,11 @@ class DiscoverHomepageService:
         self._library_db = library_db
         self._follow_service = follow_service
         self._cover_repo = cover_repo
+        # per-user genre reduce/mute levels for the balance pass (None = defaults)
+        self._genre_prefs_store = genre_prefs_store
+        # persistent (disk) discover cache: survives restarts, reloaded lazily per key
+        self._disk_cache = disk_cache
+        self._disk_checked: set[str] = set()
         self._transformers = HomeDataTransformers(jellyfin_repo)
         self._weekly_exploration = WeeklyExplorationService(listenbrainz_repo, musicbrainz_repo)
         # per-user in-flight warm guard so one user never blocks another
@@ -275,6 +307,10 @@ class DiscoverHomepageService:
                 user_id, lb_enabled, lfm_enabled
             )
             cached = await self._memory_cache.get(cache_key)
+            if not isinstance(cached, DiscoverResponse):
+                # restart-wiped memory: reload yesterday's discover from the persistent
+                # cache instantly; the SWR check below still refreshes it in background
+                cached = await self._load_persisted_response(cache_key)
             if cached is not None and isinstance(cached, DiscoverResponse):
                 # stale-while-revalidate: serve the cached copy immediately, but rebuild
                 # in the background once it's older than the freshness window so the data
@@ -286,7 +322,7 @@ class DiscoverHomepageService:
                 return clone_with_updates(cached, {"refreshing": building})
         # cache miss (first build, restart-wiped cache, or a user whose build is
         # legitimately empty). Back off if a build was attempted within the freshness
-        # window so an empty/failed build doesn't rebuild on every 3s poll and hammer
+        # window so an empty/failed build doesn't rebuild on every poll and hammer
         # upstream APIs; if backed off we report refreshing=false so the UI settles on
         # the empty state instead of polling forever.
         cache_key = self._integration.get_discover_cache_key(
@@ -298,11 +334,90 @@ class DiscoverHomepageService:
         if not building and not attempted_recently:
             self._trigger_warm(user_id)
             building = True
-        return DiscoverResponse(
+        # FAST FIRST PAINT: never block the request on the full cold build. Return the
+        # cheap library-derived zones right away (empty zones are hidden client-side);
+        # the remaining zones land in the cache as the background build completes and
+        # stream in via the frontend's refreshing poll.
+        return await self._build_quick_response(user_id, lb_enabled, lfm_enabled, refreshing=building)
+
+    async def _build_quick_response(
+        self, user_id: str, lb_enabled: bool, lfm_enabled: bool, refreshing: bool,
+    ) -> DiscoverResponse:
+        """Library/local-only zones (anniversaries, new-from-followed, rediscover, genre
+        browse) under a hard ~QUICK_ZONE_BUDGET_SECONDS per zone: no external charts or
+        similarity calls, so a cold cache still paints in well under 2s."""
+        response = DiscoverResponse(
             integration_status=self._integration.get_integration_status(),
             service_prompts=self._build_service_prompts(lb_enabled, lfm_enabled),
-            refreshing=building,
+            refreshing=refreshing,
         )
+        try:
+            jf_enabled = self._integration.is_jellyfin_enabled()
+            library_configured = self._integration.is_library_configured()
+            tasks: dict[str, Any] = {
+                "anniversaries": self._build_anniversaries(),
+                "new_from_followed": self._build_new_from_followed(user_id),
+                "library_mbids": self._mbid.get_library_artist_mbids(library_configured),
+            }
+            if jf_enabled:
+                tasks["jf_most_played"] = self._jf_repo.get_most_played_artists(limit=50)
+            if library_configured:
+                tasks["library_albums"] = self._library_repo.get_library(include_unmonitored=True)
+            keys = list(tasks.keys())
+            raw = await asyncio.gather(
+                *(asyncio.wait_for(c, timeout=QUICK_ZONE_BUDGET_SECONDS) for c in tasks.values()),
+                return_exceptions=True,
+            )
+            results = {k: (None if isinstance(v, BaseException) else v) for k, v in zip(keys, raw)}
+            response.anniversaries = results.get("anniversaries")
+            response.new_from_followed = results.get("new_from_followed")
+            library_mbids = results.get("library_mbids") or set()
+            response.rediscover = self._build_rediscover(results, library_mbids, jf_enabled)
+            response.genre_list = self._build_genre_list(results, lb_enabled)
+        except Exception as e:  # noqa: BLE001 - the quick paint must never fail the request
+            logger.debug("Quick discover response degraded: %s", e)
+        return response
+
+    async def _persist_response(self, cache_key: str, response: DiscoverResponse) -> None:
+        """Bank the built discover in the persistent metadata cache so a restart reloads
+        yesterday's page instantly instead of showing the build screen."""
+        if self._disk_cache is None:
+            return
+        try:
+            payload = {
+                "built_at": time.time(),
+                "response": encode_discover_response(response),
+            }
+            await self._disk_cache.set_discover(cache_key, payload, ttl_seconds=DISCOVER_CACHE_TTL)
+        except Exception as e:  # noqa: BLE001 - persistence is best-effort
+            logger.warning("Failed to persist discover cache: %s", e)
+
+    async def _load_persisted_response(self, cache_key: str) -> DiscoverResponse | None:
+        """One-shot per key: rehydrate the memory cache (and the SWR clock) from disk
+        after a restart. Returns None when there is nothing usable persisted."""
+        if self._disk_cache is None or cache_key in self._disk_checked:
+            return None
+        self._disk_checked.add(cache_key)
+        try:
+            payload = await self._disk_cache.get_discover(cache_key)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Persisted discover load failed: %s", e)
+            return None
+        if not isinstance(payload, dict):
+            return None
+        response = decode_discover_response(payload.get("response"))
+        if response is None or not self._has_meaningful_content(response):
+            return None
+        built_at = float(payload.get("built_at") or 0.0)
+        remaining = DISCOVER_CACHE_TTL - (time.time() - built_at)
+        if remaining <= 0:
+            return None
+        if self._memory_cache:
+            await self._memory_cache.set(cache_key, response, max(int(remaining), 60))
+        # restore the build time so stale-while-revalidate refreshes it in background
+        self._built_at[cache_key] = built_at
+        logger.info("Discover cache reloaded from disk for key %s", cache_key[:24])
+        return response
 
     async def get_discover_preview(self, user_id: str) -> DiscoverPreview | None:
         if not self._memory_cache:
@@ -379,6 +494,16 @@ class DiscoverHomepageService:
         finally:
             discover_build_thorough.reset(token)
 
+    async def invalidate_personalization_caches(self, user_id: str) -> None:
+        """Drop the per-user sub-caches that bake in genre preferences (daily
+        mixes, top picks) so the next rebuild honors updated prefs immediately
+        instead of after their own TTLs."""
+        if not self._memory_cache:
+            return
+        for source in ("listenbrainz", "lastfm"):
+            await self._memory_cache.delete(self._daily_mix_cache_key(user_id, source))
+            await self._memory_cache.delete(self._top_picks_cache_key(user_id, source))
+
     async def refresh_discover_data(self, user_id: str) -> None:
         _, _, _, _, lb_enabled, lfm_enabled, _ = await self._resolve_user_music(user_id, None)
         if user_id in self._building_keys:
@@ -404,6 +529,7 @@ class DiscoverHomepageService:
             response = await self.build_discover_data(user_id)
             if self._memory_cache and self._has_meaningful_content(response):
                 await self._memory_cache.set(cache_key, response, DISCOVER_CACHE_TTL)
+                await self._persist_response(cache_key, response)
                 self._spawn_cover_prewarm(user_id, response)
             else:
                 logger.warning("Discover build produced no meaningful content, keeping existing cache")
@@ -511,12 +637,14 @@ class DiscoverHomepageService:
         # download buttons) and neutered the don't-suggest-what-you-own exclusions
         library_album_mbids = await self._mbid.get_library_album_mbids(library_configured)
 
+        genre_prefs = await self._load_genre_prefs(user_id)
         seed_artists = await self._get_seed_artists(
             lb_enabled, username, jf_enabled,
             resolved_source=primary,
             lfm_enabled=lfm_enabled,
             lfm_username=lfm_username,
             lb_client=lb_client,
+            genre_prefs=genre_prefs,
         )
 
         tasks: dict[str, Any] = {}
@@ -584,6 +712,9 @@ class DiscoverHomepageService:
 
         seen_artist_mbids: set[str] = set()
 
+        # Synchronous zones first: pure transforms over the phase-1 results. They run
+        # sequentially so the artist dedup between sections (seen_artist_mbids) stays
+        # deterministic; none of them awaits an external service.
         response.because_you_listen_to = self._build_because_sections(
             seed_artists, results, library_mbids, seen_artist_mbids,
             resolved_source=primary,
@@ -591,7 +722,38 @@ class DiscoverHomepageService:
         await self._enrich_because_sections_audiodb(response.because_you_listen_to)
 
         response.fresh_releases = self._build_fresh_releases(results, library_album_mbids)
+        response.rediscover = self._build_rediscover(results, library_mbids, jf_enabled)
+        response.artists_you_might_like = self._build_artists_you_might_like(
+            seed_artists, results, library_mbids, seen_artist_mbids,
+            resolved_source=primary,
+        )
+        response.genre_list = self._build_genre_list(results, lb_enabled)
 
+        if primary == "lastfm":
+            response.globally_trending = self._build_lastfm_globally_trending(
+                results, library_mbids, seen_artist_mbids
+            )
+        else:
+            response.globally_trending = self._build_globally_trending(
+                results, library_mbids, seen_artist_mbids
+            )
+
+        response.lastfm_weekly_artist_chart = self._build_lastfm_weekly_artist_chart(
+            results, library_mbids, seen_artist_mbids
+        )
+
+        similar_artist_mbids: list[str] = []
+        for i in range(3):
+            similar = results.get(f"similar_{i}") or []
+            for artist in similar:
+                mbid = getattr(artist, 'artist_mbid', None) or getattr(artist, 'mbid', None)
+                if mbid:
+                    similar_artist_mbids.append(mbid)
+
+        # Every remaining zone is independent - run them ALL concurrently, each under its
+        # own per-zone timeout (_execute_tasks), so one slow upstream (a starved
+        # MusicBrainz resolution, a hanging chart call) can't delay unrelated zones.
+        # Upstream fan-out stays bounded by the repos' own rate limiters/queues.
         post_tasks: dict[str, Any] = {
             "missing_essentials": self._build_missing_essentials(results, library_album_mbids),
             "lastfm_weekly_album_chart": self._build_lastfm_weekly_album_chart(
@@ -609,13 +771,22 @@ class DiscoverHomepageService:
             ),
             "anniversaries": self._build_anniversaries(),
             "new_from_followed": self._build_new_from_followed(user_id),
+            "popular_in_your_genres": self._build_popular_in_genres(
+                results, library_mbids, seen_artist_mbids,
+                resolved_source=primary,
+                genre_prefs=genre_prefs,
+            ),
+            "unexplored_genres": self._build_unexplored_genres(
+                response.because_you_listen_to, similar_artist_mbids
+            ),
         }
+        if response.genre_list and response.genre_list.items:
+            post_tasks["genre_artists"] = self._build_genre_artists(response.genre_list)
         if lb_client and username:
             post_tasks["listeners_like_you"] = self._build_listeners_like_you(
                 lb_client, username, user_id,
             )
-        # LB-specific: runs whenever the user's ListenBrainz is linked
-        if lb_client and username:
+            # LB-specific: runs whenever the user's ListenBrainz is linked
             post_tasks["weekly_exploration"] = self._weekly_exploration.build_section(
                 username, lb_repo=lb_client
             )
@@ -628,78 +799,140 @@ class DiscoverHomepageService:
         response.listeners_like_you = post_results.get("listeners_like_you")
         response.anniversaries = post_results.get("anniversaries")
         response.new_from_followed = post_results.get("new_from_followed")
-
-        response.rediscover = self._build_rediscover(results, library_mbids, jf_enabled)
-
-        response.artists_you_might_like = self._build_artists_you_might_like(
-            seed_artists, results, library_mbids, seen_artist_mbids,
-            resolved_source=primary,
-        )
-
-        response.popular_in_your_genres = await self._build_popular_in_genres(
-            results, library_mbids, seen_artist_mbids,
-            resolved_source=primary,
-        )
-
-        response.genre_list = self._build_genre_list(results, lb_enabled)
-
-        similar_artist_mbids: list[str] = []
-        for i in range(3):
-            similar = results.get(f"similar_{i}") or []
-            for artist in similar:
-                mbid = getattr(artist, 'artist_mbid', None) or getattr(artist, 'mbid', None)
-                if mbid:
-                    similar_artist_mbids.append(mbid)
-
-        response.unexplored_genres = await self._build_unexplored_genres(
-            response.because_you_listen_to, similar_artist_mbids
-        )
-
-        if response.genre_list and response.genre_list.items:
-            genre_names = [
-                g.name for g in response.genre_list.items[:20]
-                if isinstance(g, HomeGenre)
-            ]
-            if genre_names:
-                raw_mbids = await asyncio.gather(
-                    *(self._get_genre_artist(g) for g in genre_names)
-                )
-                used_mbids: set[str] = set()
-                genre_artists: dict[str, str | None] = {}
-                for g, mbid in zip(genre_names, raw_mbids):
-                    if mbid and mbid not in used_mbids:
-                        genre_artists[g] = mbid
-                        used_mbids.add(mbid)
-                    elif mbid and mbid in used_mbids:
-                        alt = await self._get_genre_artist(g, exclude_mbids=used_mbids)
-                        genre_artists[g] = alt
-                        if alt:
-                            used_mbids.add(alt)
-                    else:
-                        genre_artists[g] = None
-                response.genre_artists = genre_artists
-                response.genre_artist_images = await self._resolve_genre_artist_images(
-                    response.genre_artists
-                )
-
-        if primary == "lastfm":
-            response.globally_trending = self._build_lastfm_globally_trending(
-                results, library_mbids, seen_artist_mbids
-            )
-        else:
-            response.globally_trending = self._build_globally_trending(
-                results, library_mbids, seen_artist_mbids
-            )
-
-        response.lastfm_weekly_artist_chart = self._build_lastfm_weekly_artist_chart(
-            results, library_mbids, seen_artist_mbids
-        )
+        response.popular_in_your_genres = post_results.get("popular_in_your_genres")
+        response.unexplored_genres = post_results.get("unexplored_genres")
+        genre_artist_result = post_results.get("genre_artists")
+        if genre_artist_result:
+            response.genre_artists, response.genre_artist_images = genre_artist_result
         response.lastfm_weekly_album_chart = post_results.get("lastfm_weekly_album_chart")
         response.lastfm_recent_scrobbles = post_results.get("lastfm_recent_scrobbles")
 
         response.service_prompts = self._build_service_prompts(lb_enabled, lfm_enabled)
 
+        # Genre-balance pass over the assembled zones: per-zone AND page-wide family
+        # share caps plus the user's reduce/mute levels. Runs after the zone builders
+        # (a pure post-filter) so the parallel orchestration above stays untouched.
+        try:
+            await self._apply_genre_balance(response, genre_prefs)
+        except Exception as e:  # noqa: BLE001 - balancing must never fail the build
+            logger.warning("Genre balance pass failed: %s", e)
+
         return response
+
+    async def _apply_genre_balance(
+        self, response: DiscoverResponse, prefs: GenrePrefs,
+    ) -> None:
+        """Cap any single genre family's share (~GENRE_SHARE_CAP) inside each
+        recommendation zone and across the whole assembled page, and honor the
+        user's reduce/mute levels.
+
+        Classification comes from the library genre index; items whose artist has
+        no known genres always pass through, so external-chart zones are trimmed
+        conservatively rather than emptied. Daily mixes and radio stations are
+        single-genre BY DESIGN - they're balanced at cluster/seed level instead
+        and skipped here."""
+        if self._genre_index is None:
+            return
+
+        other_sections: list[HomeSection] = [
+            section
+            for section in (
+                response.artists_you_might_like,
+                response.popular_in_your_genres,
+                response.globally_trending,
+                response.listeners_like_you,
+                response.fresh_releases,
+                response.missing_essentials,
+            )
+            if section is not None
+        ]
+
+        mbids: set[str] = {
+            b.seed_artist_mbid.lower()
+            for b in response.because_you_listen_to
+            if b.seed_artist_mbid
+        }
+        for section in [b.section for b in response.because_you_listen_to] + other_sections:
+            for item in section.items:
+                mbid = getattr(item, "artist_mbid", None) or getattr(item, "mbid", None)
+                if mbid:
+                    mbids.add(str(mbid).lower())
+        if response.top_picks:
+            for pick in response.top_picks.items:
+                if pick.album.artist_mbid:
+                    mbids.add(pick.album.artist_mbid.lower())
+
+        genres = await self._genres_for_artists(mbids)
+        if not genres:
+            return
+        lookup = genres_lookup(genres)
+
+        # a muted seed family takes its whole "Because You Listen To" rail with it
+        if not prefs.is_empty():
+            response.because_you_listen_to = [
+                b for b in response.because_you_listen_to
+                if not (
+                    b.seed_artist_mbid
+                    and prefs.is_muted(
+                        primary_family(genres.get(b.seed_artist_mbid.lower(), []))
+                    )
+                )
+            ]
+        sections = [b.section for b in response.because_you_listen_to] + other_sections
+
+        # page-wide budget: one family may claim at most the cap share of ALL
+        # capped-zone items combined, on top of each zone's own cap
+        total_items = sum(len(s.items) for s in sections)
+        if response.top_picks:
+            total_items += len(response.top_picks.items)
+        page_counts: dict[str, int] = {}
+        page_allowance = max(1, math.ceil(GENRE_SHARE_CAP * total_items))
+
+        # the hero zone first, so the page budget favors Top Picks
+        if response.top_picks:
+            response.top_picks.items = cap_genre_share(
+                response.top_picks.items, lookup, prefs=prefs,
+                counts=page_counts, total_allowed=page_allowance,
+            )
+        for section in sections:
+            section.items = cap_genre_share(
+                section.items, lookup, prefs=prefs,
+                counts=page_counts, total_allowed=page_allowance,
+            )
+        response.because_you_listen_to = [
+            b for b in response.because_you_listen_to if b.section.items
+        ]
+
+    async def _build_genre_artists(
+        self, genre_list: HomeSection
+    ) -> tuple[dict[str, str | None], dict[str, str | None]] | None:
+        """A representative artist (and image) per browsable genre tile. Split out so it
+        runs as its own zone: its MusicBrainz tag searches (1 req/s) previously ran after
+        everything else and serially stretched the build by tens of seconds."""
+        genre_names = [
+            g.name for g in genre_list.items[:20]
+            if isinstance(g, HomeGenre)
+        ]
+        if not genre_names:
+            return None
+        raw_mbids = await asyncio.gather(
+            *(self._get_genre_artist(g) for g in genre_names)
+        )
+        used_mbids: set[str] = set()
+        genre_artists: dict[str, str | None] = {}
+        for g, mbid in zip(genre_names, raw_mbids):
+            if mbid and mbid not in used_mbids:
+                genre_artists[g] = mbid
+                used_mbids.add(mbid)
+            elif mbid and mbid in used_mbids:
+                alt = await self._get_genre_artist(g, exclude_mbids=used_mbids)
+                genre_artists[g] = alt
+                if alt:
+                    used_mbids.add(alt)
+            else:
+                genre_artists[g] = None
+        images = await self._resolve_genre_artist_images(genre_artists)
+        return genre_artists, images
 
     async def build_playlist_suggestions(
         self,
@@ -805,9 +1038,15 @@ class DiscoverHomepageService:
         lfm_enabled: bool = False,
         lfm_username: str | None = None,
         lb_client: Any = None,
+        genre_prefs: GenrePrefs | None = None,
     ) -> list[ListenBrainzArtist]:
         seeds: list[ListenBrainzArtist] = []
         seen_mbids: set[str] = set()
+        # Collect a wider candidate pool than we need, then balance the final pick
+        # across genre FAMILIES (breadth-based seeding) instead of taking the raw
+        # most-played top - which a genre-skewed library dominates. Without a genre
+        # index there is nothing to balance with, so keep the original tight target.
+        pool_target = SEED_CANDIDATE_POOL if self._genre_index is not None else SEED_ARTIST_COUNT
 
         if resolved_source == "lastfm" and lfm_enabled and lfm_username and self._lfm_repo:
             try:
@@ -815,7 +1054,7 @@ class DiscoverHomepageService:
                     lfm_username, period="3month", limit=10
                 )
                 for a in lfm_artists:
-                    if len(seeds) >= 3:
+                    if len(seeds) >= pool_target:
                         break
                     mbid = a.mbid
                     if mbid and mbid not in seen_mbids:
@@ -832,15 +1071,15 @@ class DiscoverHomepageService:
 
         # LB top-artists rely on the client's own identity, so use the per-user client
         seed_lb_repo = lb_client or self._lb_repo
-        if resolved_source != "lastfm" and len(seeds) < 3 and lb_enabled and username:
+        if resolved_source != "lastfm" and len(seeds) < pool_target and lb_enabled and username:
             # fall back to broader windows so a quiet week/month still yields seeds
             for range_ in ("this_week", "this_month", "this_year", "all_time"):
-                if len(seeds) >= 3:
+                if len(seeds) >= pool_target:
                     break
                 try:
                     artists = await seed_lb_repo.get_user_top_artists(count=10, range_=range_)
                     for a in artists:
-                        if len(seeds) >= 3:
+                        if len(seeds) >= pool_target:
                             break
                         mbid = a.artist_mbids[0] if a.artist_mbids else None
                         if mbid and mbid not in seen_mbids:
@@ -849,17 +1088,17 @@ class DiscoverHomepageService:
                 except Exception as e:  # noqa: BLE001
                     logger.warning(f"Failed to get LB top artists ({range_}): {e}")
 
-        if resolved_source != "lastfm" and len(seeds) < 3 and jf_enabled:
+        if resolved_source != "lastfm" and len(seeds) < pool_target and jf_enabled:
             for fetch_fn in (
                 lambda: self._jf_repo.get_most_played_artists(limit=10),
                 lambda: self._jf_repo.get_favorite_artists(limit=10),
             ):
-                if len(seeds) >= 3:
+                if len(seeds) >= pool_target:
                     break
                 try:
                     jf_items = await fetch_fn()
                     for item in jf_items:
-                        if len(seeds) >= 3:
+                        if len(seeds) >= pool_target:
                             break
                         mbid = None
                         if item.provider_ids:
@@ -875,7 +1114,57 @@ class DiscoverHomepageService:
                     logger.warning(f"Failed to get Jellyfin seed artists: {e}")
                     continue
 
-        return seeds
+        return await self._select_balanced_seeds(seeds, genre_prefs or EMPTY_GENRE_PREFS)
+
+    async def _load_genre_prefs(self, user_id: str) -> GenrePrefs:
+        """The user's genre reduce/mute levels; empty (all-normal) on any failure."""
+        if self._genre_prefs_store is None:
+            return EMPTY_GENRE_PREFS
+        try:
+            return GenrePrefs(await self._genre_prefs_store.get_levels(user_id))
+        except Exception as e:  # noqa: BLE001 - prefs must never break a build
+            logger.debug("Genre prefs load failed: %s", e)
+            return EMPTY_GENRE_PREFS
+
+    async def _genres_for_artists(self, mbids: Iterable[str]) -> dict[str, list[str]]:
+        """{artist_mbid_lower: [genres]} from the library genre index; {} on failure."""
+        mbid_list = [m for m in mbids if m]
+        if self._genre_index is None or not mbid_list:
+            return {}
+        try:
+            return await self._genre_index.get_genres_for_artists(mbid_list)
+        except Exception as e:  # noqa: BLE001 - genre data is best-effort
+            logger.debug("Genre lookup for seed balancing failed: %s", e)
+            return {}
+
+    async def _select_balanced_seeds(
+        self, candidates: list[ListenBrainzArtist], prefs: GenrePrefs,
+    ) -> list[ListenBrainzArtist]:
+        """SEED_ARTIST_COUNT seeds spread round-robin across genre families.
+
+        With no genre data and no prefs this is exactly the old take-the-first-3,
+        so sparse libraries and genre-index-less setups behave as before."""
+        if not candidates:
+            return []
+        genres: dict[str, list[str]] = {}
+        if len(candidates) > SEED_ARTIST_COUNT or not prefs.is_empty():
+            genres = await self._genres_for_artists(
+                [self._seed_mbid(s) or "" for s in candidates]
+            )
+        if not genres and prefs.is_empty():
+            return candidates[:SEED_ARTIST_COUNT]
+
+        def genres_of(seed: Any) -> list[str]:
+            mbid = self._seed_mbid(seed)
+            return genres.get(mbid.lower(), []) if mbid else []
+
+        return balanced_seed_selection(candidates, genres_of, SEED_ARTIST_COUNT, prefs)
+
+    @staticmethod
+    def _seed_mbid(seed: Any) -> str | None:
+        if getattr(seed, "artist_mbids", None):
+            return seed.artist_mbids[0]
+        return getattr(seed, "artist_mbid", None)
 
     async def _enrich_because_sections_audiodb(
         self, sections: list[BecauseYouListenTo]
@@ -972,14 +1261,22 @@ class DiscoverHomepageService:
                 await self._cache_daily_mix_result([], user_id, resolved_source)
                 return []
 
-            genre_names = [g for g, _ in top_genres[:10]]
+            # breadth-based cluster seeding: sqrt-damped counts, at most
+            # DAILY_MIX_MAX_CLUSTERS_PER_FAMILY genres per family ("k-pop" and
+            # "korean pop" are ONE family), muted families dropped, reduce halved
+            genre_prefs = await self._load_genre_prefs(user_id)
+            balanced_genres = diverse_genre_selection(
+                top_genres, limit=10, prefs=genre_prefs,
+                max_per_family=DAILY_MIX_MAX_CLUSTERS_PER_FAMILY,
+            )
+            genre_names = [g for g, _ in balanced_genres]
             artists_by_genre = await self._genre_index.get_artists_for_genres(genre_names)
 
             MIN_ARTISTS_PER_CLUSTER = 3
             MAX_CLUSTERS = 5
             candidate_clusters: list[tuple[str, list[str]]] = []
             seen_artists: set[str] = set()
-            for genre_lower, _count in top_genres:
+            for genre_lower, _count in balanced_genres:
                 artist_mbids = artists_by_genre.get(genre_lower, [])
                 unique = [a for a in artist_mbids if a not in seen_artists]
                 if len(unique) < MIN_ARTISTS_PER_CLUSTER:
@@ -1412,6 +1709,12 @@ class DiscoverHomepageService:
                 name = getattr(g, "genre", None)
                 if name:
                     user_genres.add(name.lower())
+            # muted families don't get to pull the genre-affinity score either
+            genre_prefs = await self._load_genre_prefs(user_id)
+            if not genre_prefs.is_empty():
+                user_genres = {
+                    g for g in user_genres if not genre_prefs.is_muted(genre_family(g))
+                }
             genres_by_artist: dict[str, list[str]] = {}
             if self._genre_index is not None:
                 artist_mbids = [c.artist_mbid for c in candidates if c.artist_mbid]
@@ -1427,6 +1730,14 @@ class DiscoverHomepageService:
                 user_genres=user_genres,
                 genres_by_artist=genres_by_artist,
                 count=count,
+            )
+            # zone genre cap: no single family (where the artist's genres are known)
+            # may dominate Top Picks; muted families are excluded outright
+            picks = cap_genre_share(
+                picks,
+                lambda p: genres_by_artist.get((p.candidate.artist_mbid or "").lower(), []),
+                prefs=genre_prefs,
+                target_size=count,
             )
             if not picks:
                 await self._cache_top_picks_result(None, user_id, primary, ttl=picks_ttl)
@@ -1861,10 +2172,11 @@ class DiscoverHomepageService:
         library_mbids: set[str],
         seen_artist_mbids: set[str],
         resolved_source: str = "listenbrainz",
+        genre_prefs: GenrePrefs = EMPTY_GENRE_PREFS,
     ) -> HomeSection | None:
         if resolved_source == "lastfm" and self._lfm_repo:
             return await self._build_popular_in_genres_lastfm(
-                results, library_mbids, seen_artist_mbids
+                results, library_mbids, seen_artist_mbids, genre_prefs=genre_prefs,
             )
 
         genres = results.get("lb_genres")
@@ -1872,10 +2184,19 @@ class DiscoverHomepageService:
         if not genres:
             return None
         else:
+            # breadth: pick 3 DISTINCT genre families (not three spellings of one),
+            # skipping families the user muted
             genre_names = []
-            for genre in genres[:3]:
+            seen_families: set[str] = set()
+            for genre in genres:
                 name = genre.genre if hasattr(genre, 'genre') else str(genre)
+                family = genre_family(name) or name
+                if family in seen_families or genre_prefs.is_muted(family):
+                    continue
+                seen_families.add(family)
                 genre_names.append(name)
+                if len(genre_names) >= 3:
+                    break
 
         all_artists: list[HomeArtist] = []
         tag_results = await asyncio.gather(
@@ -1915,6 +2236,7 @@ class DiscoverHomepageService:
         results: dict[str, Any],
         library_mbids: set[str],
         seen_artist_mbids: set[str],
+        genre_prefs: GenrePrefs = EMPTY_GENRE_PREFS,
     ) -> HomeSection | None:
         top_artists = results.get("lfm_user_top_artists_for_genres") or []
         if not top_artists or not self._lfm_repo:
@@ -1930,17 +2252,24 @@ class DiscoverHomepageService:
 
         genre_names: list[str] = []
         seen_genres: set[str] = set()
+        seen_families: set[str] = set()
         for info in artist_info_results:
             if isinstance(info, Exception):
                 logger.debug("Failed to get artist info for genre extraction: %s", info)
                 continue
             if info and info.tags:
                 for tag in info.tags[:2]:
-                    if tag.name and tag.name.lower() not in seen_genres:
-                        genre_names.append(tag.name)
-                        seen_genres.add(tag.name.lower())
-                        if len(genre_names) >= 3:
-                            break
+                    if not tag.name or tag.name.lower() in seen_genres:
+                        continue
+                    # one genre per FAMILY, none from muted families
+                    family = genre_family(tag.name) or tag.name.lower()
+                    if family in seen_families or genre_prefs.is_muted(family):
+                        continue
+                    genre_names.append(tag.name)
+                    seen_genres.add(tag.name.lower())
+                    seen_families.add(family)
+                    if len(genre_names) >= 3:
+                        break
             if len(genre_names) >= 3:
                 break
 
@@ -2335,8 +2664,18 @@ class DiscoverHomepageService:
         # bound each upstream call so one slow/hanging service can't stall the whole
         # build (a timeout is caught below and that section is just dropped)
         _task_timeout = _scaled(DISCOVER_TASK_TIMEOUT_SECONDS)
-        coros = [asyncio.wait_for(c, timeout=_task_timeout) for c in tasks.values()]
-        raw_results = await asyncio.gather(*coros, return_exceptions=True)
+        durations: dict[str, float] = {}
+
+        async def _timed(key: str, coro: Any) -> Any:
+            start = time.monotonic()
+            try:
+                return await asyncio.wait_for(coro, timeout=_task_timeout)
+            finally:
+                durations[key] = time.monotonic() - start
+
+        raw_results = await asyncio.gather(
+            *(_timed(k, c) for k, c in tasks.items()), return_exceptions=True
+        )
         results = {}
         self._last_failed_task_keys = set()
         for key, result in zip(keys, raw_results):
@@ -2346,6 +2685,12 @@ class DiscoverHomepageService:
                 self._last_failed_task_keys.add(key)
             else:
                 results[key] = result
+        # where the seconds go, slowest zones first (the whole gather costs max(), not sum())
+        slowest = sorted(durations.items(), key=lambda kv: kv[1], reverse=True)
+        logger.info(
+            "Discover zone timings: %s",
+            ", ".join(f"{k}={v:.1f}s" for k, v in slowest[:10]),
+        )
         return results
 
     @staticmethod

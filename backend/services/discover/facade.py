@@ -72,6 +72,8 @@ class DiscoverService:
         follow_service: Any = None,
         cover_repo: Any = None,
         preview_repo: Any = None,
+        disk_cache: Any = None,
+        genre_prefs_store: Any = None,
     ):
         self._integration = IntegrationHelpers(preferences_service)
         self._client_factory = client_factory
@@ -125,6 +127,8 @@ class DiscoverService:
             library_db=library_db,
             follow_service=follow_service,
             cover_repo=cover_repo,
+            disk_cache=disk_cache,
+            genre_prefs_store=genre_prefs_store,
         )
 
         self._radio = radio_service
@@ -147,6 +151,9 @@ class DiscoverService:
 
     async def refresh_discover_data(self, user_id: str) -> None:
         return await self._homepage.refresh_discover_data(user_id)
+
+    async def invalidate_personalization_caches(self, user_id: str) -> None:
+        return await self._homepage.invalidate_personalization_caches(user_id)
 
     async def warm_cache(self, user_id: str) -> None:
         return await self._homepage.warm_cache(user_id)

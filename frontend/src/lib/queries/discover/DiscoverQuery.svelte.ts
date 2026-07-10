@@ -41,13 +41,17 @@ export const getDiscoverQueryOptions = (userId: string | null | undefined) =>
 		queryFn: ({ signal }) => fetchDiscover(userId, signal)
 	});
 
+// While the backend is still building (`refreshing === true`), poll gently so the page
+// fills in zone-by-zone as the background build completes; stop as soon as it settles.
+const DISCOVER_REFRESHING_POLL_MS = 8_000;
+
 export const getDiscoverQuery = () =>
 	createQuery(() => ({
 		staleTime: DISCOVER_REVALIDATE_MS,
 		queryKey: DiscoverQueryKeyFactory.discover(authStore.user?.id),
 		queryFn: ({ signal }) => fetchDiscover(authStore.user?.id, signal),
 		refetchInterval: (query: { state: { data?: DiscoverResponse | undefined } }) =>
-			query.state.data?.refreshing ? 3000 : false
+			query.state.data?.refreshing ? DISCOVER_REFRESHING_POLL_MS : false
 	}));
 
 export const getRadioQuery = (getParams: Getter<{ seedType: string; seedId: string }>) =>

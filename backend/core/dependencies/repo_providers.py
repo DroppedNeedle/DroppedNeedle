@@ -403,6 +403,17 @@ def get_user_section_prefs_store() -> "UserSectionPrefsStore":
 
 
 @singleton
+def get_user_genre_prefs_store() -> "UserGenrePrefsStore":
+    from infrastructure.persistence.user_genre_prefs_store import UserGenrePrefsStore
+    from .cache_providers import get_persistence_write_lock
+
+    settings = get_settings()
+    return UserGenrePrefsStore(
+        db_path=settings.library_db_path, write_lock=get_persistence_write_lock()
+    )
+
+
+@singleton
 def get_play_history_store() -> "PlayHistoryStore":
     from infrastructure.persistence.play_history_store import PlayHistoryStore
     from .cache_providers import get_persistence_write_lock

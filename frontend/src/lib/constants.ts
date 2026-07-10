@@ -254,6 +254,7 @@ export const API = {
 		`/api/v1/discover/album-preview?artist=${encodeURIComponent(artist)}&album=${encodeURIComponent(album)}`,
 	discoverPlaylistSuggestions: () => '/api/v1/discover/playlist-suggestions',
 	discoverGenreDetail: (tag: string) => `/api/v1/discover/genres/${encodeURIComponent(tag)}`,
+	discoverTasteGraph: () => '/api/v1/discover/taste-graph',
 	youtube: {
 		generate: () => '/api/v1/youtube/generate',
 		link: (albumId: string) => `/api/v1/youtube/link/${albumId}`,
@@ -298,6 +299,7 @@ export const API = {
 		connection: (service: string) => `/api/v1/me/connections/${service}`,
 		scrobblePreferences: () => '/api/v1/me/scrobble-preferences',
 		sectionPrefs: () => '/api/v1/me/section-prefs',
+		genrePrefs: () => '/api/v1/me/genre-prefs',
 		lastfmAuthToken: () => '/api/v1/me/connections/lastfm/auth/token',
 		lastfmAuthSession: () => '/api/v1/me/connections/lastfm/auth/session',
 		listenbrainz: () => '/api/v1/me/connections/listenbrainz',

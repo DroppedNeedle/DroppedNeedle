@@ -256,6 +256,9 @@ async def test_seed_artists_fall_back_to_broader_ranges():
 
     svc = DiscoverHomepageService.__new__(DiscoverHomepageService)
     svc._lfm_repo = None
+    # no genre index in this test: seed selection keeps the original tight target
+    svc._genre_index = None
+    svc._genre_prefs_store = None
 
     seed = ListenBrainzArtist(artist_name="A", listen_count=5, artist_mbids=["mbid-1"])
 
@@ -360,9 +363,20 @@ def _miss_service(built_at: dict):
     svc._integration = MagicMock()
     svc._integration.get_discover_cache_key.return_value = "discover_response:u1:True:False"
     svc._integration.get_integration_status.return_value = MagicMock()
+    svc._integration.is_jellyfin_enabled.return_value = False
+    svc._integration.is_library_configured.return_value = False
     svc._build_service_prompts = MagicMock(return_value=[])
     svc._trigger_warm = MagicMock()
     svc._built_at = built_at
+    # collaborators the cold-path quick response (library-derived zones) touches
+    svc._disk_cache = None
+    svc._disk_checked = set()
+    svc._mbid = MagicMock()
+    svc._mbid.get_library_artist_mbids = AsyncMock(return_value=set())
+    svc._library_db = None
+    svc._follow_service = None
+    svc._transformers = MagicMock()
+    svc._transformers.extract_genres_from_library.return_value = []
     return svc
 
 

@@ -495,7 +495,8 @@ def start_artist_discovery_cache_warming_task(
 # and banks them to mbid_store so the following normal-budget build finds them cached. One
 # loop, ONE user at a time (the single global MB 1/s queue makes concurrency pointless), and
 # it yields whenever a user is actively browsing.
-DISCOVER_WARMER_STARTUP_DELAY = 180       # let boot + first on-demand traffic settle
+DISCOVER_WARMER_STARTUP_DELAY = 10        # start warming right after boot: a restart-wiped
+                                          # cache must repopulate before users notice, not 3min later
 DISCOVER_WARMER_INTERVAL = 90             # floor between per-user warm ticks
 DISCOVER_WARMER_ENUM_TTL = 600            # re-enumerate eligible users at most this often
 DISCOVER_WARMER_REFRESH_INTERVAL = 6 * 3600   # re-warm a converged user this often

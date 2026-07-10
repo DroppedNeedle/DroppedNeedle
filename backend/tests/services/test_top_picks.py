@@ -141,6 +141,7 @@ def _svc() -> DiscoverHomepageService:
     svc._memory_cache = None
     svc._mbid_store = None
     svc._genre_index = None
+    svc._genre_prefs_store = None
     svc._library_db = None
     svc._follow_service = None
     svc._integration = MagicMock()

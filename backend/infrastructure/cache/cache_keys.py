@@ -15,6 +15,10 @@ MB_RECORDING_TO_RG_PREFIX = "mb:recording_to_rg:"
 MB_ARTIST_RELS_PREFIX = "mb:artist_rels:"
 MB_ARTISTS_BY_TAG_PREFIX = "mb_artists_by_tag:"
 MB_RG_BY_TAG_PREFIX = "mb_rg_by_tag:"
+MB_ARTIST_EXPANSION_PREFIX = "mb:artist_expansion:"
+MB_LABEL_RELEASES_PREFIX = "mb:label_releases:"
+
+TASTE_GRAPH_PREFIX = "taste_graph:"
 
 LB_PREFIX = "lb_"
 
@@ -96,6 +100,8 @@ def musicbrainz_prefixes() -> list[str]:
         MB_ARTIST_RELS_PREFIX,
         MB_ARTISTS_BY_TAG_PREFIX,
         MB_RG_BY_TAG_PREFIX,
+        MB_ARTIST_EXPANSION_PREFIX,
+        MB_LABEL_RELEASES_PREFIX,
     ]
 
 
