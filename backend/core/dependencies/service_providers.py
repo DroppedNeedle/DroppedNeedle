@@ -44,6 +44,7 @@ from .repo_providers import (
     get_request_history_store,
     get_user_connections_store,
     get_user_listening_prefs_store,
+    get_user_genre_prefs_store,
     get_play_history_store,
     get_follow_store,
     get_github_repository,
@@ -854,6 +855,7 @@ def get_taste_graph_service() -> "TasteGraphService":
         mb_repo=get_musicbrainz_repository(),
         cache=get_cache(),
         genre_index=get_genre_index(),
+        genre_prefs_store=get_user_genre_prefs_store(),
     )
 
 
@@ -919,6 +921,7 @@ def get_discover_service() -> "DiscoverService":
         cover_repo=get_coverart_repository(),
         preview_repo=get_preview_repository(),
         disk_cache=get_disk_cache(),
+        genre_prefs_store=get_user_genre_prefs_store(),
     )
 
 

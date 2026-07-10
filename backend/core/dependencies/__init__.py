@@ -50,6 +50,7 @@ from .repo_providers import (  # noqa: F401
     get_user_connections_store,
     get_user_listening_prefs_store,
     get_user_section_prefs_store,
+    get_user_genre_prefs_store,
     get_preview_repository,
     get_discovery_batch_store,
     get_play_history_store,

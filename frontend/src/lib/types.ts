@@ -2105,6 +2105,23 @@ export interface SectionPrefsUpdate {
 	sections: { key: string; enabled: boolean }[];
 }
 
+export type GenrePrefLevel = 'normal' | 'reduce' | 'mute';
+
+export interface GenrePrefItem {
+	family: string;
+	label: string;
+	artist_count: number;
+	level: GenrePrefLevel;
+}
+
+export interface GenrePrefsResponse {
+	genres: GenrePrefItem[];
+}
+
+export interface GenrePrefsUpdate {
+	genres: { family: string; level: GenrePrefLevel }[];
+}
+
 export interface PreviewTrackItem {
 	title: string;
 	artist_name: string;

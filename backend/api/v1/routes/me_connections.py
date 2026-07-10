@@ -26,6 +26,11 @@ from api.v1.schemas.me_connections import (
     ScrobblePreferencesUpdate,
     SpotifyAuthUrlResponse,
 )
+from api.v1.schemas.genre_prefs import (
+    GenrePrefItem,
+    GenrePrefsResponse,
+    GenrePrefsUpdate,
+)
 from api.v1.schemas.section_prefs import (
     SectionPrefItem,
     SectionPrefsResponse,
@@ -39,6 +44,8 @@ from api.v1.schemas.settings import (
 )
 from core.dependencies import (
     get_auth_store,
+    get_cache,
+    get_genre_index,
     get_lastfm_auth_service,
     get_now_playing_service,
     get_per_user_client_factory,
@@ -47,6 +54,7 @@ from core.dependencies import (
     get_settings_service,
     get_sse_publisher,
     get_user_connections_store,
+    get_user_genre_prefs_store,
     get_user_listening_prefs_store,
     get_user_section_prefs_store,
 )
@@ -59,6 +67,7 @@ from core.task_registry import TaskRegistry
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from infrastructure.persistence.auth_store import AuthStore
 from infrastructure.persistence.user_connections_store import UserConnectionsStore
+from infrastructure.persistence.user_genre_prefs_store import UserGenrePrefsStore
 from infrastructure.persistence.user_listening_prefs_store import UserListeningPrefsStore
 from infrastructure.persistence.user_section_prefs_store import UserSectionPrefsStore
 from middleware import CurrentUserDep
@@ -442,3 +451,91 @@ async def update_section_prefs(
             )
         }
     )
+
+
+_GENRE_PREF_MAX_FAMILIES = 30
+
+
+async def _build_genre_pref_items(
+    user_id: str,
+    genre_prefs: UserGenrePrefsStore,
+    genre_index,
+) -> list[GenrePrefItem]:
+    """The user's library genre FAMILIES (spelling variants merged) with their
+    current balance level. Stored families no longer present in the library are
+    still listed (artist_count 0) so a mute can always be undone."""
+    from services.discover.genre_balance import genre_family
+
+    levels = await genre_prefs.get_levels(user_id)
+    family_counts: dict[str, int] = {}
+    try:
+        top_genres = await genre_index.get_top_genres(limit=60)
+    except Exception:  # noqa: BLE001 - an unscanned library still gets its stored prefs
+        top_genres = []
+    for genre, count in top_genres:
+        family = genre_family(genre)
+        if family:
+            family_counts[family] = family_counts.get(family, 0) + int(count)
+    for family in levels:
+        family_counts.setdefault(family, 0)
+
+    ranked = sorted(family_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [
+        GenrePrefItem(
+            family=family,
+            label=family.title(),
+            artist_count=count,
+            level=levels.get(family, "normal"),  # type: ignore[arg-type]
+        )
+        for family, count in ranked[:_GENRE_PREF_MAX_FAMILIES]
+    ]
+
+
+@router.get("/genre-prefs", response_model=GenrePrefsResponse)
+async def get_genre_prefs(
+    current_user: CurrentUserDep,
+    genre_prefs: UserGenrePrefsStore = Depends(get_user_genre_prefs_store),
+    genre_index=Depends(get_genre_index),
+) -> GenrePrefsResponse:
+    return GenrePrefsResponse(
+        genres=await _build_genre_pref_items(current_user.id, genre_prefs, genre_index)
+    )
+
+
+@router.put("/genre-prefs", response_model=GenrePrefsResponse)
+async def update_genre_prefs(
+    current_user: CurrentUserDep,
+    body: GenrePrefsUpdate = MsgSpecBody(GenrePrefsUpdate),
+    genre_prefs: UserGenrePrefsStore = Depends(get_user_genre_prefs_store),
+    genre_index=Depends(get_genre_index),
+) -> GenrePrefsResponse:
+    from services.discover.genre_balance import genre_family
+
+    levels: dict[str, str] = {}
+    for item in body.genres:
+        family = genre_family(item.family)
+        if not family:
+            raise HTTPException(status_code=422, detail=f"Unknown genre family: {item.family!r}")
+        if item.level in ("reduce", "mute"):
+            levels[family] = item.level
+    await genre_prefs.set_levels(current_user.id, levels)
+    await _invalidate_recommendation_caches(current_user.id)
+    return GenrePrefsResponse(
+        genres=await _build_genre_pref_items(current_user.id, genre_prefs, genre_index)
+    )
+
+
+async def _invalidate_recommendation_caches(user_id: str) -> None:
+    """Changed genre levels must reach the (heavily cached) recommendation
+    surfaces: drop the per-user taste graph + daily mix + top picks entries and
+    kick a background Discover rebuild. All best-effort - the pref save wins."""
+    from core.dependencies import get_discover_service
+    from infrastructure.cache.cache_keys import TASTE_GRAPH_PREFIX
+
+    try:
+        await get_cache().delete(f"{TASTE_GRAPH_PREFIX}{user_id}")
+        discover = get_discover_service()
+        await discover.invalidate_personalization_caches(user_id)
+        await discover.refresh_discover_data(user_id)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Genre-pref cache invalidation failed: %s", e)

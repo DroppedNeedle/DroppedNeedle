@@ -299,6 +299,7 @@ export const API = {
 		connection: (service: string) => `/api/v1/me/connections/${service}`,
 		scrobblePreferences: () => '/api/v1/me/scrobble-preferences',
 		sectionPrefs: () => '/api/v1/me/section-prefs',
+		genrePrefs: () => '/api/v1/me/genre-prefs',
 		lastfmAuthToken: () => '/api/v1/me/connections/lastfm/auth/token',
 		lastfmAuthSession: () => '/api/v1/me/connections/lastfm/auth/session',
 		listenbrainz: () => '/api/v1/me/connections/listenbrainz',
