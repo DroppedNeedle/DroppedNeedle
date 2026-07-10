@@ -267,13 +267,13 @@ async def test_incremental_second_scan_skips_unchanged(tmp_path):
     await scanner.scan([music])
 
     calls = {"n": 0}
-    original = manager.upsert_file
+    original = manager.upsert_files_batch
 
-    async def spy(*args, **kwargs):
-        calls["n"] += 1
-        return await original(*args, **kwargs)
+    async def spy(items, *args, **kwargs):
+        calls["n"] += len(items)
+        return await original(items, *args, **kwargs)
 
-    manager.upsert_file = spy
+    manager.upsert_files_batch = spy
     await scanner.scan([music])
     assert calls["n"] == 0  # nothing changed -> nothing re-upserted
 
@@ -285,13 +285,13 @@ async def test_force_rescan_reidentifies_unchanged(tmp_path):
     await scanner.scan([music])
 
     calls = {"n": 0}
-    original = manager.upsert_file
+    original = manager.upsert_files_batch
 
-    async def spy(*args, **kwargs):
-        calls["n"] += 1
-        return await original(*args, **kwargs)
+    async def spy(items, *args, **kwargs):
+        calls["n"] += len(items)
+        return await original(items, *args, **kwargs)
 
-    manager.upsert_file = spy
+    manager.upsert_files_batch = spy
     await scanner.scan([music], force=True)
     assert calls["n"] > 0  # force bypasses the unchanged-file skip -> files re-upserted
 
@@ -569,13 +569,13 @@ async def test_incremental_reimports_changed_file(tmp_path):
     os.utime(paths[0], (st.st_atime, st.st_mtime + 10))
 
     calls = {"n": 0}
-    original = manager.upsert_file
+    original = manager.upsert_files_batch
 
-    async def spy(*args, **kwargs):
-        calls["n"] += 1
-        return await original(*args, **kwargs)
+    async def spy(items, *args, **kwargs):
+        calls["n"] += len(items)
+        return await original(items, *args, **kwargs)
 
-    manager.upsert_file = spy
+    manager.upsert_files_batch = spy
     await scanner.scan([music])
     assert calls["n"] == 1  # changed file is re-imported
 

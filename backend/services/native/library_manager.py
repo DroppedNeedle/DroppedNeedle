@@ -415,6 +415,77 @@ class LibraryManager(LibraryStub):
             await self._upsert_artist_rows(row)
             return file_id
 
+    async def upsert_files_batch(self, items: list[dict]) -> None:
+        """Scanner batch write: build each row exactly as ``upsert_file`` does, then
+        write the whole folder - file rows plus their ``library_artists`` rows - in
+        ONE transaction instead of a connection + commit per file (the profiled
+        dominant cost of a large first scan). Each item carries ``upsert_file``'s
+        arguments: ``audio_path``/``tag``/``info`` plus the keyword fields."""
+        if not items:
+            return
+        rows: list[dict] = []
+        artists: list[tuple[str, str]] = []
+        seen_artists: set[str] = set()
+        # one album-artist inherit lookup per release group, not per file
+        override_cache: dict[str, tuple[str, str] | None] = {}
+        for item in items:
+            tag: AudioTag = item["tag"]
+            release_group_mbid = item["release_group_mbid"]
+            if release_group_mbid is None and item.get("source") != "manual_review":
+                raise ValueError(
+                    "upsert_file requires release_group_mbid unless source='manual_review'"
+                )
+            album_artist_override = None
+            if (
+                release_group_mbid
+                and _real_mbid(tag.musicbrainz_album_artist_id) is None
+                and not _tag_is_compilation(tag)
+            ):
+                if release_group_mbid not in override_cache:
+                    override_cache[release_group_mbid] = (
+                        await self._db.get_album_artist_for_release_group(release_group_mbid)
+                    )
+                album_artist_override = override_cache[release_group_mbid]
+            row = self._build_row(
+                item["audio_path"],
+                tag,
+                item["info"],
+                release_group_mbid=release_group_mbid,
+                release_mbid=item.get("release_mbid"),
+                recording_mbid=item.get("recording_mbid"),
+                confidence=item.get("confidence", 1.0),
+                source=item.get("source", "scan"),
+                download_task_id=None,
+                file_mtime=item.get("file_mtime"),
+                album_artist_override=album_artist_override,
+            )
+            # a row carrying the group's real (dashed) artist identity is what a later
+            # sibling in this batch would have inherited via the per-file lookup
+            if (
+                release_group_mbid
+                and override_cache.get(release_group_mbid) is None
+                and not row["is_compilation"]
+                and _real_mbid(row["album_artist_mbid"]) is not None
+                and row["album_artist_name"]
+            ):
+                override_cache[release_group_mbid] = (
+                    row["album_artist_mbid"],
+                    row["album_artist_name"],
+                )
+            rows.append(row)
+            # mirror _upsert_artist_rows (ON CONFLICT DO NOTHING makes dedupe safe)
+            for mbid_key, name_key in (
+                ("artist_mbid", "artist_name"),
+                ("album_artist_mbid", "album_artist_name"),
+            ):
+                mbid = row.get(mbid_key)
+                if not mbid or mbid in seen_artists:
+                    continue
+                seen_artists.add(mbid)
+                artists.append((mbid, (row.get(name_key) or "").strip() or "Unknown Artist"))
+        async with self._library_write_lock:
+            await self._db.upsert_library_files(rows, artists)
+
     async def _upsert_artist_rows(self, row: dict) -> None:
         """Ensure a library_artists row exists for the track + album artist (Q14).
         Idempotent; needed by compat browse-by-id and the lazy-MB discovery cache,

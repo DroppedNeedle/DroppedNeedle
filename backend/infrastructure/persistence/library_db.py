@@ -673,57 +673,79 @@ class LibraryDB(PersistenceBase):
         row identity. UPDATE preserves id/imported_at/download_task_id and clears
         deleted_at (re-import un-deletes). Returns the row id."""
         now = time.time()
-        file_path = row["file_path"]
 
         def operation(conn: sqlite3.Connection) -> str:
-            # partial unique index only constrains non-deleted rows, so a path can
-            # have several soft-deleted rows; prefer active then most recent so
-            # re-import deterministically revives the right one
-            existing = conn.execute(
-                "SELECT id FROM library_files WHERE file_path = ? "
-                "ORDER BY deleted_at IS NULL DESC, imported_at DESC LIMIT 1",
-                (file_path,),
-            ).fetchone()
-            value_params = [row.get(col) for col in _LIBRARY_FILE_VALUE_COLUMNS]
-            # folded mirrors are written via SQL fold() - the same function used at
-            # search time - so the stored values never drift from the query side
-            folded_params = [row.get(src) for src in _LIBRARY_FILE_FOLDED_COLUMNS.values()]
-            if existing is not None:
-                set_clause = ", ".join(f"{col} = ?" for col in _LIBRARY_FILE_VALUE_COLUMNS)
-                folded_clause = ", ".join(
-                    f"{col} = fold(?)" for col in _LIBRARY_FILE_FOLDED_COLUMNS
-                )
-                conn.execute(
-                    f"UPDATE library_files SET {set_clause}, {folded_clause}, "
-                    "deleted_at = NULL WHERE id = ?",
-                    (*value_params, *folded_params, existing["id"]),
-                )
-                return str(existing["id"])
-            new_id = uuid4().hex
-            columns = (
-                "id",
-                "download_task_id",
-                *_LIBRARY_FILE_VALUE_COLUMNS,
-                "imported_at",
-                *_LIBRARY_FILE_FOLDED_COLUMNS,
-            )
-            placeholders = ", ".join(
-                ["?"] * (len(columns) - len(_LIBRARY_FILE_FOLDED_COLUMNS))
-                + ["fold(?)"] * len(_LIBRARY_FILE_FOLDED_COLUMNS)
-            )
-            conn.execute(
-                f"INSERT INTO library_files ({', '.join(columns)}) VALUES ({placeholders})",
-                (
-                    new_id,
-                    row.get("download_task_id"),
-                    *value_params,
-                    row.get("imported_at") or now,
-                    *folded_params,
-                ),
-            )
-            return new_id
+            return self._upsert_library_file_op(conn, row, now)
 
         return await self._write(operation)
+
+    async def upsert_library_files(
+        self, rows: list[dict[str, Any]], artists: list[tuple[str, str]] | None = None
+    ) -> list[str]:
+        """Batch upsert: every file row (plus their ``library_artists`` rows) in
+        ONE write transaction - the scanner's per-album-folder flush. Same per-row
+        semantics as ``upsert_library_file``; one connection + commit instead of
+        several per file (profiled: connection churn dominated large scans)."""
+        now = time.time()
+
+        def operation(conn: sqlite3.Connection) -> list[str]:
+            ids = [self._upsert_library_file_op(conn, row, now) for row in rows]
+            for mbid, name in artists or []:
+                self._upsert_artist_op(conn, mbid, name, int(now))
+            return ids
+
+        return await self._write(operation)
+
+    @staticmethod
+    def _upsert_library_file_op(conn: sqlite3.Connection, row: dict[str, Any], now: float) -> str:
+        """One file's read-then-update-or-insert, on the caller's connection."""
+        file_path = row["file_path"]
+        # partial unique index only constrains non-deleted rows, so a path can
+        # have several soft-deleted rows; prefer active then most recent so
+        # re-import deterministically revives the right one
+        existing = conn.execute(
+            "SELECT id FROM library_files WHERE file_path = ? "
+            "ORDER BY deleted_at IS NULL DESC, imported_at DESC LIMIT 1",
+            (file_path,),
+        ).fetchone()
+        value_params = [row.get(col) for col in _LIBRARY_FILE_VALUE_COLUMNS]
+        # folded mirrors are written via SQL fold() - the same function used at
+        # search time - so the stored values never drift from the query side
+        folded_params = [row.get(src) for src in _LIBRARY_FILE_FOLDED_COLUMNS.values()]
+        if existing is not None:
+            set_clause = ", ".join(f"{col} = ?" for col in _LIBRARY_FILE_VALUE_COLUMNS)
+            folded_clause = ", ".join(
+                f"{col} = fold(?)" for col in _LIBRARY_FILE_FOLDED_COLUMNS
+            )
+            conn.execute(
+                f"UPDATE library_files SET {set_clause}, {folded_clause}, "
+                "deleted_at = NULL WHERE id = ?",
+                (*value_params, *folded_params, existing["id"]),
+            )
+            return str(existing["id"])
+        new_id = uuid4().hex
+        columns = (
+            "id",
+            "download_task_id",
+            *_LIBRARY_FILE_VALUE_COLUMNS,
+            "imported_at",
+            *_LIBRARY_FILE_FOLDED_COLUMNS,
+        )
+        placeholders = ", ".join(
+            ["?"] * (len(columns) - len(_LIBRARY_FILE_FOLDED_COLUMNS))
+            + ["fold(?)"] * len(_LIBRARY_FILE_FOLDED_COLUMNS)
+        )
+        conn.execute(
+            f"INSERT INTO library_files ({', '.join(columns)}) VALUES ({placeholders})",
+            (
+                new_id,
+                row.get("download_task_id"),
+                *value_params,
+                row.get("imported_at") or now,
+                *folded_params,
+            ),
+        )
+        return new_id
 
     async def get_albums_aggregated(
         self,
@@ -1682,18 +1704,22 @@ class LibraryDB(PersistenceBase):
         ``'{}'`` (only the legacy outbound sync populates real MB json). An
         existing row is left untouched so a re-scan never clobbers an aggregated
         album_count or a real-MB row."""
-        normalized = _normalize(mbid)
         now = int(time.time())
 
         def operation(conn: sqlite3.Connection) -> None:
-            conn.execute(
-                "INSERT INTO library_artists "
-                "(mbid_lower, mbid, name, album_count, date_added, raw_json) "
-                "VALUES (?, ?, ?, 0, ?, '{}') ON CONFLICT(mbid_lower) DO NOTHING",
-                (normalized, mbid, name, now),
-            )
+            self._upsert_artist_op(conn, mbid, name, now)
 
         await self._write(operation)
+
+    @staticmethod
+    def _upsert_artist_op(conn: sqlite3.Connection, mbid: str, name: str, now: int) -> None:
+        """One artist's idempotent insert, on the caller's connection."""
+        conn.execute(
+            "INSERT INTO library_artists "
+            "(mbid_lower, mbid, name, album_count, date_added, raw_json) "
+            "VALUES (?, ?, ?, 0, ?, '{}') ON CONFLICT(mbid_lower) DO NOTHING",
+            (_normalize(mbid), mbid, name, now),
+        )
 
     async def get_artists_aggregated(
         self,

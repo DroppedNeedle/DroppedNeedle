@@ -51,6 +51,9 @@ _TEXT_MATCH_THRESHOLD = 0.85
 _FINGERPRINT_SCORE_THRESHOLD = 0.70
 _LEDGER_BATCH_SIZE = 100
 _PROGRESS_INTERVAL_SECONDS = 2.0
+# Bounded parallelism for the local-only stat + tag-read stage (profiled: the file
+# open dominates a scan's local cost). Identification stays strictly sequential.
+_TAG_READ_CONCURRENCY = 8
 # Folders larger than this are treated as a flat dump, not an album.
 _MAX_ALBUM_FILES = 60
 _ARTIST_RECONCILE_PASSES = 8
@@ -468,20 +471,39 @@ class LibraryScanner:
                     continue
 
                 if len(todo) > _MAX_ALBUM_FILES:
-                    # Too big to be one album - identify per file.
-                    for path in todo:
+                    # Too big to be one album - identify per file, in ledger-sized
+                    # chunks so tag reads parallelise and writes share a transaction.
+                    for start in range(0, len(todo), _LEDGER_BATCH_SIZE):
                         if self._cancel.is_set():
                             cancelled = True
                             break
-                        await self._process_one(path, file_index, stats)
-                        await tick(str(path))
+                        chunk = todo[start : start + _LEDGER_BATCH_SIZE]
+                        prepared = await self._prepare_files(chunk, file_index, stats)
+                        existing = await self._library.get_attributions_for_paths(
+                            [str(e.path) for e in prepared if e is not None]
+                        )
+                        chunk_batch: list[dict] = []
+                        done: list[str] = []
+                        for path, entry in zip(chunk, prepared):
+                            if self._cancel.is_set():
+                                cancelled = True
+                                break
+                            if entry is not None:
+                                await self._identify_and_persist(
+                                    entry, stats, existing=existing, batch=chunk_batch
+                                )
+                            done.append(str(path))
+                        await self._flush_persist_batch(chunk_batch)
+                        for spath in done:
+                            await tick(spath)
                     if cancelled:
                         break
                     continue
 
                 entries: list[_FileEntry] = []
-                for path in todo:
-                    entry = await self._prepare_file(path, file_index, stats)
+                for path, entry in zip(
+                    todo, await self._prepare_files(todo, file_index, stats)
+                ):
                     if entry is None:
                         await tick(str(path))
                     else:
@@ -639,13 +661,32 @@ class LibraryScanner:
         tag = self._enrich_tag_from_path(path, tag)
         return _FileEntry(path=path, tag=tag, info=info, mtime=stat.st_mtime)
 
-    async def _process_one(
-        self, path: Path, file_index: dict[str, tuple[float, int]], stats: ScanStats
-    ) -> None:
-        entry = await self._prepare_file(path, file_index, stats)
-        if entry is not None:
-            existing = await self._library.get_attributions_for_paths([str(path)])
-            await self._identify_and_persist(entry, stats, existing=existing)
+    async def _prepare_files(
+        self,
+        paths: list[Path],
+        file_index: dict[str, tuple[float, int]],
+        stats: ScanStats,
+    ) -> list[_FileEntry | None]:
+        """``_prepare_file`` for a folder's files with bounded parallelism - the
+        stat + tag read are local-only work, so reading several files at once is
+        safe; identification stays strictly sequential downstream. Results keep
+        the input order (one slot per path, ``None`` where skipped/errored)."""
+        if len(paths) == 1:
+            return [await self._prepare_file(paths[0], file_index, stats)]
+        semaphore = asyncio.Semaphore(_TAG_READ_CONCURRENCY)
+
+        async def prepare(path: Path) -> _FileEntry | None:
+            async with semaphore:
+                return await self._prepare_file(path, file_index, stats)
+
+        return list(await asyncio.gather(*(prepare(path) for path in paths)))
+
+    async def _flush_persist_batch(self, batch: list[dict]) -> None:
+        """Write a folder's buffered attributions in ONE transaction (see
+        ``LibraryManager.upsert_files_batch``), then clear the buffer."""
+        if batch:
+            await self._library.upsert_files_batch(batch)
+            batch.clear()
 
     async def _identify_entries(
         self, entries: list[_FileEntry], stats: ScanStats, *, force: bool = False
@@ -730,6 +771,7 @@ class LibraryScanner:
 
         # Per-file fallback for anything not claimed as part of an album. Reuse any
         # fingerprint already taken above so Tier 3 doesn't fingerprint the file twice.
+        batch: list[dict] = []
         for entry in entries:
             if str(entry.path) in claimed:
                 continue
@@ -740,8 +782,11 @@ class LibraryScanner:
                 stats,
                 precomputed_fp=fp_by_path.get(str(entry.path)),
                 existing=existing,
+                batch=batch,
             )
             persisted.append(str(entry.path))
+        # Flush before returning so the ledger never records an unwritten path.
+        await self._flush_persist_batch(batch)
         return persisted
 
     def _incumbent_rg(self, existing: dict[str, dict]) -> str | None:
@@ -818,27 +863,45 @@ class LibraryScanner:
         recording_mbid: str | None,
         confidence: float,
         source: str,
+        batch: list[dict] | None = None,
     ) -> None:
         """Persist a scan attribution for one file, unless a prior confident attribution
         should stand (Phase 1 guard). When the prior stands the row is left untouched -
-        never downgraded - and still counted as matched."""
+        never downgraded - and still counted as matched. With ``batch`` the write is
+        buffered for a single per-folder transaction (``_flush_persist_batch``)
+        instead of committed per file."""
         prior = existing.get(str(entry.path))
         if prior is not None and await self._should_keep_prior(
             prior, release_group_mbid, confidence
         ):
             stats.matched += 1
             return
-        await self._library.upsert_file(
-            entry.path,
-            entry.tag,
-            entry.info,
-            release_group_mbid=release_group_mbid,
-            release_mbid=release_mbid,
-            recording_mbid=recording_mbid,
-            confidence=confidence,
-            source=source,
-            file_mtime=entry.mtime,
-        )
+        if batch is not None:
+            batch.append(
+                {
+                    "audio_path": entry.path,
+                    "tag": entry.tag,
+                    "info": entry.info,
+                    "release_group_mbid": release_group_mbid,
+                    "release_mbid": release_mbid,
+                    "recording_mbid": recording_mbid,
+                    "confidence": confidence,
+                    "source": source,
+                    "file_mtime": entry.mtime,
+                }
+            )
+        else:
+            await self._library.upsert_file(
+                entry.path,
+                entry.tag,
+                entry.info,
+                release_group_mbid=release_group_mbid,
+                release_mbid=release_mbid,
+                recording_mbid=recording_mbid,
+                confidence=confidence,
+                source=source,
+                file_mtime=entry.mtime,
+            )
         stats.matched += 1
         self._note_attribution_change(prior, release_group_mbid, release_mbid)
 
@@ -883,6 +946,7 @@ class LibraryScanner:
         attribution protects (Phase 1 guard), are left as-is."""
         mapped_confidence = round(1.0 - match.distance, 4)
         claimed_here = False
+        batch: list[dict] = []
         for entry in entries:
             key = str(entry.path)
             if key in claimed:
@@ -899,10 +963,14 @@ class LibraryScanner:
                 recording_mbid=(match.assignments.get(key) or None) if mapped else None,
                 confidence=mapped_confidence if mapped else _UNMAPPED_ALBUM_CONFIDENCE,
                 source="scan",
+                batch=batch,
             )
             claimed.add(key)
             persisted.append(key)
             claimed_here = True
+        # One transaction for the whole folder; must land before the artist stamp
+        # below so set_album_artist sees the rows it updates.
+        await self._flush_persist_batch(batch)
         # Stamp the canonical artist now so this album needs no end-of-scan lookup.
         if claimed_here and match.artist_mbid and match.artist_name:
             try:
@@ -966,6 +1034,7 @@ class LibraryScanner:
         stats: ScanStats,
         precomputed_fp: "FingerprintResult | None" = None,
         existing: dict[str, dict] | None = None,
+        batch: list[dict] | None = None,
     ) -> None:
         result = await self._identify_tiered(
             entry.path, entry.tag, entry.info, precomputed_fp=precomputed_fp
@@ -980,6 +1049,7 @@ class LibraryScanner:
                 recording_mbid=result.recording_mbid,
                 confidence=result.confidence,
                 source="scan",
+                batch=batch,
             )
             logger.debug(
                 self._TIER_MATCH_EVENTS.get(result.tier, "scan.matched"),

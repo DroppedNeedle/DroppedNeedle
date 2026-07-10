@@ -106,7 +106,9 @@ async def test_cutoff_boundary_at_tier_is_satisfied(manager: LibraryManager):
 
 @pytest.mark.asyncio
 async def test_soft_deleted_files_do_not_count(manager: LibraryManager):
-    await _add_file(manager, "/music/d/01.mp3", "rg-del", "mp3", 128)
-    await manager._db.soft_delete_library_file("/music/d/01.mp3")
+    path = "/music/d/01.mp3"
+    await _add_file(manager, path, "rg-del", "mp3", 128)
+    # soft-delete must match the stored path exactly (str(Path(...)) uses "\" on Windows)
+    await manager._db.soft_delete_library_file(str(Path(path)))
 
     assert await manager.list_cutoff_unmet("lossless") == []
