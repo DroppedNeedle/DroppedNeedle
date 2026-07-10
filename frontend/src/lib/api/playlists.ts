@@ -116,6 +116,20 @@ export async function createPlaylist(name: string): Promise<PlaylistDetail> {
 	return api.global.post<PlaylistDetail>(API.playlists.create(), { name });
 }
 
+export type SmartMixSeedType = 'artist' | 'genre' | 'mood';
+
+export interface GenerateSmartMixInput {
+	seed_type: SmartMixSeedType;
+	seed: string;
+	count?: number;
+	name?: string;
+}
+
+/** Smart Mix: generate and persist a playlist from an artist / genre / mood seed. */
+export async function generateSmartMix(input: GenerateSmartMixInput): Promise<PlaylistDetail> {
+	return api.global.post<PlaylistDetail>(API.playlists.generate(), input);
+}
+
 export async function updatePlaylist(id: string, data: { name?: string }): Promise<PlaylistDetail> {
 	return api.global.put<PlaylistDetail>(API.playlists.update(id), data);
 }

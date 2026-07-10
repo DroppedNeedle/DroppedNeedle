@@ -29,6 +29,10 @@ import type { RadioPlanRequest, RadioPlanResponse, RadioPlanTrack } from '$lib/t
 
 export type RadioMode = 'library' | 'hybrid';
 
+/** Below this many playable tracks a station is "sparse": it still plays, but
+ * the listener gets an honest toast instead of a silent one-track queue. */
+const MIN_RICH_STATION = 5;
+
 export interface LaunchRadioOptions {
 	shuffle?: boolean;
 	mode?: RadioMode;
@@ -114,7 +118,11 @@ export async function launchRadio(
 	ytConfigured: boolean,
 	options: LaunchRadioOptions = {}
 ): Promise<boolean> {
-	const mode: RadioMode = options.mode ?? seed.mode ?? 'hybrid';
+	const requestedMode: RadioMode = options.mode ?? seed.mode ?? 'hybrid';
+	// Without YouTube the player can't stream un-owned tracks (they'd all be
+	// dropped from the queue), so every station degrades to a library-first
+	// plan the backend fills from the user's own files.
+	const mode: RadioMode = ytConfigured ? requestedMode : 'library';
 	const effectiveYt = ytConfigured;
 	const request = { ...seed, mode, count: options.count ?? seed.count ?? 30 };
 
@@ -171,8 +179,20 @@ export async function launchRadio(
 	playerStore.playQueue(items, 0, options.shuffle ?? false);
 	startRadioHydration();
 
-	// full plan in the background; append what the fast plan didn't cover
-	void extendRadio(effectiveYt);
+	// full plan in the background; append what the fast plan didn't cover.
+	// Once it lands, a still-tiny queue means the station genuinely has almost
+	// nothing to play - say so instead of silently looping one track.
+	void extendRadio(effectiveYt).then(() => {
+		if (!radioSession.active) return;
+		const playable = playerStore.queue.length;
+		if (playable > 0 && playable < MIN_RICH_STATION) {
+			playbackToast.show(
+				`Station found only ${playable} ${playable === 1 ? 'match' : 'matches'}` +
+					(effectiveYt ? '' : ' - add more music or connect YouTube'),
+				'warning'
+			);
+		}
+	});
 	return true;
 }
 
