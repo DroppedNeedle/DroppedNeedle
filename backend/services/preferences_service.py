@@ -899,6 +899,31 @@ class PreferencesService:
             logger.error(f"Failed to save plugin config for {plugin_name}: {e}")
             raise ConfigurationError("Failed to save plugin settings")
 
+    # --- Acquisition plugins - per-plugin namespaced config (plugins.{id}) --------
+    # The acquisition ``PluginManager`` owns the shape ({"enabled": bool,
+    # "settings": {...}} with secret values Fernet-encrypted by the manager against
+    # the plugin's typed schema); this layer only persists the namespaced dicts.
+    # Shares the ``plugins`` section with the manifest host's get/save above -
+    # acquisition plugin ids (source ids) and manifest plugin names live side by side.
+
+    def get_plugins_config(self) -> dict:
+        """The whole ``plugins`` section: ``{plugin_id: {...}}``."""
+        section = self._load_config().get("plugins", {})
+        return dict(section) if isinstance(section, dict) else {}
+
+    def save_plugin_config_raw(self, plugin_id: str, cfg: dict) -> None:
+        """Persist one plugin's raw config dict without the manifest host's
+        str-coercion (acquisition plugin settings are typed and pre-encrypted)."""
+        try:
+            config = self._load_config().copy()
+            section = dict(config.get("plugins", {}))
+            section[plugin_id] = cfg
+            config["plugins"] = section
+            self._save_config(config)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to save plugin config for {plugin_id}: {e}")
+            raise ConfigurationError(f"Failed to save plugin config: {e}")
+
     def _events_section_raw(self) -> EventsSettings:
         config = self._load_config()
         data = config.get("events", {})

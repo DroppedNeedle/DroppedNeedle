@@ -1075,6 +1075,36 @@ def get_download_manifest_codec() -> "ManifestCodec":
     return ManifestCodec()
 
 
+def _resolve_acquisition_providers() -> tuple:
+    """Resolve the per-source (indexer, download-client) pairs through the plugin
+    registry - the acquisition seam. The built-in plugins return the exact same
+    singletons the orchestrator used pre-plugins (``get_slskd_repository`` /
+    ``get_slskd_indexer`` / ``get_newznab_indexer`` / ``get_sabnzbd_download_client``),
+    so behaviour is unchanged; the direct providers remain only as a fallback for
+    the (should-never-happen) case of a quarantined built-in."""
+    from .plugin_providers import get_plugin_manager
+    from .repo_providers import (
+        get_download_client_repository,
+        get_newznab_indexer,
+        get_sabnzbd_download_client,
+        get_slskd_indexer,
+    )
+
+    manager = get_plugin_manager()
+    soulseek = manager.get_plugin("soulseek")
+    usenet = manager.get_plugin("usenet")
+    if soulseek is None or usenet is None:  # pragma: no cover - built-ins always load
+        logger.error(
+            "plugins.builtin_missing - falling back to direct providers",
+            extra={"soulseek": soulseek is not None, "usenet": usenet is not None},
+        )
+    client = soulseek.get_download_client() if soulseek else get_download_client_repository()
+    indexer = soulseek.get_indexer() if soulseek else get_slskd_indexer()
+    usenet_client = usenet.get_download_client() if usenet else get_sabnzbd_download_client()
+    usenet_indexer = usenet.get_indexer() if usenet else get_newznab_indexer()
+    return client, indexer, usenet_client, usenet_indexer
+
+
 @singleton
 def get_download_orchestrator() -> "DownloadOrchestrator":
     from pathlib import Path
@@ -1082,14 +1112,9 @@ def get_download_orchestrator() -> "DownloadOrchestrator":
     from core.config import get_settings
     from services.native.download_orchestrator import DownloadOrchestrator
 
-    from .repo_providers import (
-        get_download_client_repository,
-        get_download_store,
-        get_newznab_indexer,
-        get_sabnzbd_download_client,
-        get_slskd_indexer,
-    )
+    from .repo_providers import get_download_store
 
+    client, indexer, usenet_client, usenet_indexer = _resolve_acquisition_providers()
     prefs = get_preferences_service()
     lib = prefs.get_library_settings_raw()
     policy = prefs.get_download_policy()
@@ -1103,8 +1128,8 @@ def get_download_orchestrator() -> "DownloadOrchestrator":
         else Path(get_settings().cache_dir) / "download-staging"
     )
     return DownloadOrchestrator(
-        client=get_download_client_repository(),
-        indexer=get_slskd_indexer(),
+        client=client,
+        indexer=indexer,
         download_store=get_download_store(),
         file_processor=get_file_processor(),
         library_manager=get_library_manager(),
@@ -1127,8 +1152,8 @@ def get_download_orchestrator() -> "DownloadOrchestrator":
         on_import_callback=_build_import_invalidation(
             get_cache(), get_disk_cache(), get_library_db()
         ),
-        usenet_indexer=get_newznab_indexer(),
-        usenet_client=get_sabnzbd_download_client(),
+        usenet_indexer=usenet_indexer,
+        usenet_client=usenet_client,
         usenet_scorer=get_newznab_release_scorer(),
         usenet_enabled=usenet_enabled,
         soulseek_enabled=dc.enabled,
@@ -1150,12 +1175,10 @@ def get_download_service() -> "DownloadService":
 
     from .repo_providers import (
         get_album_release_pin_store,
-        get_download_client_repository,
         get_download_store,
-        get_newznab_indexer,
-        get_slskd_indexer,
     )
 
+    client, indexer, _usenet_client, usenet_indexer = _resolve_acquisition_providers()
     prefs = get_preferences_service()
     dc = prefs.get_download_client_settings_raw()
     policy = prefs.get_download_policy()
@@ -1163,8 +1186,8 @@ def get_download_service() -> "DownloadService":
     # The service is "enabled" if ANY source can act (slskd OR usenet), so a Usenet-only
     # install isn't blocked by the slskd-disabled guard.
     return DownloadService(
-        download_client=get_download_client_repository(),
-        indexer=get_slskd_indexer(),
+        download_client=client,
+        indexer=indexer,
         scorer=get_album_preflight_scorer(),
         library_manager=get_library_repository(),
         download_store=get_download_store(),
@@ -1178,7 +1201,7 @@ def get_download_service() -> "DownloadService":
         auto_accept_threshold=policy.preflight_score_auto_accept,
         manual_threshold=policy.preflight_score_manual_min,
         enabled=dc.enabled or usenet_enabled,
-        usenet_indexer=get_newznab_indexer(),
+        usenet_indexer=usenet_indexer,
         usenet_scorer=get_newznab_release_scorer(),
         usenet_enabled=usenet_enabled,
         soulseek_enabled=dc.enabled,

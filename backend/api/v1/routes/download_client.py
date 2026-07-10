@@ -42,40 +42,11 @@ async def update_config(
 ):
     preferences.save_download_client_settings(settings)
     # bust the whole download-client singleton chain so new settings take effect
-    # immediately; scorer/matcher/DownloadService/orchestrator capture these at
-    # construction and hold the client, so they must be cleared too, not just slskd
-    # client/repository. The orchestrator is built eagerly at startup (resume task),
-    # so omitting it leaves every download running against the old/empty URL.
-    from core.dependencies import (
-        get_album_preflight_scorer,
-        get_download_client_repository as _dc,
-        get_download_orchestrator,
-        get_download_service,
-        get_file_processor,
-        get_newznab_release_scorer,
-        get_slskd_client,
-        get_slskd_indexer,
-        get_slskd_repository,
-        get_status_service,
-        get_track_matcher,
-    )
+    # immediately (shared with the plugin settings API - see
+    # core/dependencies/invalidation.py for the why of each entry)
+    from core.dependencies.invalidation import clear_soulseek_chain
 
-    for provider in (
-        get_slskd_client,
-        get_slskd_repository,
-        get_slskd_indexer,
-        _dc,
-        get_album_preflight_scorer,
-        get_track_matcher,
-        get_newznab_release_scorer,
-        # FileProcessor + StatusService capture the slskd repo (mount/URL) at construction,
-        # so they must be cleared too - else the rebuilt orchestrator reuses a stale one.
-        get_file_processor,
-        get_status_service,
-        get_download_orchestrator,
-        get_download_service,
-    ):
-        provider.cache_clear()
+    clear_soulseek_chain()
     return preferences.get_download_client_settings()
 
 

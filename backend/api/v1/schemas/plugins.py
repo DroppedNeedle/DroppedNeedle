@@ -1,45 +1,52 @@
-"""Wire schemas for the plugin API surfaces (phase 01b).
+"""Admin plugin-registry API schemas."""
 
-Secret-marked plugin settings follow the house mask-sentinel pattern: reads
-return the mask when a value exists, and a save that sends the mask back keeps
-the stored value.
-"""
+from typing import Any
 
 from infrastructure.msgspec_fastapi import AppStruct
-
-PLUGIN_SECRET_MASK = "plugin****"
-
-
-class PluginSettingFieldInfo(AppStruct):
-    key: str
-    label: str
-    help: str = ""
-    secret: bool = False
+from plugins.base import SettingsField
 
 
 class PluginInfo(AppStruct):
+    id: str
     name: str
-    display_name: str
     version: str
+    builtin: bool
     enabled: bool
-    capabilities: list[str] = []
-    active_capabilities: list[str] = []
-    description: str = ""
-    author: str = ""
-    homepage: str = ""
+    loaded: bool
     error: str | None = None
-    settings_fields: list[PluginSettingFieldInfo] = []
-    settings_values: dict[str, str] = {}
+    source: str = "external"
+    api_version: int | None = None
 
 
 class PluginListResponse(AppStruct):
     plugins: list[PluginInfo] = []
+    api_version: int = 0
 
 
-class PluginUpdateRequest(AppStruct):
+class PluginToggleResponse(AppStruct):
+    id: str
     enabled: bool
-    settings: dict[str, str] = {}
 
 
-class PluginInstallRequest(AppStruct):
-    repository_url: str
+class PluginSettingsResponse(AppStruct):
+    """Schema + current values (secrets masked)."""
+
+    id: str
+    schema: list[SettingsField] = []
+    values: dict[str, Any] = {}
+
+
+class PluginSettingsUpdate(AppStruct):
+    values: dict[str, Any] = {}
+
+
+class PluginTestRequest(AppStruct):
+    """Optional values to test WITHOUT saving (masked secrets resolve to stored)."""
+
+    values: dict[str, Any] = {}
+
+
+class PluginTestResponse(AppStruct):
+    valid: bool
+    message: str = ""
+    version: str | None = None
