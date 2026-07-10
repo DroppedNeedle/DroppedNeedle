@@ -43,6 +43,7 @@ from api.v1.routes import (
 from api.v1.routes import (
     discovery_batches as discovery_batches_routes
 )
+from api.v1.routes import taste_graph as taste_graph_routes
 from api.v1.routes import library_scan as library_scan_routes
 from api.v1.routes import cache as cache_routes
 from api.v1.routes import cache_status as cache_status_routes
@@ -729,6 +730,9 @@ v1_router.include_router(wrapped.router)
 # literal /discover/batches paths registered before the discover router (which owns
 # the broader /discover prefix) so they can never be shadowed
 v1_router.include_router(discovery_batches_routes.router)
+# literal /discover/taste-graph path, registered alongside the other literal
+# /discover/* routers before the main discover router
+v1_router.include_router(taste_graph_routes.router)
 v1_router.include_router(discover.router)
 v1_router.include_router(youtube_routes.router)
 v1_router.include_router(cache_routes.router)

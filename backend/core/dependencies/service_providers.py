@@ -844,6 +844,20 @@ def get_scrobble_service() -> "ScrobbleService":
 
 
 @singleton
+def get_taste_graph_service() -> "TasteGraphService":
+    from services.taste_graph_service import TasteGraphService
+
+    return TasteGraphService(
+        library_db=get_library_db(),
+        follow_store=get_follow_store(),
+        play_history_store=get_play_history_store(),
+        mb_repo=get_musicbrainz_repository(),
+        cache=get_cache(),
+        genre_index=get_genre_index(),
+    )
+
+
+@singleton
 def get_discover_service() -> "DiscoverService":
     from services.discover_service import DiscoverService
     from services.discover.radio_service import DiscoverRadioService

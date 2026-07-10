@@ -12,6 +12,7 @@ from infrastructure.cache.memory_cache import CacheInterface
 from infrastructure.cache.cache_keys import (
     mb_artist_search_key, mb_artist_detail_key,
     MB_ARTISTS_BY_TAG_PREFIX, MB_ARTIST_RELS_PREFIX,
+    MB_ARTIST_EXPANSION_PREFIX, MB_LABEL_RELEASES_PREFIX,
 )
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.resilience.retry import CircuitOpenError
@@ -256,6 +257,60 @@ class MusicBrainzArtistMixin:
                 await self.get_release_group_by_id(rg_id, priority=RequestPriority.BACKGROUND_SYNC)
             except (CircuitOpenError, ExternalServiceError, httpx.HTTPError):
                 pass
+
+    async def get_artist_expansion(self, mbid: str) -> dict | None:
+        """Artist relationships (band members, collaborations, tributes), label
+        relations, and tags — the taste-graph expansion payload. One MB call per
+        artist per 24h (cached + deduplicated); BACKGROUND_SYNC priority so it can
+        never starve user-initiated lookups."""
+        cache_key = f"{MB_ARTIST_EXPANSION_PREFIX}{mbid}"
+        cached = await self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        return await mb_deduplicator.dedupe(
+            cache_key, lambda: self._fetch_artist_expansion(mbid, cache_key)
+        )
+
+    async def _fetch_artist_expansion(self, mbid: str, cache_key: str) -> dict | None:
+        try:
+            result = await mb_api_get(
+                f"/artist/{mbid}",
+                params={"inc": "artist-rels+label-rels+tags"},
+                priority=RequestPriority.BACKGROUND_SYNC,
+            )
+            if not result:
+                return None
+            await self._cache.set(cache_key, result, ttl_seconds=86400)
+            return result
+        except Exception as e:  # noqa: BLE001 - one seed failing must not sink the graph
+            logger.error(f"Failed to fetch artist expansion {mbid}: {e}")
+            _record_mb_degradation(f"artist expansion failed: {e}")
+            return None
+
+    async def get_label_releases(self, label_mbid: str, limit: int = 25) -> list[dict[str, Any]]:
+        """Releases on a label (with release-groups + artist credits), for
+        label-mate discovery. Cached 24h; BACKGROUND_SYNC priority."""
+        cache_key = f"{MB_LABEL_RELEASES_PREFIX}{label_mbid}:{limit}"
+        cached = await self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            result = await mb_api_get(
+                "/release",
+                params={
+                    "label": label_mbid,
+                    "inc": "release-groups+artist-credits",
+                    "limit": min(100, limit),
+                },
+                priority=RequestPriority.BACKGROUND_SYNC,
+            )
+            releases = result.get("releases", []) if isinstance(result, dict) else []
+            await self._cache.set(cache_key, releases, ttl_seconds=86400)
+            return releases
+        except Exception as e:  # noqa: BLE001 - one label failing must not sink the graph
+            logger.error(f"Failed to fetch label releases {label_mbid}: {e}")
+            _record_mb_degradation(f"label releases failed: {e}")
+            return []
 
     async def get_artist_release_groups(
         self,
