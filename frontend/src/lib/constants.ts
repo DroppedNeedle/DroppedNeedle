@@ -148,7 +148,11 @@ export const API = {
 			return `/api/v1/artists/${id}/lastfm?${params.toString()}`;
 		},
 		follow: (id: string) => `/api/v1/artists/${id}/follow`,
-		autoDownload: (id: string) => `/api/v1/artists/${id}/auto-download`
+		autoDownload: (id: string) => `/api/v1/artists/${id}/auto-download`,
+		purchaseOptions: (id: string, artistName: string) => {
+			const params = new URLSearchParams({ name: artistName });
+			return `/api/v1/artists/${id}/purchase-options?${params.toString()}`;
+		}
 	},
 	following: {
 		artists: () => '/api/v1/following/artists',
@@ -168,7 +172,8 @@ export const API = {
 	},
 	album: {
 		basic: (id: string) => `/api/v1/albums/${id}`,
-		tracks: (id: string) => `/api/v1/albums/${id}/tracks`
+		tracks: (id: string) => `/api/v1/albums/${id}/tracks`,
+		purchaseOptions: (id: string) => `/api/v1/albums/${id}/purchase-options`
 	},
 	library: {
 		mbids: () => '/api/v1/library/mbids',
@@ -276,6 +281,7 @@ export const API = {
 	settingsLocalFilesVerify: () => '/api/v1/settings/local-files/verify',
 	settingsMusicbrainz: () => '/api/v1/settings/musicbrainz',
 	settingsMusicbrainzVerify: () => '/api/v1/settings/musicbrainz/verify',
+	settingsGetIt: () => '/api/v1/settings/get-it',
 	profile: {
 		get: () => '/api/v1/profile',
 		update: () => '/api/v1/profile',
@@ -365,6 +371,22 @@ export const API = {
 		status: () => '/api/v1/lidarr-import/status',
 		artists: () => '/api/v1/lidarr-import/artists',
 		import: () => '/api/v1/lidarr-import/import'
+	},
+	plugins: {
+		list: () => '/api/v1/plugins',
+		install: () => '/api/v1/plugins/install',
+		update: (name: string) => `/api/v1/plugins/${name}`,
+		uninstall: (name: string) => `/api/v1/plugins/${name}`,
+		sources: () => '/api/v1/plugins/sources',
+		sourceSearch: (name: string) => `/api/v1/plugins/sources/${name}/search`,
+		sourceFetch: (name: string) => `/api/v1/plugins/sources/${name}/fetch`
+	},
+	dropImport: {
+		uploads: () => '/api/v1/import/uploads',
+		jobs: (all: boolean = false) => `/api/v1/import/jobs${all ? '?all=true' : ''}`,
+		job: (jobId: string) => `/api/v1/import/jobs/${jobId}`,
+		match: (itemId: number) => `/api/v1/import/items/${itemId}/match`,
+		discard: (itemId: number) => `/api/v1/import/items/${itemId}/discard`
 	},
 	downloadClients: {
 		sabnzbd: () => '/api/v1/download-clients/sabnzbd',

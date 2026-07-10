@@ -156,6 +156,87 @@ def get_sse_publisher() -> "SSEPublisher":
 
 
 @singleton
+def get_plugin_host() -> "PluginHost":
+    from core.config import get_settings
+    from infrastructure.plugins.host import PluginHost
+
+    return PluginHost(
+        plugins_dir=get_settings().root_app_dir / "plugins",
+        preferences_service=get_preferences_service(),
+    )
+
+
+@singleton
+def get_plugin_source_service() -> "PluginSourceService":
+    from services.plugin_source_service import PluginSourceService
+
+    return PluginSourceService(
+        plugin_host=get_plugin_host(),
+        drop_import_service=get_drop_import_service(),
+        sse_publisher=get_sse_publisher(),
+    )
+
+
+@singleton
+def get_get_it_service() -> "GetItService":
+    from services.get_it_service import GetItService
+
+    from .repo_providers import get_itunes_repository, get_musicbrainz_repository
+
+    return GetItService(
+        mb_repo=get_musicbrainz_repository(),
+        itunes_repo=get_itunes_repository(),
+        preferences_service=get_preferences_service(),
+        cache=get_cache(),
+        plugin_host=get_plugin_host(),
+    )
+
+
+@singleton
+def get_drop_import_service() -> "DropImportService":
+    from core.config import get_settings
+    from services.native.drop_import_service import DropImportService
+
+    from .repo_providers import (
+        get_drop_import_store,
+        get_request_history_store,
+        get_wanted_store,
+    )
+
+    canonical = _build_import_invalidation(get_cache(), get_disk_cache(), get_library_db())
+
+    async def on_drop_import(*, mbid, artist_mbid, artist_name, title, year):  # noqa: ANN001, ANN202
+        # the canonical invalidator takes a request record; a drop needs no
+        # request to exist, so synthesize the album-shaped subset it reads
+        record = RequestHistoryRecord(
+            musicbrainz_id=mbid,
+            artist_name=artist_name or "",
+            album_title=title or "",
+            requested_at="",
+            status="imported",
+            artist_mbid=artist_mbid,
+            year=year,
+        )
+        await canonical(record)
+
+    return DropImportService(
+        store=get_drop_import_store(),
+        tagger=get_audio_tagger(),
+        fingerprinter=get_audio_fingerprinter(),
+        album_identifier=get_album_identifier(),
+        mb_matcher=get_musicbrainz_matcher(),
+        naming_engine=get_naming_template_engine(),
+        library_manager=get_library_manager(),
+        preferences_service=get_preferences_service(),
+        request_history=get_request_history_store(),
+        wanted_store=get_wanted_store(),
+        sse_publisher=get_sse_publisher(),
+        on_import=on_drop_import,
+        staging_root=get_settings().root_app_dir / "imports",
+    )
+
+
+@singleton
 def get_now_playing_service() -> "NowPlayingService":
     from services.now_playing_service import NowPlayingService
 
@@ -736,6 +817,7 @@ def get_scrobble_service() -> "ScrobbleService":
         client_factory=get_per_user_client_factory(),
         listening_prefs_store=get_user_listening_prefs_store(),
         play_history_store=get_play_history_store(),
+        plugin_host=get_plugin_host(),
     )
 
 

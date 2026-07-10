@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from core.exceptions import ClientDisconnectedError
 from api.v1.schemas.artist import ArtistInfo, ArtistExtendedInfo, ArtistReleases, LastFmArtistEnrichment, FollowRequest, AutoDownloadRequest, FollowStatusResponse
 from api.v1.schemas.discovery import SimilarArtistsResponse, TopSongsResponse, TopAlbumsResponse
-from core.dependencies import get_artist_service, get_artist_discovery_service, get_artist_enrichment_service, get_follow_service
+from api.v1.schemas.get_it import ArtistPurchaseOptionsResponse
+from core.dependencies import get_artist_service, get_artist_discovery_service, get_artist_enrichment_service, get_follow_service, get_get_it_service
 from services.artist_service import ArtistService
 from services.follow_service import FollowService, FollowError
 from middleware import CurrentUserDep
@@ -48,6 +49,22 @@ async def get_artist(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid artist request"
         )
+
+
+@router.get("/{artist_id}/purchase-options", response_model=ArtistPurchaseOptionsResponse)
+async def get_artist_purchase_options(
+    artist_id: str,
+    name: str = Query("", description="Artist name, for the Bandcamp search fallback"),
+    service=Depends(get_get_it_service),
+):
+    """The artist's own storefronts (Get it, phase 01). Lazy like the album
+    variant: the artist page's load path never calls this."""
+    if is_unknown_mbid(artist_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid or unknown artist ID: {artist_id}",
+        )
+    return await service.get_artist_purchase_options(artist_id, name)
 
 
 @router.get("/{artist_id}/extended", response_model=ArtistExtendedInfo)

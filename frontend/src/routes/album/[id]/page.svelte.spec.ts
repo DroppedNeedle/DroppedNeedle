@@ -97,6 +97,11 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getLibraryAlbumStatusQuery: () => ({ data: undefined, refetch: vi.fn() })
 }));
 
+// Where-to-buy section (Get it): stub so the page renders without a QueryClientProvider
+vi.mock('$lib/queries/albums/GetItQueries.svelte', () => ({
+	getPurchaseOptionsQuery: () => ({ data: undefined, isLoading: false })
+}));
+
 // album-scoped downloads query: feed it per-test via mockDownloadsData so the page renders without
 // a QueryClientProvider (same approach as the library status query above)
 vi.mock('$lib/queries/downloads/DownloadQueries.svelte', () => ({

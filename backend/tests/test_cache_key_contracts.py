@@ -1,8 +1,9 @@
-"""Contract tests — every key function must produce keys that start with its prefix constant."""
+"""Contract tests - every key function must produce keys that start with its prefix constant."""
 
 import pytest
 
 from infrastructure.cache.cache_keys import (
+    GETIT_OPTIONS_PREFIX,
     LIBRARY_PREFIX,
     LIBRARY_REQUESTED_PREFIX,
     MB_ALBUM_SEARCH_PREFIX,
@@ -14,6 +15,7 @@ from infrastructure.cache.cache_keys import (
     WIKIDATA_IMAGE_PREFIX,
     WIKIDATA_URL_PREFIX,
     WIKIPEDIA_PREFIX,
+    getit_options_key,
     library_artist_mbids_key,
     library_albums_key,
     library_artists_key,
@@ -55,6 +57,7 @@ from infrastructure.cache.cache_keys import (
         (wikidata_url_key("artist-1"), WIKIDATA_URL_PREFIX),
         (wikipedia_extract_key("https://en.wikipedia.org/wiki/Test"), WIKIPEDIA_PREFIX),
         (preferences_key(), PREFERENCES_PREFIX),
+        (getit_options_key("rg-1", "GB", True), GETIT_OPTIONS_PREFIX),
     ],
     ids=[
         "mb_artist_search",
@@ -75,6 +78,7 @@ from infrastructure.cache.cache_keys import (
         "wikidata_url",
         "wikipedia_extract",
         "preferences",
+        "getit_options",
     ],
 )
 def test_key_starts_with_prefix(generated_key: str, expected_prefix: str):
@@ -90,6 +94,7 @@ def test_key_starts_with_prefix(generated_key: str, expected_prefix: str):
         pytest.param("listenbrainz_prefixes", id="listenbrainz"),
         pytest.param("lastfm_prefixes", id="lastfm"),
         pytest.param("home_prefixes", id="home"),
+        pytest.param("getit_prefixes", id="getit"),
     ],
 )
 def test_invalidation_groups_return_list_of_strings(group_fn: str):

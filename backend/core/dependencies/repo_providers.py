@@ -273,6 +273,26 @@ def get_wanted_store() -> "WantedStore":
 
 
 @singleton
+def get_itunes_repository() -> "ITunesRepository":
+    from infrastructure.http.client import HttpClientFactory
+    from repositories.itunes_repository import ITunesRepository
+
+    # dedicated client name: the factory caches clients by name and the first
+    # caller's kwargs win, so a non-default surface gets its own entry
+    http = HttpClientFactory.get_client(name="itunes-search", timeout=10.0)
+    return ITunesRepository(http)
+
+
+@singleton
+def get_drop_import_store() -> "DropImportStore":
+    from infrastructure.persistence.drop_import_store import DropImportStore
+    from .cache_providers import get_persistence_write_lock
+
+    settings = get_settings()
+    return DropImportStore(db_path=settings.library_db_path, write_lock=get_persistence_write_lock())
+
+
+@singleton
 def get_events_store() -> "EventsStore":
     from infrastructure.persistence.events_store import EventsStore
     from .cache_providers import get_persistence_write_lock

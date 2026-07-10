@@ -25,6 +25,8 @@ from api.v1.routes import download_clients as download_clients_routes
 from api.v1.routes import downloads as downloads_routes
 from api.v1.routes import downloads_search as downloads_search_routes
 from api.v1.routes import following as following_routes
+from api.v1.routes import import_drop as import_drop_routes
+from api.v1.routes import plugins as plugins_routes
 from api.v1.routes import library as library_routes
 from api.v1.routes import lidarr_import as lidarr_import_routes
 from api.v1.routes import discovery_batches as discovery_batches_routes
@@ -52,6 +54,9 @@ from core.dependencies import (
     get_library_manager,
     get_library_scanner,
     get_library_service,
+    get_drop_import_service,
+    get_plugin_host,
+    get_plugin_source_service,
     get_lidarr_import_repository,
     get_lidarr_import_service,
     get_now_playing_service,
@@ -70,7 +75,7 @@ from core.dependencies import (
     get_user_section_prefs_store,
     get_wanted_watcher_service,
 )
-from middleware import _get_current_admin, _get_current_user
+from middleware import _get_current_admin, _get_current_curator, _get_current_user
 from tests.helpers import build_test_client, mock_admin_user, mock_user
 
 _SERVICE_PROVIDERS = (
@@ -88,6 +93,9 @@ _SERVICE_PROVIDERS = (
     get_library_manager,
     get_library_scanner,
     get_library_service,
+    get_drop_import_service,
+    get_plugin_host,
+    get_plugin_source_service,
     get_lidarr_import_repository,
     get_lidarr_import_service,
     get_now_playing_service,
@@ -137,6 +145,9 @@ _ADMIN_ENDPOINTS = [
     # Wanted watcher settings (admin, download-clients router)
     ("GET", "/api/v1/download-clients/wanted", None),
     ("PUT", "/api/v1/download-clients/wanted", {}),
+    # Get it purchase-link settings (admin, settings router)
+    ("GET", "/api/v1/settings/get-it", None),
+    ("PUT", "/api/v1/settings/get-it", {"store_region": "US", "support_droppedneedle": True}),
     # Upcoming Events sources (admin, settings router)
     ("GET", "/api/v1/settings/events", None),
     ("PUT", "/api/v1/settings/events", {}),
@@ -146,6 +157,22 @@ _ADMIN_ENDPOINTS = [
     ("GET", "/api/v1/lidarr-import/config", None),
     ("PUT", "/api/v1/lidarr-import/config", {}),
     ("POST", "/api/v1/lidarr-import/test", {}),
+    # Plugin API (phase 01b): admin manages plugins; curators use source surfaces
+    # (both reject a plain user with 403, so they live in the admin list).
+    ("GET", "/api/v1/plugins", None),
+    ("POST", "/api/v1/plugins/install", {"repository_url": "https://github.com/o/r"}),
+    ("PUT", "/api/v1/plugins/demo", {"enabled": False, "settings": {}}),
+    ("DELETE", "/api/v1/plugins/demo", None),
+    ("GET", "/api/v1/plugins/sources", None),
+    ("POST", "/api/v1/plugins/sources/demo/search", {"query": "q"}),
+    ("POST", "/api/v1/plugins/sources/demo/fetch", {"item_id": "i"}),
+    # Drop importer (phase 01c): curator-gated (admin + trusted) - a plain user
+    # must see 403. POST /import/uploads is multipart and can't be driven here;
+    # its auth posture is covered in tests/routes/test_import_drop_routes.py.
+    ("GET", "/api/v1/import/jobs", None),
+    ("GET", "/api/v1/import/jobs/job-1", None),
+    ("POST", "/api/v1/import/items/1/match", {"release_group_mbid": "rg-1"}),
+    ("POST", "/api/v1/import/items/1/discard", None),
     # Bulk auto-download approval batches (admin, requests router)
     ("GET", "/api/v1/requests/auto-download-approval-batches", None),
     ("POST", "/api/v1/requests/auto-download-approval-batches/batch-1/approve", None),
@@ -245,6 +272,8 @@ def _client(scenario: str):
         playlists_routes.router,
         requests_page_routes.router,
         lidarr_import_routes.router,
+        import_drop_routes.router,
+        plugins_routes.router,
         settings_routes.router,
         spotify_routes.router,
     ):
@@ -257,9 +286,12 @@ def _client(scenario: str):
     if scenario == "user":
         app.dependency_overrides[_get_current_user] = lambda: mock_user(role="user", user_id="user-1")
         app.dependency_overrides[_get_current_admin] = _deny_admin
+        # curator endpoints reject a plain user exactly like admin ones (403)
+        app.dependency_overrides[_get_current_curator] = _deny_admin
     elif scenario == "admin":
         app.dependency_overrides[_get_current_user] = mock_admin_user
         app.dependency_overrides[_get_current_admin] = mock_admin_user
+        app.dependency_overrides[_get_current_curator] = mock_admin_user
     # "none": no auth overrides -> real deps read request.state.user (unset) -> 401
     return build_test_client(app)
 

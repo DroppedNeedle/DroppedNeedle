@@ -1,0 +1,14 @@
+[plugin]
+name = "webhook-scrobbler"
+display_name = "Webhook Scrobbler"
+version = "1.0.0"
+api_version = 0
+entrypoint = "plugin:WebhookScrobbler"
+capabilities = ["scrobbler"]
+description = "POSTs every accepted play to a webhook URL you configure - wire it to Home Assistant, n8n, a Discord webhook, anything."
+author = "DroppedNeedle examples"
+
+[[settings]]
+key = "webhook_url"
+label = "Webhook URL"
+help = "Each play is POSTed here as JSON: {artist, track, album, timestamp}."

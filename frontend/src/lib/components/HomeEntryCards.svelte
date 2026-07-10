@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { Headphones, Library, ArrowRight, Sparkles, AlertTriangle } from 'lucide-svelte';
+	import { Headphones, ArrowRight, Sparkles, AlertTriangle } from 'lucide-svelte';
 	import type { ComponentType } from 'svelte';
 	import { fromStore } from 'svelte/store';
+	import DropImportZone from '$lib/components/import/DropImportZone.svelte';
 	import { integrationStore } from '$lib/stores/integration';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getLocalStatsQuery } from '$lib/queries/local/LocalQueries.svelte';
@@ -37,6 +38,7 @@
 
 	const integrations = fromStore(integrationStore);
 	const localEnabled = $derived(integrations.current.localfiles);
+	const canImport = $derived(authStore.isTrusted);
 
 	const localStatsQuery = getLocalStatsQuery(() => localEnabled);
 	const libraryStatsQuery = getLibraryStatsQuery();
@@ -53,40 +55,56 @@
 	}
 	const localFormats = $derived(localStats ? topFormats(localStats.format_breakdown) : '');
 
-	// show stats mid-refetch, surface errors instead of an endless skeleton
-	const listenState = $derived<CardState>(
-		!integrations.current.loaded
-			? 'loading'
-			: !localEnabled
-				? 'prompt'
-				: localStats
-					? 'stats'
-					: localStatsQuery.isError
-						? 'error'
-						: 'loading'
+	const libUnmatched = $derived(libraryStats?.unmatched_count ?? 0);
+	const libLastScan = $derived(
+		libraryStats?.last_scan_at ? new Date(libraryStats.last_scan_at * 1000) : null
 	);
 
-	const listenCard: EntryCard = $derived({
-		href: localEnabled ? '/library/local' : '/settings?tab=library',
+	// One card for the whole library: listen, browse, organise (the old Listen +
+	// Manage cards merged - owner-signed, phase 01c). Show stats mid-refetch,
+	// surface errors instead of an endless skeleton.
+	const musicState = $derived<CardState>(
+		!integrations.current.loaded
+			? 'loading'
+			: libraryStats
+				? libraryStats.total_albums === 0
+					? 'prompt'
+					: 'stats'
+				: libraryStatsQuery.isError
+					? 'error'
+					: 'loading'
+	);
+
+	const musicFooter = $derived(
+		libUnmatched > 0
+			? `${libUnmatched} album${libUnmatched === 1 ? '' : 's'} need review`
+			: localStats && localStats.total_tracks > 0
+				? `${localStats.total_size_human}${localFormats ? ' · ' + localFormats : ''}`
+				: libLastScan
+					? `Scanned ${formatLastUpdated(libLastScan)}`
+					: 'Not scanned yet'
+	);
+
+	const musicCard: EntryCard = $derived({
+		href: localEnabled ? '/library/local' : '/library',
 		icon: Headphones,
-		title: 'Listen to Music',
-		subtitle: 'The Listening Room',
-		state: listenState,
-		stats: localStats
+		title: 'Your Music',
+		subtitle: 'Listen, browse & organise',
+		state: musicState,
+		stats: libraryStats
 			? [
-					{ value: localStats.total_tracks.toLocaleString(), label: 'tracks' },
-					{ value: localStats.total_artists.toLocaleString(), label: 'artists' },
-					{ value: localStats.total_albums.toLocaleString(), label: 'albums' }
+					{ value: libraryStats.total_albums.toLocaleString(), label: 'albums' },
+					{ value: libraryStats.total_artists.toLocaleString(), label: 'artists' },
+					{ value: libraryStats.total_tracks.toLocaleString(), label: 'tracks' }
 				]
 			: [],
-		footer: localStats
-			? localStats.total_tracks > 0
-				? `${localStats.total_size_human}${localFormats ? ' · ' + localFormats : ''}`
-				: 'No local tracks yet'
-			: '',
-		footerWarning: false,
-		ctaLabel: listenState === 'prompt' ? 'Set up local files' : 'Enter the room',
-		promptText: 'Connect your local music folder to start listening.',
+		footer: musicFooter,
+		footerWarning: libUnmatched > 0,
+		ctaLabel:
+			musicState === 'prompt' ? 'Open library' : localEnabled ? 'Enter the room' : 'Manage library',
+		promptText: authStore.isAdmin
+			? 'Add a library path and run a scan to fill your library.'
+			: 'Your library is being prepared by an admin.',
 		gradient: 'from-accent/20 via-secondary/10 to-base-200',
 		orb: 'bg-accent/25',
 		iconWrap: 'bg-accent/15',
@@ -95,55 +113,6 @@
 		arrow: 'group-hover:text-accent',
 		cta: 'text-accent'
 	});
-
-	const libUnmatched = $derived(libraryStats?.unmatched_count ?? 0);
-	const libLastScan = $derived(
-		libraryStats?.last_scan_at ? new Date(libraryStats.last_scan_at * 1000) : null
-	);
-	const libraryState = $derived<CardState>(
-		libraryStats
-			? libraryStats.total_albums === 0
-				? 'prompt'
-				: 'stats'
-			: libraryStatsQuery.isError
-				? 'error'
-				: 'loading'
-	);
-
-	const libraryCard: EntryCard = $derived({
-		href: '/library',
-		icon: Library,
-		title: 'Manage your Library',
-		subtitle: 'Browse, scan & organise',
-		state: libraryState,
-		stats: libraryStats
-			? [
-					{ value: libraryStats.total_albums.toLocaleString(), label: 'albums' },
-					{ value: libraryStats.total_artists.toLocaleString(), label: 'artists' },
-					{ value: libraryStats.total_tracks.toLocaleString(), label: 'tracks' }
-				]
-			: [],
-		footer:
-			libUnmatched > 0
-				? `${libUnmatched} album${libUnmatched === 1 ? '' : 's'} need review`
-				: libLastScan
-					? `Scanned ${formatLastUpdated(libLastScan)}`
-					: 'Not scanned yet',
-		footerWarning: libUnmatched > 0,
-		ctaLabel: libraryState === 'prompt' ? 'Open library' : 'Manage library',
-		promptText: authStore.isAdmin
-			? 'Add a library path and run a scan to fill your library.'
-			: 'Your library is being prepared by an admin.',
-		gradient: 'from-primary/20 via-info/10 to-base-200',
-		orb: 'bg-primary/25',
-		iconWrap: 'bg-primary/15',
-		ring: 'ring-primary/30',
-		iconColor: 'text-primary',
-		arrow: 'group-hover:text-primary',
-		cta: 'text-primary'
-	});
-
-	const cards = $derived([listenCard, libraryCard]);
 </script>
 
 {#snippet entryCard(card: EntryCard)}
@@ -238,8 +207,19 @@
 	</a>
 {/snippet}
 
-<div class="discover-section-enter grid grid-cols-1 gap-4 sm:gap-5 lg:grid-cols-2">
-	{#each cards as card (card.title)}
-		{@render entryCard(card)}
-	{/each}
+<div
+	class="discover-section-enter grid grid-cols-1 gap-4 sm:gap-5 {canImport ? 'lg:grid-cols-2' : ''}"
+>
+	{@render entryCard(musicCard)}
+	{#if canImport}
+		<div class="flex flex-col">
+			<DropImportZone className="flex-1 [&>button]:h-full" />
+			<a
+				href="/downloads?tab=import"
+				class="mt-2 self-end text-xs font-semibold text-primary hover:underline"
+			>
+				View import history
+			</a>
+		</div>
+	{/if}
 </div>

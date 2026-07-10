@@ -5,17 +5,19 @@ services:
       dockerfile: Dockerfile
     container_name: droppedneedle-dev
     environment:
-      - PUID=1000            # User ID — run `id` on your host to find yours
-      - PGID=1000            # Group ID — run `id` on your host to find yours
+      - PUID=1000            # User ID - run `id` on your host to find yours
+      - PGID=1000            # Group ID - run `id` on your host to find yours
       #                        Unraid: use 99/100 (nobody:users) unless you changed Unraid's defaults.
       #                        If using Docker --user, PUID/PGID are ignored (user mapping is external).
       - PORT=8688            # Internal port (must match the right side of "ports" below)
-      - TZ=Etc/UTC           # Timezone — e.g. America/New_York, Europe/London
+      - TZ=Etc/UTC           # Timezone - e.g. America/New_York, Europe/London
     ports:
-      - "8689:8688"         # <host-port>:<container-port> — change the left side to remap
+      - "8689:8688"         # <host-port>:<container-port> - change the left side to remap
     volumes:
       - config:/app/config
       - cache:/app/cache
+      - plugins:/app/plugins   # installed plugins; without this they vanish on recreate
+      - imports:/app/imports   # drop-importer staging
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8688/health"]
@@ -27,3 +29,5 @@ services:
 volumes:
   config:
   cache:
+  plugins:
+  imports:

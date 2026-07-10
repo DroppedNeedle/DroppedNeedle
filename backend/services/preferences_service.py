@@ -39,6 +39,8 @@ from api.v1.schemas.settings import (
     SpotifySettings,
     SPOTIFY_SECRET_MASK,
     EventsSettings,
+    GetItSettings,
+    PluginConfig,
     TICKETMASTER_KEY_MASK,
     SKIDDLE_KEY_MASK,
     DEFAULT_NAMING_TEMPLATE,
@@ -823,6 +825,51 @@ class PreferencesService:
     def is_spotify_enabled(self) -> bool:
         raw = self.get_spotify_settings_raw()
         return raw.enabled and bool(raw.client_id) and bool(raw.client_secret)
+
+    def get_get_it_settings(self) -> GetItSettings:
+        """"Get it" purchase-link settings (no secrets - safe for API responses)."""
+        data = self._load_config().get("get_it", {})
+        return GetItSettings(
+            store_region=(data.get("store_region") or "US").upper(),
+            support_droppedneedle=bool(data.get("support_droppedneedle", True)),
+        )
+
+    def save_get_it_settings(self, settings: GetItSettings) -> None:
+        try:
+            config = self._load_config().copy()
+            config["get_it"] = {
+                "store_region": settings.store_region.upper(),
+                "support_droppedneedle": settings.support_droppedneedle,
+            }
+            self._save_config(config)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to save Get it settings: {e}")
+            raise ConfigurationError("Failed to save Get it settings")
+
+    def get_plugin_config(self, plugin_name: str) -> PluginConfig:
+        """Per-plugin admin state (01b). Unknown plugins get the safe default:
+        disabled, no settings."""
+        section = self._load_config().get("plugins", {})
+        data = section.get(plugin_name, {}) if isinstance(section, dict) else {}
+        raw_settings = data.get("settings", {})
+        settings = {
+            str(k): str(v) for k, v in raw_settings.items()
+        } if isinstance(raw_settings, dict) else {}
+        return PluginConfig(enabled=bool(data.get("enabled", False)), settings=settings)
+
+    def save_plugin_config(self, plugin_name: str, plugin_config: PluginConfig) -> None:
+        try:
+            config = self._load_config().copy()
+            section = dict(config.get("plugins", {}))
+            section[plugin_name] = {
+                "enabled": plugin_config.enabled,
+                "settings": dict(plugin_config.settings),
+            }
+            config["plugins"] = section
+            self._save_config(config)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to save plugin config for {plugin_name}: {e}")
+            raise ConfigurationError("Failed to save plugin settings")
 
     def _events_section_raw(self) -> EventsSettings:
         config = self._load_config()

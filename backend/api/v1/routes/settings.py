@@ -30,6 +30,7 @@ from api.v1.schemas.settings import (
     HomeSettings,
     ACOUSTID_KEY_MASK,
     EventsSettings,
+    GetItSettings,
     TICKETMASTER_KEY_MASK,
     SKIDDLE_KEY_MASK,
     WrappedSettings,
@@ -461,6 +462,25 @@ def _clear_events_cache() -> None:
         get_events_watcher_service,
     ):
         provider.cache_clear()
+
+
+@router.get("/get-it", response_model=GetItSettings, dependencies=[Depends(_admin_guard)])
+async def get_get_it_settings(
+    preferences_service: PreferencesService = Depends(get_preferences_service),
+):
+    return preferences_service.get_get_it_settings()
+
+
+@router.put("/get-it", response_model=GetItSettings, dependencies=[Depends(_admin_guard)])
+async def update_get_it_settings(
+    settings: GetItSettings = MsgSpecBody(GetItSettings),
+    preferences_service: PreferencesService = Depends(get_preferences_service),
+):
+    # no provider clearing needed: GetItService reads these settings per call,
+    # and the options cache key carries region + decoration state, so a changed
+    # setting simply misses to a fresh key
+    preferences_service.save_get_it_settings(settings)
+    return preferences_service.get_get_it_settings()
 
 
 @router.get("/events", response_model=EventsSettings, dependencies=[Depends(_admin_guard)])

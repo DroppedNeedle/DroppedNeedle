@@ -474,6 +474,14 @@ class AlbumIdentifier:
         text_ranked = sorted(set(order), key=lambda mbid: -freq[mbid])
         return (seeds + text_ranked)[:_MAX_CANDIDATE_RGS]
 
+    async def release_tracks(
+        self, rg_id: str, target_count: int
+    ) -> tuple[_ReleaseMeta, list[MBTrack]] | None:
+        """Public wrapper over ``_best_release``: the release-group's best-fitting
+        release and its tracklist, for callers (the drop importer) that need the
+        per-track metadata behind an identified or manually chosen release group."""
+        return await self._best_release(rg_id, target_count)
+
     async def _best_release(
         self, rg_id: str, target_count: int
     ) -> tuple[_ReleaseMeta, list[MBTrack]] | None:

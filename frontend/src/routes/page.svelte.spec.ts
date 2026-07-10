@@ -17,11 +17,14 @@ vi.mock('$lib/queries/HomeQuery.svelte', () => ({
 }));
 
 vi.mock('$lib/queries/local/LocalQueries.svelte', () => ({
-	getLocalStatsQuery: () => ({ data: undefined, isError: false })
+	getLocalStatsQuery: () => ({ data: undefined, isError: false }),
+	// re-exported key factory (DropImportMutations imports it via this module)
+	LOCAL_KEYS: { root: ['local'] }
 }));
 
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
-	getLibraryStatsQuery: () => ({ data: undefined, isError: false })
+	getLibraryStatsQuery: () => ({ data: undefined, isError: false }),
+	getAlbumSearchQuery: () => ({ data: [], isFetching: false })
 }));
 
 // SimpleSourceSwitcher (rendered by the page) calls getConnectionsQuery, which

@@ -4,6 +4,7 @@
 	import { colors } from '$lib/colors';
 	import ArtistHeaderSkeleton from '$lib/components/ArtistHeaderSkeleton.svelte';
 	import AlbumGridSkeleton from '$lib/components/AlbumGridSkeleton.svelte';
+	import ArtistWhereToBuy from '$lib/components/ArtistWhereToBuy.svelte';
 	import ReleaseList from '$lib/components/ReleaseList.svelte';
 	import Toast from '$lib/components/Toast.svelte';
 	import ArtistHero from '$lib/components/ArtistHero.svelte';
@@ -315,6 +316,8 @@
 							{/each}
 						</div>
 					{/if}
+
+					<ArtistWhereToBuy artistMbid={data.artistId} artistName={artist.name} />
 				</section>
 
 				<section id="section-about" class="space-y-4 scroll-mt-24">

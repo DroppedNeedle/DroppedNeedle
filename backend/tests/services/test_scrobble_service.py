@@ -226,3 +226,40 @@ class TestDedupEviction:
             req = _scrobble_req(artist_name=f"artist-{i}", timestamp=base_ts + i)
             await service.submit_scrobble(req, user_id="u")
         assert len(service._dedup_cache) <= 200
+
+
+class TestPluginDispatch:
+    @pytest.mark.asyncio
+    async def test_accepted_scrobble_fans_out_to_plugins(self):
+        """01b scrobbler capability: an accepted play dispatches to the plugin
+        host fire-and-forget, without blocking the response."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        service, *_ = _make_service()
+        host = MagicMock()
+        host.dispatch_scrobble = AsyncMock()
+        service._plugin_host = host
+
+        result = await service.submit_scrobble(_scrobble_req(), user_id="u")
+        assert result.accepted is True
+        await asyncio.gather(*service._plugin_tasks)
+
+        host.dispatch_scrobble.assert_awaited_once()
+        event = host.dispatch_scrobble.await_args.args[0]
+        assert event.track == _scrobble_req().track_name
+
+    @pytest.mark.asyncio
+    async def test_short_tracks_do_not_reach_plugins(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        service, *_ = _make_service()
+        host = MagicMock()
+        host.dispatch_scrobble = AsyncMock()
+        service._plugin_host = host
+
+        await service.submit_scrobble(_scrobble_req(duration_ms=5_000), user_id="u")
+        await asyncio.gather(*service._plugin_tasks)
+
+        host.dispatch_scrobble.assert_not_awaited()

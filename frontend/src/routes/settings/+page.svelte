@@ -31,6 +31,8 @@
 	import SettingsOnboardingChecklist from '$lib/components/settings/SettingsOnboardingChecklist.svelte';
 	import SettingsSpotify from '$lib/components/settings/SettingsSpotify.svelte';
 	import SettingsEvents from '$lib/components/settings/SettingsEvents.svelte';
+	import SettingsGetIt from '$lib/components/settings/SettingsGetIt.svelte';
+	import SettingsPlugins from '$lib/components/settings/SettingsPlugins.svelte';
 	import SettingsWrapped from '$lib/components/settings/SettingsWrapped.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getUpdateCheckQuery } from '$lib/queries/VersionQuery.svelte';
@@ -54,7 +56,9 @@
 		Waypoints,
 		CalendarClock,
 		DownloadCloud,
-		Gift
+		Gift,
+		ShoppingBag,
+		Blocks
 	} from 'lucide-svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
@@ -111,6 +115,9 @@
 		...(authStore.isAdmin
 			? [{ id: 'events', label: 'Live Events', tier: 'setup', icon: CalendarClock }]
 			: []),
+		...(authStore.isAdmin
+			? [{ id: 'get-it', label: 'Get it', tier: 'setup', icon: ShoppingBag }]
+			: []),
 		{ id: 'settings', label: 'Release Types', tier: 'personalize', icon: Settings2 },
 		{ id: 'home', label: 'Home', tier: 'personalize', icon: Home },
 		{ id: 'discover', label: 'Discover', tier: 'personalize', icon: Compass },
@@ -121,6 +128,7 @@
 			? [
 					{ id: 'users', label: 'Users', tier: 'system', icon: Users },
 					{ id: 'security', label: 'Security', tier: 'system', icon: ShieldCheck },
+					{ id: 'plugins', label: 'Plugins', tier: 'system', icon: Blocks },
 					{ id: 'wrapped', label: 'Wrapped API', tier: 'system', icon: Gift }
 				]
 			: []),
@@ -159,15 +167,19 @@
 </script>
 
 <div class="min-h-screen bg-base-100">
-	<div class="container mx-auto p-4 max-w-7xl">
-		<div class="mb-6">
+	<!-- Desktop is an app-style two-pane layout: the page itself doesn't scroll;
+	     the tab rail and the content pane each scroll independently. This is what
+	     keeps the wheel from being trapped by a hidden sidebar scroller when the
+	     tab list grows taller than the viewport. Mobile keeps natural page flow. -->
+	<div class="container mx-auto p-4 max-w-7xl lg:flex lg:h-[calc(100vh-4rem)] lg:flex-col">
+		<div class="mb-6 lg:shrink-0">
 			<h1 class="text-3xl font-bold">Settings</h1>
 			<p class="text-base-content/70 mt-2">Manage your preferences and app settings.</p>
 		</div>
 
-		<div class="flex flex-col lg:flex-row gap-6">
+		<div class="flex flex-col lg:flex-row gap-6 lg:min-h-0 lg:flex-1">
 			<aside
-				class="scrollbar-hide w-full lg:w-80 lg:shrink-0 space-y-3 lg:sticky lg:top-20 lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto"
+				class="scrollbar-hide w-full lg:w-80 lg:shrink-0 space-y-3 lg:min-h-0 lg:overflow-y-auto lg:pb-4"
 			>
 				<label class="relative block">
 					<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-base-content/40" />
@@ -250,7 +262,7 @@
 				{/if}
 			</aside>
 
-			<main class="flex-1 min-w-0">
+			<main class="flex-1 min-w-0 lg:min-h-0 lg:overflow-y-auto lg:pb-4">
 				{#if activeTab === 'settings'}
 					<SettingsPreferences />
 				{:else if activeTab === 'home'}
@@ -299,6 +311,10 @@
 					<SettingsSpotify />
 				{:else if activeTab === 'events' && authStore.isAdmin}
 					<SettingsEvents />
+				{:else if activeTab === 'get-it' && authStore.isAdmin}
+					<SettingsGetIt />
+				{:else if activeTab === 'plugins' && authStore.isAdmin}
+					<SettingsPlugins />
 				{:else if activeTab === 'musicbrainz'}
 					<SettingsMusicBrainz />
 				{:else if activeTab === 'advanced'}

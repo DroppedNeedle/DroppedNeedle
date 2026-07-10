@@ -14,7 +14,8 @@ from api.v1.schemas.album import (
     LastFmAlbumEnrichment,
 )
 from api.v1.schemas.discovery import SimilarAlbumsResponse, MoreByArtistResponse
-from core.dependencies import get_album_service, get_album_discovery_service, get_album_enrichment_service, get_download_service, get_navidrome_library_service
+from api.v1.schemas.get_it import PurchaseOptionsResponse
+from core.dependencies import get_album_service, get_album_discovery_service, get_album_enrichment_service, get_download_service, get_get_it_service, get_navidrome_library_service
 from services.album_service import AlbumService
 from services.album_discovery_service import AlbumDiscoveryService
 from services.album_enrichment_service import AlbumEnrichmentService
@@ -79,6 +80,23 @@ async def refresh_album(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid album request"
         )
+
+
+@router.get("/{album_id}/purchase-options", response_model=PurchaseOptionsResponse)
+async def get_album_purchase_options(
+    album_id: str,
+    service=Depends(get_get_it_service),
+):
+    """The "Where to buy" links for an album (Get it, phase 01). Lazy by design:
+    the album page's own load path never calls this - the section component
+    fetches it with its own skeleton, so cold iTunes/MB lookups cost the album
+    page nothing."""
+    if is_unknown_mbid(album_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid or unknown album ID: {album_id}",
+        )
+    return await service.get_purchase_options(album_id)
 
 
 @router.get("/{album_id}/basic", response_model=AlbumBasicInfo)

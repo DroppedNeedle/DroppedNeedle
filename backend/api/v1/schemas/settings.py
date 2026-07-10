@@ -357,6 +357,27 @@ TICKETMASTER_KEY_MASK = "ticketmaster****"
 SKIDDLE_KEY_MASK = "skiddle****"
 
 
+class PluginConfig(AppStruct):
+    """Per-plugin admin state (phase 01b). ``enabled`` defaults to False on
+    purpose: dropping a folder into the plugins directory must never run code
+    until an admin flips it on (the documented trust model). ``settings`` holds
+    the values for the fields the plugin's manifest declares."""
+
+    enabled: bool = False
+    settings: dict[str, str] = {}
+
+
+class GetItSettings(AppStruct):
+    """"Get it" purchase links (phase 01). ``store_region`` feeds the iTunes
+    Search ``country`` storefront parameter. ``support_droppedneedle`` gates
+    the affiliate decorator (D19): on = the app's baked-in tags decorate store
+    links and a disclosure line renders; off = every link is a clean direct
+    URL. No secrets here - affiliate tags are public strings."""
+
+    store_region: Annotated[str, msgspec.Meta(pattern=r"^[A-Za-z]{2}$")] = "US"
+    support_droppedneedle: bool = True
+
+
 class EventsSettings(AppStruct):
     """Upcoming Events sources (.dev-notes/Events). Both API keys are
     Fernet-encrypted secrets, masked on read, preserved on save when the

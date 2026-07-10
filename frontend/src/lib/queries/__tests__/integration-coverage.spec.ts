@@ -158,6 +158,29 @@ const COVERAGE: Array<[string, string, string]> = [
 	['lidarr-import status', API.lidarrImport.status(), '/api/v1/lidarr-import/status'],
 	['lidarr-import artists', API.lidarrImport.artists(), '/api/v1/lidarr-import/artists'],
 	['lidarr-import import', API.lidarrImport.import(), '/api/v1/lidarr-import/import'],
+	// Get it (phase 01): the lazy Where-to-buy endpoint + the admin settings card
+	['album purchase options', API.album.purchaseOptions('M1'), '/api/v1/albums/M1/purchase-options'],
+	[
+		'artist purchase options',
+		API.artist.purchaseOptions('A1', 'Band'),
+		'/api/v1/artists/A1/purchase-options?name=Band'
+	],
+	['get-it settings', API.settingsGetIt(), '/api/v1/settings/get-it'],
+	// Plugin API (phase 01b): admin roster + curator source surfaces
+	['plugins list', API.plugins.list(), '/api/v1/plugins'],
+	['plugin install', API.plugins.install(), '/api/v1/plugins/install'],
+	['plugin update', API.plugins.update('P1'), '/api/v1/plugins/P1'],
+	['plugin uninstall', API.plugins.uninstall('P1'), '/api/v1/plugins/P1'],
+	['plugin sources', API.plugins.sources(), '/api/v1/plugins/sources'],
+	['plugin source search', API.plugins.sourceSearch('P1'), '/api/v1/plugins/sources/P1/search'],
+	['plugin source fetch', API.plugins.sourceFetch('P1'), '/api/v1/plugins/sources/P1/fetch'],
+	// Drop importer (Store Sync 01c): curator-gated upload/jobs/match/discard
+	['drop-import uploads', API.dropImport.uploads(), '/api/v1/import/uploads'],
+	['drop-import jobs', API.dropImport.jobs(), '/api/v1/import/jobs'],
+	['drop-import jobs (all)', API.dropImport.jobs(true), '/api/v1/import/jobs?all=true'],
+	['drop-import job', API.dropImport.job('J1'), '/api/v1/import/jobs/J1'],
+	['drop-import match', API.dropImport.match(7), '/api/v1/import/items/7/match'],
+	['drop-import discard', API.dropImport.discard(7), '/api/v1/import/items/7/discard'],
 	// Bulk auto-download approval batches (admin, requests router)
 	[
 		'auto-download approval batches',

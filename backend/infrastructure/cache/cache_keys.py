@@ -63,6 +63,22 @@ GITHUB_RELEASES_PREFIX = "github:releases:"
 
 AUDIODB_PREFIX = "audiodb_"
 
+GETIT_OPTIONS_PREFIX = "getit:options:"
+GETIT_ARTIST_OPTIONS_PREFIX = "getit:artist_options:"
+
+
+def getit_prefixes() -> list[str]:
+    """"Get it" purchase-option keys; swept when Get-it settings change."""
+    return [GETIT_OPTIONS_PREFIX, GETIT_ARTIST_OPTIONS_PREFIX]
+
+
+def getit_options_key(release_group_mbid: str, region: str, decorated: bool) -> str:
+    return f"{GETIT_OPTIONS_PREFIX}{release_group_mbid}:{region}:{int(decorated)}"
+
+
+def getit_artist_options_key(artist_mbid: str, decorated: bool) -> str:
+    return f"{GETIT_ARTIST_OPTIONS_PREFIX}{artist_mbid}:{int(decorated)}"
+
 
 def musicbrainz_prefixes() -> list[str]:
     """All MusicBrainz cache key prefixes for bulk invalidation."""

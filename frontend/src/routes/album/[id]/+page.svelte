@@ -13,6 +13,7 @@
 	import AlbumSourceBars from './AlbumSourceBars.svelte';
 	import AlbumTrackList from './AlbumTrackList.svelte';
 	import AlbumDiscovery from './AlbumDiscovery.svelte';
+	import WhereToBuy from './WhereToBuy.svelte';
 
 	let { data }: { data: { albumId: string } } = $props();
 
@@ -77,6 +78,8 @@
 				onrefresh={state.refreshAll}
 				onartistclick={state.goToArtist}
 			/>
+
+			<WhereToBuy releaseGroupMbid={album.musicbrainz_id} />
 
 			{#if state.loadingTracks}
 				<div class="space-y-3">

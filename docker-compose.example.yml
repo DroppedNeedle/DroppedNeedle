@@ -22,6 +22,11 @@ services:
     volumes:
       - ./config:/app/config       # config + database
       - ./cache:/app/cache         # cover art and metadata cache
+      - ./plugins:/app/plugins     # installed plugins; omit and they vanish on recreate
+      # OPTIONAL: drop-importer staging. Put it on the same filesystem as /music and an
+      # import is an atomic rename instead of a byte copy. Omit and uploads land on the
+      # container's writable layer, and anything awaiting a manual match is lost on recreate.
+      - ./imports:/app/imports
       - /path/to/music:/music:rw   # your library; imports land here
       # slskd's COMPLETED-downloads folder (its Options > Directories > "downloads", often a
       # .../complete dir) - the exact folder, NOT a parent, or imports show as "failed". Keep

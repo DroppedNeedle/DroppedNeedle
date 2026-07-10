@@ -1,0 +1,15 @@
+[plugin]
+name = "lma-source"
+display_name = "Live Music Archive"
+version = "1.0.0"
+api_version = 0
+entrypoint = "plugin:LiveMusicArchiveSource"
+capabilities = ["audio_source"]
+description = "Search the Internet Archive's Live Music Archive (etree) and import shows - live recordings the artists have approved for free, legal trading."
+author = "DroppedNeedle examples"
+homepage = "https://archive.org/details/etree"
+
+[[settings]]
+key = "preferred_format"
+label = "Preferred format"
+help = "FLAC or MP3 (falls back to whatever the show has). Default: FLAC."

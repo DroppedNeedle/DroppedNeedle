@@ -1100,6 +1100,34 @@ export type SpotifySettings = {
 	enabled: boolean;
 };
 
+// mirrors backend api/v1/schemas/settings.py (GetItSettings)
+export type GetItSettings = {
+	store_region: string; // ISO 3166-1 alpha-2, feeds the iTunes storefront
+	support_droppedneedle: boolean; // D19 affiliate toggle
+};
+
+// mirrors backend api/v1/schemas/get_it.py
+export type PurchaseLink = {
+	store: string;
+	label: string;
+	url: string;
+	kind: 'digital' | 'physical' | 'free';
+};
+
+export type PurchaseOptionsResponse = {
+	digital: PurchaseLink[];
+	physical: PurchaseLink[];
+	free: PurchaseLink[];
+	bandcamp_search_url: string;
+	disclosure: boolean;
+};
+
+export type ArtistPurchaseOptionsResponse = {
+	links: PurchaseLink[];
+	bandcamp_search_url: string;
+	disclosure: boolean;
+};
+
 // mirrors backend api/v1/schemas/settings.py (EventsSettings)
 export type EventsSettings = {
 	enabled: boolean;

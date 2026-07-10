@@ -33,11 +33,33 @@ class ScrobbleService:
         client_factory: PerUserClientFactory,
         listening_prefs_store: UserListeningPrefsStore,
         play_history_store: PlayHistoryStore,
+        plugin_host=None,  # noqa: ANN001 - PluginHost, optional (01b)
     ):
         self._client_factory = client_factory
         self._listening_prefs_store = listening_prefs_store
         self._play_history_store = play_history_store
+        self._plugin_host = plugin_host
         self._dedup_cache: dict[str, float] = {}
+        self._plugin_tasks: set[asyncio.Task] = set()
+
+    def _dispatch_to_plugins(self, request: ScrobbleRequest) -> None:
+        """Fan the accepted play out to scrobbler plugins, fire-and-forget so a
+        slow plugin never adds latency to the client's scrobble call."""
+        if self._plugin_host is None:
+            return
+        from infrastructure.plugins.protocols import ScrobbleEvent
+
+        event = ScrobbleEvent(
+            artist=request.artist_name,
+            track=request.track_name,
+            album=request.album_name,
+            timestamp=request.timestamp,
+            duration_ms=request.duration_ms or None,
+            recording_mbid=request.mbid,
+        )
+        task = asyncio.create_task(self._plugin_host.dispatch_scrobble(event))
+        self._plugin_tasks.add(task)
+        task.add_done_callback(self._plugin_tasks.discard)
 
     def _dedup_key(self, user_id: str, artist: str, track: str, timestamp: int) -> str:
         # user_id-scoped so two users scrobbling the same track aren't cross-deduped
@@ -128,6 +150,8 @@ class ScrobbleService:
                 request.track_name,
             )
             return ScrobbleResponse(accepted=True, services={})
+
+        self._dispatch_to_plugins(request)
 
         prefs = await self._listening_prefs_store.get(user_id)
         tasks: dict[str, Any] = {}
