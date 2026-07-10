@@ -141,23 +141,19 @@
 </script>
 
 <div
-	class="card card-sm w-full shadow-sm shrink-0 group relative transition-all duration-200"
-	class:bg-base-100={!sourceType}
+	class="group relative flex w-full shrink-0 flex-col overflow-hidden rounded-2xl border border-base-content/8 bg-base-200/50 transition-colors duration-200 hover:border-primary/30"
 	style={sourceColor
-		? `background: color-mix(in srgb, ${sourceColor} 6%, var(--color-base-100)); border-left: 3px solid color-mix(in srgb, ${sourceColor} 50%, transparent);`
+		? `background: color-mix(in srgb, ${sourceColor} 6%, oklch(from var(--color-base-200) l c h / 0.5)); border-left: 3px solid color-mix(in srgb, ${sourceColor} 50%, transparent);`
 		: ''}
-	style:--source-glow={sourceColor
-		? `color-mix(in srgb, ${sourceColor} 20%, transparent)`
-		: 'oklch(from var(--color-primary) l c h / 0.15)'}
 >
 	<a
 		href="/playlists/{playlist.id}"
-		class="block relative z-0 transition-transform active:scale-95 focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 rounded-t-box"
+		class="relative z-0 block rounded-t-2xl transition-transform focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 active:scale-95"
 		aria-label="Open {playlist.name}"
 	>
-		<figure class="aspect-square overflow-hidden relative">
+		<figure class="relative aspect-square overflow-hidden">
 			<div
-				class="w-full h-full transition-transform duration-200 group-hover:scale-105 transform-gpu"
+				class="h-full w-full transform-gpu transition-transform duration-200 group-hover:scale-105"
 			>
 				<PlaylistMosaic
 					coverUrls={playlist.cover_urls}
@@ -168,7 +164,7 @@
 			</div>
 			{#if sourceType}
 				<div
-					class="absolute top-2 right-2 flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider shadow-md backdrop-blur-sm"
+					class="absolute top-2 right-2 flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider shadow-md backdrop-blur-sm"
 					style="background: color-mix(in srgb, {sourceColor} 85%, black); color: white;"
 				>
 					{#if sourceType === 'jellyfin'}
@@ -196,16 +192,18 @@
 			{/if}
 		</figure>
 		<div class="px-3 pt-3 pb-1">
-			<h3 class="text-sm font-semibold line-clamp-1">{playlist.name}</h3>
-			<p class="text-xs text-base-content/60 mt-0.5">{subtitle}</p>
+			<h3 class="line-clamp-1 font-display text-sm font-semibold tracking-tight">
+				{playlist.name}
+			</h3>
+			<p class="mt-0.5 text-xs text-base-content/60">{subtitle}</p>
 			{#if !playlist.is_owner && playlist.is_public}
 				<div class="mt-1.5 flex items-center gap-1.5">
 					<div class="avatar avatar-placeholder">
-						<div class="w-4 h-4 rounded-full bg-accent text-accent-content">
+						<div class="h-4 w-4 rounded-full bg-accent text-accent-content">
 							<span class="text-[8px] font-semibold leading-none">{ownerInitials}</span>
 						</div>
 					</div>
-					<span class="text-[10px] text-base-content/60 line-clamp-1">
+					<span class="line-clamp-1 text-[10px] text-base-content/60">
 						Shared by {playlist.owner_name ?? 'someone'}
 					</span>
 				</div>
@@ -213,9 +211,9 @@
 		</div>
 	</a>
 
-	<div class="flex items-center gap-1 px-3 pb-2.5 pt-1.5">
+	<div class="flex items-center gap-1 px-3 pt-1.5 pb-2.5">
 		<button
-			class="btn btn-circle btn-sm bg-success text-success-content border-none shadow-md hover:scale-110 active:scale-95 transition-transform duration-150"
+			class="btn btn-circle btn-sm btn-primary border-none shadow-md transition-transform duration-150 hover:scale-110 active:scale-95"
 			onclick={handlePlay}
 			disabled={!hasPlayableTracks || playLoading}
 			aria-label="Play {playlist.name}"
@@ -229,7 +227,7 @@
 		</button>
 
 		<button
-			class="btn btn-circle btn-sm btn-ghost text-base-content/50 hover:text-base-content transition-colors duration-150"
+			class="btn btn-circle btn-sm btn-ghost text-base-content/50 transition-colors duration-150 hover:text-base-content"
 			onclick={handleShuffle}
 			disabled={!hasPlayableTracks || shuffleLoading}
 			aria-label="Shuffle {playlist.name}"
@@ -265,9 +263,3 @@
 		{/if}
 	</div>
 </div>
-
-<style>
-	div.card:hover {
-		box-shadow: 0 0 20px var(--source-glow, oklch(from var(--color-primary) l c h / 0.15));
-	}
-</style>

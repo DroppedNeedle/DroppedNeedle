@@ -123,7 +123,7 @@
 		<a
 			href={card.href}
 			bind:this={cardEls[i]}
-			class="group relative flex min-h-[160px] flex-col justify-center overflow-hidden rounded-2xl border bg-gradient-to-br px-6 py-5 text-center backdrop-blur-sm transition-all sm:min-h-[180px] {colors.gradient} {colors.border} {isHovered
+			class="group relative flex min-h-[160px] flex-col justify-center overflow-hidden rounded-2xl border bg-base-200/50 bg-gradient-to-br px-6 py-5 text-center backdrop-blur-sm transition-all sm:min-h-[180px] {colors.gradient} {colors.border} {isHovered
 				? glowHover[card.colorScheme]
 				: colors.glow} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100"
 			style="transform-style: preserve-3d; transform: {tiltStyles[i] ||
@@ -154,12 +154,8 @@
 
 			{#if card.value !== null}
 				<div
-					class="text-4xl font-bold tabular-nums tracking-tight sm:text-5xl {colors.text}"
-					style="text-shadow: 0 0 30px oklch(var(--{card.colorScheme === 'primary'
-						? 'p'
-						: card.colorScheme === 'secondary'
-							? 's'
-							: 'a'}) / 0.25);"
+					class="font-display text-4xl font-bold tabular-nums tracking-tight sm:text-5xl {colors.text}"
+					style="text-shadow: 0 0 30px oklch(from var(--color-{card.colorScheme}) l c h / 0.25);"
 				>
 					{formatNumber(Math.round(getCounterValue(i)))}
 				</div>
@@ -167,12 +163,14 @@
 				<div class="mx-auto h-10 w-24 animate-glow-pulse rounded-lg bg-base-200/40 sm:h-12"></div>
 			{/if}
 
-			<div class="mt-2 text-sm font-medium uppercase tracking-[0.15em] text-base-content/60">
+			<div
+				class="mt-3 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/60"
+			>
 				{card.label}
 			</div>
 
 			{#if card.subtitle}
-				<div class="mt-0.5 text-xs text-base-content/40">{card.subtitle}</div>
+				<div class="mt-1 text-xs text-base-content/40">{card.subtitle}</div>
 			{/if}
 
 			<div

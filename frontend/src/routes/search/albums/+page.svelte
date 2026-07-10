@@ -1,14 +1,13 @@
-<script lang="ts">
+﻿<script lang="ts">
 	import { run } from 'svelte/legacy';
 
 	import { onDestroy, onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { goto } from '$app/navigation';
 	import AlbumCard from '$lib/components/AlbumCard.svelte';
 	import AlbumCardSkeleton from '$lib/components/AlbumCardSkeleton.svelte';
 	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
 	import type { Album, EnrichmentSource } from '$lib/types';
-	import { colors } from '$lib/colors';
+	import SearchHeader from '$lib/components/search/SearchHeader.svelte';
 	import { searchStore } from '$lib/stores/search';
 	import { fetchEnrichmentBatch, applyAlbumEnrichment } from '$lib/utils/enrichment';
 	import { isAbortError } from '$lib/utils/errorHandling';
@@ -34,18 +33,6 @@
 	let observer: IntersectionObserver | null = null;
 	let enrichmentSource: EnrichmentSource = $state('none');
 	let lastQuery = $state('');
-
-	function navigateBack() {
-		if (data.query) {
-			goto(`/search?q=${encodeURIComponent(data.query)}`);
-		}
-	}
-
-	function navigateToBucket(bucket: 'artists') {
-		if (data.query) {
-			goto(`/search/${bucket}?q=${encodeURIComponent(data.query)}`);
-		}
-	}
 
 	function handleAlbumAdded() {
 		showToast = true;
@@ -226,30 +213,7 @@
 	});
 </script>
 
-<div class="px-8 pt-4 pb-2">
-	<div class="flex gap-2">
-		<button
-			class="badge badge-lg cursor-pointer transition-colors"
-			style="background-color: {colors.secondary}; color: {colors.primary};"
-			onclick={navigateBack}
-		>
-			All
-		</button>
-		<button
-			class="badge badge-lg cursor-pointer transition-colors"
-			style="background-color: {colors.secondary}; color: {colors.primary};"
-			onclick={() => navigateToBucket('artists')}
-		>
-			Artists
-		</button>
-		<button
-			class="badge badge-lg cursor-pointer"
-			style="background-color: {colors.primary}; color: {colors.secondary};"
-		>
-			Albums
-		</button>
-	</div>
-</div>
+<SearchHeader query={data.query} active="albums" />
 
 <section class="px-8 py-4">
 	{#if !data.query}

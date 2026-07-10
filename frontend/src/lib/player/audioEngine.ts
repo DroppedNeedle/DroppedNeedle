@@ -11,6 +11,7 @@ export class AudioEngine {
 	private analyser: AnalyserNode | null = null;
 	private freqData: Uint8Array<ArrayBuffer> | null = null;
 	private connectedElement: HTMLAudioElement | null = null;
+	private stateChangeCallbacks: ((state: AudioContextState) => void)[] = [];
 
 	connect(audio: HTMLAudioElement): void {
 		if (this.connectedElement === audio) return;
@@ -19,6 +20,13 @@ export class AudioEngine {
 		}
 
 		this.context = new AudioContext();
+		// iOS suspends the AudioContext when a PWA backgrounds; surface state flips
+		// so callers can resume the chain instead of letting playback die silently.
+		this.context.onstatechange = () => {
+			const state = this.context?.state;
+			if (!state) return;
+			for (const cb of this.stateChangeCallbacks) cb(state);
+		};
 		this.source = this.context.createMediaElementSource(audio);
 
 		this.filters = EQ_FREQUENCIES.map((freq) => {
@@ -92,6 +100,11 @@ export class AudioEngine {
 		return this.connectedElement !== null;
 	}
 
+	/** Notifies on AudioContext state flips ('suspended'/'running'/...). */
+	onContextStateChange(callback: (state: AudioContextState) => void): void {
+		this.stateChangeCallbacks.push(callback);
+	}
+
 	async resume(): Promise<void> {
 		if (this.context && this.context.state === 'suspended') {
 			await this.context.resume();
@@ -104,9 +117,13 @@ export class AudioEngine {
 		}
 		this.analyser?.disconnect();
 		this.source?.disconnect();
-		if (this.context && this.context.state !== 'closed') {
-			void this.context.close();
+		if (this.context) {
+			this.context.onstatechange = null;
+			if (this.context.state !== 'closed') {
+				void this.context.close();
+			}
 		}
+		this.stateChangeCallbacks = [];
 		this.filters = [];
 		this.analyser = null;
 		this.freqData = null;

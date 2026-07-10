@@ -6,22 +6,23 @@
 		TrendingUp,
 		Sparkles,
 		Library,
-		SlidersHorizontal
+		ChevronRight
 	} from 'lucide-svelte';
 	import HomeSection from '$lib/components/HomeSection.svelte';
 	import WeeklyExploration from '$lib/components/WeeklyExploration.svelte';
 	import ServicePromptCard from '$lib/components/ServicePromptCard.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import GenreGrid from '$lib/components/GenreGrid.svelte';
 	import SectionDivider from '$lib/components/SectionDivider.svelte';
 	import type {
 		HomeSection as HomeSectionType,
 		WeeklyExplorationSection as WeeklyExplorationSectionType
 	} from '$lib/types';
 	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
-	import PageHeader from '$lib/components/PageHeader.svelte';
+	import ExploreSpotlight from '$lib/components/home/ExploreSpotlight.svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { getGreeting } from '$lib/utils/homeCache';
 	import { isDismissed } from '$lib/utils/dismissedPrompts';
+	import type { HomeAlbum } from '$lib/types';
 	import HomeSectionNowPlaying from '$lib/components/HomeSectionNowPlaying.svelte';
 	import HomeEntryCards from '$lib/components/HomeEntryCards.svelte';
 	import DiscoverTeaserBand from '$lib/components/discover/DiscoverTeaserBand.svelte';
@@ -137,6 +138,47 @@
 	let downloadClientConfigured = $derived(homeData?.integration_status?.download_client ?? true);
 	let downloadClientPrompt = $derived(servicePrompts.find((p) => p.service === 'download-client'));
 
+	// Cinematic spotlight — YOUR music first. Global charts (ListenBrainz) are
+	// only the cold-start fallback for brand-new instances with no history.
+	const spotlightPersonal = $derived.by(() => {
+		const pools = [
+			homeData?.recently_played?.items ?? [],
+			homeData?.your_top_albums?.items ?? [],
+			homeData?.recently_added?.items ?? [],
+			homeData?.library_albums?.items ?? []
+		];
+		const seen = new SvelteSet<string>();
+		const picks: HomeAlbum[] = [];
+		for (const pool of pools) {
+			for (const raw of pool) {
+				const item = raw as HomeAlbum;
+				if (!item.mbid || !item.artist_mbid || seen.has(item.mbid)) continue;
+				seen.add(item.mbid);
+				picks.push(item);
+				if (picks.length >= 5) return picks;
+			}
+		}
+		return picks;
+	});
+
+	const spotlightItems = $derived.by(() => {
+		if (spotlightPersonal.length > 0) return spotlightPersonal;
+		const pool = (homeData?.popular_albums?.items ?? []) as HomeAlbum[];
+		const seen = new SvelteSet<string>();
+		const picks: HomeAlbum[] = [];
+		for (const item of pool) {
+			if (!item.mbid || !item.artist_mbid || seen.has(item.mbid)) continue;
+			seen.add(item.mbid);
+			picks.push(item);
+			if (picks.length >= 5) break;
+		}
+		return picks;
+	});
+
+	const spotlightEyebrow = $derived(
+		spotlightPersonal.length > 0 ? 'From your rotation' : 'Trending this week'
+	);
+
 	const getOtherPrompts = () => {
 		return servicePrompts.filter((p) => p.service !== 'download-client' && !isDismissed(p.service));
 	};
@@ -148,35 +190,95 @@
 </script>
 
 <svelte:head>
-	<title>Home - DroppedNeedle</title>
+	<title>Explore - DroppedNeedle</title>
 </svelte:head>
 
 <div class="min-h-[calc(100vh-200px)]">
-	<PageHeader
-		subtitle="Discover music, explore your library, and find new favorites."
-		{loading}
-		isUpdating={isUpdating || !!homeData?.refreshing}
-		{lastUpdated}
-	>
-		{#snippet title()}
-			<Music class="inline h-8 w-8 sm:h-10 sm:w-10 lg:h-12 lg:w-12 mr-2 align-text-bottom" />
-			{getGreeting()}
-		{/snippet}
-	</PageHeader>
+	{#if spotlightItems.length > 0}
+		<ExploreSpotlight items={spotlightItems} eyebrow={spotlightEyebrow} />
+	{:else if loading && !homeData}
+		<div class="flex min-h-[40vh] items-end px-4 pb-10 sm:px-6 lg:px-8">
+			<div class="w-full max-w-xl space-y-4">
+				<div class="skeleton skeleton-shimmer h-6 w-36 rounded-full"></div>
+				<div class="skeleton skeleton-shimmer h-16 w-4/5"></div>
+				<div class="skeleton skeleton-shimmer h-5 w-2/3"></div>
+			</div>
+		</div>
+	{/if}
 
-	<div class="flex justify-end px-4 -mt-4 mb-4 sm:px-6 lg:px-8">
-		<a
-			href="/settings?tab=home"
-			class="btn btn-ghost btn-sm gap-2 text-base-content/60 hover:text-base-content"
-			title="Choose which sections appear here"
-		>
-			<SlidersHorizontal class="h-4 w-4" />
-			<span class="hidden sm:inline">Customise</span>
-		</a>
-	</div>
+	<!-- onboarding first: when the download client isn't wired up yet, the welcome
+	     card owns the top of the page -->
+	{#if homeData && !downloadClientConfigured && downloadClientPrompt}
+		<!-- phones get one quiet line instead of the onboarding boxes -->
+		<div class="px-4 pt-4 md:hidden">
+			<a
+				href="/settings?tab=download-client"
+				class="flex items-center gap-3 rounded-2xl border border-base-content/10 bg-base-200/60 px-4 py-3"
+			>
+				<Download class="h-4 w-4 shrink-0 text-accent" />
+				<span class="min-w-0 flex-1 text-sm text-base-content/75">
+					Finish setup — connect a download client
+				</span>
+				<ChevronRight class="h-4 w-4 shrink-0 opacity-40" />
+			</a>
+		</div>
 
-	<div class="mb-10 px-4 sm:mb-12 sm:px-6 lg:px-8">
-		<HomeEntryCards />
+		<div class="hidden px-4 pt-6 sm:px-6 md:block lg:px-8">
+			<div class="dn-welcome">
+				<div class="dn-welcome__wash" aria-hidden="true"></div>
+				<p
+					class="font-mono text-[0.62rem] font-bold uppercase tracking-[0.22em] text-base-content/50"
+				>
+					First spin
+				</p>
+				<h2 class="hero-title mt-2 font-display text-3xl font-bold tracking-tight sm:text-4xl">
+					Welcome to DroppedNeedle
+				</h2>
+				<p class="mt-3 max-w-lg text-base-content/65">
+					Connect a download client to start requesting albums and tracks for your library.
+				</p>
+				<div class="mt-4 flex flex-wrap gap-1.5">
+					{#each downloadClientPrompt.features as feature (feature)}
+						<span
+							class="rounded-full border border-base-content/10 bg-base-content/5 px-3 py-1 font-mono text-[0.6rem] font-bold uppercase tracking-[0.1em] text-base-content/60"
+							>{feature}</span
+						>
+					{/each}
+				</div>
+				<a
+					href="/settings?tab=download-client"
+					class="btn btn-primary mt-6 gap-2 rounded-full shadow-lg"
+				>
+					<Download class="h-4 w-4" />
+					Configure Download Client
+				</a>
+			</div>
+		</div>
+	{/if}
+
+	<!-- the two big doors: desktop only — on phones the drawer + bottom bar cover them -->
+	<div class="hidden px-4 pt-6 sm:px-6 md:block lg:px-8">
+		<div class="flex items-baseline justify-between gap-3 pb-4">
+			<p class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/45">
+				{getGreeting()} · your setup
+			</p>
+			<p class="min-h-4 text-xs text-base-content/40">
+				{#if isUpdating || homeData?.refreshing}
+					<span class="inline-flex items-center gap-1.5">
+						<span class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary"></span>
+						Updating…
+					</span>
+				{:else if lastUpdated}
+					Updated {lastUpdated.toLocaleTimeString(undefined, {
+						hour: 'numeric',
+						minute: '2-digit'
+					})}
+				{/if}
+			</p>
+		</div>
+		<div class="dn-entry-scale mb-12">
+			<HomeEntryCards />
+		</div>
 	</div>
 
 	{#if homeQuery.error && !homeData}
@@ -190,32 +292,6 @@
 			class="space-y-10 px-4 sm:space-y-12 sm:px-6 lg:px-8"
 			class:is-refreshing={homeData?.refreshing}
 		>
-			{#if !downloadClientConfigured && downloadClientPrompt}
-				<div
-					class="card bg-linear-to-br from-accent/20 via-accent/10 to-base-200 border-2 border-accent/40 shadow-xl relative overflow-hidden"
-				>
-					<div class="card-body items-center text-center py-12 stagger-fade-in">
-						<Music class="h-16 w-16 mb-4 animate-float text-accent" />
-						<h2 class="card-title text-3xl sm:text-4xl lg:text-5xl font-bold mb-2">
-							Welcome to <span class="text-primary">DroppedNeedle</span>!
-						</h2>
-						<p class="text-base-content/70 max-w-lg mb-6">
-							Get started by connecting a download client. You need it to request albums and tracks
-							for your library.
-						</p>
-						<div class="flex flex-wrap justify-center gap-2 mb-6">
-							{#each downloadClientPrompt.features as feature (feature)}
-								<span class="badge badge-accent badge-lg">{feature}</span>
-							{/each}
-						</div>
-						<a href="/settings?tab=download-client" class="btn btn-accent btn-lg gap-2">
-							<Download class="h-5 w-5" />
-							Configure Download Client
-						</a>
-					</div>
-				</div>
-			{/if}
-
 			{#if otherPrompts.length > 0 && downloadClientConfigured}
 				<div class="space-y-3">
 					{#each otherPrompts as prompt, i (`prompt-${i}`)}
@@ -285,24 +361,7 @@
 				{/if}
 			{/if}
 
-			{#if loading && !homeData}
-				<section>
-					<div class="skeleton skeleton-shimmer mb-4 h-6 w-36"></div>
-					<div class="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-5">
-						{#each Array(10) as _, i (`genre-skeleton-${i}`)}
-							<div class="skeleton skeleton-shimmer h-20 rounded-lg sm:h-24"></div>
-						{/each}
-					</div>
-				</section>
-			{:else if homeData?.genre_list && homeData.genre_list.items.length > 0}
-				<div class="mt-10 mb-10">
-					<GenreGrid
-						title={homeData.genre_list.title}
-						genres={homeData.genre_list.items}
-						genreArtistImages={homeData.genre_artist_images}
-					/>
-				</div>
-			{/if}
+			<!-- genre browsing lives in Discovery and Stations now; Home stays music-first -->
 
 			{#if loading && !homeData}
 				{#each Array(4) as _, i (`post-genre-skeleton-${i}`)}
@@ -326,7 +385,7 @@
 				</div>
 			{/if}
 
-			{#if !loading && !hasContent && servicePrompts.length === 0}
+			{#if !loading && !hasContent && servicePrompts.length === 0 && downloadClientConfigured}
 				<div class="flex flex-col items-center justify-center py-12 sm:py-16">
 					<Music class="h-12 w-12 sm:h-16 sm:w-16 mb-4 sm:mb-6" />
 					<h2 class="mb-2 text-center text-3xl font-bold sm:text-4xl lg:text-5xl">
@@ -351,3 +410,48 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.dn-welcome {
+		position: relative;
+		isolation: isolate;
+		overflow: hidden;
+		padding: 2.5rem 2rem 2.75rem;
+		border-radius: 1.5rem;
+		border: 1px solid var(--dn-hairline);
+	}
+	.dn-welcome__wash {
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		background:
+			radial-gradient(
+				circle at 12% -30%,
+				oklch(from var(--color-accent) l c h / 0.16),
+				transparent 55%
+			),
+			radial-gradient(
+				circle at 90% 130%,
+				oklch(from var(--color-primary) l c h / 0.08),
+				transparent 55%
+			),
+			oklch(from var(--color-base-200) l c h / 0.5);
+	}
+
+	/* the entry doors: prominent but not oversized — a notch above stock size */
+	.dn-entry-scale :global(.card-body) {
+		padding: 1.5rem;
+		gap: 1rem;
+	}
+	.dn-entry-scale :global(.card-body h2) {
+		font-size: 1.3rem;
+	}
+	@media (min-width: 1024px) {
+		.dn-entry-scale :global(.card-body) {
+			padding: 1.75rem;
+		}
+		.dn-entry-scale :global(.card-body h2) {
+			font-size: 1.45rem;
+		}
+	}
+</style>

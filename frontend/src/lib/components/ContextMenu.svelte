@@ -134,7 +134,7 @@
 	<ul
 		bind:this={menuEl}
 		use:portal
-		class="menu bg-base-200/95 backdrop-blur-md rounded-box shadow-lg w-52 p-2"
+		class="dn-ctx-menu menu w-52 rounded-xl p-2"
 		style="position: fixed; top: {menuTop}px; left: {menuLeft}px; z-index: 9999;"
 		role="menu"
 		onclick={(e: MouseEvent) => e.stopPropagation()}
@@ -146,7 +146,9 @@
 			<li>
 				<button
 					role="menuitem"
-					class="{item.disabled ? 'opacity-50 cursor-not-allowed' : ''} {item.className ?? ''}"
+					class="rounded-lg text-[0.85rem] hover:bg-base-content/8 {item.disabled
+						? 'opacity-50 cursor-not-allowed'
+						: ''} {item.className ?? ''}"
 					disabled={item.disabled}
 					aria-disabled={item.disabled ? 'true' : undefined}
 					onclick={(e: MouseEvent) => {
@@ -154,10 +156,20 @@
 						handleItemClick(item);
 					}}
 				>
-					<item.icon class="h-4 w-4" />
+					<item.icon class="h-4 w-4 opacity-70" />
 					{item.label}
 				</button>
 			</li>
 		{/each}
 	</ul>
 {/if}
+
+<style>
+	.dn-ctx-menu {
+		border: 1px solid var(--dn-hairline);
+		background: oklch(from var(--color-base-200) l c h / 0.97);
+		backdrop-filter: blur(24px) saturate(1.05);
+		-webkit-backdrop-filter: blur(24px) saturate(1.05);
+		box-shadow: var(--dn-shadow-4);
+	}
+</style>

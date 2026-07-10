@@ -1,0 +1,113 @@
+/*
+ * DroppedNeedle design tokens
+ * -----------------------------------------------------------------------------
+ * The formal token layer for the redesign. Colour roles come from the DaisyUI
+ * themes defined in app.css (base-100/200/300, primary, accent, ...). This file
+ * adds the theme-independent scales (elevation, radius, motion) plus the
+ * per-theme mirrors and accessibility hooks (text size, reduced motion) that the
+ * app.css theme blocks cannot express on their own.
+ *
+ * Everything here is ADDITIVE: it introduces new `--dn-*` custom properties and
+ * `[data-*]` hooks without altering any existing selector, so it cannot change
+ * current styling until a component opts in.
+ */
+
+:root {
+	/* Elevation — a four-step shadow scale. Tuned for dark surfaces; the light
+	   theme softens them below. Use var(--dn-shadow-N) instead of ad-hoc values. */
+	--dn-shadow-1: 0 1px 2px oklch(0 0 0 / 0.28);
+	--dn-shadow-2: 0 6px 16px -6px oklch(0 0 0 / 0.45);
+	--dn-shadow-3: 0 14px 32px -12px oklch(0 0 0 / 0.55);
+	--dn-shadow-4: 0 28px 64px -22px oklch(0 0 0 / 0.66);
+
+	/* Radius scale — cards, controls, pills. */
+	--dn-radius-xs: 0.5rem;
+	--dn-radius-sm: 0.75rem;
+	--dn-radius-md: 1rem;
+	--dn-radius-lg: 1.35rem;
+	--dn-radius-xl: 1.85rem;
+	--dn-radius-pill: 999px;
+
+	/* Motion — durations pair with the easings already in app.css
+	   (--ease-spring, --ease-overshoot). */
+	--dn-dur-instant: 0.1s;
+	--dn-dur-fast: 0.16s;
+	--dn-dur-base: 0.24s;
+	--dn-dur-slow: 0.4s;
+	--dn-dur-slower: 0.6s;
+
+	/* Semantic surface helpers derived from the active theme's base colours, so
+	   they re-tint automatically per theme. */
+	--dn-surface-raised: oklch(from var(--color-base-200) l c h / 0.72);
+	--dn-surface-overlay: oklch(from var(--color-base-200) l c h / 0.94);
+	--dn-hairline: oklch(from var(--color-base-content) l c h / 0.1);
+	--dn-hairline-strong: oklch(from var(--color-base-content) l c h / 0.16);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Per-theme mirrors                                                          */
+/* rgb-triplet of --color-primary, consumed by rgb(var(--color-primary-rgb)/…) */
+/* gradient/glow helpers. Kept in sync with each theme's --color-primary.      */
+/* -------------------------------------------------------------------------- */
+[data-theme='droppedneedle'],
+[data-theme='dark'] {
+	--color-primary-rgb: 233 235 227;
+}
+[data-theme='droppedneedle-light'] {
+	--color-primary-rgb: 47 111 158;
+	/* soften the black-based elevation on paper surfaces */
+	--dn-shadow-1: 0 1px 2px oklch(0 0 0 / 0.08);
+	--dn-shadow-2: 0 6px 16px -6px oklch(0 0 0 / 0.14);
+	--dn-shadow-3: 0 14px 32px -12px oklch(0 0 0 / 0.18);
+	--dn-shadow-4: 0 28px 64px -22px oklch(0 0 0 / 0.22);
+}
+[data-theme='droppedneedle-contrast'] {
+	--color-primary-rgb: 169 215 255;
+	--dn-hairline: oklch(from var(--color-base-content) l c h / 0.28);
+	--dn-hairline-strong: oklch(from var(--color-base-content) l c h / 0.45);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Accessibility hooks (driven by the appearance store)                       */
+/* -------------------------------------------------------------------------- */
+
+/* Large-text mode scales everything rem-based. md (16px) is the default and
+   needs no attribute. */
+html[data-dn-text='sm'] {
+	font-size: 93.75%;
+}
+html[data-dn-text='lg'] {
+	font-size: 112.5%;
+}
+html[data-dn-text='xl'] {
+	font-size: 125%;
+}
+
+/* Explicit "reduce motion" choice — a hard kill switch layered on top of the
+   OS-level `prefers-reduced-motion` media queries already in app.css, so a user
+   whose OS does not advertise the preference can still opt in here. */
+html[data-dn-motion='reduced'] *,
+html[data-dn-motion='reduced'] *::before,
+html[data-dn-motion='reduced'] *::after {
+	animation-duration: 0.001ms !important;
+	animation-iteration-count: 1 !important;
+	transition-duration: 0.001ms !important;
+	scroll-behavior: auto !important;
+}
+
+/* exemption: the turntable's rotation is functional play-state feedback —
+   slowed rather than frozen when motion is reduced */
+html[data-dn-motion='reduced'] .vinyl-spin {
+	animation-duration: 12s !important;
+	animation-iteration-count: infinite !important;
+}
+
+/* A brief, tasteful cross-fade when the theme flips, so the switch reads as a
+   deliberate transition rather than a flash. Suppressed under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+	html:not([data-dn-motion='reduced']) body {
+		transition:
+			background-color var(--dn-dur-slow) ease,
+			color var(--dn-dur-slow) ease;
+	}
+}

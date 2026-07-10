@@ -141,22 +141,31 @@
 	<title>Sign in - DroppedNeedle</title>
 </svelte:head>
 
-<div class="login-wrap grain min-h-screen flex items-center justify-center p-4">
+<div class="login-wrap grain flex min-h-screen items-center justify-center p-4">
 	<div class="w-full max-w-md">
 		<div class="login-brand">
 			<img src="/logo_icon.png" alt="" aria-hidden="true" class="login-mark" />
+			<p class="login-eyebrow">Audiophile grade</p>
 			<h1 class="login-wordmark">DroppedNeedle</h1>
 			<div class="login-rule" aria-hidden="true"></div>
 			<p class="login-sub">Sign in to continue</p>
 		</div>
 
-		<div class="bg-base-200 rounded-box shadow-lg border border-base-300">
+		<div
+			class="rounded-2xl border border-base-content/8 bg-base-200/50 p-6 backdrop-blur-sm sm:p-7"
+		>
 			{#if availableTabs.length > 1}
-				<div class="flex border-b border-base-300 px-2 pt-2">
+				<div
+					class="mb-6 flex flex-wrap items-center justify-center gap-1 rounded-full border border-base-content/8 bg-base-100/50 p-1"
+					role="tablist"
+					aria-label="Sign-in providers"
+				>
 					{#each availableTabs as tab (tab)}
 						<button
-							class="tab-btn"
-							class:tab-btn-active={activeTab === tab}
+							class="pill-tab"
+							class:pill-tab-active={activeTab === tab}
+							role="tab"
+							aria-selected={activeTab === tab}
 							onclick={() => (activeTab = tab)}
 						>
 							{#if tab === 'plex'}<PlexIcon class="h-4 w-4" style="color: rgb(var(--brand-plex))" />
@@ -172,215 +181,204 @@
 				</div>
 			{/if}
 
-			<div class="p-6">
-				{#if activeTab === 'local'}
-					<form
-						onsubmit={(e) => {
-							e.preventDefault();
-							void handleLocalLogin();
-						}}
-						class="flex flex-col gap-4"
-					>
-						<fieldset class="fieldset">
-							<legend class="fieldset-legend">Username</legend>
-							<input
-								type="text"
-								class="input input-bordered w-full"
-								placeholder="Username"
-								bind:value={username}
-								required
-								autocomplete="username"
-							/>
-						</fieldset>
-						<fieldset class="fieldset">
-							<legend class="fieldset-legend">Password</legend>
-							<label class="input input-bordered flex items-center gap-2 w-full">
-								{#if showPassword}
-									<input
-										type="text"
-										class="grow"
-										placeholder="Password"
-										bind:value={password}
-										required
-										autocomplete="current-password"
-									/>
-								{:else}
-									<input
-										type="password"
-										class="grow"
-										placeholder="Password"
-										bind:value={password}
-										required
-										autocomplete="current-password"
-									/>
-								{/if}
-								<button
-									type="button"
-									onclick={() => (showPassword = !showPassword)}
-									class="opacity-50 hover:opacity-100 transition-opacity"
-									aria-label="Toggle password visibility"
-								>
-									{#if showPassword}<EyeOff class="h-4 w-4" />{:else}<Eye class="h-4 w-4" />{/if}
-								</button>
-							</label>
-						</fieldset>
-						{#if localError}
-							<div class="alert alert-error py-2 text-sm">{localError}</div>
-						{/if}
-						<button type="submit" class="btn btn-primary w-full" disabled={localLogin.isPending}>
-							{#if localLogin.isPending}<span class="loading loading-spinner loading-sm"
-								></span>{/if}
-							Sign in
-						</button>
-					</form>
-				{:else if activeTab === 'jellyfin'}
-					<form
-						onsubmit={(e) => {
-							e.preventDefault();
-							void handleJellyfinLogin();
-						}}
-						class="flex flex-col gap-4"
-					>
-						<div class="flex items-center gap-2 mb-1">
-							<JellyfinIcon class="h-5 w-5 text-info" />
-							<span class="text-sm font-medium">Sign in with your Jellyfin account</span>
-						</div>
-						<fieldset class="fieldset">
-							<legend class="fieldset-legend">Username</legend>
-							<input
-								type="text"
-								class="input input-bordered w-full"
-								placeholder="Jellyfin username"
-								bind:value={jfUsername}
-								required
-								autocomplete="username"
-							/>
-						</fieldset>
-						<fieldset class="fieldset">
-							<legend class="fieldset-legend">Password</legend>
-							<label class="input input-bordered flex items-center gap-2 w-full">
-								{#if jfShowPassword}
-									<input
-										type="text"
-										class="grow"
-										placeholder="Password"
-										bind:value={jfPassword}
-										required
-										autocomplete="current-password"
-									/>
-								{:else}
-									<input
-										type="password"
-										class="grow"
-										placeholder="Password"
-										bind:value={jfPassword}
-										required
-										autocomplete="current-password"
-									/>
-								{/if}
-								<button
-									type="button"
-									onclick={() => (jfShowPassword = !jfShowPassword)}
-									class="opacity-50 hover:opacity-100 transition-opacity"
-									aria-label="Toggle password visibility"
-								>
-									{#if jfShowPassword}<EyeOff class="h-4 w-4" />{:else}<Eye class="h-4 w-4" />{/if}
-								</button>
-							</label>
-						</fieldset>
-						{#if jfError}
-							<div class="alert alert-error py-2 text-sm">{jfError}</div>
-						{/if}
-						<button type="submit" class="btn btn-primary w-full" disabled={jellyfinLogin.isPending}>
-							{#if jellyfinLogin.isPending}<span class="loading loading-spinner loading-sm"
-								></span>{/if}
-							Sign in with Jellyfin
-						</button>
-					</form>
-				{:else if activeTab === 'plex'}
-					<div class="flex flex-col gap-4">
-						<div class="flex items-center gap-2 mb-1">
-							<PlexIcon class="h-5 w-5" style="color: rgb(var(--brand-plex))" />
-							<span class="text-sm font-medium">Sign in with your Plex account</span>
-						</div>
-						<p class="text-sm text-base-content/60">
-							A Plex login window will open. Sign in there and return to this page.
-						</p>
-						{#if plexError}
-							<div class="alert alert-error py-2 text-sm">{plexError}</div>
-						{/if}
-						<button
-							class="btn btn-primary w-full gap-2"
-							onclick={() => void handlePlexLogin()}
-							disabled={plexLoading}
+			{#if activeTab === 'local'}
+				<form
+					onsubmit={(e) => {
+						e.preventDefault();
+						void handleLocalLogin();
+					}}
+					class="flex flex-col gap-4"
+				>
+					<div class="flex flex-col gap-1.5">
+						<label class="field-label" for="login-username">Username</label>
+						<input
+							id="login-username"
+							type="text"
+							class="input w-full rounded-full border-base-content/12 bg-base-100/60"
+							placeholder="Username"
+							bind:value={username}
+							required
+							autocomplete="username"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5">
+						<span class="field-label">Password</span>
+						<label
+							class="input flex w-full items-center gap-2 rounded-full border-base-content/12 bg-base-100/60"
 						>
-							{#if plexLoading}
-								<span class="loading loading-spinner loading-sm"></span>
-								Waiting for Plex…
+							{#if showPassword}
+								<input
+									type="text"
+									class="grow"
+									placeholder="Password"
+									bind:value={password}
+									required
+									autocomplete="current-password"
+								/>
 							{:else}
-								<PlexIcon class="h-4 w-4" style="color: currentColor" />
-								Continue with Plex
+								<input
+									type="password"
+									class="grow"
+									placeholder="Password"
+									bind:value={password}
+									required
+									autocomplete="current-password"
+								/>
 							{/if}
-						</button>
+							<button
+								type="button"
+								onclick={() => (showPassword = !showPassword)}
+								class="opacity-50 transition-opacity hover:opacity-100"
+								aria-label="Toggle password visibility"
+							>
+								{#if showPassword}<EyeOff class="h-4 w-4" />{:else}<Eye class="h-4 w-4" />{/if}
+							</button>
+						</label>
 					</div>
-				{:else if activeTab === 'oidc'}
-					<div class="flex flex-col gap-4">
-						<p class="text-sm text-base-content/60">
-							Sign in using your organisation's single sign-on provider.
-						</p>
-						{#if oidcError}
-							<div class="alert alert-error py-2 text-sm">{oidcError}</div>
-						{/if}
-						<button
-							class="btn btn-primary w-full"
-							onclick={() => void handleOidcLogin()}
-							disabled={oidcLoading}
+					{#if localError}
+						<div class="alert alert-error rounded-2xl py-2 text-sm">{localError}</div>
+					{/if}
+					<button
+						type="submit"
+						class="btn btn-primary w-full rounded-full"
+						disabled={localLogin.isPending}
+					>
+						{#if localLogin.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
+						Sign in
+					</button>
+				</form>
+			{:else if activeTab === 'jellyfin'}
+				<form
+					onsubmit={(e) => {
+						e.preventDefault();
+						void handleJellyfinLogin();
+					}}
+					class="flex flex-col gap-4"
+				>
+					<div class="mb-1 flex items-center gap-2">
+						<JellyfinIcon class="h-5 w-5 text-info" />
+						<span class="text-sm font-medium">Sign in with your Jellyfin account</span>
+					</div>
+					<div class="flex flex-col gap-1.5">
+						<label class="field-label" for="login-jf-username">Username</label>
+						<input
+							id="login-jf-username"
+							type="text"
+							class="input w-full rounded-full border-base-content/12 bg-base-100/60"
+							placeholder="Jellyfin username"
+							bind:value={jfUsername}
+							required
+							autocomplete="username"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5">
+						<span class="field-label">Password</span>
+						<label
+							class="input flex w-full items-center gap-2 rounded-full border-base-content/12 bg-base-100/60"
 						>
-							{#if oidcLoading}<span class="loading loading-spinner loading-sm"></span>{/if}
-							Continue with SSO
-						</button>
+							{#if jfShowPassword}
+								<input
+									type="text"
+									class="grow"
+									placeholder="Password"
+									bind:value={jfPassword}
+									required
+									autocomplete="current-password"
+								/>
+							{:else}
+								<input
+									type="password"
+									class="grow"
+									placeholder="Password"
+									bind:value={jfPassword}
+									required
+									autocomplete="current-password"
+								/>
+							{/if}
+							<button
+								type="button"
+								onclick={() => (jfShowPassword = !jfShowPassword)}
+								class="opacity-50 transition-opacity hover:opacity-100"
+								aria-label="Toggle password visibility"
+							>
+								{#if jfShowPassword}<EyeOff class="h-4 w-4" />{:else}<Eye class="h-4 w-4" />{/if}
+							</button>
+						</label>
 					</div>
-				{/if}
-			</div>
+					{#if jfError}
+						<div class="alert alert-error rounded-2xl py-2 text-sm">{jfError}</div>
+					{/if}
+					<button
+						type="submit"
+						class="btn btn-primary w-full rounded-full"
+						disabled={jellyfinLogin.isPending}
+					>
+						{#if jellyfinLogin.isPending}<span class="loading loading-spinner loading-sm"
+							></span>{/if}
+						Sign in with Jellyfin
+					</button>
+				</form>
+			{:else if activeTab === 'plex'}
+				<div class="flex flex-col gap-4">
+					<div class="mb-1 flex items-center gap-2">
+						<PlexIcon class="h-5 w-5" style="color: rgb(var(--brand-plex))" />
+						<span class="text-sm font-medium">Sign in with your Plex account</span>
+					</div>
+					<p class="text-sm text-base-content/60">
+						A Plex login window will open. Sign in there and return to this page.
+					</p>
+					{#if plexError}
+						<div class="alert alert-error rounded-2xl py-2 text-sm">{plexError}</div>
+					{/if}
+					<button
+						class="btn btn-primary w-full gap-2 rounded-full"
+						onclick={() => void handlePlexLogin()}
+						disabled={plexLoading}
+					>
+						{#if plexLoading}
+							<span class="loading loading-spinner loading-sm"></span>
+							Waiting for Plex…
+						{:else}
+							<PlexIcon class="h-4 w-4" style="color: currentColor" />
+							Continue with Plex
+						{/if}
+					</button>
+				</div>
+			{:else if activeTab === 'oidc'}
+				<div class="flex flex-col gap-4">
+					<p class="text-sm text-base-content/60">
+						Sign in using your organisation's single sign-on provider.
+					</p>
+					{#if oidcError}
+						<div class="alert alert-error rounded-2xl py-2 text-sm">{oidcError}</div>
+					{/if}
+					<button
+						class="btn btn-primary w-full rounded-full"
+						onclick={() => void handleOidcLogin()}
+						disabled={oidcLoading}
+					>
+						{#if oidcLoading}<span class="loading loading-spinner loading-sm"></span>{/if}
+						Continue with SSO
+					</button>
+				</div>
+			{/if}
 		</div>
 	</div>
 </div>
 
 <style>
-	.tab-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		padding: 0.5rem 0.85rem;
-		font-size: 0.875rem;
-		font-weight: 500;
-		color: oklch(from var(--color-base-content) l c h / 0.45);
-		border-bottom: 2px solid transparent;
-		transition: all 0.15s ease;
-		cursor: pointer;
-		background: none;
-		border-top: none;
-		border-left: none;
-		border-right: none;
-		margin-bottom: -1px;
-	}
-	.tab-btn:hover {
-		color: oklch(from var(--color-base-content) l c h / 0.7);
-	}
-	.tab-btn-active {
-		color: oklch(from var(--color-primary) l c h / 1);
-		border-bottom-color: oklch(from var(--color-primary) l c h / 1);
-	}
-
 	.login-wrap {
 		--grain-opacity: 0.1;
-		position: relative;
-		isolation: isolate;
 		background:
 			radial-gradient(
 				circle at 50% -8rem,
 				oklch(from var(--color-primary) l c h / 0.08),
-				transparent 22rem
+				transparent 24rem
+			),
+			radial-gradient(
+				circle at 85% 110%,
+				oklch(from var(--color-accent) l c h / 0.05),
+				transparent 26rem
 			),
 			var(--color-base-100);
 	}
@@ -398,6 +396,15 @@
 		width: auto;
 		margin-bottom: 0.25rem;
 		opacity: 0.9;
+	}
+
+	.login-eyebrow {
+		font-family: var(--font-mono);
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.28em;
+		text-transform: uppercase;
+		color: oklch(from var(--color-base-content) l c h / 0.45);
 	}
 
 	.login-wordmark {
@@ -427,6 +434,46 @@
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
 		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: oklch(from var(--color-base-content) l c h / 0.5);
+	}
+
+	.pill-tab {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.42rem 0.95rem;
+		border-radius: 999px;
+		font-family: var(--font-mono);
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: oklch(from var(--color-base-content) l c h / 0.5);
+		background: transparent;
+		border: none;
+		cursor: pointer;
+		transition:
+			background var(--dn-dur-fast, 0.15s) ease,
+			color var(--dn-dur-fast, 0.15s) ease;
+	}
+	.pill-tab:hover {
+		color: oklch(from var(--color-base-content) l c h / 0.8);
+	}
+	.pill-tab-active {
+		background: var(--color-primary);
+		color: var(--color-primary-content);
+	}
+	.pill-tab-active:hover {
+		color: var(--color-primary-content);
+	}
+
+	.field-label {
+		margin-left: 1rem;
+		font-family: var(--font-mono);
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.18em;
 		text-transform: uppercase;
 		color: oklch(from var(--color-base-content) l c h / 0.5);
 	}

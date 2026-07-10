@@ -1,8 +1,8 @@
 <script lang="ts">
-	import PageHeader from '$lib/components/PageHeader.svelte';
+	import PageHero from '$lib/ui/PageHero.svelte';
 	import LibraryDashboard from '$lib/components/library/LibraryDashboard.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { Headphones, SlidersHorizontal, Waypoints, X } from 'lucide-svelte';
+	import { Library, Headphones, SlidersHorizontal, Waypoints, X } from 'lucide-svelte';
 
 	// admins land on the server-setup toggles; everyone else on their self-service Profile
 	const CONNECT_APPS_HREF = $derived(
@@ -35,8 +35,15 @@
 <svelte:head><title>Library · DroppedNeedle</title></svelte:head>
 
 <div class="min-h-[calc(100vh-200px)]">
-	<PageHeader subtitle="Your scanned music library">
-		{#snippet title()}Library{/snippet}
+	<PageHero
+		title="Vinyl Collection"
+		subtitle="Everything you own, curated in your vault."
+		eyebrow="Audiophile grade"
+		tint="rgb(var(--brand-library))"
+	>
+		{#snippet icon()}
+			<Library class="h-7 w-7" />
+		{/snippet}
 		{#snippet actions()}
 			<a
 				href="/library/local"
@@ -64,7 +71,7 @@
 				</button>
 			{/if}
 		{/snippet}
-	</PageHeader>
+	</PageHero>
 	<div class="space-y-10 px-4 pb-12 sm:space-y-12 sm:px-6 lg:px-8">
 		{#if !bannerDismissed}
 			<div

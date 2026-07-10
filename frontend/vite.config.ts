@@ -9,6 +9,15 @@ export default defineConfig({
 	plugins: [sveltekit()],
 	test: {
 		expect: { requireAssertions: true },
+		// Dynamic import() in specs can stall >10s while the vite module runner
+		// transforms under parallel cross-project load; give hooks/tests headroom.
+		testTimeout: 30000,
+		hookTimeout: 30000,
+		// The browser-mode vite server resolves its port from THIS top level
+		// (test.browser.api), not from the project entry below; without it vitest
+		// falls back to 63315, which sits in a Windows excluded TCP port range on
+		// some machines (EACCES). Pin a safe port so the client suite can boot.
+		browser: { api: { port: 24817 } },
 		projects: [
 			{
 				extends: true,

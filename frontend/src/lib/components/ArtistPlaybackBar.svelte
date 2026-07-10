@@ -125,14 +125,15 @@
 
 {#if showBar}
 	<div
-		class="bg-base-200/30 border border-base-content/5 rounded-xl shadow-sm p-3 sm:p-4"
+		class="rounded-2xl border border-base-content/8 bg-base-200/50 p-3 sm:p-4"
 		role="toolbar"
 		aria-label="Artist playback controls"
 	>
 		<div class="flex flex-col sm:flex-row sm:items-center gap-3">
 			<div class="flex items-center gap-2.5 min-w-0">
-				<span class="text-xs font-medium text-base-content/50 whitespace-nowrap select-none"
-					>Play from:</span
+				<span
+					class="select-none whitespace-nowrap font-mono text-[0.62rem] font-bold uppercase tracking-[0.18em] text-base-content/45"
+					>Play from</span
 				>
 				{#if availableSources.length > 1}
 					<div class="join">
@@ -166,7 +167,7 @@
 
 			<div class="flex items-center gap-2 sm:ml-auto">
 				<button
-					class="btn btn-sm btn-accent gap-1.5 shadow-sm"
+					class="btn btn-sm btn-primary gap-1.5 rounded-full shadow-sm"
 					disabled={loader.loading}
 					aria-label="Play all tracks from {artistName}"
 					onclick={() => loader.playAll()}
@@ -180,7 +181,7 @@
 				</button>
 
 				<button
-					class="btn btn-sm btn-ghost gap-1.5"
+					class="btn btn-sm btn-ghost gap-1.5 rounded-full border border-base-content/10"
 					disabled={loader.loading}
 					aria-label="Shuffle all tracks from {artistName}"
 					onclick={() => loader.shuffleAll()}

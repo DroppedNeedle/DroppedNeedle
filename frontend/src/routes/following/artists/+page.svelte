@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Heart, X, ArrowLeft, DownloadCloud } from 'lucide-svelte';
+	import PageHero from '$lib/ui/PageHero.svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import LidarrImportModal from '$lib/components/following/LidarrImportModal.svelte';
@@ -29,75 +30,98 @@
 	<title>Your Artists - DroppedNeedle</title>
 </svelte:head>
 
-<div class="mx-auto w-full max-w-6xl px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
-	<div class="mb-6 flex items-center gap-3">
-		<a href="/following" class="btn btn-ghost btn-sm btn-circle" aria-label="Back to Following">
-			<ArrowLeft class="h-5 w-5" />
-		</a>
-		<Heart class="h-6 w-6 text-primary" aria-hidden="true" />
-		<h1 class="text-2xl font-bold sm:text-3xl">Your Artists</h1>
-		<div class="flex-1"></div>
-		<span
-			class={lidarrConfigured ? '' : 'tooltip tooltip-left'}
-			data-tip={lidarrConfigured ? undefined : 'An admin needs to connect Lidarr first'}
-		>
-			<button
-				class="btn btn-sm gap-2"
-				disabled={!lidarrConfigured}
-				onclick={() => (importOpen = true)}
+<div class="min-h-[calc(100vh-200px)]">
+	<PageHero
+		title="Your Artists"
+		subtitle="Every name on your follow list — new releases and shows tracked for you."
+		eyebrow="Following"
+		tint="var(--color-primary)"
+		loading={query.isPending}
+	>
+		{#snippet icon()}
+			<Heart class="h-7 w-7" />
+		{/snippet}
+		{#snippet actions()}
+			<a
+				href="/following"
+				class="btn btn-ghost btn-sm gap-1.5 rounded-full bg-base-content/6"
+				aria-label="Back to Following"
 			>
-				<DownloadCloud class="h-4 w-4" aria-hidden="true" />
-				<span class="hidden sm:inline">Import from Lidarr</span>
-				<span class="sm:hidden">Import</span>
-			</button>
-		</span>
-	</div>
+				<ArrowLeft class="h-4 w-4" />
+				Following
+			</a>
+			<span
+				class={lidarrConfigured ? '' : 'tooltip tooltip-bottom'}
+				data-tip={lidarrConfigured ? undefined : 'An admin needs to connect Lidarr first'}
+			>
+				<button
+					class="btn btn-primary btn-sm gap-2 rounded-full"
+					disabled={!lidarrConfigured}
+					onclick={() => (importOpen = true)}
+				>
+					<DownloadCloud class="h-4 w-4" aria-hidden="true" />
+					<span class="hidden sm:inline">Import from Lidarr</span>
+					<span class="sm:hidden">Import</span>
+				</button>
+			</span>
+		{/snippet}
+	</PageHero>
 
-	<LidarrImportModal bind:open={importOpen} />
+	<div class="px-4 pb-12 sm:px-6 lg:px-8">
+		<LidarrImportModal bind:open={importOpen} />
 
-	{#if query.isPending}
-		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-			{#each Array(10) as _, i (i)}
-				<div class="aspect-square w-full animate-pulse rounded-2xl bg-base-200"></div>
-			{/each}
-		</div>
-	{:else if artists.length === 0}
-		<EmptyState
-			icon={Heart}
-			title="You are not following anyone yet"
-			description="Follow an artist from their page to keep up with their new releases here."
-			ctaLabel="Find artists"
-			ctaHref="/search"
-		/>
-	{:else}
-		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-			{#each artists as a (a.mbid)}
-				{@const chip = stateChip(a)}
-				<div class="group flex flex-col gap-2">
-					<div class="relative overflow-hidden rounded-2xl">
-						<a href="/artist/{a.mbid}" aria-label="Open {a.name}">
-							<ArtistImage
-								mbid={a.mbid}
-								alt={a.name}
-								className="w-full aspect-square object-cover transition-transform duration-300 group-hover:scale-105"
-							/>
-						</a>
-						<button
-							class="btn btn-circle btn-xs btn-error absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100"
-							onclick={() => unfollow.mutate(a.mbid)}
-							disabled={unfollow.isPending}
-							aria-label="Unfollow {a.name}"
-							title="Unfollow"
-						>
-							<X class="h-3.5 w-3.5" />
-						</button>
+		{#if query.isPending}
+			<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+				{#each Array(10) as _, i (i)}
+					<div class="aspect-square w-full animate-pulse rounded-2xl bg-base-200"></div>
+				{/each}
+			</div>
+		{:else if artists.length === 0}
+			<EmptyState
+				icon={Heart}
+				title="You are not following anyone yet"
+				description="Follow an artist from their page to keep up with their new releases here."
+				ctaLabel="Find artists"
+				ctaHref="/search"
+			/>
+		{:else}
+			<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+				{#each artists as a (a.mbid)}
+					{@const chip = stateChip(a)}
+					<div
+						class="group flex flex-col rounded-2xl border border-base-content/8 bg-base-200/50 p-3 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg"
+					>
+						<div class="relative overflow-hidden rounded-xl">
+							<a href="/artist/{a.mbid}" aria-label="Open {a.name}">
+								<ArtistImage
+									mbid={a.mbid}
+									alt={a.name}
+									className="w-full aspect-square object-cover transition-transform duration-300 group-hover:scale-105"
+								/>
+							</a>
+							<button
+								class="btn btn-circle btn-xs btn-error absolute right-2 top-2 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+								onclick={() => unfollow.mutate(a.mbid)}
+								disabled={unfollow.isPending}
+								aria-label="Unfollow {a.name}"
+								title="Unfollow"
+							>
+								<X class="h-3.5 w-3.5" />
+							</button>
+						</div>
+						<div class="mt-2.5 min-w-0">
+							<a
+								href="/artist/{a.mbid}"
+								class="block truncate font-display font-semibold tracking-tight hover:text-primary"
+								>{a.name}</a
+							>
+							{#if chip}
+								<span class="badge badge-sm {chip.cls} mt-1.5 w-fit">{chip.label}</span>
+							{/if}
+						</div>
 					</div>
-					<a href="/artist/{a.mbid}" class="truncate font-semibold hover:underline">{a.name}</a>
-					{#if chip}
-						<span class="badge badge-sm {chip.cls} w-fit">{chip.label}</span>
-					{/if}
-				</div>
-			{/each}
-		</div>
-	{/if}
+				{/each}
+			</div>
+		{/if}
+	</div>
 </div>

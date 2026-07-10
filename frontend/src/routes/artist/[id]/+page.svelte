@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { ReleaseGroup } from '$lib/types';
 	import { dedupeById } from '$lib/utils/dedupe';
-	import { colors } from '$lib/colors';
 	import ArtistHeaderSkeleton from '$lib/components/ArtistHeaderSkeleton.svelte';
 	import AlbumGridSkeleton from '$lib/components/AlbumGridSkeleton.svelte';
 	import ArtistWhereToBuy from '$lib/components/ArtistWhereToBuy.svelte';
@@ -40,7 +39,10 @@
 		discographyDownloadStore,
 		type DiscographyRelease
 	} from '$lib/stores/discographyDownload.svelte';
-	import { Download } from 'lucide-svelte';
+	import { CalendarDays, Disc3, Download, Globe2, Loader2, Sparkles } from 'lucide-svelte';
+	import { goto } from '$app/navigation';
+	import { createGenerateSmartMixMutation } from '$lib/queries/playlists/PlaylistMutations.svelte';
+	import { toastStore } from '$lib/stores/toast';
 
 	let { data }: PageProps = $props();
 
@@ -240,6 +242,26 @@
 		discographyDownloadStore.show(artist.name, data.artistId, items);
 	}
 
+	const smartMixMutation = createGenerateSmartMixMutation();
+
+	async function handleSmartMix() {
+		if (!artist || smartMixMutation.isPending) return;
+		try {
+			const created = await smartMixMutation.mutateAsync({
+				seeds: [{ type: 'artist', value: data.artistId }],
+				count: 25,
+				name: `${artist.name} — Smart Mix`
+			});
+			toastStore.show({ message: `Smart Mix created from ${artist.name}`, type: 'success' });
+			await goto(`/playlists/${created.id}`);
+		} catch (e) {
+			toastStore.show({
+				message: e instanceof Error ? e.message : "Couldn't create the Smart Mix",
+				type: 'error'
+			});
+		}
+	}
+
 	const tocSections = $derived.by<ArtistTocSection[]>(() => {
 		if (!artist) {
 			return [];
@@ -258,7 +280,9 @@
 <div class="w-full px-2 sm:px-4 lg:px-8 py-4 sm:py-8 max-w-7xl mx-auto">
 	{#if error}
 		<div class="flex items-center justify-center min-h-[50vh]">
-			<div class="alert alert-error">
+			<div
+				class="flex items-center gap-3 rounded-2xl border border-error/30 bg-error/10 px-5 py-4 text-sm text-error"
+			>
 				<span>{error}</span>
 			</div>
 		</div>
@@ -268,7 +292,7 @@
 			<AlbumGridSkeleton title="Albums" count={12} />
 		</div>
 	{:else if artist}
-		<div class="xl:grid xl:grid-cols-[9rem_minmax(0,1fr)] xl:gap-4">
+		<div class="xl:grid xl:grid-cols-[10rem_minmax(0,1fr)] xl:gap-6">
 			<ArtistPageToc sections={tocSections} />
 
 			<div class="xl:col-start-2 xl:row-start-1 space-y-4 sm:space-y-6 lg:space-y-8">
@@ -280,16 +304,18 @@
 						onrefresh={handleRefreshClick}
 					/>
 
-					<div class="flex flex-wrap items-center gap-x-4 gap-y-2 justify-center sm:justify-start">
+					<div
+						class="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-base-content/60 sm:justify-start"
+					>
 						{#if artist.country}
-							<span class="text-sm text-base-content/80 flex items-center gap-1.5">
-								<span>🌍</span>
+							<span class="flex items-center gap-1.5">
+								<Globe2 class="h-3.5 w-3.5 text-accent" />
 								{artist.country}
 							</span>
 						{/if}
 						{#if artist.life_span?.begin}
-							<span class="text-sm text-base-content/80 flex items-center gap-1.5">
-								<span>📅</span>
+							<span class="flex items-center gap-1.5">
+								<CalendarDays class="h-3.5 w-3.5 text-accent" />
 								{artist.life_span.begin}
 								{#if artist.life_span.end}
 									&nbsp;–&nbsp;
@@ -298,20 +324,20 @@
 							</span>
 						{/if}
 						{#if releases.albums.length + releases.eps.length + releases.singles.length > 0}
-							<span class="text-sm text-base-content/80 flex items-center gap-1.5">
-								<span>💿</span>
+							<span class="flex items-center gap-1.5 font-mono tabular-nums">
+								<Disc3 class="h-3.5 w-3.5 text-accent" />
 								{releases.albums.length + releases.eps.length + releases.singles.length} releases
 							</span>
 						{/if}
 					</div>
 
 					{#if artist.tags.length > 0}
-						<div class="flex flex-wrap gap-2 justify-center sm:justify-start -mt-2">
+						<div class="-mt-1 flex flex-wrap justify-center gap-2 sm:justify-start">
 							{#each [...new Set(artist.tags)].slice(0, 10) as tag (tag)}
 								<a
 									href="/genre?name={encodeURIComponent(tag)}"
-									class="badge badge-lg cursor-pointer hover:opacity-80 transition-opacity"
-									style="background-color: {colors.primary}; color: {colors.secondary};">{tag}</a
+									class="rounded-full border border-base-content/10 bg-base-200/50 px-3 py-1 text-xs font-medium text-base-content/70 transition-colors hover:border-primary/40 hover:bg-base-200 hover:text-base-content"
+									>{tag}</a
 								>
 							{/each}
 						</div>
@@ -336,15 +362,34 @@
 					releases={[...releases.albums, ...releases.eps, ...releases.singles]}
 				/>
 
-				{#if downloadableReleaseCount > 0}
-					<div class="flex justify-center sm:justify-start">
-						<button class="btn btn-accent btn-sm gap-1.5" onclick={() => openDiscographyModal()}>
+				<div class="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+					{#if downloadableReleaseCount > 0}
+						<button
+							class="btn btn-primary btn-sm gap-1.5 rounded-full"
+							onclick={() => openDiscographyModal()}
+						>
 							<Download class="h-4 w-4" />
 							Download Discography
-							<span class="badge badge-sm ml-0.5">{downloadableReleaseCount}</span>
+							<span
+								class="ml-0.5 rounded-full bg-primary-content/15 px-2 py-0.5 font-mono text-[0.68rem] font-bold tabular-nums"
+								>{downloadableReleaseCount}</span
+							>
 						</button>
-					</div>
-				{/if}
+					{/if}
+					<button
+						class="btn btn-ghost btn-sm gap-1.5 rounded-full border border-base-content/10"
+						disabled={smartMixMutation.isPending}
+						aria-label="Create a Smart Mix playlist seeded from {artist.name}"
+						onclick={() => void handleSmartMix()}
+					>
+						{#if smartMixMutation.isPending}
+							<Loader2 class="h-4 w-4 animate-spin" />
+						{:else}
+							<Sparkles class="h-4 w-4 text-accent" />
+						{/if}
+						Smart Mix
+					</button>
+				</div>
 
 				<LibraryAlbumsCarousel
 					releases={[...releases.albums, ...releases.eps, ...releases.singles]}
@@ -352,7 +397,7 @@
 					loading={loadingBasic}
 				/>
 
-				<div class="flex items-center justify-end mt-8 mb-4">
+				<div class="mt-8 mb-4 flex items-center justify-end">
 					<SimpleSourceSwitcher
 						currentSource={validSource}
 						onSourceChange={(newSource) => {
@@ -361,7 +406,9 @@
 					/>
 				</div>
 
-				<div class="flex flex-col md:flex-row gap-6 md:items-stretch">
+				<div
+					class="flex flex-col gap-6 rounded-2xl border border-base-content/8 bg-base-200/50 p-4 sm:p-5 md:flex-row md:items-stretch"
+				>
 					<div class="flex-1 min-w-0">
 						<TopAlbumsList
 							albums={topAlbums?.albums || []}
@@ -371,7 +418,7 @@
 						/>
 					</div>
 					<div
-						class="shrink-0 bg-base-content/25 h-px w-full md:w-px md:h-auto md:self-stretch"
+						class="h-px w-full shrink-0 bg-base-content/10 md:h-auto md:w-px md:self-stretch"
 						aria-hidden="true"
 					></div>
 					<div class="flex-1 min-w-0">
@@ -396,15 +443,15 @@
 					<AlbumGridSkeleton title="Discography" count={12} />
 				{:else if hasMoreReleases || loadingMoreReleases}
 					<div
-						class="flex items-center justify-center gap-3 p-4 bg-base-300 rounded-box mb-6"
-						style="border: 2px solid {colors.accent};"
+						class="mb-6 flex items-center justify-center gap-3 rounded-2xl border border-accent/25 bg-base-200/50 p-4"
 					>
-						<span class="loading loading-spinner loading-md" style="color: {colors.accent};"></span>
+						<span class="loading loading-spinner loading-md text-accent"></span>
 						<div class="flex flex-col items-start">
-							<span class="font-semibold text-base" style="color: {colors.accent};"
-								>Loading releases...</span
+							<span
+								class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-accent"
+								>Loading releases…</span
 							>
-							<span class="text-sm text-base-content/70"
+							<span class="text-sm text-base-content/60 tabular-nums"
 								>{#if sourceTotalCount}Loaded {loadedReleaseCount} of {sourceTotalCount} releases{:else}Loading
 									{loadedReleaseCount} releases{/if}</span
 							>

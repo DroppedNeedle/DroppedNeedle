@@ -1,4 +1,4 @@
-import { page } from '@vitest/browser/context';
+﻿import { page } from '@vitest/browser/context';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import type { LyricsData } from '$lib/queries/lyrics/LyricsQuery.svelte';
@@ -79,7 +79,7 @@ describe('Player.svelte lyrics button', () => {
 		playerStore.playQueue([makeTrack('navidrome')]);
 		render(Player);
 
-		await expect.element(page.getByLabelText('Toggle lyrics')).toBeInTheDocument();
+		await expect.element(page.getByLabelText('Open lyrics')).toBeInTheDocument();
 	});
 
 	it('hides lyrics button when query succeeds with null (no lyrics)', async () => {
@@ -94,7 +94,7 @@ describe('Player.svelte lyrics button', () => {
 		playerStore.playQueue([makeTrack('navidrome')]);
 		render(Player);
 
-		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
+		await expect.element(page.getByLabelText('Open lyrics')).not.toBeInTheDocument();
 	});
 
 	it('hides lyrics button when query is loading', async () => {
@@ -109,7 +109,7 @@ describe('Player.svelte lyrics button', () => {
 		playerStore.playQueue([makeTrack('navidrome')]);
 		render(Player);
 
-		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
+		await expect.element(page.getByLabelText('Open lyrics')).not.toBeInTheDocument();
 	});
 
 	it('hides lyrics button when query errors', async () => {
@@ -124,7 +124,7 @@ describe('Player.svelte lyrics button', () => {
 		playerStore.playQueue([makeTrack('navidrome')]);
 		render(Player);
 
-		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
+		await expect.element(page.getByLabelText('Open lyrics')).not.toBeInTheDocument();
 	});
 
 	it('hides lyrics button for youtube source', async () => {
@@ -139,7 +139,7 @@ describe('Player.svelte lyrics button', () => {
 		playerStore.playQueue([makeTrack('youtube')]);
 		render(Player);
 
-		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
+		await expect.element(page.getByLabelText('Open lyrics')).not.toBeInTheDocument();
 	});
 
 	it('hides lyrics button for plex source', async () => {
@@ -154,7 +154,7 @@ describe('Player.svelte lyrics button', () => {
 		playerStore.playQueue([makeTrack('plex')]);
 		render(Player);
 
-		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
+		await expect.element(page.getByLabelText('Open lyrics')).not.toBeInTheDocument();
 	});
 
 	it('hides lyrics button for local source', async () => {
@@ -169,6 +169,52 @@ describe('Player.svelte lyrics button', () => {
 		playerStore.playQueue([makeTrack('local')]);
 		render(Player);
 
-		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
+		await expect.element(page.getByLabelText('Open lyrics')).not.toBeInTheDocument();
+	});
+});
+
+describe('Player.svelte background resilience', () => {
+	beforeEach(() => {
+		playerStore.stop();
+		mockQueryState = {
+			isSuccess: false,
+			isError: false,
+			isLoading: false,
+			isFetching: false,
+			data: undefined
+		};
+	});
+
+	it('re-issues play on visibilitychange while playback is intended but not playing', async () => {
+		playerStore.playQueue([makeTrack('local')]);
+		render(Player);
+		await vi.waitFor(() => {
+			expect(playerStore.currentSource).not.toBeNull();
+		});
+		const source = playerStore.currentSource!;
+		const callsBefore = vi.mocked(source.play).mock.calls.length;
+
+		document.dispatchEvent(new Event('visibilitychange'));
+
+		await vi.waitFor(() => {
+			expect(vi.mocked(source.play).mock.calls.length).toBeGreaterThan(callsBefore);
+		});
+	});
+
+	it('never resurrects playback on visibilitychange after the user pauses', async () => {
+		playerStore.playQueue([makeTrack('local')]);
+		render(Player);
+		await vi.waitFor(() => {
+			expect(playerStore.currentSource).not.toBeNull();
+		});
+		playerStore.pause();
+		const source = playerStore.currentSource!;
+		const callsBefore = vi.mocked(source.play).mock.calls.length;
+
+		document.dispatchEvent(new Event('visibilitychange'));
+		await new Promise((r) => setTimeout(r, 20));
+
+		expect(vi.mocked(source.play).mock.calls.length).toBe(callsBefore);
+		expect(playerStore.intendedPlaying).toBe(false);
 	});
 });

@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "DroppedNeedle",
   "short_name": "DroppedNeedle",
   "id": "/",
@@ -18,6 +18,6 @@
       "type": "image/png"
     }
   ],
-  "theme_color": "#0d120a",
-  "background_color": "#0d120a"
+  "theme_color": "#0d0e0c",
+  "background_color": "#0d0e0c"
 }

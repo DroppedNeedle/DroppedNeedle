@@ -24,7 +24,6 @@
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { Music, Lock, Download, Loader2 } from 'lucide-svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
-	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import type { PageData } from './$types';
 	import PlaylistHeader from './PlaylistHeader.svelte';
 	import PlaylistTrackList from './PlaylistTrackList.svelte';
@@ -280,46 +279,59 @@
 	<title>{playlist?.name ?? 'Playlist'} - DroppedNeedle</title>
 </svelte:head>
 
-<div class="w-full px-2 sm:px-4 lg:px-8 py-4 sm:py-8 max-w-7xl mx-auto">
-	{#if loading}
+{#if loading}
+	<div class="mx-auto w-full max-w-7xl px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
 		<div class="space-y-6 sm:space-y-8">
 			<div class="skeleton h-10 w-10 rounded-full"></div>
-			<div class="flex flex-col lg:flex-row gap-6 lg:gap-8">
-				<div class="skeleton w-full lg:w-64 xl:w-80 aspect-square rounded-box shrink-0"></div>
-				<div class="flex-1 flex flex-col justify-end space-y-4">
+			<div class="flex flex-col gap-6 lg:flex-row lg:gap-8">
+				<div class="skeleton aspect-square w-full shrink-0 rounded-2xl lg:w-64 xl:w-80"></div>
+				<div class="flex flex-1 flex-col justify-end space-y-4">
 					<div class="skeleton h-4 w-20"></div>
 					<div class="skeleton h-12 w-3/4"></div>
 					<div class="skeleton h-6 w-1/2"></div>
-					<div class="flex gap-4 mt-6">
-						<div class="skeleton h-12 w-32"></div>
-						<div class="skeleton h-12 w-32"></div>
+					<div class="mt-6 flex gap-4">
+						<div class="skeleton h-12 w-32 rounded-full"></div>
+						<div class="skeleton h-12 w-32 rounded-full"></div>
 					</div>
 				</div>
 			</div>
 			<div class="space-y-2">
 				{#each Array(4) as _, i (`loading-track-${i}`)}
-					<div class="skeleton h-14 w-full"></div>
+					<div class="skeleton h-14 w-full rounded-xl"></div>
 				{/each}
 			</div>
 		</div>
-	{:else if loadError}
-		<div class="flex flex-col items-center justify-center py-20 gap-4 text-center">
+	</div>
+{:else if loadError}
+	<div class="mx-auto w-full max-w-7xl px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
+		<div class="flex flex-col items-center justify-center gap-4 py-20 text-center">
 			<Music class="h-16 w-16 text-base-content/20" />
-			<h2 class="text-lg font-semibold text-base-content/80">Couldn't load this playlist</h2>
+			<h2 class="font-display text-lg font-semibold tracking-tight text-base-content/80">
+				Couldn't load this playlist
+			</h2>
 			<p class="text-sm text-base-content/60">{loadError}</p>
 			<div class="flex items-center gap-2">
-				<button class="btn btn-sm btn-accent" onclick={() => void detailQuery.refetch()}>
+				<button
+					class="btn btn-primary btn-sm rounded-full"
+					onclick={() => void detailQuery.refetch()}
+				>
 					Retry
 				</button>
 				<BackButton fallback="/playlists" />
 			</div>
 		</div>
-	{:else if redacted}
-		<div class="flex flex-col items-center justify-center py-20 gap-4 text-center">
-			<div class="flex items-center justify-center rounded-full bg-base-200 p-5">
+	</div>
+{:else if redacted}
+	<div class="mx-auto w-full max-w-7xl px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
+		<div class="flex flex-col items-center justify-center gap-4 py-20 text-center">
+			<div
+				class="flex items-center justify-center rounded-full border border-base-content/8 bg-base-200/60 p-5"
+			>
 				<Lock class="h-12 w-12 text-base-content/30" />
 			</div>
-			<h2 class="text-lg font-semibold italic text-base-content/70">Private playlist</h2>
+			<h2 class="font-display text-lg font-semibold italic text-base-content/70">
+				Private playlist
+			</h2>
 			<p class="text-sm text-base-content/60">
 				{redacted.track_count} track{redacted.track_count === 1 ? '' : 's'}{redacted.owner_name
 					? ` · owned by ${redacted.owner_name}`
@@ -327,92 +339,148 @@
 			</p>
 			<BackButton fallback="/playlists" />
 		</div>
-	{:else if !playlist}
-		<div class="flex flex-col items-center justify-center py-20 gap-4">
+	</div>
+{:else if !playlist}
+	<div class="mx-auto w-full max-w-7xl px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
+		<div class="flex flex-col items-center justify-center gap-4 py-20">
 			<Music class="h-16 w-16 text-base-content/20" />
-			<h2 class="text-lg font-semibold text-base-content/60">Playlist not found</h2>
+			<h2 class="font-display text-lg font-semibold tracking-tight text-base-content/60">
+				Playlist not found
+			</h2>
 			<BackButton fallback="/playlists" />
 		</div>
-	{:else}
-		<div class="space-y-6 sm:space-y-8">
+	</div>
+{:else}
+	<!-- cinematic full-bleed masthead: cover backdrop under a charcoal wash -->
+	<section class="dn-playlist-hero" aria-label="Playlist details">
+		<div class="dn-playlist-hero__backdrop" aria-hidden="true">
 			<div
-				class="group relative rounded-box playlist-hero"
-				style="--hero-glow-color: var(--brand-hero);"
-			>
-				<div
-					class="absolute inset-0 bg-linear-to-b {heroGradient} transition-all duration-1000 rounded-box"
-				></div>
-				<HeroBackdrop
-					imageUrl={heroBgUrl}
-					opacity={0.15}
-					hoverOpacity={0.2}
-					blur={3}
-					hoverBlur={2}
-					position="full"
-				/>
-				<div
-					class="absolute inset-0 bg-linear-to-b from-transparent via-base-100/50 to-base-100/80 rounded-box pointer-events-none"
-				></div>
-
-				<div class="relative z-10 p-4 sm:p-6 lg:p-8">
-					<div class="mb-4">
-						<BackButton fallback="/playlists" />
-					</div>
-
-					<PlaylistHeader
-						bind:this={header}
-						{playlist}
-						canEdit={isOwner}
-						{canDelete}
-						sharePending={shareMutation.isPending}
-						onplayall={playAll}
-						onshuffleall={shuffleAll}
-						ondeleteclick={() => deleteModal?.showModal()}
-						onplaylistupdate={handlePlaylistUpdate}
-						onshare={handleShare}
-					/>
-				</div>
-			</div>
-
-			{#if isOwner && missingAlbumCount > 0}
-				<div
-					class="flex items-center gap-3 rounded-xl border border-base-300/40 bg-base-200/40 px-4 py-3"
-				>
-					<Download class="h-4 w-4 shrink-0 text-base-content/50" />
-					<p class="flex-1 text-sm text-base-content/70">
-						{missingAlbumCount}
-						{missingAlbumCount === 1 ? 'album' : 'albums'} not in your library
-					</p>
-					<button
-						class="btn btn-accent btn-sm"
-						onclick={() => void handleRequestMissing()}
-						disabled={requesting}
-					>
-						{#if requesting}
-							<Loader2 class="h-3.5 w-3.5 animate-spin" />
-						{:else}
-							<Download class="h-3.5 w-3.5" />
-						{/if}
-						Request {missingAlbumCount === 1 ? 'album' : missingAlbumCount + ' albums'}
-					</button>
-				</div>
+				class="absolute inset-0 bg-linear-to-b {heroGradient} transition-all duration-1000"
+			></div>
+			{#if heroBgUrl}
+				{#key heroBgUrl}
+					<img src={heroBgUrl} alt="" />
+				{/key}
 			{/if}
-
-			<PlaylistTrackList
-				bind:this={trackList}
-				{playlist}
-				readonly={!isOwner}
-				ontrackchange={() => {}}
-				onsourcechange={handleSourceChange}
-				onplaytrack={playFromTrack}
-			/>
+			<div class="dn-playlist-hero__wash"></div>
 		</div>
 
-		<DeletePlaylistModal
-			bind:this={deleteModal}
-			playlistName={playlist.name}
-			{deleting}
-			onconfirm={() => void confirmDelete()}
+		<div class="dn-playlist-hero__content mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
+			<div class="mb-6">
+				<BackButton fallback="/playlists" />
+			</div>
+
+			<PlaylistHeader
+				bind:this={header}
+				{playlist}
+				canEdit={isOwner}
+				{canDelete}
+				sharePending={shareMutation.isPending}
+				onplayall={playAll}
+				onshuffleall={shuffleAll}
+				ondeleteclick={() => deleteModal?.showModal()}
+				onplaylistupdate={handlePlaylistUpdate}
+				onshare={handleShare}
+			/>
+		</div>
+	</section>
+
+	<div class="mx-auto w-full max-w-7xl space-y-6 px-2 pb-12 pt-6 sm:space-y-8 sm:px-4 lg:px-8">
+		{#if isOwner && missingAlbumCount > 0}
+			<div
+				class="flex items-center gap-3 rounded-2xl border border-base-content/8 bg-base-200/50 px-4 py-3"
+			>
+				<Download class="h-4 w-4 shrink-0 text-base-content/50" />
+				<p class="flex-1 text-sm text-base-content/70">
+					{missingAlbumCount}
+					{missingAlbumCount === 1 ? 'album' : 'albums'} not in your library
+				</p>
+				<button
+					class="btn btn-accent btn-sm rounded-full"
+					onclick={() => void handleRequestMissing()}
+					disabled={requesting}
+				>
+					{#if requesting}
+						<Loader2 class="h-3.5 w-3.5 animate-spin" />
+					{:else}
+						<Download class="h-3.5 w-3.5" />
+					{/if}
+					Request {missingAlbumCount === 1 ? 'album' : missingAlbumCount + ' albums'}
+				</button>
+			</div>
+		{/if}
+
+		<PlaylistTrackList
+			bind:this={trackList}
+			{playlist}
+			readonly={!isOwner}
+			ontrackchange={() => {}}
+			onsourcechange={handleSourceChange}
+			onplaytrack={playFromTrack}
 		/>
-	{/if}
-</div>
+	</div>
+
+	<DeletePlaylistModal
+		bind:this={deleteModal}
+		playlistName={playlist.name}
+		{deleting}
+		onconfirm={() => void confirmDelete()}
+	/>
+{/if}
+
+<style>
+	.dn-playlist-hero {
+		position: relative;
+		isolation: isolate;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+		justify-content: flex-end;
+		min-height: min(50vh, 30rem);
+		padding: 2.5rem 0 2.75rem;
+	}
+	@media (min-width: 1024px) {
+		.dn-playlist-hero {
+			padding: 3.25rem 0 3.25rem;
+		}
+	}
+
+	.dn-playlist-hero__backdrop {
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+	}
+	.dn-playlist-hero__backdrop img {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		object-position: center 30%;
+		transform: scale(1.08);
+		filter: saturate(0.9) brightness(0.7) blur(22px);
+		transition: opacity var(--dn-dur-slow, 400ms) ease;
+	}
+	.dn-playlist-hero__wash {
+		position: absolute;
+		inset: 0;
+		background:
+			linear-gradient(
+				90deg,
+				oklch(from var(--color-base-100) l c h / 0.9) 0%,
+				oklch(from var(--color-base-100) l c h / 0.55) 45%,
+				oklch(from var(--color-base-100) l c h / 0.25) 100%
+			),
+			linear-gradient(
+				180deg,
+				oklch(from var(--color-base-100) l c h / 0.4) 0%,
+				oklch(from var(--color-base-100) l c h / 0.15) 40%,
+				var(--color-base-100) 100%
+			);
+	}
+
+	.dn-playlist-hero__content {
+		position: relative;
+		z-index: 1;
+	}
+</style>

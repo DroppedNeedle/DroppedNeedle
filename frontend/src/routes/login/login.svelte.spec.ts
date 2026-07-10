@@ -62,7 +62,8 @@ describe('login local tab uses a username field', () => {
 
 	it('labels the local tab "Username"', async () => {
 		render(Login);
-		await expect.element(page.getByRole('button', { name: 'Username' })).toBeInTheDocument();
+		// The provider switcher is a proper tablist now, so the label lives on a tab role.
+		await expect.element(page.getByRole('tab', { name: 'Username' })).toBeInTheDocument();
 	});
 
 	it('submits the mixed-case username + password to the local login mutation', async () => {

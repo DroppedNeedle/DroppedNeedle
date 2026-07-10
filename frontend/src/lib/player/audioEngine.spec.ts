@@ -224,6 +224,33 @@ describe('AudioEngine', () => {
 		});
 	});
 
+	describe('onContextStateChange', () => {
+		it('notifies listeners when the AudioContext state flips', () => {
+			expect.assertions(2);
+			const cb = vi.fn();
+			engine.onContextStateChange(cb);
+			engine.connect(mockAudio);
+			const ctx = mockCtx as unknown as { onstatechange: () => void };
+
+			mockCtx.state = 'suspended';
+			ctx.onstatechange();
+			expect(cb).toHaveBeenCalledWith('suspended');
+
+			mockCtx.state = 'running';
+			ctx.onstatechange();
+			expect(cb).toHaveBeenCalledWith('running');
+		});
+
+		it('clears the context handler on destroy', () => {
+			expect.assertions(1);
+			engine.connect(mockAudio);
+			engine.destroy();
+			expect(
+				(mockCtx as unknown as { onstatechange: (() => void) | null }).onstatechange
+			).toBeNull();
+		});
+	});
+
 	describe('getFrequencies', () => {
 		it('returns the 10 standard frequencies', () => {
 			expect.assertions(2);

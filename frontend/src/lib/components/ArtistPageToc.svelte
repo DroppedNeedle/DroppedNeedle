@@ -127,19 +127,21 @@
 {#if showToc}
 	<aside class="hidden xl:block">
 		<nav class="sticky top-24" aria-label="Page sections">
-			<p class="text-[10px] font-semibold uppercase tracking-widest text-base-content/40 mb-2 pl-3">
+			<p
+				class="mb-3 pl-1 font-mono text-[0.6rem] font-bold uppercase tracking-[0.2em] text-base-content/40"
+			>
 				On this page
 			</p>
-			<ul class="flex flex-col border-l border-base-content/10">
+			<ul class="flex flex-col items-start gap-1.5">
 				{#each sections as section (section.id)}
 					<li>
 						<a
 							href={`#${section.id}`}
 							onclick={(event) => scrollToSection(event, section.id)}
-							class="block py-1.5 pl-3 text-xs transition-colors duration-150 -ml-px border-l-2
+							class="btn btn-xs rounded-full font-medium normal-case
 								{activeSectionId === section.id
-								? 'border-primary text-primary font-semibold'
-								: 'border-transparent text-base-content/50 hover:text-base-content/80 hover:border-base-content/30'}"
+								? 'btn-primary'
+								: 'btn-ghost border border-base-content/10 bg-base-200/40 text-base-content/60 hover:border-base-content/25 hover:text-base-content'}"
 							aria-current={activeSectionId === section.id ? 'true' : undefined}
 						>
 							{section.label}
@@ -160,21 +162,23 @@
 				<List class="h-5 w-5" />
 			</summary>
 			<div
-				class="dropdown-content z-[1] w-52 mb-2 rounded-box bg-base-200/95 backdrop-blur-md shadow-xl border border-base-content/10 p-3"
+				class="dropdown-content z-[1] mb-2 w-56 rounded-2xl border border-base-content/10 bg-base-200/95 p-3 shadow-xl backdrop-blur-md"
 			>
-				<p class="text-[10px] font-semibold uppercase tracking-widest text-base-content/40 mb-2">
+				<p
+					class="mb-2.5 font-mono text-[0.6rem] font-bold uppercase tracking-[0.2em] text-base-content/40"
+				>
 					Jump to
 				</p>
-				<ul class="flex flex-col border-l border-base-content/10">
+				<ul class="flex flex-wrap items-start gap-1.5">
 					{#each sections as section (section.id)}
 						<li>
 							<a
 								href={`#${section.id}`}
 								onclick={(event) => scrollToSection(event, section.id)}
-								class="block py-1.5 pl-3 text-sm transition-colors duration-150 -ml-px border-l-2
+								class="btn btn-xs rounded-full font-medium normal-case
 									{activeSectionId === section.id
-									? 'border-primary text-primary font-semibold'
-									: 'border-transparent text-base-content/60 hover:text-base-content hover:border-base-content/30'}"
+									? 'btn-primary'
+									: 'btn-ghost border border-base-content/10 bg-base-100/60 text-base-content/70 hover:border-base-content/25 hover:text-base-content'}"
 								aria-current={activeSectionId === section.id ? 'true' : undefined}
 							>
 								{section.label}

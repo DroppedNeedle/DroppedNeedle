@@ -1,18 +1,136 @@
 @import 'tailwindcss';
+@import './lib/styles/tokens.css';
 @plugin "@tailwindcss/typography";
 @plugin "daisyui" {
-	themes: dark --default;
+	themes:
+		droppedneedle --default,
+		droppedneedle-light,
+		droppedneedle-contrast,
+		dark;
 }
+
+/* Brand dark — the signature "audiophile grade" theme: warm charcoal surfaces,
+   ivory pill CTAs, muted sage signal accents. Default and preferred for OS dark mode. */
+@plugin "daisyui/theme" {
+	name: 'droppedneedle';
+	default: true;
+	prefersdark: true;
+	color-scheme: dark;
+	--color-base-300: #1e211c;
+	--color-base-200: #151713;
+	--color-base-100: #0d0e0c;
+	--color-base-content: #e4e6df;
+	--color-primary: #e9ebe3;
+	--color-primary-content: #14160f;
+	--color-accent: #c8dcab;
+	--color-accent-content: #121a08;
+	--color-neutral: #24271f;
+	--color-neutral-content: #e4e6df;
+	/* shape language: pill fields/buttons, soft cards, pill selectors.
+	   EVERY theme block must define --size-selector/--size-field/--border/--depth/--noise:
+	   daisyui component width calcs reference them without var() fallbacks (e.g. .toggle's
+	   width uses --border), and a missing var invalidates the whole declaration at
+	   computed-value time — toggles collapse to ~5px app-wide. */
+	--radius-field: 9999px;
+	--radius-box: 1rem;
+	--radius-selector: 9999px;
+	--size-selector: 0.25rem;
+	--size-field: 0.25rem;
+	--border: 1px;
+	--depth: 1;
+	--noise: 0;
+}
+
+/* Legacy alias: keeps any stray data-theme="dark" resolving to the brand dark. */
 @plugin "daisyui/theme" {
 	name: 'dark';
-	default: true;
-	--color-base-300: #1f271b;
-	--color-base-200: #161d12;
-	--color-base-100: #0d120a;
-	--color-primary: #aed5f2;
-	--color-primary-content: #071520;
-	--color-accent: #bbdb9b;
-	--color-accent-content: #0f1a0a;
+	color-scheme: dark;
+	--color-base-300: #1e211c;
+	--color-base-200: #151713;
+	--color-base-100: #0d0e0c;
+	--color-base-content: #e4e6df;
+	--color-primary: #e9ebe3;
+	--color-primary-content: #14160f;
+	--color-accent: #c8dcab;
+	--color-accent-content: #121a08;
+	--color-neutral: #24271f;
+	--color-neutral-content: #e4e6df;
+	--radius-field: 9999px;
+	--radius-box: 1rem;
+	--radius-selector: 9999px;
+	--size-selector: 0.25rem;
+	--size-field: 0.25rem;
+	--border: 1px;
+	--depth: 1;
+	--noise: 0;
+}
+
+/* Daylight — a warm paper theme that keeps the blue/green brand accents. */
+@plugin "daisyui/theme" {
+	name: 'droppedneedle-light';
+	color-scheme: light;
+	--color-base-100: #f7f8f4;
+	--color-base-200: #eef0e9;
+	--color-base-300: #e2e5db;
+	--color-base-content: #17201a;
+	--color-primary: #2f6f9e;
+	--color-primary-content: #ffffff;
+	--color-secondary: #556052;
+	--color-secondary-content: #ffffff;
+	--color-accent: #4c8a3f;
+	--color-accent-content: #ffffff;
+	--color-neutral: #2b322a;
+	--color-neutral-content: #f2f4ee;
+	--color-info: #2f6f9e;
+	--color-info-content: #ffffff;
+	--color-success: #3d8b40;
+	--color-success-content: #ffffff;
+	--color-warning: #b7791f;
+	--color-warning-content: #ffffff;
+	--color-error: #c0392b;
+	--color-error-content: #ffffff;
+	--radius-field: 9999px;
+	--radius-box: 1rem;
+	--radius-selector: 9999px;
+	--size-selector: 0.25rem;
+	--size-field: 0.25rem;
+	--border: 1px;
+	--depth: 1;
+	--noise: 0;
+}
+
+/* High contrast — WCAG-forward dark theme with pure-black base and bright ink. */
+@plugin "daisyui/theme" {
+	name: 'droppedneedle-contrast';
+	color-scheme: dark;
+	--color-base-100: #000000;
+	--color-base-200: #0b0b0b;
+	--color-base-300: #1a1a1a;
+	--color-base-content: #ffffff;
+	--color-primary: #a9d7ff;
+	--color-primary-content: #00111f;
+	--color-secondary: #d6d6d6;
+	--color-secondary-content: #000000;
+	--color-accent: #bff29a;
+	--color-accent-content: #04140a;
+	--color-neutral: #ffffff;
+	--color-neutral-content: #000000;
+	--color-info: #7cc4ff;
+	--color-info-content: #00111f;
+	--color-success: #86efac;
+	--color-success-content: #04140a;
+	--color-warning: #fcd34d;
+	--color-warning-content: #1a1200;
+	--color-error: #ff8a80;
+	--color-error-content: #1f0500;
+	--radius-field: 9999px;
+	--radius-box: 1rem;
+	--radius-selector: 9999px;
+	--size-selector: 0.25rem;
+	--size-field: 0.25rem;
+	--border: 1px;
+	--depth: 1;
+	--noise: 0;
 }
 
 /* Self-hosted (SIL OFL) so no external font calls; Latin + Latin-ext subsets */
@@ -259,7 +377,7 @@
 
 :root {
 	/* rgb-triplet mirror of --color-primary; keep in sync with the theme token */
-	--color-primary-rgb: 174 213 242;
+	--color-primary-rgb: 233 235 227;
 	/* reusable film-grain texture; opacity tuned per-surface via --grain-opacity */
 	--grain-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='ms-grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23ms-grain)'/%3E%3C/svg%3E");
 	--brand-library: 34 197 94;
@@ -330,6 +448,87 @@ textarea {
 	touch-action: manipulation;
 }
 
+/* ═══ premium interaction layer ═══ */
+/* visible, token-driven focus ring everywhere (low specificity so components can override) */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+	outline: 2px solid oklch(from var(--color-primary) l c h / 0.65);
+	outline-offset: 2px;
+	border-radius: inherit;
+}
+
+/* quiet thin scrollbars that match the surface */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: oklch(from var(--color-base-content) l c h / 0.18) transparent;
+}
+*::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+	border-radius: 999px;
+	background: oklch(from var(--color-base-content) l c h / 0.16);
+}
+*::-webkit-scrollbar-thumb:hover {
+	background: oklch(from var(--color-base-content) l c h / 0.28);
+}
+*::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+::selection {
+	background: oklch(from var(--color-primary) l c h / 0.28);
+}
+
+/* ═══ mobile app feel ═══ */
+body {
+	/* no grey tap flash — buttons carry their own pressed states */
+	-webkit-tap-highlight-color: transparent;
+}
+
+@media (max-width: 767px) {
+	/* Entrance stagger animations replay whenever a page's data refreshes in the
+	   background — on phones that reads as flicker/glitch (Discovery especially).
+	   Content settles instantly instead; hover/press motion is untouched. */
+	.discover-section-enter > *,
+	.stagger-fade-in > * {
+		animation: none !important;
+		opacity: 1 !important;
+		transform: none !important;
+	}
+	.scroll-reveal {
+		opacity: 1 !important;
+		transform: none !important;
+		transition: none !important;
+	}
+
+	/* quicker to the music: a shorter spotlight above the fold */
+	.dn-spotlight {
+		min-height: min(46vh, 24rem) !important;
+	}
+
+	/* chrome reads as UI, not selectable text */
+	.dn-navitem,
+	.droppedneedle-bottom-nav__item,
+	.dn-topbar__palette,
+	.dn-sidebar__cta {
+		-webkit-user-select: none;
+		user-select: none;
+	}
+}
+
+/* page-to-page view transitions: a brief, quiet cross-fade */
+::view-transition-old(root),
+::view-transition-new(root) {
+	animation-duration: 0.22s;
+	animation-timing-function: ease;
+}
+/* the dock artwork ↔ Stage artwork morph */
+::view-transition-group(dn-now-art) {
+	animation-duration: 0.32s;
+	animation-timing-function: var(--ease-spring);
+}
+
 .droppedneedle-app-shell {
 	position: relative;
 	isolation: isolate;
@@ -337,7 +536,7 @@ textarea {
 	min-height: 100dvh;
 	overflow-x: clip;
 	background:
-		radial-gradient(circle at 50% -12rem, rgb(var(--brand-library) / 0.12), transparent 22rem),
+		radial-gradient(circle at 50% -12rem, rgb(var(--brand-library) / 0.05), transparent 22rem),
 		var(--color-base-100);
 }
 
@@ -357,6 +556,550 @@ textarea {
 .droppedneedle-topbar {
 	min-height: calc(4rem + var(--ms-safe-top));
 	padding-top: var(--ms-safe-top);
+	border-bottom: 1px solid var(--dn-hairline);
+}
+
+/* Rebuilt topbar (AppTopbar.svelte) */
+.dn-topbar {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding-inline: 0.6rem 0.9rem;
+	background: oklch(from var(--color-base-100) l c h / 0.8);
+	backdrop-filter: blur(16px) saturate(1.05);
+	-webkit-backdrop-filter: blur(16px) saturate(1.05);
+}
+.dn-topbar__brand {
+	display: inline-flex;
+	flex-shrink: 0;
+	align-items: center;
+	padding: 0.3rem 0.5rem;
+	border-radius: var(--dn-radius-sm);
+	transition: background var(--dn-dur-fast) ease;
+}
+.dn-topbar__brand:hover {
+	background: oklch(from var(--color-base-content) l c h / 0.06);
+}
+.dn-topbar__wordmark {
+	font-family: var(--font-display);
+	font-size: 1.25rem;
+	font-weight: 700;
+	letter-spacing: -0.01em;
+	white-space: nowrap;
+}
+
+.dn-topbar__tabs {
+	display: none;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: 1.4rem;
+	margin-left: 1.25rem;
+	min-width: 0;
+}
+@media (min-width: 768px) {
+	.dn-topbar__tabs {
+		display: flex;
+	}
+}
+.dn-topbar__tab {
+	position: relative;
+	padding: 0.35rem 0.1rem;
+	font-size: 0.95rem;
+	font-weight: 500;
+	color: oklch(from var(--color-base-content) l c h / 0.6);
+	white-space: nowrap;
+	transition: color var(--dn-dur-fast) ease;
+}
+.dn-topbar__tab:hover {
+	color: oklch(from var(--color-base-content) l c h / 0.95);
+}
+.dn-topbar__tab--active {
+	color: oklch(from var(--color-base-content) l c h);
+	font-weight: 600;
+}
+.dn-topbar__tab--active::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: -0.2rem;
+	height: 2px;
+	border-radius: 999px;
+	background: oklch(from var(--color-primary) l c h / 0.9);
+}
+
+.dn-topbar__palette {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	height: 2.35rem;
+	padding: 0 0.85rem;
+	margin-right: 0.35rem;
+	border-radius: 999px;
+	border: 1px solid var(--dn-hairline);
+	background: oklch(from var(--color-base-content) l c h / 0.05);
+	color: oklch(from var(--color-base-content) l c h / 0.55);
+	font-size: 0.82rem;
+	white-space: nowrap;
+	transition:
+		background var(--dn-dur-fast) ease,
+		color var(--dn-dur-fast) ease,
+		border-color var(--dn-dur-fast) ease;
+}
+.dn-topbar__palette:hover {
+	background: oklch(from var(--color-base-content) l c h / 0.09);
+	color: oklch(from var(--color-base-content) l c h / 0.85);
+	border-color: var(--dn-hairline-strong);
+}
+.dn-topbar__palette-label {
+	display: none;
+}
+@media (min-width: 640px) {
+	.dn-topbar__palette-label {
+		display: inline;
+	}
+}
+.dn-topbar__palette-kbd {
+	display: none;
+	padding: 0.1rem 0.4rem;
+	font-family: var(--font-mono);
+	font-size: 0.68rem;
+	border-radius: 0.4rem;
+	border: 1px solid var(--dn-hairline);
+	color: oklch(from var(--color-base-content) l c h / 0.45);
+}
+@media (min-width: 1024px) {
+	.dn-topbar__palette-kbd {
+		display: inline;
+	}
+}
+.dn-topbar__actions {
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 0.15rem;
+	/* pin to the right edge even when the center tabs (the natural spacer)
+	   are hidden on small screens */
+	margin-left: auto;
+}
+
+/* phones: compact brand + palette so the right-aligned cluster never clips */
+@media (max-width: 640px) {
+	.dn-topbar {
+		gap: 0.25rem;
+	}
+	.dn-topbar__brand {
+		padding-inline: 0.25rem;
+	}
+	.dn-topbar__wordmark {
+		font-size: 1.05rem;
+	}
+	.dn-topbar__palette {
+		height: 2.25rem;
+		padding: 0 0.6rem;
+		margin-right: 0.1rem;
+	}
+}
+.dn-topbar__profile {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	height: 2.5rem;
+	width: 2.5rem;
+	border-radius: 999px;
+	color: oklch(from var(--color-base-content) l c h / 0.75);
+	transition: background var(--dn-dur-fast) ease;
+}
+.dn-topbar__profile:hover {
+	background: oklch(from var(--color-base-content) l c h / 0.06);
+	color: oklch(from var(--color-base-content) l c h / 0.95);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Rebuilt app sidebar (AppSidebar.svelte)
+   Collapse behaviour is driven by container queries on the rail width, so the
+   internal layout is independent of DaisyUI's drawer internals.
+   ═══════════════════════════════════════════════════════════════════════ */
+.dn-sidebar {
+	position: relative;
+	container: dn-sidebar / inline-size;
+	border-right: 1px solid var(--dn-hairline);
+	background: linear-gradient(
+		180deg,
+		oklch(from var(--color-base-200) l c h) 0%,
+		oklch(from var(--color-base-200) l c h / 0.55) 100%
+	);
+}
+
+/* ── mobile: the sidebar becomes the app drawer ───────────────────────────
+   Slide-over panel above the bottom nav + player dock, opaque surface,
+   always expanded (the collapse rail is a desktop idea). */
+@media (max-width: 767px) {
+	.droppedneedle-app-shell .drawer-side {
+		z-index: 90;
+	}
+	.dn-sidebar {
+		width: min(19rem, 86vw) !important;
+		min-height: 100dvh;
+		padding-top: var(--ms-safe-top);
+		background: oklch(from var(--color-base-200) l c h / 0.98);
+		backdrop-filter: blur(24px);
+		-webkit-backdrop-filter: blur(24px);
+		box-shadow: var(--dn-shadow-4);
+	}
+	.dn-sidebar__footer {
+		padding-bottom: calc(1rem + var(--ms-safe-bottom));
+	}
+}
+.dn-sidebar__scroll {
+	scrollbar-width: none;
+	/* content quietly fades at the scroll edges instead of clipping */
+	-webkit-mask-image: linear-gradient(
+		to bottom,
+		transparent 0,
+		#000 0.9rem,
+		#000 calc(100% - 1.1rem),
+		transparent 100%
+	);
+	mask-image: linear-gradient(
+		to bottom,
+		transparent 0,
+		#000 0.9rem,
+		#000 calc(100% - 1.1rem),
+		transparent 100%
+	);
+}
+.dn-sidebar__scroll::-webkit-scrollbar {
+	display: none;
+}
+.dn-sidebar__footer {
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+	padding: 0.6rem 0.75rem 1rem;
+	border-top: 1px solid var(--dn-hairline);
+}
+
+.dn-navgroup {
+	padding: 0 0.65rem;
+	margin: 1.2rem 0 0.4rem;
+	font-family: var(--font-mono);
+	font-size: 0.6rem;
+	font-weight: 700;
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+	white-space: nowrap;
+	color: oklch(from var(--color-base-content) l c h / 0.35);
+	transition: opacity var(--dn-dur-base) ease;
+}
+
+/* sidebar brand block — the "audiophile grade" signature */
+.dn-sidebar__brand {
+	display: flex;
+	align-items: center;
+	gap: 0.7rem;
+	padding: 0.35rem 0.45rem 0.9rem;
+}
+.dn-sidebar__brandmark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 2.4rem;
+	height: 2.4rem;
+	flex-shrink: 0;
+	border-radius: 0.85rem;
+	border: 1px solid var(--dn-hairline);
+	background: oklch(from var(--color-base-content) l c h / 0.06);
+	color: oklch(from var(--color-base-content) l c h / 0.85);
+	box-shadow: inset 0 1px 0 oklch(from var(--color-base-content) l c h / 0.06);
+}
+.dn-sidebar__brandtext {
+	min-width: 0;
+	line-height: 1.15;
+}
+.dn-sidebar__brandtitle {
+	font-family: var(--font-display);
+	font-size: 1.05rem;
+	font-weight: 700;
+	letter-spacing: -0.01em;
+	white-space: nowrap;
+}
+.dn-sidebar__eyebrow {
+	font-family: var(--font-mono);
+	font-size: 0.55rem;
+	font-weight: 700;
+	letter-spacing: 0.24em;
+	text-transform: uppercase;
+	white-space: nowrap;
+	color: oklch(from var(--color-base-content) l c h / 0.35);
+}
+
+/* light pill CTA (New Playlist) */
+.dn-sidebar__cta {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.45rem;
+	width: 100%;
+	margin: 0.75rem 0 0.25rem;
+	padding: 0.55rem 0.5rem;
+	border-radius: 999px;
+	background: oklch(from var(--color-primary) l c h / 0.92);
+	color: var(--color-primary-content);
+	font-family: var(--font-mono);
+	font-size: 0.68rem;
+	font-weight: 700;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	white-space: nowrap;
+	box-shadow: var(--dn-shadow-1);
+	transition:
+		background var(--dn-dur-fast) ease,
+		transform var(--dn-dur-fast) var(--ease-spring);
+}
+.dn-sidebar__cta:hover {
+	background: var(--color-primary);
+	transform: translateY(-1px);
+}
+.dn-navlist {
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+}
+
+.dn-navitem {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 0.85rem;
+	width: 100%;
+	padding: 0.68rem 0.8rem;
+	border-radius: 0.8rem;
+	color: oklch(from var(--color-base-content) l c h / 0.62);
+	font-family: var(--font-mono);
+	font-size: 0.7rem;
+	font-weight: 700;
+	letter-spacing: 0.11em;
+	text-transform: uppercase;
+	line-height: 1.1;
+	white-space: nowrap;
+	transition:
+		background var(--dn-dur-fast) ease,
+		color var(--dn-dur-fast) ease,
+		transform var(--dn-dur-fast) var(--ease-spring);
+}
+.dn-navitem:hover {
+	background: oklch(from var(--color-base-content) l c h / 0.05);
+	color: oklch(from var(--color-base-content) l c h / 0.95);
+	transform: translateX(2px);
+}
+.dn-navitem:hover .dn-navitem__icon {
+	color: oklch(from var(--color-accent) l c h / 0.9);
+}
+.dn-navitem__icon {
+	transition: color var(--dn-dur-fast) ease;
+}
+@media (prefers-reduced-motion: reduce) {
+	.dn-navitem,
+	.dn-navitem:hover {
+		transform: none;
+	}
+}
+.dn-navitem__icon {
+	width: 1.3rem;
+	height: 1.3rem;
+	flex-shrink: 0;
+}
+.dn-navitem__iconwrap {
+	position: relative;
+	display: inline-flex;
+	flex-shrink: 0;
+}
+.dn-navitem__label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.dn-navitem__kbd {
+	margin-left: auto;
+	padding: 0.05rem 0.4rem;
+	font-family: var(--font-mono);
+	font-size: 0.7rem;
+	border-radius: 0.35rem;
+	border: 1px solid var(--dn-hairline);
+	color: oklch(from var(--color-base-content) l c h / 0.45);
+}
+
+/* active state: filled card + a notch tab kissing the sidebar's right edge */
+.dn-navitem--active {
+	color: oklch(from var(--color-base-content) l c h);
+	background: linear-gradient(
+		180deg,
+		oklch(from var(--color-base-content) l c h / 0.11),
+		oklch(from var(--color-base-content) l c h / 0.07)
+	);
+	outline: 1px solid var(--dn-hairline);
+	outline-offset: -1px;
+	box-shadow:
+		inset 0 1px 0 oklch(from var(--color-base-content) l c h / 0.07),
+		var(--dn-shadow-1);
+}
+.dn-navitem--active,
+.dn-navitem--active:hover {
+	transform: none;
+}
+.dn-navitem--active .dn-navitem__icon {
+	color: oklch(from var(--color-base-content) l c h);
+}
+.dn-navitem--active:hover {
+	background: oklch(from var(--color-base-content) l c h / 0.12);
+	color: oklch(from var(--color-base-content) l c h);
+}
+.dn-navitem--active::after {
+	content: '';
+	position: absolute;
+	right: -0.8rem;
+	top: 50%;
+	transform: translateY(-50%);
+	height: 1.6rem;
+	width: 4px;
+	border-radius: 999px 0 0 999px;
+	background: oklch(from var(--color-primary) l c h / 0.9);
+}
+
+.dn-dot {
+	position: absolute;
+	top: -0.15rem;
+	right: -0.15rem;
+	display: inline-flex;
+}
+.dn-dot--primary {
+	height: 0.5rem;
+	width: 0.5rem;
+	border-radius: 999px;
+	background: oklch(from var(--color-primary) l c h);
+}
+.dn-navitem__count {
+	position: absolute;
+	top: -0.45rem;
+	right: -0.55rem;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 1rem;
+	height: 1rem;
+	padding: 0 0.25rem;
+	border-radius: 999px;
+	background: oklch(from var(--color-primary) l c h);
+	color: oklch(from var(--color-primary-content) l c h);
+	font-size: 0.625rem;
+	font-weight: 800;
+	line-height: 1;
+}
+.dn-navitem__count--warning {
+	background: oklch(from var(--color-warning) l c h);
+	color: oklch(from var(--color-warning-content) l c h);
+}
+.dn-navitem__badge {
+	position: absolute;
+	top: -0.2rem;
+	right: -0.2rem;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	height: 1.05rem;
+	width: 1.05rem;
+	border-radius: 999px;
+	background: oklch(from var(--color-accent) l c h);
+	color: oklch(from var(--color-accent-content) l c h);
+}
+
+/* "connect this source" hint — a muted nav item with a + affordance */
+.dn-navitem--hint {
+	opacity: 0.5;
+}
+.dn-navitem--hint:hover {
+	opacity: 0.9;
+}
+.dn-navitem__addbadge {
+	position: absolute;
+	right: -0.3rem;
+	bottom: -0.3rem;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0.1rem;
+	border-radius: 999px;
+	background: var(--color-base-300);
+	color: oklch(from var(--color-base-content) l c h / 0.8);
+}
+
+/* ── collapsed rail (container narrower than ~150px) ──────────────────── */
+@container dn-sidebar (max-width: 150px) {
+	.dn-sidebar__scroll {
+		overflow: visible;
+		/* tooltips overflow the rail; the fade mask would clip them */
+		-webkit-mask-image: none;
+		mask-image: none;
+	}
+	.dn-sidebar__brand {
+		justify-content: center;
+		padding-inline: 0;
+	}
+	.dn-sidebar__brandtext,
+	.dn-sidebar__cta {
+		display: none;
+	}
+	.dn-navitem--active::after {
+		display: none;
+	}
+	.dn-navgroup {
+		height: 1px;
+		margin: 0.75rem 0.5rem;
+		padding: 0;
+		overflow: hidden;
+		background: var(--dn-hairline);
+		color: transparent;
+	}
+	.dn-navitem {
+		justify-content: center;
+		gap: 0;
+		padding-inline: 0;
+	}
+	.dn-navitem__label,
+	.dn-navitem__kbd,
+	.dn-navitem .now-playing-bars {
+		display: none;
+	}
+	.dn-navitem--toggle .dn-navitem__icon {
+		transform: none;
+	}
+	/* hover tooltip — the .drawer-side keeps overflow-visible while collapsed */
+	.dn-navitem[data-tip]:hover::after {
+		content: attr(data-tip);
+		position: absolute;
+		left: calc(100% + 0.6rem);
+		top: 50%;
+		transform: translateY(-50%);
+		z-index: 80;
+		padding: 0.3rem 0.6rem;
+		border-radius: var(--dn-radius-xs);
+		background: var(--dn-surface-overlay);
+		border: 1px solid var(--dn-hairline);
+		box-shadow: var(--dn-shadow-3);
+		color: oklch(from var(--color-base-content) l c h / 0.95);
+		font-size: 0.8rem;
+		font-weight: 500;
+		white-space: nowrap;
+		pointer-events: none;
+	}
+}
+
+/* expanded: flip the collapse chevron to point inward */
+@container dn-sidebar (min-width: 151px) {
+	.dn-navitem--toggle .dn-navitem__icon {
+		transform: rotateY(180deg);
+	}
 }
 
 .droppedneedle-main-content {
@@ -383,17 +1126,34 @@ textarea {
 	max-width: 100%;
 }
 
-/* app headings + modal titles use the display face */
+/* ═══ global type system ═══
+   Big headings: display face, Title Case, tight tracking (the mockup language).
+   Micro-labels (.section-title and .dn-label): monospace uppercase with wide
+   tracking — the only place uppercase lives now. */
 .droppedneedle-main-content :is(h1, h2),
 .modal-box :is(h1, h2, h3) {
 	font-family: var(--font-display);
+	letter-spacing: -0.01em;
 }
 
-/* structural labels go uppercase; content names keep their case via .hero-title */
-.droppedneedle-main-content :is(h1, h2):not(.hero-title),
-.modal-box :is(h1, h2, h3):not(.hero-title) {
+/* shelf/section titles everywhere become quiet mono eyebrows */
+.droppedneedle-main-content :is(h2, h3).section-title,
+.dn-label {
+	font-family: var(--font-mono);
+	font-size: 0.68rem;
+	font-weight: 700;
+	letter-spacing: 0.2em;
 	text-transform: uppercase;
-	letter-spacing: 0.02em;
+	color: oklch(from var(--color-base-content) l c h / 0.5);
+}
+
+/* badges carry the audiophile-grade signal language (MASTER / HI-RES / FLAC) */
+.badge {
+	font-family: var(--font-mono);
+	font-size: 0.62rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
 }
 
 .droppedneedle-main-content.droppedneedle-player-visible {
@@ -476,6 +1236,12 @@ textarea {
 
 .droppedneedle-playback-toast.droppedneedle-playback-toast--player {
 	bottom: calc(var(--ms-bottom-nav-offset) + var(--ms-player-height) + 0.75rem);
+}
+
+/* While the full-screen Stage is open the pop-out must stay on top of it —
+   YouTube's policies forbid obscuring the player. */
+html.dn-stage-open .droppedneedle-yt-popout {
+	z-index: 95;
 }
 
 /* Pops out above the bar so the bar keeps its height. YouTube's Developer Policies demand a
@@ -929,8 +1695,43 @@ textarea {
 	transform: rotate(-3deg);
 	transition: transform 0.9s var(--ease-overshoot);
 }
-.tonearm.is-playing {
-	transform: rotate(-31deg);
+/* rotation is driven inline by the Turntable (tracks album position); this class
+   is kept for the reduced-motion kill switch below */
+
+/* picture-disc surface: pressed grooves + rim shadow + a soft sheen so full-disc
+   artwork still reads as vinyl */
+.dn-vinyl-grooves {
+	background:
+		repeating-radial-gradient(
+			circle at center,
+			oklch(0 0 0 / 0.16) 0px,
+			oklch(0 0 0 / 0.16) 1px,
+			transparent 2px,
+			transparent 5px
+		),
+		radial-gradient(
+			circle at center,
+			transparent 55%,
+			oklch(0 0 0 / 0.3) 88%,
+			oklch(0 0 0 / 0.55) 100%
+		),
+		radial-gradient(circle at 32% 26%, oklch(1 0 0 / 0.14), transparent 42%);
+	mix-blend-mode: multiply;
+}
+.dn-vinyl-grooves::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: 999px;
+	background: conic-gradient(
+		from 210deg,
+		transparent 0deg,
+		oklch(1 0 0 / 0.08) 18deg,
+		transparent 40deg,
+		transparent 180deg,
+		oklch(1 0 0 / 0.05) 200deg,
+		transparent 224deg
+	);
 }
 
 .deck-halo {
@@ -1032,8 +1833,13 @@ textarea {
 }
 
 @media (prefers-reduced-motion: reduce) {
+	/* the record's rotation is play-state feedback, not decoration — under
+	   reduced motion it turns at a third of the speed instead of freezing.
+	   iteration-count is re-forced so no kill switch can clamp it to a single
+	   revolution (which would read as "spin, stop, restart"). */
 	.vinyl-spin {
-		animation: none !important;
+		animation-duration: 12s !important;
+		animation-iteration-count: infinite !important;
 	}
 	.tonearm,
 	.crate-card,

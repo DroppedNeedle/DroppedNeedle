@@ -212,44 +212,56 @@
 	<title>{genreName ? `${genreName}` : 'Genre'} - DroppedNeedle</title>
 </svelte:head>
 
-<div class="min-h-screen bg-base-100 relative overflow-hidden">
+<div class="relative min-h-screen overflow-hidden bg-base-100">
 	{#if heroArtistMbid}
+		<!-- cinematic backdrop: genre artist portrait under a charcoal wash -->
 		<div
-			class="absolute inset-x-0 top-0 h-96 overflow-hidden pointer-events-none"
+			class="pointer-events-none absolute inset-x-0 top-0 h-[26rem] overflow-hidden"
 			style="z-index: 0;"
 		>
 			<img
 				src={getApiUrl(`/api/v1/covers/artist/${heroArtistMbid}?size=500`)}
 				alt=""
-				class="w-full h-full object-cover object-top transition-opacity duration-700 {heroImageLoaded
-					? 'opacity-20'
+				class="h-full w-full object-cover object-top transition-opacity duration-700 {heroImageLoaded
+					? 'opacity-100'
 					: 'opacity-0'}"
+				style="filter: saturate(0.9) brightness(0.72);"
 				onload={() => (heroImageLoaded = true)}
 			/>
 			<div
-				class="absolute inset-0 bg-linear-to-b from-base-100/30 via-base-100/70 to-base-100"
+				class="absolute inset-0 bg-linear-to-r from-base-100/90 via-base-100/55 to-base-100/25"
+			></div>
+			<div
+				class="absolute inset-0 bg-linear-to-b from-base-100/35 via-base-100/60 to-base-100"
 			></div>
 		</div>
 	{/if}
 
-	<div class="container mx-auto p-4 max-w-7xl relative" style="z-index: 1;">
-		<header class="mb-10 pt-2">
-			<a href="/" class="btn btn-ghost btn-sm gap-2 mb-6 -ml-2 opacity-70 hover:opacity-100">
-				<ArrowLeft class="w-4 h-4" />
+	<div class="container relative mx-auto max-w-7xl p-4" style="z-index: 1;">
+		<header class="mb-10 pt-4">
+			<a href="/" class="btn btn-ghost btn-sm mb-6 gap-2 rounded-full bg-base-content/6">
+				<ArrowLeft class="h-4 w-4" />
 				Back
 			</a>
+			<p
+				class="mb-3 w-fit rounded-full border border-base-content/15 bg-base-100/45 px-3 py-1 font-mono text-[0.62rem] font-bold uppercase tracking-[0.22em] text-base-content/70 backdrop-blur-sm"
+			>
+				Genre
+			</p>
 			<div class="flex items-center gap-5">
 				<div
-					class="w-20 h-20 rounded-2xl bg-linear-to-br from-primary/30 to-secondary/30 flex items-center justify-center shrink-0"
+					class="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl border border-base-content/8 bg-base-200/60 backdrop-blur-sm"
 				>
-					<Music2 class="h-10 w-10 text-primary" />
+					<Music2 class="h-10 w-10 text-accent" />
 				</div>
 				<div>
-					<h1 class="text-4xl sm:text-5xl font-bold capitalize tracking-tight">
+					<h1
+						class="hero-title font-display text-4xl font-bold capitalize tracking-tight sm:text-6xl"
+					>
 						{genreName || 'Genre'}
 					</h1>
 					{#if genreData}
-						<p class="text-base-content/50 mt-2 text-sm sm:text-base">
+						<p class="mt-2 text-sm text-base-content/55 sm:text-base">
 							{#if hasLibraryContent}
 								{genreData.library?.artist_count ?? 0} artists · {genreData.library?.album_count ??
 									0} albums in your library
@@ -271,23 +283,31 @@
 						size="md"
 						label="Play"
 					/>
-					<div class="join" role="radiogroup" aria-label="Station mode">
+					<div
+						class="flex items-center gap-1 rounded-full border border-base-content/8 bg-base-200/60 p-1 backdrop-blur-sm"
+						role="radiogroup"
+						aria-label="Station mode"
+					>
 						<button
-							class="btn btn-xs join-item {radioMode === 'hybrid' ? 'btn-active' : 'btn-ghost'}"
+							class="btn btn-xs rounded-full {radioMode === 'hybrid' ? 'btn-primary' : 'btn-ghost'}"
 							onclick={() => (radioMode = 'hybrid')}
 							title="Your library plus streamed full tracks"
 						>
 							Full tracks
 						</button>
 						<button
-							class="btn btn-xs join-item {radioMode === 'previews' ? 'btn-active' : 'btn-ghost'}"
+							class="btn btn-xs rounded-full {radioMode === 'previews'
+								? 'btn-primary'
+								: 'btn-ghost'}"
 							onclick={() => (radioMode = 'previews')}
 							title="30-second tastes - fast crate-digging"
 						>
 							Quick previews
 						</button>
 						<button
-							class="btn btn-xs join-item {radioMode === 'library' ? 'btn-active' : 'btn-ghost'}"
+							class="btn btn-xs rounded-full {radioMode === 'library'
+								? 'btn-primary'
+								: 'btn-ghost'}"
 							onclick={() => (radioMode = 'library')}
 							title="Only music you own"
 						>
@@ -300,21 +320,18 @@
 
 		{#if loading}
 			<section class="mb-12" aria-label="Loading">
-				<div class="flex items-center gap-3 mb-6">
-					<div class="skeleton w-10 h-10 rounded-xl"></div>
-					<div>
-						<div class="skeleton h-6 w-48 mb-2"></div>
-						<div class="skeleton h-4 w-32"></div>
-					</div>
+				<div class="mb-6 flex items-center gap-3">
+					<div class="skeleton h-4 w-4 rounded"></div>
+					<div class="skeleton h-4 w-44"></div>
 				</div>
 				<div
-					class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
+					class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
 				>
 					{#each Array(12) as _, i (`genre-artist-skeleton-${i}`)}
-						<div class="card bg-base-200/50">
+						<div class="rounded-2xl border border-base-content/8 bg-base-200/50">
 							<div class="skeleton aspect-square rounded-t-2xl"></div>
 							<div class="p-3">
-								<div class="skeleton h-4 w-3/4 mb-2"></div>
+								<div class="skeleton mb-2 h-4 w-3/4"></div>
 								<div class="skeleton h-3 w-1/2"></div>
 							</div>
 						</div>
@@ -323,21 +340,18 @@
 			</section>
 
 			<section class="mb-12" aria-label="Loading">
-				<div class="flex items-center gap-3 mb-6">
-					<div class="skeleton w-10 h-10 rounded-xl"></div>
-					<div>
-						<div class="skeleton h-6 w-40 mb-2"></div>
-						<div class="skeleton h-4 w-28"></div>
-					</div>
+				<div class="mb-6 flex items-center gap-3">
+					<div class="skeleton h-4 w-4 rounded"></div>
+					<div class="skeleton h-4 w-36"></div>
 				</div>
 				<div
-					class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
+					class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
 				>
 					{#each Array(6) as _, i (`genre-album-skeleton-${i}`)}
-						<div class="card bg-base-200/50">
+						<div class="rounded-2xl border border-base-content/8 bg-base-200/50">
 							<div class="skeleton aspect-square rounded-t-2xl"></div>
 							<div class="p-3">
-								<div class="skeleton h-4 w-3/4 mb-2"></div>
+								<div class="skeleton mb-2 h-4 w-3/4"></div>
 								<div class="skeleton h-3 w-1/2"></div>
 							</div>
 						</div>
@@ -346,32 +360,32 @@
 			</section>
 		{:else if error}
 			<div class="flex flex-col items-center justify-center py-24">
-				<CircleAlert class="h-12 w-12 text-base-content/40 mb-4" strokeWidth={1.5} />
-				<p class="text-base-content/70 text-lg">{error}</p>
-				<button class="btn btn-primary mt-6" onclick={loadData}>Try Again</button>
+				<CircleAlert class="mb-4 h-12 w-12 text-base-content/40" strokeWidth={1.5} />
+				<p class="text-lg text-base-content/70">{error}</p>
+				<button class="btn btn-primary mt-6 rounded-full" onclick={loadData}>Try Again</button>
 			</div>
 		{:else if genreData}
 			{#if hasLibraryContent}
 				<section class="mb-12" aria-label="From Your Library">
-					<div class="flex items-center gap-3 mb-6">
-						<div
-							class="w-10 h-10 rounded-xl bg-success/20 flex items-center justify-center text-success"
+					<div class="mb-5 flex items-baseline justify-between gap-3">
+						<h2
+							class="flex items-center gap-2.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
 						>
-							<BookOpen class="w-5 h-5" />
-						</div>
-						<div>
-							<h2 class="text-2xl font-bold">From Your Library</h2>
-							<p class="text-sm text-base-content/50">
-								{genreData.library?.artist_count ?? 0} artists · {genreData.library?.album_count ??
-									0} albums
-							</p>
-						</div>
+							<BookOpen class="h-4 w-4 text-accent" />
+							From your library
+						</h2>
+						<p class="text-xs text-base-content/45">
+							{genreData.library?.artist_count ?? 0} artists · {genreData.library?.album_count ?? 0}
+							albums
+						</p>
 					</div>
 
 					{#if (genreData.library?.artists?.length ?? 0) > 0}
-						<h3 class="text-lg font-semibold mb-4 text-base-content/70">Artists</h3>
+						<h3 class="mb-4 font-display text-lg font-semibold tracking-tight text-base-content/80">
+							Artists
+						</h3>
 						<div
-							class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 mb-8"
+							class="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
 						>
 							{#each genreData.library?.artists ?? [] as artist (artist.mbid || artist.name)}
 								<GenreArtistCard
@@ -384,9 +398,11 @@
 					{/if}
 
 					{#if (genreData.library?.albums?.length ?? 0) > 0}
-						<h3 class="text-lg font-semibold mb-4 text-base-content/70">Albums</h3>
+						<h3 class="mb-4 font-display text-lg font-semibold tracking-tight text-base-content/80">
+							Albums
+						</h3>
 						<div
-							class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
+							class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
 						>
 							{#each genreData.library?.albums ?? [] as album (album.mbid || album.name)}
 								<GenreAlbumCard
@@ -398,46 +414,46 @@
 						</div>
 					{/if}
 				</section>
-				<div class="divider my-8 opacity-30"></div>
+				<div class="my-10 h-px bg-base-content/8" aria-hidden="true"></div>
 			{/if}
 
 			<section class="mb-12" aria-label="Popular Artists">
-				<div class="flex items-center gap-3 mb-6">
-					<div
-						class="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center text-primary"
+				<div class="mb-5 flex items-baseline justify-between gap-3">
+					<h2
+						class="flex items-center gap-2.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
 					>
-						<Mic class="w-5 h-5" />
-					</div>
-					<div>
-						<h2 class="text-2xl font-bold">Popular Artists</h2>
-						<p class="text-sm text-base-content/50">Top {genreName} artists</p>
-					</div>
+						<Mic class="h-4 w-4 text-accent" />
+						Popular artists
+					</h2>
+					<p class="text-xs text-base-content/45">Top {genreName} artists</p>
 				</div>
 
 				{#if (genreData.popular?.artists?.length ?? 0) === 0}
-					<div class="flex flex-col items-center justify-center py-16">
-						<Mic class="h-10 w-10 text-base-content/30 mb-4" strokeWidth={1.5} />
+					<div
+						class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-base-content/12 py-16"
+					>
+						<Mic class="mb-4 h-10 w-10 text-base-content/30" strokeWidth={1.5} />
 						<p class="text-base-content/50">No artists found for this genre</p>
 					</div>
 				{:else}
 					<div
-						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
+						class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
 					>
 						{#each genreData.popular?.artists ?? [] as artist (artist.mbid || artist.name)}
 							<GenreArtistCard {artist} href={artistHrefOrNull(artist.mbid)} />
 						{/each}
 					</div>
 					{#if genreData.popular?.has_more_artists}
-						<div class="flex justify-center mt-8">
+						<div class="mt-8 flex justify-center">
 							<button
-								class="btn btn-outline btn-wide gap-2"
+								class="btn btn-wide gap-2 rounded-full btn-ghost bg-base-content/6"
 								onclick={loadMoreArtists}
 								disabled={loadingMoreArtists}
 							>
 								{#if loadingMoreArtists}
 									<span class="loading loading-spinner loading-sm"></span>
 								{:else}
-									<ChevronDown class="w-4 h-4" />
+									<ChevronDown class="h-4 w-4" />
 								{/if}
 								View More Artists
 							</button>
@@ -447,42 +463,42 @@
 			</section>
 
 			<section class="mb-12" aria-label="Popular Albums">
-				<div class="flex items-center gap-3 mb-6">
-					<div
-						class="w-10 h-10 rounded-xl bg-secondary/20 flex items-center justify-center text-secondary"
+				<div class="mb-5 flex items-baseline justify-between gap-3">
+					<h2
+						class="flex items-center gap-2.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
 					>
-						<Disc3 class="w-5 h-5" />
-					</div>
-					<div>
-						<h2 class="text-2xl font-bold">Popular Albums</h2>
-						<p class="text-sm text-base-content/50">Top {genreName} albums</p>
-					</div>
+						<Disc3 class="h-4 w-4 text-accent" />
+						Popular albums
+					</h2>
+					<p class="text-xs text-base-content/45">Top {genreName} albums</p>
 				</div>
 
 				{#if (genreData.popular?.albums?.length ?? 0) === 0}
-					<div class="flex flex-col items-center justify-center py-16">
-						<Disc3 class="h-10 w-10 text-base-content/30 mb-4" strokeWidth={1.5} />
+					<div
+						class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-base-content/12 py-16"
+					>
+						<Disc3 class="mb-4 h-10 w-10 text-base-content/30" strokeWidth={1.5} />
 						<p class="text-base-content/50">No albums found for this genre</p>
 					</div>
 				{:else}
 					<div
-						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
+						class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
 					>
 						{#each genreData.popular?.albums ?? [] as album (album.mbid || album.name)}
 							<GenreAlbumCard {album} href={albumHrefOrNull(album.mbid)} />
 						{/each}
 					</div>
 					{#if genreData.popular?.has_more_albums}
-						<div class="flex justify-center mt-8">
+						<div class="mt-8 flex justify-center">
 							<button
-								class="btn btn-outline btn-wide gap-2"
+								class="btn btn-wide gap-2 rounded-full btn-ghost bg-base-content/6"
 								onclick={loadMoreAlbums}
 								disabled={loadingMoreAlbums}
 							>
 								{#if loadingMoreAlbums}
 									<span class="loading loading-spinner loading-sm"></span>
 								{:else}
-									<ChevronDown class="w-4 h-4" />
+									<ChevronDown class="h-4 w-4" />
 								{/if}
 								View More Albums
 							</button>

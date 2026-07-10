@@ -34,14 +34,19 @@
 {:else}
 	<div class="grid grid-cols-1 gap-6 md:grid-cols-2">
 		{#if artists.length > 0}
-			<div class="space-y-2">
-				<h3 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">Artists</h3>
+			<div class="space-y-3">
+				<h3
+					class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+				>
+					Artists
+				</h3>
 				<ol class="space-y-1">
 					{#each artists as artist (artist.id)}
 						<li
-							class="flex items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-base-200/50"
+							class="flex items-center gap-3 rounded-xl border border-transparent px-2.5 py-1.5 transition-colors hover:border-primary/30 hover:bg-base-200/60"
 						>
-							<span class="w-5 text-right text-xs font-bold text-base-content/40"
+							<span
+								class="w-5 text-right font-mono text-xs font-bold tabular-nums text-base-content/40"
 								>{artists.indexOf(artist) + 1}</span
 							>
 							<div class="h-9 w-9 shrink-0 overflow-hidden rounded-full">
@@ -69,16 +74,21 @@
 		{/if}
 
 		{#if albums.length > 0}
-			<div class="space-y-2">
-				<h3 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">Albums</h3>
+			<div class="space-y-3">
+				<h3
+					class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+				>
+					Albums
+				</h3>
 				<ol class="space-y-1">
 					{#each albums as album (album.id)}
 						<li>
 							<button
-								class="flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-base-200/50"
+								class="flex w-full items-center gap-3 rounded-xl border border-transparent px-2.5 py-1.5 text-left transition-colors hover:border-primary/30 hover:bg-base-200/60"
 								onclick={() => onAlbumClick?.(album)}
 							>
-								<span class="w-5 text-right text-xs font-bold text-base-content/40"
+								<span
+									class="w-5 text-right font-mono text-xs font-bold tabular-nums text-base-content/40"
 									>{albums.indexOf(album) + 1}</span
 								>
 								<div class="h-9 w-9 shrink-0 overflow-hidden rounded-md">

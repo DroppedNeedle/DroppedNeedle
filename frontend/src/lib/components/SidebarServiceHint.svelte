@@ -11,20 +11,18 @@
 	let { icon, label, settingsTab }: Props = $props();
 </script>
 
-<li class="opacity-30 hover:opacity-70 transition-opacity duration-200">
+<li>
 	<a
 		href="/settings?tab={settingsTab}"
-		class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+		class="dn-navitem dn-navitem--hint"
 		data-tip="Connect {label}"
 	>
-		<div class="relative">
+		<span class="dn-navitem__iconwrap">
 			{@render icon()}
-			<span
-				class="absolute -bottom-1 -right-1 bg-base-300 rounded-full p-0.5 flex items-center justify-center"
-			>
-				<Plus class="w-2.5 h-2.5" />
+			<span class="dn-navitem__addbadge">
+				<Plus class="h-2.5 w-2.5" />
 			</span>
-		</div>
-		<span class="is-drawer-close:hidden">{label}</span>
+		</span>
+		<span class="dn-navitem__label">{label}</span>
 	</a>
 </li>

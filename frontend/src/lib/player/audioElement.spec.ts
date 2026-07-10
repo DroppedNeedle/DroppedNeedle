@@ -4,7 +4,8 @@ const mockEngine = vi.hoisted(() => ({
 	connect: vi.fn(),
 	destroy: vi.fn(),
 	isConnected: vi.fn(() => true),
-	resume: vi.fn(async () => undefined)
+	resume: vi.fn(async () => undefined),
+	onContextStateChange: vi.fn()
 }));
 
 vi.mock('./audioEngine', () => {
@@ -16,6 +17,7 @@ import {
 	_resetAudioElement,
 	getAudioElement,
 	getAudioEngine,
+	onAudioEngineSuspended,
 	resumeAudioEngine,
 	tryGetAudioEngine,
 	setAudioElement
@@ -121,5 +123,44 @@ describe('audioElement registry', () => {
 
 		await expect(resumeAudioEngine()).resolves.toBeUndefined();
 		expect(mockEngine.resume).toHaveBeenCalledTimes(1);
+	});
+
+	it('sets navigator.audioSession.type to playback when available (iOS 17+)', () => {
+		expect.assertions(1);
+		const audioSession = { type: 'auto' };
+		vi.stubGlobal('navigator', { audioSession });
+
+		setAudioElement({ src: '' } as HTMLAudioElement);
+
+		expect(audioSession.type).toBe('playback');
+		vi.unstubAllGlobals();
+	});
+
+	it('registers without audioSession support (no throw)', () => {
+		expect.assertions(1);
+		vi.stubGlobal('navigator', {});
+
+		setAudioElement({ src: '' } as HTMLAudioElement);
+
+		expect(getAudioElement()).toBeDefined();
+		vi.unstubAllGlobals();
+	});
+
+	it('notifies suspend listeners when the engine context suspends', () => {
+		expect.assertions(3);
+		const listener = vi.fn();
+		const unsubscribe = onAudioEngineSuspended(listener);
+		setAudioElement({ src: '' } as HTMLAudioElement);
+		const bridge = mockEngine.onContextStateChange.mock.calls[0][0] as (state: string) => void;
+
+		bridge('running');
+		expect(listener).not.toHaveBeenCalled();
+
+		bridge('suspended');
+		expect(listener).toHaveBeenCalledTimes(1);
+
+		unsubscribe();
+		bridge('suspended');
+		expect(listener).toHaveBeenCalledTimes(1);
 	});
 });

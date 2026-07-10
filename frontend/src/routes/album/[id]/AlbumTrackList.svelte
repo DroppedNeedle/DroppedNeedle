@@ -17,7 +17,6 @@
 	import { resolveSourceTrack } from './albumTrackResolvers';
 	import { normalizeDiscNumber, getDiscTrackKey } from '$lib/player/queueHelpers';
 	import { formatDuration } from '$lib/utils/formatting';
-	import { colors } from '$lib/colors';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import TrackPlayButton from '$lib/components/TrackPlayButton.svelte';
@@ -169,13 +168,13 @@
 	}
 </script>
 
-<div class="bg-base-200 rounded-box overflow-visible">
+<div class="rounded-2xl border border-base-content/8 bg-base-200/50 overflow-visible">
 	<ul class="list">
 		{#each renderedTrackSections as section (section.discNumber)}
 			{#if renderedTrackSections.length > 1}
 				<li class="list-row min-h-0 cursor-default px-3 sm:px-4 pt-4 pb-2">
 					<div
-						class="inline-flex items-center gap-2 rounded-full border border-base-content/10 bg-base-100/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] opacity-70"
+						class="inline-flex items-center gap-2 rounded-full border border-base-content/10 bg-base-100/80 px-3 py-1 font-mono text-[0.62rem] font-bold uppercase tracking-[0.18em] text-base-content/60"
 					>
 						<span class="h-1.5 w-1.5 rounded-full bg-accent"></span>
 						Disc {section.discNumber}
@@ -258,48 +257,70 @@
 					!!upgradeRecordingId &&
 					!trackTask &&
 					$integrationStore.download_client}
+				{@const hasActions =
+					youtubeEnabled ||
+					showPreview ||
+					showJellyfinBtn ||
+					showLocalBtn ||
+					showNavidromeBtn ||
+					showPlexBtn ||
+					showRequest ||
+					showTrackDownload ||
+					!!heldMeta ||
+					showUpgrade}
 				<li
-					class="list-row group hover:bg-base-300/50 transition-colors p-3 sm:p-4"
-					style={isCurrentlyPlaying ? `background-color: ${colors.accent}20;` : ''}
+					class="list-row group transition-colors p-3 sm:p-4 {isCurrentlyPlaying
+						? 'bg-accent/10'
+						: 'hover:bg-base-200/60'}"
 				>
-					<div class="list-col-grow flex items-center gap-4 w-full">
+					<div
+						class="list-col-grow grid w-full min-w-0 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 sm:grid-cols-[2rem_minmax(0,1fr)_auto_max-content] sm:gap-x-4"
+					>
 						<div
-							class="font-medium w-8 text-center shrink-0 {isCurrentlyPlaying
-								? ''
-								: 'text-base-content/60'}"
-							style={isCurrentlyPlaying ? `color: ${colors.accent};` : ''}
+							class="min-w-0 text-right font-mono text-sm tabular-nums {isCurrentlyPlaying
+								? 'text-accent'
+								: 'text-base-content/50'}"
 						>
 							{#if isCurrentlyPlaying}
-								<NowPlayingIndicator />
+								<div class="flex justify-end">
+									<NowPlayingIndicator />
+								</div>
 							{:else}
 								{track.position}
 							{/if}
 						</div>
 
-						{#if libMeta}
-							<div class="shrink-0">
-								<LibraryFormatBadge format={libMeta.file_format} size="badge-xs" />
-							</div>
-						{/if}
-
-						<div class="flex-1 min-w-0">
-							<div
-								class="font-medium truncate"
-								style={isCurrentlyPlaying ? `color: ${colors.accent};` : ''}
-							>
-								{track.title}
-							</div>
-							{#if libMeta?.artist_name && libMeta.artist_name !== album.artist_name}
-								<div class="truncate text-xs text-base-content/60">{libMeta.artist_name}</div>
+						<div class="flex min-w-0 items-start gap-2">
+							{#if libMeta}
+								<div class="mt-1 shrink-0">
+									<LibraryFormatBadge format={libMeta.file_format} size="badge-xs" />
+								</div>
 							{/if}
+
+							<div class="min-w-0 flex-1">
+								<div
+									class="font-medium line-clamp-2 break-words {isCurrentlyPlaying
+										? 'text-accent'
+										: ''}"
+								>
+									{track.title}
+								</div>
+								{#if libMeta?.artist_name && libMeta.artist_name !== album.artist_name}
+									<div class="truncate text-xs text-base-content/50">{libMeta.artist_name}</div>
+								{/if}
+							</div>
 						</div>
 
-						<div class="text-base-content/60 text-sm shrink-0">
+						<div
+							class="w-12 min-w-0 text-right font-mono text-xs tabular-nums text-base-content/50"
+						>
 							{formatDuration(track.length)}
 						</div>
 
-						{#if youtubeEnabled || showPreview || showJellyfinBtn || showLocalBtn || showNavidromeBtn || showPlexBtn || showRequest || showTrackDownload || heldMeta || showUpgrade}
-							<div class="flex items-center gap-1.5 shrink-0 ml-auto">
+						{#if hasActions || libMeta}
+							<div
+								class="col-span-3 flex min-w-0 flex-wrap items-center justify-end gap-1.5 sm:col-span-1 sm:col-start-4 sm:row-start-1 sm:flex-nowrap"
+							>
 								{#if showTrackDownload && trackTask}
 									<TrackDownloadStatus task={trackTask} />
 								{/if}
@@ -428,36 +449,38 @@
 									</TrackSourceButton>
 								{/if}
 
-								<div>
-									<ContextMenu
-										items={getTrackContextMenuItems(
-											track,
-											localTrack,
-											jellyfinTrack,
-											navidromeTrack,
-											plexTrack
-										)}
-										position="end"
-										size="xs"
-									/>
-								</div>
-							</div>
-						{/if}
+								{#if hasActions}
+									<div>
+										<ContextMenu
+											items={getTrackContextMenuItems(
+												track,
+												localTrack,
+												jellyfinTrack,
+												navidromeTrack,
+												plexTrack
+											)}
+											position="end"
+											size="xs"
+										/>
+									</div>
+								{/if}
 
-						{#if libMeta}
-							<button
-								class="btn btn-ghost btn-xs btn-circle shrink-0"
-								onclick={() => toggleRow(row.globalIndex)}
-								aria-label={expandedRows.has(row.globalIndex)
-									? 'Hide file details'
-									: 'Show file details'}
-							>
-								<ChevronDown
-									class="h-4 w-4 transition-transform {expandedRows.has(row.globalIndex)
-										? 'rotate-180'
-										: ''}"
-								/>
-							</button>
+								{#if libMeta}
+									<button
+										class="btn btn-ghost btn-xs btn-circle shrink-0"
+										onclick={() => toggleRow(row.globalIndex)}
+										aria-label={expandedRows.has(row.globalIndex)
+											? 'Hide file details'
+											: 'Show file details'}
+									>
+										<ChevronDown
+											class="h-4 w-4 transition-transform {expandedRows.has(row.globalIndex)
+												? 'rotate-180'
+												: ''}"
+										/>
+									</button>
+								{/if}
+							</div>
 						{/if}
 					</div>
 				</li>

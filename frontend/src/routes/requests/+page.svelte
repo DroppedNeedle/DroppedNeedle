@@ -22,8 +22,10 @@
 		Heart,
 		Sparkles,
 		DownloadCloud,
-		TrendingUp
+		TrendingUp,
+		Inbox
 	} from 'lucide-svelte';
+	import PageHero from '$lib/ui/PageHero.svelte';
 	import WantedWatchCard from '$lib/components/WantedWatchCard.svelte';
 	import WantedRetryingCard from '$lib/components/WantedRetryingCard.svelte';
 	import { getWantedWatchesQuery } from '$lib/queries/wanted/WantedQuery.svelte';
@@ -528,14 +530,16 @@
 	});
 </script>
 
-<div class="container mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-	<div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
-		<div>
-			<h1 class="text-2xl sm:text-3xl font-bold text-base-content">Requests</h1>
-			<p class="text-base-content/50 text-sm mt-0.5">
-				What you've asked for and where each one stands
-			</p>
-		</div>
+<PageHero
+	title="Requests"
+	subtitle="What you've asked for and where each one stands."
+	eyebrow="On order"
+	tint="var(--color-info)"
+>
+	{#snippet icon()}
+		<Inbox class="h-7 w-7" />
+	{/snippet}
+	{#snippet actions()}
 		{#if activeCount > 0}
 			<div class="flex items-center gap-3 text-xs text-base-content/50">
 				{#if downloadingCount > 0}
@@ -552,16 +556,16 @@
 				{/if}
 			</div>
 		{/if}
-	</div>
+	{/snippet}
+</PageHero>
 
-	<div
-		class="flex items-center gap-1 mb-6 border-b border-base-content/5 pb-px overflow-x-auto"
-		role="tablist"
-	>
+<div class="px-4 pb-12 sm:px-6 lg:px-8">
+	<div class="mb-6 flex items-center gap-2 overflow-x-auto pb-1" role="tablist">
 		<button
 			role="tab"
-			class="tab-btn"
-			class:tab-btn-active={activeTab === 'active'}
+			class="btn btn-sm shrink-0 gap-1.5 rounded-full {activeTab === 'active'
+				? 'btn-primary'
+				: 'btn-ghost bg-base-content/6'}"
 			aria-selected={activeTab === 'active'}
 			onclick={() => switchTab('active')}
 		>
@@ -569,7 +573,10 @@
 			Active
 			{#if activeCount > 0}
 				<span
-					class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-info/15 text-info text-xs font-medium tabular-nums"
+					class="inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium tabular-nums {activeTab ===
+					'active'
+						? 'bg-primary-content/12 text-primary-content'
+						: 'bg-info/15 text-info'}"
 				>
 					{activeCount}
 				</span>
@@ -580,8 +587,9 @@
 		</button>
 		<button
 			role="tab"
-			class="tab-btn"
-			class:tab-btn-active={activeTab === 'history'}
+			class="btn btn-sm shrink-0 gap-1.5 rounded-full {activeTab === 'history'
+				? 'btn-primary'
+				: 'btn-ghost bg-base-content/6'}"
 			aria-selected={activeTab === 'history'}
 			onclick={() => switchTab('history')}
 		>
@@ -589,7 +597,10 @@
 			History
 			{#if historyTotal > 0}
 				<span
-					class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-base-content/8 text-base-content/50 text-xs font-medium tabular-nums"
+					class="inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium tabular-nums {activeTab ===
+					'history'
+						? 'bg-primary-content/12 text-primary-content'
+						: 'bg-base-content/8 text-base-content/50'}"
 				>
 					{historyTotal}
 				</span>
@@ -597,8 +608,9 @@
 		</button>
 		<button
 			role="tab"
-			class="tab-btn"
-			class:tab-btn-active={activeTab === 'wanted'}
+			class="btn btn-sm shrink-0 gap-1.5 rounded-full {activeTab === 'wanted'
+				? 'btn-primary'
+				: 'btn-ghost bg-base-content/6'}"
 			aria-selected={activeTab === 'wanted'}
 			onclick={() => switchTab('wanted')}
 		>
@@ -606,7 +618,10 @@
 			Wanted
 			{#if wantedActiveCount > 0}
 				<span
-					class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-base-content/8 text-base-content/50 text-xs font-medium tabular-nums"
+					class="inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium tabular-nums {activeTab ===
+					'wanted'
+						? 'bg-primary-content/12 text-primary-content'
+						: 'bg-base-content/8 text-base-content/50'}"
 				>
 					{wantedActiveCount}
 				</span>
@@ -615,8 +630,9 @@
 		{#if authStore.isAdmin}
 			<button
 				role="tab"
-				class="tab-btn"
-				class:tab-btn-active={activeTab === 'approvals'}
+				class="btn btn-sm shrink-0 gap-1.5 rounded-full {activeTab === 'approvals'
+					? 'btn-primary'
+					: 'btn-ghost bg-base-content/6'}"
 				aria-selected={activeTab === 'approvals'}
 				onclick={() => switchTab('approvals')}
 			>
@@ -624,7 +640,10 @@
 				Approvals
 				{#if approvalCount > 0}
 					<span
-						class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-warning/15 text-warning text-xs font-medium tabular-nums"
+						class="inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium tabular-nums {activeTab ===
+						'approvals'
+							? 'bg-primary-content/12 text-primary-content'
+							: 'bg-warning/15 text-warning'}"
 					>
 						{approvalCount}
 					</span>
@@ -634,8 +653,9 @@
 		{#if authStore.isAdmin}
 			<button
 				role="tab"
-				class="tab-btn"
-				class:tab-btn-active={activeTab === 'auto-download'}
+				class="btn btn-sm shrink-0 gap-1.5 rounded-full {activeTab === 'auto-download'
+					? 'btn-primary'
+					: 'btn-ghost bg-base-content/6'}"
 				aria-selected={activeTab === 'auto-download'}
 				onclick={() => switchTab('auto-download')}
 			>
@@ -643,7 +663,10 @@
 				Auto-downloads
 				{#if autoApprovalCount > 0}
 					<span
-						class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-warning/15 text-warning text-xs font-medium tabular-nums"
+						class="inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium tabular-nums {activeTab ===
+						'auto-download'
+							? 'bg-primary-content/12 text-primary-content'
+							: 'bg-warning/15 text-warning'}"
 					>
 						{autoApprovalCount}
 					</span>
@@ -653,8 +676,9 @@
 		{#if authStore.isTrusted}
 			<button
 				role="tab"
-				class="tab-btn"
-				class:tab-btn-active={activeTab === 'upgrades'}
+				class="btn btn-sm shrink-0 gap-1.5 rounded-full {activeTab === 'upgrades'
+					? 'btn-primary'
+					: 'btn-ghost bg-base-content/6'}"
 				aria-selected={activeTab === 'upgrades'}
 				onclick={() => switchTab('upgrades')}
 			>
@@ -662,7 +686,10 @@
 				Upgrades
 				{#if upgradeItems.length > 0}
 					<span
-						class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-base-content/8 text-base-content/50 text-xs font-medium tabular-nums"
+						class="inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium tabular-nums {activeTab ===
+						'upgrades'
+							? 'bg-primary-content/12 text-primary-content'
+							: 'bg-base-content/8 text-base-content/50'}"
 					>
 						{upgradeItems.length}
 					</span>
@@ -674,10 +701,10 @@
 	{#if activeTab === 'active'}
 		<div in:fade={{ duration: 150 }} aria-live="polite">
 			{#if activeError}
-				<div class="alert alert-warning mb-4">
+				<div class="alert alert-warning mb-4 rounded-2xl">
 					<TriangleAlert class="h-5 w-5" />
 					<span>{activeError}</span>
-					<button class="btn btn-sm" onclick={loadActive}>Retry</button>
+					<button class="btn btn-sm rounded-full" onclick={loadActive}>Retry</button>
 				</div>
 			{/if}
 
@@ -685,29 +712,31 @@
 				<div class="flex flex-col gap-2.5">
 					{#each Array(3) as _, i (`active-loading-${i}`)}
 						<div
-							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box animate-pulse"
+							class="flex animate-pulse items-center gap-3 rounded-2xl border border-base-content/8 bg-base-200/50 p-3 sm:gap-4 sm:p-4"
 							style="animation-delay: {i * 100}ms"
 						>
-							<div class="w-14 h-14 sm:w-18 sm:h-18 bg-base-300 rounded-lg"></div>
+							<div class="h-14 w-14 rounded-lg bg-base-content/8 sm:h-18 sm:w-18"></div>
 							<div class="flex-1">
-								<div class="h-4 bg-base-300 rounded w-44 mb-2"></div>
-								<div class="h-3 bg-base-300 rounded w-28 mb-1"></div>
-								<div class="h-2.5 bg-base-300 rounded w-20"></div>
+								<div class="mb-2 h-4 w-44 rounded bg-base-content/8"></div>
+								<div class="mb-1 h-3 w-28 rounded bg-base-content/8"></div>
+								<div class="h-2.5 w-20 rounded bg-base-content/8"></div>
 							</div>
 							<div class="flex flex-col items-end gap-2">
-								<div class="h-5 bg-base-300 rounded-full w-24"></div>
-								<div class="h-1.5 bg-base-300 rounded w-36"></div>
+								<div class="h-5 w-24 rounded-full bg-base-content/8"></div>
+								<div class="h-1.5 w-36 rounded bg-base-content/8"></div>
 							</div>
 						</div>
 					{/each}
 				</div>
 			{:else if activeItems.length === 0}
-				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
-					<div class="w-16 h-16 rounded-full bg-success/5 flex items-center justify-center mb-4">
-						<CheckCircle class="h-8 w-8 text-success/30" />
+				<div
+					class="flex min-h-60 flex-col items-center justify-center rounded-2xl border border-dashed border-base-content/12 px-6 py-16 text-center"
+				>
+					<div class="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-accent/8">
+						<CheckCircle class="h-7 w-7 text-accent/70" />
 					</div>
-					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">All clear</h2>
-					<p class="text-base-content/30 text-sm max-w-xs">
+					<h2 class="font-display text-lg font-semibold text-base-content/70">All clear</h2>
+					<p class="mt-1.5 max-w-xs text-sm text-base-content/45">
 						No active downloads. Search for albums and request them to see progress here.
 					</p>
 				</div>
@@ -729,9 +758,9 @@
 		</div>
 	{:else if activeTab === 'history'}
 		<div in:fade={{ duration: 150 }}>
-			<div class="flex flex-wrap items-center gap-2 mb-4">
+			<div class="mb-4 flex flex-wrap items-center gap-2">
 				<select
-					class="select select-bordered select-sm text-xs"
+					class="select select-sm w-auto rounded-full border-base-content/10 bg-base-200/60 text-xs"
 					aria-label="Filter by status"
 					onchange={handleFilterChange}
 				>
@@ -748,7 +777,7 @@
 				</select>
 
 				<select
-					class="select select-bordered select-sm text-xs"
+					class="select select-sm w-auto rounded-full border-base-content/10 bg-base-200/60 text-xs"
 					aria-label="Sort order"
 					onchange={handleSortChange}
 				>
@@ -769,9 +798,9 @@
 			</div>
 
 			{#if historyError}
-				<div class="alert alert-error mb-4">
+				<div class="alert alert-error mb-4 rounded-2xl">
 					<span>{historyError}</span>
-					<button class="btn btn-sm" onclick={loadHistory}>Retry</button>
+					<button class="btn btn-sm rounded-full" onclick={loadHistory}>Retry</button>
 				</div>
 			{/if}
 
@@ -779,30 +808,32 @@
 				<div class="flex flex-col gap-2.5">
 					{#each Array(5) as _, i (`history-loading-${i}`)}
 						<div
-							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box animate-pulse"
+							class="flex animate-pulse items-center gap-3 rounded-2xl border border-base-content/8 bg-base-200/50 p-3 sm:gap-4 sm:p-4"
 							style="animation-delay: {i * 80}ms"
 						>
-							<div class="w-14 h-14 sm:w-18 sm:h-18 bg-base-300 rounded-lg"></div>
+							<div class="h-14 w-14 rounded-lg bg-base-content/8 sm:h-18 sm:w-18"></div>
 							<div class="flex-1">
-								<div class="h-4 bg-base-300 rounded w-44 mb-2"></div>
-								<div class="h-3 bg-base-300 rounded w-28"></div>
+								<div class="mb-2 h-4 w-44 rounded bg-base-content/8"></div>
+								<div class="h-3 w-28 rounded bg-base-content/8"></div>
 							</div>
 							<div class="flex flex-col items-end gap-2">
-								<div class="h-5 bg-base-300 rounded-full w-20"></div>
-								<div class="h-3 bg-base-300 rounded w-28"></div>
+								<div class="h-5 w-20 rounded-full bg-base-content/8"></div>
+								<div class="h-3 w-28 rounded bg-base-content/8"></div>
 							</div>
 						</div>
 					{/each}
 				</div>
 			{:else if historyItems.length === 0}
-				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
+				<div
+					class="flex min-h-60 flex-col items-center justify-center rounded-2xl border border-dashed border-base-content/12 px-6 py-16 text-center"
+				>
 					<div
-						class="w-16 h-16 rounded-full bg-base-content/3 flex items-center justify-center mb-4"
+						class="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-base-content/6"
 					>
-						<Clock class="h-8 w-8 text-base-content/15" />
+						<Clock class="h-7 w-7 text-base-content/25" />
 					</div>
-					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">No history yet</h2>
-					<p class="text-base-content/30 text-sm max-w-xs">
+					<h2 class="font-display text-lg font-semibold text-base-content/70">No history yet</h2>
+					<p class="mt-1.5 max-w-xs text-sm text-base-content/45">
 						Completed and failed requests will appear here.
 					</p>
 				</div>
@@ -826,7 +857,7 @@
 				</div>
 
 				{#if historyTotalPages > 1}
-					<div class="flex justify-center mt-6">
+					<div class="mt-6 flex justify-center">
 						<Pagination
 							current={historyPage}
 							total={historyTotalPages}
@@ -839,48 +870,52 @@
 	{:else if activeTab === 'wanted'}
 		<div in:fade={{ duration: 150 }}>
 			{#if wantedQuery.isError}
-				<div class="alert alert-warning mb-4">
+				<div class="alert alert-warning mb-4 rounded-2xl">
 					<TriangleAlert class="h-5 w-5" />
 					<span>Could not load the watchlist.</span>
-					<button class="btn btn-sm" onclick={() => void wantedQuery.refetch()}>Retry</button>
+					<button class="btn btn-sm rounded-full" onclick={() => void wantedQuery.refetch()}
+						>Retry</button
+					>
 				</div>
 			{:else if wantedQuery.isPending}
 				<div class="flex flex-col gap-2.5">
 					{#each Array(3) as _, i (`wanted-loading-${i}`)}
 						<div
-							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box animate-pulse"
+							class="flex animate-pulse items-center gap-3 rounded-2xl border border-base-content/8 bg-base-200/50 p-3 sm:gap-4 sm:p-4"
 							style="animation-delay: {i * 100}ms"
 						>
-							<div class="w-14 h-14 sm:w-16 sm:h-16 bg-base-300 rounded-lg"></div>
+							<div class="h-14 w-14 rounded-lg bg-base-content/8 sm:h-16 sm:w-16"></div>
 							<div class="flex-1">
-								<div class="h-4 bg-base-300 rounded w-44 mb-2"></div>
-								<div class="h-3 bg-base-300 rounded w-28 mb-1"></div>
-								<div class="h-2.5 bg-base-300 rounded w-52"></div>
+								<div class="mb-2 h-4 w-44 rounded bg-base-content/8"></div>
+								<div class="mb-1 h-3 w-28 rounded bg-base-content/8"></div>
+								<div class="h-2.5 w-52 rounded bg-base-content/8"></div>
 							</div>
 							<div class="flex gap-2">
-								<div class="h-8 bg-base-300 rounded-btn w-24"></div>
-								<div class="h-8 bg-base-300 rounded-btn w-16"></div>
+								<div class="h-8 w-24 rounded-full bg-base-content/8"></div>
+								<div class="h-8 w-16 rounded-full bg-base-content/8"></div>
 							</div>
 						</div>
 					{/each}
 				</div>
 			{:else if wantedItems.length === 0 && wantedRetrying.length === 0}
-				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
+				<div
+					class="flex min-h-60 flex-col items-center justify-center rounded-2xl border border-dashed border-base-content/12 px-6 py-16 text-center"
+				>
 					<div
-						class="w-16 h-16 rounded-full bg-base-content/3 flex items-center justify-center mb-4"
+						class="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-base-content/6"
 					>
-						<Radar class="h-8 w-8 text-base-content/15" />
+						<Radar class="h-7 w-7 text-base-content/25" />
 					</div>
-					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">
+					<h2 class="font-display text-lg font-semibold text-base-content/70">
 						Nothing on the watchlist
 					</h2>
-					<p class="text-base-content/30 text-sm max-w-xs">
+					<p class="mt-1.5 max-w-xs text-sm text-base-content/45">
 						When a request can't be found anywhere, DroppedNeedle keeps checking for it and lists it
 						here.
 					</p>
 				</div>
 			{:else}
-				<p class="text-xs text-base-content/40 mb-3">
+				<p class="mb-3 text-xs text-base-content/45">
 					Albums that couldn't be found are re-checked on a schedule. A copy that passes
 					verification downloads by itself; near misses show up as candidates for you to review.
 				</p>
@@ -919,10 +954,10 @@
 	{:else if activeTab === 'approvals' && authStore.isAdmin}
 		<div in:fade={{ duration: 150 }}>
 			{#if approvalError}
-				<div class="alert alert-warning mb-4">
+				<div class="alert alert-warning mb-4 rounded-2xl">
 					<TriangleAlert class="h-5 w-5" />
 					<span>{approvalError}</span>
-					<button class="btn btn-sm" onclick={loadApprovals}>Retry</button>
+					<button class="btn btn-sm rounded-full" onclick={loadApprovals}>Retry</button>
 				</div>
 			{/if}
 
@@ -930,28 +965,32 @@
 				<div class="flex flex-col gap-2.5">
 					{#each Array(3) as _, i (`approval-loading-${i}`)}
 						<div
-							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box animate-pulse"
+							class="flex animate-pulse items-center gap-3 rounded-2xl border border-base-content/8 bg-base-200/50 p-3 sm:gap-4 sm:p-4"
 							style="animation-delay: {i * 100}ms"
 						>
-							<div class="w-14 h-14 sm:w-18 sm:h-18 bg-base-300 rounded-lg"></div>
+							<div class="h-14 w-14 rounded-lg bg-base-content/8 sm:h-18 sm:w-18"></div>
 							<div class="flex-1">
-								<div class="h-4 bg-base-300 rounded w-44 mb-2"></div>
-								<div class="h-3 bg-base-300 rounded w-28"></div>
+								<div class="mb-2 h-4 w-44 rounded bg-base-content/8"></div>
+								<div class="h-3 w-28 rounded bg-base-content/8"></div>
 							</div>
 							<div class="flex gap-2">
-								<div class="h-8 bg-base-300 rounded-btn w-20"></div>
-								<div class="h-8 bg-base-300 rounded-btn w-20"></div>
+								<div class="h-8 w-20 rounded-full bg-base-content/8"></div>
+								<div class="h-8 w-20 rounded-full bg-base-content/8"></div>
 							</div>
 						</div>
 					{/each}
 				</div>
 			{:else if approvalItems.length === 0}
-				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
-					<div class="w-16 h-16 rounded-full bg-success/5 flex items-center justify-center mb-4">
-						<CheckCircle class="h-8 w-8 text-success/30" />
+				<div
+					class="flex min-h-60 flex-col items-center justify-center rounded-2xl border border-dashed border-base-content/12 px-6 py-16 text-center"
+				>
+					<div class="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-accent/8">
+						<CheckCircle class="h-7 w-7 text-accent/70" />
 					</div>
-					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">No pending approvals</h2>
-					<p class="text-base-content/30 text-sm max-w-xs">
+					<h2 class="font-display text-lg font-semibold text-base-content/70">
+						No pending approvals
+					</h2>
+					<p class="mt-1.5 max-w-xs text-sm text-base-content/45">
 						Requests from regular users will appear here for your review.
 					</p>
 				</div>
@@ -960,10 +999,10 @@
 					{#each approvalItems as item, i (item.musicbrainz_id)}
 						<div
 							in:fly={{ y: 12, duration: 200, delay: i * 30 }}
-							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box"
+							class="flex items-center gap-3 rounded-2xl border border-base-content/8 bg-base-200/50 p-3 transition-colors hover:border-primary/30 sm:gap-4 sm:p-4"
 						>
 							<div
-								class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg overflow-hidden bg-base-300"
+								class="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-base-300 ring-1 ring-base-content/10 sm:h-16 sm:w-16"
 							>
 								<AlbumImage
 									mbid={item.musicbrainz_id}
@@ -974,31 +1013,31 @@
 									className="w-full h-full"
 								/>
 							</div>
-							<div class="flex-1 min-w-0">
-								<p class="font-semibold text-sm truncate">{item.album_title}</p>
-								<p class="text-base-content/60 text-xs truncate">{item.artist_name}</p>
-								<div class="flex items-center gap-1.5 flex-wrap">
+							<div class="min-w-0 flex-1">
+								<p class="truncate text-sm font-semibold">{item.album_title}</p>
+								<p class="truncate text-xs text-base-content/60">{item.artist_name}</p>
+								<div class="flex flex-wrap items-center gap-1.5">
 									{#if item.year}
-										<p class="text-base-content/40 text-xs">{item.year}</p>
+										<p class="text-xs text-base-content/40">{item.year}</p>
 									{/if}
 									{#if item.requested_by_name}
-										{#if item.year}<span class="text-base-content/20 text-xs">•</span>{/if}
-										<p class="text-base-content/40 text-xs">
+										{#if item.year}<span class="text-xs text-base-content/20">•</span>{/if}
+										<p class="text-xs text-base-content/40">
 											Requested by {item.requested_by_name}
 										</p>
 									{/if}
 								</div>
 							</div>
-							<div class="flex gap-2 shrink-0">
+							<div class="flex shrink-0 gap-2">
 								<button
-									class="btn btn-success btn-sm gap-1"
+									class="btn btn-success btn-sm gap-1 rounded-full"
 									onclick={() => void handleApprove(item.musicbrainz_id)}
 								>
 									<Check class="h-3.5 w-3.5" />
 									Approve
 								</button>
 								<button
-									class="btn btn-error btn-sm btn-outline gap-1"
+									class="btn btn-error btn-sm btn-outline gap-1 rounded-full"
 									onclick={() => void handleReject(item.musicbrainz_id)}
 								>
 									<X class="h-3.5 w-3.5" />
@@ -1013,60 +1052,69 @@
 	{:else if activeTab === 'upgrades' && authStore.isTrusted}
 		<div in:fade={{ duration: 150 }}>
 			{#if cutoffUnmetQuery.isError}
-				<div class="alert alert-warning mb-4">
+				<div class="alert alert-warning mb-4 rounded-2xl">
 					<TriangleAlert class="h-5 w-5" />
 					<span>Could not load the upgrade worklist.</span>
-					<button class="btn btn-sm" onclick={() => void cutoffUnmetQuery.refetch()}>Retry</button>
+					<button class="btn btn-sm rounded-full" onclick={() => void cutoffUnmetQuery.refetch()}
+						>Retry</button
+					>
 				</div>
 			{:else if cutoffUnmetQuery.isPending}
 				<div class="flex flex-col gap-2.5">
 					{#each Array(3) as _, i (`upgrade-loading-${i}`)}
 						<div
-							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box animate-pulse"
+							class="flex animate-pulse items-center gap-3 rounded-2xl border border-base-content/8 bg-base-200/50 p-3 sm:gap-4 sm:p-4"
 							style="animation-delay: {i * 100}ms"
 						>
-							<div class="w-14 h-14 sm:w-16 sm:h-16 bg-base-300 rounded-lg"></div>
+							<div class="h-14 w-14 rounded-lg bg-base-content/8 sm:h-16 sm:w-16"></div>
 							<div class="flex-1">
-								<div class="h-4 bg-base-300 rounded w-44 mb-2"></div>
-								<div class="h-3 bg-base-300 rounded w-28"></div>
+								<div class="mb-2 h-4 w-44 rounded bg-base-content/8"></div>
+								<div class="h-3 w-28 rounded bg-base-content/8"></div>
 							</div>
-							<div class="h-8 bg-base-300 rounded-btn w-32"></div>
+							<div class="h-8 w-32 rounded-full bg-base-content/8"></div>
 						</div>
 					{/each}
 				</div>
 			{:else if !cutoffUnmetQuery.data?.upgrade_allowed}
-				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
+				<div
+					class="flex min-h-60 flex-col items-center justify-center rounded-2xl border border-dashed border-base-content/12 px-6 py-16 text-center"
+				>
 					<div
-						class="w-16 h-16 rounded-full bg-base-content/3 flex items-center justify-center mb-4"
+						class="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-base-content/6"
 					>
-						<TrendingUp class="h-8 w-8 text-base-content/15" />
+						<TrendingUp class="h-7 w-7 text-base-content/25" />
 					</div>
-					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">Upgrades are off</h2>
-					<p class="text-base-content/30 text-sm max-w-xs">
+					<h2 class="font-display text-lg font-semibold text-base-content/70">Upgrades are off</h2>
+					<p class="mt-1.5 max-w-xs text-sm text-base-content/45">
 						Turn on "Allow automatic upgrades" in Settings → Download Clients to list albums below
 						your quality cutoff.
 					</p>
 					{#if authStore.isAdmin}
-						<a href="/settings?tab=download-client" class="btn btn-sm btn-primary mt-4">
+						<a
+							href="/settings?tab=download-client"
+							class="btn btn-sm btn-primary mt-4 rounded-full"
+						>
 							Open download settings
 						</a>
 					{/if}
 				</div>
 			{:else if upgradeItems.length === 0}
-				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
-					<div class="w-16 h-16 rounded-full bg-success/5 flex items-center justify-center mb-4">
-						<CheckCircle class="h-8 w-8 text-success/30" />
+				<div
+					class="flex min-h-60 flex-col items-center justify-center rounded-2xl border border-dashed border-base-content/12 px-6 py-16 text-center"
+				>
+					<div class="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-accent/8">
+						<CheckCircle class="h-7 w-7 text-accent/70" />
 					</div>
-					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">
+					<h2 class="font-display text-lg font-semibold text-base-content/70">
 						Everything meets your cutoff
 					</h2>
-					<p class="text-base-content/30 text-sm max-w-xs">
+					<p class="mt-1.5 max-w-xs text-sm text-base-content/45">
 						No album is below {tierLabel(cutoffUnmetQuery.data.cutoff)}. Albums that fall short will
 						appear here.
 					</p>
 				</div>
 			{:else}
-				<p class="text-xs text-base-content/40 mb-3">
+				<p class="mb-3 text-xs text-base-content/45">
 					Albums whose worst track is below your cutoff ({tierLabel(cutoffUnmetQuery.data.cutoff)}).
 					"Find a better copy" only replaces a file when the new one is better quality; replaced
 					files go to the recycle bin.
@@ -1076,10 +1124,10 @@
 						{@const queued = upgradeQueued.has(item.release_group_mbid)}
 						<div
 							in:fly={{ y: 12, duration: 200, delay: i * 30 }}
-							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box"
+							class="flex items-center gap-3 rounded-2xl border border-base-content/8 bg-base-200/50 p-3 transition-colors hover:border-primary/30 sm:gap-4 sm:p-4"
 						>
 							<div
-								class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg overflow-hidden bg-base-300"
+								class="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-base-300 ring-1 ring-base-content/10 sm:h-16 sm:w-16"
 							>
 								<AlbumImage
 									mbid={item.release_group_mbid}
@@ -1090,17 +1138,17 @@
 									className="w-full h-full"
 								/>
 							</div>
-							<div class="flex-1 min-w-0">
+							<div class="min-w-0 flex-1">
 								<a
 									href="/album/{item.release_group_mbid}"
-									class="block font-semibold text-sm truncate hover:text-accent hover:underline"
+									class="block truncate text-sm font-semibold transition-colors hover:text-primary"
 								>
 									{item.album_title ?? 'Unknown album'}
 								</a>
-								<p class="text-base-content/60 text-xs truncate">
+								<p class="truncate text-xs text-base-content/60">
 									{item.artist_name ?? 'Unknown artist'}{item.year ? ` • ${item.year}` : ''}
 								</p>
-								<p class="text-base-content/40 text-xs mt-0.5">
+								<p class="mt-0.5 font-mono text-[0.65rem] uppercase tracking-wider">
 									<span class="text-warning/80">{tierLabel(item.current_tier)}</span>
 									<span class="text-base-content/25">
 										→ {tierLabel(cutoffUnmetQuery.data.cutoff)}</span
@@ -1110,7 +1158,9 @@
 							</div>
 							<div class="shrink-0">
 								<button
-									class="btn btn-sm gap-1.5 {queued ? 'btn-ghost' : 'btn-primary btn-outline'}"
+									class="btn btn-sm gap-1.5 rounded-full {queued
+										? 'btn-ghost'
+										: 'btn-primary btn-outline'}"
 									disabled={queued || upgradeAlbum.isPending}
 									onclick={() => void handleUpgrade(item)}
 								>
@@ -1131,11 +1181,11 @@
 	{:else if activeTab === 'auto-download' && authStore.isAdmin}
 		<div in:fade={{ duration: 150 }}>
 			{#if autoApprovalsQuery.isError || mixApprovalsQuery.isError || batchApprovalsQuery.isError}
-				<div class="alert alert-warning mb-4">
+				<div class="alert alert-warning mb-4 rounded-2xl">
 					<TriangleAlert class="h-5 w-5" />
 					<span>Could not load auto-download approvals.</span>
 					<button
-						class="btn btn-sm"
+						class="btn btn-sm rounded-full"
 						onclick={() => {
 							void autoApprovalsQuery.refetch();
 							void batchApprovalsQuery.refetch();
@@ -1147,28 +1197,32 @@
 				<div class="flex flex-col gap-2.5">
 					{#each Array(3) as _, i (`auto-approval-loading-${i}`)}
 						<div
-							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box animate-pulse"
+							class="flex animate-pulse items-center gap-3 rounded-2xl border border-base-content/8 bg-base-200/50 p-3 sm:gap-4 sm:p-4"
 							style="animation-delay: {i * 100}ms"
 						>
-							<div class="w-14 h-14 sm:w-16 sm:h-16 bg-base-300 rounded-lg"></div>
+							<div class="h-14 w-14 rounded-lg bg-base-content/8 sm:h-16 sm:w-16"></div>
 							<div class="flex-1">
-								<div class="h-4 bg-base-300 rounded w-44 mb-2"></div>
-								<div class="h-3 bg-base-300 rounded w-28"></div>
+								<div class="mb-2 h-4 w-44 rounded bg-base-content/8"></div>
+								<div class="h-3 w-28 rounded bg-base-content/8"></div>
 							</div>
 							<div class="flex gap-2">
-								<div class="h-8 bg-base-300 rounded-btn w-20"></div>
-								<div class="h-8 bg-base-300 rounded-btn w-20"></div>
+								<div class="h-8 w-20 rounded-full bg-base-content/8"></div>
+								<div class="h-8 w-20 rounded-full bg-base-content/8"></div>
 							</div>
 						</div>
 					{/each}
 				</div>
 			{:else if autoApprovals.length === 0 && batchApprovals.length === 0 && mixApprovals.length === 0}
-				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
-					<div class="w-16 h-16 rounded-full bg-success/5 flex items-center justify-center mb-4">
-						<Heart class="h-8 w-8 text-success/30" />
+				<div
+					class="flex min-h-60 flex-col items-center justify-center rounded-2xl border border-dashed border-base-content/12 px-6 py-16 text-center"
+				>
+					<div class="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-accent/8">
+						<Heart class="h-7 w-7 text-accent/70" />
 					</div>
-					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">No pending approvals</h2>
-					<p class="text-base-content/30 text-sm max-w-xs">
+					<h2 class="font-display text-lg font-semibold text-base-content/70">
+						No pending approvals
+					</h2>
+					<p class="mt-1.5 max-w-xs text-sm text-base-content/45">
 						When a user turns on artist auto-download or Weekly Mix auto-requests, it appears here
 						for your review.
 					</p>
@@ -1178,10 +1232,10 @@
 					{#each autoApprovals as item (item.user_id + item.artist_mbid)}
 						<div
 							in:fly={{ y: 12, duration: 200 }}
-							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box"
+							class="flex items-center gap-3 rounded-2xl border border-base-content/8 bg-base-200/50 p-3 transition-colors hover:border-primary/30 sm:gap-4 sm:p-4"
 						>
 							<div
-								class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg overflow-hidden bg-base-300"
+								class="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-base-300 ring-1 ring-base-content/10 sm:h-16 sm:w-16"
 							>
 								<ArtistImage
 									mbid={item.artist_mbid}
@@ -1189,21 +1243,21 @@
 									className="w-full h-full object-cover"
 								/>
 							</div>
-							<div class="flex-1 min-w-0">
+							<div class="min-w-0 flex-1">
 								<a
 									href="/artist/{item.artist_mbid}"
-									class="block font-semibold text-sm truncate hover:text-accent hover:underline"
+									class="block truncate text-sm font-semibold transition-colors hover:text-primary"
 									title={item.artist_name}>{item.artist_name}</a
 								>
-								<div class="flex items-center gap-1.5 flex-wrap text-xs text-base-content/40">
+								<div class="flex flex-wrap items-center gap-1.5 text-xs text-base-content/40">
 									<span>{item.user_name ?? 'A user'}</span>
 									<span class="text-base-content/20">•</span>
 									<span>requested {approvalTimeAgo(item.requested_at)}</span>
 								</div>
 							</div>
-							<div class="flex gap-2 shrink-0">
+							<div class="flex shrink-0 gap-2">
 								<button
-									class="btn btn-success btn-sm gap-1"
+									class="btn btn-success btn-sm gap-1 rounded-full"
 									disabled={approveAuto.isPending || rejectAuto.isPending}
 									onclick={() =>
 										approveAuto.mutate({
@@ -1216,7 +1270,7 @@
 									Approve
 								</button>
 								<button
-									class="btn btn-error btn-sm btn-outline gap-1"
+									class="btn btn-error btn-sm btn-outline gap-1 rounded-full"
 									disabled={approveAuto.isPending || rejectAuto.isPending}
 									onclick={() =>
 										rejectAuto.mutate({
@@ -1234,34 +1288,34 @@
 					{#each batchApprovals as batch (batch.batch_id)}
 						<div
 							in:fly={{ y: 12, duration: 200 }}
-							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box"
+							class="flex items-center gap-3 rounded-2xl border border-base-content/8 bg-base-200/50 p-3 transition-colors hover:border-primary/30 sm:gap-4 sm:p-4"
 						>
 							<div
-								class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg bg-base-300 flex items-center justify-center"
+								class="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-base-content/6 sm:h-16 sm:w-16"
 							>
 								<DownloadCloud class="h-6 w-6 text-accent/60" />
 							</div>
-							<div class="flex-1 min-w-0">
-								<span class="block font-semibold text-sm">
+							<div class="min-w-0 flex-1">
+								<span class="block text-sm font-semibold">
 									{batch.user_name ?? 'A user'} wants auto-download on {batch.artist_count} imported
 									{batch.artist_count === 1 ? 'artist' : 'artists'}
 								</span>
-								<div class="flex items-center gap-1.5 flex-wrap text-xs text-base-content/40">
+								<div class="flex flex-wrap items-center gap-1.5 text-xs text-base-content/40">
 									<span>from Lidarr import</span>
 									<span class="text-base-content/20">•</span>
 									<span>requested {approvalTimeAgo(batch.requested_at)}</span>
 								</div>
 								{#if batch.sample_names.length > 0}
-									<p class="mt-0.5 text-xs text-base-content/50 truncate">
+									<p class="mt-0.5 truncate text-xs text-base-content/50">
 										{batch.sample_names.join(', ')}{batch.artist_count > batch.sample_names.length
 											? `, +${batch.artist_count - batch.sample_names.length} more`
 											: ''}
 									</p>
 								{/if}
 							</div>
-							<div class="flex gap-2 shrink-0">
+							<div class="flex shrink-0 gap-2">
 								<button
-									class="btn btn-success btn-sm gap-1"
+									class="btn btn-success btn-sm gap-1 rounded-full"
 									disabled={approveBatch.isPending || rejectBatch.isPending}
 									onclick={() =>
 										approveBatch.mutate({
@@ -1274,7 +1328,7 @@
 									Approve
 								</button>
 								<button
-									class="btn btn-error btn-sm btn-outline gap-1"
+									class="btn btn-error btn-sm btn-outline gap-1 rounded-full"
 									disabled={approveBatch.isPending || rejectBatch.isPending}
 									onclick={() =>
 										rejectBatch.mutate({
@@ -1292,24 +1346,24 @@
 					{#each mixApprovals as item (item.user_id)}
 						<div
 							in:fly={{ y: 12, duration: 200 }}
-							class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box"
+							class="flex items-center gap-3 rounded-2xl border border-base-content/8 bg-base-200/50 p-3 transition-colors hover:border-primary/30 sm:gap-4 sm:p-4"
 						>
 							<div
-								class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg bg-base-300 flex items-center justify-center"
+								class="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-base-content/6 sm:h-16 sm:w-16"
 							>
 								<Sparkles class="h-6 w-6 text-accent/60" />
 							</div>
-							<div class="flex-1 min-w-0">
-								<span class="block font-semibold text-sm truncate">Weekly Mix auto-requests</span>
-								<div class="flex items-center gap-1.5 flex-wrap text-xs text-base-content/40">
+							<div class="min-w-0 flex-1">
+								<span class="block truncate text-sm font-semibold">Weekly Mix auto-requests</span>
+								<div class="flex flex-wrap items-center gap-1.5 text-xs text-base-content/40">
 									<span>{item.user_name ?? 'A user'}</span>
 									<span class="text-base-content/20">•</span>
 									<span>requested {approvalTimeAgo(item.requested_at)}</span>
 								</div>
 							</div>
-							<div class="flex gap-2 shrink-0">
+							<div class="flex shrink-0 gap-2">
 								<button
-									class="btn btn-success btn-sm gap-1"
+									class="btn btn-success btn-sm gap-1 rounded-full"
 									disabled={approveMix.isPending || rejectMix.isPending}
 									onclick={() =>
 										approveMix.mutate({ userId: item.user_id, userName: item.user_name })}
@@ -1318,7 +1372,7 @@
 									Approve
 								</button>
 								<button
-									class="btn btn-error btn-sm btn-outline gap-1"
+									class="btn btn-error btn-sm btn-outline gap-1 rounded-full"
 									disabled={approveMix.isPending || rejectMix.isPending}
 									onclick={() =>
 										rejectMix.mutate({ userId: item.user_id, userName: item.user_name })}
@@ -1338,36 +1392,11 @@
 <Toast bind:show={toastShow} message={toastMessage} type={toastType} />
 
 <style>
-	.tab-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.4rem;
-		padding: 0.5rem 0.85rem;
-		font-size: 0.875rem;
-		font-weight: 500;
-		color: oklch(from var(--color-base-content) l c h / 0.4);
-		border-bottom: 2px solid transparent;
-		transition: all 0.15s ease;
-		cursor: pointer;
-		background: none;
-		border-top: none;
-		border-left: none;
-		border-right: none;
-		margin-bottom: -1px;
-	}
-	.tab-btn:hover {
-		color: oklch(from var(--color-base-content) l c h / 0.7);
-	}
-	.tab-btn-active {
-		color: oklch(from var(--color-primary) l c h / 1);
-		border-bottom-color: oklch(from var(--color-primary) l c h / 1);
-	}
-
 	.polling-dot {
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
-		background: oklch(from var(--color-info) l c h / 0.7);
+		background: currentColor;
 		animation: pulse-dot 1.5s ease-in-out infinite;
 	}
 
@@ -1380,6 +1409,12 @@
 		50% {
 			opacity: 1;
 			transform: scale(1.2);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.polling-dot {
+			animation: none;
 		}
 	}
 </style>

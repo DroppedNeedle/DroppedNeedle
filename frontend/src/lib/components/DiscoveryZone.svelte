@@ -11,20 +11,18 @@
 </script>
 
 <div use:reveal class="relative mt-8 mb-4">
-	<div
-		class="relative overflow-hidden rounded-2xl border border-base-content/5 bg-base-200/20 shadow-sm backdrop-blur-sm"
-	>
+	<div class="relative overflow-hidden rounded-2xl border border-base-content/8 bg-base-200/50">
 		<div
-			class="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent"
+			class="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-accent/40 to-transparent"
 		></div>
 
-		<div class="p-6 space-y-5">
-			<div class="flex items-center gap-2.5">
-				<div class="flex items-center justify-center rounded-lg bg-primary/10 p-1.5">
-					<Sparkles class="h-4.5 w-4.5 text-primary" />
-				</div>
-				<h2 class="text-lg font-semibold tracking-tight text-base-content sm:text-xl">Discover</h2>
-			</div>
+		<div class="space-y-6 p-5 sm:p-6">
+			<h2
+				class="flex items-center gap-2.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+			>
+				<Sparkles class="h-4 w-4 text-accent" />
+				Discover
+			</h2>
 
 			{@render children()}
 		</div>

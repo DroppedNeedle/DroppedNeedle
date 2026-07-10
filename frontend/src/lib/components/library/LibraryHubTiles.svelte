@@ -48,6 +48,45 @@
 			: albumArt
 	);
 
+	const tiles = $derived([
+		{
+			href: '/library/albums',
+			aria: 'Browse all albums',
+			label: 'Albums',
+			count: stats.total_albums,
+			art: albumArt,
+			base: 0,
+			icon: Disc3,
+			hover: 'hover:border-primary/30 focus-visible:ring-primary',
+			arrowHover: 'group-hover:text-primary',
+			blob: 'bg-primary/10'
+		},
+		{
+			href: '/library/artists',
+			aria: 'Browse all artists',
+			label: 'Artists',
+			count: stats.total_artists,
+			art: artistArt,
+			base: 3,
+			icon: Users,
+			hover: 'hover:border-accent/30 focus-visible:ring-accent',
+			arrowHover: 'group-hover:text-accent',
+			blob: 'bg-accent/10'
+		},
+		{
+			href: '/library/tracks',
+			aria: 'Browse all tracks',
+			label: 'Tracks',
+			count: stats.total_tracks,
+			art: trackArt,
+			base: 5,
+			icon: Music2,
+			hover: 'hover:border-primary/30 focus-visible:ring-primary',
+			arrowHover: 'group-hover:text-primary',
+			blob: 'bg-primary/10'
+		}
+	]);
+
 	const WINDOW = 5;
 
 	// one shared heartbeat advances every deck; per-deck offsets stagger them
@@ -84,19 +123,18 @@
 	}
 
 	// playing-card fan: outer cards rotate from a low pivot, dim and drop back; anything past the window parks off the nearest edge and fades
-	function slotStyle(pos: number, win: number, hero: boolean, n: number): string {
+	function slotStyle(pos: number, win: number, n: number): string {
 		if (pos >= win) {
 			// park off-stage toward the side this card is heading, so it slides out past the spread and re-enters from the far edge rather than collapsing to centre
 			const exiting = pos >= (win + n - 1) / 2;
-			const edge = (hero ? 128 : 64) * (exiting ? -1 : 1);
-			const drop = hero ? 26 : 12;
-			return `transform:translate(calc(-50% + ${edge}px), calc(-50% + ${drop}px)) scale(.72);opacity:0;z-index:0;`;
+			const edge = 56 * (exiting ? -1 : 1);
+			return `transform:translate(calc(-50% + ${edge}px), calc(-50% + 10px)) scale(.72);opacity:0;z-index:0;`;
 		}
 		const off = pos - (win - 1) / 2;
 		const a = Math.abs(off);
-		const rot = off * (hero ? 9 : 7);
-		const tx = off * (hero ? 52 : 23);
-		const ty = a * (hero ? 10 : 6);
+		const rot = off * 7;
+		const tx = off * 14;
+		const ty = a * 4;
 		const scale = 1 - a * 0.05;
 		const z = 40 - Math.round(a * 10);
 		const opacity = 1 - a * 0.1;
@@ -104,17 +142,15 @@
 	}
 </script>
 
-{#snippet fan(art: Art[], base: number, hero: boolean, FallbackIcon: typeof Disc3)}
+{#snippet fan(art: Art[], base: number, FallbackIcon: typeof Disc3)}
 	<div class="fan-deck relative h-full w-full">
 		{#if art.length}
 			{@const n = art.length}
 			{@const win = visibleWindow(n)}
 			{#each art as item, i (item.key)}
 				<div
-					class="fan-card absolute top-1/2 left-1/2 aspect-square overflow-hidden rounded-2xl shadow-xl ring-1 ring-base-content/10 {hero
-						? 'w-40 sm:w-48'
-						: 'w-20 sm:w-[5.5rem]'}"
-					style={slotStyle(position(i, base, n), win, hero, n)}
+					class="fan-card absolute top-1/2 left-1/2 aspect-square w-14 overflow-hidden rounded-xl shadow-lg ring-1 ring-base-content/10"
+					style={slotStyle(position(i, base, n), win, n)}
 				>
 					{#if item.type === 'album'}
 						<AlbumImage
@@ -139,7 +175,7 @@
 			{/each}
 		{:else}
 			<div class="absolute inset-0 flex items-center justify-center">
-				<FallbackIcon class="h-16 w-16 text-base-content/10" strokeWidth={1.25} />
+				<FallbackIcon class="h-10 w-10 text-base-content/10" strokeWidth={1.25} />
 			</div>
 		{/if}
 	</div>
@@ -147,109 +183,43 @@
 
 <!-- isolate traps the fan cards' inline z-index (up to 40) in their own stacking
      context so they can't paint over the library search dropdown above them -->
-<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 isolate">
-	<a
-		href="/library/albums"
-		class="group relative flex min-h-[27rem] flex-col overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-br from-primary/20 via-primary/5 to-base-200/40 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-primary/40 hover:shadow-2xl focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none"
-		aria-label="Browse all albums"
-	>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute -top-16 -right-12 h-52 w-52 rounded-full bg-primary/25 blur-3xl transition-transform duration-500 group-hover:scale-125"
-		></div>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute inset-0 opacity-[0.035]"
-			style="background-image:url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 200 200%22><filter id=%22n%22><feTurbulence type=%22fractalNoise%22 baseFrequency=%220.9%22 numOctaves=%224%22 stitchTiles=%22stitch%22/></filter><rect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23n)%22 opacity=%220.5%22/></svg>');background-size:200px;"
-		></div>
-		<ArrowUpRight
-			class="absolute top-5 right-5 z-10 h-5 w-5 text-base-content/25 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-primary"
-		/>
-		<div class="relative flex-1 px-6 pt-8 pb-2">
-			{@render fan(albumArt, 0, true, Disc3)}
-		</div>
-		<div class="relative flex items-end justify-between px-6 pt-2 pb-6">
-			<div>
-				<div class="text-4xl leading-none font-black tabular-nums sm:text-5xl">
-					{stats.total_albums.toLocaleString()}
-				</div>
-				<div
-					class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-base-content/55 uppercase"
-				>
-					<Disc3 class="h-3.5 w-3.5 text-primary" /> Albums
-				</div>
-			</div>
-		</div>
-	</a>
-
-	<a
-		href="/library/artists"
-		class="group relative flex min-h-[27rem] flex-col overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-br from-accent/20 via-accent/5 to-base-200/40 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-accent/40 hover:shadow-2xl focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none"
-		aria-label="Browse all artists"
-	>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute -top-16 -right-12 h-52 w-52 rounded-full bg-accent/25 blur-3xl transition-transform duration-500 group-hover:scale-125"
-		></div>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute inset-0 opacity-[0.035]"
-			style="background-image:url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 200 200%22><filter id=%22n%22><feTurbulence type=%22fractalNoise%22 baseFrequency=%220.9%22 numOctaves=%224%22 stitchTiles=%22stitch%22/></filter><rect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23n)%22 opacity=%220.5%22/></svg>');background-size:200px;"
-		></div>
-		<ArrowUpRight
-			class="absolute top-5 right-5 z-10 h-5 w-5 text-base-content/25 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-accent"
-		/>
-		<div class="relative flex-1 px-6 pt-8 pb-2">
-			{@render fan(artistArt, 3, true, Users)}
-		</div>
-		<div class="relative flex items-end justify-between px-6 pt-2 pb-6">
-			<div>
-				<div class="text-4xl leading-none font-black tabular-nums sm:text-5xl">
-					{stats.total_artists.toLocaleString()}
-				</div>
-				<div
-					class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-base-content/55 uppercase"
-				>
-					<Users class="h-3.5 w-3.5 text-accent" /> Artists
-				</div>
-			</div>
-		</div>
-	</a>
-
-	<a
-		href="/library/tracks"
-		class="group relative col-span-1 flex items-center gap-4 overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-r from-info/15 via-info/5 to-base-200/40 px-6 py-5 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-info/40 hover:shadow-2xl focus-visible:ring-2 focus-visible:ring-info focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none sm:col-span-2 sm:gap-8 sm:px-8"
-		aria-label="Browse all tracks"
-	>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute -top-12 right-1/3 h-44 w-44 rounded-full bg-info/20 blur-3xl transition-transform duration-500 group-hover:scale-125"
-		></div>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute inset-0 opacity-[0.035]"
-			style="background-image:url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 200 200%22><filter id=%22n%22><feTurbulence type=%22fractalNoise%22 baseFrequency=%220.9%22 numOctaves=%224%22 stitchTiles=%22stitch%22/></filter><rect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23n)%22 opacity=%220.5%22/></svg>');background-size:200px;"
-		></div>
-		<div class="relative hidden h-28 w-52 shrink-0 sm:block">
-			{@render fan(trackArt, 5, false, Music2)}
-		</div>
-		<div class="relative min-w-0 flex-1">
-			<div class="text-4xl leading-none font-black tabular-nums sm:text-5xl">
-				{stats.total_tracks.toLocaleString()}
-			</div>
+<div class="isolate grid grid-cols-1 gap-4 sm:grid-cols-3">
+	{#each tiles as tile (tile.href)}
+		<a
+			href={tile.href}
+			class="hub-tile grain group relative flex h-32 items-center overflow-hidden rounded-2xl border border-base-content/8 bg-base-200/50 pr-3 pl-5 transition-all duration-300 hover:-translate-y-1 hover:bg-base-200 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none {tile.hover}"
+			aria-label={tile.aria}
+		>
 			<div
-				class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-base-content/55 uppercase"
-			>
-				<Music2 class="h-3.5 w-3.5 text-info" /> Tracks
+				aria-hidden="true"
+				class="pointer-events-none absolute -top-10 -right-6 h-32 w-32 rounded-full blur-3xl transition-transform duration-500 group-hover:scale-125 {tile.blob}"
+			></div>
+			<ArrowUpRight
+				class="absolute top-3 right-3 z-50 h-4 w-4 text-base-content/25 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 {tile.arrowHover}"
+			/>
+			<div class="relative min-w-0 flex-1">
+				<div class="font-display text-3xl leading-none font-bold tabular-nums sm:text-4xl">
+					{tile.count.toLocaleString()}
+				</div>
+				<div
+					class="mt-2 flex items-center gap-1.5 font-mono text-[0.68rem] font-bold tracking-[0.2em] text-base-content/50 uppercase"
+				>
+					<tile.icon class="h-3.5 w-3.5 text-accent" />
+					{tile.label}
+				</div>
 			</div>
-		</div>
-		<ArrowUpRight
-			class="relative h-6 w-6 shrink-0 text-base-content/25 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-info"
-		/>
-	</a>
+			<!-- hidden in the cramped sm-to-md band where three columns leave no room for the deck -->
+			<div class="relative block h-full w-28 shrink-0 sm:hidden md:block">
+				{@render fan(tile.art, tile.base, tile.icon)}
+			</div>
+		</a>
+	{/each}
 </div>
 
 <style>
+	.hub-tile {
+		--grain-opacity: 0.05;
+	}
 	.fan-card {
 		transition:
 			transform 0.7s cubic-bezier(0.22, 1, 0.36, 1),

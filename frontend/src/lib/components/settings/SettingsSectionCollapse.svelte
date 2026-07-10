@@ -26,16 +26,20 @@
 	}: Props = $props();
 </script>
 
-<div class="collapse collapse-arrow bg-base-200 rounded-box">
+<div class="collapse collapse-arrow rounded-2xl border border-base-content/8 bg-base-200/50">
 	<input type="radio" {name} checked={isOpen} onchange={() => (isOpen = true)} />
 	<div class="collapse-title">
-		<div class="flex items-center gap-3">
-			<div class="{iconBgClass} p-2 rounded-lg">
+		<div class="flex items-center gap-3.5">
+			<div class="{iconBgClass} grid size-10 shrink-0 place-items-center rounded-xl">
 				<Icon class="w-5 h-5 {iconTextClass}" />
 			</div>
-			<div>
-				<h3 class="font-semibold text-base">{title}</h3>
-				<p class="text-xs text-base-content/50">{description}</p>
+			<div class="min-w-0">
+				<h3
+					class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+				>
+					{title}
+				</h3>
+				<p class="mt-0.5 truncate text-sm text-base-content/70">{description}</p>
 			</div>
 		</div>
 	</div>

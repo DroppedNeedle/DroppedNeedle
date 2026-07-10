@@ -57,15 +57,17 @@
 {#if statsQuery.isLoading}
 	<div class="space-y-4">
 		<div class="skeleton h-16 w-full rounded-2xl"></div>
-		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-			<div class="skeleton h-72 w-full rounded-3xl"></div>
-			<div class="skeleton h-72 w-full rounded-3xl"></div>
-			<div class="skeleton h-32 w-full rounded-3xl sm:col-span-2"></div>
+		<div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+			<div class="skeleton h-32 w-full rounded-2xl"></div>
+			<div class="skeleton h-32 w-full rounded-2xl"></div>
+			<div class="skeleton h-32 w-full rounded-2xl"></div>
 		</div>
 		<div class="skeleton h-12 w-full rounded-2xl"></div>
 	</div>
 {:else if statsQuery.isError}
-	<div class="alert alert-error">Failed to load library: {statsQuery.error.message}</div>
+	<div class="alert alert-error rounded-2xl">
+		Failed to load library: {statsQuery.error.message}
+	</div>
 {:else if isEmpty}
 	{#if authStore.isAdmin}
 		<EmptyState
@@ -74,7 +76,7 @@
 			description="Add a library path in Settings and start a scan to get started."
 		/>
 		<div class="flex justify-center">
-			<LibraryScanButton {hasPath} class="btn btn-primary gap-1" />
+			<LibraryScanButton {hasPath} class="btn btn-primary gap-1 rounded-full" />
 		</div>
 	{:else}
 		<EmptyState
@@ -90,26 +92,29 @@
 		<LibraryHubTiles {stats} />
 
 		<div
-			class="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-base-content/5 bg-base-200/30 px-5 py-3 text-sm"
+			class="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-base-content/8 bg-base-200/50 px-5 py-3 text-sm"
 		>
 			<div class="flex items-center gap-2 text-base-content/55">
-				<HardDrive class="h-4 w-4 text-base-content/40" />
-				<span class="font-semibold text-base-content/80">{formatBytes(stats.total_size_bytes)}</span
-				>
+				<HardDrive class="h-4 w-4 text-accent/70" />
+				<span class="font-mono text-xs font-semibold tabular-nums text-base-content/80">
+					{formatBytes(stats.total_size_bytes)}
+				</span>
 				on disk
 			</div>
 			<span class="hidden h-4 w-px bg-base-content/10 sm:block"></span>
 			<div class="flex items-center gap-2 text-base-content/55">
-				<Clock class="h-4 w-4 text-base-content/40" />
+				<Clock class="h-4 w-4 text-accent/70" />
 				Last scan
-				<span class="font-semibold text-base-content/80"
-					>{lastScan ? formatLastUpdated(lastScan) : 'never'}</span
-				>
+				<span class="font-mono text-xs font-semibold tabular-nums text-base-content/80">
+					{lastScan ? formatLastUpdated(lastScan) : 'never'}
+				</span>
 			</div>
 			<span class="hidden h-4 w-px bg-base-content/10 sm:block"></span>
 			<div class="flex min-w-0 items-center gap-2 text-base-content/55">
-				<Layers class="h-4 w-4 shrink-0 text-base-content/40" />
-				<span class="truncate font-semibold text-base-content/80">{formatSummary || '-'}</span>
+				<Layers class="h-4 w-4 shrink-0 text-accent/70" />
+				<span class="truncate font-mono text-xs font-semibold tabular-nums text-base-content/80">
+					{formatSummary || '-'}
+				</span>
 			</div>
 			{#if showAttention}
 				<a
@@ -136,7 +141,7 @@
 
 	<div class="flex justify-center pt-4">
 		<button
-			class="btn btn-ghost btn-sm gap-1.5 text-base-content/50 transition-colors hover:text-base-content"
+			class="btn btn-ghost btn-sm gap-1.5 rounded-full text-base-content/50 transition-colors hover:text-base-content"
 			onclick={scrollToTop}
 		>
 			<ArrowUp class="h-4 w-4" /> Back to top

@@ -9,6 +9,7 @@
 	import GenrePills from '$lib/components/GenrePills.svelte';
 	import GenreGrid from '$lib/components/GenreGrid.svelte';
 	import DiscoverQueueDeck from '$lib/components/discover/DiscoverQueueDeck.svelte';
+	import TasteGraphZone from '$lib/components/discover/TasteGraphZone.svelte';
 	import PlaylistDiscoveryModal from '$lib/components/PlaylistDiscoveryModal.svelte';
 	import WeeklyExploration from '$lib/components/WeeklyExploration.svelte';
 	import ServicePromptCard from '$lib/components/ServicePromptCard.svelte';
@@ -17,7 +18,7 @@
 	import SectionDivider from '$lib/components/SectionDivider.svelte';
 	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
-	import PageHeader from '$lib/components/PageHeader.svelte';
+	import PageHero from '$lib/ui/PageHero.svelte';
 	import { api } from '$lib/api/client';
 	import { isDismissed } from '$lib/utils/dismissedPrompts';
 	import {
@@ -94,17 +95,17 @@
 	);
 
 	let zones = $derived.by(() => {
-		const list: { id: string; label: string }[] = [];
+		const list: { id: string; label: string }[] = [{ id: 'zone-taste', label: 'Taste Graph' }];
 		if (queueEnabled) list.push({ id: 'zone-queue', label: 'Queue' });
-		if ((discoverData?.top_picks?.items?.length ?? 0) > 0)
-			list.push({ id: 'zone-picks', label: 'Top Picks' });
-		if (hasLounge) list.push({ id: 'zone-lounge', label: 'Lounge' });
-		if (hasMadeForYou) list.push({ id: 'zone-made', label: 'Made For You' });
 		if (hasBecauseYouListened) list.push({ id: 'zone-because', label: 'For You' });
+		if (hasMadeForYou) list.push({ id: 'zone-made', label: 'Made For You' });
 		if (hasNewFresh) list.push({ id: 'zone-fresh', label: 'New' });
 		if (hasFromYourLibrary) list.push({ id: 'zone-library', label: 'Your Library' });
 		if (hasBrowseGenres) list.push({ id: 'zone-genres', label: 'Genres' });
-		if (hasTrending) list.push({ id: 'zone-trending', label: 'Trending' });
+		if ((discoverData?.top_picks?.items?.length ?? 0) > 0)
+			list.push({ id: 'zone-picks', label: 'Picks' });
+		if (hasLounge) list.push({ id: 'zone-lounge', label: 'Lounge' });
+		if (hasTrending) list.push({ id: 'zone-trending', label: 'Charts' });
 		return list;
 	});
 
@@ -168,39 +169,37 @@
 </svelte:head>
 
 <div class="min-h-[calc(100vh-200px)]">
-	<PageHeader
+	<PageHero
+		title="Discover"
 		subtitle="Music recommendations based on what you listen to."
-		gradientClass="bg-gradient-to-br from-info/30 via-primary/20 to-secondary/10"
+		eyebrow="Your discovery engine"
+		tint="rgb(var(--brand-discover))"
 		{loading}
 		isUpdating={isUpdating || isUpdatingInBackground}
 		{lastUpdated}
 	>
-		{#snippet title()}
-			<Compass class="inline h-8 w-8 sm:h-10 sm:w-10 lg:h-12 lg:w-12 mr-2 align-text-bottom" />
-			Discover
+		{#snippet icon()}
+			<Compass class="h-7 w-7" />
 		{/snippet}
-	</PageHeader>
+	</PageHero>
 
 	{#if error && !discoverData}
-		<div class="mt-16 flex flex-col items-center justify-center px-4">
-			<CircleAlert class="mb-4 h-10 w-10 text-base-content/50" />
-			<p class="text-base-content/70">{error}</p>
-			<button class="btn btn-primary mt-4" onclick={() => discoverQuery.refetch()}>Try Again</button
+		<div class="px-4 sm:px-6 lg:px-8">
+			<div
+				class="mt-10 flex flex-col items-center gap-4 rounded-2xl border border-base-content/8 bg-base-200/50 px-6 py-12 text-center"
 			>
+				<CircleAlert class="h-10 w-10 text-base-content/40" />
+				<p class="text-sm text-base-content/70">{error}</p>
+				<button class="btn btn-primary" onclick={() => discoverQuery.refetch()}>Try Again</button>
+			</div>
 		</div>
 	{:else}
-		<div class="px-4 sm:px-6 lg:px-8">
-			{#if servicePrompts.length > 0}
-				<div class="space-y-3 mb-6">
-					{#each servicePrompts as prompt, i (`service-prompt-${prompt.service}-${i}`)}
-						<ServicePromptCard {prompt} ondismiss={handlePromptDismiss} />
-					{/each}
-				</div>
-			{/if}
-
+		<div class="px-4 pb-12 sm:px-6 lg:px-8">
 			{#if (loading && !discoverData) || isBuilding}
 				{#if isBuilding}
-					<div class="mb-8 flex items-center justify-center gap-3 px-4 text-center">
+					<div
+						class="mb-8 flex items-center justify-center gap-3 rounded-2xl border border-base-content/8 bg-base-200/50 px-5 py-4"
+					>
 						<span class="loading loading-spinner loading-sm text-primary"></span>
 						<p class="text-sm text-base-content/60">
 							Building your recommendations from your listening history. The first load can take a
@@ -221,7 +220,7 @@
 					{#snippet action()}
 						<a
 							href="/settings?tab=discover"
-							class="btn btn-ghost btn-xs gap-1.5 text-base-content/60 hover:text-primary"
+							class="btn btn-ghost btn-xs gap-1.5 rounded-full bg-base-content/6 text-base-content/60 hover:text-primary"
 							title="Choose which sections appear here"
 						>
 							<SlidersHorizontal class="h-3.5 w-3.5" />
@@ -229,25 +228,53 @@
 						</a>
 					{/snippet}
 				</DiscoverZoneNav>
+
 				<div class="space-y-10 sm:space-y-12" class:is-refreshing={isUpdatingInBackground}>
+					<div id="zone-taste" class="discover-section-enter scroll-mt-14">
+						<TasteGraphZone />
+					</div>
+
 					{#if queueEnabled}
 						<div id="zone-queue" class="discover-section-enter scroll-mt-14">
 							<DiscoverQueueDeck />
 						</div>
 					{/if}
 
-					{#if discoverData.top_picks && discoverData.top_picks.items.length > 0}
-						<div id="zone-picks" class="discover-section-enter scroll-mt-14">
-							<TopPicksDeck section={discoverData.top_picks} />
-						</div>
-					{/if}
-
-					{#if hasLounge}
-						<div id="zone-lounge" class="discover-section-enter scroll-mt-14">
-							<ListeningLounge
-								section={discoverData.listeners_like_you}
-								topPicks={discoverData.top_picks}
-							/>
+					<!-- connect-service nudges: kept, but music comes first -->
+					{#if servicePrompts.length > 0 && hasContent}
+						<details
+							class="group rounded-2xl border border-base-content/8 bg-base-200/50 transition-colors open:bg-base-200/50 hover:border-primary/30"
+						>
+							<summary
+								class="flex cursor-pointer list-none items-center gap-3 px-5 py-3.5 [&::-webkit-details-marker]:hidden"
+							>
+								<Sparkles class="h-4 w-4 shrink-0 text-accent" />
+								<span class="flex-1 text-sm text-base-content/70 group-hover:text-base-content"
+									>Make Discover smarter — {servicePrompts.length} service{servicePrompts.length ===
+									1
+										? ''
+										: 's'} to connect</span
+								>
+								<span
+									class="font-mono text-[0.62rem] font-bold uppercase tracking-[0.2em] text-base-content/40 group-open:hidden"
+									>Show</span
+								>
+								<span
+									class="hidden font-mono text-[0.62rem] font-bold uppercase tracking-[0.2em] text-base-content/40 group-open:inline"
+									>Hide</span
+								>
+							</summary>
+							<div class="space-y-3 px-4 pb-4">
+								{#each servicePrompts as prompt, i (`service-prompt-${prompt.service}-${i}`)}
+									<ServicePromptCard {prompt} ondismiss={handlePromptDismiss} />
+								{/each}
+							</div>
+						</details>
+					{:else if servicePrompts.length > 0}
+						<div class="space-y-3">
+							{#each servicePrompts as prompt, i (`service-prompt-${prompt.service}-${i}`)}
+								<ServicePromptCard {prompt} ondismiss={handlePromptDismiss} />
+							{/each}
 						</div>
 					{/if}
 
@@ -257,89 +284,36 @@
 						</div>
 					{/if}
 
-					<div class="discover-section-enter">
-						<div class="grid grid-cols-1 gap-4">
-							{#if playlistDiscoveryEnabled}
-								<button
-									type="button"
-									class="group relative w-full overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/8 via-base-200/50 to-secondary/8 px-5 py-7 backdrop-blur-sm shadow-[0_4px_24px_oklch(from_var(--color-primary)_l_c_h_/_0.06)] transition-all duration-300 cursor-pointer text-left motion-safe:hover:-translate-y-0.5 hover:shadow-[0_8px_32px_oklch(from_var(--color-primary)_l_c_h_/_0.15)] hover:border-primary/25 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100"
-									onclick={() => (playlistDiscoverOpen = true)}
+					{#if playlistDiscoveryEnabled}
+						<div class="discover-section-enter">
+							<button
+								type="button"
+								class="group flex w-full cursor-pointer items-center gap-4 rounded-2xl border border-base-content/8 bg-base-200/50 px-5 py-5 text-left transition-colors hover:border-primary/30 hover:bg-base-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100"
+								onclick={() => (playlistDiscoverOpen = true)}
+							>
+								<div
+									class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-base-content/6"
 								>
-									<div
-										class="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-br from-white/[0.03] to-transparent"
-									></div>
-									<div class="flex items-center gap-4">
-										<div
-											class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/15 shadow-[0_0_16px_oklch(from_var(--color-primary)_l_c_h_/_0.15)]"
-										>
-											<Wand2 class="h-5 w-5 text-primary" />
-										</div>
-										<div class="flex-1 min-w-0">
-											<h3 class="font-bold text-sm sm:text-base">Discover for a Playlist</h3>
-											<p class="text-xs text-base-content/50 mt-0.5">
-												Get album suggestions based on any playlist.
-											</p>
-										</div>
-										<div
-											class="shrink-0 text-primary/50 transition-transform duration-300 group-hover:translate-x-1"
-										>
-											<Sparkles class="h-5 w-5" />
-										</div>
-									</div>
-								</button>
-							{/if}
-						</div>
-					</div>
-
-					{#if hasMadeForYou}
-						<div id="zone-made" class="scroll-mt-14">
-							<SectionDivider label="Made For You">
-								{#snippet icon()}<Sparkles class="w-3.5 h-3.5" />{/snippet}
-							</SectionDivider>
-
-							<div class="discover-section-enter space-y-8 sm:space-y-10">
-								{#if discoverData.daily_mixes?.length}
-									<div>
-										<h3
-											class="section-title text-sm font-semibold text-base-content/70 mb-3 flex items-center gap-2"
-										>
-											<Music2 class="h-4 w-4" />
-											Daily Mixes
-										</h3>
-										<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-											{#each discoverData.daily_mixes as mix, i (`${mix.title}-${i}`)}
-												<DailyMixCard section={mix} />
-											{/each}
-										</div>
-									</div>
-								{/if}
-
-								{#if discoverData.radio_sections?.length}
-									<div>
-										<h3
-											class="section-title text-sm font-semibold text-base-content/70 mb-3 flex items-center gap-2"
-										>
-											<Radio class="h-4 w-4" />
-											Radio Stations
-										</h3>
-										<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-											{#each discoverData.radio_sections as radio (`radio-${radio.radio_seed_id}`)}
-												<RadioCard
-													seedType={radio.radio_seed_type ?? 'artist'}
-													seedId={radio.radio_seed_id ?? ''}
-													initialSection={radio}
-												/>
-											{/each}
-										</div>
-									</div>
-								{/if}
-							</div>
+									<Wand2 class="h-5 w-5 text-accent" />
+								</div>
+								<div class="min-w-0 flex-1">
+									<h3 class="font-display text-sm font-semibold tracking-tight sm:text-base">
+										Discover for a Playlist
+									</h3>
+									<p class="mt-0.5 text-xs text-base-content/50">
+										Get album suggestions based on any playlist.
+									</p>
+								</div>
+								<Sparkles
+									class="h-4 w-4 shrink-0 text-base-content/40 transition-transform duration-300 group-hover:translate-x-1 group-hover:text-primary"
+								/>
+							</button>
 						</div>
 					{/if}
 
 					<div id="zone-because" class="scroll-mt-14">
 						<SectionDivider label="Because You Listened">
-							{#snippet icon()}<Heart class="w-3.5 h-3.5" />{/snippet}
+							{#snippet icon()}<Heart class="h-3.5 w-3.5" />{/snippet}
 						</SectionDivider>
 
 						{#if hasBecauseYouListened}
@@ -371,10 +345,56 @@
 						{/if}
 					</div>
 
+					{#if hasMadeForYou}
+						<div id="zone-made" class="scroll-mt-14">
+							<SectionDivider label="Made For You">
+								{#snippet icon()}<Sparkles class="h-3.5 w-3.5" />{/snippet}
+							</SectionDivider>
+
+							<div class="discover-section-enter space-y-8 sm:space-y-10">
+								{#if discoverData.daily_mixes?.length}
+									<section aria-label="Daily mixes">
+										<h3
+											class="mb-4 flex items-center gap-2.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+										>
+											<Music2 class="h-4 w-4 text-accent" />
+											Daily Mixes
+										</h3>
+										<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+											{#each discoverData.daily_mixes as mix, i (`${mix.title}-${i}`)}
+												<DailyMixCard section={mix} />
+											{/each}
+										</div>
+									</section>
+								{/if}
+
+								{#if discoverData.radio_sections?.length}
+									<section aria-label="Radio stations">
+										<h3
+											class="mb-4 flex items-center gap-2.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+										>
+											<Radio class="h-4 w-4 text-accent" />
+											Radio Stations
+										</h3>
+										<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+											{#each discoverData.radio_sections as radio (`radio-${radio.radio_seed_id}`)}
+												<RadioCard
+													seedType={radio.radio_seed_type ?? 'artist'}
+													seedId={radio.radio_seed_id ?? ''}
+													initialSection={radio}
+												/>
+											{/each}
+										</div>
+									</section>
+								{/if}
+							</div>
+						</div>
+					{/if}
+
 					{#if hasNewFresh}
 						<div id="zone-fresh" class="scroll-mt-14">
 							<SectionDivider label="New & Fresh">
-								{#snippet icon()}<Music class="w-3.5 h-3.5" />{/snippet}
+								{#snippet icon()}<Music class="h-3.5 w-3.5" />{/snippet}
 							</SectionDivider>
 
 							<div class="discover-section-enter space-y-2">
@@ -406,7 +426,7 @@
 					{#if hasFromYourLibrary}
 						<div id="zone-library" class="scroll-mt-14">
 							<SectionDivider label="From Your Library">
-								{#snippet icon()}<Library class="w-3.5 h-3.5" />{/snippet}
+								{#snippet icon()}<Library class="h-3.5 w-3.5" />{/snippet}
 							</SectionDivider>
 
 							<div class="discover-section-enter space-y-2">
@@ -428,37 +448,63 @@
 					{#if hasBrowseGenres}
 						<div id="zone-genres" class="scroll-mt-14">
 							<SectionDivider label="Browse Genres">
-								{#snippet icon()}<LayoutGrid class="w-3.5 h-3.5" />{/snippet}
+								{#snippet icon()}<LayoutGrid class="h-3.5 w-3.5" />{/snippet}
 							</SectionDivider>
 
-							<div class="discover-section-enter space-y-2">
+							<div class="discover-section-enter space-y-6">
 								{#if discoverData.unexplored_genres && shuffledGenres.length > 0}
-									<div class="mt-4 mb-4">
-										<GenrePills
-											title={discoverData.unexplored_genres.title}
-											genres={shuffledGenres}
-											onShuffle={shuffleGenres}
-										/>
-									</div>
+									<GenrePills
+										title={discoverData.unexplored_genres.title}
+										genres={shuffledGenres}
+										onShuffle={shuffleGenres}
+									/>
 								{/if}
 
 								{#if discoverData.genre_list && discoverData.genre_list.items.length > 0}
-									<div class="mt-4 mb-4">
-										<GenreGrid
-											title={discoverData.genre_list.title}
-											genres={discoverData.genre_list.items}
-											genreArtistImages={discoverData.genre_artist_images}
-										/>
-									</div>
+									<GenreGrid
+										title={discoverData.genre_list.title}
+										genres={discoverData.genre_list.items}
+										genreArtistImages={discoverData.genre_artist_images}
+									/>
 								{/if}
 							</div>
+						</div>
+					{/if}
+
+					{#if (discoverData.top_picks && discoverData.top_picks.items.length > 0) || hasLounge || hasTrending}
+						<div class="flex items-center gap-3">
+							<span
+								class="font-mono text-[0.62rem] font-bold uppercase tracking-[0.2em] text-base-content/35"
+								>Wider world — charts &amp; other listeners, not your taste profile</span
+							>
+							<div class="h-px flex-1 bg-base-content/10"></div>
+							<a
+								href="/settings?tab=discover"
+								class="btn btn-ghost btn-xs rounded-full text-base-content/50 hover:text-primary"
+								>Hide these</a
+							>
+						</div>
+					{/if}
+
+					{#if discoverData.top_picks && discoverData.top_picks.items.length > 0}
+						<div id="zone-picks" class="discover-section-enter scroll-mt-14">
+							<TopPicksDeck section={discoverData.top_picks} />
+						</div>
+					{/if}
+
+					{#if hasLounge}
+						<div id="zone-lounge" class="discover-section-enter scroll-mt-14">
+							<ListeningLounge
+								section={discoverData.listeners_like_you}
+								topPicks={discoverData.top_picks}
+							/>
 						</div>
 					{/if}
 
 					{#if hasTrending}
 						<div id="zone-trending" class="scroll-mt-14">
 							<SectionDivider label="Trending Now">
-								{#snippet icon()}<TrendingUp class="w-3.5 h-3.5" />{/snippet}
+								{#snippet icon()}<TrendingUp class="h-3.5 w-3.5" />{/snippet}
 							</SectionDivider>
 
 							<div class="discover-section-enter space-y-2">
@@ -478,42 +524,50 @@
 					{/if}
 
 					{#if !hasContent && servicePrompts.length > 0}
-						<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-							<Compass class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-base-content/50" />
-							<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">
+						<div
+							class="flex flex-col items-center rounded-2xl border border-dashed border-base-content/12 px-6 py-12 text-center sm:py-16"
+						>
+							<Compass class="mb-4 h-10 w-10 text-base-content/40 sm:mb-5 sm:h-12 sm:w-12" />
+							<h2 class="font-display text-xl font-bold tracking-tight sm:text-2xl">
 								Nothing to Discover Yet
 							</h2>
-							<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
+							<p class="mt-2 max-w-md text-sm text-base-content/60 sm:text-base">
 								Connect a music service to get recommendations. The more you connect, the better
 								they get.
 							</p>
-							<a href="/settings" class="btn btn-primary">Connect Services</a>
+							<a href="/settings" class="btn btn-primary mt-6">Connect Services</a>
 						</div>
 					{:else if !hasContent && !queueEnabled}
-						<div class="flex flex-col items-center justify-center py-12 sm:py-16">
+						<div
+							class="flex flex-col items-center rounded-2xl border border-dashed border-base-content/12 px-6 py-12 text-center sm:py-16"
+						>
 							<SlidersHorizontal
-								class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-base-content/50"
+								class="mb-4 h-10 w-10 text-base-content/40 sm:mb-5 sm:h-12 sm:w-12"
 							/>
-							<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">
-								You've hidden every section
+							<h2 class="font-display text-xl font-bold tracking-tight sm:text-2xl">
+								You've Hidden Every Section
 							</h2>
-							<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
+							<p class="mt-2 max-w-md text-sm text-base-content/60 sm:text-base">
 								Turn some discovery sections back on to fill this page.
 							</p>
-							<a href="/settings?tab=discover" class="btn btn-primary gap-2">
+							<a href="/settings?tab=discover" class="btn btn-primary mt-6 gap-2">
 								<SlidersHorizontal class="h-4 w-4" />
 								Customise Sections
 							</a>
 						</div>
 					{:else if !hasContent}
-						<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-							<Compass class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-base-content/50" />
-							<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">Still Loading</h2>
-							<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
+						<div
+							class="flex flex-col items-center rounded-2xl border border-dashed border-base-content/12 px-6 py-12 text-center sm:py-16"
+						>
+							<Compass class="mb-4 h-10 w-10 text-base-content/40 sm:mb-5 sm:h-12 sm:w-12" />
+							<h2 class="font-display text-xl font-bold tracking-tight sm:text-2xl">
+								Still Loading
+							</h2>
+							<p class="mt-2 max-w-md text-sm text-base-content/60 sm:text-base">
 								Your recommendations are still loading. Try refreshing.
 							</p>
 							<button
-								class="btn btn-primary"
+								class="btn btn-primary mt-6"
 								onclick={() => void handleRefresh()}
 								disabled={refreshing}
 							>

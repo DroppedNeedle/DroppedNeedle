@@ -15,7 +15,7 @@
 
 {#if available}
 	<button
-		class="btn btn-sm rounded-lg gap-1.5 shrink-0 border-none"
+		class="btn btn-sm rounded-lg gap-1.5 shrink-0 border-none max-sm:px-2 max-sm:gap-1"
 		style="--btn-color: {sourceColor}; background-color: var(--btn-color); color: oklch(98% 0 0);"
 		{onclick}
 		aria-label={ariaLabel}
@@ -25,7 +25,7 @@
 	</button>
 {:else}
 	<span
-		class="btn btn-sm btn-ghost rounded-lg shrink-0 pointer-events-none opacity-30"
+		class="btn btn-sm btn-ghost rounded-lg shrink-0 pointer-events-none opacity-30 max-sm:px-2"
 		aria-label="Not available"
 	>
 		—

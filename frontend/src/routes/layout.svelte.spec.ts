@@ -12,7 +12,8 @@ vi.mock('$app/environment', () => ({ browser: true, building: false, dev: false 
 vi.mock('$app/navigation', () => ({
 	goto: vi.fn(),
 	beforeNavigate: vi.fn(),
-	afterNavigate: vi.fn()
+	afterNavigate: vi.fn(),
+	onNavigate: vi.fn()
 }));
 vi.mock('$app/paths', () => ({
 	base: '',
@@ -177,7 +178,8 @@ describe('+layout.svelte sidebar', () => {
 	it('renders "Playlists" link in the sidebar when the download client is available', async () => {
 		integrationState.download_client = true;
 		renderLayout();
-		await expect.element(page.getByText('Playlists')).toBeInTheDocument();
+		// "Playlists" also renders in the command palette, so scope to the sidebar (first in DOM)
+		await expect.element(page.getByText('Playlists').first()).toBeInTheDocument();
 	});
 
 	it('always renders "Library" link in the sidebar', async () => {
@@ -189,7 +191,7 @@ describe('+layout.svelte sidebar', () => {
 	it('Playlists link navigates to /playlists', async () => {
 		integrationState.download_client = true;
 		renderLayout();
-		const link = page.getByText('Playlists');
+		const link = page.getByText('Playlists').first();
 		const anchor = link.element().closest('a');
 		expect(anchor).not.toBeNull();
 		expect(anchor!.getAttribute('href')).toBe('/playlists');
@@ -198,7 +200,7 @@ describe('+layout.svelte sidebar', () => {
 	it('Playlists link has tooltip data attribute', async () => {
 		integrationState.download_client = true;
 		renderLayout();
-		const link = page.getByText('Playlists');
+		const link = page.getByText('Playlists').first();
 		const anchor = link.element().closest('a');
 		expect(anchor!.getAttribute('data-tip')).toBe('Playlists');
 	});

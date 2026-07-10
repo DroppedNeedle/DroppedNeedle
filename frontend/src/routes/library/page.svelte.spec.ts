@@ -33,8 +33,10 @@ afterEach(() => authStore.clear());
 describe('library route page', () => {
 	it('renders the Library header and subtitle', async () => {
 		render(LibraryPage);
-		await expect.element(page.getByRole('heading', { name: 'Library' })).toBeVisible();
-		await expect.element(page.getByText('Your scanned music library')).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'Vinyl Collection' })).toBeVisible();
+		await expect
+			.element(page.getByText('Everything you own, curated in your vault.'))
+			.toBeVisible();
 	});
 
 	it('links Listen to the Listening Room', async () => {

@@ -1,9 +1,26 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="droppedneedle">
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-		<meta name="theme-color" content="#0d120a" />
+		<meta name="theme-color" content="#0d0e0c" />
+		<!-- Apply the saved appearance before first paint to avoid a theme flash.
+		     Mirrors the logic in $lib/stores/appearance.svelte.ts. -->
+		<script>
+			(function () {
+				try {
+					var p = JSON.parse(localStorage.getItem('dn-appearance') || '{}');
+					var choice = p.theme || 'system';
+					var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+					var resolved =
+						choice === 'system' ? (dark ? 'droppedneedle' : 'droppedneedle-light') : choice;
+					var el = document.documentElement;
+					el.setAttribute('data-theme', resolved);
+					if (p.textScale && p.textScale !== 'md') el.setAttribute('data-dn-text', p.textScale);
+					if (p.motion === 'reduced') el.setAttribute('data-dn-motion', 'reduced');
+				} catch (e) {}
+			})();
+		</script>
 		<meta name="mobile-web-app-capable" content="yes" />
 		<meta name="apple-mobile-web-app-capable" content="yes" />
 		<meta name="apple-mobile-web-app-title" content="DroppedNeedle" />
@@ -17,13 +34,6 @@
 		<link
 			rel="preload"
 			href="%sveltekit.assets%/fonts/hankengrotesk-latin.woff2"
-			as="font"
-			type="font/woff2"
-			crossorigin
-		/>
-		<link
-			rel="preload"
-			href="%sveltekit.assets%/fonts/bigshoulders-latin.woff2"
 			as="font"
 			type="font/woff2"
 			crossorigin

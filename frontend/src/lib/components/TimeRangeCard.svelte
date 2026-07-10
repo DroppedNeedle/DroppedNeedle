@@ -44,7 +44,9 @@
 <svelte:element
 	this={href ? 'a' : 'div'}
 	href={href ?? undefined}
-	class={`card ${className} group ${href ? 'cursor-pointer' : 'cursor-default'}`}
+	class={variant === 'featured'
+		? `group relative block overflow-hidden rounded-2xl border border-base-content/8 bg-base-200/50 ${className} ${href ? 'cursor-pointer' : 'cursor-default'}`
+		: `group flex items-center gap-3 px-2 py-2.5 transition-colors hover:bg-base-content/4 ${className} ${href ? 'cursor-pointer' : 'cursor-default'}`}
 	onclick={href ? undefined : handleCardClick}
 	onkeydown={href ? undefined : handleCardKeydown}
 	role={href ? undefined : 'button'}
@@ -74,14 +76,24 @@
 			<div
 				class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"
 			></div>
-			<div class="absolute left-3 top-3 flex items-center gap-2">
-				<span class="badge badge-primary badge-lg font-bold">#{rank}</span>
-				<span class="badge badge-ghost badge-sm">Most Popular</span>
+			<div class="absolute left-3 top-3 flex flex-wrap items-center gap-1.5">
+				<span
+					class="rounded-full bg-primary px-2.5 py-1 font-mono text-[0.65rem] font-bold tabular-nums text-primary-content"
+				>
+					#{rank}
+				</span>
+				<span
+					class="rounded-full border border-white/15 bg-black/40 px-2.5 py-1 font-mono text-[0.6rem] font-bold uppercase tracking-[0.14em] text-white/75 backdrop-blur-sm"
+				>
+					Most popular
+				</span>
 				{#if item.in_library}
-					<div class="badge badge-success">
+					<span
+						class="flex items-center gap-1 rounded-full border border-accent/40 bg-accent/20 px-2.5 py-1 font-mono text-[0.6rem] font-bold uppercase tracking-[0.14em] text-accent backdrop-blur-sm"
+					>
 						<Check class="h-3 w-3" />
-						In Library
-					</div>
+						In library
+					</span>
 				{/if}
 			</div>
 			{#if isAlbum(item) && item.mbid && item.in_library}
@@ -93,12 +105,14 @@
 				/>
 			{/if}
 			<div class="absolute inset-x-0 bottom-0 p-4 text-white">
-				<h3 class="line-clamp-2 text-lg font-bold sm:text-xl">{item.name}</h3>
+				<h3 class="line-clamp-2 font-display text-lg font-bold sm:text-xl">{item.name}</h3>
 				{#if isAlbum(item) && item.artist_name}
 					<p class="line-clamp-1 text-sm text-white/80">{item.artist_name}</p>
 				{/if}
 				{#if item.listen_count !== null && item.listen_count !== undefined}
-					<p class="mt-1 text-sm text-white/60">🎧 {formatListenCount(item.listen_count)}</p>
+					<p class="mt-1 font-mono text-xs tabular-nums text-white/60">
+						{formatListenCount(item.listen_count)}
+					</p>
 				{/if}
 			</div>
 			{#if !item.mbid}
@@ -113,8 +127,19 @@
 			{/if}
 		</figure>
 	{:else}
-		{#if itemType === 'album'}
-			<figure class="relative aspect-square overflow-hidden">
+		<span
+			class="w-7 shrink-0 text-right font-mono text-xs font-bold tabular-nums {rank <= 3
+				? 'text-primary'
+				: 'text-base-content/35'}"
+		>
+			{rank}
+		</span>
+		<figure
+			class="relative h-11 w-11 shrink-0 overflow-hidden {itemType === 'artist'
+				? 'rounded-full'
+				: 'rounded-lg'}"
+		>
+			{#if itemType === 'album'}
 				<AlbumImage
 					mbid={item.mbid || ''}
 					alt={item.name}
@@ -123,11 +148,6 @@
 					className="w-full h-full"
 					customUrl={(item as HomeAlbum).image_url || null}
 				/>
-				{#if item.in_library}
-					<div class="badge badge-success badge-sm absolute left-1 top-1 z-20">
-						<Check class="h-3 w-3" />
-					</div>
-				{/if}
 				{#if item.mbid && item.in_library}
 					<AlbumCardOverlay
 						mbid={item.mbid}
@@ -137,78 +157,44 @@
 						size="sm"
 					/>
 				{/if}
-				<div
-					class="badge badge-sm absolute bottom-1 left-1 font-bold {variant === 'expanded' &&
-					rank <= 3
-						? 'badge-primary'
-						: 'badge-neutral'}"
-				>
-					#{rank}
-				</div>
-				{#if !item.mbid}
-					<button
-						type="button"
-						class="btn btn-ghost btn-xs btn-circle absolute bottom-1 right-1"
-						title="Search album"
-						onclick={handleSearchClick}
-					>
-						<Search class="h-3 w-3" />
-					</button>
-				{/if}
-			</figure>
-		{:else}
-			<figure
-				class={variant === 'overview'
-					? 'relative flex justify-center pt-4'
-					: 'relative aspect-square overflow-hidden'}
-			>
+			{:else}
 				<ArtistImage
 					mbid={item.mbid || ''}
 					alt={item.name}
-					size={variant === 'overview' ? 'md' : 'full'}
-					rounded={variant === 'overview' ? undefined : 'none'}
-					className={variant === 'overview' ? undefined : 'w-full h-full'}
-					lazy={variant === 'overview' ? false : undefined}
+					size="full"
+					rounded="none"
+					className="w-full h-full"
 				/>
-				{#if item.in_library}
-					<div class="badge badge-success badge-sm absolute right-1 top-1">
-						<Check class="h-3 w-3" />
-					</div>
-				{/if}
-				<div
-					class="badge badge-sm absolute bottom-1 left-1 font-bold {variant === 'expanded' &&
-					rank <= 3
-						? 'badge-primary'
-						: 'badge-neutral'}"
-				>
-					#{rank}
-				</div>
-				{#if !item.mbid}
-					<button
-						type="button"
-						class="btn btn-ghost btn-xs btn-circle absolute bottom-1 right-1"
-						title="Search artist"
-						onclick={handleSearchClick}
-					>
-						<Search class="h-3 w-3" />
-					</button>
-				{/if}
-			</figure>
-		{/if}
-		<div class={variant === 'expanded' ? 'card-body p-2 sm:p-3' : 'card-body p-2'}>
-			<h3
-				class={variant === 'expanded'
-					? 'card-title line-clamp-1 text-xs sm:text-sm'
-					: 'card-title line-clamp-1 text-xs'}
-			>
-				{item.name}
-			</h3>
-			{#if isAlbum(item) && item.artist_name}
-				<p class="line-clamp-1 text-xs text-base-content/50">{item.artist_name}</p>
 			{/if}
-			{#if item.listen_count !== null && item.listen_count !== undefined}
-				<p class="text-xs text-base-content/40">{formatListenCount(item.listen_count)}</p>
+		</figure>
+		<div class="min-w-0 flex-1">
+			<h3 class="truncate text-sm font-medium">{item.name}</h3>
+			{#if isAlbum(item) && item.artist_name}
+				<p class="truncate text-xs text-base-content/45">{item.artist_name}</p>
 			{/if}
 		</div>
+		{#if item.in_library}
+			<span
+				class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-accent/40 bg-accent/15 text-accent"
+				title="In library"
+			>
+				<Check class="h-3 w-3" />
+			</span>
+		{/if}
+		{#if item.listen_count !== null && item.listen_count !== undefined}
+			<span class="shrink-0 font-mono text-xs tabular-nums text-base-content/45">
+				{formatListenCount(item.listen_count)}
+			</span>
+		{/if}
+		{#if !item.mbid}
+			<button
+				type="button"
+				class="btn btn-ghost btn-xs btn-circle shrink-0"
+				title={itemType === 'album' ? 'Search album' : 'Search artist'}
+				onclick={handleSearchClick}
+			>
+				<Search class="h-3 w-3" />
+			</button>
+		{/if}
 	{/if}
 </svelte:element>

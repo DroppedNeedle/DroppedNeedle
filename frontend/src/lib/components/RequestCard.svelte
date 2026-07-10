@@ -209,19 +209,20 @@
 </script>
 
 <div
-	class="request-card relative flex flex-col rounded-box transition-all duration-200"
-	class:border-error={isFailedState}
-	class:border={isFailedState}
+	class="request-card relative flex flex-col rounded-2xl transition-all duration-200"
+	class:is-failed={isFailedState}
 	class:is-downloading={isActive && activeItem.status === 'downloading'}
 >
 	<a
 		href={albumHref(item.musicbrainz_id)}
-		class="absolute inset-0 z-0 rounded-box"
+		class="absolute inset-0 z-0 rounded-2xl"
 		aria-label="Open {item.album_title}"
 	></a>
 
 	<div class="relative z-10 flex items-center gap-3 sm:gap-4 p-3 sm:p-4 pointer-events-none">
-		<div class="w-14 h-14 sm:w-18 sm:h-18 shrink-0 rounded-lg overflow-hidden relative">
+		<div
+			class="w-14 h-14 sm:w-18 sm:h-18 shrink-0 rounded-lg overflow-hidden relative ring-1 ring-base-content/10"
+		>
 			<AlbumImage
 				mbid={item.musicbrainz_id}
 				customUrl={item.cover_url ?? null}
@@ -430,7 +431,7 @@
 	{#if showStatusDetails && hasStatusMessages}
 		<div class="px-3 sm:px-4 pb-3 sm:pb-4 -mt-1 relative z-10">
 			<div
-				class="bg-base-100/50 border border-error/10 rounded-lg p-3 text-xs max-h-48 overflow-y-auto"
+				class="bg-base-100/50 border border-error/10 rounded-xl p-3 text-xs max-h-48 overflow-y-auto"
 			>
 				{#each activeItem.status_messages ?? [] as msg, i (`${msg.title}-${i}`)}
 					{#if msg.title}
@@ -468,11 +469,15 @@
 
 <style>
 	.request-card {
-		background: oklch(from var(--color-base-200) l c h / 1);
+		border: 1px solid oklch(from var(--color-base-content) l c h / 0.08);
+		background: oklch(from var(--color-base-200) l c h / 0.5);
 	}
 	.request-card:hover {
-		background: oklch(from var(--color-base-300) l c h / 1);
-		box-shadow: 0 0 12px oklch(from var(--color-primary) l c h / 0.06);
+		border-color: oklch(from var(--color-primary) l c h / 0.3);
+		background: oklch(from var(--color-base-200) l c h / 0.8);
+	}
+	.request-card.is-failed {
+		border-color: oklch(from var(--color-error) l c h / 0.4);
 	}
 	.request-card.is-downloading {
 		box-shadow: 0 0 16px oklch(from var(--color-info) l c h / 0.08);
@@ -481,7 +486,7 @@
 	.progress-track {
 		height: 6px;
 		border-radius: 3px;
-		background: oklch(from var(--color-base-300) l c h / 1);
+		background: oklch(from var(--color-base-content) l c h / 0.1);
 		overflow: hidden;
 	}
 	.progress-fill {
@@ -489,8 +494,8 @@
 		border-radius: 3px;
 		background: linear-gradient(
 			90deg,
-			oklch(from var(--color-info) l c h / 0.8),
-			oklch(from var(--color-info) l c h / 1)
+			oklch(from var(--color-primary) l c h / 0.7),
+			oklch(from var(--color-primary) l c h / 1)
 		);
 		transition: width 0.6s ease-out;
 		position: relative;
@@ -502,7 +507,7 @@
 		background: linear-gradient(
 			90deg,
 			transparent 0%,
-			rgba(255, 255, 255, 0.15) 50%,
+			oklch(from var(--color-primary-content) l c h / 0.2) 50%,
 			transparent 100%
 		);
 		animation: shimmer 2s ease-in-out infinite;

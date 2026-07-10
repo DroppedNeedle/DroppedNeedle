@@ -29,10 +29,15 @@
 	let open = $state(false);
 </script>
 
-<div class="client-card card border border-base-300 bg-base-200" class:is-active={enabled}>
-	<div class="card-body gap-0 p-0">
+<div
+	class="client-card overflow-hidden rounded-2xl border border-base-content/8 bg-base-200/50"
+	class:is-active={enabled}
+>
+	<div>
 		<div class="flex flex-wrap items-center gap-4 p-5">
-			<div class="grid size-12 place-items-center rounded-2xl bg-base-300/60">
+			<div
+				class="grid size-12 place-items-center rounded-2xl border border-base-content/8 bg-base-300/60"
+			>
 				<Icon class="size-6 text-accent" aria-hidden="true" />
 			</div>
 			<button
@@ -41,9 +46,12 @@
 				onclick={() => (open = !open)}
 				aria-expanded={open}
 			>
-				<div class="flex items-center gap-2">
-					<h3 class="text-lg font-bold">{title}</h3>
-					<span class="badge badge-ghost badge-sm">{sourceLabel}</span>
+				<div class="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+					<h3 class="font-display text-lg font-bold tracking-tight">{title}</h3>
+					<span
+						class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+						>{sourceLabel}</span
+					>
 				</div>
 				<div class="flex items-center gap-2 text-sm text-base-content/70">
 					<span
@@ -79,7 +87,7 @@
 		</div>
 
 		{#if open}
-			<div class="space-y-5 border-t border-base-300 p-5">
+			<div class="space-y-5 border-t border-base-content/8 p-5">
 				{@render children()}
 			</div>
 		{/if}

@@ -1,9 +1,8 @@
-<script lang="ts">
+﻿<script lang="ts">
 	import { run } from 'svelte/legacy';
 
 	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
-	import { goto } from '$app/navigation';
 	import AlbumCard from '$lib/components/AlbumCard.svelte';
 	import SearchArtistCard from '$lib/components/SearchArtistCard.svelte';
 	import ViewMoreAlbumCard from '$lib/components/ViewMoreAlbumCard.svelte';
@@ -11,7 +10,6 @@
 	import ArtistCardSkeleton from '$lib/components/ArtistCardSkeleton.svelte';
 	import AlbumCardSkeleton from '$lib/components/AlbumCardSkeleton.svelte';
 	import type { Artist, Album, EnrichmentSource } from '$lib/types';
-	import { colors } from '$lib/colors';
 	import { searchStore } from '$lib/stores/search';
 	import {
 		fetchEnrichmentBatch,
@@ -22,6 +20,7 @@
 	import { api } from '$lib/api/client';
 	import { Check, ArrowRight } from 'lucide-svelte';
 	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
+	import SearchHeader from '$lib/components/search/SearchHeader.svelte';
 
 	interface Props {
 		data: { query: string };
@@ -50,12 +49,6 @@
 	let displayedAlbums = $derived(
 		topAlbum ? albums.filter((a) => a.musicbrainz_id !== topAlbum?.musicbrainz_id) : albums
 	);
-
-	function navigateToBucket(bucket: 'artists' | 'albums') {
-		if (data.query) {
-			goto(`/search/${bucket}?q=${encodeURIComponent(data.query)}`);
-		}
-	}
 
 	function handleAlbumAdded() {
 		showToast = true;
@@ -227,30 +220,7 @@
 </script>
 
 {#if hasSearched || isSearching}
-	<div class="px-8 pt-4 pb-2">
-		<div class="flex gap-2">
-			<button
-				class="badge badge-lg cursor-pointer"
-				style="background-color: {colors.primary}; color: {colors.secondary};"
-			>
-				All
-			</button>
-			<button
-				class="badge badge-lg cursor-pointer transition-colors"
-				style="background-color: {colors.secondary}; color: {colors.primary};"
-				onclick={() => navigateToBucket('artists')}
-			>
-				Artists
-			</button>
-			<button
-				class="badge badge-lg cursor-pointer transition-colors"
-				style="background-color: {colors.secondary}; color: {colors.primary};"
-				onclick={() => navigateToBucket('albums')}
-			>
-				Albums
-			</button>
-		</div>
-	</div>
+	<SearchHeader query={data.query} active="all" />
 {/if}
 
 {#if isSearching && !hasResults}

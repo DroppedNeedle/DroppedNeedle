@@ -36,22 +36,19 @@ vi.mock('$lib/queries/connections/ConnectionsQuery.svelte', () => ({
 import Page from './+page.svelte';
 
 describe('/+page.svelte', () => {
-	it('should render the greeting h1', async () => {
-		expect.assertions(2);
-		render(Page);
-
-		const heading = page.getByRole('heading', { level: 1 });
-		await expect.element(heading).toBeInTheDocument();
-		// getGreeting() returns one of these depending on the time of day.
-		await expect.element(heading).toHaveTextContent(/Good (morning|afternoon|evening)/);
-	});
-
-	it('renders the page subtitle', async () => {
+	it('renders the time-of-day greeting', async () => {
 		expect.assertions(1);
 		render(Page);
 
-		await expect
-			.element(page.getByText('Discover music, explore your library, and find new favorites.'))
-			.toBeVisible();
+		// getGreeting() returns one of these depending on the time of day; the
+		// redesigned home renders it as the "your setup" eyebrow, not an h1.
+		await expect.element(page.getByText(/Good (morning|afternoon|evening)/)).toBeInTheDocument();
+	});
+
+	it('renders the entry cards', async () => {
+		expect.assertions(1);
+		render(Page);
+
+		await expect.element(page.getByText('Listen to Music')).toBeInTheDocument();
 	});
 });

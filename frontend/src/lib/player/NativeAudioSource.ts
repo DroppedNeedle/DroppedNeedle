@@ -188,7 +188,13 @@ export class NativeAudioSource implements PlaybackSource {
 		this.destroyed = true;
 		this.clearStallTimeout();
 		this.cleanupListeners();
+		// Fully disarm the shared element: pause and drop the src attribute so
+		// lock-screen/OS play events cannot restart a zombie stream after stop().
+		this.audio.pause();
 		this.audio.src = '';
+		if (typeof this.audio.removeAttribute === 'function') {
+			this.audio.removeAttribute('src');
+		}
 		this.audio.load();
 		this.stateCallbacks = [];
 		this.readyCallbacks = [];
@@ -237,6 +243,13 @@ export class NativeAudioSource implements PlaybackSource {
 		this.clearStallTimeout();
 		this.stallTimeoutHandle = setTimeout(() => {
 			if (this.destroyed) return;
+			if (typeof document !== 'undefined' && document.hidden) {
+				// Background throttling starves media fetches while the tab/PWA is
+				// hidden; that stall is benign and must not feed the store's
+				// auto-skip chain. Re-arm and re-check once visible again.
+				this.startStallTimeout();
+				return;
+			}
 			this.emitError('NETWORK_STALL', `Playback stalled for ${STALL_TIMEOUT_MS}ms`);
 			this.emitStateChange('error');
 		}, STALL_TIMEOUT_MS);

@@ -9,6 +9,7 @@ from api.v1.schemas.playlists import (
     CheckTrackMembershipResponse,
     CoverUploadResponse,
     CreatePlaylistRequest,
+    GeneratePlaylistRequest,
     PlaylistDetailResponse,
     PlaylistListResponse,
     PlaylistSummaryResponse,
@@ -23,7 +24,7 @@ from api.v1.schemas.playlists import (
     UpdateTrackRequest,
 )
 from api.v1.schemas.request import BatchRequestResponse
-from core.dependencies import JellyfinLibraryServiceDep, LocalFilesServiceDep, NavidromeLibraryServiceDep, PlexLibraryServiceDep, PlaylistServiceDep, get_request_service
+from core.dependencies import JellyfinLibraryServiceDep, LocalFilesServiceDep, NavidromeLibraryServiceDep, PlexLibraryServiceDep, PlaylistServiceDep, SmartPlaylistServiceDep, get_request_service
 from core.dependencies.type_aliases import CurrentUserDep
 from core.exceptions import PlaylistNotFoundError
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
@@ -161,6 +162,23 @@ async def create_playlist(
 ) -> PlaylistDetailResponse:
     playlist = await service.create_playlist(body.name, user_id=current_user.id)
     return _detail_to_response(playlist, [], is_owner=True, owner_name=None)
+
+
+@router.post("/generate", response_model=PlaylistDetailResponse, status_code=201)
+async def generate_smart_mix(
+    service: SmartPlaylistServiceDep,
+    current_user: CurrentUserDep,
+    body: GeneratePlaylistRequest = MsgSpecBody(GeneratePlaylistRequest),
+) -> PlaylistDetailResponse:
+    """Smart Mix: build a playlist from a blend of artist / genre / mood seeds
+    using the user's own library (radio-plan engine) and persist it natively."""
+    playlist, tracks = await service.generate(
+        current_user,
+        seeds=[(s.type, s.value) for s in body.seeds],
+        count=body.count,
+        name=body.name,
+    )
+    return _detail_to_response(playlist, tracks, is_owner=True, owner_name=None)
 
 
 @router.get("/{playlist_id}", response_model=PlaylistDetailResponse | RedactedPlaylist)

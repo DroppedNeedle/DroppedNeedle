@@ -254,6 +254,7 @@ export const API = {
 		`/api/v1/discover/album-preview?artist=${encodeURIComponent(artist)}&album=${encodeURIComponent(album)}`,
 	discoverPlaylistSuggestions: () => '/api/v1/discover/playlist-suggestions',
 	discoverGenreDetail: (tag: string) => `/api/v1/discover/genres/${encodeURIComponent(tag)}`,
+	discoverTasteGraph: () => '/api/v1/discover/taste-graph',
 	youtube: {
 		generate: () => '/api/v1/youtube/generate',
 		link: (albumId: string) => `/api/v1/youtube/link/${albumId}`,
@@ -317,6 +318,7 @@ export const API = {
 	playlists: {
 		list: () => '/api/v1/playlists',
 		create: () => '/api/v1/playlists',
+		generate: () => '/api/v1/playlists/generate',
 		detail: (id: string) => `/api/v1/playlists/${id}`,
 		update: (id: string) => `/api/v1/playlists/${id}`,
 		delete: (id: string) => `/api/v1/playlists/${id}`,

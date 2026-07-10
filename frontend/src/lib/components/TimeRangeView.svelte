@@ -266,16 +266,20 @@
 	});
 </script>
 
-<div class="container mx-auto p-4 md:p-6 lg:p-8">
-	<div class="mb-6 flex items-center gap-4">
-		<button class="btn btn-circle btn-ghost" onclick={() => goto('/')} aria-label="Back to home">
-			<ChevronLeft class="h-6 w-6" />
+<div class="container mx-auto px-4 py-6 md:px-6 lg:px-8">
+	<header class="mb-8 flex items-start gap-4">
+		<button
+			class="btn btn-circle btn-ghost border border-base-content/8 bg-base-200/50"
+			onclick={() => goto('/')}
+			aria-label="Back to home"
+		>
+			<ChevronLeft class="h-5 w-5" />
 		</button>
-		<div>
-			<h1 class="text-3xl font-bold">{title}</h1>
-			<p class="mt-1 text-sm text-base-content/70">{subtitle}</p>
+		<div class="min-w-0">
+			<h1 class="font-display text-3xl font-bold tracking-tight sm:text-4xl">{title}</h1>
+			<p class="mt-1 text-sm text-base-content/60">{subtitle}</p>
 		</div>
-	</div>
+	</header>
 
 	{#if loading}
 		<div class="flex min-h-100 items-center justify-center">
@@ -285,38 +289,125 @@
 		<div class="flex min-h-100 flex-col items-center justify-center text-center">
 			{#if errorIcon}
 				{@const SvelteComponent = errorIcon}
-				<SvelteComponent class="h-12 w-12 text-base-content/40 mb-4" strokeWidth={1.5} />
+				<SvelteComponent class="mb-4 h-12 w-12 text-base-content/40" strokeWidth={1.5} />
 			{:else}
-				<CircleAlert class="h-12 w-12 text-base-content/40 mb-4" strokeWidth={1.5} />
+				<CircleAlert class="mb-4 h-12 w-12 text-base-content/40" strokeWidth={1.5} />
 			{/if}
-			<h2 class="mb-2 text-2xl font-semibold">Unable to load {itemType}s</h2>
+			<h2 class="mb-2 font-display text-2xl font-semibold">Unable to load {itemType}s</h2>
 			<p class="mb-4 text-base-content/70">Please try again later.</p>
-			<button class="btn btn-primary" onclick={loadOverview}>Retry</button>
+			<button class="btn btn-primary rounded-full" onclick={loadOverview}>Retry</button>
 		</div>
 	{:else}
-		<div class="space-y-8">
+		<div
+			class="mb-8 inline-flex flex-wrap items-center gap-1 rounded-full border border-base-content/8 bg-base-200/50 p-1"
+			role="group"
+			aria-label="Time range"
+		>
 			{#each timeRanges as range (range.key)}
-				{@const featured = getFeaturedForRange(range.key)}
-				{@const items = getItemsForRange(range.key)}
-				{@const isExpanded = expandedRange === range.key}
+				<button
+					class="rounded-full px-4 py-1.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.16em] transition-colors {expandedRange ===
+					range.key
+						? 'bg-primary text-primary-content'
+						: 'text-base-content/55 hover:text-base-content'}"
+					aria-pressed={expandedRange === range.key}
+					onclick={() => expandRange(range.key)}
+				>
+					{range.label}
+				</button>
+			{/each}
+		</div>
 
-				<section class="rounded-2xl bg-base-200/50 p-4 sm:p-6">
-					<button
-						class="mb-4 flex w-full items-center justify-between text-left"
-						onclick={() => expandRange(range.key)}
-						aria-label="{isExpanded ? 'Collapse' : 'Expand'} {range.label}"
+		{#if expandedRange}
+			{@const activeRange = timeRanges.find((r) => r.key === expandedRange)}
+			<section
+				class="rounded-2xl border border-base-content/8 bg-base-200/50 p-4 sm:p-6"
+				aria-label={activeRange?.label}
+			>
+				<div class="mb-4 flex items-center justify-between gap-3">
+					<h2
+						class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
 					>
-						<h2 class="text-xl font-bold sm:text-2xl">{range.label}</h2>
-						<div class="flex items-center gap-2">
-							<span class="text-sm text-base-content/50">
-								{isExpanded ? 'Show less' : 'View all'}
-							</span>
-							<ChevronDown class="h-5 w-5 transition-transform {isExpanded ? 'rotate-180' : ''}" />
-						</div>
+						{activeRange?.label} — top {itemType}s
+					</h2>
+					<button
+						class="flex items-center gap-1.5 rounded-full border border-base-content/10 px-3 py-1 text-xs text-base-content/55 transition-colors hover:border-base-content/25 hover:text-base-content"
+						onclick={() => expandRange(expandedRange!)}
+					>
+						Show less
+						<ChevronDown class="h-3.5 w-3.5 rotate-180" />
 					</button>
+				</div>
 
-					{#if !isExpanded}
-						<div class="grid gap-4 lg:grid-cols-3">
+				{#if loadingMore && !expandedData}
+					<div class="flex justify-center py-8">
+						<span class="loading loading-spinner loading-lg"></span>
+					</div>
+				{:else if expandedData}
+					<div class="flex flex-col divide-y divide-base-content/5">
+						{#each expandedData.items as item, idx (idx)}
+							{@const rank = idx + 1}
+							{@const itemHref = getItemHref(item)}
+							<TimeRangeCard
+								{item}
+								{itemType}
+								href={itemHref}
+								{rank}
+								variant="expanded"
+								className="rounded-xl"
+								onFallbackClick={handleItemClick}
+							/>
+						{/each}
+					</div>
+
+					{#if expandedData.has_more}
+						<div class="mt-6 flex justify-center">
+							<button
+								class="btn btn-outline btn-wide rounded-full"
+								onclick={loadMore}
+								disabled={loadingMore}
+							>
+								{#if loadingMore}
+									<span class="loading loading-spinner loading-sm"></span>
+								{:else}
+									Load More
+								{/if}
+							</button>
+						</div>
+						{#if paginationError}
+							<p class="mt-2 text-center text-sm text-error">{paginationError}</p>
+						{/if}
+					{/if}
+				{/if}
+			</section>
+		{:else}
+			<div class="space-y-8">
+				{#each timeRanges as range (range.key)}
+					{@const featured = getFeaturedForRange(range.key)}
+					{@const items = getItemsForRange(range.key)}
+
+					<section
+						class="rounded-2xl border border-base-content/8 bg-base-200/50 p-4 sm:p-6"
+						aria-label={range.label}
+					>
+						<button
+							class="group mb-4 flex w-full items-center justify-between gap-3 text-left"
+							onclick={() => expandRange(range.key)}
+							aria-label="Expand {range.label}"
+						>
+							<h2
+								class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+							>
+								{range.label}
+							</h2>
+							<span
+								class="flex items-center gap-1.5 rounded-full border border-base-content/10 px-3 py-1 text-xs text-base-content/55 transition-colors group-hover:text-base-content"
+							>
+								View all
+								<ChevronDown class="h-3.5 w-3.5 -rotate-90" />
+							</span>
+						</button>
+
+						<div class="grid gap-5 lg:grid-cols-3">
 							{#if featured}
 								{@const featuredHref = getItemHref(featured)}
 								<TimeRangeCard
@@ -325,12 +416,12 @@
 									href={featuredHref}
 									rank={1}
 									variant="featured"
-									className="overflow-hidden bg-base-100 shadow-lg transition-all hover:shadow-xl lg:col-span-1"
+									className="transition-colors hover:border-base-content/20 lg:col-span-1"
 									onFallbackClick={handleItemClick}
 								/>
 							{/if}
 
-							<div class="grid-cards-overview lg:col-span-2">
+							<div class="flex flex-col divide-y divide-base-content/5 lg:col-span-2">
 								{#each items.slice(0, 8) as item, idx (idx)}
 									{@const rank = idx + 2}
 									{@const itemHref = getItemHref(item)}
@@ -340,50 +431,15 @@
 										href={itemHref}
 										{rank}
 										variant="overview"
-										className="bg-base-100 shadow-sm transition-all hover:scale-105 hover:shadow-lg active:scale-95"
+										className="rounded-xl"
 										onFallbackClick={handleItemClick}
 									/>
 								{/each}
 							</div>
 						</div>
-					{:else if loadingMore && !expandedData}
-						<div class="flex justify-center py-8">
-							<span class="loading loading-spinner loading-lg"></span>
-						</div>
-					{:else if expandedData}
-						<div class="grid-cards">
-							{#each expandedData.items as item, idx (idx)}
-								{@const rank = idx + 1}
-								{@const itemHref = getItemHref(item)}
-								<TimeRangeCard
-									{item}
-									{itemType}
-									href={itemHref}
-									{rank}
-									variant="expanded"
-									className="bg-base-100 shadow-sm transition-all hover:scale-105 hover:shadow-lg active:scale-95"
-									onFallbackClick={handleItemClick}
-								/>
-							{/each}
-						</div>
-
-						{#if expandedData.has_more}
-							<div class="mt-6 flex justify-center">
-								<button class="btn btn-outline btn-wide" onclick={loadMore} disabled={loadingMore}>
-									{#if loadingMore}
-										<span class="loading loading-spinner loading-sm"></span>
-									{:else}
-										Load More
-									{/if}
-								</button>
-							</div>
-							{#if paginationError}
-								<p class="mt-2 text-center text-sm text-error">{paginationError}</p>
-							{/if}
-						{/if}
-					{/if}
-				</section>
-			{/each}
-		</div>
+					</section>
+				{/each}
+			</div>
+		{/if}
 	{/if}
 </div>

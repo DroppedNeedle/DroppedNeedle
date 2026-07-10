@@ -14,33 +14,34 @@
 </script>
 
 <section class="space-y-3">
-	<div class="flex items-center justify-between px-1">
+	<div class="flex items-center justify-between gap-3 px-1">
 		{#if seeAllHref}
-			<a
-				href={seeAllHref}
-				class="group/title flex items-center gap-1 transition-colors hover:text-primary"
-			>
+			<a href={seeAllHref} class="group/title min-w-0">
 				<h2
-					class="text-lg font-semibold text-base-content group-hover/title:text-primary sm:text-xl"
+					class="truncate font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50 transition-colors group-hover/title:text-primary"
 				>
 					{title}
 				</h2>
 			</a>
 		{:else}
-			<h2 class="text-lg font-semibold text-base-content sm:text-xl">{title}</h2>
+			<h2
+				class="truncate font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+			>
+				{title}
+			</h2>
 		{/if}
 		{#if seeAllHref}
 			<a
 				href={seeAllHref}
-				class="btn btn-ghost btn-sm gap-1 text-xs font-medium text-base-content/60 hover:text-base-content"
+				class="btn btn-ghost btn-xs shrink-0 gap-1 rounded-full border border-base-content/10 font-mono text-[0.62rem] uppercase tracking-wider text-base-content/60 transition-colors hover:border-primary/30 hover:text-base-content"
 			>
 				View all
-				<ChevronRight class="h-4 w-4" />
+				<ChevronRight class="h-3.5 w-3.5" />
 			</a>
 		{/if}
 	</div>
 
-	<div class="rounded-xl bg-base-100/40 p-4 shadow-sm">
+	<div class="rounded-2xl border border-base-content/8 bg-base-200/50 p-4 sm:p-5">
 		{#if loading}
 			<CarouselSkeleton />
 		{:else}

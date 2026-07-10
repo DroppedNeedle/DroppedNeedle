@@ -95,6 +95,10 @@ function createPlayerStore() {
 	let shuffleOrder = $state<number[]>([]);
 	let consecutiveErrors = 0;
 	let errorSkipTimeout: ReturnType<typeof setTimeout> | null = null;
+	// Explicit user intent: true after play/togglePlay/playQueue/jumpToTrack/…,
+	// false after pause/stop. Gates every automatic recovery path (error
+	// auto-skip, background resume) so playback never resurrects against the user.
+	let intendedPlaying = $state(false);
 	let lastPersistTime = 0;
 	let beforeUnloadRegistered = false;
 
@@ -186,6 +190,7 @@ function createPlayerStore() {
 	}
 
 	function applyResetState(): void {
+		intendedPlaying = false;
 		currentSource?.destroy();
 		currentSource = null;
 		nowPlaying = null;
@@ -316,8 +321,11 @@ function createPlayerStore() {
 
 	function handleTrackError(gen: number): void {
 		if (gen !== loadGeneration) return;
-		consecutiveErrors++;
 		playbackState = 'error';
+		// User intent gate: after an explicit pause/stop, never auto-skip — the
+		// skip loads the next track and calls play(), resurrecting playback.
+		if (!intendedPlaying) return;
+		consecutiveErrors++;
 		const trackName = nowPlaying?.trackName ?? 'Unknown track';
 		if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
 			playbackToast.show('Several tracks failed, so playback stopped.', 'error');
@@ -486,8 +494,12 @@ function createPlayerStore() {
 		get shuffleOrder() {
 			return shuffleOrder;
 		},
+		get intendedPlaying() {
+			return intendedPlaying;
+		},
 
 		playAlbum(source: PlaybackSource, metadata: NowPlaying): void {
+			intendedPlaying = true;
 			void resumeAudioEngine();
 			void stopPreviousSession(getCurrentItem(), progress);
 			currentSource?.destroy();
@@ -508,6 +520,7 @@ function createPlayerStore() {
 
 		playQueue(items: QueueItem[], startIndex: number = 0, shuffle: boolean = false): void {
 			if (items.length === 0) return;
+			intendedPlaying = true;
 			void resumeAudioEngine();
 			const s = buildPlayQueueState(items, startIndex, shuffle);
 			queue = s.queue;
@@ -520,7 +533,8 @@ function createPlayerStore() {
 
 		nextTrack(): void {
 			const idx = getNextIndex();
-			if (idx !== null)
+			if (idx !== null) {
+				intendedPlaying = true;
 				void loadQueueItem(idx).then(() => {
 					const c = performCleanup(
 						queue,
@@ -534,17 +548,22 @@ function createPlayerStore() {
 					shuffleOrder = c.newShuffleOrder;
 					persist();
 				});
+			}
 		},
 
 		previousTrack(): void {
 			const idx = getPreviousIndex();
-			if (idx !== null) void loadQueueItem(idx);
+			if (idx !== null) {
+				intendedPlaying = true;
+				void loadQueueItem(idx);
+			}
 		},
 
 		nextAlbum(): void {
 			if (!hasNextAlbum) return;
 			const idx = computeNextAlbumIndex(queue, currentIndex);
-			if (idx !== null)
+			if (idx !== null) {
+				intendedPlaying = true;
 				void loadQueueItem(idx).then(() => {
 					const c = performCleanup(
 						queue,
@@ -558,12 +577,16 @@ function createPlayerStore() {
 					shuffleOrder = c.newShuffleOrder;
 					persist();
 				});
+			}
 		},
 
 		previousAlbum(): void {
 			if (!hasPreviousAlbum) return;
 			const idx = computePreviousAlbumIndex(queue, currentIndex);
-			if (idx !== null) void loadQueueItem(idx);
+			if (idx !== null) {
+				intendedPlaying = true;
+				void loadQueueItem(idx);
+			}
 		},
 
 		toggleShuffle(): void {
@@ -573,7 +596,10 @@ function createPlayerStore() {
 		},
 
 		jumpToTrack(index: number): void {
-			if (index >= 0 && index < queue.length) void loadQueueItem(index);
+			if (index >= 0 && index < queue.length) {
+				intendedPlaying = true;
+				void loadQueueItem(index);
+			}
 		},
 
 		addToQueue(item: QueueItem): void {
@@ -754,11 +780,13 @@ function createPlayerStore() {
 		},
 
 		play(): void {
+			intendedPlaying = true;
 			void resumeAudioEngine();
 			currentSource?.play();
 		},
 
 		pause(): void {
+			intendedPlaying = false;
 			currentSource?.pause();
 			const jf = getJellyfinItem();
 			if (jf?.playSessionId)
@@ -772,6 +800,7 @@ function createPlayerStore() {
 
 		togglePlay(): void {
 			if (isPlaying) {
+				intendedPlaying = false;
 				currentSource?.pause();
 				const jf = getJellyfinItem();
 				if (jf?.playSessionId)
@@ -782,6 +811,7 @@ function createPlayerStore() {
 				if (item?.sourceType === 'navidrome') void reportNavidromeStopped(item.trackSourceId);
 				persist();
 			} else {
+				intendedPlaying = true;
 				void resumeAudioEngine();
 				currentSource?.play();
 			}
@@ -823,6 +853,8 @@ function createPlayerStore() {
 			shuffleEnabled = resume.shuffleEnabled;
 			shuffleOrder = resume.shuffleOrder;
 			isPlayerVisible = true;
+			// Restored sessions land paused — playback must wait for the user.
+			intendedPlaying = false;
 			consecutiveErrors = 0;
 			void stopPreviousSession(getCurrentItem(), progress);
 			currentSource?.destroy();

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import { Play } from 'lucide-svelte';
 
 	interface AlbumSummary {
 		name: string;
@@ -52,79 +53,73 @@
 
 {#if hero}
 	<canvas bind:this={canvasEl} class="hidden" width="1" height="1"></canvas>
-	<section class="animate-fade-in-up space-y-0 overflow-hidden rounded-2xl">
-		<div
-			class="relative flex min-h-[220px] items-center gap-6 overflow-hidden px-6 py-6 sm:min-h-[260px] sm:px-8 sm:py-8"
-		>
+	<section class="dn-featured animate-fade-in-up" aria-label="Continue listening">
+		<div class="dn-featured__backdrop" aria-hidden="true">
 			{#if hero.image_url}
-				<img
-					src={hero.image_url}
-					alt=""
-					aria-hidden="true"
-					crossorigin="anonymous"
-					class="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-2xl brightness-[0.25]"
-					onload={handleHeroLoad}
-				/>
+				<img src={hero.image_url} alt="" crossorigin="anonymous" onload={handleHeroLoad} />
 			{/if}
-
 			{#if glowColor}
 				<div
-					class="pointer-events-none absolute inset-0"
-					style="background: radial-gradient(ellipse at 30% 80%, rgba({glowColor}, 0.22), transparent 70%);"
+					class="absolute inset-0"
+					style="background: radial-gradient(ellipse at 28% 85%, rgba({glowColor}, 0.22), transparent 70%);"
 				></div>
 			{/if}
+			<div class="dn-featured__wash"></div>
+		</div>
 
-			<div
-				class="pointer-events-none absolute inset-0 bg-gradient-to-r from-base-100/70 via-base-100/40 to-transparent"
-			></div>
+		<div
+			class="relative z-10 flex min-h-[220px] flex-col justify-center gap-6 px-6 py-8 sm:min-h-[260px] sm:flex-row sm:items-center sm:justify-start sm:gap-8 sm:px-8 sm:py-10"
+		>
+			<button
+				class="dn-featured__cover self-start sm:self-auto"
+				aria-label="Play {hero.name} by {hero.artist_name}"
+				onclick={() => onAlbumClick?.(hero)}
+			>
+				<div class="h-[130px] w-[130px] sm:h-[160px] sm:w-[160px]">
+					<AlbumImage
+						mbid={hero.musicbrainz_id ?? getId(hero)}
+						customUrl={hero.image_url}
+						alt={hero.name}
+						size="full"
+						rounded="none"
+						className="h-full w-full"
+					/>
+				</div>
+			</button>
 
-			<div class="relative z-10 flex items-center gap-6">
-				<button
-					class="shrink-0 overflow-hidden rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.5)] transition-transform duration-500 hover:scale-[1.03]"
-					style="transform-style: preserve-3d; transform: perspective(600px) rotateY(-2deg);"
-					aria-label="Play {hero.name} by {hero.artist_name}"
-					onclick={() => onAlbumClick?.(hero)}
+			<div class="min-w-0">
+				<p class="dn-featured__eyebrow"><span>Continue Listening</span></p>
+				<h3
+					class="mt-3 line-clamp-2 font-display text-2xl font-bold tracking-tight text-base-content sm:text-4xl"
 				>
-					<div class="h-[120px] w-[120px] sm:h-[150px] sm:w-[150px]">
-						<AlbumImage
-							mbid={hero.musicbrainz_id ?? getId(hero)}
-							customUrl={hero.image_url}
-							alt={hero.name}
-							size="full"
-							rounded="none"
-							className="h-full w-full"
-						/>
-					</div>
-				</button>
-
-				<div class="min-w-0 space-y-1">
-					<p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-base-content/50">
-						Continue Listening
-					</p>
-					<h3 class="line-clamp-2 text-xl font-bold text-base-content sm:text-2xl">
-						{hero.name}
-					</h3>
-					<p class="line-clamp-1 text-sm text-base-content/70">{hero.artist_name}</p>
-					{#if hero.year}
-						<span class="badge badge-sm badge-ghost mt-1">{hero.year}</span>
-					{/if}
+					{hero.name}
+				</h3>
+				<p class="mt-1.5 line-clamp-1 text-sm text-base-content/65">
+					{hero.artist_name}{#if hero.year}<span class="text-base-content/45">
+							· {hero.year}</span
+						>{/if}
+				</p>
+				<div class="mt-5">
+					<button
+						class="btn gap-2 rounded-full border-0 bg-base-content text-base-100 shadow-[0_10px_30px_rgba(0,0,0,0.35)] hover:bg-base-content/85"
+						onclick={() => onAlbumClick?.(hero)}
+					>
+						<Play class="h-4 w-4 fill-current" />
+						Play Now
+					</button>
 				</div>
 			</div>
 		</div>
 
 		{#if thumbnails.length > 0}
-			<div
-				class="-mt-5 flex gap-3 overflow-x-auto px-6 pb-4 pt-5 scrollbar-hide"
-				style="-webkit-mask-image: linear-gradient(to bottom, transparent, black 30%); mask-image: linear-gradient(to bottom, transparent, black 30%);"
-			>
+			<div class="relative z-10 flex gap-3 overflow-x-auto px-6 pb-6 scrollbar-hide sm:px-8">
 				{#each thumbnails as album (getId(album))}
 					<button
-						class="shrink-0 overflow-hidden rounded-lg ring-2 ring-base-100/30 transition-all duration-300 hover:scale-105 hover:ring-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-						style="transition-timing-function: var(--ease-overshoot);"
+						class="dn-featured__thumb"
 						aria-label="Play {album.name}"
 						onclick={() => onAlbumClick?.(album)}
 					>
-						<div class="h-[72px] w-[72px] sm:h-[80px] sm:w-[80px]">
+						<div class="h-[68px] w-[68px] sm:h-[76px] sm:w-[76px]">
 							<AlbumImage
 								mbid={album.musicbrainz_id ?? getId(album)}
 								customUrl={album.image_url}
@@ -140,3 +135,92 @@
 		{/if}
 	</section>
 {/if}
+
+<style>
+	.dn-featured {
+		position: relative;
+		isolation: isolate;
+		overflow: hidden;
+		border-radius: 1rem;
+		border: 1px solid oklch(from var(--color-base-content) l c h / 0.08);
+	}
+
+	.dn-featured__backdrop {
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		pointer-events: none;
+	}
+	.dn-featured__backdrop img {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		object-position: center 35%;
+		transform: scale(1.15);
+		filter: blur(28px) saturate(0.9) brightness(0.6);
+	}
+	.dn-featured__wash {
+		position: absolute;
+		inset: 0;
+		background:
+			linear-gradient(
+				90deg,
+				oklch(from var(--color-base-100) l c h / 0.88) 0%,
+				oklch(from var(--color-base-100) l c h / 0.55) 45%,
+				oklch(from var(--color-base-100) l c h / 0.25) 100%
+			),
+			linear-gradient(
+				180deg,
+				oklch(from var(--color-base-100) l c h / 0.25) 0%,
+				oklch(from var(--color-base-100) l c h / 0.1) 45%,
+				oklch(from var(--color-base-100) l c h / 0.85) 100%
+			);
+	}
+
+	.dn-featured__eyebrow span {
+		display: inline-block;
+		padding: 0.32rem 0.85rem;
+		border-radius: 999px;
+		border: 1px solid oklch(from var(--color-base-content) l c h / 0.15);
+		background: oklch(from var(--color-base-100) l c h / 0.45);
+		backdrop-filter: blur(8px);
+		font-family: var(--font-mono);
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.22em;
+		text-transform: uppercase;
+		color: oklch(from var(--color-base-content) l c h / 0.75);
+	}
+
+	.dn-featured__cover {
+		flex-shrink: 0;
+		overflow: hidden;
+		border-radius: 0.75rem;
+		border: 1px solid oklch(from var(--color-base-content) l c h / 0.12);
+		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+		transform: perspective(600px) rotateY(-2deg);
+		transform-style: preserve-3d;
+		transition: transform 0.5s ease;
+	}
+	.dn-featured__cover:hover {
+		transform: perspective(600px) rotateY(0deg) scale(1.03);
+	}
+
+	.dn-featured__thumb {
+		flex-shrink: 0;
+		overflow: hidden;
+		border-radius: 0.65rem;
+		border: 1px solid oklch(from var(--color-base-content) l c h / 0.1);
+		transition:
+			transform 0.3s var(--ease-overshoot, ease),
+			border-color 0.3s ease;
+	}
+	.dn-featured__thumb:hover,
+	.dn-featured__thumb:focus-visible {
+		transform: scale(1.05);
+		border-color: oklch(from var(--color-primary) l c h / 0.6);
+		outline: none;
+	}
+</style>

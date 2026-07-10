@@ -13,6 +13,7 @@ const hoisted = vi.hoisted(() => {
 		play: vi.fn(() => Promise.resolve()),
 		pause: vi.fn(),
 		load: vi.fn(),
+		removeAttribute: vi.fn(),
 		addEventListener: vi.fn((event: string, handler: EventListener) => {
 			const set = listeners.get(event) ?? new Set<EventListener>();
 			set.add(handler);
@@ -41,6 +42,7 @@ const hoisted = vi.hoisted(() => {
 		audio.play.mockImplementation(() => Promise.resolve());
 		audio.pause.mockReset();
 		audio.load.mockReset();
+		audio.removeAttribute.mockReset();
 		audio.addEventListener.mockClear();
 		audio.removeEventListener.mockClear();
 		resumeAudioEngine.mockReset();
@@ -203,6 +205,52 @@ describe('NativeAudioSource', () => {
 
 		expect(hoisted.audio.src).toBe('');
 		expect(hoisted.audio.removeEventListener).toHaveBeenCalled();
+	});
+
+	it('destroy pauses the element and drops the src attribute so nothing can restart it', async () => {
+		const source = new NativeAudioSource('local', { url: '/disarm.mp3', seekable: true });
+		const loadPromise = source.load();
+		hoisted.dispatch('canplay');
+		await loadPromise;
+
+		source.destroy();
+
+		expect(hoisted.audio.pause).toHaveBeenCalled();
+		expect(hoisted.audio.removeAttribute).toHaveBeenCalledWith('src');
+		expect(hoisted.audio.load).toHaveBeenCalledTimes(2); // initial load + reset
+	});
+
+	it('treats a stall timeout as benign while the document is hidden', async () => {
+		vi.useFakeTimers();
+		const doc = { hidden: true };
+		vi.stubGlobal('document', doc);
+		try {
+			const source = new NativeAudioSource('local', { url: '/bg-stall.mp3', seekable: true });
+			const onError = vi.fn();
+			const states: string[] = [];
+			source.onError(onError);
+			source.onStateChange((s) => states.push(s));
+
+			const loadPromise = source.load();
+			hoisted.dispatch('canplay');
+			await loadPromise;
+
+			hoisted.dispatch('stalled');
+			vi.advanceTimersByTime(15_000);
+			expect(onError).not.toHaveBeenCalled();
+			expect(states).not.toContain('error');
+
+			// Still hidden — the re-armed timer stays benign indefinitely.
+			vi.advanceTimersByTime(15_000);
+			expect(onError).not.toHaveBeenCalled();
+
+			// Once visible again, a real stall becomes fatal.
+			doc.hidden = false;
+			vi.advanceTimersByTime(15_000);
+			expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'NETWORK_STALL' }));
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it('throws when audio element is unavailable', () => {

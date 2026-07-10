@@ -90,19 +90,18 @@
 </script>
 
 <div class="mb-6">
-	<div class="relative group">
+	<div class="group relative max-w-xl">
 		<Search
-			class="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-base-content/40
-			group-focus-within:text-primary transition-colors duration-200 pointer-events-none"
+			class="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-base-content/40
+			transition-colors duration-200 group-focus-within:text-primary"
 		/>
 		<input
 			type="text"
 			{placeholder}
-			class="input input-md w-full rounded-full pl-11 pr-12
-				bg-base-200/50 border-base-content/10
-				focus:border-primary focus:bg-base-200/80
-				transition-all duration-200
-				placeholder:text-base-content/30"
+			class="input input-md w-full rounded-full border-base-content/10 bg-base-200/50
+				pl-11 pr-12 transition-all duration-200
+				placeholder:text-base-content/30
+				focus:border-primary/40 focus:bg-base-200/80"
 			bind:value={searchQuery}
 			oninput={() => onSearchInput?.()}
 			aria-label={ariaLabel}
@@ -110,7 +109,7 @@
 		{#if isSearching}
 			<button
 				type="button"
-				class="absolute right-3 top-1/2 -translate-y-1/2 btn btn-sm btn-ghost btn-circle"
+				class="btn btn-ghost btn-sm btn-circle absolute right-2 top-1/2 -translate-y-1/2"
 				onclick={clearSearch}
 				aria-label="Clear search"
 			>
@@ -120,11 +119,11 @@
 	</div>
 
 	{#if hasSecondRow}
-		<div class="flex flex-wrap items-center gap-3 mt-3">
+		<div class="mt-3 flex flex-wrap items-center gap-2.5">
 			{#if hasSortControls}
 				<select
-					class="select select-sm rounded-full bg-base-200/50 border-base-content/10
-						focus:border-primary transition-all duration-200"
+					class="select select-sm rounded-full border-base-content/10 bg-base-200/50
+						transition-all duration-200 hover:border-primary/30 focus:border-primary/40"
 					onchange={handleSortSelect}
 					aria-label="Sort by"
 				>
@@ -134,7 +133,7 @@
 				</select>
 				<button
 					type="button"
-					class="btn btn-sm btn-ghost btn-circle"
+					class="btn btn-ghost btn-sm btn-circle border border-base-content/10 bg-base-200/50 transition-colors hover:border-primary/30"
 					onclick={() => onToggleSortOrder?.()}
 					aria-label={isAscending ? 'Switch to descending sort' : 'Switch to ascending sort'}
 					title={isAscending ? 'Ascending' : 'Descending'}
@@ -145,8 +144,8 @@
 
 			{#if hasGenreFilter}
 				<select
-					class="select select-sm rounded-full bg-base-200/50 border-base-content/10
-						focus:border-primary transition-all duration-200"
+					class="select select-sm rounded-full border-base-content/10 bg-base-200/50
+						transition-all duration-200 hover:border-primary/30 focus:border-primary/40"
 					onchange={handleGenreSelect}
 					aria-label="Filter by genre"
 				>
@@ -159,8 +158,8 @@
 
 			{#if hasMoodFilter}
 				<select
-					class="select select-sm rounded-full bg-base-200/50 border-base-content/10
-						focus:border-primary transition-all duration-200"
+					class="select select-sm rounded-full border-base-content/10 bg-base-200/50
+						transition-all duration-200 hover:border-primary/30 focus:border-primary/40"
 					onchange={handleMoodSelect}
 					aria-label="Filter by {moodLabel.toLowerCase()}"
 				>
@@ -172,18 +171,21 @@
 			{/if}
 
 			{#if resultCount != null && !loading}
-				<span class="text-sm text-base-content/50">{resultCount} results</span>
+				<span
+					class="rounded-full border border-base-content/8 bg-base-200/50 px-3 py-1 font-mono text-[0.62rem] font-bold uppercase tracking-[0.18em] tabular-nums text-base-content/50"
+					>{resultCount} results</span
+				>
 			{/if}
 		</div>
 	{/if}
 
 	{#if hasDecadeChips}
-		<div class="flex flex-wrap gap-2 mt-3" role="group" aria-label="Filter by decade">
+		<div class="mt-3 flex flex-wrap gap-2" role="group" aria-label="Filter by decade">
 			<button
 				type="button"
-				class="btn btn-xs rounded-full {selectedDecade === ''
+				class="btn btn-xs rounded-full font-mono uppercase tracking-wider {selectedDecade === ''
 					? 'btn-primary'
-					: 'btn-ghost bg-base-200/50'}"
+					: 'btn-ghost border border-base-content/10 bg-base-200/50 text-base-content/60 hover:border-primary/30'}"
 				onclick={() => onDecadeChange?.('')}
 			>
 				All
@@ -191,9 +193,10 @@
 			{#each decades! as decade (decade)}
 				<button
 					type="button"
-					class="btn btn-xs rounded-full {selectedDecade === decade
+					class="btn btn-xs rounded-full font-mono uppercase tracking-wider {selectedDecade ===
+					decade
 						? 'btn-primary'
-						: 'btn-ghost bg-base-200/50'}"
+						: 'btn-ghost border border-base-content/10 bg-base-200/50 text-base-content/60 hover:border-primary/30'}"
 					onclick={() => onDecadeChange?.(decade)}
 				>
 					{decade}
@@ -203,12 +206,12 @@
 	{/if}
 
 	{#if hasTagChips}
-		<div class="flex flex-wrap gap-2 mt-3" role="group" aria-label="Filter by tag">
+		<div class="mt-3 flex flex-wrap gap-2" role="group" aria-label="Filter by tag">
 			<button
 				type="button"
-				class="btn btn-xs rounded-full {selectedTag === ''
+				class="btn btn-xs rounded-full font-mono uppercase tracking-wider {selectedTag === ''
 					? 'btn-primary'
-					: 'btn-ghost bg-base-200/50'}"
+					: 'btn-ghost border border-base-content/10 bg-base-200/50 text-base-content/60 hover:border-primary/30'}"
 				onclick={() => onTagChange?.('')}
 			>
 				All tags
@@ -216,9 +219,9 @@
 			{#each tags! as tag (tag)}
 				<button
 					type="button"
-					class="btn btn-xs rounded-full {selectedTag === tag
+					class="btn btn-xs rounded-full font-mono uppercase tracking-wider {selectedTag === tag
 						? 'btn-primary'
-						: 'btn-ghost bg-base-200/50'}"
+						: 'btn-ghost border border-base-content/10 bg-base-200/50 text-base-content/60 hover:border-primary/30'}"
 					onclick={() => onTagChange?.(tag)}
 				>
 					{tag}

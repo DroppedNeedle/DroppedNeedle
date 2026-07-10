@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import {
 		isRedactedPlaylist,
 		type PlaylistListItem,
@@ -11,7 +12,9 @@
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
 	import { getPlaylistListQuery } from '$lib/queries/playlists/PlaylistQuery.svelte';
 	import { createCreatePlaylistMutation } from '$lib/queries/playlists/PlaylistMutations.svelte';
-	import { ListMusic, Plus, Lock } from 'lucide-svelte';
+	import { ListMusic, Plus, Lock, Sparkles, Users } from 'lucide-svelte';
+	import PageHero from '$lib/ui/PageHero.svelte';
+	import SmartMixModal from '$lib/components/SmartMixModal.svelte';
 	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
 	import PlaylistCard from '$lib/components/PlaylistCard.svelte';
 	import RedactedPlaylistCard from '$lib/components/RedactedPlaylistCard.svelte';
@@ -44,10 +47,18 @@
 	let showNewInput = $state(false);
 	let newName = $state('');
 	let newNameInputEl = $state<HTMLInputElement | null>(null);
+	let smartMixModal = $state<SmartMixModal | null>(null);
 
 	$effect(() => {
 		if (showNewInput && newNameInputEl) {
 			newNameInputEl.focus();
+		}
+	});
+
+	// the sidebar's "New playlist" pill deep-links here with ?new=1
+	$effect(() => {
+		if (page.url.searchParams.get('new') === '1') {
+			showNewInput = true;
 		}
 	});
 
@@ -84,43 +95,54 @@
 	<title>Playlists - DroppedNeedle</title>
 </svelte:head>
 
-<div class="space-y-6 px-4 sm:px-6 lg:px-8">
-	<div class="flex items-center justify-between gap-3">
-		<h1 class="text-2xl font-bold sm:text-3xl">Playlists</h1>
-		<div class="flex items-center gap-2">
-			{#if spotifyLinked}
-				<a
-					href="/playlists/spotify"
-					class="btn btn-sm gap-1.5 bg-green-600 text-white hover:bg-green-500"
-				>
-					<SpotifyIcon class="h-3.5 w-3.5" />
-					Import from Spotify
-				</a>
-			{/if}
-			<button
-				class="btn btn-accent btn-sm"
-				onclick={() => {
-					showNewInput = true;
-				}}
+<PageHero title="Playlists" subtitle="Your mixes, moods, and moments." eyebrow="Your music">
+	{#snippet icon()}
+		<ListMusic class="h-7 w-7" />
+	{/snippet}
+	{#snippet actions()}
+		<button
+			class="btn btn-primary btn-sm gap-1.5 rounded-full"
+			onclick={() => {
+				showNewInput = true;
+			}}
+		>
+			<Plus class="h-4 w-4" />
+			New Playlist
+		</button>
+		<button
+			class="btn btn-ghost btn-sm gap-1.5 rounded-full bg-base-content/6"
+			onclick={() => smartMixModal?.showModal()}
+		>
+			<Sparkles class="h-3.5 w-3.5 text-accent" />
+			Smart Mix
+		</button>
+		{#if spotifyLinked}
+			<a
+				href="/playlists/spotify"
+				class="btn btn-ghost btn-sm gap-1.5 rounded-full bg-base-content/6"
 			>
-				<Plus class="h-4 w-4" />
-				New Playlist
-			</button>
-		</div>
-	</div>
+				<SpotifyIcon class="h-3.5 w-3.5 text-accent" />
+				Import from Spotify
+			</a>
+		{/if}
+	{/snippet}
+</PageHero>
 
+<div class="space-y-10 px-4 pb-12 sm:px-6 lg:px-8">
 	{#if showNewInput}
-		<div class="flex items-center gap-2">
+		<div
+			class="flex items-center gap-2 rounded-2xl border border-base-content/8 bg-base-200/50 p-3"
+		>
 			<input
 				type="text"
-				class="input input-sm flex-1"
+				class="input input-sm flex-1 rounded-full"
 				placeholder="Playlist name..."
 				bind:this={newNameInputEl}
 				bind:value={newName}
 				onkeydown={handleCreateKeydown}
 			/>
 			<button
-				class="btn btn-accent btn-sm"
+				class="btn btn-primary btn-sm rounded-full"
 				onclick={() => void handleCreate()}
 				disabled={!newName.trim() || createMutation.isPending}
 			>
@@ -131,7 +153,7 @@
 				{/if}
 			</button>
 			<button
-				class="btn btn-ghost btn-sm"
+				class="btn btn-ghost btn-sm rounded-full"
 				onclick={() => {
 					showNewInput = false;
 					newName = '';
@@ -154,11 +176,15 @@
 			<button class="btn btn-sm btn-ghost" onclick={() => void query.refetch()}>Retry</button>
 		</div>
 	{:else if items.length === 0}
-		<div class="flex flex-col items-center justify-center py-20 gap-4">
+		<div
+			class="flex flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-base-content/12 py-20"
+		>
 			<ListMusic class="h-16 w-16 text-base-content/20" />
-			<h2 class="text-lg font-semibold text-base-content/60">No playlists yet</h2>
+			<h2 class="font-display text-lg font-semibold tracking-tight text-base-content/60">
+				No playlists yet
+			</h2>
 			<button
-				class="btn btn-accent btn-sm"
+				class="btn btn-primary btn-sm rounded-full"
 				onclick={() => {
 					showNewInput = true;
 				}}
@@ -169,8 +195,11 @@
 		</div>
 	{:else}
 		{#if myPlaylists.length > 0}
-			<section class="space-y-3">
-				<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/60">
+			<section class="space-y-4" aria-label="My playlists">
+				<h2
+					class="flex items-center gap-2.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+				>
+					<ListMusic class="h-4 w-4 text-accent" />
 					My Playlists
 				</h2>
 				<div class={gridClass}>
@@ -182,8 +211,11 @@
 		{/if}
 
 		{#if sharedPlaylists.length > 0}
-			<section class="space-y-3">
-				<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/60">
+			<section class="space-y-4" aria-label="Shared with you">
+				<h2
+					class="flex items-center gap-2.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+				>
+					<Users class="h-4 w-4 text-accent" />
 					Shared with you
 				</h2>
 				<div class={gridClass}>
@@ -195,11 +227,11 @@
 		{/if}
 
 		{#if redactedPlaylists.length > 0}
-			<section class="space-y-3">
+			<section class="space-y-4" aria-label="Private playlists, admin view">
 				<h2
-					class="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wider text-base-content/40"
+					class="flex items-center gap-2.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/40"
 				>
-					<Lock class="h-3.5 w-3.5" />
+					<Lock class="h-4 w-4 text-accent" />
 					Private &middot; admin view
 				</h2>
 				<div class={gridClass}>
@@ -211,3 +243,5 @@
 		{/if}
 	{/if}
 </div>
+
+<SmartMixModal bind:this={smartMixModal} />

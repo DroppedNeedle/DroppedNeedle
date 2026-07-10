@@ -3,6 +3,7 @@
 
 	import { Download, PackageOpen } from 'lucide-svelte';
 
+	import PageHero from '$lib/ui/PageHero.svelte';
 	import DownloadQueue from '$lib/components/downloads/DownloadQueue.svelte';
 	import FreeMusicQueue from '$lib/components/downloads/FreeMusicQueue.svelte';
 	import DiscoveryBatchList from '$lib/components/discover/DiscoveryBatchList.svelte';
@@ -33,17 +34,18 @@
 	<title>Downloads - DroppedNeedle</title>
 </svelte:head>
 
-<div class="mx-auto w-full max-w-5xl px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
-	<div class="mb-6">
-		<div class="flex items-center gap-2">
-			<Download class="h-6 w-6 text-primary" aria-hidden="true" />
-			<h1 class="text-2xl font-bold sm:text-3xl">Downloads</h1>
-		</div>
-		<p class="text-base-content/50 text-sm mt-0.5">
-			The engine room - live transfers, retries, and things needing your call
-		</p>
-	</div>
+<PageHero
+	title="Downloads"
+	subtitle="The engine room — live transfers, retries, and things needing your call."
+	eyebrow="The pressing plant"
+	tint="var(--color-primary)"
+>
+	{#snippet icon()}
+		<Download class="h-7 w-7" />
+	{/snippet}
+</PageHero>
 
+<div class="mx-auto w-full max-w-5xl px-2 pb-8 sm:px-4 lg:px-8">
 	{#if canImport}
 		<div role="tablist" class="tabs tabs-border mb-6">
 			<button

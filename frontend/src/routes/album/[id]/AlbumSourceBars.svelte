@@ -96,7 +96,7 @@
 
 {#if jellyfinEnabled}
 	{#if loadingJellyfin}
-		<div class="skeleton h-14 w-full rounded-box"></div>
+		<div class="skeleton h-14 w-full rounded-2xl"></div>
 	{:else if jellyfinMatch?.found}
 		<AlbumSourceBar
 			sourceLabel="Jellyfin"
@@ -118,7 +118,7 @@
 
 {#if localfilesEnabled}
 	{#if loadingLocal}
-		<div class="skeleton h-14 w-full rounded-box"></div>
+		<div class="skeleton h-14 w-full rounded-2xl"></div>
 	{:else if localMatch?.found}
 		<AlbumSourceBar
 			sourceLabel="Local Files"
@@ -142,7 +142,7 @@
 
 {#if navidromeEnabled}
 	{#if loadingNavidrome}
-		<div class="skeleton h-14 w-full rounded-box"></div>
+		<div class="skeleton h-14 w-full rounded-2xl"></div>
 	{:else if navidromeMatch?.found}
 		<AlbumSourceBar
 			sourceLabel="Navidrome"
@@ -164,7 +164,7 @@
 
 {#if plexEnabled}
 	{#if loadingPlex}
-		<div class="skeleton h-14 w-full rounded-box"></div>
+		<div class="skeleton h-14 w-full rounded-2xl"></div>
 	{:else if plexMatch?.found}
 		<AlbumSourceBar
 			sourceLabel="Plex"

@@ -15,117 +15,85 @@
 	);
 </script>
 
-<footer class="ms-footer grain" aria-label="Site footer">
-	<div class="ms-footer__inner">
-		<div class="ms-footer__brand">
-			<img src="/logo_wide_white.png" alt="DroppedNeedle" class="ms-footer__logo" />
-		</div>
-
-		<div class="ms-footer__rule" aria-hidden="true"></div>
-
-		<div class="ms-footer__meta">
-			<span class="ms-footer__tag">Your Music. Your Way.</span>
-			<div class="ms-footer__links">
-				<a class="ms-footer__link" href={GITHUB_URL} target="_blank" rel="noopener noreferrer">
-					<Github class="h-4 w-4" />
-					<span>GitHub</span>
-				</a>
-				{#if versionLabel}
-					<span class="ms-footer__ver">{versionLabel}</span>
-				{/if}
-			</div>
+<footer class="dn-footer" aria-label="Site footer">
+	<div class="dn-footer__inner">
+		<span class="dn-footer__wordmark">DroppedNeedle</span>
+		<span class="dn-footer__tag">Audiophile grade · Your music, on the record</span>
+		<div class="dn-footer__links">
+			<a class="dn-footer__link" href={GITHUB_URL} target="_blank" rel="noopener noreferrer">
+				<Github class="h-3.5 w-3.5" />
+				<span>GitHub</span>
+			</a>
+			{#if versionLabel}
+				<span class="dn-footer__ver">{versionLabel}</span>
+			{/if}
 		</div>
 	</div>
 </footer>
 
 <style>
-	.ms-footer {
-		--grain-opacity: 0.16;
+	.dn-footer {
 		margin-top: auto;
-		padding: 1.75rem 0;
-		border-top: 1px solid oklch(from var(--color-base-content) l c h / 0.08);
-		background: linear-gradient(
-			180deg,
-			oklch(from var(--color-base-100) calc(l * 0.72) c h),
-			oklch(from var(--color-base-100) calc(l * 0.42) c h)
-		);
-		box-shadow:
-			inset 0 1px 0 oklch(from var(--color-base-content) l c h / 0.05),
-			inset 0 24px 48px -36px rgb(0 0 0 / 0.9);
+		padding: 1.5rem 0 1.75rem;
+		border-top: 1px solid var(--dn-hairline);
 	}
 
-	.ms-footer__inner {
+	.dn-footer__inner {
 		width: 100%;
 		max-width: 80rem;
 		margin: 0 auto;
 		padding-inline: clamp(1rem, 4vw, 2.5rem);
 		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-	}
-
-	.ms-footer__brand {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-	}
-
-	.ms-footer__logo {
-		height: clamp(2.25rem, 5vw, 2.75rem);
-		width: auto;
-		opacity: 0.9;
-	}
-
-	.ms-footer__rule {
-		height: 2px;
-		width: 100%;
-		border-radius: 999px;
-		background: linear-gradient(
-			to right,
-			transparent,
-			oklch(from var(--color-primary) l c h / 0.55) 18%,
-			oklch(from var(--color-accent) l c h / 0.55) 78%,
-			transparent
-		);
-		box-shadow: 0 0 12px oklch(from var(--color-primary) l c h / 0.15);
-	}
-
-	.ms-footer__meta {
-		display: flex;
 		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem 1.5rem;
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-		color: oklch(from var(--color-base-content) l c h / 0.5);
+		align-items: baseline;
+		gap: 0.5rem 1.5rem;
 	}
 
-	.ms-footer__links {
+	.dn-footer__wordmark {
+		font-family: var(--font-display);
+		font-size: 0.95rem;
+		font-weight: 700;
+		color: oklch(from var(--color-base-content) l c h / 0.55);
+	}
+
+	.dn-footer__tag {
+		flex: 1;
+		font-family: var(--font-mono);
+		font-size: 0.6rem;
+		font-weight: 700;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+		white-space: nowrap;
+		color: oklch(from var(--color-base-content) l c h / 0.3);
+	}
+
+	.dn-footer__links {
 		display: flex;
 		align-items: center;
 		gap: 1.25rem;
+		font-family: var(--font-mono);
+		font-size: 0.68rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
 	}
 
-	.ms-footer__link {
+	.dn-footer__link {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.4rem;
-		color: oklch(from var(--color-base-content) l c h / 0.7);
+		color: oklch(from var(--color-base-content) l c h / 0.6);
 		transition: color 0.15s ease;
 	}
-	.ms-footer__link:hover {
-		color: oklch(from var(--color-primary) l c h);
+	.dn-footer__link:hover {
+		color: oklch(from var(--color-base-content) l c h);
 	}
-	.ms-footer__link:focus-visible {
+	.dn-footer__link:focus-visible {
 		outline: 2px solid oklch(from var(--color-primary) l c h / 0.6);
 		outline-offset: 3px;
 		border-radius: 4px;
 	}
 
-	.ms-footer__ver {
-		color: oklch(from var(--color-base-content) l c h / 0.4);
+	.dn-footer__ver {
+		color: oklch(from var(--color-base-content) l c h / 0.35);
 	}
 </style>

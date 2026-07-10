@@ -25,6 +25,7 @@
 		Mail,
 		KeyRound
 	} from 'lucide-svelte';
+	import PageHero from '$lib/ui/PageHero.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { logout } from '$lib/utils/logout';
 	import { getProfileQuery } from '$lib/queries/profile/ProfileQuery.svelte';
@@ -332,25 +333,40 @@
 </svelte:head>
 
 <div class="min-h-screen">
-	<div class="relative overflow-hidden">
-		<div class="absolute inset-0 bg-linear-to-br from-primary/20 via-accent/10 to-base-100"></div>
-		<div class="absolute inset-0 bg-linear-to-t from-base-100 via-base-100/60 to-transparent"></div>
+	<PageHero
+		title="Profile"
+		subtitle="Your identity, connections, and libraries on this server."
+		eyebrow="Your account"
+		tint="var(--color-primary)"
+		loading={profileQuery.isPending}
+	>
+		{#snippet icon()}
+			<UserRound class="h-7 w-7" />
+		{/snippet}
+	</PageHero>
 
-		<div class="relative px-4 pt-10 pb-6 sm:px-6 lg:px-8">
-			<div class="mx-auto max-w-4xl">
-				{#if profileQuery.isPending}
-					<div class="flex flex-col items-center gap-6">
-						<div class="skeleton h-32 w-32 rounded-full sm:h-40 sm:w-40"></div>
-						<div class="flex flex-col items-center gap-2">
-							<div class="skeleton h-8 w-48"></div>
-							<div class="skeleton h-4 w-32"></div>
-						</div>
+	<div class="px-4 pb-12 sm:px-6 lg:px-8">
+		<div class="max-w-4xl space-y-10 stagger-fade-in">
+			{#if profileQuery.isPending}
+				<section
+					class="flex flex-col items-center gap-5 rounded-2xl border border-base-content/8 bg-base-200/50 p-5 sm:flex-row sm:p-6"
+					aria-label="Loading profile"
+				>
+					<div class="skeleton h-24 w-24 shrink-0 rounded-full sm:h-28 sm:w-28"></div>
+					<div class="flex flex-col items-center gap-2 sm:items-start">
+						<div class="skeleton h-5 w-20"></div>
+						<div class="skeleton h-8 w-48"></div>
 					</div>
-				{:else if profile}
-					<div class="flex flex-col items-center gap-6">
+				</section>
+			{:else if profile}
+				<section
+					class="rounded-2xl border border-base-content/8 bg-base-200/50 p-5 transition-colors hover:border-primary/30 sm:p-6"
+					aria-label="Identity"
+				>
+					<div class="flex flex-col items-center gap-5 text-center sm:flex-row sm:text-left">
 						<button
 							onclick={() => (showAvatarModal = true)}
-							class="group relative h-32 w-32 shrink-0 cursor-pointer overflow-hidden rounded-full shadow-2xl ring-4 ring-base-content/10 transition-all hover:ring-primary/40 sm:h-40 sm:w-40"
+							class="group relative h-24 w-24 shrink-0 cursor-pointer overflow-hidden rounded-full ring-2 ring-base-content/10 transition-all hover:ring-primary/40 sm:h-28 sm:w-28"
 							aria-label="Change profile picture"
 						>
 							{#if profile.avatar_url}
@@ -363,21 +379,23 @@
 								<div
 									class="flex h-full w-full items-center justify-center bg-linear-to-br from-primary/30 to-accent/20"
 								>
-									<UserRound class="h-16 w-16 text-base-content/40 sm:h-20 sm:w-20" />
+									<UserRound class="h-12 w-12 text-base-content/40" />
 								</div>
 							{/if}
 							<div
-								class="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100"
+								class="absolute inset-0 flex items-center justify-center bg-base-300/70 opacity-0 transition-opacity group-hover:opacity-100"
 							>
-								<Camera class="h-8 w-8 text-white" />
+								<Camera class="h-7 w-7 text-base-content" />
 							</div>
 						</button>
 
-						<div class="flex w-full max-w-md flex-col items-center gap-2 pb-2">
+						<div class="flex min-w-0 flex-1 flex-col items-center gap-2 sm:items-start">
 							<div class="flex items-center gap-2">
-								<span class="text-xs font-semibold uppercase tracking-widest text-base-content/40"
-									>Profile</span
+								<span
+									class="font-mono text-[0.62rem] font-bold uppercase tracking-[0.2em] text-base-content/45"
 								>
+									Signed in as
+								</span>
 								{#if authStore.user}
 									{#if authStore.user.role === 'admin'}
 										<span class="badge badge-accent badge-sm gap-1">
@@ -426,9 +444,9 @@
 									class="group flex items-center gap-2"
 									aria-label="Edit display name"
 								>
-									<h1 class="text-3xl font-bold sm:text-4xl">
+									<h2 class="font-display text-2xl font-bold sm:text-3xl">
 										{profile.display_name || 'Set your name'}
-									</h1>
+									</h2>
 									<Pencil
 										class="h-4 w-4 text-base-content/30 transition-colors group-hover:text-primary"
 									/>
@@ -436,44 +454,44 @@
 							{/if}
 						</div>
 					</div>
-				{:else if profileQuery.isError}
-					<div class="flex flex-col items-center gap-4 py-12 text-center">
-						<CircleAlert class="h-10 w-10 text-base-content/50" />
-						<p class="text-base-content/70">Failed to load profile</p>
-						<button
-							class="btn btn-primary btn-sm gap-2"
-							onclick={() => void profileQuery.refetch()}
-						>
-							<RefreshCw class="h-4 w-4" />
-							Try Again
-						</button>
-					</div>
-				{/if}
-			</div>
-		</div>
-	</div>
+				</section>
+			{:else if profileQuery.isError}
+				<section
+					class="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-base-content/12 px-6 py-12 text-center"
+				>
+					<CircleAlert class="h-10 w-10 text-base-content/50" />
+					<p class="text-base-content/70">Failed to load profile</p>
+					<button
+						class="btn btn-primary btn-sm gap-2 rounded-full"
+						onclick={() => void profileQuery.refetch()}
+					>
+						<RefreshCw class="h-4 w-4" />
+						Try Again
+					</button>
+				</section>
+			{/if}
 
-	{#if profile}
-		<div class="px-4 pb-12 sm:px-6 lg:px-8">
-			<div class="mx-auto max-w-4xl space-y-8 stagger-fade-in">
+			{#if profile}
 				<section>
 					<h2
-						class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
+						class="mb-4 flex items-center gap-2.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
 					>
-						<UserCog class="h-4 w-4" />
+						<UserCog class="h-4 w-4 text-accent" />
 						Account
 					</h2>
 					<div
-						class="divide-y divide-base-300/30 overflow-hidden rounded-xl border border-base-300/40 bg-base-200/50 backdrop-blur-sm"
+						class="divide-y divide-base-content/6 overflow-hidden rounded-2xl border border-base-content/8 bg-base-200/50"
 					>
 						<div class="flex items-start gap-3 px-5 py-4">
 							<div
-								class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-base-content/70"
+								class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-content/6 text-base-content/70"
 							>
 								<AtSign class="h-4 w-4" />
 							</div>
 							<div class="min-w-0 flex-1">
-								<p class="text-[10px] font-medium uppercase tracking-wider text-base-content/40">
+								<p
+									class="font-mono text-[0.6rem] font-medium uppercase tracking-[0.18em] text-base-content/40"
+								>
 									Username
 								</p>
 								{#if editingUsername}
@@ -524,12 +542,14 @@
 
 						<div class="flex items-start gap-3 px-5 py-4">
 							<div
-								class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-base-content/70"
+								class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-content/6 text-base-content/70"
 							>
 								<Mail class="h-4 w-4" />
 							</div>
 							<div class="min-w-0 flex-1">
-								<p class="text-[10px] font-medium uppercase tracking-wider text-base-content/40">
+								<p
+									class="font-mono text-[0.6rem] font-medium uppercase tracking-[0.18em] text-base-content/40"
+								>
 									Email
 								</p>
 								{#if editingEmail}
@@ -581,12 +601,14 @@
 						<div class="px-5 py-4">
 							<div class="flex items-center gap-3">
 								<div
-									class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-base-content/70"
+									class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-content/6 text-base-content/70"
 								>
 									<KeyRound class="h-4 w-4" />
 								</div>
 								<div class="min-w-0 flex-1">
-									<p class="text-[10px] font-medium uppercase tracking-wider text-base-content/40">
+									<p
+										class="font-mono text-[0.6rem] font-medium uppercase tracking-[0.18em] text-base-content/40"
+									>
 										Password
 									</p>
 									{#if hasLocalPassword}
@@ -597,7 +619,7 @@
 								</div>
 								<button
 									onclick={togglePasswordForm}
-									class="btn btn-ghost btn-sm gap-1.5 text-base-content/60 hover:text-primary"
+									class="btn btn-ghost btn-sm gap-1.5 rounded-full text-base-content/60 hover:text-primary"
 								>
 									{#if showPasswordForm}
 										Cancel
@@ -654,7 +676,8 @@
 											{/if}
 											{hasLocalPassword ? 'Update password' : 'Set password'}
 										</button>
-										<button onclick={togglePasswordForm} class="btn btn-ghost btn-sm">Cancel</button
+										<button onclick={togglePasswordForm} class="btn btn-ghost btn-sm rounded-full"
+											>Cancel</button
 										>
 									</div>
 								</div>
@@ -665,9 +688,9 @@
 
 				<section>
 					<h2
-						class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
+						class="mb-4 flex items-center gap-2.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
 					>
-						<ExternalLink class="h-4 w-4" />
+						<ExternalLink class="h-4 w-4 text-accent" />
 						Connected Services
 					</h2>
 					<div class="grid gap-3 sm:grid-cols-3">
@@ -679,15 +702,15 @@
 								target={profileUrl ? '_blank' : undefined}
 								rel={profileUrl ? 'noopener noreferrer' : undefined}
 								role={profileUrl ? undefined : 'presentation'}
-								class="crate-card group rounded-xl border {getServiceBorderColor(
+								class="group block rounded-2xl border {getServiceBorderColor(
 									service.name
-								)} bg-base-200/50 p-4 backdrop-blur-sm transition-all hover:bg-base-200/80 hover:shadow-lg {profileUrl
+								)} bg-base-200/50 p-4 text-inherit no-underline transition-all hover:border-primary/30 hover:bg-base-200/80 {profileUrl
 									? 'cursor-pointer'
-									: 'cursor-default'} block no-underline text-inherit"
+									: 'cursor-default'}"
 							>
 								<div class="flex items-center gap-3">
 									<div
-										class="flex h-10 w-10 items-center justify-center rounded-lg bg-base-300/60 {getServiceColor(
+										class="flex h-10 w-10 items-center justify-center rounded-lg bg-base-content/6 {getServiceColor(
 											service.name
 										)}"
 									>
@@ -736,20 +759,20 @@
 				{#if profile.library_stats.length > 0}
 					<section>
 						<h2
-							class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
+							class="mb-4 flex items-center gap-2.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
 						>
-							<Database class="h-4 w-4" />
+							<Database class="h-4 w-4 text-accent" />
 							Your Libraries
 						</h2>
 						<div class="space-y-4">
 							{#each profile.library_stats as stats (stats.source)}
 								{@const SourceIcon = getSourceIcon(stats.source)}
 								<div
-									class="crate-card overflow-hidden rounded-xl border border-base-300/40 bg-base-200/50 backdrop-blur-sm"
+									class="overflow-hidden rounded-2xl border border-base-content/8 bg-base-200/50 transition-colors hover:border-primary/30"
 								>
-									<div class="flex items-center gap-3 border-b border-base-300/30 px-5 py-3">
+									<div class="flex items-center gap-3 border-b border-base-content/6 px-5 py-3">
 										<div
-											class="flex h-8 w-8 items-center justify-center rounded-lg bg-base-300/60 {getSourceColor(
+											class="flex h-8 w-8 items-center justify-center rounded-lg bg-base-content/6 {getSourceColor(
 												stats.source
 											)}"
 										>
@@ -757,40 +780,50 @@
 										</div>
 										<span class="text-sm font-semibold">{stats.source}</span>
 									</div>
-									<div class="grid grid-cols-3 divide-x divide-base-300/30 px-1 py-4">
+									<div class="grid grid-cols-3 divide-x divide-base-content/6 px-1 py-4">
 										<div class="flex flex-col items-center gap-1">
 											<div class="flex items-center gap-1.5 text-base-content/50">
 												<Disc3 class="h-3.5 w-3.5" />
-												<span class="text-[10px] font-medium uppercase tracking-wider">Songs</span>
+												<span
+													class="font-mono text-[0.6rem] font-medium uppercase tracking-[0.18em]"
+												>
+													Songs
+												</span>
 											</div>
-											<span class="text-xl font-bold tabular-nums">
+											<span class="font-display text-xl font-bold tabular-nums">
 												{formatNumber(stats.total_tracks)}
 											</span>
 										</div>
 										<div class="flex flex-col items-center gap-1">
 											<div class="flex items-center gap-1.5 text-base-content/50">
 												<Database class="h-3.5 w-3.5" />
-												<span class="text-[10px] font-medium uppercase tracking-wider">Albums</span>
+												<span
+													class="font-mono text-[0.6rem] font-medium uppercase tracking-[0.18em]"
+												>
+													Albums
+												</span>
 											</div>
-											<span class="text-xl font-bold tabular-nums">
+											<span class="font-display text-xl font-bold tabular-nums">
 												{formatNumber(stats.total_albums)}
 											</span>
 										</div>
 										<div class="flex flex-col items-center gap-1">
 											<div class="flex items-center gap-1.5 text-base-content/50">
 												<Users class="h-3.5 w-3.5" />
-												<span class="text-[10px] font-medium uppercase tracking-wider">
+												<span
+													class="font-mono text-[0.6rem] font-medium uppercase tracking-[0.18em]"
+												>
 													Artists
 												</span>
 											</div>
-											<span class="text-xl font-bold tabular-nums">
+											<span class="font-display text-xl font-bold tabular-nums">
 												{formatNumber(stats.total_artists)}
 											</span>
 										</div>
 									</div>
 									{#if stats.total_size_human}
 										<div
-											class="flex items-center justify-center gap-2 border-t border-base-300/30 px-5 py-3"
+											class="flex items-center justify-center gap-2 border-t border-base-content/6 px-5 py-3"
 										>
 											<HardDrive class="h-3.5 w-3.5 text-base-content/40" />
 											<span class="text-xs text-base-content/50">
@@ -807,27 +840,27 @@
 				<section class="flex justify-center gap-3 pt-2">
 					<a
 						href="/settings"
-						class="btn btn-outline btn-sm gap-2 rounded-full border-base-content/20 text-base-content/60 transition-all hover:border-primary hover:text-primary"
+						class="btn btn-ghost btn-sm gap-2 rounded-full bg-base-content/6 text-base-content/60 transition-all hover:text-primary"
 					>
 						<Settings class="h-4 w-4" />
 						Open Settings
 					</a>
 					<button
-						class="btn btn-outline btn-sm gap-2 rounded-full border-base-content/20 text-base-content/60 transition-all hover:border-error hover:text-error"
+						class="btn btn-ghost btn-sm gap-2 rounded-full bg-base-content/6 text-base-content/60 transition-all hover:text-error"
 						onclick={() => void logout()}
 					>
 						<LogOut class="h-4 w-4" />
 						Sign Out
 					</button>
 				</section>
-			</div>
+			{/if}
 		</div>
-	{/if}
+	</div>
 </div>
 
 <dialog class="modal" class:modal-open={showAvatarModal}>
-	<div class="modal-box bg-base-200 border border-base-300 max-w-sm">
-		<h3 class="mb-4 text-lg font-bold">Upload Profile Picture</h3>
+	<div class="modal-box max-w-sm rounded-2xl border border-base-content/8 bg-base-200">
+		<h3 class="mb-4 font-display text-lg font-bold">Upload Profile Picture</h3>
 		<input
 			type="file"
 			accept="image/jpeg,image/png,image/webp,image/gif"
@@ -837,7 +870,7 @@
 		/>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
-			class="flex flex-col items-center justify-center gap-3 rounded-box border-2 border-dashed p-6 transition-colors cursor-pointer
+			class="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed p-6 transition-colors
 				{draggingOver ? 'border-primary bg-primary/10' : 'border-base-content/20 hover:border-primary/50'}"
 			ondrop={handleDrop}
 			ondragover={handleDragOver}
@@ -862,9 +895,9 @@
 			{/if}
 		</div>
 		<div class="modal-action">
-			<button class="btn btn-ghost btn-sm" onclick={closeAvatarModal}>Cancel</button>
+			<button class="btn btn-ghost btn-sm rounded-full" onclick={closeAvatarModal}>Cancel</button>
 			<button
-				class="btn btn-primary btn-sm"
+				class="btn btn-primary btn-sm rounded-full"
 				onclick={() => void uploadAvatar()}
 				disabled={avatarMutation.isPending || !avatarFile}
 			>

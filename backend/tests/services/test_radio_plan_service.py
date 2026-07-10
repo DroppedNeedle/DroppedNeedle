@@ -23,8 +23,10 @@ def _svc(**overrides) -> RadioPlanService:
     mbid.normalize_mbid = staticmethod(lambda m: m.lower() if m else None)
     library_db = MagicMock()
     library_db.get_files_by_artist_mbids = AsyncMock(return_value=[])
+    library_db.get_files_by_genre = AsyncMock(return_value=[])
     genre_index = MagicMock()
     genre_index.get_artists_for_genres = AsyncMock(return_value={})
+    genre_index.get_genres_for_artists = AsyncMock(return_value={})
     lfm = MagicMock()
     lfm.get_tag_top_artists = AsyncMock(return_value=[])
     deps = dict(
@@ -184,6 +186,125 @@ class TestPoolsAndMixing:
         req = RadioPlanRequest(seed_type="artist", seed_id="a-0", mode="library", fast=True, count=500)
         resp = await svc.build_plan(_UID, req)
         assert len(resp.tracks) <= 50
+
+
+class TestLibraryFirstFill:
+    """Library-mode stations must fill from the user's own files, never 1 track."""
+
+    @pytest.mark.asyncio
+    async def test_genre_station_fills_from_whole_library_genre(self):
+        # a large library: 20 artists in the genre index, 3 tracks each; the
+        # sampled seeds cover only a couple of them, but the plan must still
+        # reach the requested count from the rest of the library
+        svc = _svc()
+        all_artists = [f"lib-{i}" for i in range(20)]
+        svc._genre_index.get_artists_for_genres = AsyncMock(
+            return_value={"shoegaze": all_artists}
+        )
+
+        async def files_for(mbids, *, limit=50):
+            return [
+                _lib_row(f"{m}-t{j}", f"Artist {m}", m)
+                for m in mbids
+                for j in range(3)
+            ][:limit]
+
+        svc._library_db.get_files_by_artist_mbids = AsyncMock(side_effect=files_for)
+        req = RadioPlanRequest(seed_type="genre", seed_id="shoegaze", mode="library", count=50)
+        resp = await svc.build_plan(_UID, req)
+        assert len(resp.tracks) >= 40
+        assert all(t.in_library for t in resp.tracks)
+
+    @pytest.mark.asyncio
+    async def test_genre_station_fast_mode_also_fills(self):
+        # the fast (first-audio) call is library-DB only, so it gets the same
+        # deep pool - a genre station must never open with a 1-track queue
+        svc = _svc()
+        svc._genre_index.get_artists_for_genres = AsyncMock(
+            return_value={"jazz": [f"lib-{i}" for i in range(12)]}
+        )
+
+        async def files_for(mbids, *, limit=50):
+            return [_lib_row(f"{m}-t{j}", f"Artist {m}", m) for m in mbids for j in range(4)][
+                :limit
+            ]
+
+        svc._library_db.get_files_by_artist_mbids = AsyncMock(side_effect=files_for)
+        req = RadioPlanRequest(seed_type="genre", seed_id="jazz", mode="library", fast=True, count=30)
+        resp = await svc.build_plan(_UID, req)
+        assert len(resp.tracks) >= 20
+
+    @pytest.mark.asyncio
+    async def test_genre_station_uses_file_tag_matches_without_index(self):
+        # genre exists only as file tags (artists never made the genre index)
+        svc = _svc()
+        svc._lfm_repo = None
+        svc._library_db.get_files_by_genre = AsyncMock(
+            return_value=[_lib_row(f"T{i}", f"A{i}", f"a-{i}") for i in range(20)]
+        )
+        req = RadioPlanRequest(seed_type="genre", seed_id="dungeon synth", mode="library", count=20)
+        resp = await svc.build_plan(_UID, req)
+        assert len(resp.tracks) >= 15
+        svc._library_db.get_files_by_genre.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_artist_station_pulls_genre_adjacent_library_artists(self):
+        svc = _svc()
+        svc._genre_index.get_genres_for_artists = AsyncMock(
+            return_value={"seed-1": ["Post-Rock"]}
+        )
+        svc._genre_index.get_artists_for_genres = AsyncMock(
+            return_value={"post-rock": ["seed-1", "adj-1", "adj-2"]}
+        )
+
+        async def files_for(mbids, *, limit=50):
+            return [_lib_row(f"{m}-t{j}", f"Artist {m}", m) for m in mbids for j in range(5)][
+                :limit
+            ]
+
+        svc._library_db.get_files_by_artist_mbids = AsyncMock(side_effect=files_for)
+        req = RadioPlanRequest(seed_type="artist", seed_id="seed-1", mode="library", fast=True, count=15)
+        resp = await svc.build_plan(_UID, req)
+        # adjacency query must exclude the seed itself
+        adjacency_call = svc._library_db.get_files_by_artist_mbids.await_args_list[-1]
+        assert "seed-1" not in adjacency_call.args[0]
+        artists = {t.artist_mbid for t in resp.tracks}
+        assert {"adj-1", "adj-2"} & artists
+        assert len(resp.tracks) == 15
+
+    @pytest.mark.asyncio
+    async def test_diversity_no_three_consecutive_same_artist(self):
+        svc = _svc()
+        svc._genre_index.get_artists_for_genres = AsyncMock(
+            return_value={"rock": ["a-1", "a-2", "a-3"]}
+        )
+
+        async def files_for(mbids, *, limit=50):
+            return [_lib_row(f"{m}-t{j}", f"Artist {m}", m) for m in mbids for j in range(30)][
+                :limit
+            ]
+
+        svc._library_db.get_files_by_artist_mbids = AsyncMock(side_effect=files_for)
+        req = RadioPlanRequest(seed_type="genre", seed_id="rock", mode="library", count=50)
+        resp = await svc.build_plan(_UID, req)
+        # relaxed fill lifts the per-artist cap to reach the count...
+        assert len(resp.tracks) == 50
+        # ...but never allows 3 in a row by the same artist
+        for i in range(len(resp.tracks) - 2):
+            window = {t.artist_mbid for t in resp.tracks[i : i + 3]}
+            assert len(window) > 1
+
+    @pytest.mark.asyncio
+    async def test_hybrid_mode_does_not_run_library_first_fill(self):
+        # YouTube-configured behavior stays exactly as before
+        svc = _svc()
+        svc._lb_repo.get_artist_top_recordings = AsyncMock(
+            return_value=[_recording(f"Ext{i}", f"E{i}", f"rec-{i}") for i in range(5)]
+        )
+        req = RadioPlanRequest(seed_type="artist", seed_id="a-1", mode="hybrid", fast=True)
+        await svc.build_plan(_UID, req)
+        svc._genre_index.get_genres_for_artists.assert_not_awaited()
+        svc._library_db.get_files_by_genre.assert_not_awaited()
 
 
 class TestExternalFallbackChain:

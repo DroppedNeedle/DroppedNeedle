@@ -83,18 +83,24 @@
 </script>
 
 {#if orphans.length > 0}
-	<section class="card bg-base-200 border-l-4 border-warning">
-		<div class="card-body gap-3 p-4 sm:p-5">
-			<div class="flex flex-wrap items-center gap-2">
-				<TriangleAlert class="h-4 w-4 text-warning" />
-				<h2 class="text-sm font-bold">Unmatched files</h2>
-				<span class="badge badge-sm badge-warning">{orphans.length}</span>
-				<p class="w-full text-xs opacity-60 sm:w-auto sm:ml-1">
+	<section class="rounded-2xl border border-warning/25 bg-base-200/50">
+		<div class="flex flex-col gap-3 p-4 sm:p-5">
+			<div class="flex flex-wrap items-center gap-2.5">
+				<h2
+					class="flex items-center gap-2.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+				>
+					<TriangleAlert class="h-4 w-4 text-warning" />
+					Unmatched files
+				</h2>
+				<span class="badge badge-sm badge-warning badge-outline font-mono tabular-nums"
+					>{orphans.length}</span
+				>
+				<p class="w-full text-xs text-base-content/55 sm:w-auto sm:ml-1">
 					Stored under this album, but they don't match any of its tracks.
 				</p>
 			</div>
 
-			<ul class="divide-y divide-base-300">
+			<ul class="divide-y divide-base-content/8">
 				{#each orphans as file (file.id)}
 					<li class="py-2.5">
 						<div class="flex flex-wrap items-center gap-3">
@@ -114,7 +120,7 @@
 									{file.artist_name ? `${file.artist_name} - ` : ''}{file.track_title ||
 										basename(file.file_path)}
 								</p>
-								<p class="truncate text-xs opacity-60">
+								<p class="truncate font-mono text-[0.68rem] tabular-nums text-base-content/50">
 									{file.file_format?.toUpperCase() ?? '?'}
 									{#if file.duration_seconds}
 										• {fmt(file.duration_seconds)}
@@ -122,7 +128,9 @@
 									• {basename(file.file_path)}
 								</p>
 							</div>
-							<span class="badge badge-sm badge-warning badge-outline whitespace-nowrap">
+							<span
+								class="badge badge-sm badge-warning badge-outline whitespace-nowrap rounded-full"
+							>
 								Doesn't match
 							</span>
 							{#if canRemove}
@@ -168,7 +176,7 @@
 									value={currentTime}
 									oninput={seek}
 								/>
-								<span class="text-xs tabular-nums opacity-60">
+								<span class="font-mono text-xs tabular-nums text-base-content/50">
 									{fmt(currentTime)} / {fmt(mediaDuration || file.duration_seconds || 0)}
 								</span>
 							</div>

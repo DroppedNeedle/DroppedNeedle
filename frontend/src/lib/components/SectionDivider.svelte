@@ -9,16 +9,16 @@
 	let { label, icon }: Props = $props();
 </script>
 
-<div class="flex items-center gap-3 pt-6 pb-2 sm:pt-8 sm:pb-3">
+<div class="flex items-center gap-2.5 pt-6 pb-3 sm:pt-8 sm:pb-4">
 	{#if icon}
-		<span class="text-base-content/30">
+		<span class="text-accent">
 			{@render icon()}
 		</span>
 	{/if}
 	<span
-		class="font-display text-[12px] font-semibold uppercase tracking-[0.18em] text-base-content/40 whitespace-nowrap select-none"
+		class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50 whitespace-nowrap select-none"
 	>
 		{label}
 	</span>
-	<div class="h-px flex-1 bg-gradient-to-r from-base-content/8 to-transparent"></div>
+	<div class="h-px flex-1 bg-base-content/10"></div>
 </div>

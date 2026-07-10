@@ -336,15 +336,19 @@
 <svelte:window onkeydown={handleWindowKeydown} />
 
 {#if playlist.tracks.length === 0}
-	<div class="flex flex-col items-center justify-center py-16 gap-3">
+	<div
+		class="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-base-content/12 py-16"
+	>
 		<Music class="h-12 w-12 text-base-content/20" />
-		<h2 class="text-base font-semibold text-base-content/60">This playlist is empty</h2>
+		<h2 class="font-display text-base font-semibold tracking-tight text-base-content/60">
+			This playlist is empty
+		</h2>
 		<p class="text-sm text-base-content/40">Add tracks from album pages using the context menu</p>
 	</div>
 {:else}
-	<ul class="list bg-base-200 rounded-box overflow-visible">
+	<ul class="list overflow-visible rounded-2xl border border-base-content/8 bg-base-200/50">
 		{#if playlist.tracks.length > 1 && !readonly}
-			<li class="px-3 sm:px-4 py-2 border-b border-base-300/50">
+			<li class="px-3 sm:px-4 py-2 border-b border-base-content/8">
 				<label class="flex items-center gap-2 cursor-pointer text-xs text-base-content/50">
 					<input
 						type="checkbox"
@@ -370,7 +374,7 @@
 					? 'bg-primary/5'
 					: isCurrentlyPlaying
 						? 'bg-accent/10'
-						: 'hover:bg-base-300/50'}"
+						: 'hover:bg-base-content/4'}"
 				class:opacity-50={dragIndex === i}
 				class:border-t-2={dragOverIndex === i && dragIndex !== null && dragIndex !== i}
 				class:border-accent={dragOverIndex === i && dragIndex !== null && dragIndex !== i}
@@ -499,21 +503,21 @@
 
 	{#if selectionMode}
 		<div
-			class="fixed left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-base-300 border border-base-content/10 rounded-box px-4 py-3 shadow-xl {playerStore.isPlayerVisible &&
+			class="fixed left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-full border border-base-content/10 bg-base-200/95 px-4 py-2.5 shadow-xl backdrop-blur-md {playerStore.isPlayerVisible &&
 			playerStore.nowPlaying
 				? 'bottom-28'
 				: 'bottom-4'}"
 			transition:fly={{ y: 40, duration: 200 }}
 		>
-			<span class="text-sm font-medium">
+			<span class="font-mono text-xs font-bold uppercase tracking-wider text-base-content/70">
 				{selectedIds.size} selected
 			</span>
-			<button class="btn btn-ghost btn-sm" onclick={clearSelection}>
+			<button class="btn btn-ghost btn-sm rounded-full bg-base-content/6" onclick={clearSelection}>
 				<X class="h-4 w-4" />
 				Deselect
 			</button>
 			<button
-				class="btn btn-error btn-sm"
+				class="btn btn-error btn-sm rounded-full"
 				onclick={() => void removeSelectedTracks()}
 				disabled={bulkRemoving}
 			>

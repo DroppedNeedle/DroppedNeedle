@@ -72,41 +72,61 @@
 	const SvelteComponent = $derived(serviceIcons[prompt.service] || Music);
 </script>
 
-<div
-	class="card overflow-hidden border-l-4 bg-base-200/50 border border-base-300/50 shadow-sm {getBorderColor()}"
+<article
+	class="relative overflow-hidden rounded-2xl border border-base-content/8 border-l-2 bg-base-200/50 transition-colors hover:bg-base-200 {getBorderColor()}"
 	style={getBorderStyle()}
 >
-	<div class="card-body flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:p-6 relative">
-		<button
-			class="absolute top-2 right-2 btn btn-ghost btn-xs btn-circle text-base-content/40 hover:text-base-content"
-			onclick={handleDismiss}
-			aria-label="Dismiss {prompt.title}"
-			title="Dismiss"
+	<button
+		class="btn btn-ghost btn-xs btn-circle absolute top-2.5 right-2.5 text-base-content/40 hover:text-base-content"
+		onclick={handleDismiss}
+		aria-label="Dismiss {prompt.title}"
+		title="Dismiss"
+	>
+		<X class="h-3.5 w-3.5" />
+	</button>
+
+	<div class="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:gap-5">
+		<div
+			class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-base-content/6"
+			style={getIconColor()}
 		>
-			<X class="h-3.5 w-3.5" />
-		</button>
-		<div class="shrink-0" style={getIconColor()}>
-			<SvelteComponent class="h-10 w-10 sm:h-12 sm:w-12" />
+			<SvelteComponent class="h-5 w-5" />
 		</div>
-		<div class="min-w-0 flex-1 pr-6">
-			<h3 class="card-title mb-1 text-base sm:text-lg">{prompt.title}</h3>
-			<p class="mb-2 text-xs text-base-content/70 sm:mb-3 sm:text-sm">
+
+		<div class="min-w-0 flex-1 pr-8 sm:pr-0">
+			<p
+				class="mb-1 font-mono text-[0.62rem] font-bold uppercase tracking-[0.2em]"
+				style={getIconColor()}
+			>
+				{prompt.service}
+			</p>
+			<h3 class="font-display text-base font-semibold tracking-tight sm:text-lg">
+				{prompt.title}
+			</h3>
+			<p class="mt-1 text-xs text-base-content/60 sm:text-sm">
 				{prompt.description}
 			</p>
-			<div class="flex flex-wrap gap-1 sm:gap-2">
-				{#each prompt.features as feature, i (`${feature}-${i}`)}
-					<span class="badge badge-ghost badge-xs sm:badge-sm">{feature}</span>
-				{/each}
-			</div>
+			{#if prompt.features.length > 0}
+				<div class="mt-2.5 flex flex-wrap gap-1.5">
+					{#each prompt.features as feature, i (`${feature}-${i}`)}
+						<span
+							class="rounded-full border border-base-content/10 px-2.5 py-0.5 text-[0.68rem] text-base-content/55"
+						>
+							{feature}
+						</span>
+					{/each}
+				</div>
+			{/if}
 		</div>
+
 		<div class="shrink-0">
 			<a
 				href={getSettingsLink(prompt.service)}
-				class="btn btn-sm sm:btn-md {getPromptButtonClass(prompt.color)}"
+				class="btn btn-sm gap-1.5 {getPromptButtonClass(prompt.color)}"
 			>
 				Connect
 				<ArrowRight class="h-4 w-4" />
 			</a>
 		</div>
 	</div>
-</div>
+</article>

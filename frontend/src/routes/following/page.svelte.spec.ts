@@ -71,13 +71,15 @@ describe('Following hub digest', () => {
 		concertsData = { configured: true, items: [GIG], total: 11 };
 		render(FollowingHub);
 
-		await expect.element(page.getByText('New releases')).toBeVisible();
+		// hero subtitle also contains "New releases", so scope to the section heading
+		await expect.element(page.getByRole('heading', { name: /New releases/ })).toBeVisible();
 		await expect.element(page.getByText('(9)')).toBeVisible();
 		await expect.element(page.getByText('This Is How Tomorrow Moves')).toBeVisible();
 		await expect.element(page.getByText('Coming up')).toBeVisible();
 		await expect.element(page.getByText('(11)')).toBeVisible();
 		await expect.element(page.getByText('AO Arena · Manchester · 2 mi')).toBeVisible();
-		await expect.element(page.getByText('Your artists')).toBeVisible();
+		// the hero eyebrow also says "Your artists", so scope to the section heading
+		await expect.element(page.getByRole('heading', { name: /Your artists/ })).toBeVisible();
 		await expect.element(page.getByRole('link', { name: 'Tickets' })).toBeVisible();
 	});
 

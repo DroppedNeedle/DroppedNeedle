@@ -31,12 +31,14 @@ describe('eqStore', () => {
 	let eqStore: (typeof import('./eq.svelte'))['eqStore'];
 
 	beforeEach(async () => {
-		vi.useFakeTimers();
 		vi.clearAllMocks();
 		storage.clear();
 		vi.resetModules();
+		// Import before faking timers: the vite module runner's transport retries on
+		// real setTimeout, so a first fetch under fake timers can stall the hook.
 		const mod = await import('./eq.svelte');
 		eqStore = mod.eqStore;
+		vi.useFakeTimers();
 	});
 
 	afterEach(() => {

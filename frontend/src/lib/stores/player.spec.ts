@@ -715,6 +715,94 @@ describe('playerStore queue methods', () => {
 	});
 });
 
+describe('user intent gating (pause/stop vs auto-recovery)', () => {
+	beforeEach(() => {
+		localStorage.clear();
+		playerStore.stop();
+		vi.clearAllMocks();
+		vi.useFakeTimers();
+		mockApiHead.mockResolvedValue(new Response(null, { status: 200 }));
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('playQueue marks playback as intended', async () => {
+		playerStore.playQueue(makeItems(3));
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(playerStore.intendedPlaying).toBe(true);
+	});
+
+	it('pause clears intent; play/togglePlay restore it', async () => {
+		playerStore.playQueue(makeItems(3));
+		await vi.advanceTimersByTimeAsync(0);
+
+		playerStore.pause();
+		expect(playerStore.intendedPlaying).toBe(false);
+
+		playerStore.play();
+		expect(playerStore.intendedPlaying).toBe(true);
+
+		capturedStateCallbacks.forEach((cb) => cb('playing'));
+		playerStore.togglePlay();
+		expect(playerStore.intendedPlaying).toBe(false);
+	});
+
+	it('auto-skips on error while playback is intended', async () => {
+		playerStore.playQueue(makeItems(3));
+		await vi.advanceTimersByTimeAsync(0);
+
+		capturedErrorCallbacks.forEach((cb) => cb({ code: 'NETWORK_STALL', message: 'stall' }));
+		await vi.advanceTimersByTimeAsync(2000);
+
+		expect(playerStore.currentIndex).toBe(1);
+	});
+
+	it('does NOT auto-skip on error after the user pauses', async () => {
+		playerStore.playQueue(makeItems(3));
+		await vi.advanceTimersByTimeAsync(0);
+		playerStore.pause();
+
+		capturedErrorCallbacks.forEach((cb) => cb({ code: 'NETWORK_STALL', message: 'stall' }));
+		await vi.advanceTimersByTimeAsync(10_000);
+
+		expect(playerStore.currentIndex).toBe(0);
+		expect(playerStore.playbackState).toBe('error');
+		expect(playbackToast.show).not.toHaveBeenCalled();
+	});
+
+	it('stop() clears intent, destroys the source, and empties the queue', async () => {
+		playerStore.playQueue(makeItems(3));
+		await vi.advanceTimersByTimeAsync(0);
+		const source = playerStore.currentSource;
+		expect(source).not.toBeNull();
+
+		playerStore.stop();
+		await vi.advanceTimersByTimeAsync(10_000);
+
+		expect(playerStore.intendedPlaying).toBe(false);
+		expect(source!.destroy).toHaveBeenCalled();
+		expect(playerStore.currentSource).toBeNull();
+		expect(playerStore.queue).toHaveLength(0);
+	});
+
+	it('an error landing after stop() cannot resurrect playback', async () => {
+		playerStore.playQueue(makeItems(3));
+		await vi.advanceTimersByTimeAsync(0);
+		const staleErrorCallbacks = [...capturedErrorCallbacks];
+
+		playerStore.stop();
+		staleErrorCallbacks.forEach((cb) => cb({ code: 'NETWORK_STALL', message: 'stall' }));
+		await vi.advanceTimersByTimeAsync(10_000);
+
+		expect(playerStore.queue).toHaveLength(0);
+		expect(playerStore.currentSource).toBeNull();
+		expect(playerStore.intendedPlaying).toBe(false);
+	});
+});
+
 describe('Jellyfin session lifecycle', () => {
 	let jellyfinApi: {
 		startSession: ReturnType<typeof vi.fn>;

@@ -205,27 +205,29 @@
 	}
 </script>
 
-<div class="flex flex-col lg:flex-row gap-6 lg:gap-8">
-	<div class="relative group w-full lg:w-64 xl:w-80 shrink-0">
+<div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:gap-10">
+	<div class="group relative w-full max-w-72 shrink-0 sm:max-w-80 lg:w-60 xl:w-72">
 		<PlaylistMosaic
 			coverUrls={playlist.cover_urls}
 			customCoverUrl={coverDisplayUrl}
 			size="w-full aspect-square"
-			rounded="rounded-box"
+			rounded="rounded-2xl"
 		/>
-		<div class="absolute inset-0 rounded-box shadow-2xl pointer-events-none"></div>
+		<div
+			class="pointer-events-none absolute inset-0 rounded-2xl border border-base-content/10 shadow-2xl"
+		></div>
 		{#if uploading}
-			<div class="absolute inset-0 flex items-center justify-center bg-base-100/60 rounded-box">
+			<div class="absolute inset-0 flex items-center justify-center rounded-2xl bg-base-100/60">
 				<span class="loading loading-spinner loading-md"></span>
 			</div>
 		{/if}
 		{#if canEdit}
 			<div
-				class="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
+				class="absolute bottom-2 right-2 flex gap-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
 			>
 				<button
 					type="button"
-					class="btn btn-circle btn-xs bg-base-100/80 hover:bg-base-100 border-0"
+					class="btn btn-circle btn-xs border-0 bg-base-100/80 hover:bg-base-100"
 					onclick={triggerCoverUpload}
 					aria-label="Upload cover image"
 					disabled={uploading}
@@ -235,7 +237,7 @@
 				{#if playlist.custom_cover_url}
 					<button
 						type="button"
-						class="btn btn-circle btn-xs bg-base-100/80 hover:bg-error/80 border-0"
+						class="btn btn-circle btn-xs border-0 bg-base-100/80 hover:bg-error/80"
 						onclick={() => void removeCover()}
 						aria-label="Remove custom cover"
 					>
@@ -253,8 +255,10 @@
 		/>
 	</div>
 
-	<div class="flex flex-col gap-1.5 flex-1 min-w-0 lg:justify-end">
-		<span class="text-xs sm:text-sm font-semibold text-base-content/50 uppercase tracking-wider">
+	<div class="flex min-w-0 flex-1 flex-col gap-2 lg:justify-end">
+		<span
+			class="w-fit rounded-full border border-base-content/15 bg-base-100/45 px-3 py-1 font-mono text-[0.62rem] font-bold uppercase tracking-[0.22em] text-base-content/70 backdrop-blur-sm"
+		>
 			Playlist
 		</span>
 
@@ -265,7 +269,7 @@
 					bind:this={nameInputEl}
 					bind:value={nameInput}
 					onkeydown={handleNameKeydown}
-					class="input input-sm text-3xl sm:text-4xl font-bold w-full"
+					class="input input-sm w-full font-display text-3xl font-bold sm:text-4xl"
 					placeholder="Playlist name"
 					maxlength={100}
 				/>
@@ -292,17 +296,17 @@
 				aria-label="Edit playlist name"
 			>
 				<h1
-					class="hero-title text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-bold leading-tight truncate"
+					class="hero-title truncate font-display text-3xl font-bold leading-tight tracking-tight sm:text-4xl lg:text-5xl xl:text-6xl"
 				>
 					{playlist.name}
 				</h1>
 				<Pencil
-					class="h-4 w-4 shrink-0 text-base-content/30 opacity-0 group-hover/name:opacity-100 transition-opacity"
+					class="h-4 w-4 shrink-0 text-base-content/30 opacity-0 transition-opacity group-hover/name:opacity-100"
 				/>
 			</button>
 		{:else}
 			<h1
-				class="hero-title text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-bold leading-tight truncate"
+				class="hero-title truncate font-display text-3xl font-bold leading-tight tracking-tight sm:text-4xl lg:text-5xl xl:text-6xl"
 			>
 				{playlist.name}
 			</h1>
@@ -311,13 +315,13 @@
 		<div class="flex flex-wrap items-center gap-2 text-sm text-base-content/60">
 			<span>{playlist.track_count} track{playlist.track_count === 1 ? '' : 's'}</span>
 			{#if playlist.total_duration}
-				<span class="opacity-50">-</span>
+				<span class="opacity-50">·</span>
 				<span>{formatTotalDurationSec(playlist.total_duration)}</span>
 			{/if}
-			<span class="opacity-50">-</span>
+			<span class="opacity-50">·</span>
 			<span>Created {formatRelativeTime(new Date(playlist.created_at))}</span>
 			{#if sourceType && sourceColor && sourceLabel}
-				<span class="opacity-50">-</span>
+				<span class="opacity-50">·</span>
 				<span
 					class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
 					style="background: color-mix(in srgb, {sourceColor} 15%, transparent); color: {sourceColor};"
@@ -334,10 +338,10 @@
 			{/if}
 		</div>
 
-		<div class="flex items-center gap-3 pt-4">
+		<div class="flex flex-wrap items-center gap-3 pt-4">
 			<button
 				type="button"
-				class="btn btn-accent"
+				class="btn btn-primary gap-2 rounded-full"
 				onclick={onplayall}
 				disabled={playlist.track_count === 0}
 			>
@@ -346,7 +350,7 @@
 			</button>
 			<button
 				type="button"
-				class="btn btn-ghost"
+				class="btn btn-ghost gap-2 rounded-full bg-base-100/40"
 				onclick={onshuffleall}
 				disabled={playlist.track_count < 2}
 			>
@@ -355,7 +359,7 @@
 			</button>
 			<button
 				type="button"
-				class="btn btn-ghost"
+				class="btn btn-ghost gap-2 rounded-full bg-base-100/40"
 				onclick={() => (discoverModalOpen = true)}
 				disabled={playlist.track_count === 0}
 			>
@@ -365,7 +369,7 @@
 
 			{#if canEdit}
 				<label
-					class="ml-1 flex cursor-pointer items-center gap-2"
+					class="ml-1 flex cursor-pointer items-center gap-2 rounded-full border border-base-content/10 bg-base-100/40 px-3 py-1.5 backdrop-blur-sm"
 					title="Toggle who can see this playlist"
 				>
 					{#if playlist.is_public}
@@ -388,7 +392,7 @@
 			{:else if !playlist.is_owner && playlist.owner_name}
 				<span class="ml-1 inline-flex items-center gap-1.5 text-sm text-base-content/60">
 					<span class="avatar avatar-placeholder">
-						<span class="w-5 h-5 rounded-full bg-accent text-accent-content">
+						<span class="h-5 w-5 rounded-full bg-accent text-accent-content">
 							<span class="text-[9px] font-semibold leading-none">{ownerInitials}</span>
 						</span>
 					</span>

@@ -1,5 +1,18 @@
 <script lang="ts">
-	import { ChevronDown, Download, RotateCcw, TimerOff, Trash2 } from 'lucide-svelte';
+	import {
+		ChevronDown,
+		CircleAlert,
+		Disc3,
+		Download,
+		FileQuestion,
+		History,
+		ListMusic,
+		Radar,
+		RotateCcw,
+		ShieldAlert,
+		TimerOff,
+		Trash2
+	} from 'lucide-svelte';
 
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import {
@@ -73,7 +86,9 @@
 			<div class="skeleton h-20 w-full rounded-2xl"></div>
 		</div>
 	{:else if query.isError}
-		<div class="alert alert-error">Couldn't load your downloads - retrying shortly.</div>
+		<div class="alert alert-error rounded-2xl">
+			Couldn't load your downloads - retrying shortly.
+		</div>
 	{:else if isEmpty}
 		<EmptyState
 			icon={Download}
@@ -95,7 +110,8 @@
 		<!-- NOW SPINNING -->
 		{#if sections.now_spinning.length > 0}
 			<section class="space-y-3">
-				<h2 class="dl-eyebrow">
+				<h2 class="dl-eyebrow flex items-center gap-2">
+					<Disc3 class="h-3.5 w-3.5 text-accent" />
 					Now spinning <span class="dl-count">{sections.now_spinning.length}</span>
 				</h2>
 				{#if hero}<NowPressingHero task={hero} showEyebrow={false} />{/if}
@@ -109,7 +125,8 @@
 		{#if sections.wanted.length > 0}
 			<section class="space-y-3">
 				<div class="flex items-center justify-between gap-2">
-					<h2 class="dl-eyebrow">
+					<h2 class="dl-eyebrow flex items-center gap-2">
+						<Radar class="h-3.5 w-3.5 text-accent" />
 						Still hunting <span class="text-base-content/35">· auto-retrying</span>
 						<span class="dl-count">{sections.wanted.length}</span>
 					</h2>
@@ -133,7 +150,8 @@
 		<!-- NEEDS YOU -->
 		{#if sections.needs_you.length > 0}
 			<section class="space-y-3">
-				<h2 class="dl-eyebrow">
+				<h2 class="dl-eyebrow flex items-center gap-2">
+					<CircleAlert class="h-3.5 w-3.5 text-accent" />
 					Needs you <span class="text-base-content/35">· pick a release</span>
 					<span class="dl-count">{sections.needs_you.length}</span>
 				</h2>
@@ -146,7 +164,8 @@
 		<!-- COULDN'T VERIFY (held for "import anyway" review) -->
 		{#if held.length > 0}
 			<section class="space-y-3">
-				<h2 class="dl-eyebrow">
+				<h2 class="dl-eyebrow flex items-center gap-2">
+					<FileQuestion class="h-3.5 w-3.5 text-accent" />
 					Couldn't verify <span class="text-base-content/35">· your call</span>
 					<span class="dl-count">{held.length}</span>
 				</h2>
@@ -161,7 +180,10 @@
 		<!-- CUEING UP -->
 		{#if sections.cueing.length > 0}
 			<section class="space-y-3">
-				<h2 class="dl-eyebrow">Cueing up <span class="dl-count">{sections.cueing.length}</span></h2>
+				<h2 class="dl-eyebrow flex items-center gap-2">
+					<ListMusic class="h-3.5 w-3.5 text-accent" />
+					Cueing up <span class="dl-count">{sections.cueing.length}</span>
+				</h2>
 				{#each sections.cueing as task (task.id)}
 					<DownloadItem {task} />
 				{/each}
@@ -182,6 +204,7 @@
 								? ''
 								: '-rotate-90'}"
 						/>
+						<History class="h-3.5 w-3.5 text-accent" />
 						History
 						<span class="font-normal normal-case tracking-normal text-base-content/40">
 							{historyLabel}
@@ -233,6 +256,7 @@
 							? ''
 							: '-rotate-90'}"
 					/>
+					<ShieldAlert class="h-3.5 w-3.5 text-accent" />
 					Quarantine <span class="dl-count">{quarantineCount}</span>
 				</button>
 				{#if quarantineOpen}<QuarantinePanel />{/if}
@@ -243,11 +267,12 @@
 
 <style>
 	.dl-eyebrow {
-		font-size: 11px;
+		font-family: var(--font-mono);
+		font-size: 0.68rem;
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.16em;
-		color: oklch(from var(--color-base-content) l c h / 0.45);
+		letter-spacing: 0.2em;
+		color: oklch(from var(--color-base-content) l c h / 0.5);
 	}
 	.dl-count {
 		display: inline-block;
