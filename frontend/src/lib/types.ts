@@ -1642,6 +1642,7 @@ export interface LibrarySettings {
 	staging_path: string;
 	naming_template: string;
 	acoustid_api_key: string;
+	lyrics_fetch_enabled: boolean;
 }
 
 export type ScanFrequency =

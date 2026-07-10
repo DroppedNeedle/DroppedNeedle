@@ -161,6 +161,18 @@ class UnmatchedBatchResolveResponse(AppStruct):
     failed: list[UnmatchedBatchFailure] = []
 
 
+class LibraryLyricLine(AppStruct):
+    text: str = ""
+    start_seconds: float | None = None
+
+
+class LibraryLyricsResponse(AppStruct):
+    # same shape the frontend already consumes from the jellyfin/navidrome lyrics endpoints
+    text: str = ""
+    is_synced: bool = False
+    lines: list[LibraryLyricLine] = []
+
+
 class LibraryScanStatusResponse(AppStruct):
     status: str = "idle"
     total_files: int = 0

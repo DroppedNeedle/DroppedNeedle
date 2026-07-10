@@ -65,6 +65,15 @@ def test_mask_on_save_preserves_existing_key(prefs):
     assert raw.library_paths == ["/m2"]  # non-secret fields updated
 
 
+def test_lyrics_fetch_enabled_defaults_off_and_round_trips(prefs):
+    assert prefs.get_library_settings().lyrics_fetch_enabled is False  # off by default
+    prefs.save_library_settings(
+        LibrarySettings(library_paths=["/m"], lyrics_fetch_enabled=True)
+    )
+    assert prefs.get_library_settings().lyrics_fetch_enabled is True
+    assert prefs.get_library_settings_raw().lyrics_fetch_enabled is True
+
+
 def test_seeds_library_paths_from_legacy_root(tmp_path: Path):
     settings = Settings()
     settings.config_file_path = tmp_path / "config.json"

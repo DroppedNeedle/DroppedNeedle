@@ -352,6 +352,14 @@ def get_geocoding_repository() -> "GeocodingRepository":
 
 
 @singleton
+def get_lrclib_repository() -> "LrcLibRepository":
+    from repositories.lrclib_repository import LRCLIB_TIMEOUT_SECONDS, LrcLibRepository
+
+    http = HttpClientFactory.get_client(name="lrclib", timeout=LRCLIB_TIMEOUT_SECONDS)
+    return LrcLibRepository(http)
+
+
+@singleton
 def get_user_connections_store() -> "UserConnectionsStore":
     from infrastructure.persistence.user_connections_store import UserConnectionsStore
     from .cache_providers import get_persistence_write_lock

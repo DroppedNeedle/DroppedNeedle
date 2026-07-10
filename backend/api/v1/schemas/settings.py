@@ -420,6 +420,8 @@ class LibrarySettings(AppStruct):
     staging_path: str = ""
     naming_template: str = DEFAULT_NAMING_TEMPLATE
     acoustid_api_key: str = ""
+    # optional online lyrics fetch (LRCLIB); off = fully offline lyrics lookup
+    lyrics_fetch_enabled: bool = False
 
 
 class LibraryPathRequest(AppStruct):

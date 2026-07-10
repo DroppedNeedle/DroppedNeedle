@@ -29,6 +29,7 @@
 
 	let template = $state('');
 	let acoustidKey = $state('');
+	let lyricsFetch = $state(false);
 	let seeded = $state(false);
 	let maxLibraryGb = $state<number | null>(0);
 	let capSeeded = $state(false);
@@ -40,6 +41,7 @@
 		if (d && !seeded) {
 			template = d.naming_template;
 			acoustidKey = d.acoustid_api_key;
+			lyricsFetch = d.lyrics_fetch_enabled;
 			seeded = true;
 		}
 	});
@@ -83,7 +85,8 @@
 				...d,
 				library_paths: paths,
 				naming_template: template,
-				acoustid_api_key: acoustidKey
+				acoustid_api_key: acoustidKey,
+				lyrics_fetch_enabled: lyricsFetch
 			});
 			toastStore.show({ message: 'Library settings saved', type: 'success' });
 		} catch (e) {
@@ -147,6 +150,22 @@
 				placeholder="Enter AcoustID API key"
 				aria-label="AcoustID API key"
 			/>
+		</section>
+
+		<section class="space-y-2">
+			<h3
+				class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+			>
+				Lyrics
+			</h3>
+			<label class="flex w-fit cursor-pointer items-center gap-3">
+				<input type="checkbox" class="toggle toggle-primary" bind:checked={lyricsFetch} />
+				<span class="text-sm">Fetch missing lyrics from LRCLIB</span>
+			</label>
+			<p class="text-xs text-base-content/60">
+				When a track has no embedded lyrics or .lrc file, DroppedNeedle asks LRCLIB (free, open
+				lyrics database) once and saves a .lrc beside the file. Off = fully offline.
+			</p>
 		</section>
 
 		<div>

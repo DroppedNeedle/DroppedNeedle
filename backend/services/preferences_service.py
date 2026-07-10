@@ -995,6 +995,7 @@ class PreferencesService:
             staging_path=settings.staging_path,
             naming_template=settings.naming_template,
             acoustid_api_key=ACOUSTID_KEY_MASK if settings.acoustid_api_key else "",
+            lyrics_fetch_enabled=settings.lyrics_fetch_enabled,
         )
 
     def get_library_settings_raw(self) -> LibrarySettings:
@@ -1008,6 +1009,7 @@ class PreferencesService:
             staging_path=settings.staging_path,
             naming_template=settings.naming_template,
             acoustid_api_key=api_key,
+            lyrics_fetch_enabled=settings.lyrics_fetch_enabled,
         )
 
     def save_library_settings(self, settings: LibrarySettings) -> None:
@@ -1025,6 +1027,7 @@ class PreferencesService:
                     staging_path=settings.staging_path,
                     naming_template=settings.naming_template or DEFAULT_NAMING_TEMPLATE,
                     acoustid_api_key=api_key,
+                    lyrics_fetch_enabled=settings.lyrics_fetch_enabled,
                 ),
             )
         except Exception as e:  # noqa: BLE001

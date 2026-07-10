@@ -18,6 +18,7 @@ from api.v1.schemas.library import (
     NativeTracksResponse,
     NativeLibraryStatsResponse,
     LibraryAlbumStatusResponse,
+    LibraryLyricsResponse,
     LibraryTrackResponse,
     TrackTagUpdateRequest,
 )
@@ -27,14 +28,16 @@ from core.dependencies import (
     get_library_service,
     get_library_manager,
     get_library_scanner,
+    get_local_lyrics_service,
     get_preferences_service,
 )
-from core.exceptions import ExternalServiceError
+from core.exceptions import ExternalServiceError, ResourceNotFoundError
 from infrastructure.msgspec_fastapi import MsgSpecRoute, MsgSpecBody
 from middleware import CurrentAdminDep, CurrentCuratorDep, CurrentUserDep
 from models.audio import AudioTag
 from services.album_service import AlbumService
 from services.library_service import LibraryService
+from services.local_lyrics_service import LocalLyricsService
 from services.native.library_manager import LibraryManager
 from services.native.library_scanner import LibraryScanner
 
@@ -249,6 +252,31 @@ async def remove_library_track(
     file matching none of the album's expected tracks. Admin/trusted only, matching
     the album-delete gate."""
     return await library_service.remove_file(file_id)
+
+
+@router.get("/tracks/{file_id}/lyrics", response_model=LibraryLyricsResponse)
+async def get_track_lyrics(
+    file_id: str,
+    current_user: CurrentUserDep,
+    lyrics_service: LocalLyricsService = Depends(get_local_lyrics_service),
+) -> LibraryLyricsResponse:
+    """Lyrics for a local library track: sidecar .lrc/.txt first, then embedded
+    tags (USLT/SYLT, Vorbis LYRICS, MP4 lyr). 404 = no lyrics, matching the
+    jellyfin/navidrome lyrics endpoints the frontend already consumes."""
+    try:
+        lyrics = await lyrics_service.get_lyrics(file_id)
+    except ResourceNotFoundError:
+        raise HTTPException(status_code=404, detail="Track file not found")
+    except PermissionError:
+        raise HTTPException(
+            status_code=403, detail="Access denied: path is outside the music directory"
+        )
+    except ExternalServiceError as e:
+        logger.error("Lyrics lookup failed for %s: %s", file_id, e)
+        raise HTTPException(status_code=502, detail="Failed to read lyrics")
+    if lyrics is None:
+        raise HTTPException(status_code=404, detail="Lyrics not available")
+    return lyrics
 
 
 @router.get("/tracks/{file_id}/tags", response_model=AudioTag)

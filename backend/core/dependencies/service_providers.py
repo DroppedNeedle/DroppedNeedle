@@ -145,6 +145,7 @@ def get_file_processor() -> "FileProcessor":
         download_store=get_download_store(),
         held_dir=Path(get_settings().cache_dir) / "held",
         recycle_bin=resolve_bin_path(policy.recycle_bin_path, lib.library_paths),
+        lyrics_service=get_local_lyrics_service(),
     )
 
 
@@ -949,6 +950,20 @@ def get_local_files_service() -> "LocalFilesService":
     preferences_service = get_preferences_service()
     cache = get_cache()
     return LocalFilesService(library_repo, preferences_service, cache)
+
+
+@singleton
+def get_local_lyrics_service() -> "LocalLyricsService":
+    from services.local_lyrics_service import LocalLyricsService
+
+    from .repo_providers import get_lrclib_repository
+
+    return LocalLyricsService(
+        get_local_files_service(),
+        library_repo=get_library_repository(),
+        preferences_service=get_preferences_service(),
+        lrclib_repository=get_lrclib_repository(),
+    )
 
 
 @singleton

@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from infrastructure.persistence.download_store import DownloadStore
     from models.held_import import HeldImport
     from repositories.protocols.download_client import DownloadClientProtocol
+    from services.local_lyrics_service import LocalLyricsService
     from services.native.library_manager import LibraryManager
     from services.native.naming import NamingTemplateEngine
 
@@ -461,6 +462,7 @@ class FileProcessor:
         download_store: "DownloadStore | None" = None,
         held_dir: Path | None = None,
         recycle_bin: Path | None = None,
+        lyrics_service: "LocalLyricsService | None" = None,
     ) -> None:
         self._tagger = tagger
         self._naming = naming_engine
@@ -480,6 +482,10 @@ class FileProcessor:
         # disables replace-on-import entirely - an upgrade must never destroy the
         # only copy of the old bytes.
         self._recycle_bin = recycle_bin
+        # Optional post-import lyrics fetch (admin-gated LRCLIB): fire-and-forget,
+        # best-effort - a lyrics problem must never fail or slow an import.
+        self._lyrics_service = lyrics_service
+        self._lyrics_tasks: set[asyncio.Task] = set()
 
     def verify_downloaded_file(
         self,
@@ -769,7 +775,35 @@ class FileProcessor:
             raise VerificationFailed(
                 f"Import failed for {source.name}: {exc}", reason=IMPORT_FAILED, filename=source.name
             ) from exc
+        self._schedule_lyrics_fetch(target_path, target_tag, info)
         return target_path
+
+    def _schedule_lyrics_fetch(
+        self, target_path: Path, target_tag: AudioTag, info: AudioInfo
+    ) -> None:
+        """Fire-and-forget post-import lyrics fetch (admin-gated LRCLIB).
+
+        The service itself gates on the setting, skips files that already carry
+        lyrics, and swallows every failure - so this can never fail, slow, or
+        otherwise change the import outcome. No lyrics service wired = no-op."""
+        if self._lyrics_service is None:
+            return
+        try:
+            task = asyncio.create_task(
+                self._lyrics_service.fetch_lyrics_for_new_import(
+                    target_path,
+                    artist_name=target_tag.artist or target_tag.album_artist,
+                    track_title=target_tag.title,
+                    album_title=target_tag.album,
+                    duration_seconds=info.duration_seconds,
+                )
+            )
+        except Exception:  # noqa: BLE001 - lyrics must never break an import
+            logger.debug("Could not schedule lyrics fetch for %s", target_path)
+            return
+        # keep a strong reference so the task isn't garbage-collected mid-flight
+        self._lyrics_tasks.add(task)
+        task.add_done_callback(self._lyrics_tasks.discard)
 
     # --- Replace-on-import (CollectionManagement D4/D18/D19) --------------------
     # Fires ONLY for an origin='upgrade' import, and only strictly-better. Two
@@ -1317,6 +1351,7 @@ class FileProcessor:
                 reason=IMPORT_FAILED,
                 filename=expected.filename,
             ) from exc
+        self._schedule_lyrics_fetch(target_path, target_tag, info)
         return target_path
 
     def _import_into_library(
