@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
 _TOKEN_RE = re.compile(r'Token="([^"]*)"')
 _CLIENT_RE = re.compile(r'Client="([^"]*)"')
+_DEVICE_RE = re.compile(r'Device="([^"]*)"')
+_DEVICE_ID_RE = re.compile(r'DeviceId="([^"]*)"')
 
 
 def _mediabrowser_header(request: Request) -> str:
@@ -45,6 +47,14 @@ def extract_token(request: Request) -> str | None:
 def extract_client(request: Request) -> str | None:
     m = _CLIENT_RE.search(_mediabrowser_header(request))
     return m.group(1) if m else None
+
+
+def extract_device(request: Request) -> tuple[str | None, str | None]:
+    """(Device, DeviceId) from the MediaBrowser auth header, either None if absent."""
+    header = _mediabrowser_header(request)
+    name = _DEVICE_RE.search(header)
+    device_id = _DEVICE_ID_RE.search(header)
+    return (name.group(1) if name else None, device_id.group(1) if device_id else None)
 
 
 async def resolve_user(

@@ -156,6 +156,7 @@ class CompatScrobbleAdapter:
                 is_paused=is_paused,
                 progress_ms=progress_ms,
                 duration_ms=round(track.duration_seconds * 1000) or None,
+                track_file_id=track.file_id,
             )
         except Exception as e:  # noqa: BLE001 - presence must never fail a play report
             logger.debug("compat presence update failed: %s", e)

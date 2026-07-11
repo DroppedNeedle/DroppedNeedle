@@ -74,21 +74,66 @@ class SystemInfo(msgspec.Struct, kw_only=True):
     SupportsLibraryMonitor: bool = True
 
 
+class UserConfiguration(msgspec.Struct, kw_only=True):
+    """Real Jellyfin sends this fully populated; strict clients hard-cast the
+    bools, so an empty {} crashes them (Finamp: 'Null is not a subtype of bool',
+    issue #144). Fields/defaults verified against jellyfin-sdk-typescript
+    user-configuration.ts and Finamp lib/models/jellyfin_models.dart (its 9
+    required fields are all non-optional here)."""
+
+    AudioLanguagePreference: str | None = None
+    PlayDefaultAudioTrack: bool = True
+    SubtitleLanguagePreference: str | None = None
+    DisplayMissingEpisodes: bool = False
+    GroupedFolders: list[str] = []
+    SubtitleMode: str = "Default"
+    DisplayCollectionsView: bool = False
+    EnableLocalPassword: bool = False
+    OrderedViews: list[str] = []
+    LatestItemsExcludes: list[str] = []
+    MyMediaExcludes: list[str] = []
+    HidePlayedInLatest: bool = True
+    RememberAudioSelections: bool = True
+    RememberSubtitleSelections: bool = True
+    EnableNextEpisodeAutoPlay: bool = True
+
+
+class SessionInfo(msgspec.Struct, kw_only=True):
+    """Minimal session object for AuthenticationResult. Finamp requires UserId,
+    LastActivityDate and the four bools non-null when SessionInfo is present
+    (jellyfin_models.dart), so an empty {} crashes it (issue #144)."""
+
+    Id: str
+    UserId: str
+    UserName: str
+    LastActivityDate: str
+    Client: str | None = None
+    DeviceName: str = ""
+    DeviceId: str | None = None
+    IsActive: bool = True
+    SupportsRemoteControl: bool = False
+    SupportsMediaControl: bool = False
+    HasCustomDeviceName: bool = False
+    ServerId: str = SERVER_ID
+
+
 class UserDto(msgspec.Struct, kw_only=True):
     Id: str
     Name: str
     ServerId: str = SERVER_ID
     HasPassword: bool = True
     HasConfiguredPassword: bool = True
-    Configuration: dict[str, Any] = {}
+    # deprecated upstream but still sent by real servers; Finamp requires it non-null
+    HasConfiguredEasyPassword: bool = False
+    Configuration: UserConfiguration = msgspec.field(default_factory=UserConfiguration)
     Policy: dict[str, Any] = {}
 
 
 class AuthenticationResult(msgspec.Struct, kw_only=True):
     User: UserDto
     AccessToken: str
+    SessionInfo: SessionInfo
     ServerId: str = SERVER_ID
-    SessionInfo: dict[str, Any] = {}
 
 
 class NameGuidPair(msgspec.Struct, kw_only=True):

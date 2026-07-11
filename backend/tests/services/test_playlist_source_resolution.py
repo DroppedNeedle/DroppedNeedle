@@ -201,6 +201,48 @@ class TestResolveTrackSourcesPersistence:
         repo.batch_update_available_sources.assert_not_called()
 
 
+class TestResolveLinksLibraryFiles:
+    """A local match must also persist library_file_id so the compat shims can
+    stream the entry (issue #181 - imported playlists showed empty in clients)."""
+
+    @pytest.mark.asyncio
+    async def test_links_unlinked_entry_on_local_match(self, tmp_path):
+        service, repo = _make_service(tmp_path)
+        track = _make_track(available_sources=["navidrome"])
+        repo.get_tracks = MagicMock(return_value=[track])
+
+        await service.resolve_track_sources(
+            "p-1", local_service=_make_local_service(), nd_service=_make_nd_service(),
+        )
+
+        repo.batch_link_library_files.assert_called_once_with("p-1", {"t-1": "789"})
+
+    @pytest.mark.asyncio
+    async def test_existing_link_left_alone(self, tmp_path):
+        service, repo = _make_service(tmp_path)
+        track = _make_track(available_sources=["navidrome"])
+        track.library_file_id = "already"
+        repo.get_tracks = MagicMock(return_value=[track])
+
+        await service.resolve_track_sources(
+            "p-1", local_service=_make_local_service(), nd_service=_make_nd_service(),
+        )
+
+        repo.batch_link_library_files.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_local_match_no_link(self, tmp_path):
+        service, repo = _make_service(tmp_path)
+        repo.get_tracks = MagicMock(return_value=[_make_track()])
+
+        await service.resolve_track_sources(
+            "p-1", local_service=_make_local_service(found=False),
+            nd_service=_make_nd_service(),
+        )
+
+        repo.batch_link_library_files.assert_not_called()
+
+
 class TestStringTrackNumberRegression:
     """Regression tests: source resolution must work when track_number arrives as a string.
 

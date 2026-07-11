@@ -21,6 +21,7 @@ from core.dependencies import (
     get_favorites_service,
     get_library_view_service,
     get_local_files_service,
+    get_now_playing_service,
     get_playlist_service,
     get_preferences_service,
     get_transcode_service,
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from services.compat.library_view_service import LibraryViewService
     from services.compat.transcode_service import TranscodeService
     from services.local_files_service import LocalFilesService
+    from services.now_playing_service import NowPlayingService
     from services.playlist_service import PlaylistService
     from services.preferences_service import PreferencesService
 
@@ -53,6 +55,7 @@ class CompatServices:
     coverart: "CoverArtRepository"
     preferences: "PreferencesService"
     transcode: "TranscodeService"
+    now_playing: "NowPlayingService"
 
 
 def get_compat_services(
@@ -67,6 +70,7 @@ def get_compat_services(
     coverart=Depends(get_coverart_repository),
     preferences=Depends(get_preferences_service),
     transcode=Depends(get_transcode_service),
+    now_playing=Depends(get_now_playing_service),
 ) -> CompatServices:
     return CompatServices(
         app_passwords=app_passwords,
@@ -80,4 +84,5 @@ def get_compat_services(
         coverart=coverart,
         preferences=preferences,
         transcode=transcode,
+        now_playing=now_playing,
     )

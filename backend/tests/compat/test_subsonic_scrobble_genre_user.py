@@ -48,6 +48,45 @@ async def test_scrobble_requires_id(compat_env):
     assert body["error"]["code"] == 10
 
 
+async def test_get_now_playing_lists_compat_session(compat_env):
+    # a submission=false scrobble registers presence; getNowPlaying serves it
+    # as a full Child with session attribution (issue #159)
+    song = _sub(_get(compat_env, "search3", query=""))["searchResult3"]["song"][0]
+    _sub(_get(compat_env, "scrobble", id=song["id"], submission="false", c="symfonium"))
+    entries = _sub(_get(compat_env, "getNowPlaying"))["nowPlaying"]["entry"]
+    assert len(entries) == 1
+    assert entries[0]["id"] == song["id"]
+    assert entries[0]["title"] == song["title"]
+    assert entries[0]["username"] == "Alice"
+    assert entries[0]["minutesAgo"] == 0
+    assert entries[0]["playerName"] == "symfonium"
+
+
+async def test_get_now_playing_empty_without_sessions(compat_env):
+    body = _sub(_get(compat_env, "getNowPlaying"))
+    assert body["nowPlaying"].get("entry", []) == []
+
+
+async def test_get_now_playing_respects_track_hidden_visibility(compat_env):
+    song = _sub(_get(compat_env, "search3", query=""))["searchResult3"]["song"][0]
+    _sub(_get(compat_env, "scrobble", id=song["id"], submission="false"))
+    await compat_env.now_playing.set_visibility("user-alice", "track_hidden")
+    body = _sub(_get(compat_env, "getNowPlaying"))
+    assert body["nowPlaying"].get("entry", []) == []
+
+
+async def test_get_artist_info2_empty_but_valid(compat_env):
+    # not populated (no biography source); must not be "Unknown method" - some
+    # clients call it unconditionally while browsing
+    artist_id = _sub(_get(compat_env, "getArtists"))["artists"]["index"][0]["artist"][0]["id"]
+    body = _sub(_get(compat_env, "getArtistInfo2", id=artist_id))
+    assert body["status"] == "ok"
+    assert "error" not in body
+    body2 = _sub(_get(compat_env, "getArtistInfo", id=artist_id))
+    assert body2["status"] == "ok"
+    assert "error" not in body2
+
+
 async def test_get_genres(compat_env):
     genres = _sub(_get(compat_env, "getGenres"))["genres"]["genre"]
     rock = next(g for g in genres if g["value"] == "Alternative Rock")

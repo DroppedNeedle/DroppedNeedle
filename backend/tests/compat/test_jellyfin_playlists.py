@@ -107,3 +107,24 @@ async def test_create_playlist_unknown_track_ignored(compat_env):
     assert r.status_code == 200
     pid = json.loads(r.content)["Id"]
     assert _jget(compat_env, f"/Playlists/{pid}/Items")["Items"] == []
+
+
+async def test_web_ui_local_playlist_visible(compat_env, auth_store):
+    # web-UI shape: source_type='local' + track_source_id, no explicit
+    # library_file_id - must still surface via /Playlists/{id}/Items (issue #181)
+    fid = compat_env.ids["tracks"][0]
+    user = await auth_store.get_user_by_id("user-alice")
+    record = await compat_env.playlists.create_playlist("Web Mix", user_id="user-alice")
+    await compat_env.playlists.add_tracks(record.id, user, [{
+        "track_name": "Airbag", "artist_name": "Radiohead",
+        "album_name": "OK Computer", "track_source_id": fid,
+        "source_type": "local", "duration": 201,
+    }])
+    jf_pid = await compat_env.id_map.to_jf("playlist", record.id)
+    items = _jget(compat_env, f"/Playlists/{jf_pid}/Items")["Items"]
+    assert len(items) == 1
+    assert items[0]["Name"] == "Airbag"
+    # browse listing advertises the served count, like Subsonic getPlaylists
+    pls = _jget(compat_env, "/Items", IncludeItemTypes="Playlist")["Items"]
+    mine = next(p for p in pls if p["Id"] == jf_pid)
+    assert mine["ChildCount"] == 1

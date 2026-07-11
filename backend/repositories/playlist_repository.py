@@ -207,6 +207,18 @@ class PlaylistRepository:
                 conn.commit()
             except sqlite3.OperationalError:
                 pass
+            # backfill: web-UI local entries predate the add_tracks auto-link and
+            # showed as empty playlists in compat clients (#181). For local sources
+            # track_source_id IS the library file id ('howler' = legacy local slug).
+            # Idempotent: matched rows are non-NULL after the first run.
+            conn.execute("""
+                UPDATE playlist_tracks
+                SET library_file_id = track_source_id
+                WHERE library_file_id IS NULL
+                  AND source_type IN ('local', 'droppedneedle-local', 'howler')
+                  AND track_source_id IS NOT NULL
+                  AND track_source_id != ''
+            """)
             conn.execute("""
                 UPDATE playlist_tracks
                 SET cover_url = '/api/v1/covers/' || SUBSTR(cover_url, LENGTH('/api/covers/') + 1)
@@ -709,6 +721,41 @@ class PlaylistRepository:
                 )
                 conn.commit()
         return updated
+
+    def batch_link_library_files(
+        self,
+        playlist_id: str,
+        updates: dict[str, str],
+    ) -> int:
+        """Link resolved entries to their local library file (track_id -> file_id).
+        Only fills NULLs: an existing link (compat-created or add-time) wins."""
+        if not updates:
+            return 0
+        updated = 0
+        with self._write_lock:
+            conn = self._get_connection()
+            for track_id, file_id in updates.items():
+                cur = conn.execute(
+                    "UPDATE playlist_tracks SET library_file_id = ? "
+                    "WHERE id = ? AND playlist_id = ? AND library_file_id IS NULL",
+                    (file_id, track_id, playlist_id),
+                )
+                updated += cur.rowcount
+            if updated:
+                conn.commit()
+        return updated
+
+    def get_streamable_counts(self) -> dict[str, tuple[int, int]]:
+        """playlist_id -> (count, total duration seconds) over entries linked to a
+        library file - what the compat shims can actually serve. Unlinked entries
+        are excluded so clients never see a song count larger than the entry list."""
+        conn = self._get_connection()
+        rows = conn.execute(
+            "SELECT playlist_id, COUNT(*), COALESCE(SUM(COALESCE(duration, 0)), 0) "
+            "FROM playlist_tracks WHERE library_file_id IS NOT NULL "
+            "GROUP BY playlist_id"
+        ).fetchall()
+        return {row[0]: (row[1], row[2]) for row in rows}
 
     def update_track_source(
         self,

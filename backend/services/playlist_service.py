@@ -325,6 +325,16 @@ class PlaylistService:
                     normalized_sources.append(_SOURCE_TYPE_ALIASES[source])
                 normalized["available_sources"] = normalized_sources
 
+            # for local sources track_source_id IS the library_files id (same
+            # assumption as update_track_source); without the link compat
+            # clients see an empty playlist (#181)
+            if (
+                normalized["source_type"] in ("local", "droppedneedle-local")
+                and normalized.get("track_source_id")
+                and not normalized.get("library_file_id")
+            ):
+                normalized["library_file_id"] = normalized["track_source_id"]
+
             normalized_tracks.append(normalized)
         await self._load_owned_or_raise(playlist_id, requesting)
         result = await self._repo.add_tracks(playlist_id, normalized_tracks, position)
@@ -461,6 +471,10 @@ class PlaylistService:
     async def get_tracks(self, playlist_id: str) -> list[PlaylistTrackRecord]:
         return await self._repo.get_tracks(playlist_id)
 
+    async def get_streamable_counts(self) -> dict[str, tuple[int, int]]:
+        """Per-playlist (count, duration) over entries the compat shims can stream."""
+        return await self._repo.get_streamable_counts()
+
     async def analyse_playlist_profile(
         self, playlist_id: str, requesting: UserRecord,
     ) -> "PlaylistProfile | None":
@@ -557,6 +571,10 @@ class PlaylistService:
             *(_resolve_group(album_tracks) for _album_id, album_tracks in grouped)
         )
 
+        # entries that resolved to a local file get linked so the compat shims can
+        # stream them (issue #181 - imported playlists showed empty in clients)
+        file_links: dict[str, str] = {}
+
         for (_album_id, album_tracks), (
             jf_by_num,
             local_by_num,
@@ -576,6 +594,8 @@ class PlaylistService:
                 local_track = local_by_num.get(disc_key)
                 if local_track and _fuzzy_name_match(t.track_name, local_track[0]):
                     sources.add("local")
+                    if not t.library_file_id and local_track[1]:
+                        file_links[t.id] = local_track[1]
 
                 nd_track = nd_by_num.get(disc_key)
                 if nd_track and _fuzzy_name_match(t.track_name, nd_track[0]):
@@ -600,6 +620,8 @@ class PlaylistService:
                 persist_updates[t.id] = resolved
         if persist_updates:
             await self._repo.batch_update_available_sources(playlist_id, persist_updates)
+        if file_links:
+            await self._repo.batch_link_library_files(playlist_id, file_links)
 
         return result
 

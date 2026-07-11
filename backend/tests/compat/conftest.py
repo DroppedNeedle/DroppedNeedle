@@ -183,6 +183,7 @@ async def streaming_env(tmp_path):
         deps.get_compat_scrobble_adapter: lambda: Mock(),
         deps.get_compat_discover_service: lambda: Mock(),
         deps.get_coverart_repository: lambda: cover,
+        deps.get_now_playing_service: lambda: Mock(),
     })
     client = build_test_client(app)
     jf_track_id = await id_map.to_jf("track", fid)
@@ -323,7 +324,15 @@ async def compat_env(
         client_factory=AsyncMock(), listening_prefs_store=listening_prefs,
         play_history_store=phs,
     )
-    scrobble = CompatScrobbleAdapter(scrobble_service, view)
+    from infrastructure.sse_publisher import SSEPublisher
+    from services.now_playing_service import NowPlayingService
+
+    np_prefs = AsyncMock()
+    np_prefs.get = AsyncMock(
+        return_value=SimpleNamespace(now_playing_visibility="full")
+    )
+    now_playing = NowPlayingService(SSEPublisher(), np_prefs)
+    scrobble = CompatScrobbleAdapter(scrobble_service, view, now_playing)
     discover = CompatDiscoverService(
         library_db=db, library_view_service=view, preferences_service=preferences,
         play_history_store=phs,
@@ -351,6 +360,7 @@ async def compat_env(
         deps.get_local_files_service: lambda: Mock(),
         deps.get_coverart_repository: lambda: cover,
         deps.get_preferences_service: lambda: preferences,
+        deps.get_now_playing_service: lambda: now_playing,
     }
     app.dependency_overrides.update(overrides)
     client = build_test_client(app)
@@ -358,5 +368,5 @@ async def compat_env(
         client=client, secret=secret, username="alice", ids=ids,
         preferences=preferences, app=app, view=view, favorites=favorites_service,
         playlists=playlists, phs=phs, discover=discover,
-        lm=_lm, db=db, id_map=compat_id_map_service,
+        lm=_lm, db=db, id_map=compat_id_map_service, now_playing=now_playing,
     )

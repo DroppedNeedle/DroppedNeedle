@@ -29,6 +29,43 @@ class TestEnsureTables:
         repo.delete_playlist(playlist.id)
         assert repo.get_tracks(playlist.id) == []
 
+    def test_backfills_local_library_file_id(self, tmp_path):
+        # web-UI-era local rows carry the file id only in track_source_id; the
+        # ensure-tables ratchet links them so compat clients can stream them
+        # (issue #181), and re-running is a no-op.
+        import sqlite3
+
+        db = tmp_path / "test.db"
+        repo1 = PlaylistRepository(db_path=db)
+        playlist = repo1.create_playlist("Legacy")
+        conn = sqlite3.connect(db)
+        rows = [
+            ("t-local", "local", "file-1", None),
+            ("t-howler", "howler", "file-2", None),
+            ("t-linked", "local", "file-3", "already-linked"),
+            ("t-foreign", "navidrome", "nd-4", None),
+            ("t-empty", "local", "", None),
+        ]
+        for i, (tid, source, src_id, lfid) in enumerate(rows):
+            conn.execute(
+                "INSERT INTO playlist_tracks "
+                "(id, playlist_id, position, track_name, artist_name, album_name, "
+                " source_type, track_source_id, library_file_id, created_at) "
+                "VALUES (?, ?, ?, 'T', 'A', 'AL', ?, ?, ?, '2025-01-01')",
+                (tid, playlist.id, i, source, src_id, lfid),
+            )
+        conn.commit()
+        conn.close()
+
+        for _ in range(2):  # construct twice: backfill applies once, stays stable
+            PlaylistRepository(db_path=db)
+            by_id = {t.id: t for t in repo1.get_tracks(playlist.id)}
+            assert by_id["t-local"].library_file_id == "file-1"
+            assert by_id["t-howler"].library_file_id == "file-2"
+            assert by_id["t-linked"].library_file_id == "already-linked"
+            assert by_id["t-foreign"].library_file_id is None
+            assert by_id["t-empty"].library_file_id is None
+
     def test_unique_position_constraint(self, repo):
         playlist = repo.create_playlist("Test")
         repo.add_tracks(playlist.id, [
@@ -326,6 +363,44 @@ class TestUpdateTrackSource:
     def test_non_existent(self, repo):
         p = repo.create_playlist("Test")
         assert repo.update_track_source(p.id, "nonexistent") is None
+
+
+class TestBatchLinkLibraryFiles:
+    def test_links_only_null_rows(self, repo):
+        p = repo.create_playlist("Test")
+        tracks = repo.add_tracks(p.id, [
+            {"track_name": "T1", "artist_name": "A", "album_name": "AL", "source_type": ""},
+            {"track_name": "T2", "artist_name": "A", "album_name": "AL",
+             "source_type": "local", "library_file_id": "keep-me"},
+        ])
+        updated = repo.batch_link_library_files(
+            p.id, {tracks[0].id: "file-1", tracks[1].id: "file-2"},
+        )
+        assert updated == 1  # linked row is left alone
+        by_id = {t.id: t for t in repo.get_tracks(p.id)}
+        assert by_id[tracks[0].id].library_file_id == "file-1"
+        assert by_id[tracks[1].id].library_file_id == "keep-me"
+
+    def test_empty_updates_noop(self, repo):
+        p = repo.create_playlist("Test")
+        assert repo.batch_link_library_files(p.id, {}) == 0
+
+
+class TestGetStreamableCounts:
+    def test_counts_linked_entries_only(self, repo):
+        p = repo.create_playlist("Test")
+        repo.add_tracks(p.id, [
+            {"track_name": "T1", "artist_name": "A", "album_name": "AL",
+             "source_type": "local", "library_file_id": "f1", "duration": 100},
+            {"track_name": "T2", "artist_name": "A", "album_name": "AL",
+             "source_type": "local", "library_file_id": "f2", "duration": None},
+            {"track_name": "T3", "artist_name": "A", "album_name": "AL",
+             "source_type": ""},
+        ])
+        empty = repo.create_playlist("Empty")
+        counts = repo.get_streamable_counts()
+        assert counts[p.id] == (2, 100)  # NULL duration counts as 0
+        assert empty.id not in counts
 
 
 class TestGetTracks:

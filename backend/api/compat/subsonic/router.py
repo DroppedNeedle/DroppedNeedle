@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
+import msgspec
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response, StreamingResponse
 
@@ -346,10 +348,20 @@ async def _get_music_directory(c: Ctx) -> Response:
     raise SubsonicError(70, "Not a directory")
 
 
+def _normalize_search_query(raw: str | None) -> str | None:
+    """Missing/empty query means "match everything", matching Navidrome/gonic (clients
+    like Arpeggi rely on this for their "all songs" view). Symfonium's full-library
+    sync sends the literal two-character string `""` (query=%22%22, verified in
+    sentriz/gonic#229 request logs), so surrounding quotes are stripped before the
+    empty check - otherwise native-mode sync matches nothing (issue #129)."""
+    if raw is None:
+        return None
+    q = raw.strip().strip("\"'").strip()
+    return q or None
+
+
 async def _search(c: Ctx):
-    # missing/empty query means "match everything", matching Navidrome/gonic (clients
-    # like Arpeggi rely on this for their "all songs" view)
-    q = c.p("query") or None
+    q = _normalize_search_query(c.p("query"))
     a_count = max(c.pint("artistCount", 20) or 0, 0)
     a_offset = max(c.pint("artistOffset", 0) or 0, 0)
     al_count = max(c.pint("albumCount", 20) or 0, 0)
@@ -537,16 +549,20 @@ async def _build_playlist_detail(c: Ctx, pid: str):
 @endpoint("getPlaylists")
 async def _get_playlists(c: Ctx) -> Response:
     views = await c.services.playlists.get_all_playlists(c.user)
+    # counts must match what getPlaylist serves (library-linked entries only);
+    # a higher songCount reads as a broken playlist in clients (#181)
+    streamable = await c.services.playlists.get_streamable_counts()
     playlists = []
     for v in views:
         record = getattr(v, "record", None)
         if record is None:  # RedactedSummaryView (private, non-owned)
             continue
         owner = c.user.username if v.is_owner else v.owner_name
+        song_count, duration = streamable.get(record.id, (0, 0))
         playlists.append(m.SPlaylist(
             id=encode("playlist", record.id), name=record.name, owner=owner,
-            public=record.is_public, songCount=record.track_count,
-            duration=record.total_duration, created=record.created_at,
+            public=record.is_public, songCount=song_count,
+            duration=duration, created=record.created_at,
             changed=record.updated_at, coverArt=_playlist_cover(record),
         ))
     return c.render("playlists", {"playlist": playlists})
@@ -712,6 +728,34 @@ async def _scrobble(c: Ctx) -> Response:
                 user_name=getattr(c.user, "display_name", ""),
             )
     return c.render(None, None)
+
+
+@endpoint("getNowPlaying")
+async def _get_now_playing(c: Ctx) -> Response:
+    entries = []
+    now = time.time()
+    for idx, (proj, fid, updated_at) in enumerate(c.services.now_playing.compat_now_playing()):
+        track = await c.services.view.get_track(fid, user=c.user)
+        if track is None:
+            continue
+        child = c.child(track)
+        entries.append(m.SNowPlayingEntry(
+            **msgspec.structs.asdict(child),
+            username=proj.user_name,
+            minutesAgo=max(int((now - updated_at) // 60), 0),
+            playerId=idx,
+            playerName=proj.source or proj.device_name or None,
+        ))
+    return c.render("nowPlaying", {"entry": entries})
+
+
+@endpoint("getArtistInfo2", "getArtistInfo")
+async def _get_artist_info(c: Ctx) -> Response:
+    # no biography/similar-artist data to serve; an empty element is valid and
+    # spares clients that call this unconditionally an "Unknown method" error
+    # (setRating no-op pattern). Artist images flow through coverArt ids.
+    leaf = c.request.url.path.rsplit("/", 1)[-1].removesuffix(".view")
+    return c.render("artistInfo2" if leaf == "getArtistInfo2" else "artistInfo", {})
 
 
 @endpoint("getGenres")

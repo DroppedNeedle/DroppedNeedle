@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import inspect
 import logging
+from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
 from uuid import uuid4
@@ -14,7 +15,12 @@ from fastapi.responses import Response, StreamingResponse
 
 from api.compat.common.deps import CompatServices, get_compat_services
 from api.compat.jellyfin import models as jm
-from api.compat.jellyfin.auth import extract_client, extract_token, resolve_user
+from api.compat.jellyfin.auth import (
+    extract_client,
+    extract_device,
+    extract_token,
+    resolve_user,
+)
 from api.compat.jellyfin.errors import to_jellyfin_status
 from api.compat.jellyfin.serialization import (
     decode_body,
@@ -178,7 +184,19 @@ async def _authenticate(request, services, _user) -> jm.AuthenticationResult:
         )
     except PermissionDeniedError:
         raise JellyfinError(401, "Invalid username or password")  # login -> 401, not 403
-    return jm.AuthenticationResult(User=_user_dto(user), AccessToken=body.Pw)
+    device_name, device_id = extract_device(request)
+    session = jm.SessionInfo(
+        Id=uuid4().hex,
+        UserId=user.id,
+        UserName=user.username_display or user.username or user.display_name,
+        LastActivityDate=datetime.now(timezone.utc).isoformat(),
+        Client=extract_client(request),
+        DeviceName=device_name or "",
+        DeviceId=device_id,
+    )
+    return jm.AuthenticationResult(
+        User=_user_dto(user), AccessToken=body.Pw, SessionInfo=session
+    )
 
 
 @router.get("/Users/Me")
@@ -360,7 +378,11 @@ async def _browse(request, services, user, **_) -> jm.BaseItemDtoQueryResult:
 
     if primary == "Playlist":
         views = await services.playlists.get_all_playlists(user)
-        vps = [_to_view_playlist(v.record) for v in views if getattr(v, "record", None)]
+        streamable = await services.playlists.get_streamable_counts()
+        vps = [
+            _to_view_playlist(v.record, streamable)
+            for v in views if getattr(v, "record", None)
+        ]
         return await _build_page(b.playlist, vps, start, limit)
 
     if primary == "Audio":
@@ -436,7 +458,8 @@ async def _single_item(services, b, kind, internal, user):
         for v in await services.playlists.get_all_playlists(user):
             rec = getattr(v, "record", None)
             if rec and rec.id == internal:
-                return await b.playlist(_to_view_playlist(rec))
+                streamable = await services.playlists.get_streamable_counts()
+                return await b.playlist(_to_view_playlist(rec, streamable))
         return None
     return None
 
@@ -1052,14 +1075,16 @@ async def sessions_capabilities(
 
 # ===== Playlists (06-data-mapping.md s10) =====
 
-def _to_view_playlist(record):
+def _to_view_playlist(record, streamable_counts):
     from services.compat.view_models import ViewPlaylist
 
+    # served-entry counts, not record.track_count: /Playlists/{id}/Items filters
+    # to library-linked entries, so the advertised ChildCount must match (issue #181)
+    count, duration = streamable_counts.get(record.id, (0, 0))
     return ViewPlaylist(
         id=record.id, name=record.name, is_public=record.is_public,
-        owner_id=record.user_id or "", track_count=record.track_count,
-        total_duration_seconds=float(record.total_duration)
-        if record.total_duration else None,
+        owner_id=record.user_id or "", track_count=count,
+        total_duration_seconds=float(duration) if duration else None,
     )
 
 

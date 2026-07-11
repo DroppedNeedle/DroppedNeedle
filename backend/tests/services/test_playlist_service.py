@@ -150,6 +150,35 @@ class TestAddTracks:
         with pytest.raises(PlaylistNotFoundError):
             await service.add_tracks("nonexistent", _OWNER, [{"track_name": "T", "artist_name": "A", "album_name": "AL", "source_type": "local"}])
 
+    @pytest.mark.asyncio
+    async def test_local_track_source_id_links_library_file(self, tmp_path):
+        # web-UI adds send the library file id as track_source_id; without the
+        # auto-link the compat shims treat the entry as unstreamable (issue #181)
+        service, repo = _make_service(tmp_path)
+        await service.add_tracks("p-1", _OWNER, [
+            {"track_name": "T", "artist_name": "A", "album_name": "AL",
+             "source_type": "local", "track_source_id": "file-1"},
+            {"track_name": "T2", "artist_name": "A", "album_name": "AL",
+             "source_type": "howler", "track_source_id": "file-2"},  # alias of local
+            {"track_name": "T3", "artist_name": "A", "album_name": "AL",
+             "source_type": "navidrome", "track_source_id": "nd-3"},
+        ])
+        sent = repo.add_tracks.call_args[0][1]
+        assert sent[0]["library_file_id"] == "file-1"
+        assert sent[1]["library_file_id"] == "file-2"
+        assert "library_file_id" not in sent[2]
+
+    @pytest.mark.asyncio
+    async def test_explicit_library_file_id_wins(self, tmp_path):
+        service, repo = _make_service(tmp_path)
+        await service.add_tracks("p-1", _OWNER, [
+            {"track_name": "T", "artist_name": "A", "album_name": "AL",
+             "source_type": "local", "track_source_id": "file-1",
+             "library_file_id": "explicit"},
+        ])
+        sent = repo.add_tracks.call_args[0][1]
+        assert sent[0]["library_file_id"] == "explicit"
+
 
 class TestRemoveTrack:
     @pytest.mark.asyncio

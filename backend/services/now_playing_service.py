@@ -53,6 +53,9 @@ class _Entry(msgspec.Struct):
     progress_ms: int | None
     duration_ms: int | None
     updated_at: float
+    # library file id when the reporter knows it (compat clients); lets the
+    # Subsonic getNowPlaying endpoint serve a real Child for the session
+    track_file_id: str | None = None
 
 
 class ExternalSession(msgspec.Struct):
@@ -103,6 +106,7 @@ class NowPlayingService:
         is_paused: bool,
         progress_ms: int | None,
         duration_ms: int | None,
+        track_file_id: str | None = None,
     ) -> None:
         """Upsert a DroppedNeedle-origin session (native player or inbound compat)."""
         if user_id is not None and user_id not in self._visibility:
@@ -122,6 +126,7 @@ class NowPlayingService:
                 progress_ms=progress_ms,
                 duration_ms=duration_ms,
                 updated_at=time.time(),
+                track_file_id=track_file_id,
             )
         await self._publish()
 
@@ -187,6 +192,20 @@ class NowPlayingService:
     def snapshot(self) -> list[NowPlayingSnapshotEntry]:
         """Privacy-projected current sessions, for the GET hydrate endpoint."""
         return [p for e in self._entries.values() if (p := self._project(e)) is not None]
+
+    def compat_now_playing(self) -> list[tuple[NowPlayingSnapshotEntry, str, float]]:
+        """(projection, track_file_id, updated_at) for sessions Subsonic getNowPlaying
+        can serve: a library file id is known and the owner's visibility is full -
+        a redacted projection carries no track, so it is skipped, not leaked."""
+        out: list[tuple[NowPlayingSnapshotEntry, str, float]] = []
+        for e in self._entries.values():
+            if e.track_file_id is None:
+                continue
+            p = self._project(e)
+            if p is None or p.redacted:
+                continue
+            out.append((p, e.track_file_id, e.updated_at))
+        return out
 
     def _project(self, entry: _Entry) -> NowPlayingSnapshotEntry | None:
         if entry.user_id is None:

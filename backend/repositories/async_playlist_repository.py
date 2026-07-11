@@ -105,6 +105,18 @@ class AsyncPlaylistRepository:
             self._repo.batch_update_available_sources, playlist_id, updates,
         )
 
+    async def batch_link_library_files(
+        self,
+        playlist_id: str,
+        updates: dict[str, str],
+    ) -> int:
+        return await asyncio.to_thread(
+            self._repo.batch_link_library_files, playlist_id, updates,
+        )
+
+    async def get_streamable_counts(self) -> dict[str, tuple[int, int]]:
+        return await asyncio.to_thread(self._repo.get_streamable_counts)
+
     async def get_tracks(self, playlist_id: str) -> list[PlaylistTrackRecord]:
         return await asyncio.to_thread(self._repo.get_tracks, playlist_id)
 

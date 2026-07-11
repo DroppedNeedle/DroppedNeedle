@@ -40,6 +40,21 @@ async def test_search3_missing_query_pages_everything(compat_env):
     assert len(res["song"]) == 2
 
 
+async def test_search3_literal_quoted_empty_query_pages_everything(compat_env):
+    # Symfonium's full-library sync sends query=%22%22 - the literal two-character
+    # string '""' (sentriz/gonic#229 request logs). Treating it as a search term
+    # matched nothing and native-mode sync came back empty (issue #129).
+    res = _sub(_get(compat_env, "search3", query='""', songCount="100"))["searchResult3"]
+    assert len(res["artist"]) == 1
+    assert len(res["album"]) == 1
+    assert len(res["song"]) == 2
+
+
+async def test_search3_quoted_term_still_matches(compat_env):
+    res = _sub(_get(compat_env, "search3", query='"Radiohead"'))["searchResult3"]
+    assert any(a["name"] == "Radiohead" for a in res.get("artist", []))
+
+
 async def test_search2_file_structure(compat_env):
     res = _sub(_get(compat_env, "search2", query=""))["searchResult2"]
     assert res["album"][0]["isDir"] is True

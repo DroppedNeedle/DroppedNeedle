@@ -110,6 +110,15 @@ class SChild(msgspec.Struct, kw_only=True):
     musicBrainzId: str | None = None
 
 
+class SNowPlayingEntry(SChild, kw_only=True):
+    """getNowPlaying entry: a song Child plus session attribution."""
+
+    username: str = ""
+    minutesAgo: int = 0
+    playerId: int = 0
+    playerName: str | None = None
+
+
 class SGenre(msgspec.Struct, kw_only=True):
     value: str
     songCount: int = 0

@@ -40,6 +40,54 @@ async def test_authenticate_by_name_issues_token(compat_env):
     assert body["User"]["ServerId"] == SERVER_ID
 
 
+# Finamp hard-casts these; a missing/empty object crashes it with
+# "type 'Null' is not a subtype of type 'bool'" (issue #144). Field lists
+# verified against Finamp lib/models/jellyfin_models.dart.
+_FINAMP_REQUIRED_CONFIGURATION = {
+    "PlayDefaultAudioTrack": bool, "DisplayMissingEpisodes": bool,
+    "SubtitleMode": str, "DisplayCollectionsView": bool,
+    "EnableLocalPassword": bool, "HidePlayedInLatest": bool,
+    "RememberAudioSelections": bool, "RememberSubtitleSelections": bool,
+    "EnableNextEpisodeAutoPlay": bool,
+}
+_FINAMP_REQUIRED_SESSION = {
+    "UserId": str, "LastActivityDate": str, "SupportsRemoteControl": bool,
+    "IsActive": bool, "SupportsMediaControl": bool, "HasCustomDeviceName": bool,
+}
+
+
+async def test_authenticate_response_survives_finamp_parsing(compat_env):
+    r = compat_env.client.post(
+        "/jellyfin/Users/AuthenticateByName",
+        json={"Username": "alice", "Pw": compat_env.secret},
+        headers={"Authorization": 'MediaBrowser Client="Finamp", Device="iPhone", '
+                                  'DeviceId="dev-1", Version="0.6.25"'},
+    )
+    assert r.status_code == 200
+    body = _jbody(r)
+    config = body["User"]["Configuration"]
+    for field, typ in _FINAMP_REQUIRED_CONFIGURATION.items():
+        assert isinstance(config.get(field), typ), field
+    assert isinstance(body["User"]["HasConfiguredEasyPassword"], bool)
+    session = body["SessionInfo"]
+    for field, typ in _FINAMP_REQUIRED_SESSION.items():
+        assert isinstance(session.get(field), typ), field
+    assert session["UserId"] == body["User"]["Id"]
+    assert session["Client"] == "Finamp"
+    assert session["DeviceName"] == "iPhone"
+    assert session["DeviceId"] == "dev-1"
+
+
+async def test_users_me_includes_full_configuration(compat_env):
+    r = compat_env.client.get(
+        "/jellyfin/Users/Me", headers=_auth_header(compat_env.secret)
+    )
+    assert r.status_code == 200
+    config = _jbody(r)["Configuration"]
+    for field, typ in _FINAMP_REQUIRED_CONFIGURATION.items():
+        assert isinstance(config.get(field), typ), field
+
+
 async def test_lowercase_path_routes_case_insensitively(compat_env):
     # Feishin (and others) lowercase the whole URL path; real Jellyfin routes paths
     # case-insensitively, so /jellyfin/users/authenticatebyname must hit the handler.
