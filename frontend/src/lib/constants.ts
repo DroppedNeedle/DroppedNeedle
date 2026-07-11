@@ -321,6 +321,7 @@ export const API = {
 	playlists: {
 		list: () => '/api/v1/playlists',
 		create: () => '/api/v1/playlists',
+		generate: () => '/api/v1/playlists/generate',
 		detail: (id: string) => `/api/v1/playlists/${id}`,
 		update: (id: string) => `/api/v1/playlists/${id}`,
 		delete: (id: string) => `/api/v1/playlists/${id}`,

@@ -34,6 +34,10 @@ _FAST_SEED_ARTISTS = 2
 _TRACKS_PER_ARTIST_EXTERNAL = 5
 _MAX_PER_ARTIST = 4
 _MAX_CONSECUTIVE_SAME_ARTIST = 2
+# library-first pool depth: caps below keep the IN(...) placeholder count safe
+# (mbids are bound twice in get_files_by_artist_mbids; SQLite default cap is 999)
+_MAX_POOL_ARTISTS = 300
+_ADJACENT_GENRES = 6
 
 
 class RadioPlanService:
@@ -55,18 +59,32 @@ class RadioPlanService:
         self._lfm_repo = lfm_repo
         self._preview_repo = preview_repo
 
-    async def build_plan(self, user_id: str, request: RadioPlanRequest) -> RadioPlanResponse:
+    async def build_plan(
+        self, user_id: str, request: RadioPlanRequest, *, max_count: int = 50
+    ) -> RadioPlanResponse:
+        # max_count lets non-radio callers (Smart Mix saved playlists) ask for a
+        # deeper plan than the live-radio default cap of 50
         seeds, title = await self._expand_seeds(user_id, request)
-        if not seeds:
+        # library-mode genre stations can still fill from file-tag genre matches
+        # even when the genre index yields no seed artists - don't bail early
+        library_genre_station = request.mode == "library" and request.seed_type == "genre"
+        if not seeds and not library_genre_station:
             return RadioPlanResponse(title=title, tracks=[])
 
         exclude_recordings = {m.lower() for m in request.exclude_recording_mbids}
-        count = max(5, min(request.count, 50))
+        count = max(5, min(request.count, max_count))
 
         library_pool = await self._library_tracks(seeds, exclude_recordings)
         external_pool: list[RadioPlanTrack] = []
         if request.mode == "hybrid":
             external_pool = await self._external_tracks(seeds, exclude_recordings)
+        elif len(library_pool) < count:
+            # library-first: the seed pool alone is thin (a genre station samples
+            # only a few index artists) - deepen it from the user's own files.
+            # Pure library-DB work: fast, offline, no external calls.
+            library_pool = await self._library_first_pool(
+                request, seeds, library_pool, exclude_recordings, count
+            )
 
         tracks = self._mix(library_pool, external_pool, count, request.mode)
         return RadioPlanResponse(title=title, tracks=tracks)
@@ -195,8 +213,20 @@ class RadioPlanService:
         except Exception as e:  # noqa: BLE001
             logger.debug("Library radio pool failed: %s", e)
             return []
+        return self._rows_to_plan_tracks(rows, exclude_recordings, set())
+
+    @staticmethod
+    def _rows_to_plan_tracks(
+        rows: list[dict[str, Any]],
+        exclude_recordings: set[str],
+        seen_titles: set[str],
+    ) -> list[RadioPlanTrack]:
+        """Convert library_files rows into plan tracks, deduped by artist|title.
+
+        ``seen_titles`` is shared across pools so successive fills never re-add
+        a track already claimed by an earlier pool.
+        """
         tracks: list[RadioPlanTrack] = []
-        seen_titles: set[str] = set()
         for row in rows:
             recording = (row.get("recording_mbid") or "").lower()
             if recording and recording in exclude_recordings:
@@ -218,6 +248,83 @@ class RadioPlanService:
                 duration_s=row.get("duration_seconds"),
             ))
         return tracks
+
+    async def _library_first_pool(
+        self,
+        request: RadioPlanRequest,
+        seeds: list[tuple[str, str]],
+        base_pool: list[RadioPlanTrack],
+        exclude_recordings: set[str],
+        count: int,
+    ) -> list[RadioPlanTrack]:
+        """Deepen a thin library pool from the user's own files (library mode).
+
+        Genre stations pull EVERY library artist tagged with the genre plus
+        file-tag genre matches; artist/album/items stations pull artists
+        adjacent to the seeds through shared library genres. Everything here is
+        local SQLite - no external calls, so it also runs on ``fast`` plans.
+        Seed-artist tracks stay at the head; the widened pool is shuffled so the
+        _mix diversity pass has varied material.
+        """
+        if self._library_db is None:
+            return base_pool
+        seen_titles = {f"{t.artist_name.lower()}|{t.track_name.lower()}" for t in base_pool}
+        extra: list[RadioPlanTrack] = []
+        fetch_limit = max(count * 6, 200)
+        genre = request.seed_id if request.seed_type == "genre" else None
+        seed_mbids = {mbid for mbid, _ in seeds if mbid}
+
+        pool_artist_mbids: list[str] = []
+        if self._genre_index is not None:
+            try:
+                if genre:
+                    by_genre = await self._genre_index.get_artists_for_genres([genre])
+                    pool_artist_mbids = list(by_genre.get(genre.strip().lower(), []))
+                elif seed_mbids:
+                    genres_by_artist = await self._genre_index.get_genres_for_artists(
+                        sorted(seed_mbids)
+                    )
+                    adjacent_genres: list[str] = []
+                    seen_genres: set[str] = set()
+                    for artist_genres in genres_by_artist.values():
+                        for g in artist_genres:
+                            g_lower = g.strip().lower()
+                            if g_lower and g_lower not in seen_genres:
+                                seen_genres.add(g_lower)
+                                adjacent_genres.append(g)
+                    if adjacent_genres:
+                        by_genre = await self._genre_index.get_artists_for_genres(
+                            adjacent_genres[:_ADJACENT_GENRES]
+                        )
+                        seen_mbids: set[str] = set()
+                        for mbids in by_genre.values():
+                            for mbid in mbids:
+                                if mbid not in seen_mbids:
+                                    seen_mbids.add(mbid)
+                                    pool_artist_mbids.append(mbid)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("Library-first adjacency lookup failed: %s", e)
+
+        pool_artist_mbids = [m for m in pool_artist_mbids if m not in seed_mbids]
+        if pool_artist_mbids:
+            try:
+                rows = await self._library_db.get_files_by_artist_mbids(
+                    pool_artist_mbids[:_MAX_POOL_ARTISTS], limit=fetch_limit
+                )
+                extra.extend(self._rows_to_plan_tracks(rows, exclude_recordings, seen_titles))
+            except Exception as e:  # noqa: BLE001
+                logger.debug("Library-first artist pool failed: %s", e)
+
+        # file-tag genre matches catch tracks whose artists never made the index
+        if genre:
+            try:
+                rows = await self._library_db.get_files_by_genre(genre, limit=fetch_limit)
+                extra.extend(self._rows_to_plan_tracks(rows, exclude_recordings, seen_titles))
+            except Exception as e:  # noqa: BLE001
+                logger.debug("Library-first genre pool failed: %s", e)
+
+        random.shuffle(extra)
+        return base_pool + extra
 
     async def _artist_top_tracks(
         self, artist_mbid: str, artist_name: str
@@ -336,4 +443,36 @@ class RadioPlanService:
             per_artist[a_key] = per_artist.get(a_key, 0) + 1
             selected.append(track)
             stall = 0
+
+        if mode == "library" and len(selected) < count:
+            # relaxed fill (library mode only - hybrid stays as before): lift
+            # the per-artist cap (a library with few artists in a genre must
+            # still fill the station) but KEEP the consecutive-same-artist rule
+            # so diversity survives
+            remaining = [
+                t
+                for pool in pools
+                for t in pool
+                if f"{t.artist_name.lower()}|{t.track_name.lower()}" not in seen_keys
+            ]
+            progress = True
+            while len(selected) < count and remaining and progress:
+                progress = False
+                for i, track in enumerate(remaining):
+                    key = f"{track.artist_name.lower()}|{track.track_name.lower()}"
+                    if key in seen_keys:
+                        remaining.pop(i)
+                        progress = True
+                        break
+                    a_key = artist_key(track)
+                    recent = [artist_key(t) for t in selected[-_MAX_CONSECUTIVE_SAME_ARTIST:]]
+                    if len(recent) == _MAX_CONSECUTIVE_SAME_ARTIST and all(
+                        r == a_key for r in recent
+                    ):
+                        continue
+                    seen_keys.add(key)
+                    selected.append(track)
+                    remaining.pop(i)
+                    progress = True
+                    break
         return selected

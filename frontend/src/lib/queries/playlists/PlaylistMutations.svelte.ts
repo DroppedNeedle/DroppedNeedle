@@ -1,5 +1,11 @@
 import { createMutation } from '@tanstack/svelte-query';
-import { createPlaylist, setPlaylistPublic, type PlaylistSummary } from '$lib/api/playlists';
+import {
+	createPlaylist,
+	generateSmartMix,
+	setPlaylistPublic,
+	type GenerateSmartMixInput,
+	type PlaylistSummary
+} from '$lib/api/playlists';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { invalidateQueriesWithPersister } from '../QueryClient';
 import { PlaylistQueryKeyFactory } from './PlaylistQueryKeyFactory';
@@ -14,6 +20,12 @@ function invalidateList(): Promise<void> {
 export const createCreatePlaylistMutation = () =>
 	createMutation(() => ({
 		mutationFn: (name: string) => createPlaylist(name),
+		onSuccess: () => invalidateList()
+	}));
+
+export const createGenerateSmartMixMutation = () =>
+	createMutation(() => ({
+		mutationFn: (input: GenerateSmartMixInput) => generateSmartMix(input),
 		onSuccess: () => invalidateList()
 	}));
 

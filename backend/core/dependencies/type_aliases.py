@@ -50,6 +50,7 @@ from services.navidrome_playback_service import NavidromePlaybackService
 from services.plex_library_service import PlexLibraryService
 from services.plex_playback_service import PlexPlaybackService
 from services.playlist_service import PlaylistService
+from services.smart_playlist_service import SmartPlaylistService
 from services.lastfm_auth_service import LastFmAuthService
 from services.scrobble_service import ScrobbleService
 from services.cache_status_service import CacheStatusService
@@ -86,6 +87,7 @@ from .service_providers import (
     get_request_service,
     get_requests_page_service,
     get_playlist_service,
+    get_smart_playlist_service,
     get_library_service,
     get_status_service,
     get_home_service,
@@ -147,6 +149,7 @@ LastFmAuthServiceDep = Annotated[LastFmAuthService, Depends(get_lastfm_auth_serv
 ScrobbleServiceDep = Annotated[ScrobbleService, Depends(get_scrobble_service)]
 PlaylistRepositoryDep = Annotated[PlaylistRepository, Depends(get_playlist_repository)]
 PlaylistServiceDep = Annotated[PlaylistService, Depends(get_playlist_service)]
+SmartPlaylistServiceDep = Annotated[SmartPlaylistService, Depends(get_smart_playlist_service)]
 NavidromeRepositoryDep = Annotated[NavidromeRepository, Depends(get_navidrome_repository)]
 NavidromeLibraryServiceDep = Annotated[NavidromeLibraryService, Depends(get_navidrome_library_service)]
 NavidromePlaybackServiceDep = Annotated[NavidromePlaybackService, Depends(get_navidrome_playback_service)]

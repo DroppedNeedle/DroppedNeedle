@@ -844,6 +844,38 @@ def get_scrobble_service() -> "ScrobbleService":
 
 
 @singleton
+def get_smart_playlist_service() -> "SmartPlaylistService":
+    from services.smart_playlist_service import SmartPlaylistService
+    from services.discover.mbid_resolution_service import MbidResolutionService
+    from services.discover.radio_plan_service import RadioPlanService
+
+    library_db = get_library_db()
+    genre_index = get_genre_index()
+    mbid_svc = MbidResolutionService(
+        musicbrainz_repo=get_musicbrainz_repository(),
+        library_repo=get_library_repository(),
+        listenbrainz_repo=get_listenbrainz_repository(),
+        library_db=library_db,
+        mbid_store=get_mbid_store(),
+    )
+    radio_plan = RadioPlanService(
+        lb_repo=get_listenbrainz_repository(),
+        mb_repo=get_musicbrainz_repository(),
+        mbid_svc=mbid_svc,
+        library_db=library_db,
+        genre_index=genre_index,
+        lfm_repo=get_lastfm_repository(),
+        preview_repo=get_preview_repository(),
+    )
+    return SmartPlaylistService(
+        radio_plan=radio_plan,
+        playlist_service=get_playlist_service(),
+        genre_index=genre_index,
+        library_db=library_db,
+    )
+
+
+@singleton
 def get_discover_service() -> "DiscoverService":
     from services.discover_service import DiscoverService
     from services.discover.radio_service import DiscoverRadioService
