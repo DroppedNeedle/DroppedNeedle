@@ -1770,6 +1770,58 @@ export interface OperationResult {
 	message?: string | null;
 }
 
+// Acquisition plugins (hand-mirrors backend api/v1/schemas/plugins.py)
+export interface PluginInfo {
+	id: string;
+	name: string;
+	version: string;
+	builtin: boolean;
+	enabled: boolean;
+	loaded: boolean;
+	error?: string | null;
+	source: string;
+	api_version?: number | null;
+}
+
+export interface PluginListResponse {
+	plugins: PluginInfo[];
+	api_version: number;
+}
+
+export type PluginSettingsValue = string | number | boolean | null;
+
+export interface PluginSelectOption {
+	value: string | number;
+	label: string;
+}
+
+export interface PluginSettingsField {
+	key: string;
+	type: 'str' | 'int' | 'bool' | 'select' | 'secret';
+	label: string;
+	help: string;
+	default: PluginSettingsValue;
+	required: boolean;
+	options: PluginSelectOption[];
+}
+
+export interface PluginSettingsResponse {
+	id: string;
+	schema: PluginSettingsField[];
+	values: Record<string, PluginSettingsValue>;
+}
+
+export interface PluginToggleResponse {
+	id: string;
+	enabled: boolean;
+}
+
+export interface PluginTestResult {
+	valid: boolean;
+	message: string;
+	version?: string | null;
+}
+
 export interface SabnzbdConnectionSettings {
 	enabled: boolean;
 	client_type: string;

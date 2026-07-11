@@ -1,135 +1,130 @@
-"""Plugin API routes (phase 01b).
+"""Acquisition-plugin admin routes.
 
-Admin-only: list plugins, install one from GitHub, enable/disable, edit their
-settings (mask-sentinel for secret fields), uninstall. There is deliberately no
-route that makes a plugin acquire content (D22).
+Registry list, enable/disable, per-plugin settings (schema + values, secrets
+masked on GET / preserved on masked PUT) and connection test. All admin-gated,
+matching the other settings surfaces.
 """
 
-import asyncio
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from api.v1.schemas.plugins import (
-    PLUGIN_SECRET_MASK,
     PluginInfo,
-    PluginInstallRequest,
     PluginListResponse,
-    PluginSettingFieldInfo,
-    PluginUpdateRequest,
+    PluginSettingsResponse,
+    PluginSettingsUpdate,
+    PluginTestRequest,
+    PluginTestResponse,
+    PluginToggleResponse,
 )
-from api.v1.schemas.settings import PluginConfig
-from core.dependencies import get_plugin_host, get_preferences_service
-from api.v1.schemas.common import StatusMessageResponse
-from core.exceptions import ResourceNotFoundError, ValidationError
+from core.dependencies import get_plugin_manager
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from middleware import CurrentAdminDep
+from plugins.base import API_VERSION
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(route_class=MsgSpecRoute, prefix="/plugins", tags=["plugins"])
 
-# Route order: the literal path (/install) is declared before the /{plugin_name}
-# handlers, so a future GET /{plugin_name} can never swallow it.
 
-
-def _to_info(plugin, prefs) -> PluginInfo:  # noqa: ANN001 - LoadedPlugin / PreferencesService
-    manifest = plugin.manifest
-    config = prefs.get_plugin_config(manifest.name)
-    values: dict[str, str] = {}
-    for field in manifest.settings:
-        stored = config.settings.get(field.key, "")
-        values[field.key] = (PLUGIN_SECRET_MASK if stored else "") if field.secret else stored
+def _info(manager, record) -> PluginInfo:
+    plugin = record.plugin
     return PluginInfo(
-        name=manifest.name,
-        display_name=manifest.display_name,
-        version=manifest.version,
-        enabled=plugin.enabled,
-        capabilities=manifest.capabilities,
-        active_capabilities=plugin.active_capabilities,
-        description=manifest.description,
-        author=manifest.author,
-        homepage=manifest.homepage,
-        error=plugin.error,
-        settings_fields=[
-            PluginSettingFieldInfo(
-                key=f.key, label=f.label, help=f.help, secret=f.secret
-            )
-            for f in manifest.settings
-        ],
-        settings_values=values,
+        id=record.id,
+        name=record.name or record.id,
+        version=record.version,
+        builtin=record.builtin,
+        enabled=manager.is_enabled(record.id) if record.loaded else False,
+        loaded=record.loaded,
+        error=record.error,
+        source=record.source,
+        api_version=getattr(plugin, "api_version", None) if plugin else None,
     )
 
 
+def _record_or_404(manager, plugin_id: str):
+    record = manager.get_record(plugin_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Unknown plugin '{plugin_id}'")
+    return record
+
+
 @router.get("", response_model=PluginListResponse)
-async def list_plugins(
-    _: CurrentAdminDep,
-    host=Depends(get_plugin_host),
-    prefs=Depends(get_preferences_service),
+async def list_plugins(_: CurrentAdminDep, manager=Depends(get_plugin_manager)):
+    return PluginListResponse(
+        plugins=[_info(manager, r) for r in manager.list_records()],
+        api_version=API_VERSION,
+    )
+
+
+@router.post("/{plugin_id}/enable", response_model=PluginToggleResponse)
+async def enable_plugin(
+    plugin_id: str, _: CurrentAdminDep, manager=Depends(get_plugin_manager)
 ):
-    return PluginListResponse(plugins=[_to_info(p, prefs) for p in host.list_plugins()])
+    record = _record_or_404(manager, plugin_id)
+    if not record.loaded:
+        raise HTTPException(
+            status_code=409, detail=record.error or "Plugin failed to load"
+        )
+    manager.set_enabled(plugin_id, True)
+    return PluginToggleResponse(id=plugin_id, enabled=manager.is_enabled(plugin_id))
 
 
-@router.post("/install", response_model=PluginInfo, status_code=201)
-async def install_plugin(
-    _: CurrentAdminDep,
-    body: PluginInstallRequest = MsgSpecBody(PluginInstallRequest),
-    host=Depends(get_plugin_host),
-    prefs=Depends(get_preferences_service),
+@router.post("/{plugin_id}/disable", response_model=PluginToggleResponse)
+async def disable_plugin(
+    plugin_id: str, _: CurrentAdminDep, manager=Depends(get_plugin_manager)
 ):
-    """Download a public GitHub repo into the plugins folder. The code is stored,
-    never executed: the plugin arrives DISABLED and an admin must enable it,
-    exactly like a hand-copied folder."""
-    from infrastructure.http.client import HttpClientFactory
-    from infrastructure.plugins.host import PluginInstallError
-
-    http = HttpClientFactory.get_client(name="plugin-install", timeout=60.0)
-    try:
-        name = await host.install_from_github(body.repository_url, http)
-    except PluginInstallError as exc:
-        raise ValidationError(str(exc)) from exc
-    plugin = host.get(name)
-    if plugin is None:
-        raise ValidationError("The plugin installed but could not be read back")
-    return _to_info(plugin, prefs)
+    record = _record_or_404(manager, plugin_id)
+    if not record.loaded:
+        raise HTTPException(
+            status_code=409, detail=record.error or "Plugin failed to load"
+        )
+    manager.set_enabled(plugin_id, False)
+    return PluginToggleResponse(id=plugin_id, enabled=manager.is_enabled(plugin_id))
 
 
-@router.put("/{plugin_name}", response_model=PluginInfo)
-async def update_plugin(
-    plugin_name: str,
-    _: CurrentAdminDep,
-    body: PluginUpdateRequest = MsgSpecBody(PluginUpdateRequest),
-    host=Depends(get_plugin_host),
-    prefs=Depends(get_preferences_service),
+@router.get("/{plugin_id}/settings", response_model=PluginSettingsResponse)
+async def get_plugin_settings(
+    plugin_id: str, _: CurrentAdminDep, manager=Depends(get_plugin_manager)
 ):
-    plugin = host.get(plugin_name)
-    if plugin is None:
-        raise ResourceNotFoundError("Plugin not found")
-    current = prefs.get_plugin_config(plugin_name)
-    secret_keys = {f.key for f in plugin.manifest.settings if f.secret}
-    merged: dict[str, str] = {}
-    for key, value in body.settings.items():
-        if key in secret_keys and value == PLUGIN_SECRET_MASK:
-            merged[key] = current.settings.get(key, "")
-        else:
-            merged[key] = value
-    prefs.save_plugin_config(plugin_name, PluginConfig(enabled=body.enabled, settings=merged))
-    # reload so enable/disable and entrypoint changes apply immediately; module
-    # import is blocking work, so keep it off the event loop
-    await asyncio.to_thread(host.load_all)
-    refreshed = host.get(plugin_name)
-    if refreshed is None:
-        raise ResourceNotFoundError("Plugin not found")
-    return _to_info(refreshed, prefs)
+    record = _record_or_404(manager, plugin_id)
+    return PluginSettingsResponse(
+        id=plugin_id,
+        schema=manager.get_settings_schema(plugin_id),
+        values=manager.get_settings_values(record),  # secrets masked
+    )
 
 
-@router.delete("/{plugin_name}", response_model=StatusMessageResponse)
-async def uninstall_plugin(
-    plugin_name: str,
+@router.put("/{plugin_id}/settings", response_model=PluginSettingsResponse)
+async def update_plugin_settings(
+    plugin_id: str,
     _: CurrentAdminDep,
-    host=Depends(get_plugin_host),
+    body: PluginSettingsUpdate = MsgSpecBody(PluginSettingsUpdate),
+    manager=Depends(get_plugin_manager),
 ):
-    """Remove the plugin's folder. Its saved settings stay in config.json, so a
-    reinstall picks them back up."""
-    await asyncio.to_thread(host.uninstall, plugin_name)
-    return StatusMessageResponse(status="ok", message=f"Removed {plugin_name}")
+    record = _record_or_404(manager, plugin_id)
+    if not record.loaded:
+        raise HTTPException(
+            status_code=409, detail=record.error or "Plugin failed to load"
+        )
+    manager.save_settings(plugin_id, body.values)
+    return PluginSettingsResponse(
+        id=plugin_id,
+        schema=manager.get_settings_schema(plugin_id),
+        values=manager.get_settings_values(record),  # secrets masked
+    )
+
+
+@router.post("/{plugin_id}/test", response_model=PluginTestResponse)
+async def test_plugin(
+    plugin_id: str,
+    _: CurrentAdminDep,
+    body: PluginTestRequest = MsgSpecBody(PluginTestRequest),
+    manager=Depends(get_plugin_manager),
+):
+    """Tests the submitted values (masked secrets resolve to stored ones) without
+    saving; an empty body tests the currently saved configuration."""
+    _record_or_404(manager, plugin_id)
+    result = await manager.test(plugin_id, body.values or None)
+    return PluginTestResponse(valid=result.ok, message=result.message, version=result.version)

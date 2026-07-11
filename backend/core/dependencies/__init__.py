@@ -143,6 +143,10 @@ from .service_providers import (  # noqa: F401
     get_quota_service,
 )
 
+from .plugin_providers import (  # noqa: F401
+    get_plugin_manager,
+)
+
 from .type_aliases import (  # noqa: F401
     SettingsDep,
     CacheDep,

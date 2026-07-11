@@ -385,6 +385,12 @@ export const API = {
 	},
 	plugins: {
 		list: () => '/api/v1/plugins',
+		enable: (id: string) => `/api/v1/plugins/${id}/enable`,
+		disable: (id: string) => `/api/v1/plugins/${id}/disable`,
+		settings: (id: string) => `/api/v1/plugins/${id}/settings`,
+		test: (id: string) => `/api/v1/plugins/${id}/test`,
+		// manifest plugin API (PLUGINS.md, api_version 0) routes - kept so the
+		// existing manifest UI/queries type-check while the two APIs are reconciled
 		install: () => '/api/v1/plugins/install',
 		update: (name: string) => `/api/v1/plugins/${name}`,
 		uninstall: (name: string) => `/api/v1/plugins/${name}`

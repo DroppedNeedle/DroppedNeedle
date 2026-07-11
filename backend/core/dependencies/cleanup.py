@@ -63,6 +63,16 @@ async def init_app_state(app) -> None:
 
 
 async def cleanup_app_state() -> None:
+    # Give acquisition plugins their shutdown hook (best-effort; only if the
+    # manager was ever built - constructing it during teardown would be wasted work).
+    from .plugin_providers import get_plugin_manager
+
+    try:
+        if get_plugin_manager.cache_info().currsize:
+            await get_plugin_manager().shutdown_all()
+    except Exception as exc:  # noqa: BLE001 - cleanup must never abort shutdown
+        logger.error("Failed to shut down acquisition plugins during cleanup: %s", exc)
+
     # Graceful service shutdown
     try:
         queue_mgr = get_discover_queue_manager()

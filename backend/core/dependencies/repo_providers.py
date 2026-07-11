@@ -692,10 +692,18 @@ def get_download_client(client_type: str) -> "DownloadClientProtocol":
             raise ConfigurationError(f"Unknown download client type: {other!r}")
 
 
-# Fixed v1 source → client_type map (assembled in get_sources, dispatched here).
+# Fixed v1 source → client_type map (fallback for the built-in sources when the
+# plugin registry can't answer - should never happen once the manager has loaded).
 _SOURCE_CLIENT_TYPE = {"soulseek": "slskd", "usenet": "sabnzbd"}
 
 
 def get_download_client_for_source(source: str) -> "DownloadClientProtocol":
-    """Resolve the download client that owns a given acquisition source."""
+    """Resolve the download client that owns a given acquisition source, via the
+    plugin registry (source ids ARE plugin ids: 'soulseek'/'usenet' plus any
+    third-party plugin). Falls back to the fixed built-in map."""
+    from .plugin_providers import get_plugin_manager
+
+    plugin = get_plugin_manager().get_plugin(source)
+    if plugin is not None:
+        return plugin.get_download_client()
     return get_download_client(_SOURCE_CLIENT_TYPE.get(source, source))
