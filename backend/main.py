@@ -783,6 +783,7 @@ app = FastAPI(
     openapi_url="/api/v1/openapi.json",
     lifespan=lifespan,
     default_response_class=MsgSpecJSONResponse,
+    root_path=get_settings().base_path,
 )
 
 app.add_exception_handler(ClientDisconnectedError, client_disconnected_handler)

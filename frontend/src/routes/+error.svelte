@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Home, RotateCw } from 'lucide-svelte';
 	import { page } from '$app/state';
 
@@ -23,7 +24,7 @@
 	<h1 class="err-head">{heading}</h1>
 	<p class="err-blurb">{blurb}</p>
 	<div class="err-actions">
-		<a href="/" class="btn btn-ghost btn-sm">
+		<a href={resolve('/')} class="btn btn-ghost btn-sm">
 			<Home class="h-4 w-4" />
 			Home
 		</a>

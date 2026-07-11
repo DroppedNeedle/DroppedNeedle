@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import {
 		Download,
 		Music,
@@ -166,7 +167,7 @@
 
 	<div class="flex justify-end px-4 -mt-4 mb-4 sm:px-6 lg:px-8">
 		<a
-			href="/settings?tab=home"
+			href={resolve('/settings?tab=home')}
 			class="btn btn-ghost btn-sm gap-2 text-base-content/60 hover:text-base-content"
 			title="Choose which sections appear here"
 		>
@@ -211,7 +212,10 @@
 									<span class="badge badge-accent badge-lg">{feature}</span>
 								{/each}
 							</div>
-							<a href="/settings?tab=download-client" class="btn btn-accent btn-lg gap-2">
+							<a
+								href={resolve('/settings?tab=download-client')}
+								class="btn btn-accent btn-lg gap-2"
+							>
 								<Download class="h-5 w-5" />
 								Configure Download Client
 							</a>
@@ -342,14 +346,14 @@
 								Your library is empty. Add a library path and start a scan to fill it.
 							</p>
 							<div class="flex flex-wrap justify-center gap-2">
-								<a href="/settings?tab=library" class="btn btn-primary">Start scan</a>
-								<a href="/library" class="btn btn-ghost">Go to Library</a>
+								<a href={resolve('/settings?tab=library')} class="btn btn-primary">Start scan</a>
+								<a href={resolve('/library')} class="btn btn-ghost">Go to Library</a>
 							</div>
 						{:else}
 							<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
 								Your library is being prepared. An admin is setting things up - check back soon.
 							</p>
-							<a href="/library" class="btn btn-ghost">Go to Library</a>
+							<a href={resolve('/library')} class="btn btn-ghost">Go to Library</a>
 						{/if}
 					</div>
 				{/if}

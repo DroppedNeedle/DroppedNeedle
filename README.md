@@ -620,6 +620,8 @@ DroppedNeedle stores its config in `config/config.json` inside the mapped config
 | `PORT` | `8688` | Port the application listens on |
 | `TZ` | `Etc/UTC` | Container timezone |
 | `SLSKD_DOWNLOADS_PATH` | `/data/downloads/slskd` | Exact in-container path to slskd's completed downloads. The Compose example overrides this with `/data/slskd/complete`; keep either path inside the library's common-parent mount for fast moves. |
+| `TRUSTED_PROXY_IPS` | `*` | Comma-separated IPs/CIDRs trusted for `X-Forwarded-*` headers. Restrict to your proxy's IP in production. |
+| `BASE_PATH` | *(empty)* | Subpath to serve under behind a reverse proxy, e.g. `/droppedneedle`. Empty serves at the domain root. See [Serving Under a Subpath](#serving-under-a-subpath). |
 
 Run `id` on your host to find your PUID and PGID values.
 
@@ -635,6 +637,21 @@ and another trusted service share a group and both must modify the same media. A
 it makes new files writable by every local account allowed by the underlying filesystem.
 A move or metadata-preserving copy can retain a source file's existing mode, so `UMASK`
 is not a way to override permissions supplied by a download client.
+
+### Serving Under a Subpath
+
+By default DroppedNeedle is served at the root of its domain (`https://music.example.com/`).
+To serve it under a subpath instead (`https://example.com/droppedneedle/`), set `BASE_PATH`
+to that subpath and configure your reverse proxy to forward it **with the prefix stripped**.
+The single prebuilt image handles any subpath at runtime; no rebuild is needed. Example nginx:
+
+```nginx
+location /droppedneedle/ {
+    proxy_pass http://droppedneedle:8688/;  # trailing slash strips the prefix
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
 
 ### In-App Settings
 

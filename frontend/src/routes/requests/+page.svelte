@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { page } from '$app/state';
@@ -1041,7 +1042,7 @@
 						your quality cutoff.
 					</p>
 					{#if authStore.isAdmin}
-						<a href="/settings?tab=download-client" class="btn btn-sm btn-primary mt-4">
+						<a href={resolve('/settings?tab=download-client')} class="btn btn-sm btn-primary mt-4">
 							Open download settings
 						</a>
 					{/if}
@@ -1086,7 +1087,7 @@
 							</div>
 							<div class="flex-1 min-w-0">
 								<a
-									href="/album/{item.release_group_mbid}"
+									href={resolve(`/album/${item.release_group_mbid}`)}
 									class="block font-semibold text-sm truncate hover:text-accent hover:underline"
 								>
 									{item.album_title ?? 'Unknown album'}
@@ -1185,7 +1186,7 @@
 							</div>
 							<div class="flex-1 min-w-0">
 								<a
-									href="/artist/{item.artist_mbid}"
+									href={resolve(`/artist/${item.artist_mbid}`)}
 									class="block font-semibold text-sm truncate hover:text-accent hover:underline"
 									title={item.artist_name}>{item.artist_name}</a
 								>

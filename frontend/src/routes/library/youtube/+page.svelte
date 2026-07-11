@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { API } from '$lib/constants';
 	import { integrationStore } from '$lib/stores/integration';
@@ -169,7 +170,7 @@
 		<div class="alert alert-warning mb-4">
 			<Info class="h-4 w-4" />
 			<span
-				>YouTube is not enabled. <a href="/settings?tab=youtube" class="link"
+				>YouTube is not enabled. <a href={resolve('/settings?tab=youtube')} class="link"
 					>Enable it in settings</a
 				> to use YouTube features.</span
 			>
@@ -179,7 +180,7 @@
 			<Info class="h-4 w-4" />
 			<span
 				>YouTube API is not configured. You can add links manually, or <a
-					href="/settings?tab=youtube"
+					href={resolve('/settings?tab=youtube')}
 					class="link">enable the API in settings</a
 				> for auto-generation.</span
 			>

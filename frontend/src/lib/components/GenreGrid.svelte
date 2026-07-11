@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import GenreArtwork from '$lib/components/GenreArtwork.svelte';
 	import type { GenreArtwork as GenreArtworkModel } from '$lib/types';
 	import { getGenreGradient } from '$lib/utils/genreGradient';
@@ -25,7 +26,7 @@
 	<div class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-5">
 		{#each genres.slice(0, 20) as genre (genre.name)}
 			<a
-				href="/genre?name={encodeURIComponent(genre.name)}"
+				href={resolve(`/genre?name=${encodeURIComponent(genre.name)}`)}
 				class="genre-tile group relative isolate overflow-hidden rounded-xl text-white shadow-md transition-all duration-300 hover:shadow-xl hover:ring-2 hover:ring-white/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
 			>
 				<div class="aspect-16/10"></div>

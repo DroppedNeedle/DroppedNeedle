@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { isWhatsNewDismissed, dismissWhatsNew } from '$lib/stores/version.svelte';
 	import { renderMarkdown } from '$lib/utils/markdown';
@@ -78,7 +79,7 @@
 
 	function handleViewChangelog() {
 		handleDismiss();
-		goto('/settings?tab=about');
+		goto(resolve('/settings?tab=about'));
 	}
 </script>
 

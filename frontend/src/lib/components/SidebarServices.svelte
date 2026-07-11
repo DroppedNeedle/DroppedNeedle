@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { fromStore } from 'svelte/store';
 	import { Headphones, Disc3 } from 'lucide-svelte';
 	import { integrationStore } from '$lib/stores/integration';
@@ -47,7 +48,7 @@
 	{#if integrations.current.youtube}
 		<li>
 			<a
-				href="/library/youtube"
+				href={resolve('/library/youtube')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 				data-tip="YouTube"
 			>
@@ -66,7 +67,7 @@
 	{#if integrations.current.jellyfin}
 		<li>
 			<a
-				href="/library/jellyfin"
+				href={resolve('/library/jellyfin')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 				data-tip="Jellyfin"
 			>
@@ -96,7 +97,7 @@
 	{#if integrations.current.navidrome}
 		<li>
 			<a
-				href="/library/navidrome"
+				href={resolve('/library/navidrome')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 				data-tip="Navidrome"
 			>
@@ -126,7 +127,7 @@
 	{#if integrations.current.plex}
 		<li>
 			<a
-				href="/library/plex"
+				href={resolve('/library/plex')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 				data-tip="Plex"
 			>
@@ -156,7 +157,7 @@
 	{#if integrations.current.localfiles}
 		<li>
 			<a
-				href="/library/local"
+				href={resolve('/library/local')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 				data-tip="Local Files"
 			>

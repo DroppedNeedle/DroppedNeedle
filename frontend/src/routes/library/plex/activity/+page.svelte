@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
@@ -63,7 +64,7 @@
 
 <div class="container mx-auto space-y-6 p-6">
 	<div class="flex items-center gap-3">
-		<a href="/library/plex" class="btn btn-ghost btn-sm">← Back</a>
+		<a href={resolve('/library/plex')} class="btn btn-ghost btn-sm">← Back</a>
 		<PlexIcon class="h-6 w-6" style="color: rgb(var(--brand-plex));" />
 		<h1 class="text-2xl font-bold">Plex activity and analytics</h1>
 	</div>

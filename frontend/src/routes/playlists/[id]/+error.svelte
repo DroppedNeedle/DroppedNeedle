@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Music, ArrowLeft } from 'lucide-svelte';
 	import { page } from '$app/state';
 </script>
@@ -18,7 +19,7 @@
 			{/if}
 		</p>
 		<div class="flex items-center gap-2">
-			<a href="/playlists" class="btn btn-ghost btn-sm">
+			<a href={resolve('/playlists')} class="btn btn-ghost btn-sm">
 				<ArrowLeft class="h-4 w-4" />
 				Back to Playlists
 			</a>

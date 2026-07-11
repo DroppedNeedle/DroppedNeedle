@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import {
 		isRedactedPlaylist,
@@ -61,7 +62,7 @@
 			const created = await createMutation.mutateAsync(trimmed);
 			newName = '';
 			showNewInput = false;
-			await goto(`/playlists/${created.id}`);
+			await goto(resolve(`/playlists/${created.id}`));
 		} catch (_e) {
 			toastStore.show({ message: "Couldn't create the playlist", type: 'error' });
 		}
@@ -90,7 +91,7 @@
 		<div class="flex items-center gap-2">
 			{#if spotifyLinked}
 				<a
-					href="/playlists/spotify"
+					href={resolve('/playlists/spotify')}
 					class="btn btn-sm gap-1.5 bg-green-600 text-white hover:bg-green-500"
 				>
 					<SpotifyIcon class="h-3.5 w-3.5" />

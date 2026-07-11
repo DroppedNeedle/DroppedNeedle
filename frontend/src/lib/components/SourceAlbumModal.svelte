@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Shuffle, Play, X, ListPlus, ListStart, ListMusic, Info, Download } from 'lucide-svelte';
 	import { goto } from '$app/navigation';
 	import { API } from '$lib/constants';
@@ -201,10 +202,10 @@
 		if (mbid) {
 			const target = mbid;
 			handleClose();
-			goto(`/album/${target}`);
+			goto(resolve(`/album/${target}`));
 		} else if (albumName) {
 			handleClose();
-			goto(`/search?q=${encodeURIComponent(albumName)}`);
+			goto(resolve(`/search?q=${encodeURIComponent(albumName)}`));
 		}
 	}
 
@@ -212,7 +213,7 @@
 		if (!canNavigateArtist || !artistMbid) return;
 		const target = artistMbid;
 		handleClose();
-		goto(`/artist/${target}`);
+		goto(resolve(`/artist/${target}`));
 	}
 
 	async function launchInstantMix() {

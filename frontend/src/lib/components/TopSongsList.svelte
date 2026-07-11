@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import type { TopSong, ResolvedTrack } from '$lib/types';
 	import type { QueueItem, SourceType } from '$lib/player/types';
 	import { API } from '$lib/constants';
@@ -135,7 +136,7 @@
 		<div class="bg-base-200 rounded-lg p-4 text-center flex-1 flex items-center justify-center">
 			<div>
 				<p class="text-base-content/70 text-sm">Connect a music service to see popular songs</p>
-				<a href="/profile#scrobbling" class="btn btn-primary btn-xs mt-2">Configure</a>
+				<a href={resolve('/profile#scrobbling')} class="btn btn-primary btn-xs mt-2">Configure</a>
 			</div>
 		</div>
 	{:else if songs.length === 0}

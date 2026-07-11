@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Disc3, Users, Music2, ArrowUpRight } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
@@ -180,7 +181,7 @@
      context so they can't paint over the library search dropdown above them -->
 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 isolate">
 	<a
-		href="/library/albums"
+		href={resolve('/library/albums')}
 		class="group relative flex min-h-[27rem] flex-col overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-br from-primary/20 via-primary/5 to-base-200/40 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-primary/40 hover:shadow-2xl focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none"
 		aria-label="Browse all albums"
 	>
@@ -214,7 +215,7 @@
 	</a>
 
 	<a
-		href="/library/artists"
+		href={resolve('/library/artists')}
 		class="group relative flex min-h-[27rem] flex-col overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-br from-accent/20 via-accent/5 to-base-200/40 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-accent/40 hover:shadow-2xl focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none"
 		aria-label="Browse all artists"
 	>
@@ -248,7 +249,7 @@
 	</a>
 
 	<a
-		href="/library/tracks"
+		href={resolve('/library/tracks')}
 		class="group relative col-span-1 flex items-center gap-4 overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-r from-info/15 via-info/5 to-base-200/40 px-6 py-5 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-info/40 hover:shadow-2xl focus-visible:ring-2 focus-visible:ring-info focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none sm:col-span-2 sm:gap-8 sm:px-8"
 		aria-label="Browse all tracks"
 	>

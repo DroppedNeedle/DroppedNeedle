@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
@@ -148,7 +149,7 @@
 	<div class="flex items-center gap-4 mb-6">
 		<button
 			class="btn btn-ghost btn-circle"
-			onclick={() => goto('/library')}
+			onclick={() => goto(resolve('/library'))}
 			aria-label="Back to library"
 		>
 			<ChevronLeft class="w-6 h-6" />

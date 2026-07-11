@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../../auth.css';
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { ApiError } from '$lib/api/client';
@@ -36,7 +37,7 @@
 			});
 			authStore.setUser(toAuthUser(data.user));
 			authStore.setSetupRequired(false);
-			goto('/');
+			goto(resolve('/'));
 		} catch (e) {
 			error =
 				e instanceof ApiError ? e.message : 'Could not reach the server. Is DroppedNeedle running?';

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
 	import SourceArtistCard from '$lib/components/SourceArtistCard.svelte';
@@ -61,7 +62,7 @@
 		class="mb-6 rounded-xl bg-base-200/30 backdrop-blur-sm border border-base-content/5 px-5 py-4 shadow-sm flex items-center gap-3"
 	>
 		<a
-			href="/library/navidrome"
+			href={resolve('/library/navidrome')}
 			class="btn btn-ghost btn-sm gap-1"
 			aria-label="Back to Navidrome library"
 		>

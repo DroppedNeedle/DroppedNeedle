@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Trash2, TriangleAlert, Users, Waypoints } from 'lucide-svelte';
 
 	import { toastStore } from '$lib/stores/toast';
@@ -105,7 +106,8 @@
 		</p>
 		<p class="mt-1 max-w-2xl text-sm text-base-content/50">
 			These are server-wide switches. Each person creates their own app-password from their
-			<a href="/profile#connect-apps" class="link link-accent">Profile → Connect Apps</a>.
+			<a href={resolve('/profile#connect-apps')} class="link link-accent">Profile → Connect Apps</a
+			>.
 		</p>
 	</header>
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
 	import { playerStore } from '$lib/stores/player.svelte';
@@ -367,7 +368,7 @@
 				</button>
 				{#if isMbid(album.musicbrainz_id)}
 					<a
-						href="/album/{album.musicbrainz_id}"
+						href={resolve(`/album/${album.musicbrainz_id}`)}
 						class="mt-2 block truncate text-sm font-semibold transition-colors hover:text-accent hover:underline"
 						title={album.name}>{album.name}</a
 					>
@@ -376,7 +377,7 @@
 				{/if}
 				{#if isMbid(album.artist_mbid)}
 					<a
-						href="/artist/{album.artist_mbid}"
+						href={resolve(`/artist/${album.artist_mbid}`)}
 						class="block truncate text-xs text-base-content/55 transition-colors hover:text-accent hover:underline"
 						title={album.artist_name}>{album.artist_name}</a
 					>
@@ -458,8 +459,9 @@
 				<div>
 					<p class="font-semibold">No local music yet</p>
 					<p class="text-sm text-base-content/55">
-						Add a music folder in <a href="/settings?tab=library" class="link link-accent"
-							>Settings &rarr; Library</a
+						Add a music folder in <a
+							href={resolve('/settings?tab=library')}
+							class="link link-accent">Settings &rarr; Library</a
 						>, then run a scan.
 					</p>
 				</div>

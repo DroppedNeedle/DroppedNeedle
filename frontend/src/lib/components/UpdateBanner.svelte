@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { serviceStatusStore } from '$lib/stores/serviceStatus';
 	import { fromStore } from 'svelte/store';
 	import { PersistedState } from 'runed';
@@ -45,7 +46,7 @@
 					<span class="font-semibold">({latestVersion})</span>
 				{/if}
 			</span>
-			<a href="/settings?tab=about" class="btn btn-accent btn-xs btn-outline">Details</a>
+			<a href={resolve('/settings?tab=about')} class="btn btn-accent btn-xs btn-outline">Details</a>
 			<button
 				class="btn btn-ghost btn-sm btn-circle"
 				onclick={dismiss}

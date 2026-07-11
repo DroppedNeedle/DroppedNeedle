@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Heart, X, ArrowLeft, DownloadCloud } from 'lucide-svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
@@ -31,7 +32,11 @@
 
 <div class="mx-auto w-full max-w-6xl px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
 	<div class="mb-6 flex items-center gap-3">
-		<a href="/following" class="btn btn-ghost btn-sm btn-circle" aria-label="Back to Following">
+		<a
+			href={resolve('/following')}
+			class="btn btn-ghost btn-sm btn-circle"
+			aria-label="Back to Following"
+		>
 			<ArrowLeft class="h-5 w-5" />
 		</a>
 		<Heart class="h-6 w-6 text-primary" aria-hidden="true" />
@@ -75,7 +80,7 @@
 				{@const chip = stateChip(a)}
 				<div class="group flex flex-col gap-2">
 					<div class="relative overflow-hidden rounded-2xl">
-						<a href="/artist/{a.mbid}" aria-label="Open {a.name}">
+						<a href={resolve(`/artist/${a.mbid}`)} aria-label="Open {a.name}">
 							<ArtistImage
 								mbid={a.mbid}
 								alt={a.name}
@@ -92,7 +97,9 @@
 							<X class="h-3.5 w-3.5" />
 						</button>
 					</div>
-					<a href="/artist/{a.mbid}" class="truncate font-semibold hover:underline">{a.name}</a>
+					<a href={resolve(`/artist/${a.mbid}`)} class="truncate font-semibold hover:underline"
+						>{a.name}</a
+					>
 					{#if chip}
 						<span class="badge badge-sm {chip.cls} w-fit">{chip.label}</span>
 					{/if}

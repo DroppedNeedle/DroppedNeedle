@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { FolderLock, RotateCcw, TimerOff, X } from 'lucide-svelte';
 
 	import {
@@ -130,7 +131,7 @@
 
 	<div class="flex shrink-0 items-center gap-1.5">
 		{#if isReview}
-			<a href="/downloads" class="btn btn-primary btn-xs">
+			<a href={resolve('/downloads')} class="btn btn-primary btn-xs">
 				{isManagementHold ? 'Review organizer' : 'Review'}
 			</a>
 		{/if}

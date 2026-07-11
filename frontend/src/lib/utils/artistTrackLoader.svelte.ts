@@ -15,6 +15,7 @@ import {
 } from '$lib/player/queueHelpers';
 import type { TrackMeta } from '$lib/player/queueHelpers';
 import { API } from '$lib/constants';
+import { getApiUrl } from '$lib/api/api-utils';
 import { api } from '$lib/api/client';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 
@@ -66,7 +67,10 @@ async function fetchAlbumTracksForSource(
 				return buildQueueItemsFromLocal(match.tracks, meta);
 			}
 			case 'navidrome': {
-				const url = new URL(API.navidromeLibrary.albumMatch(mbid), window.location.origin);
+				const url = new URL(
+					getApiUrl(API.navidromeLibrary.albumMatch(mbid)),
+					window.location.origin
+				);
 				url.searchParams.set('name', release.title);
 				url.searchParams.set('artist', artistName);
 				const match = await api.global.get<NavidromeAlbumMatch>(url.toString(), { signal });
@@ -82,7 +86,7 @@ async function fetchAlbumTracksForSource(
 				return buildQueueItemsFromJellyfin(match.tracks, meta);
 			}
 			case 'plex': {
-				const url = new URL(API.plexLibrary.albumMatch(mbid), window.location.origin);
+				const url = new URL(getApiUrl(API.plexLibrary.albumMatch(mbid)), window.location.origin);
 				url.searchParams.set('name', release.title);
 				url.searchParams.set('artist', artistName);
 				const match = await api.global.get<PlexAlbumMatch>(url.toString(), { signal });

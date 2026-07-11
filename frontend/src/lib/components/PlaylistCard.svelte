@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onDestroy } from 'svelte';
 	import type { PlaylistSummary } from '$lib/api/playlists';
 	import { fetchPlaylist, deletePlaylist, isRedactedPlaylist } from '$lib/api/playlists';
@@ -151,7 +152,7 @@
 		: 'oklch(from var(--color-primary) l c h / 0.15)'}
 >
 	<a
-		href="/playlists/{playlist.id}"
+		href={resolve(`/playlists/${playlist.id}`)}
 		class="block relative z-0 transition-transform active:scale-95 focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 rounded-t-box"
 		aria-label="Open {playlist.name}"
 	>

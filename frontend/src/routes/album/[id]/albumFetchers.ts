@@ -12,6 +12,7 @@ import type {
 } from '$lib/types';
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
+import { getApiUrl } from '$lib/api/api-utils';
 import { compareDiscTrack } from '$lib/player/queueHelpers';
 
 export { fetchAlbumTracks } from '$lib/api/albums';
@@ -82,7 +83,10 @@ export async function fetchNavidromeMatch(
 	opts: { albumTitle?: string; artistName?: string },
 	signal?: AbortSignal
 ): Promise<NavidromeAlbumMatch | null> {
-	const matchUrl = new URL(API.navidromeLibrary.albumMatch(albumId), window.location.origin);
+	const matchUrl = new URL(
+		getApiUrl(API.navidromeLibrary.albumMatch(albumId)),
+		window.location.origin
+	);
 	if (opts.albumTitle) matchUrl.searchParams.set('name', opts.albumTitle);
 	if (opts.artistName) matchUrl.searchParams.set('artist', opts.artistName);
 	return api.get<NavidromeAlbumMatch>(matchUrl.toString(), { signal });
@@ -93,7 +97,7 @@ export async function fetchPlexMatch(
 	opts: { albumTitle?: string; artistName?: string },
 	signal?: AbortSignal
 ): Promise<PlexAlbumMatch | null> {
-	const matchUrl = new URL(API.plexLibrary.albumMatch(albumId), window.location.origin);
+	const matchUrl = new URL(getApiUrl(API.plexLibrary.albumMatch(albumId)), window.location.origin);
 	if (opts.albumTitle) matchUrl.searchParams.set('name', opts.albumTitle);
 	if (opts.artistName) matchUrl.searchParams.set('artist', opts.artistName);
 	return api.get<PlexAlbumMatch>(matchUrl.toString(), { signal });

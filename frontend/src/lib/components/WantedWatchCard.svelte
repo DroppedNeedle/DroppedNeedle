@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import AlbumImage from './AlbumImage.svelte';
 	import {
@@ -54,7 +55,7 @@
 
 	<div class="flex-1 min-w-0">
 		<a
-			href="/album/{item.release_group_mbid}"
+			href={resolve(`/album/${item.release_group_mbid}`)}
 			class="block font-semibold text-sm truncate hover:text-accent hover:underline"
 			title={item.album_title}
 		>
@@ -109,7 +110,7 @@
 
 		{#if item.new_candidate_count > 0}
 			<a
-				href="/album/{item.release_group_mbid}"
+				href={resolve(`/album/${item.release_group_mbid}`)}
 				class="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-full bg-accent/15 text-accent text-xs font-medium hover:bg-accent/25"
 				onclick={() => onseen?.(item)}
 			>

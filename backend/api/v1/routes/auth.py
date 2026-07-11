@@ -490,7 +490,9 @@ async def oidc_callback(
         raise HTTPException(status_code = status.HTTP_401_UNAUTHORIZED, detail = "OIDC authentication failed")
     except ExternalServiceError:
         raise HTTPException(status_code = status.HTTP_503_SERVICE_UNAVAILABLE, detail = "OIDC provider unavailable")
-    return responses.RedirectResponse(url = f"/auth/callback?code={exchange_code}")
+    return responses.RedirectResponse(
+        request.url_for("serve_spa_routes", full_path="auth/callback").include_query_params(code=exchange_code)
+    )
 
 
 @router.post("/oidc/exchange", response_model = AuthResponse)

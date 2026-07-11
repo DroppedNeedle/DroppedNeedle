@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Heart, ArrowRight, CalendarClock, Check, Disc3, ExternalLink } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
@@ -95,7 +96,7 @@
 				class="group/card relative rounded-2xl border border-base-300 bg-base-200/40 p-4 transition-colors hover:border-primary sm:p-5"
 			>
 				<a
-					href="/following/new-releases"
+					href={resolve('/following/new-releases')}
 					class="mb-3 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-2xl after:content-['']"
 				>
 					<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">
@@ -118,7 +119,7 @@
 					<div class="relative z-10 grid grid-cols-3 gap-3 sm:grid-cols-5">
 						{#each releases as release, index (release.release_group_mbid)}
 							<a
-								href="/album/{release.release_group_mbid}"
+								href={resolve(`/album/${release.release_group_mbid}`)}
 								class="group flex flex-col gap-1.5 {heroGrid && index === 0
 									? 'col-span-2 row-span-2'
 									: ''}"
@@ -171,7 +172,7 @@
 				class="group/card relative rounded-2xl border border-base-300 bg-base-200/40 p-4 transition-colors hover:border-primary sm:p-5"
 			>
 				<a
-					href="/following/events"
+					href={resolve('/following/events')}
 					class="mb-3 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-2xl after:content-['']"
 				>
 					<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">
@@ -205,7 +206,7 @@
 										{monthShort(concert.local_date)}
 									</span>
 								</div>
-								<a href="/artist/{concert.artist_mbid}" class="shrink-0">
+								<a href={resolve(`/artist/${concert.artist_mbid}`)} class="shrink-0">
 									<ArtistImage
 										mbid={concert.artist_mbid}
 										alt={concert.artist_name}
@@ -215,7 +216,7 @@
 								</a>
 								<div class="min-w-0 flex-1">
 									<a
-										href="/artist/{concert.artist_mbid}"
+										href={resolve(`/artist/${concert.artist_mbid}`)}
 										class="block truncate font-semibold hover:text-primary"
 									>
 										{concert.artist_name}
@@ -245,7 +246,7 @@
 					</p>
 				{:else if authStore.isAdmin}
 					<a
-						href="/settings?tab=events"
+						href={resolve('/settings?tab=events')}
 						class="relative z-10 flex items-center gap-3 rounded-2xl border border-dashed border-base-300 p-4 text-sm text-base-content/60 transition-colors hover:border-primary hover:text-primary"
 					>
 						<CalendarClock class="h-5 w-5 shrink-0" aria-hidden="true" />
@@ -259,7 +260,7 @@
 				class="group/card relative rounded-2xl border border-base-300 bg-base-200/40 p-4 transition-colors hover:border-primary sm:p-5"
 			>
 				<a
-					href="/following/artists"
+					href={resolve('/following/artists')}
 					class="mb-3 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-2xl after:content-['']"
 				>
 					<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">
@@ -277,13 +278,17 @@
 				</a>
 				<div class="relative z-10 flex flex-wrap items-center gap-2">
 					{#each artists.slice(0, AVATAR_ROW) as artist (artist.mbid)}
-						<a href="/artist/{artist.mbid}" title={artist.name} aria-label="Open {artist.name}">
+						<a
+							href={resolve(`/artist/${artist.mbid}`)}
+							title={artist.name}
+							aria-label="Open {artist.name}"
+						>
 							<ArtistImage mbid={artist.mbid} alt={artist.name} size="xs" rounded="full" />
 						</a>
 					{/each}
 					{#if artists.length > AVATAR_ROW}
 						<a
-							href="/following/artists"
+							href={resolve('/following/artists')}
 							class="badge badge-lg border-base-300 bg-base-200 py-4 font-medium hover:border-primary hover:text-primary"
 						>
 							+{artists.length - AVATAR_ROW}

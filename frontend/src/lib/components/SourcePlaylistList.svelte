@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { resolve } from '$app/paths';
 	import { ApiError } from '$lib/api/client';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import SourcePlaylistCard from '$lib/components/SourcePlaylistCard.svelte';
@@ -11,7 +12,10 @@
 		source: SourcePlaylistSource;
 		sourceLabel: string;
 		backFallback: string;
-		playlistBaseHref: string;
+		playlistBaseHref:
+			| '/library/jellyfin/playlists'
+			| '/library/navidrome/playlists'
+			| '/library/plex/playlists';
 		icon: Snippet;
 	}
 
@@ -64,7 +68,7 @@
 			</p>
 			<div class="mt-4 flex flex-wrap justify-center gap-2">
 				{#if relinkRequired}
-					<a class="btn btn-primary btn-sm gap-2" href="/profile#media-accounts">
+					<a class="btn btn-primary btn-sm gap-2" href={resolve('/profile#media-accounts')}>
 						<Link2 class="h-4 w-4" />
 						Reconnect account
 					</a>
@@ -86,7 +90,7 @@
 			</p>
 			<div class="mt-4 flex flex-wrap justify-center gap-2">
 				{#if collection}
-					<a class="btn btn-primary btn-sm gap-2" href="/profile#media-accounts">
+					<a class="btn btn-primary btn-sm gap-2" href={resolve('/profile#media-accounts')}>
 						<Link2 class="h-4 w-4" />
 						{collection.account_mode === 'shared' ? 'Link your account' : 'Manage account'}
 					</a>
@@ -100,7 +104,7 @@
 	{:else}
 		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
 			{#each playlists as playlist (playlist.id)}
-				<SourcePlaylistCard {playlist} href="{playlistBaseHref}/{playlist.id}" />
+				<SourcePlaylistCard {playlist} href={resolve(`${playlistBaseHref}/${playlist.id}`)} />
 			{/each}
 		</div>
 	{/if}

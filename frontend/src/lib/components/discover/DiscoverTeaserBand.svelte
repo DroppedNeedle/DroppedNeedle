@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { Compass, Sparkles } from 'lucide-svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
@@ -32,7 +33,7 @@
 </script>
 
 <a
-	href="/discover"
+	href={resolve('/discover')}
 	class="group relative block overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-r from-primary/10 via-base-200/60 to-secondary/10 shadow-[0_4px_24px_oklch(from_var(--color-primary)_l_c_h_/_0.08)] transition-all duration-300 motion-safe:hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_8px_32px_oklch(from_var(--color-primary)_l_c_h_/_0.15)]"
 >
 	<div class="flex flex-col items-center gap-4 px-5 py-6 sm:flex-row sm:gap-6 sm:px-7">

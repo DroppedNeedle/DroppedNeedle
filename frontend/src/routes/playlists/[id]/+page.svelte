@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
@@ -244,7 +245,7 @@
 				queryKey: PlaylistQueryKeyFactory.list(authStore.user?.id)
 			});
 			toastStore.show({ message: 'Playlist deleted', type: 'success' });
-			await goto('/playlists');
+			await goto(resolve('/playlists'));
 		} catch {
 			toastStore.show({ message: "Couldn't delete the playlist", type: 'error' });
 		} finally {

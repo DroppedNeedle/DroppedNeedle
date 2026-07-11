@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { ChevronLeft, Disc3, Search, X } from 'lucide-svelte';
@@ -67,7 +68,7 @@
 	<div class="flex items-center gap-4 mb-6">
 		<button
 			class="btn btn-ghost btn-circle"
-			onclick={() => goto('/library')}
+			onclick={() => goto(resolve('/library'))}
 			aria-label="Back to library"
 		>
 			<ChevronLeft class="w-6 h-6" />

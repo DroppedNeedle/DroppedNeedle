@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import {
 		Shuffle,
 		Pencil,
@@ -125,13 +126,13 @@
 		if (!canNavigate || !link) return;
 		const albumId = link.album_id;
 		handleClose();
-		goto(`/album/${albumId}`);
+		goto(resolve(`/album/${albumId}`));
 	}
 
 	function searchArtist(): void {
 		if (!link) return;
 		handleClose();
-		goto(`/search?q=${encodeURIComponent(link.artist_name)}`);
+		goto(resolve(`/search?q=${encodeURIComponent(link.artist_name)}`));
 	}
 
 	async function playFullAlbum(): Promise<void> {

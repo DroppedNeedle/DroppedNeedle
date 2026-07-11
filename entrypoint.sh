@@ -27,6 +27,24 @@ PGID=${PGID:-1000}
 case "$PUID" in ''|*[!0-9]*) echo "[init] FATAL: PUID='$PUID' is not a valid numeric UID."; exit 1;; esac
 case "$PGID" in ''|*[!0-9]*) echo "[init] FATAL: PGID='$PGID' is not a valid numeric GID."; exit 1;; esac
 
+# Rewrite the frontend's build-time base-path placeholder (baked by the Dockerfile) to
+# the runtime BASE_PATH, so one image serves any reverse-proxy subpath. Empty = root.
+apply_base_path() {
+    _static="/app/static"
+    [ -d "$_static" ] || return 0
+    _base=$(printf '%s' "${BASE_PATH:-}" | sed 's#/*$##')
+    case "$_base" in ""|/*) ;; *) _base="/$_base" ;; esac
+    _files=$(grep -rlF '/__DN_BASE_PATH__' "$_static" 2>/dev/null || true)
+    [ -n "$_files" ] || return 0
+    printf '%s\n' "$_files" | while IFS= read -r _f; do
+        if ! sed -i "s#/__DN_BASE_PATH__#${_base}#g" "$_f" 2>/dev/null; then
+            echo "[init] WARNING: could not rewrite '$_f' for BASE_PATH (not writable?); frontend may be broken."
+        fi
+    done
+    echo "[init] Serving frontend under base path '${_base:-/}'."
+}
+apply_base_path || true
+
 check_writable() {
     _dir="$1"
     _identity="$2"

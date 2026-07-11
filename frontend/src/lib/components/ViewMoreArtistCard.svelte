@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { colors } from '$lib/colors';
@@ -13,7 +14,7 @@
 	function handleClick() {
 		const query = page.url.searchParams.get('q') || '';
 		if (query) {
-			goto(`/search/artists?q=${encodeURIComponent(query)}`);
+			goto(resolve(`/search/artists?q=${encodeURIComponent(query)}`));
 		}
 	}
 </script>

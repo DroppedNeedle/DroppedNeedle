@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
 	import { buildDiscoveryQueueFromJellyfin } from '$lib/player/queueHelpers';
@@ -172,7 +173,7 @@
 		class="mb-6 rounded-xl bg-base-200/30 backdrop-blur-sm border border-base-content/5 px-5 py-4 shadow-sm flex items-center gap-3"
 	>
 		<a
-			href="/library/jellyfin"
+			href={resolve('/library/jellyfin')}
 			class="btn btn-ghost btn-sm gap-1"
 			aria-label="Back to Jellyfin library"
 		>

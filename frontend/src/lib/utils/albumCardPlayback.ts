@@ -1,5 +1,6 @@
 import { get } from 'svelte/store';
 import { API } from '$lib/constants';
+import { getApiUrl } from '$lib/api/api-utils';
 import { api } from '$lib/api/client';
 import { integrationStore } from '$lib/stores/integration';
 import { playerStore } from '$lib/stores/player.svelte';
@@ -121,7 +122,10 @@ export async function fetchAlbumQueueItems(
 	}
 
 	if (status.navidrome) {
-		const url = new URL(API.navidromeLibrary.albumMatch(meta.mbid), window.location.origin);
+		const url = new URL(
+			getApiUrl(API.navidromeLibrary.albumMatch(meta.mbid)),
+			window.location.origin
+		);
 		if (meta.albumName) url.searchParams.set('name', meta.albumName);
 		if (meta.artistName) url.searchParams.set('artist', meta.artistName);
 		probes.push(
@@ -154,7 +158,10 @@ export async function fetchAlbumQueueItems(
 	}
 
 	if (status.plex) {
-		const plexUrl = new URL(API.plexLibrary.albumMatch(meta.mbid), window.location.origin);
+		const plexUrl = new URL(
+			getApiUrl(API.plexLibrary.albumMatch(meta.mbid)),
+			window.location.origin
+		);
 		if (meta.albumName) plexUrl.searchParams.set('name', meta.albumName);
 		if (meta.artistName) plexUrl.searchParams.set('artist', meta.artistName);
 		probes.push(
