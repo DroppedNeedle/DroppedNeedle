@@ -131,12 +131,14 @@ class ListenBrainzRepository:
         username: str = "",
         user_token: str = "",
         fallback_token_provider: "Callable[[], Awaitable[str | None]] | None" = None,
+        base_url: str = LISTENBRAINZ_API_URL,
     ):
         self._client = http_client
         self._cache = cache
         self._username = username
         self._user_token = user_token
-        self._base_url = LISTENBRAINZ_API_URL
+        # admin-configurable endpoint (self-hosted ListenBrainz); official host default
+        self._base_url = base_url.rstrip("/") if base_url else LISTENBRAINZ_API_URL
         self._request_semaphore = asyncio.Semaphore(2)
         # borrowed token for PUBLIC reads when this (usually global/enrichment) repo
         # has none of its own; LB now anti-scraper-gates anonymous popularity calls.

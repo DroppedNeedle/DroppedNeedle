@@ -125,7 +125,9 @@ class SettingsService:
             http_client = get_http_client(app_settings)
             temp_cache = InMemoryCache(max_entries=100)
 
-            temp_repo = ListenBrainzRepository(http_client=http_client, cache=temp_cache)
+            temp_repo = ListenBrainzRepository(
+                http_client=http_client, cache=temp_cache, base_url=settings.api_url
+            )
             temp_repo.configure(
                 username=settings.username,
                 user_token=settings.user_token
@@ -357,6 +359,7 @@ class SettingsService:
                 api_key=settings.api_key,
                 shared_secret=shared_secret,
                 session_key=session_key,
+                base_url=settings.api_url,
             )
             valid, message = await temp_repo.validate_api_key()
             if not valid:

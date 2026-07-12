@@ -1092,6 +1092,16 @@ export type LastFmConnectionSettingsResponse = {
 	session_key: string;
 	username: string;
 	enabled: boolean;
+	api_url: string;
+	auth_url: string;
+};
+
+// mirrors backend api/v1/schemas/settings.py (ListenBrainzConnectionSettings)
+export type ListenBrainzConnectionSettings = {
+	username: string;
+	user_token: string;
+	enabled: boolean;
+	api_url: string;
 };
 
 export type SpotifySettings = {

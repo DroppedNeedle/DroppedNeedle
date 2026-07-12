@@ -803,7 +803,8 @@ def get_lastfm_auth_service() -> "LastFmAuthService":
     from services.lastfm_auth_service import LastFmAuthService
 
     lastfm_repo = get_lastfm_repository()
-    return LastFmAuthService(lastfm_repo=lastfm_repo)
+    auth_url = get_preferences_service().get_lastfm_connection().auth_url
+    return LastFmAuthService(lastfm_repo=lastfm_repo, auth_url=auth_url)
 
 
 @singleton

@@ -17,8 +17,11 @@ class TokenEntry(msgspec.Struct):
 
 
 class LastFmAuthService:
-    def __init__(self, lastfm_repo: LastFmRepositoryProtocol):
+    def __init__(self, lastfm_repo: LastFmRepositoryProtocol, auth_url: str = LASTFM_AUTH_URL):
         self._repo = lastfm_repo
+        # admin-configurable auth root for Last.fm-compatible services
+        # (libre.fm etc.); official www.last.fm default
+        self._auth_url = auth_url or LASTFM_AUTH_URL
         self._pending_tokens: dict[str, TokenEntry] = {}
 
     def _evict_expired(self) -> None:
@@ -42,7 +45,7 @@ class LastFmAuthService:
 
         self._pending_tokens[token] = TokenEntry(token=token, created_at=time.time())
 
-        auth_url = f"{LASTFM_AUTH_URL}?api_key={api_key}&token={token}"
+        auth_url = f"{self._auth_url}?api_key={api_key}&token={token}"
         return token, auth_url
 
     async def exchange_session(self, token: str) -> tuple[str, str, str]:

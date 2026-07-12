@@ -4,14 +4,36 @@
 	import { Radio, ExternalLink } from 'lucide-svelte';
 	import { onMount, onDestroy } from 'svelte';
 
+	const DEFAULT_API_URL = 'https://ws.audioscrobbler.com/2.0/';
+	const DEFAULT_AUTH_URL = 'https://www.last.fm/api/auth/';
+
+	type LastFmTestResult = { valid: boolean; message: string };
+
 	// instance-wide app credentials only; per-user OAuth session + scrobble toggles
 	// live in the profile's "Scrobbling & Discovery" card
 	const form = createSettingsForm<LastFmConnectionSettingsResponse>({
 		loadEndpoint: '/api/v1/settings/lastfm',
-		saveEndpoint: '/api/v1/settings/lastfm'
+		saveEndpoint: '/api/v1/settings/lastfm',
+		testEndpoint: '/api/v1/settings/lastfm/verify'
 	});
 
 	let showSecret = $state(false);
+
+	const testResult = $derived(form.testResult as LastFmTestResult | null);
+
+	const isDefaultEndpoint = $derived(
+		form.data
+			? form.data.api_url === DEFAULT_API_URL && form.data.auth_url === DEFAULT_AUTH_URL
+			: true
+	);
+
+	function resetEndpointToDefault() {
+		if (form.data) {
+			form.data.api_url = DEFAULT_API_URL;
+			form.data.auth_url = DEFAULT_AUTH_URL;
+			form.testResult = null;
+		}
+	}
 
 	onMount(() => {
 		form.load();
@@ -92,6 +114,71 @@
 				<ExternalLink class="h-3 w-3" /> Register an app to get a key + secret
 			</a>
 
+			<div class="mt-2 space-y-3 border-t border-base-300/50 pt-4">
+				<div class="flex items-center justify-between">
+					<span
+						class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.2em] text-base-content/50"
+					>
+						API endpoint
+					</span>
+					{#if !isDefaultEndpoint}
+						<button
+							type="button"
+							class="btn btn-ghost btn-xs rounded-full"
+							onclick={resetEndpointToDefault}
+						>
+							Reset to default
+						</button>
+					{/if}
+				</div>
+				<p class="text-xs text-base-content/50">
+					Point at any Last.fm-compatible API (libre.fm, Maloja) — leave default for last.fm
+				</p>
+
+				<label class="form-control w-full">
+					<span
+						class="label-text mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50"
+					>
+						API URL
+					</span>
+					<input
+						type="text"
+						class="input input-soft w-full font-mono text-sm"
+						bind:value={form.data.api_url}
+						placeholder={DEFAULT_API_URL}
+						autocomplete="off"
+					/>
+				</label>
+
+				<label class="form-control w-full">
+					<span
+						class="label-text mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50"
+					>
+						Auth URL
+					</span>
+					<input
+						type="text"
+						class="input input-soft w-full font-mono text-sm"
+						bind:value={form.data.auth_url}
+						placeholder={DEFAULT_AUTH_URL}
+						autocomplete="off"
+					/>
+					<span class="mt-1 text-xs text-base-content/40">
+						Where users are sent to approve the app during sign-in.
+					</span>
+				</label>
+			</div>
+
+			{#if testResult}
+				<div
+					class="alert"
+					class:alert-success={testResult.valid}
+					class:alert-error={!testResult.valid}
+				>
+					<span>{testResult.message}</span>
+				</div>
+			{/if}
+
 			{#if form.message}
 				<div
 					class="alert"
@@ -102,7 +189,18 @@
 				</div>
 			{/if}
 
-			<div class="flex justify-end pt-1">
+			<div class="flex justify-end gap-2 pt-1">
+				<button
+					type="button"
+					class="btn btn-ghost gap-2 rounded-full"
+					onclick={() => void form.test()}
+					disabled={form.testing || !form.data.api_key}
+				>
+					{#if form.testing}
+						<span class="loading loading-spinner loading-sm"></span>
+					{/if}
+					Test connection
+				</button>
 				<button
 					type="button"
 					class="btn btn-primary glow-primary-soft gap-2 rounded-full"

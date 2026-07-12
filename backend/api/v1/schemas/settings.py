@@ -9,6 +9,27 @@ from infrastructure.msgspec_fastapi import AppStruct
 
 LASTFM_SECRET_MASK = "••••••••"
 
+# Official hosts; overridable per-instance for self-hosted/compatible services
+# (libre.fm, Maloja, a self-hosted ListenBrainz) - mirrors the MusicBrainz
+# api_url pattern below.
+DEFAULT_LISTENBRAINZ_API_URL = "https://api.listenbrainz.org"
+DEFAULT_LASTFM_API_URL = "https://ws.audioscrobbler.com/2.0/"
+DEFAULT_LASTFM_AUTH_URL = "https://www.last.fm/api/auth/"
+
+
+def _normalize_endpoint_url(url: str, default: str, *, trailing_slash: bool = False) -> str:
+    """Normalize a user-supplied service endpoint URL exactly like the
+    MusicBrainz api_url: strip whitespace, silently fall back to the official
+    default when the value isn't an http(s) URL, and normalize the trailing
+    slash (Last.fm-style roots keep exactly one; ListenBrainz-style keep none)."""
+    url = (url or "").strip()
+    if not url or not url.startswith(("http://", "https://")):
+        url = default
+    url = url.rstrip("/")
+    if trailing_slash:
+        url += "/"
+    return url
+
 
 def _mask_secret(value: str) -> str:
     if not value:
@@ -24,6 +45,16 @@ class LastFmConnectionSettings(AppStruct):
     session_key: str = ""
     username: str = ""
     enabled: bool = False
+    api_url: str = DEFAULT_LASTFM_API_URL
+    auth_url: str = DEFAULT_LASTFM_AUTH_URL
+
+    def __post_init__(self) -> None:
+        self.api_url = _normalize_endpoint_url(
+            self.api_url, DEFAULT_LASTFM_API_URL, trailing_slash=True
+        )
+        self.auth_url = _normalize_endpoint_url(
+            self.auth_url, DEFAULT_LASTFM_AUTH_URL, trailing_slash=True
+        )
 
 
 class LastFmConnectionSettingsResponse(AppStruct):
@@ -32,6 +63,8 @@ class LastFmConnectionSettingsResponse(AppStruct):
     session_key: str = ""
     username: str = ""
     enabled: bool = False
+    api_url: str = DEFAULT_LASTFM_API_URL
+    auth_url: str = DEFAULT_LASTFM_AUTH_URL
 
     @classmethod
     def from_settings(cls, settings: LastFmConnectionSettings) -> "LastFmConnectionSettingsResponse":
@@ -41,6 +74,8 @@ class LastFmConnectionSettingsResponse(AppStruct):
             session_key=_mask_secret(settings.session_key),
             username=settings.username,
             enabled=settings.enabled,
+            api_url=settings.api_url,
+            auth_url=settings.auth_url,
         )
 
 
@@ -480,6 +515,10 @@ class ListenBrainzConnectionSettings(AppStruct):
     username: str = ""
     user_token: str = ""
     enabled: bool = False
+    api_url: str = DEFAULT_LISTENBRAINZ_API_URL
+
+    def __post_init__(self) -> None:
+        self.api_url = _normalize_endpoint_url(self.api_url, DEFAULT_LISTENBRAINZ_API_URL)
 
 
 class YouTubeConnectionSettings(AppStruct):

@@ -675,6 +675,7 @@ class PreferencesService:
             username=lb_data.get("username", ""),
             user_token=user_token,
             enabled=lb_data.get("enabled", False),
+            api_url=lb_data.get("api_url", ""),
         )
 
     def save_listenbrainz_connection(self, settings: ListenBrainzConnectionSettings) -> None:
@@ -684,6 +685,7 @@ class PreferencesService:
                 "username": settings.username,
                 "user_token": encrypt(settings.user_token),
                 "enabled": settings.enabled,
+                "api_url": settings.api_url,
             }
             self._save_config(config)
         except Exception as e:  # noqa: BLE001
@@ -771,6 +773,8 @@ class PreferencesService:
             session_key=self._read_secret(("lastfm_settings", "session_key"), data.get("session_key", "")),
             username=data.get("username", ""),
             enabled=data.get("enabled", False),
+            api_url=data.get("api_url", ""),
+            auth_url=data.get("auth_url", ""),
         )
 
     def save_lastfm_connection(self, settings: LastFmConnectionSettings) -> None:
@@ -803,6 +807,8 @@ class PreferencesService:
                 session_key=encrypt(session_key),
                 username=username,
                 enabled=enabled,
+                api_url=settings.api_url,
+                auth_url=settings.auth_url,
             )
             self._save_section("lastfm_settings", resolved)
         except Exception as e:  # noqa: BLE001

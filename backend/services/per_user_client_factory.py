@@ -78,6 +78,7 @@ class PerUserClientFactory:
             cache=self._cache,
             username=data.get("username", ""),
             user_token=user_token,
+            base_url=self._preferences_service.get_listenbrainz_connection().api_url,
         )
 
     async def resolve_lastfm(self, user_id: str) -> "LastFmRepository | None":
@@ -106,6 +107,7 @@ class PerUserClientFactory:
             api_key=lf.api_key,
             shared_secret=lf.shared_secret,
             session_key=session_key,
+            base_url=lf.api_url,
         )
 
     async def resolve_lastfm_username(self, user_id: str) -> str | None:

@@ -94,6 +94,7 @@ def get_listenbrainz_repository() -> "ListenBrainzRepository":
         username=lb_settings.username if lb_settings.enabled else "",
         user_token=lb_settings.user_token if lb_settings.enabled else "",
         fallback_token_provider=fallback_token_provider,
+        base_url=lb_settings.api_url,
     )
 
 
@@ -240,6 +241,7 @@ def get_lastfm_repository() -> "LastFmRepository":
         api_key=lf_settings.api_key,
         shared_secret=lf_settings.shared_secret,
         session_key=lf_settings.session_key,
+        base_url=lf_settings.api_url,
     )
 
 

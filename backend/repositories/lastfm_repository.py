@@ -108,12 +108,16 @@ class LastFmRepository:
         api_key: str = "",
         shared_secret: str = "",
         session_key: str = "",
+        base_url: str = LASTFM_API_URL,
     ):
         self._client = http_client
         self._cache = cache
         self._api_key = api_key
         self._shared_secret = shared_secret
         self._session_key = session_key
+        # admin-configurable API root (libre.fm, Maloja, other audioscrobbler-
+        # compatible endpoints); official ws.audioscrobbler.com default
+        self._base_url = base_url or LASTFM_API_URL
 
     @property
     def _can_sign(self) -> bool:
@@ -186,13 +190,13 @@ class LastFmRepository:
         try:
             if http_method == "POST":
                 response = await self._client.post(
-                    LASTFM_API_URL,
+                    self._base_url,
                     data=request_params,
                     timeout=15.0,
                 )
             else:
                 response = await self._client.get(
-                    LASTFM_API_URL,
+                    self._base_url,
                     params=request_params,
                     timeout=15.0,
                 )
