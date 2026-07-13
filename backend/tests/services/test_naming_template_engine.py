@@ -71,6 +71,41 @@ def test_genre_variable(engine):
     assert result == Path("Jazz")
 
 
+@pytest.mark.parametrize(
+    ("album_artist", "expected"),
+    [
+        ("Radiohead", "R"),
+        ("The National", "N"),  # leading "The " ignored
+        ("The\tNational", "N"),  # any whitespace after "The", not just a space
+        ("The  Doors", "D"),  # multiple spaces after "The"
+        ("the xx", "X"),  # case-insensitive "the", result uppercased
+        ("t0ni", "T"),  # lowercase first letter uppercased
+        ("2 Chainz", "#"),  # digit lead -> '#'
+        ("_m0lly", "#"),  # punctuation lead -> '#'
+        ("Öxxö Xööx", "Ö"),  # accented letters keep their own bucket
+        ("高橋洋子", "高"),  # CJK letters keep their own bucket
+        ("The", "T"),  # bare "The" is a name, not an article
+    ],
+)
+def test_initial_variable_buckets(engine, album_artist, expected):
+    result = engine.format_path("{initial}", _tag(album_artist=album_artist), "flac")
+    assert result == Path(expected)
+
+
+def test_initial_falls_back_to_artist(engine):
+    result = engine.format_path("{initial}", _tag(album_artist=None), "flac")
+    assert result == Path("R")  # artist "Radiohead"
+
+
+def test_initial_empty_artist_buckets_under_hash(engine):
+    result = engine.format_path("{initial}/x.{ext}", _tag(album_artist=None, artist=""), "flac")
+    assert result == Path("#/x.flac")
+
+
+def test_validate_template_accepts_initial(engine):
+    assert engine.validate_template("{initial}/{albumartist}/{album}.{ext}") == []
+
+
 def test_medium_variable_is_empty(engine):
     result = engine.format_path("x{medium}y", _tag(), "flac")
     assert result == Path("xy")

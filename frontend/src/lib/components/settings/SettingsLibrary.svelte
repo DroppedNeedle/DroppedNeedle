@@ -128,7 +128,9 @@
 		<section class="space-y-2">
 			<h3 class="font-semibold">Naming template</h3>
 			<p class="text-xs text-base-content/60">
-				Applies to downloaded imports only. Variables: {'{albumartist} {album} {year} {disc} {track} {title} {ext}'}.
+				Applies to downloaded imports only. Variables: {'{initial} {artist} {albumartist} {album} {year} {disc} {track} {title} {genre} {ext}'}.
+				{'{initial}'} is the album artist's first letter (ignoring a leading "The"; # for digits
+				and symbols), for letter-bucketed libraries.
 			</p>
 			<input
 				class="input input-bordered w-full font-mono text-sm"

@@ -37,6 +37,7 @@ class NamingTemplateEngine:
             "artist",
             "album",
             "albumartist",
+            "initial",
             "year",
             "title",
             "ext",
@@ -51,6 +52,8 @@ class NamingTemplateEngine:
     _TOKEN = re.compile(r"(\{[^}]+\})")
     # FS-reserved chars plus all C0 control characters and DEL.
     _INVALID_FS_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
+    # Leading "The " article for {initial} — any whitespace after "the".
+    _LEADING_THE = re.compile(r"the\s+", re.IGNORECASE)
 
     def format_path(self, template: str, tag: AudioTag, ext: str) -> Path:
         return self._normalize(self._render(template, tag, ext))
@@ -103,6 +106,8 @@ class NamingTemplateEngine:
                 return tag.album
             case "albumartist":
                 return tag.album_artist or tag.artist
+            case "initial":
+                return self._initial(tag.album_artist or tag.artist)
             case "year":
                 return str(tag.year) if tag.year else ""
             case "title":
@@ -123,6 +128,23 @@ class NamingTemplateEngine:
                 return tag.musicbrainz_artist_id or ""
             case _:
                 return ""  # unknown variable renders empty (lenient; validate_template is strict)
+
+    @classmethod
+    def _initial(cls, album_artist: str) -> str:
+        """First-letter bucket for {initial}: 'The National' -> 'N', '2 Chainz' -> '#'.
+
+        A leading "The " is ignored, the first character is uppercased
+        (Unicode-aware, so accented/CJK letters keep their own bucket), and
+        anything non-alphabetic buckets under '#'.
+        """
+        name = album_artist.strip()
+        article = cls._LEADING_THE.match(name)
+        if article:
+            name = name[article.end() :].strip()
+        if not name:
+            return "#"
+        first = name[0]
+        return first.upper() if first.isalpha() else "#"
 
     def _normalize(self, path: Path) -> Path:
         parts: list[str] = []

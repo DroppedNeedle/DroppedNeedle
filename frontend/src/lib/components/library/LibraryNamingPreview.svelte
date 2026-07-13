@@ -11,6 +11,7 @@
 		artist: 'Radiohead',
 		album: 'OK Computer',
 		albumartist: 'Radiohead',
+		initial: 'R',
 		year: 1997,
 		track: 2,
 		title: 'Paranoid Android',
