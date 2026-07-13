@@ -124,6 +124,7 @@ from .service_providers import (  # noqa: F401
     get_scrobble_service,
     get_discover_service,
     get_discover_queue_manager,
+    get_taste_graph_service,
     get_discovery_batch_service,
     get_jellyfin_playback_service,
     get_local_files_service,
