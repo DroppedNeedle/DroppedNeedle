@@ -1,0 +1,15 @@
+{
+  "$schema": "./config.schema.json",
+  "request_backend": {
+    "backend": "native",
+    "_comment_lidarr_future": "Future Lidarr backend configuration will be added here",
+    "_lidarr_settings": {
+      "url": "http://lidarr:8686",
+      "api_key": "your-lidarr-api-key",
+      "quality_profile_id": 1,
+      "metadata_profile_id": 1,
+      "root_folder_path": "/music"
+    }
+  },
+  "_comment": "This example shows the request backend configuration. Default is 'native' which uses the existing slskd/Usenet pipeline. The '_lidarr_settings' object is commented out and reserved for future Lidarr implementation."
+}

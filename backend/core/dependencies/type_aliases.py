@@ -156,3 +156,9 @@ PlexPlaybackServiceDep = Annotated[PlexPlaybackService, Depends(get_plex_playbac
 CacheStatusServiceDep = Annotated[CacheStatusService, Depends(get_cache_status_service)]
 GitHubRepositoryDep = Annotated[GitHubRepository, Depends(get_github_repository)]
 VersionServiceDep = Annotated[VersionService, Depends(get_version_service)]
+
+# Import backend providers at the end to avoid circular dependencies
+from .backend_providers import get_request_backend_service
+from services.request_backend_service import RequestBackendService
+
+RequestBackendServiceDep = Annotated[RequestBackendService, Depends(get_request_backend_service)]

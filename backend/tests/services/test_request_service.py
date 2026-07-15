@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.exceptions import ExternalServiceError
+from services.request_backend_service import DISPATCH_FAILED
 from services.request_service import RequestService
 from tests.helpers import make_builtin_dispatcher
 
@@ -84,6 +85,21 @@ async def test_request_album_wraps_errors():
 
 
 @pytest.mark.asyncio
+async def test_request_album_marks_failed_when_backend_returns_dispatch_failed():
+    service, request_history, _download_service = _make_service()
+    request_backend = MagicMock()
+    request_backend.dispatch_request = AsyncMock(return_value=DISPATCH_FAILED)
+    service._request_backend = request_backend
+    service._acquisition = None
+
+    with pytest.raises(ExternalServiceError, match="request backend dispatch failed"):
+        await service.request_album("rg-123", user_role="admin")
+
+    request_history.async_update_download_task_id.assert_not_awaited()
+    assert request_history.async_update_status.await_args.args[:2] == ("rg-123", "failed")
+
+
+@pytest.mark.asyncio
 async def test_request_batch_dispatches_each_and_links():
     service, request_history, download_service = _make_service()
     items = [
@@ -100,6 +116,25 @@ async def test_request_batch_dispatches_each_and_links():
     request_history.async_bulk_record_requests.assert_awaited_once()
     linked = {c.args[0]: c.args[1] for c in request_history.async_update_download_task_id.await_args_list}
     assert linked == {"rg-1": "task-1", "rg-2": "task-2"}
+
+
+@pytest.mark.asyncio
+async def test_request_batch_marks_failed_items_when_backend_returns_dispatch_failed():
+    service, request_history, _download_service = _make_service()
+    request_backend = MagicMock()
+    request_backend.dispatch_request = AsyncMock(side_effect=[DISPATCH_FAILED, "task-2"])
+    service._request_backend = request_backend
+    service._acquisition = None
+    items = [
+        {"musicbrainz_id": "rg-1", "artist_name": "A", "album_title": "B", "year": 2020},
+        {"musicbrainz_id": "rg-2", "artist_name": "C", "album_title": "D", "year": 2021},
+    ]
+
+    resp = await service.request_batch(items, user_role="admin", user_id="u1")
+
+    assert resp.requested == 1
+    request_history.async_update_download_task_id.assert_awaited_once_with("rg-2", "task-2")
+    assert request_history.async_update_status.await_args.args[:2] == ("rg-1", "failed")
 
 
 @pytest.mark.asyncio

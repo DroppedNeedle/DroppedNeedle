@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from collections.abc import Callable
 from infrastructure.persistence.request_history import RequestHistoryStore
 from api.v1.schemas.request import (
@@ -9,9 +9,10 @@ from api.v1.schemas.request import (
     RequestAcceptedResponse,
 )
 from core.exceptions import ExternalServiceError, ValidationError
-from services.native.download_service import ALREADY_IN_LIBRARY
+from services.request_backend_service import ALREADY_IN_LIBRARY, DISPATCH_FAILED
 
 if TYPE_CHECKING:
+    from services.request_backend_service import RequestBackendService
     from services.native.download_service import DownloadService
     from services.quota_service import QuotaService
 
@@ -19,25 +20,68 @@ logger = logging.getLogger(__name__)
 
 
 class RequestService:
-    """The approval gate. The actual download runs through ``DownloadService``: a
-    'user'-role request waits for admin approval; 'trusted'/'admin' auto-approve and
-    dispatch the native pipeline immediately, linking the new ``download_task_id``."""
+    """The approval gate. Both user submission and admin approval route through
+    the shared RequestBackendService dispatch contract, ensuring consistent
+    behavior across paths and no duplicate acquisition.
+
+    Cancellation operations go directly to download_service for native task
+    management.
+    """
 
     def __init__(
         self,
         request_history: RequestHistoryStore,
         get_download_service: "Callable[[], DownloadService]",
-        acquisition,  # noqa: ANN001 - AcquisitionDispatcher; every dispatch goes through it
+        acquisition=None,  # noqa: ANN001 - AcquisitionDispatcher; every dispatch goes through it
+        request_backend: "RequestBackendService | None" = None,
         quota_service: "QuotaService | None" = None,
     ):
         self._request_history = request_history
         # cancel_task still goes direct to DownloadService, resolved fresh so a settings
         # save (which rebuilds the singleton) is picked up rather than ignored until restart.
         self._get_download_service = get_download_service
+        self._request_backend = request_backend
         self._quota = quota_service
-        # every request_album dispatch goes through here; it picks the download client
-        # or Free Music, so RequestService cannot function without it
+        # every request_album dispatch goes through either the request backend seam
+        # or the pre-existing acquisition dispatcher fallback.
         self._acquisition = acquisition
+
+    @staticmethod
+    def _dispatch_failed(task_id: str) -> bool:
+        return task_id == DISPATCH_FAILED
+
+    async def _dispatch_request(
+        self,
+        *,
+        user_id: str,
+        release_group_mbid: str,
+        artist_name: str,
+        album_title: str,
+        year: int | None,
+        artist_mbid: str | None,
+        origin: Literal["user", "retry"],
+    ) -> str:
+        if self._request_backend is not None:
+            return await self._request_backend.dispatch_request(
+                user_id=user_id,
+                release_group_mbid=release_group_mbid,
+                artist_name=artist_name,
+                album_title=album_title,
+                year=year,
+                artist_mbid=artist_mbid,
+                origin=origin,
+            )
+        if self._acquisition is None:
+            raise ExternalServiceError("No acquisition dispatcher configured.")
+        return await self._acquisition.request_album(
+            user_id=user_id,
+            release_group_mbid=release_group_mbid,
+            artist_name=artist_name,
+            album_title=album_title,
+            year=year,
+            artist_mbid=artist_mbid,
+            origin=origin,
+        )
 
     async def request_album(
         self,
@@ -115,10 +159,9 @@ class RequestService:
                 status="awaiting_approval",
             )
 
-        # auto-approve (trusted/admin): dispatch the native pipeline and link the
-        # request to its task; the 'already_in_library' sentinel is guarded
+        # auto-approve (trusted/admin): dispatch through the shared backend seam
         try:
-            task_id = await self._acquisition.request_album(
+            task_id = await self._dispatch_request(
                 user_id=user_id or "",
                 release_group_mbid=musicbrainz_id,
                 artist_name=artist or "Unknown",
@@ -127,6 +170,16 @@ class RequestService:
                 artist_mbid=artist_mbid,
                 origin="user",
             )
+            if self._dispatch_failed(task_id):
+                logger.error(
+                    "request_service.dispatch_failed musicbrainz_id=%s origin=user",
+                    musicbrainz_id,
+                )
+                await self._request_history.async_update_status(
+                    musicbrainz_id, "failed",
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                )
+                raise ExternalServiceError("Failed to start download: request backend dispatch failed")
         except ValidationError as e:
             # cap/quota said no at dispatch (a race past the submit-time check):
             # surface the reason verbatim as a 400 rather than a wrapped 503
@@ -220,14 +273,14 @@ class RequestService:
                     skipped=skipped,
                 )
 
-            # auto-approve: dispatch each item through the native pipeline (mirrors
-            # single request_album). slskd search is serialized client-side, so there's
-            # no queue cap (overflow is always 0).
+            # auto-approve: dispatch each item through the shared backend seam
+            # (mirrors single request_album). slskd search is serialized
+            # client-side, so there's no queue cap (overflow is always 0).
             dispatched = 0
             for item in new_items:
                 mbid = item["musicbrainz_id"]
                 try:
-                    task_id = await self._acquisition.request_album(
+                    task_id = await self._dispatch_request(
                         user_id=user_id or "",
                         release_group_mbid=mbid,
                         artist_name=item.get("artist_name") or "Unknown",
@@ -236,6 +289,8 @@ class RequestService:
                         artist_mbid=item.get("artist_mbid"),
                         origin="user",
                     )
+                    if self._dispatch_failed(task_id):
+                        raise ExternalServiceError("request backend dispatch failed")
                 except Exception as e:  # noqa: BLE001 - one bad item must not sink the batch
                     logger.error("Batch download dispatch failed for %s: %s", mbid, e)
                     try:
@@ -278,6 +333,7 @@ class RequestService:
                     failed += 1
                     continue
                 # best-effort: a missing/non-cancellable task must not block marking
+                # cancelled (only applies to native backend with download_task_id)
                 if record is not None and record.download_task_id:
                     try:
                         await self._get_download_service().cancel_task(

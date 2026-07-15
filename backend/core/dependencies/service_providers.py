@@ -26,6 +26,10 @@ from .cache_providers import (
     get_scan_state_store,
     get_preferences_service,
 )
+from .backend_providers import (
+    get_request_backend_settings,
+    get_request_backend_service,
+)
 from .repo_providers import (
     get_preview_repository,
     get_library_repository,
@@ -451,10 +455,9 @@ def get_request_service() -> "RequestService":
     return RequestService(
         request_history,
         get_download_service=get_download_service,
+        request_backend=get_request_backend_service(),
         quota_service=get_quota_service(),
-        acquisition=get_acquisition_dispatcher(),
     )
-
 
 def _build_scan_invalidation(memory_cache, disk_cache):
     """Bust the cached album pages of the release groups a scan or re-identify re-attributed,
@@ -558,7 +561,7 @@ def get_requests_page_service() -> "RequestsPageService":
         on_import_callback=on_import,
         get_download_service=get_download_service,
         download_store=get_download_store(),
-        acquisition=get_acquisition_dispatcher(),
+        request_backend=get_request_backend_service(),
     )
 
 

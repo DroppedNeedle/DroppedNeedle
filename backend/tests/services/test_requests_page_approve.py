@@ -1,11 +1,12 @@
-"""task-049: approve dispatches the native pipeline via DownloadService.request_album
-and links download_task_id, replacing the retired request_queue hop."""
+"""task-049: approve/retry dispatch through the request backend seam and link
+download_task_id while preserving the older native fallback in tests."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from services.request_backend_service import DISPATCH_FAILED
 from services.requests_page_service import RequestsPageService
 from tests.helpers import make_builtin_dispatcher
 
@@ -152,6 +153,21 @@ async def test_approve_over_cap_returns_to_approval_queue_with_reason():
 
 
 @pytest.mark.asyncio
+async def test_approve_marks_failed_when_request_backend_returns_dispatch_failed():
+    service, history, _download_service = _make()
+    request_backend = MagicMock()
+    request_backend.dispatch_request = AsyncMock(return_value=DISPATCH_FAILED)
+    service._request_backend = request_backend
+    service._acquisition = None
+
+    resp = await service.approve_request("mbid-1", "admin-id", "Admin")
+
+    assert resp.success is False
+    history.async_update_download_task_id.assert_not_awaited()
+    assert history.async_update_status.await_args.args[:2] == ("mbid-1", "failed")
+
+
+@pytest.mark.asyncio
 async def test_retry_over_cap_restores_prior_status_with_reason():
     from core.exceptions import ValidationError
 
@@ -165,4 +181,19 @@ async def test_retry_over_cap_restores_prior_status_with_reason():
     assert resp.success is False
     assert "storage budget" in resp.message
     # flipped to 'pending' for the attempt, then restored to the pre-retry status
+    assert history.async_update_status.await_args_list[-1].args == ("mbid-1", "failed")
+
+
+@pytest.mark.asyncio
+async def test_retry_restores_prior_status_when_request_backend_returns_dispatch_failed():
+    service, history, _download_service = _make(record_status="failed")
+    request_backend = MagicMock()
+    request_backend.dispatch_request = AsyncMock(return_value=DISPATCH_FAILED)
+    service._request_backend = request_backend
+    service._acquisition = None
+
+    resp = await service.retry_request("mbid-1", user_id="u1", user_role="admin")
+
+    assert resp.success is False
+    assert "dispatch failed" in resp.message
     assert history.async_update_status.await_args_list[-1].args == ("mbid-1", "failed")
