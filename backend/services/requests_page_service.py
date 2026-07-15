@@ -3,7 +3,7 @@ import math
 import time as _time
 from collections.abc import Callable, Coroutine
 from datetime import datetime, timezone
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Literal, Optional, TYPE_CHECKING
 
 from api.v1.schemas.requests_page import (
     ActiveRequestItem,
@@ -13,13 +13,15 @@ from api.v1.schemas.requests_page import (
     RequestHistoryResponse,
     RetryRequestResponse,
 )
-from core.exceptions import PermissionDeniedError, ValidationError
+from core.exceptions import ExternalServiceError, PermissionDeniedError, ValidationError
 from infrastructure.cover_urls import prefer_release_group_cover_url
 from infrastructure.persistence.request_history import RequestHistoryRecord, RequestHistoryStore
 from repositories.protocols import LibraryRepositoryProtocol
+from services.request_backend_service import ALREADY_IN_LIBRARY, DISPATCH_FAILED
 
 if TYPE_CHECKING:
     from services.native.download_service import DownloadService
+    from services.request_backend_service import RequestBackendService
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ class RequestsPageService:
         get_download_service: Optional[Callable[[], "DownloadService"]] = None,
         download_store=None,  # DownloadStore | None - native reconciler source of truth
         acquisition=None,  # noqa: ANN001 - AcquisitionDispatcher | None
+        request_backend: "RequestBackendService | None" = None,
     ):
         self._library_repo = library_repo
         self._request_history = request_history
@@ -50,10 +53,45 @@ class RequestsPageService:
         # until restart. Kept for cancel_task; new dispatches go via the dispatcher.
         self._get_download_service = get_download_service
         self._download_store = download_store
-        # picks the download client or Free Music per approve/retry dispatch
+        # approve/retry dispatches go through request_backend when present, else
+        # the older acquisition fallback used by tests and legacy wiring.
         self._acquisition = acquisition
+        self._request_backend = request_backend
         self._library_mbids_cache: set[str] | None = None
         self._library_mbids_cache_time: float = 0
+
+    async def _dispatch_request(
+        self,
+        *,
+        user_id: str,
+        release_group_mbid: str,
+        artist_name: str,
+        album_title: str,
+        year: int | None,
+        artist_mbid: str | None,
+        origin: Literal["user", "retry"],
+    ) -> str:
+        if self._request_backend is not None:
+            return await self._request_backend.dispatch_request(
+                user_id=user_id,
+                release_group_mbid=release_group_mbid,
+                artist_name=artist_name,
+                album_title=album_title,
+                year=year,
+                artist_mbid=artist_mbid,
+                origin=origin,
+            )
+        if self._acquisition is None:
+            raise ExternalServiceError("Downloads unavailable")
+        return await self._acquisition.request_album(
+            user_id=user_id,
+            release_group_mbid=release_group_mbid,
+            artist_name=artist_name,
+            album_title=album_title,
+            year=year,
+            artist_mbid=artist_mbid,
+            origin=origin,
+        )
 
     async def get_active_requests(self, user_id: str | None = None) -> ActiveRequestsResponse:
         if user_id is not None:
@@ -164,40 +202,38 @@ class RequestsPageService:
                 success=False, message=f"Request is not awaiting approval (status: {record.status})"
             )
         await self._request_history.async_record_review(musicbrainz_id, "pending", reviewer_id, reviewer_name)
-        # approving dispatches the native pipeline directly; link the new task id
-        # (the 'already_in_library' sentinel is guarded)
-        if self._acquisition is not None:
-            try:
-                task_id = await self._acquisition.request_album(
-                    user_id=record.user_id or "",
-                    release_group_mbid=musicbrainz_id,
-                    artist_name=record.artist_name or "Unknown",
-                    album_title=record.album_title or "Unknown",
-                    year=record.year,
-                    artist_mbid=record.artist_mbid,
-                    origin="user",
-                )
-            except ValidationError as e:
-                # A cap/quota rejection (Feature C) is not a failure of the request:
-                # put it BACK in the approval queue (it would otherwise silently
-                # vanish into 'failed') and tell the admin exactly why it can't start.
-                await self._request_history.async_update_status(
-                    musicbrainz_id, "awaiting_approval"
-                )
-                return CancelRequestResponse(success=False, message=str(e))
-            except Exception as e:  # noqa: BLE001
-                logger.error(f"Failed to dispatch approved request {musicbrainz_id}: {e}")
-                await self._request_history.async_update_status(
-                    musicbrainz_id, "failed",
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                )
-                return CancelRequestResponse(
-                    success=False, message=f"Approved but failed to start: {record.album_title}"
-                )
-            from services.native.download_service import ALREADY_IN_LIBRARY
+        try:
+            task_id = await self._dispatch_request(
+                user_id=record.user_id or "",
+                release_group_mbid=musicbrainz_id,
+                artist_name=record.artist_name or "Unknown",
+                album_title=record.album_title or "Unknown",
+                year=record.year,
+                artist_mbid=record.artist_mbid,
+                origin="user",
+            )
+            if task_id == DISPATCH_FAILED:
+                raise ExternalServiceError("request backend dispatch failed")
+        except ValidationError as e:
+            # A cap/quota rejection (Feature C) is not a failure of the request:
+            # put it BACK in the approval queue (it would otherwise silently
+            # vanish into 'failed') and tell the admin exactly why it can't start.
+            await self._request_history.async_update_status(
+                musicbrainz_id, "awaiting_approval"
+            )
+            return CancelRequestResponse(success=False, message=str(e))
+        except Exception as e:  # noqa: BLE001
+            logger.error("requests_page.approve_request_failed musicbrainz_id=%s", musicbrainz_id, exc_info=True)
+            await self._request_history.async_update_status(
+                musicbrainz_id, "failed",
+                completed_at=datetime.now(timezone.utc).isoformat(),
+            )
+            return CancelRequestResponse(
+                success=False, message=f"Approved but failed to start: {record.album_title}"
+            )
 
-            if task_id != ALREADY_IN_LIBRARY:
-                await self._request_history.async_update_download_task_id(musicbrainz_id, task_id)
+        if task_id != ALREADY_IN_LIBRARY:
+            await self._request_history.async_update_download_task_id(musicbrainz_id, task_id)
         return CancelRequestResponse(success=True, message=f"Approved: {record.album_title}")
 
     async def reject_request(
@@ -283,15 +319,11 @@ class RequestsPageService:
                 message=f"Cannot retry request with status '{record.status}'",
             )
 
-        # re-dispatch through the native pipeline (mirrors approve_request); link the
-        # new task id (sentinel-guarded)
-        if self._acquisition is None:
-            return RetryRequestResponse(success=False, message="Downloads unavailable")
         try:
             await self._request_history.async_update_status(musicbrainz_id, "pending")
             # A retry re-dispatches an already-recorded ask, so it is not a new
             # user request for quota purposes (CollectionManagement D20).
-            task_id = await self._acquisition.request_album(
+            task_id = await self._dispatch_request(
                 user_id=record.user_id or user_id or "",
                 release_group_mbid=musicbrainz_id,
                 artist_name=record.artist_name or "Unknown",
@@ -300,16 +332,17 @@ class RequestsPageService:
                 artist_mbid=record.artist_mbid,
                 origin="retry",
             )
+            if task_id == DISPATCH_FAILED:
+                raise ExternalServiceError("request backend dispatch failed")
         except ValidationError as e:
             # cap/quota rejection: restore the pre-retry status (don't strand it as
             # a phantom 'pending') and surface the reason verbatim
             await self._request_history.async_update_status(musicbrainz_id, record.status)
             return RetryRequestResponse(success=False, message=str(e))
         except Exception as e:  # noqa: BLE001
+            await self._request_history.async_update_status(musicbrainz_id, record.status)
             logger.error("Retry failed for %s: %s", musicbrainz_id, e)
             return RetryRequestResponse(success=False, message=f"Retry failed: {e}")
-
-        from services.native.download_service import ALREADY_IN_LIBRARY
 
         if task_id != ALREADY_IN_LIBRARY:
             await self._request_history.async_update_download_task_id(musicbrainz_id, task_id)

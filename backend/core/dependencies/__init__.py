@@ -11,6 +11,11 @@ from .auth_providers import (  # noqa: F401
     get_oidc_user_auth_service,
 )
 
+from .backend_providers import (  # noqa: F401
+    get_request_backend_settings,
+    get_request_backend_service,
+)
+
 from .cache_providers import (  # noqa: F401
     get_cache,
     get_disk_cache,
