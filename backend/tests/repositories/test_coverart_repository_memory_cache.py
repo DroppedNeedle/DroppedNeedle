@@ -33,6 +33,37 @@ async def test_release_group_disk_hit_is_promoted_to_memory_and_skips_second_dis
 
 
 @pytest.mark.asyncio
+async def test_cached_caa_cover_is_upgraded_when_audiodb_becomes_available(tmp_path):
+    async with httpx.AsyncClient() as http_client:
+        repo = CoverArtRepository(http_client=http_client, cache=MagicMock(), cache_dir=tmp_path)
+        repo._disk_cache.read = AsyncMock(
+            return_value=(b'caa-image', 'image/jpeg', {'source': 'cover-art-archive'})
+        )
+        repo._album_fetcher.fetch_cached_audiodb_cover = AsyncMock(
+            return_value=(b'audiodb-image', 'image/jpeg', 'audiodb')
+        )
+
+        result = await repo.get_release_group_cover(RELEASE_GROUP_MBID, size='500')
+
+        assert result == (b'audiodb-image', 'image/jpeg', 'audiodb')
+
+
+@pytest.mark.asyncio
+async def test_cached_caa_cover_is_served_while_audiodb_is_warming(tmp_path):
+    async with httpx.AsyncClient() as http_client:
+        repo = CoverArtRepository(http_client=http_client, cache=MagicMock(), cache_dir=tmp_path)
+        repo._disk_cache.read = AsyncMock(
+            return_value=(b'caa-image', 'image/jpeg', {'source': 'cover-art-archive'})
+        )
+        repo._album_fetcher.fetch_cached_audiodb_cover = AsyncMock(return_value=None)
+        repo._album_fetcher.is_audiodb_album_warming = MagicMock(return_value=True)
+
+        result = await repo.get_release_group_cover(RELEASE_GROUP_MBID, size='500')
+
+        assert result == (b'caa-image', 'image/jpeg', 'cover-art-archive')
+
+
+@pytest.mark.asyncio
 async def test_release_cover_etag_uses_memory_before_disk(tmp_path):
     async with httpx.AsyncClient() as http_client:
         cache = MagicMock()

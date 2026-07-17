@@ -11,6 +11,7 @@ from repositories.protocols import CoverArtRepositoryProtocol
 from repositories.coverart_disk_cache import get_cache_filename
 from services.cache_status_service import CacheStatusService
 from infrastructure.cache.cache_keys import ALBUM_INFO_PREFIX
+from infrastructure.queue.priority_queue import RequestPriority
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,11 @@ class AlbumPhase:
                 cached_info = await album_service._cache.get(cache_key)
                 if not cached_info:
                     await status_service.update_progress(index + 1, f"Fetching metadata for {rgid[:8]}...", processed_albums=offset + index + 1, generation=generation)
-                    await album_service.get_album_info(rgid, library_mbids=library_mbids)
+                    await album_service.get_album_info(
+                        rgid,
+                        library_mbids=library_mbids,
+                        priority=RequestPriority.BACKGROUND_SYNC,
+                    )
                     metadata_fetched = True
                 else:
                     await status_service.update_progress(index + 1, f"Cached: {rgid[:8]}...", processed_albums=offset + index + 1, generation=generation)
@@ -57,7 +62,11 @@ class AlbumPhase:
                     file_path = self._cover_repo.cache_dir / f"{cache_filename}.bin"
                     if not file_path.exists():
                         try:
-                            await self._cover_repo.get_release_group_cover(rgid, size="500")
+                            await self._cover_repo.get_release_group_cover(
+                                rgid,
+                                size="500",
+                                priority=RequestPriority.BACKGROUND_SYNC,
+                            )
                             cover_fetched = True
                         except Exception as e:  # noqa: BLE001
                             logger.debug(f"Failed to cache cover for {rgid}: {e}")

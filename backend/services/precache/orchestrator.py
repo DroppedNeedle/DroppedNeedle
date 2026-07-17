@@ -12,7 +12,7 @@ from repositories.coverart_disk_cache import get_cache_filename
 from services.cache_status_service import CacheStatusService
 from core.exceptions import ExternalServiceError
 from infrastructure.cache.cache_keys import ALBUM_INFO_PREFIX
-from infrastructure.validators import is_unknown_mbid
+from infrastructure.validators import is_unknown_mbid, is_valid_mbid
 
 from .artist_phase import ArtistPhase
 from .album_phase import AlbumPhase
@@ -184,7 +184,7 @@ class LibraryPrecacheService:
             if self._artist_discovery_service and not skip_artists:
                 artist_mbids = list(dict.fromkeys(
                     a.get('mbid') for a in artists
-                    if a.get('mbid') and not a.get('mbid', '').startswith('unknown_')
+                    if is_valid_mbid(a.get('mbid'))
                 ))
                 if artist_mbids:
                     await status_service.update_phase('discovery', len(artist_mbids), generation=generation)
@@ -213,7 +213,7 @@ class LibraryPrecacheService:
             library_album_mbids_set: set[str] = set()
             for a in albums:
                 mbid = getattr(a, 'musicbrainz_id', None) if hasattr(a, 'musicbrainz_id') else a.get('mbid') if isinstance(a, dict) else None
-                if not is_unknown_mbid(mbid):
+                if is_valid_mbid(mbid):
                     library_album_mbids_set.add(mbid.lower())
             deduped_release_groups = list(library_album_mbids_set)
             if status_service.is_cancelled():

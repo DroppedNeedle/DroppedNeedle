@@ -39,14 +39,14 @@ class ArtistPhase:
         generation: int = 0,
     ) -> None:
         from core.dependencies import get_artist_service
-        from infrastructure.validators import is_unknown_mbid
+        from infrastructure.validators import is_valid_mbid
         artist_service = get_artist_service()
 
         seen_mbids: set[str] = set()
         unique_artists: list[dict] = []
         for a in artists:
             mbid = a.get('mbid')
-            if not mbid or is_unknown_mbid(mbid):
+            if not is_valid_mbid(mbid):
                 unique_artists.append(a)
             elif mbid.lower() not in seen_mbids:
                 seen_mbids.add(mbid.lower())
@@ -57,7 +57,7 @@ class ArtistPhase:
             mbid = artist.get('mbid')
             try:
                 artist_name = artist.get('name', 'Unknown')
-                if is_unknown_mbid(mbid):
+                if not is_valid_mbid(mbid):
                     await status_service.update_progress(index + 1, artist_name, processed_artists=offset + index + 1, generation=generation)
                     return mbid
                 artist_cache_key = f"{ARTIST_INFO_PREFIX}{mbid}"

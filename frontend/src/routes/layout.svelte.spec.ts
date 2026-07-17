@@ -81,6 +81,17 @@ vi.mock('$lib/queries/following/FollowingEvents', () => ({
 	createFollowingEvents: vi.fn(() => followingEventsMock)
 }));
 vi.mock('$lib/stores/cacheTtl', () => ({ initCacheTTLs: vi.fn() }));
+const { downloadsActivityMock, syncStatusMock } = vi.hoisted(() => ({
+	downloadsActivityMock: { count: 0, isActive: false, start: vi.fn(), stop: vi.fn() },
+	syncStatusMock: { connect: vi.fn(), disconnect: vi.fn() }
+}));
+vi.mock('$lib/stores/downloadsActivity.svelte', () => ({
+	downloadsActivity: downloadsActivityMock
+}));
+vi.mock('$lib/stores/syncStatus.svelte', () => ({ syncStatus: syncStatusMock }));
+vi.mock('$lib/stores/imageSettings', () => ({
+	imageSettingsStore: { load: vi.fn().mockResolvedValue(undefined) }
+}));
 vi.mock('$lib/stores/player.svelte', () => ({
 	playerStore: {
 		isPlayerVisible: false,
@@ -142,6 +153,8 @@ import { nowPlayingStore } from '$lib/stores/nowPlayingSessions.svelte';
 import { nowPlayingReporter } from '$lib/stores/nowPlayingReporter.svelte';
 import { pendingApprovalCountStore } from '$lib/stores/pendingApprovalCountStore.svelte';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
+import { libraryStore } from '$lib/stores/library';
+import { initCacheTTLs } from '$lib/stores/cacheTtl';
 
 type IntegrationState = {
 	download_client: boolean;
@@ -258,6 +271,10 @@ describe('+layout.svelte auth-reactive session state (#155)', () => {
 		renderLayout();
 		await vi.waitFor(() => expect(vi.mocked(integrationStore.reset)).toHaveBeenCalled());
 		expect(integrationStore.ensureLoaded).not.toHaveBeenCalled();
+		expect(libraryStore.initialize).not.toHaveBeenCalled();
+		expect(initCacheTTLs).not.toHaveBeenCalled();
+		expect(downloadsActivityMock.start).not.toHaveBeenCalled();
+		expect(syncStatusMock.connect).not.toHaveBeenCalled();
 	});
 
 	it('loads integration status and starts session services when authenticated at mount', async () => {
@@ -267,6 +284,8 @@ describe('+layout.svelte auth-reactive session state (#155)', () => {
 		expect(nowPlayingStore.start).toHaveBeenCalled();
 		expect(nowPlayingReporter.start).toHaveBeenCalled();
 		expect(followingEventsMock.start).toHaveBeenCalled();
+		await vi.waitFor(() => expect(downloadsActivityMock.start).toHaveBeenCalled());
+		expect(syncStatusMock.connect).toHaveBeenCalled();
 	});
 
 	it('loads integration status after a warm in-app login without a remount', async () => {

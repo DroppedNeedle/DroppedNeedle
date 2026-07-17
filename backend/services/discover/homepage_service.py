@@ -60,6 +60,7 @@ from repositories.listenbrainz_repository import lb_popularity_degraded
 from services.discover.top_picks import TopPickCandidate, score_candidates
 from services.discover.snapshot_codec import decode_discover_response
 from services.weekly_exploration_service import WeeklyExplorationService
+from infrastructure.validators import is_valid_mbid
 
 logger = logging.getLogger(__name__)
 
@@ -90,12 +91,12 @@ def _collect_cover_prewarm_mbids(
     seen_artists: set[str] = set()
 
     def add_album(mbid: str | None) -> None:
-        if mbid and mbid not in seen_albums:
+        if is_valid_mbid(mbid) and mbid not in seen_albums:
             seen_albums.add(mbid)
             album_mbids.append(mbid)
 
     def add_artist(mbid: str | None) -> None:
-        if mbid and mbid not in seen_artists:
+        if is_valid_mbid(mbid) and mbid not in seen_artists:
             seen_artists.add(mbid)
             artist_mbids.append(mbid)
 
@@ -1385,7 +1386,10 @@ class DiscoverHomepageService:
             seen_artists: set[str] = set()
             for genre_lower, _count in ranked_genres:
                 artist_mbids = artists_by_genre.get(genre_lower, [])
-                unique = [a for a in artist_mbids if a not in seen_artists]
+                unique = [
+                    a for a in artist_mbids
+                    if is_valid_mbid(a) and a not in seen_artists
+                ]
                 if len(unique) < MIN_ARTISTS_PER_CLUSTER:
                     continue
                 candidate_clusters.append((genre_lower, unique))
@@ -1441,12 +1445,16 @@ class DiscoverHomepageService:
             cluster_artists, seed_count
         )
 
-        name_results = await asyncio.gather(
-            *[
-                self._lb_repo.get_artist_top_release_groups(mbid, count=1)
-                for mbid in seed_mbids
-            ],
-            return_exceptions=True,
+        name_results = (
+            await asyncio.gather(
+                *[
+                    self._lb_repo.get_artist_top_release_groups(mbid, count=1)
+                    for mbid in seed_mbids
+                ],
+                return_exceptions=True,
+            )
+            if not lb_popularity_degraded()
+            else []
         )
         seed_names: dict[str, str] = {}
         for mbid, result in zip(seed_mbids, name_results):

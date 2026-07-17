@@ -53,15 +53,35 @@ class WeeklyExplorationService:
             if not playlist or not playlist.tracks:
                 return None
 
-            unique_release_ids = list({
-                track.caa_release_mbid for track in playlist.tracks if track.caa_release_mbid
+            recording_ids = [
+                track.recording_mbid
+                for track in playlist.tracks
+                if track.recording_mbid
+            ]
+            try:
+                recording_to_rg = await repo.get_recording_release_groups_batch(
+                    recording_ids
+                )
+                if not isinstance(recording_to_rg, dict):
+                    recording_to_rg = {}
+            except Exception:  # noqa: BLE001 - missing metadata falls back to MB
+                recording_to_rg = {}
+
+            unresolved_release_ids = list({
+                track.caa_release_mbid
+                for track in playlist.tracks
+                if track.caa_release_mbid
+                and not (
+                    track.recording_mbid
+                    and recording_to_rg.get(track.recording_mbid)
+                )
             })
             try:
                 rg_results = await asyncio.wait_for(
                     asyncio.gather(
                         *(
                             self._mb_repo.get_release_group_id_from_release(release_id)
-                            for release_id in unique_release_ids
+                            for release_id in unresolved_release_ids
                         ),
                         return_exceptions=True,
                     ),
@@ -72,7 +92,7 @@ class WeeklyExplorationService:
                 rg_results = []
             release_to_rg = {
                 release_id: release_group_id
-                for release_id, release_group_id in zip(unique_release_ids, rg_results)
+                for release_id, release_group_id in zip(unresolved_release_ids, rg_results)
                 if isinstance(release_group_id, str) and release_group_id
             }
 
@@ -80,7 +100,13 @@ class WeeklyExplorationService:
             for track in playlist.tracks:
                 artist_mbid = track.artist_mbids[0] if track.artist_mbids else None
                 release_group_mbid = (
-                    release_to_rg.get(track.caa_release_mbid, "") if track.caa_release_mbid else None
+                    recording_to_rg.get(track.recording_mbid, "")
+                    if track.recording_mbid
+                    else None
+                ) or (
+                    release_to_rg.get(track.caa_release_mbid, "")
+                    if track.caa_release_mbid
+                    else None
                 )
 
                 cover_url: str | None = None

@@ -1,4 +1,6 @@
 """Tests for ListenBrainz weekly exploration (recommendation playlists)."""
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -264,3 +266,83 @@ class TestGetPlaylistTracks:
         call_args = repo._cache.set.call_args
         assert call_args[0][0] == "lb_rec_playlist:abc-123"
         assert call_args[1]["ttl_seconds"] == 21600
+
+
+class TestRecordingMetadataBatch:
+    @pytest.mark.asyncio
+    async def test_resolves_release_groups_in_one_listenbrainz_request(self):
+        repo, http = _make_repo()
+        http.request = AsyncMock(
+            return_value=_ok_response(
+                {
+                    "rec-1": {
+                        "release": {"release_group_mbid": "rg-1"},
+                    },
+                    "rec-2": {
+                        "release": {"release_group_mbid": "rg-2"},
+                    },
+                }
+            )
+        )
+
+        result = await repo.get_recording_release_groups_batch(
+            ["rec-1", "rec-2", "rec-1"]
+        )
+
+        assert result == {"rec-1": "rg-1", "rec-2": "rg-2"}
+        http.request.assert_awaited_once()
+        request = http.request.await_args
+        assert request.args[:2] == ("POST", "https://api.listenbrainz.org/1/metadata/recording/")
+        assert request.kwargs["json"] == {
+            "recording_mbids": ["rec-1", "rec-2"],
+            "inc": "release",
+        }
+
+    @pytest.mark.asyncio
+    async def test_negative_metadata_result_is_cached(self):
+        repo, http = _make_repo()
+        http.request = AsyncMock(return_value=_ok_response({"rec-1": {}}))
+
+        assert await repo.get_recording_release_groups_batch(["rec-1"]) == {}
+
+        repo._cache.set.assert_awaited_once_with(
+            "lb_recording_release_group:rec-1",
+            "",
+            ttl_seconds=86400,
+        )
+
+    @pytest.mark.asyncio
+    async def test_unavailable_metadata_response_is_not_negative_cached(self):
+        repo, _ = _make_repo()
+        repo._post = AsyncMock(return_value=None)
+
+        assert await repo.get_recording_release_groups_batch(["rec-1"]) == {}
+
+        repo._cache.set.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_identical_batches_share_one_request(self):
+        repo, _ = _make_repo()
+        request_started = asyncio.Event()
+        allow_response = asyncio.Event()
+
+        async def fetch_metadata(*args, **kwargs):
+            request_started.set()
+            await allow_response.wait()
+            return {"rec-1": {"release": {"release_group_mbid": "rg-1"}}}
+
+        repo._post = AsyncMock(side_effect=fetch_metadata)
+        first = asyncio.create_task(
+            repo.get_recording_release_groups_batch(["rec-1"])
+        )
+        second = asyncio.create_task(
+            repo.get_recording_release_groups_batch(["rec-1"])
+        )
+        await request_started.wait()
+        await asyncio.sleep(0)
+        allow_response.set()
+
+        results = await asyncio.gather(first, second)
+
+        assert results == [{"rec-1": "rg-1"}, {"rec-1": "rg-1"}]
+        repo._post.assert_awaited_once()

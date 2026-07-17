@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from api.v1.schemas.discover import (
     BecauseYouListenTo,
     DiscoverResponse,
@@ -11,6 +13,10 @@ from services.discover.homepage_service import (
 )
 
 
+def _mbid(value: int) -> str:
+    return str(UUID(int=value))
+
+
 def _album(mbid):
     return HomeAlbum(name="album", mbid=mbid)
 
@@ -20,20 +26,22 @@ def _artist(mbid):
 
 
 def test_collect_covers_walks_all_sections_and_dedups_first_seen():
+    album_top, album_one, album_two = (_mbid(i) for i in range(1, 4))
+    artist_seed, artist_one = (_mbid(i) for i in range(101, 103))
     resp = DiscoverResponse(
-        top_picks=TopPicksSection(items=[TopPickItem(album=_album("alb-top"), match_pct=90)]),
+        top_picks=TopPicksSection(items=[TopPickItem(album=_album(album_top), match_pct=90)]),
         because_you_listen_to=[
             BecauseYouListenTo(
                 seed_artist="Seed",
-                seed_artist_mbid="art-seed",
-                section=HomeSection(title="t", type="albums", items=[_album("alb-1")]),
+                seed_artist_mbid=artist_seed,
+                section=HomeSection(title="t", type="albums", items=[_album(album_one)]),
             )
         ],
         artists_you_might_like=HomeSection(
-            title="Artists", type="artists", items=[_artist("art-1"), _artist("art-seed")]
+            title="Artists", type="artists", items=[_artist(artist_one), _artist(artist_seed)]
         ),
         globally_trending=HomeSection(
-            title="Trending", type="albums", items=[_album("alb-1"), _album("alb-2")]
+            title="Trending", type="albums", items=[_album(album_one), _album(album_two)]
         ),
         fresh_releases=HomeSection(
             title="Fresh", type="tracks", items=[HomeTrack(name="track")]
@@ -43,20 +51,21 @@ def test_collect_covers_walks_all_sections_and_dedups_first_seen():
     albums, artists = _collect_cover_prewarm_mbids(resp)
 
     # Top picks first, then rows top-to-bottom, duplicates dropped, tracks carry no cover.
-    assert albums == ["alb-top", "alb-1", "alb-2"]
-    assert artists == ["art-seed", "art-1"]
+    assert albums == [album_top, album_one, album_two]
+    assert artists == [artist_seed, artist_one]
 
 
 def test_collect_covers_ignores_missing_mbids():
+    album_mbid = _mbid(1)
     resp = DiscoverResponse(
         globally_trending=HomeSection(
             title="Trending",
             type="albums",
-            items=[_album(None), _album(""), _album("alb-ok")],
+            items=[_album(None), _album(""), _album(album_mbid)],
         ),
     )
     albums, artists = _collect_cover_prewarm_mbids(resp)
-    assert albums == ["alb-ok"]
+    assert albums == [album_mbid]
     assert artists == []
 
 
@@ -66,6 +75,8 @@ def test_collect_covers_includes_weekly_exploration_tracks():
         WeeklyExplorationTrack,
     )
 
+    album_mbid = _mbid(1)
+    artist_mbid = _mbid(2)
     resp = DiscoverResponse(
         weekly_exploration=WeeklyExplorationSection(
             title="Weekly Exploration",
@@ -75,15 +86,15 @@ def test_collect_covers_includes_weekly_exploration_tracks():
                     title="t",
                     artist_name="a",
                     album_name="al",
-                    release_group_mbid="we-album",
-                    artist_mbid="we-artist",
+                    release_group_mbid=album_mbid,
+                    artist_mbid=artist_mbid,
                 )
             ],
         ),
     )
     albums, artists = _collect_cover_prewarm_mbids(resp)
-    assert "we-album" in albums
-    assert "we-artist" in artists
+    assert album_mbid in albums
+    assert artist_mbid in artists
 
 
 def test_collect_covers_caps_album_count():
@@ -91,7 +102,7 @@ def test_collect_covers_caps_album_count():
         globally_trending=HomeSection(
             title="Trending",
             type="albums",
-            items=[_album(f"alb-{i}") for i in range(_PREWARM_MAX_ALBUMS + 50)],
+            items=[_album(_mbid(i + 1)) for i in range(_PREWARM_MAX_ALBUMS + 50)],
         ),
     )
     albums, _ = _collect_cover_prewarm_mbids(resp)

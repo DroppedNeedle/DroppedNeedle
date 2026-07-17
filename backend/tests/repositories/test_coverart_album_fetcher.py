@@ -31,6 +31,9 @@ async def test_release_local_sources_prefers_library_before_jellyfin():
 
     assert result is not None
     assert result[2] == 'library'
+    mb_repo.get_release_group_id_from_release.assert_awaited_once_with(
+        'release-id', priority=RequestPriority.IMAGE_FETCH
+    )
     fetcher._fetch_from_library.assert_awaited_once_with('rg-id', Path('/tmp/cover.bin'), size=500, priority=RequestPriority.IMAGE_FETCH)
     fetcher._fetch_from_jellyfin.assert_not_awaited()
 
@@ -59,6 +62,9 @@ async def test_release_local_sources_uses_jellyfin_when_library_misses():
 
     assert result is not None
     assert result[2] == 'jellyfin'
+    mb_repo.get_release_group_id_from_release.assert_awaited_once_with(
+        'release-id', priority=RequestPriority.IMAGE_FETCH
+    )
     fetcher._fetch_from_library.assert_awaited_once_with('rg-id', Path('/tmp/cover.bin'), size=500, priority=RequestPriority.IMAGE_FETCH)
     fetcher._fetch_from_jellyfin.assert_awaited_once_with('rg-id', Path('/tmp/cover.bin'), priority=RequestPriority.IMAGE_FETCH)
 
@@ -132,3 +138,45 @@ async def test_audiodb_cache_hit_returns_image_without_live_lookup():
     assert result == (b'img-bytes', 'image/jpeg', 'audiodb')
     browse_queue.enqueue.assert_not_awaited()
     audiodb_service.fetch_and_cache_album_images.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_release_group_uses_caa_while_cold_audiodb_warms():
+    audiodb_service = MagicMock()
+    audiodb_service.is_enabled.return_value = True
+    audiodb_service.get_cached_album_images = AsyncMock(return_value=None)
+    browse_queue = MagicMock()
+    browse_queue.enqueue = AsyncMock()
+    browse_queue.is_pending.return_value = True
+    http_get = AsyncMock(
+        return_value=MagicMock(
+            status_code=200,
+            content=b'caa-image',
+            headers={'content-type': 'image/jpeg'},
+        )
+    )
+    fetcher = _audiodb_fetcher(
+        audiodb_service, browse_queue, http_get=http_get
+    )
+
+    result = await fetcher.fetch_release_group_cover(
+        'rg-id', '500', Path('/tmp/cover.bin')
+    )
+
+    assert result == (b'caa-image', 'image/jpeg', 'cover-art-archive')
+    browse_queue.enqueue.assert_awaited_once_with('album', 'rg-id')
+    http_get.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_disabled_audiodb_falls_through_without_enqueuing():
+    audiodb_service = MagicMock()
+    audiodb_service.is_enabled.return_value = False
+    browse_queue = MagicMock()
+    browse_queue.enqueue = AsyncMock()
+    fetcher = _audiodb_fetcher(audiodb_service, browse_queue)
+
+    result = await fetcher._fetch_from_audiodb('rg-id', Path('/tmp/cover.bin'))
+
+    assert result is None
+    browse_queue.enqueue.assert_not_awaited()

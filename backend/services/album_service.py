@@ -238,7 +238,9 @@ class AlbumService:
             cache_key = f"{ALBUM_INFO_PREFIX}{release_group_id}"
             if await self._get_cached_album_info(release_group_id, cache_key):
                 return
-            await self.get_album_info(release_group_id)
+            await self.get_album_info(
+                release_group_id, priority=RequestPriority.BACKGROUND_SYNC
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -254,7 +256,10 @@ class AlbumService:
         return await self.get_album_info(release_group_id)
 
     async def get_album_info(
-        self, release_group_id: str, library_mbids: set[str] = None
+        self,
+        release_group_id: str,
+        library_mbids: set[str] = None,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> AlbumInfo:
         release_group_id = await self._provider_album_id(release_group_id)
         try:
@@ -291,7 +296,7 @@ class AlbumService:
             self._album_in_flight[release_group_id] = future
             try:
                 album_info = await self._do_get_album_info(
-                    release_group_id, cache_key, library_mbids
+                    release_group_id, cache_key, library_mbids, priority
                 )
                 if not future.done():
                     future.set_result(album_info)
@@ -309,10 +314,14 @@ class AlbumService:
             raise ResourceNotFoundError(f"Failed to get album info: {e}")
 
     async def _do_get_album_info(
-        self, release_group_id: str, cache_key: str, library_mbids: set[str] | None
+        self,
+        release_group_id: str,
+        cache_key: str,
+        library_mbids: set[str] | None,
+        priority: RequestPriority,
     ) -> AlbumInfo:
         album_info = await self._build_album_from_musicbrainz(
-            release_group_id, library_mbids
+            release_group_id, library_mbids, priority
         )
         album_info = await self._apply_audiodb_album_images(
             album_info,
@@ -714,11 +723,14 @@ class AlbumService:
         return cleared
 
     async def _enrich_with_release_details(
-        self, album_info: AlbumInfo, release_id: str
+        self,
+        album_info: AlbumInfo,
+        release_id: str,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> None:
         try:
             release_data = await self._mb_repo.get_release_by_id(
-                release_id, includes=["recordings", "labels"]
+                release_id, includes=["recordings", "labels"], priority=priority
             )
 
             if not release_data:
@@ -739,9 +751,14 @@ class AlbumService:
             logger.error(f"Failed to enrich with release details: {e}")
 
     async def _build_album_from_musicbrainz(
-        self, release_group_id: str, library_mbids: set[str] = None
+        self,
+        release_group_id: str,
+        library_mbids: set[str] = None,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> AlbumInfo:
-        release_group = await self._fetch_release_group(release_group_id)
+        release_group = await self._fetch_release_group(
+            release_group_id, priority=priority
+        )
         primary_release = find_primary_release(release_group)
         artist_name, artist_id = extract_artist_info(release_group)
 
@@ -768,7 +785,9 @@ class AlbumService:
         for release_id in dict.fromkeys(
             rid for rid in (owned_release_id, primary_id) if rid
         ):
-            await self._enrich_with_release_details(basic_info, release_id)
+            await self._enrich_with_release_details(
+                basic_info, release_id, priority=priority
+            )
             if basic_info.tracks:
                 break
 

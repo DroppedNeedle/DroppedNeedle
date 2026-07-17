@@ -4,6 +4,10 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 
 from core.exceptions import ExternalServiceError
+from infrastructure.degradation import (
+    clear_degradation_context,
+    init_degradation_context,
+)
 from repositories.listenbrainz_repository import ListenBrainzRepository
 
 
@@ -176,7 +180,9 @@ class TestUpstreamPolicyBlocks:
             _listenbrainz_circuit_breaker,
             ServiceDisabledUpstreamError,
         )
+        from infrastructure.service_health import service_health
 
+        service_health.clear()
         _listenbrainz_circuit_breaker.reset()
         repo, http_client = _make_repo(user_token="")
         http_client.request = AsyncMock(
@@ -193,6 +199,7 @@ class TestUpstreamPolicyBlocks:
         # one attempt, no retry storm, breaker still closed
         assert http_client.request.await_count == 1
         assert not _listenbrainz_circuit_breaker.is_open()
+        service_health.clear()
 
     @pytest.mark.asyncio
     async def test_popularity_disabled_500_is_non_breaking(self):
@@ -200,7 +207,9 @@ class TestUpstreamPolicyBlocks:
             _listenbrainz_circuit_breaker,
             ServiceDisabledUpstreamError,
         )
+        from infrastructure.service_health import service_health
 
+        service_health.clear()
         _listenbrainz_circuit_breaker.reset()
         repo, http_client = _make_repo()
         http_client.request = AsyncMock(
@@ -213,25 +222,30 @@ class TestUpstreamPolicyBlocks:
             await repo.get_artist_top_recordings("artist-1")
         assert http_client.request.await_count == 1
         assert not _listenbrainz_circuit_breaker.is_open()
+        service_health.clear()
 
     @pytest.mark.asyncio
-    async def test_successful_popularity_call_heals_the_degraded_flag(self):
+    async def test_known_popularity_outage_short_circuits_followup_calls(self):
         from repositories.listenbrainz_repository import (
             _mark_popularity_degraded,
-            lb_popularity_degraded,
         )
         from infrastructure.service_health import service_health
 
         service_health.clear()
         _mark_popularity_degraded()
-        assert lb_popularity_degraded()  # flagged down
+        degradation = init_degradation_context()
 
-        repo, http_client = _make_repo()
-        http_client.request = AsyncMock(return_value=self._resp(200, "[]"))
-        await repo.get_artist_top_recordings("artist-1")  # a /popularity/ 200
+        try:
+            repo, http_client = _make_repo()
+            http_client.request = AsyncMock(return_value=self._resp(200, "[]"))
+            result = await repo.get_artist_top_recordings("artist-1")
 
-        assert not lb_popularity_degraded()  # healed instantly, not left to expire
-        service_health.clear()
+            assert result == []
+            assert degradation.degraded_summary() == {"listenbrainz": "error"}
+            http_client.request.assert_not_awaited()
+        finally:
+            clear_degradation_context()
+            service_health.clear()
 
     @pytest.mark.asyncio
     async def test_genuine_500_still_breaks(self):

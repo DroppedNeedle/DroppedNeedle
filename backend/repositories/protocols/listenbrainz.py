@@ -85,6 +85,12 @@ class ListenBrainzRepositoryProtocol(Protocol):
     ) -> list[ListenBrainzRecording]:
         ...
 
+    async def get_recording_release_groups_batch(
+        self,
+        recording_mbids: list[str],
+    ) -> dict[str, str]:
+        ...
+
     async def get_release_group_popularity_batch(
         self,
         release_group_mbids: list[str]

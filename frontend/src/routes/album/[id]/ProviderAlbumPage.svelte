@@ -91,7 +91,7 @@
 				onartistclick={state.goToArtist}
 			/>
 
-			<WhereToBuy releaseGroupMbid={album.musicbrainz_id} />
+			<WhereToBuy releaseGroupMbid={album.musicbrainz_id} enabled={!state.loadingTracks} />
 
 			{#if state.loadingTracks}
 				<div class="space-y-3">

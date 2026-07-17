@@ -34,6 +34,7 @@ class TestEnqueue:
     async def test_enqueue_adds_item(self, queue: AudioDBBrowseQueue):
         await queue.enqueue("artist", "abc-123", name="Coldplay")
         assert queue._queue.qsize() == 1
+        assert queue.is_pending("artist", "abc-123") is True
 
     @pytest.mark.asyncio
     async def test_enqueue_dedup_same_mbid(self, queue: AudioDBBrowseQueue):
@@ -95,6 +96,7 @@ class TestConsumer:
         mock_audiodb_svc.fetch_and_cache_album_images.assert_called_once_with(
             "def-456", artist_name="Coldplay", album_name="Parachutes", is_monitored=False,
         )
+        assert queue.is_pending("album", "def-456") is False
 
     @pytest.mark.asyncio
     async def test_consumer_skips_when_disabled(self, queue, mock_audiodb_svc, mock_prefs):
@@ -110,6 +112,7 @@ class TestConsumer:
             pass
 
         mock_audiodb_svc.fetch_and_cache_artist_images.assert_not_called()
+        assert queue.is_pending("artist", "abc-123") is False
 
     @pytest.mark.asyncio
     async def test_consumer_handles_item_error(self, queue, mock_audiodb_svc, mock_prefs, caplog):
@@ -126,6 +129,7 @@ class TestConsumer:
             pass
 
         assert queue._queue.qsize() == 0
+        assert queue.is_pending("artist", "abc-123") is False
         assert any(
             record.levelno == logging.ERROR
             and "audiodb.browse_queue action=item_error" in record.message

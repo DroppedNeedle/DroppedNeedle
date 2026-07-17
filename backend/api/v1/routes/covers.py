@@ -16,6 +16,14 @@ _SIZE_ALIAS_NONE = {"", "original", "full", "max", "largest"}
 # real cover for that whole window. 5 minutes lets it fill in on the next visit while still
 # sparing the server a placeholder request on every scroll.
 _PLACEHOLDER_CACHE_CONTROL = "public, max-age=300"
+_PREFERRED_COVER_CACHE_CONTROL = "public, max-age=31536000, immutable"
+_FALLBACK_COVER_CACHE_CONTROL = "public, max-age=300"
+
+
+def _cover_cache_control(source: str) -> str:
+    if source == "cover-art-archive":
+        return _FALLBACK_COVER_CACHE_CONTROL
+    return _PREFERRED_COVER_CACHE_CONTROL
 
 
 def _warming_response() -> Response:
@@ -75,17 +83,6 @@ async def cover_from_release_group(
 ):
     desired_size = _normalize_size(size)
 
-    etag_hash = await coverart_repo.get_release_group_cover_etag(release_group_id, desired_size)
-    etag_header = _quote_etag(etag_hash) if etag_hash else None
-    if etag_header and _etag_matches(request.headers.get("if-none-match"), etag_header):
-        return Response(
-            status_code=304,
-            headers={
-                "Cache-Control": "public, max-age=31536000, immutable",
-                "ETag": etag_header,
-            },
-        )
-
     # defer_best_release: skip the expensive two-call CAA best-release fallback on the request
     # and resolve it in the background. While that runs we return 202 (warming) so the frontend
     # holds a skeleton and polls the cover in live. Compat/streaming clients call the repo
@@ -94,13 +91,20 @@ async def cover_from_release_group(
 
     if result:
         image_data, content_type, source = result
-        if not etag_header:
-            etag_header = _quote_etag(hashlib.sha1(image_data).hexdigest())
+        etag_header = _quote_etag(hashlib.sha1(image_data).hexdigest())
+        if _etag_matches(request.headers.get("if-none-match"), etag_header):
+            return Response(
+                status_code=304,
+                headers={
+                    "Cache-Control": _cover_cache_control(source),
+                    "ETag": etag_header,
+                },
+            )
         return Response(
             content=image_data,
             media_type=content_type,
             headers={
-                "Cache-Control": "public, max-age=31536000, immutable",
+                "Cache-Control": _cover_cache_control(source),
                 "X-Cover-Source": source,
                 "ETag": etag_header,
             }
@@ -139,33 +143,32 @@ async def cover_from_release(
 ):
     desired_size = _normalize_size(size)
 
-    etag_hash = await coverart_repo.get_release_cover_etag(release_id, desired_size)
-    etag_header = _quote_etag(etag_hash) if etag_hash else None
-    if etag_header and _etag_matches(request.headers.get("if-none-match"), etag_header):
-        return Response(
-            status_code=304,
-            headers={
-                "Cache-Control": "public, max-age=31536000, immutable",
-                "ETag": etag_header,
-            },
-        )
-
     result = await coverart_repo.get_release_cover(release_id, desired_size, is_disconnected=request.is_disconnected)
     
     if result:
         image_data, content_type, source = result
-        if not etag_header:
-            etag_header = _quote_etag(hashlib.sha1(image_data).hexdigest())
+        etag_header = _quote_etag(hashlib.sha1(image_data).hexdigest())
+        if _etag_matches(request.headers.get("if-none-match"), etag_header):
+            return Response(
+                status_code=304,
+                headers={
+                    "Cache-Control": _cover_cache_control(source),
+                    "ETag": etag_header,
+                },
+            )
         return Response(
             content=image_data,
             media_type=content_type,
             headers={
-                "Cache-Control": "public, max-age=31536000, immutable",
+                "Cache-Control": _cover_cache_control(source),
                 "X-Cover-Source": source,
                 "ETag": etag_header,
             }
         )
     
+    if coverart_repo.is_release_cover_warming(release_id):
+        return _warming_response()
+
     placeholder_svg = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
         <rect fill="#374151" width="200" height="200"/>
         <circle cx="100" cy="100" r="70" fill="#1f2937" stroke="#4B5563" stroke-width="2"/>

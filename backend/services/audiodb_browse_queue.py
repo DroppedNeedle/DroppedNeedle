@@ -30,6 +30,7 @@ class AudioDBBrowseQueue:
             maxsize=_BROWSE_QUEUE_MAX_SIZE,
         )
         self._recent: dict[str, float] = {}
+        self._pending: set[tuple[str, str]] = set()
         self._consumer_task: asyncio.Task | None = None
 
     async def enqueue(
@@ -57,7 +58,11 @@ class AudioDBBrowseQueue:
             artist_name=artist_name,
         )
         self._queue.put_nowait(item)
+        self._pending.add((entity_type, mbid))
         self._recent[mbid] = now
+
+    def is_pending(self, entity_type: str, mbid: str) -> bool:
+        return (entity_type, mbid) in self._pending
 
     def _evict_expired(self, now: float) -> None:
         cutoff = now - _BROWSE_QUEUE_DEDUP_TTL
@@ -111,6 +116,7 @@ class AudioDBBrowseQueue:
                         exc_info=True,
                     )
                 finally:
+                    self._pending.discard((item.entity_type, item.mbid))
                     self._queue.task_done()
 
                 await asyncio.sleep(_BROWSE_QUEUE_INTER_ITEM_DELAY)

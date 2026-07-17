@@ -149,8 +149,12 @@ async def test_release_cover_skips_audiodb_when_release_group_id_unavailable():
     fetcher._fetch_release_local_sources = AsyncMock(return_value=None)
 
     result = await fetcher.fetch_release_cover("release-id", None, Path("/tmp/release.bin"))
+    await asyncio.sleep(0)
 
     assert result == (b"cover", "image/jpeg", "cover-art-archive")
+    mb_repo.get_release_group_id_from_release.assert_awaited_once_with(
+        "release-id", priority=RequestPriority.BACKGROUND_SYNC
+    )
     audiodb_service.get_cached_album_images.assert_not_awaited()
 
 
@@ -184,7 +188,7 @@ async def test_album_release_group_chain_falls_back_to_coverartarchive_when_audi
 
 @pytest.mark.asyncio
 async def test_release_cover_uses_audiodb_before_coverartarchive():
-    http_get = AsyncMock()
+    http_get = AsyncMock(return_value=_response(status_code=404))
     mb_repo = MagicMock()
     mb_repo.get_release_group_id_from_release = AsyncMock(return_value="release-group-id")
     fetcher = AlbumCoverFetcher(
@@ -195,12 +199,73 @@ async def test_release_cover_uses_audiodb_before_coverartarchive():
     )
     fetcher._fetch_release_local_sources = AsyncMock(return_value=None)
     fetcher._fetch_from_audiodb = AsyncMock(return_value=(b"img", "image/jpeg", "audiodb"))
+    fetcher._release_audiodb_warming["release-id"] = (
+        "release-group-id",
+        float("inf"),
+    )
 
     result = await fetcher.fetch_release_cover("release-id", None, Path("/tmp/release.bin"))
 
     assert result is not None and result[2] == "audiodb"
     fetcher._fetch_from_audiodb.assert_awaited_once_with("release-group-id", Path("/tmp/release.bin"), priority=RequestPriority.IMAGE_FETCH)
+    assert "release-id" not in fetcher._release_audiodb_warming
     http_get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_release_cover_uses_caa_while_release_mapping_resolves():
+    http_get = AsyncMock(return_value=_response(content=b"caa-image"))
+    mb_repo = MagicMock()
+    mb_repo.get_release_group_id_from_release = AsyncMock(return_value="release-group-id")
+    fetcher = AlbumCoverFetcher(
+        http_get_fn=http_get,
+        write_cache_fn=AsyncMock(),
+        mb_repo=mb_repo,
+        audiodb_service=MagicMock(),
+    )
+    fetcher._fetch_release_local_sources = AsyncMock(return_value=None)
+
+    result = await fetcher.fetch_release_cover(
+        "release-id", None, Path("/tmp/release.bin")
+    )
+    await asyncio.sleep(0)
+
+    assert result == (b"caa-image", "image/jpeg", "cover-art-archive")
+    assert fetcher._release_audiodb_warming["release-id"][0] == "release-group-id"
+
+
+@pytest.mark.asyncio
+async def test_release_cover_does_not_wait_for_slow_musicbrainz_mapping():
+    mapping_started = asyncio.Event()
+    allow_mapping = asyncio.Event()
+
+    async def slow_mapping(*args, **kwargs):
+        mapping_started.set()
+        await allow_mapping.wait()
+        return "release-group-id"
+
+    mb_repo = MagicMock()
+    mb_repo.get_release_group_id_from_release = AsyncMock(side_effect=slow_mapping)
+    fetcher = AlbumCoverFetcher(
+        http_get_fn=AsyncMock(return_value=_response(content=b"caa-image")),
+        write_cache_fn=AsyncMock(),
+        mb_repo=mb_repo,
+        audiodb_service=MagicMock(),
+    )
+    fetcher._fetch_release_local_sources = AsyncMock(return_value=None)
+
+    result = await asyncio.wait_for(
+        fetcher.fetch_release_cover(
+            "release-id", None, Path("/tmp/release.bin")
+        ),
+        timeout=0.1,
+    )
+
+    assert result == (b"caa-image", "image/jpeg", "cover-art-archive")
+    await asyncio.sleep(0)
+    assert mapping_started.is_set()
+    allow_mapping.set()
+    await fetcher._release_audiodb_resolvers["release-id"]
 
 
 @pytest.mark.asyncio

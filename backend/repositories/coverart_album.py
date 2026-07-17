@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -45,6 +46,7 @@ VALID_IMAGE_CONTENT_TYPES = frozenset([
     "image/webp", "image/avif", "image/svg+xml",
 ])
 LOCAL_SOURCE_TIMEOUT_SECONDS = 1.0
+RELEASE_AUDIODB_STATE_TTL_SECONDS = 300.0
 
 
 def _is_valid_image_content_type(content_type: str) -> bool:
@@ -72,6 +74,8 @@ class AlbumCoverFetcher:
         self._jellyfin_repo = jellyfin_repo
         self._audiodb_service = audiodb_service
         self._audiodb_browse_queue = audiodb_browse_queue
+        self._release_audiodb_warming: dict[str, tuple[str, float]] = {}
+        self._release_audiodb_resolvers: dict[str, asyncio.Task] = {}
 
     async def fetch_release_group_cover(
         self,
@@ -153,12 +157,11 @@ class AlbumCoverFetcher:
         file_path: Path,
         priority: RequestPriority = RequestPriority.IMAGE_FETCH,
     ) -> tuple[bytes, str, str] | None:
-        if self._audiodb_service is None:
+        if self._audiodb_service is None or not self._audiodb_service.is_enabled():
             return None
         try:
-            # cache-only on the hot path: a live AudioDB lookup is throttled to the
-            # shared free key and would serialise the whole grid. warm misses in the
-            # background; fall through to CAA now.
+            # Live lookups share a rate-limited key, so a miss queues metadata while
+            # local and CAA fallbacks continue loading the grid.
             cached_images = await self._audiodb_service.get_cached_album_images(release_group_id)
             if cached_images is None:
                 if self._audiodb_browse_queue is not None:
@@ -190,6 +193,94 @@ class AlbumCoverFetcher:
             raise
         except Exception:  # noqa: BLE001
             return None
+
+    def is_audiodb_album_warming(self, release_group_id: str) -> bool:
+        return bool(
+            self._audiodb_browse_queue
+            and self._audiodb_browse_queue.is_pending("album", release_group_id)
+        )
+
+    async def fetch_cached_audiodb_cover(
+        self,
+        release_group_id: str,
+        file_path: Path,
+        priority: RequestPriority = RequestPriority.IMAGE_FETCH,
+    ) -> tuple[bytes, str, str] | None:
+        return await self._fetch_from_audiodb(
+            release_group_id, file_path, priority=priority
+        )
+
+    def is_audiodb_release_warming(self, release_id: str) -> bool:
+        if release_id in self._release_audiodb_resolvers:
+            return True
+        return self._get_warming_release_group(release_id) is not None
+
+    def _get_warming_release_group(self, release_id: str) -> str | None:
+        self._prune_expired_release_states()
+        state = self._release_audiodb_warming.get(release_id)
+        if state is None:
+            return None
+        release_group_id, _ = state
+        return release_group_id
+
+    def _prune_expired_release_states(self) -> None:
+        now = time.monotonic()
+        expired = [
+            release_id
+            for release_id, (_, expires_at) in self._release_audiodb_warming.items()
+            if expires_at <= now
+        ]
+        for release_id in expired:
+            self._release_audiodb_warming.pop(release_id, None)
+
+    def _spawn_release_audiodb_resolve(self, release_id: str) -> None:
+        self._prune_expired_release_states()
+        if self._mb_repo is None or release_id in self._release_audiodb_resolvers:
+            return
+
+        async def _resolve() -> None:
+            try:
+                release_group_id = await self._mb_repo.get_release_group_id_from_release(
+                    release_id,
+                    priority=RequestPriority.BACKGROUND_SYNC,
+                )
+                if not release_group_id:
+                    return
+                self._release_audiodb_warming[release_id] = (
+                    release_group_id,
+                    time.monotonic() + RELEASE_AUDIODB_STATE_TTL_SECONDS,
+                )
+                if self._audiodb_browse_queue is not None:
+                    await self._audiodb_browse_queue.enqueue(
+                        "album", release_group_id
+                    )
+            finally:
+                self._release_audiodb_resolvers.pop(release_id, None)
+
+        task = asyncio.create_task(_resolve())
+        self._release_audiodb_resolvers[release_id] = task
+        task.add_done_callback(_log_task_error)
+
+    async def fetch_release_audiodb_cover(
+        self,
+        release_id: str,
+        file_path: Path,
+        priority: RequestPriority = RequestPriority.IMAGE_FETCH,
+        is_disconnected: DisconnectCallable | None = None,
+    ) -> tuple[bytes, str, str] | None:
+        if self._audiodb_service is None or not self._audiodb_service.is_enabled():
+            return None
+        await check_disconnected(is_disconnected)
+        release_group_id = self._get_warming_release_group(release_id)
+        if release_group_id is None:
+            self._spawn_release_audiodb_resolve(release_id)
+            return None
+        result = await self._fetch_from_audiodb(
+            release_group_id, file_path, priority=priority
+        )
+        if result is not None or not self.is_audiodb_album_warming(release_group_id):
+            self._release_audiodb_warming.pop(release_id, None)
+        return result
 
     async def _get_cover_from_best_release(
         self,
@@ -326,37 +417,53 @@ class AlbumCoverFetcher:
         priority: RequestPriority = RequestPriority.IMAGE_FETCH,
         is_disconnected: DisconnectCallable | None = None,
     ) -> tuple[bytes, str, str] | None:
-        release_group_id = None
-        if self._mb_repo:
-            await check_disconnected(is_disconnected)
-            try:
-                release_group_id = await self._mb_repo.get_release_group_id_from_release(release_id)
-            except ClientDisconnectedError:
-                raise
-            except Exception:  # noqa: BLE001
-                pass
-        result = None
+        result = await self.fetch_release_audiodb_cover(
+            release_id,
+            file_path,
+            priority=priority,
+            is_disconnected=is_disconnected,
+        )
+        if result:
+            return result
+        release_group_id = self._get_warming_release_group(release_id)
         try:
             await check_disconnected(is_disconnected)
             result = await asyncio.wait_for(
-                self._fetch_release_local_sources(release_id, file_path, size, release_group_id, priority=priority),
+                self._fetch_release_local_sources(
+                    release_id,
+                    file_path,
+                    size,
+                    release_group_id,
+                    priority=priority,
+                    resolve_release_group=False,
+                ),
                 timeout=LOCAL_SOURCE_TIMEOUT_SECONDS,
             )
         except TimeoutError:
             pass
         if result:
             return result
-        if release_group_id:
-            await check_disconnected(is_disconnected)
-            result = await self._fetch_from_audiodb(release_group_id, file_path, priority=priority)
-            if result:
-                return result
+        return await self._fetch_release_from_caa(
+            release_id,
+            size,
+            file_path,
+            priority=priority,
+            is_disconnected=is_disconnected,
+        )
 
+    async def _fetch_release_from_caa(
+        self,
+        release_id: str,
+        size: str | None,
+        file_path: Path,
+        priority: RequestPriority,
+        is_disconnected: DisconnectCallable | None,
+    ) -> tuple[bytes, str, str] | None:
         size_suffix = f"-{size}" if size else ""
         url = f"{COVER_ART_ARCHIVE_BASE}/release/{release_id}/front{size_suffix}"
         await check_disconnected(is_disconnected)
         try:
-            response = await self._http_get(url, priority)
+            response = await self._http_get(url, priority, source="coverart")
             if response.status_code == 200:
                 content_type = response.headers.get("content-type", "")
                 if not _is_valid_image_content_type(content_type):
@@ -386,10 +493,14 @@ class AlbumCoverFetcher:
         size: str | None,
         release_group_id: str | None = None,
         priority: RequestPriority = RequestPriority.IMAGE_FETCH,
+        resolve_release_group: bool = True,
     ) -> tuple[bytes, str, str] | None:
         size_int = int(size) if size and size.isdigit() else 500
-        if release_group_id is None and self._mb_repo:
-            release_group_id = await self._mb_repo.get_release_group_id_from_release(release_id)
+        if release_group_id is None and self._mb_repo and resolve_release_group:
+            release_group_id = await self._mb_repo.get_release_group_id_from_release(
+                release_id,
+                priority=priority,
+            )
 
         if release_group_id:
             result = await self._fetch_from_library(release_group_id, file_path, size=size_int, priority=priority)

@@ -119,6 +119,15 @@
 
 	let cleanupResumeListeners: (() => void) | null = null;
 
+	function deferInit(fn: () => void): () => void {
+		if ('requestIdleCallback' in window) {
+			const id = window.requestIdleCallback(fn, { timeout: 2000 });
+			return () => window.cancelIdleCallback(id);
+		}
+		const id = setTimeout(fn, 100);
+		return () => clearTimeout(id);
+	}
+
 	onMount(() => {
 		if (audioElement) {
 			setAudioElement(audioElement);
@@ -140,25 +149,8 @@
 		if (browser) {
 			currentPath = window.location.pathname;
 		}
-		initCacheTTLs();
 		document.addEventListener('keydown', handleGlobalKeydown);
 		if (playlistModalRef) registerPlaylistModal(playlistModalRef);
-
-		const deferInit = (fn: () => void) => {
-			if ('requestIdleCallback' in window) {
-				requestIdleCallback(fn, { timeout: 2000 });
-			} else {
-				setTimeout(fn, 100);
-			}
-		};
-		deferInit(() => {
-			libraryStore.initialize();
-			void imageSettingsStore.load();
-			void restorePlayerSession();
-			void scrobbleManager.init();
-			syncStatus.connect();
-			downloadsActivity.start();
-		});
 	});
 
 	// Everything auth-gated must track the session reactively, not be checked once at
@@ -169,13 +161,31 @@
 	// otherwise restart every service on each play/pause.
 	$effect(() => {
 		if (authStore.isAuthenticated) {
-			untrack(() => {
+			const cancelDeferred = untrack(() => {
 				// integration status feeds the home entry cards and the services panel
 				// (only some pages call ensureLoaded themselves)
 				void integrationStore.ensureLoaded();
+				return deferInit(() => {
+					initCacheTTLs();
+					libraryStore.initialize();
+					void imageSettingsStore.load();
+					void restorePlayerSession();
+					void scrobbleManager.init();
+					syncStatus.connect();
+					downloadsActivity.start();
+				});
 			});
+			return () => {
+				cancelDeferred();
+				downloadsActivity.stop();
+				syncStatus.disconnect();
+			};
 		} else {
-			untrack(() => integrationStore.reset());
+			untrack(() => {
+				integrationStore.reset();
+				downloadsActivity.stop();
+				syncStatus.disconnect();
+			});
 		}
 	});
 

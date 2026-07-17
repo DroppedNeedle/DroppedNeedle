@@ -34,6 +34,9 @@ class AudioDBImageService:
     def _get_settings(self):
         return self._preferences_service.get_advanced_settings()
 
+    def is_enabled(self) -> bool:
+        return self._get_settings().audiodb_enabled
+
     def _mem_key(self, entity_type: str, mbid: str) -> str:
         return f"audiodb_{entity_type}:{mbid}"
 

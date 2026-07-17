@@ -11,10 +11,13 @@ import type { ArtistPurchaseOptionsResponse, PurchaseOptionsResponse } from '$li
 // from global admin settings), so no userId key segment.
 export const purchaseOptionsKey = (mbid: string) => ['albums', 'purchase-options', mbid] as const;
 
-export const getPurchaseOptionsQuery = (mbid: Getter<string>) =>
+export const getPurchaseOptionsQuery = (
+	mbid: Getter<string>,
+	enabled: Getter<boolean> = () => true
+) =>
 	createQuery(() => ({
 		queryKey: purchaseOptionsKey(mbid()),
-		enabled: !!mbid(),
+		enabled: enabled() && !!mbid(),
 		staleTime: 24 * 60 * 60 * 1000, // the backend caches for 7 days anyway
 		queryFn: ({ signal }) =>
 			api.global.get<PurchaseOptionsResponse>(API.album.purchaseOptions(mbid()), { signal })

@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING, Optional
 from infrastructure.cache.memory_cache import CacheInterface
 from infrastructure.cache.disk_cache import DiskMetadataCache
 from infrastructure.memory import get_rss_bytes, trim_malloc
+from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.serialization import clone_with_updates
-from infrastructure.validators import is_unknown_mbid
+from infrastructure.validators import is_unknown_mbid, is_valid_mbid
 from services.library_service import LibraryService
 from services.preferences_service import PreferencesService
 from core.task_registry import TaskRegistry
@@ -336,10 +337,13 @@ async def warm_library_cache(
         warmed = 0
         for i, album_data in enumerate(albums_to_warm):
             mbid = album_data.get("mbid")
-            if mbid and not is_unknown_mbid(mbid):
+            if is_valid_mbid(mbid):
                 try:
                     if not await album_service.is_album_cached(mbid):
-                        await album_service.get_album_info(mbid)
+                        await album_service.get_album_info(
+                            mbid,
+                            priority=RequestPriority.BACKGROUND_SYNC,
+                        )
                         warmed += 1
 
                     if i % 5 == 0:
@@ -420,7 +424,7 @@ async def warm_artist_discovery_cache_periodically(
             mbids = [
                 a["mbid"]
                 for a in artists
-                if a.get("mbid") and not is_unknown_mbid(a["mbid"])
+                if is_valid_mbid(a.get("mbid"))
             ]
             if not mbids:
                 await asyncio.sleep(interval)
@@ -683,7 +687,7 @@ async def warm_audiodb_cache_periodically(
 
             for a in artists or []:
                 mbid = a.get("mbid")
-                if mbid and not is_unknown_mbid(mbid):
+                if is_valid_mbid(mbid):
                     all_items.append(("artist", mbid, a))
             for a in albums or []:
                 mbid = (
@@ -691,7 +695,7 @@ async def warm_audiodb_cache_periodically(
                     if isinstance(a, dict)
                     else getattr(a, "musicbrainz_id", None)
                 )
-                if mbid and not is_unknown_mbid(mbid):
+                if is_valid_mbid(mbid):
                     all_items.append(("album", mbid, a))
 
             all_items.sort(key=lambda x: x[1])

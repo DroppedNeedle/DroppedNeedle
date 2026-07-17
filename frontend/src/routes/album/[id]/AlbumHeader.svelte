@@ -154,7 +154,7 @@
 	const editionsMbid = $derived(releaseGroupMbid || album.musicbrainz_id);
 	const editionsQuery = getAlbumEditionsQuery(
 		() => editionsMbid,
-		() => authStore.isTrusted && downloadClientConfigured
+		() => authStore.isTrusted && downloadClientConfigured && !loadingTracks
 	);
 	const editions = $derived(editionsQuery.data?.items ?? []);
 	const currentEdition = $derived(

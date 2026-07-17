@@ -10,6 +10,15 @@ mimetypes.add_type("font/woff2", ".woff2")
 mimetypes.add_type("font/woff", ".woff")
 
 _NO_CACHE_HEADERS = {"Cache-Control": "no-cache"}
+_IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
+
+
+class FrontendStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope: dict):
+        response = await super().get_response(path, scope)
+        if path.startswith("immutable/") and response.status_code in (200, 304):
+            response.headers["Cache-Control"] = _IMMUTABLE_CACHE_CONTROL
+        return response
 
 
 def mount_frontend(app: FastAPI):
@@ -35,7 +44,7 @@ def mount_frontend(app: FastAPI):
         return None
 
     if (build_dir / "_app").exists():
-        app.mount("/_app", StaticFiles(directory=build_dir / "_app", html=False), name="_app")
+        app.mount("/_app", FrontendStaticFiles(directory=build_dir / "_app", html=False), name="_app")
 
     if (img_dir := build_dir / "img").exists():
         app.mount("/img", StaticFiles(directory=img_dir, html=False), name="img")

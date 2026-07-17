@@ -557,22 +557,31 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		if (abortController) abortController.abort();
 		abortController = new AbortController();
 		const signal = abortController.signal;
+		let tracksPromise: Promise<void> | null = null;
 
 		if (refreshSourceMatch) void fetchMbidSourceMatches(albumId, signal);
 
 		if (refreshBasic) {
-			if (refreshTracks) void doFetchTracks(albumId, signal);
+			if (refreshTracks) tracksPromise = doFetchTracks(albumId, signal);
 			void doFetchYouTube(albumId, signal);
 			await doFetchBasic(albumId, signal);
 		} else {
 			void doFetchBasic(albumId, signal);
 		}
 		if (signal.aborted || !album) return;
-		if (refreshTracks && !refreshBasic) void doFetchTracks(albumId, signal);
-		if (refreshDiscovery) void doFetchDiscovery(albumId, signal);
+		if (refreshTracks && !refreshBasic) tracksPromise = doFetchTracks(albumId, signal);
 		if (!refreshBasic) void doFetchYouTube(albumId, signal);
 		if (refreshLastfm) void doFetchLastFm(albumId, signal);
 		if (refreshSourceMatch) void fetchNamedSourceMatches(albumId, signal);
+		if (refreshDiscovery) {
+			if (tracksPromise) {
+				void tracksPromise.then(() => {
+					if (!signal.aborted) void doFetchDiscovery(albumId, signal);
+				});
+			} else {
+				void doFetchDiscovery(albumId, signal);
+			}
+		}
 	}
 
 	function clearExternalRecheck() {

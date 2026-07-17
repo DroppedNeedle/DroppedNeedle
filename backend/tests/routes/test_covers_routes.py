@@ -1,3 +1,5 @@
+import hashlib
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, ANY
 
@@ -23,6 +25,7 @@ def mock_cover_repo():
     # sync warming checks default to "not warming" so a None cover renders the placeholder;
     # tests that exercise the warming (202) path flip these explicitly.
     mock.is_rg_cover_warming = MagicMock(return_value=False)
+    mock.is_release_cover_warming = MagicMock(return_value=False)
     mock.is_artist_cover_warming = MagicMock(return_value=False)
     return mock
 
@@ -48,6 +51,26 @@ def test_release_uses_dynamic_source_header(client):
 
     assert response.status_code == 200
     assert response.headers['x-cover-source'] == 'jellyfin'
+
+
+def test_caa_fallback_is_not_browser_immutable(client, mock_cover_repo):
+    mock_cover_repo.get_release_group_cover = AsyncMock(
+        return_value=(b'caa-image', 'image/jpeg', 'cover-art-archive')
+    )
+
+    response = client.get('/covers/release-group/11111111-1111-1111-1111-111111111111')
+
+    assert response.headers['cache-control'] == 'public, max-age=300'
+
+
+def test_audiodb_cover_remains_browser_immutable(client, mock_cover_repo):
+    mock_cover_repo.get_release_group_cover = AsyncMock(
+        return_value=(b'audiodb-image', 'image/jpeg', 'audiodb')
+    )
+
+    response = client.get('/covers/release-group/11111111-1111-1111-1111-111111111111')
+
+    assert response.headers['cache-control'] == 'public, max-age=31536000, immutable'
 
 
 def test_artist_uses_dynamic_source_header(client, mock_cover_repo):
@@ -99,6 +122,17 @@ def test_artist_returns_202_warming_while_resolving(client, mock_cover_repo):
     assert response.headers['cache-control'] == 'no-store'
 
 
+def test_release_returns_202_warming_while_resolving(client, mock_cover_repo):
+    mock_cover_repo.get_release_cover = AsyncMock(return_value=None)
+    mock_cover_repo.is_release_cover_warming = MagicMock(return_value=True)
+
+    response = client.get('/covers/release/55555555-5555-5555-5555-555555555555')
+
+    assert response.status_code == 202
+    assert response.headers['x-cover-source'] == 'warming'
+    assert response.headers['cache-control'] == 'no-store'
+
+
 def test_release_group_original_size_maps_to_none(client, mock_cover_repo):
     response = client.get('/covers/release-group/66666666-6666-6666-6666-666666666666?size=original')
 
@@ -121,17 +155,19 @@ def test_release_group_sets_etag_header(client):
     response = client.get('/covers/release-group/11111111-1111-1111-1111-111111111111?size=500')
 
     assert response.status_code == 200
-    assert response.headers['etag'] == '"etag-rg"'
+    expected = hashlib.sha1(b'rg-image').hexdigest()
+    assert response.headers['etag'] == f'"{expected}"'
 
 
 def test_release_group_returns_304_when_etag_matches(client, mock_cover_repo):
+    expected = hashlib.sha1(b'rg-image').hexdigest()
     response = client.get(
         '/covers/release-group/11111111-1111-1111-1111-111111111111?size=500',
-        headers={'If-None-Match': '"etag-rg"'},
+        headers={'If-None-Match': f'"{expected}"'},
     )
 
     assert response.status_code == 304
-    mock_cover_repo.get_release_group_cover.assert_not_awaited()
+    mock_cover_repo.get_release_group_cover.assert_awaited_once()
 
 
 def test_artist_returns_304_when_etag_matches(client, mock_cover_repo):

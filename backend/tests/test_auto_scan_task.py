@@ -12,6 +12,7 @@ import pytest
 
 from api.v1.schemas.settings import LibraryScanScheduleSettings
 from core import tasks
+from infrastructure.queue.priority_queue import RequestPriority
 
 
 class _Prefs:
@@ -83,6 +84,53 @@ async def test_artist_cache_warmer_resolves_rebuilt_service_each_cycle(monkeypat
 
     service_getter.assert_called_once_with()
     service.precache_artist_discovery.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_artist_cache_warmer_filters_local_ids_before_upstream_calls(monkeypatch):
+    sleeps = 0
+
+    async def stop_after_empty_cycle(_seconds):
+        nonlocal sleeps
+        sleeps += 1
+        if sleeps > 1:
+            raise asyncio.CancelledError
+
+    service_getter = MagicMock()
+    library = SimpleNamespace(
+        get_artists=AsyncMock(
+            return_value=[
+                {"mbid": "f110a324f991fab25548b41e2efeb1bf"},
+                {"mbid": "unknown_artist"},
+            ]
+        )
+    )
+    monkeypatch.setattr(tasks.asyncio, "sleep", stop_after_empty_cycle)
+
+    await tasks.warm_artist_discovery_cache_periodically(
+        service_getter, library, interval=10, delay=0
+    )
+
+    service_getter.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_library_cache_warmer_uses_background_musicbrainz_priority(monkeypatch):
+    monkeypatch.setattr(tasks.asyncio, "sleep", AsyncMock())
+    album_service = MagicMock()
+    album_service.is_album_cached = AsyncMock(return_value=False)
+    album_service.get_album_info = AsyncMock()
+    library_db = MagicMock()
+    library_db.get_albums = AsyncMock(
+        return_value=[{"mbid": "11111111-1111-1111-1111-111111111111"}]
+    )
+
+    await tasks.warm_library_cache(MagicMock(), album_service, library_db)
+
+    album_service.get_album_info.assert_awaited_once_with(
+        "11111111-1111-1111-1111-111111111111",
+        priority=RequestPriority.BACKGROUND_SYNC,
+    )
 
 
 def test_interval_overdue_runs_immediately():

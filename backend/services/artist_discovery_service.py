@@ -299,9 +299,9 @@ class ArtistDiscoveryService:
                     artist_mbid, count=count
                 )
 
-                release_ids = [r.release_mbid for r in recordings if r.release_mbid]
-
-                rg_map = await self._resolve_release_groups(release_ids)
+                rg_map = await self._resolve_recording_release_groups(
+                    lb_repo, recordings
+                )
 
                 songs = []
                 for r in recordings[:count]:
@@ -532,8 +532,7 @@ class ArtistDiscoveryService:
             mbid.lower() for mbid in requested_album_mbids if isinstance(mbid, str)
         }
 
-        release_ids = [r.release_mbid for r in recordings if r.release_mbid]
-        rg_map = await self._resolve_release_groups(release_ids) if release_ids else {}
+        rg_map = await self._resolve_recording_release_groups(lb_repo, recordings)
 
         aggregated: dict[str, dict[str, str | int | None]] = {}
         for recording in recordings:
@@ -816,6 +815,44 @@ class ArtistDiscoveryService:
                 logger.warning(f"Resolution returned None/empty for {rid}")
 
         return rg_map
+
+    async def _resolve_recording_release_groups(
+        self,
+        lb_repo: ListenBrainzRepositoryProtocol,
+        recordings: list,
+    ) -> dict[str, str]:
+        """Map release MBIDs to release groups, batching through ListenBrainz first."""
+        recording_ids = [
+            recording.recording_mbid
+            for recording in recordings
+            if recording.recording_mbid
+        ]
+        try:
+            recording_to_rg = await lb_repo.get_recording_release_groups_batch(
+                recording_ids
+            )
+            if not isinstance(recording_to_rg, dict):
+                recording_to_rg = {}
+        except Exception:  # noqa: BLE001 - MusicBrainz remains the fallback
+            recording_to_rg = {}
+
+        release_to_rg = {
+            recording.release_mbid: recording_to_rg[recording.recording_mbid]
+            for recording in recordings
+            if recording.release_mbid
+            and recording.recording_mbid
+            and recording.recording_mbid in recording_to_rg
+        }
+        unresolved_release_ids = [
+            recording.release_mbid
+            for recording in recordings
+            if recording.release_mbid and recording.release_mbid not in release_to_rg
+        ]
+        if unresolved_release_ids:
+            release_to_rg.update(
+                await self._resolve_release_groups(unresolved_release_ids)
+            )
+        return release_to_rg
 
     async def _get_similar_artists_lastfm(
         self,

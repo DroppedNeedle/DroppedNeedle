@@ -19,6 +19,7 @@ from repositories.listenbrainz_models import (
     parse_recommendation_track,
 )
 from infrastructure.degradation import try_get_degradation_context
+from infrastructure.http.deduplication import RequestDeduplicator
 from infrastructure.integration_result import IntegrationResult
 
 _SOURCE = "listenbrainz"
@@ -108,6 +109,7 @@ _listenbrainz_circuit_breaker = CircuitBreaker(
 )
 
 _listenbrainz_rate_limiter = TokenBucketRateLimiter(rate=5.0, capacity=10)
+_metadata_deduplicator = RequestDeduplicator()
 
 LISTENBRAINZ_API_URL = "https://api.listenbrainz.org"
 
@@ -585,6 +587,12 @@ class ListenBrainzRepository:
         cached = await self._cache.get(cache_key)
         if cached:
             return cached
+
+        # This outage is capability-wide, not artist-specific. Once LB explicitly
+        # disables popularity, let the shared health TTL expire before probing again.
+        if lb_popularity_degraded():
+            _record_degradation("ListenBrainz popularity is temporarily unavailable")
+            return []
         
         result = await self._get(f"/1/popularity/top-recordings-for-artist/{artist_mbid}")
         if not result:
@@ -593,6 +601,66 @@ class ListenBrainzRepository:
         if recordings:
             await self._cache.set(cache_key, recordings, ttl_seconds=3600)
         return recordings
+
+    async def get_recording_release_groups_batch(
+        self,
+        recording_mbids: list[str],
+    ) -> dict[str, str]:
+        """Resolve recordings to release groups through ListenBrainz metadata.
+
+        Live-verified against ListenBrainz 2026-07-17: POST /1/metadata/recording/
+        with ``inc=release`` returns an object keyed by recording MBID whose release
+        object carries ``release_group_mbid``.
+        """
+        unique_mbids = list(dict.fromkeys(mbid for mbid in recording_mbids if mbid))
+        if not unique_mbids:
+            return {}
+
+        resolved: dict[str, str] = {}
+        pending: list[str] = []
+        for mbid in unique_mbids:
+            cache_key = f"{LB_PREFIX}recording_release_group:{mbid}"
+            cached = await self._cache.get(cache_key)
+            if cached is None:
+                pending.append(mbid)
+            elif cached:
+                resolved[mbid] = cached
+
+        pending.sort()
+        for start in range(0, len(pending), 50):
+            batch = pending[start:start + 50]
+            dedupe_key = "listenbrainz:recording-metadata:" + ",".join(batch)
+            result = await _metadata_deduplicator.dedupe(
+                dedupe_key,
+                lambda batch=batch: self._post(
+                    "/1/metadata/recording/",
+                    {"recording_mbids": batch, "inc": "release"},
+                ),
+            )
+            if not isinstance(result, dict):
+                _record_degradation(
+                    "ListenBrainz returned no recording metadata"
+                )
+                continue
+            payload = result
+            for mbid in batch:
+                metadata = payload.get(mbid)
+                release = metadata.get("release") if isinstance(metadata, dict) else None
+                release_group_mbid = (
+                    release.get("release_group_mbid")
+                    if isinstance(release, dict)
+                    else None
+                )
+                cache_value = release_group_mbid if isinstance(release_group_mbid, str) else ""
+                await self._cache.set(
+                    f"{LB_PREFIX}recording_release_group:{mbid}",
+                    cache_value,
+                    ttl_seconds=86400,
+                )
+                if cache_value:
+                    resolved[mbid] = cache_value
+
+        return resolved
     
     async def get_similar_users(
         self,
@@ -680,6 +748,10 @@ class ListenBrainzRepository:
         if cached:
             return cached
 
+        if lb_popularity_degraded():
+            _record_degradation("ListenBrainz popularity is temporarily unavailable")
+            return []
+
         result = await self._get(f"/1/popularity/top-release-groups-for-artist/{artist_mbid}")
         if not result or not isinstance(result, list):
             return []
@@ -709,6 +781,10 @@ class ListenBrainzRepository:
         Returns a dict mapping mbid -> total_listen_count.
         """
         if not release_group_mbids:
+            return {}
+
+        if lb_popularity_degraded():
+            _record_degradation("ListenBrainz popularity is temporarily unavailable")
             return {}
 
         result = await self._post(

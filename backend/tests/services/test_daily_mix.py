@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 
@@ -150,7 +151,7 @@ def _make_artists_by_genre(genres: list[str], artists_per: int = 5) -> dict[str,
     result: dict[str, list[str]] = {}
     counter = 0
     for genre in genres:
-        result[genre] = [f"artist-mbid-{counter + j}" for j in range(artists_per)]
+        result[genre] = [str(UUID(int=counter + j + 1)) for j in range(artists_per)]
         counter += artists_per
     return result
 
@@ -178,7 +179,10 @@ class TestDailyMixReturnsEmptyWhenAllGenresBelowMinArtists:
     async def test_returns_empty_when_all_genres_below_min_artists(self) -> None:
         top_genres = [("rock", 5), ("pop", 3)]
         # 2 artists per genre, under the 3-artist minimum
-        artists_by_genre = {"rock": ["a1", "a2"], "pop": ["a3", "a4"]}
+        artists_by_genre = {
+            "rock": [str(UUID(int=i)) for i in range(1, 3)],
+            "pop": [str(UUID(int=i)) for i in range(3, 5)],
+        }
         genre_index = _make_genre_index(
             top_genres=top_genres, artists_by_genre=artists_by_genre,
         )
@@ -245,9 +249,9 @@ class TestDailyMixPersonalizedGenres:
         genre_index = _make_genre_index(
             top_genres=[("rock", 10), ("pop", 8)],
             artists_by_genre={
-                "dream pop": ["a1", "a2", "a3"],
-                "rock": ["a4", "a5", "a6"],
-                "pop": ["a7", "a8", "a9"],
+                "dream pop": [str(UUID(int=i)) for i in range(1, 4)],
+                "rock": [str(UUID(int=i)) for i in range(4, 7)],
+                "pop": [str(UUID(int=i)) for i in range(7, 10)],
             },
         )
         service = _make_service(genre_index=genre_index, cache=_make_cache())
@@ -271,7 +275,7 @@ class TestDailyMixSectionTypeIsAlbums:
     @patch("services.discover.homepage_service.build_similar_artist_pools")
     async def test_section_type_is_albums(self, mock_pools: AsyncMock) -> None:
         top_genres = [("rock", 10)]
-        artists_by_genre = {"rock": ["a1", "a2", "a3", "a4"]}
+        artists_by_genre = {"rock": [str(UUID(int=i)) for i in range(1, 5)]}
         albums = [{"title": "Album", "mbid": "m1", "artist_name": "Art"}]
         genre_index = _make_genre_index(
             top_genres=top_genres,
@@ -317,7 +321,7 @@ class TestDailyMixSectionSourceMatchesResolvedSource:
         self, mock_pools: AsyncMock,
     ) -> None:
         top_genres = [("rock", 10)]
-        artists_by_genre = {"rock": ["a1", "a2", "a3"]}
+        artists_by_genre = {"rock": [str(UUID(int=i)) for i in range(1, 4)]}
         albums = [{"title": "Album", "mbid": "m1", "artist_name": "Art"}]
         genre_index = _make_genre_index(
             top_genres=top_genres,
@@ -339,7 +343,7 @@ class TestDailyMixFamiliarVsNewRatio:
     @patch("services.discover.homepage_service.build_similar_artist_pools")
     async def test_familiar_vs_new_ratio(self, mock_pools: AsyncMock) -> None:
         top_genres = [("rock", 10)]
-        artists_by_genre = {"rock": ["a1", "a2", "a3", "a4"]}
+        artists_by_genre = {"rock": [str(UUID(int=i)) for i in range(1, 5)]}
         albums = [
             {"title": f"Lib {i}", "mbid": f"lib-{i}", "artist_name": f"Art {i}"}
             for i in range(20)

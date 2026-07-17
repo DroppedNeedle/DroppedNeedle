@@ -13,10 +13,14 @@
 
 	interface Props {
 		releaseGroupMbid: string;
+		enabled?: boolean;
 	}
-	let { releaseGroupMbid }: Props = $props();
+	let { releaseGroupMbid, enabled = true }: Props = $props();
 
-	const optionsQuery = getPurchaseOptionsQuery(() => releaseGroupMbid);
+	const optionsQuery = getPurchaseOptionsQuery(
+		() => releaseGroupMbid,
+		() => enabled
+	);
 	const options = $derived(optionsQuery.data);
 
 	let expanded = $state(false);

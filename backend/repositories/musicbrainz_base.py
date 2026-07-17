@@ -34,7 +34,10 @@ mb_circuit_breaker = CircuitBreaker(
     ),
 )
 
-mb_rate_limiter = TokenBucketRateLimiter(rate=1.0, capacity=6)
+# MusicBrainz requires clients to make no more than one request per second:
+# https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting
+# A larger bucket preserves the average refill rate but still permits a cold-start burst.
+mb_rate_limiter = TokenBucketRateLimiter(rate=1.0, capacity=1)
 
 mb_deduplicator = RequestDeduplicator()
 

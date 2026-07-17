@@ -635,18 +635,46 @@ class CoverArtRepository:
         file_path = self._disk_cache.get_file_path(identifier, suffix)
 
         if cached_memory := await self._memory_get(identifier, suffix):
-            return cached_memory
+            if cached_memory[2] in {"audiodb", "legacy-cache"}:
+                return cached_memory
+            preferred = await self._prefer_audiodb_album_cover(
+                release_group_id,
+                identifier,
+                suffix,
+                file_path,
+                cached_memory,
+                priority,
+            )
+            return preferred
 
         if cached := await self._disk_cache.read(file_path, ["source"]):
-            source = "cover-art-archive"
+            # Pre-metadata cache files have unknown provenance. Preserve them rather
+            # than assuming they came from CAA and hiding restored/local artwork.
+            source = "legacy-cache"
             if cached[2] and isinstance(cached[2], dict):
                 source = cached[2].get("source") or source
             result = (cached[0], cached[1], source)
             await self._memory_set_from_result(identifier, suffix, result)
-            return result
+            if source in {"audiodb", "legacy-cache"}:
+                return result
+            return await self._prefer_audiodb_album_cover(
+                release_group_id,
+                identifier,
+                suffix,
+                file_path,
+                result,
+                priority,
+            )
 
         if await self._disk_cache.is_negative(file_path):
-            return None
+            return await self._prefer_audiodb_album_cover(
+                release_group_id,
+                identifier,
+                suffix,
+                file_path,
+                None,
+                priority,
+            )
 
         # Key encodes the defer mode so a fast (deferred) hot request never coalesces onto an
         # in-flight slow full best-release resolve and blocks on it. See get_artist_image.
@@ -659,6 +687,10 @@ class CoverArtRepository:
                 include_best_release=not defer_best_release,
             )
         )
+        if result is None and self._album_fetcher.is_audiodb_album_warming(
+            release_group_id
+        ):
+            return None
         if result is None and defer_best_release:
             # Hot path: the cheap sources missed. Finish the expensive best-release fallback
             # (+ embedded art + negative marker) in the background so this request returns the
@@ -676,6 +708,23 @@ class CoverArtRepository:
         else:
             await self._memory_set_from_result(identifier, suffix, result)
         return result
+
+    async def _prefer_audiodb_album_cover(
+        self,
+        release_group_id: str,
+        identifier: str,
+        suffix: str,
+        file_path: Path,
+        fallback: Optional[tuple[bytes, str, str]],
+        priority: RequestPriority,
+    ) -> Optional[tuple[bytes, str, str]]:
+        preferred = await self._album_fetcher.fetch_cached_audiodb_cover(
+            release_group_id, file_path, priority=priority
+        )
+        if preferred is not None:
+            await self._memory_set_from_result(identifier, suffix, preferred)
+            return preferred
+        return fallback
 
     def _spawn_deferred_rg_resolve(self, release_group_id: str, size: Optional[str]) -> None:
         """Background full resolve of a release-group cover (the CAA best-release fallback the
@@ -705,7 +754,10 @@ class CoverArtRepository:
             release_group_id = validate_mbid(release_group_id, "release-group")
         except ValueError:
             return False
-        return f"{release_group_id}:{size or 'orig'}" in self._deferred_rg_inflight
+        return (
+            self._album_fetcher.is_audiodb_album_warming(release_group_id)
+            or f"{release_group_id}:{size or 'orig'}" in self._deferred_rg_inflight
+        )
 
     def is_artist_cover_warming(self, artist_id: str, size: Optional[int]) -> bool:
         """True while a deferred Wikidata resolve is in flight for this artist image."""
@@ -781,29 +833,89 @@ class CoverArtRepository:
         file_path = self._disk_cache.get_file_path(identifier, suffix)
 
         if cached_memory := await self._memory_get(identifier, suffix):
-            return cached_memory
+            if cached_memory[2] in {"audiodb", "legacy-cache"}:
+                return cached_memory
+            return await self._prefer_release_audiodb_cover(
+                release_id,
+                identifier,
+                suffix,
+                file_path,
+                cached_memory,
+                priority,
+                is_disconnected,
+            )
 
         if cached := await self._disk_cache.read(file_path, ["source"]):
-            source = "cover-art-archive"
+            source = "legacy-cache"
             if cached[2] and isinstance(cached[2], dict):
                 source = cached[2].get("source") or source
             result = (cached[0], cached[1], source)
             await self._memory_set_from_result(identifier, suffix, result)
-            return result
+            if source in {"audiodb", "legacy-cache"}:
+                return result
+            return await self._prefer_release_audiodb_cover(
+                release_id,
+                identifier,
+                suffix,
+                file_path,
+                result,
+                priority,
+                is_disconnected,
+            )
 
         if await self._disk_cache.is_negative(file_path):
-            return None
+            return await self._prefer_release_audiodb_cover(
+                release_id,
+                identifier,
+                suffix,
+                file_path,
+                None,
+                priority,
+                is_disconnected,
+            )
 
         dedupe_key = f"cover:rel:{release_id}:{size}"
         result = await _deduplicator.dedupe(
             dedupe_key,
             lambda: self._album_fetcher.fetch_release_cover(release_id, size, file_path, priority=priority, is_disconnected=is_disconnected)
         )
+        if result is None and self._album_fetcher.is_audiodb_release_warming(
+            release_id
+        ):
+            return None
         if result is None:
             await self._disk_cache.write_negative(file_path, ttl_seconds=COVER_NEGATIVE_TTL_SECONDS)
         else:
             await self._memory_set_from_result(identifier, suffix, result)
         return result
+
+    async def _prefer_release_audiodb_cover(
+        self,
+        release_id: str,
+        identifier: str,
+        suffix: str,
+        file_path: Path,
+        fallback: Optional[tuple[bytes, str, str]],
+        priority: RequestPriority,
+        is_disconnected: DisconnectCallable | None,
+    ) -> Optional[tuple[bytes, str, str]]:
+        preferred = await self._album_fetcher.fetch_release_audiodb_cover(
+            release_id,
+            file_path,
+            priority=priority,
+            is_disconnected=is_disconnected,
+        )
+        if preferred is not None:
+            await self._memory_set_from_result(identifier, suffix, preferred)
+            return preferred
+        return fallback
+
+    def is_release_cover_warming(self, release_id: str) -> bool:
+        try:
+            release_id = validate_mbid(release_id, "release")
+        except ValueError:
+            return False
+        return self._album_fetcher.is_audiodb_release_warming(release_id)
     
     async def batch_prefetch_covers(
         self,

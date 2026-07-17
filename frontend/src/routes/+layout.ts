@@ -88,13 +88,15 @@ export const load: LayoutLoad = async ({ url }) => {
 	// per-user primary source (F6/M2): read the requesting user's prefs, not the
 	// global admin default; falls back to DEFAULT_SOURCE on missing prefs / error
 	let primarySource = DEFAULT_SOURCE;
-	try {
-		const data = await api.global.get<{ primary_music_source: unknown }>(
-			API.me.scrobblePreferences()
-		);
-		if (isMusicSource(data.primary_music_source)) primarySource = data.primary_music_source;
-	} catch {
-		/* keep DEFAULT_SOURCE fallback */
+	if (authStore.isAuthenticated) {
+		try {
+			const data = await api.global.get<{ primary_music_source: unknown }>(
+				API.me.scrobblePreferences()
+			);
+			if (isMusicSource(data.primary_music_source)) primarySource = data.primary_music_source;
+		} catch {
+			/* keep DEFAULT_SOURCE fallback */
+		}
 	}
 
 	return { primarySource };
