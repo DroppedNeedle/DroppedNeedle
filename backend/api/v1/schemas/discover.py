@@ -260,5 +260,8 @@ class DiscoverResponse(AppStruct):
     anniversaries: HomeSection | None = None
     new_from_followed: HomeSection | None = None
     unexplored_genres: HomeSection | None = None
+    generated_at: float | None = None
+    refresh_started_at: float | None = None
+    section_status: dict[str, str] = {}
     refreshing: bool = False
     service_status: dict[str, str] | None = None

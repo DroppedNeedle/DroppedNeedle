@@ -551,13 +551,16 @@ async def lifespan(app: FastAPI):
     # warmer below (one user at a time, yields to active users). This is what lets discovery
     # "update as the day goes along" instead of only when a
     # user opens the page - and gives the rate-limited personalisation time to converge.
-    from core.dependencies import get_discover_service, get_per_user_client_factory
+    from core.dependencies import (
+        get_discover_queue_manager,
+        get_discover_service,
+    )
 
     start_discover_home_warmer_task(
         get_discover_service,
         get_home_service,
         get_auth_store,
-        get_per_user_client_factory,
+        get_discover_queue_manager,
     )
 
     from core.dependencies import get_artist_discovery_service

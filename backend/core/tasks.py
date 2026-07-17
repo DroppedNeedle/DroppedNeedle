@@ -456,14 +456,14 @@ def start_artist_discovery_cache_warming_task(
 
 
 # Proactive per-user Discover/Home warmer.
-# Keeps each music-source-linked user's Discover/Home caches warm and CONVERGED through the
+# Keeps each user's Discover/Home caches warm and CONVERGED through the
 # day, not just while they're looking at the page. During the ListenBrainz-popularity outage
 # personalisation is reconstructed from Last.fm via MusicBrainz at a hard 1 req/s, which an
 # on-visit build can't finish; a background prewarm (uncancellable) drains those resolutions
 # and banks them to mbid_store so the following normal-budget build finds them cached. One
 # loop, ONE user at a time (the single global MB 1/s queue makes concurrency pointless), and
 # it yields whenever a user is actively browsing.
-DISCOVER_WARMER_STARTUP_DELAY = 180  # let boot + first on-demand traffic settle
+DISCOVER_WARMER_STARTUP_DELAY = 5  # after core startup, before a normal first visit
 DISCOVER_WARMER_INTERVAL = 90  # floor between per-user warm ticks
 DISCOVER_WARMER_ENUM_TTL = 600  # re-enumerate eligible users at most this often
 DISCOVER_WARMER_REFRESH_INTERVAL = 6 * 3600  # re-warm a converged user this often
@@ -472,19 +472,14 @@ DISCOVER_WARMER_MAX_ATTEMPTS = 4  # stop fast-retrying a user that won't converg
 DISCOVER_WARMER_HARD_CAP = 300  # per-user wall-clock ceiling vs a wedged build
 
 
-async def _enumerate_warmer_users(auth_store, client_factory) -> list[str]:
-    """User ids with a music source linked - Discover is only meaningful for them."""
+async def _enumerate_warmer_users(auth_store) -> list[str]:
     eligible: list[str] = []
     offset = 0
     while True:
         users = await auth_store.list_users(limit=100, offset=offset)
         if not users:
             break
-        for u in users:
-            if await client_factory.is_listenbrainz_linked(
-                u.id
-            ) or await client_factory.is_lastfm_linked(u.id):
-                eligible.append(u.id)
+        eligible.extend(u.id for u in users)
         if len(users) < 100:
             break
         offset += 100
@@ -539,7 +534,7 @@ async def _run_registered_warmer_build(name: str, coro) -> None:
 
 
 async def _warm_one_user(
-    uid: str, discover, home, last_warmed: dict, attempts: dict
+    uid: str, discover, home, last_warmed: dict, attempts: dict, queue_manager=None
 ) -> None:
     registry = TaskRegistry.get_instance()
     if registry.is_running(f"discover-homepage-warm-{uid}"):
@@ -553,6 +548,14 @@ async def _warm_one_user(
         f"discover-homepage-warm-{uid}", discover.warm_cache_thorough(uid)
     )
     await _run_registered_warmer_build(f"home-warm-{uid}", home.warm_cache(uid))
+    if queue_manager is not None:
+        await queue_manager.start_build(uid)
+        try:
+            await asyncio.wait_for(
+                queue_manager.wait_for_build(uid), timeout=DISCOVER_WARMER_HARD_CAP
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Discover queue warmer for %s exceeded hard cap", uid[:8])
     last_warmed[uid] = monotonic()
     has_cache, still_converging = await discover.peek_freshness(uid)
     # converged only when a real response is cached AND it isn't trending-only; a cut-at-cap
@@ -566,7 +569,7 @@ async def warm_discover_home_periodically(
     get_discover_service,
     get_home_service,
     get_auth_store,
-    get_client_factory,
+    get_queue_manager=None,
     interval: int = DISCOVER_WARMER_INTERVAL,
 ) -> None:
     from core.config import get_settings
@@ -588,12 +591,10 @@ async def warm_discover_home_periodically(
                 continue
             now = monotonic()
             if not eligible or (now - enumerated_at) > DISCOVER_WARMER_ENUM_TTL:
-                eligible = await _enumerate_warmer_users(
-                    get_auth_store(), get_client_factory()
-                )
+                eligible = await _enumerate_warmer_users(get_auth_store())
                 enumerated_at = now
                 logger.info(
-                    "Discover warmer: %d music-source-linked user(s) eligible",
+                    "Discover warmer: %d user(s) eligible",
                     len(eligible),
                 )
             # We do NOT hard-skip when a user is "active" - the MusicBrainz priority queue
@@ -611,6 +612,7 @@ async def warm_discover_home_periodically(
                         get_home_service(),
                         last_warmed,
                         attempts,
+                        get_queue_manager() if get_queue_manager else None,
                     )
         except asyncio.CancelledError:
             break
@@ -624,14 +626,14 @@ def start_discover_home_warmer_task(
     get_discover_service,
     get_home_service,
     get_auth_store,
-    get_client_factory,
+    get_queue_manager=None,
 ) -> asyncio.Task:
     task = asyncio.create_task(
         warm_discover_home_periodically(
             get_discover_service,
             get_home_service,
             get_auth_store,
-            get_client_factory,
+            get_queue_manager,
         )
     )
     task.add_done_callback(

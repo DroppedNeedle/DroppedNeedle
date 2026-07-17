@@ -1,7 +1,7 @@
 import { page } from '@vitest/browser/context';
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { TopPicksSection } from '$lib/types';
+import type { TopPickItem, TopPicksSection } from '$lib/types';
 
 vi.mock('$env/dynamic/public', () => ({
 	env: { PUBLIC_API_URL: '' }
@@ -101,5 +101,20 @@ describe('TopPicksDeck', () => {
 		} as Parameters<typeof render<typeof TopPicksDeck>>[1]);
 
 		await expect.element(page.getByText('Personalising your picks')).toBeVisible();
+	});
+
+	it('dismisses a pick only after the preference is saved', async () => {
+		const onignore: (pick: TopPickItem) => Promise<void> = vi.fn(async () => {});
+		render(TopPicksDeck, { props: { section, onignore } } as Parameters<
+			typeof render<typeof TopPicksDeck>
+		>[1]);
+
+		await page.getByRole('button', { name: 'Not for me' }).click();
+
+		expect(onignore).toHaveBeenCalledWith(section.items[0]);
+		await expect.element(page.getByRole('link', { name: 'Souvlaki', exact: true })).toBeVisible();
+		await expect
+			.element(page.getByRole('link', { name: 'Loveless', exact: true }))
+			.not.toBeInTheDocument();
 	});
 });

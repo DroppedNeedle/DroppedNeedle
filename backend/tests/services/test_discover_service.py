@@ -765,7 +765,7 @@ class TestDailyMixesWiring:
         ]
 
         async def fake_daily_mix(
-            user_id, resolved_source, library_mbids=None, lfm_enabled=False
+            user_id, resolved_source, library_mbids=None, lfm_enabled=False, **_kwargs
         ):
             assert resolved_source == "listenbrainz"
             return stub_sections
@@ -785,7 +785,7 @@ class TestDailyMixesWiring:
         )
 
         async def fake_daily_mix(
-            user_id, resolved_source, library_mbids=None, lfm_enabled=False
+            user_id, resolved_source, library_mbids=None, lfm_enabled=False, **_kwargs
         ):
             return None
 

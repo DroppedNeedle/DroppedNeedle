@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio, hashlib, httpx, logging, os, re, sqlite3, uuid, json
+from typing import TYPE_CHECKING
 import bcrypt as _bcrypt
 
 from core.dependencies.cache_providers import get_preferences_service
 from core.exceptions import AuthenticationError, RegistrationError
 from infrastructure.persistence.auth_store import AuthStore, TokenRecord, UserRecord
+
+if TYPE_CHECKING:
+    from infrastructure.persistence.discovery_snapshot_store import DiscoverySnapshotStore
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +19,13 @@ _PW_KEY = "password_hash"
 
 
 class AuthService:
-    def __init__(self, auth_store: AuthStore) -> None:
+    def __init__(
+        self,
+        auth_store: AuthStore,
+        discovery_snapshot_store: "DiscoverySnapshotStore | None" = None,
+    ) -> None:
         self._store = auth_store
+        self._discovery_snapshot_store = discovery_snapshot_store
 
     async def is_setup_required(self) -> bool:
         return not await self._store.has_any_users()
@@ -296,6 +305,8 @@ class AuthService:
             admin_count = await self._store.count_users_by_role("admin")
             if admin_count <= 1:
                 raise AuthenticationError("Cannot delete the last admin account")
+        if self._discovery_snapshot_store is not None:
+            await self._discovery_snapshot_store.delete_user(user_id)
         await self._store.delete_user(user_id)
 
     async def get_provider_names_for_users(self, user_ids: list[str]) -> dict[str, list[str]]:

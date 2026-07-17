@@ -372,6 +372,9 @@ export type DiscoverResponse = {
 	anniversaries: HomeSection | null;
 	new_from_followed: HomeSection | null;
 	unexplored_genres: HomeSection | null;
+	generated_at: number | null;
+	refresh_started_at: number | null;
+	section_status: Record<string, string>;
 	genre_artwork: Record<string, GenreArtwork>;
 	genre_artwork_schema_version: 'v2';
 	integration_status: Record<string, boolean>;

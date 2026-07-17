@@ -41,6 +41,9 @@ vi.mock('$lib/queries/discover/DiscoverQuery.svelte', () => ({
 vi.mock('$lib/queries/section-prefs/SectionPrefsQuery.svelte', () => ({
 	getSectionPrefsQuery: () => ({ data: undefined, isLoading: false })
 }));
+vi.mock('$lib/queries/discover/DiscoverMutations.svelte', () => ({
+	getIgnoreDiscoveryMutation: () => ({ mutateAsync: vi.fn().mockResolvedValue(undefined) })
+}));
 vi.mock('$lib/queries/QueryClient', () => ({
 	invalidateQueriesWithPersister: vi.fn().mockResolvedValue(undefined),
 	setQueryDataWithPersister: vi.fn().mockResolvedValue(undefined)
@@ -117,8 +120,43 @@ describe('/discover degraded and error states (#147)', () => {
 		});
 		render(DiscoverPage);
 
-		await expect.element(page.getByText(/Building your recommendations/)).toBeVisible();
+		await expect
+			.element(page.getByText(/recommendations will appear here as each section becomes ready/i))
+			.toBeVisible();
 		await expect.element(page.getByText(/so this may take longer than usual/)).toBeVisible();
+	});
+
+	it('keeps stale recommendations interactive and clearly marks the background update', async () => {
+		discoverState.data = emptyResponse({
+			refreshing: true,
+			section_status: { trending: 'updating' },
+			globally_trending: {
+				title: 'Globally Trending',
+				type: 'artists',
+				items: [
+					{
+						name: 'Cocteau Twins',
+						mbid: null,
+						local_id: null,
+						image_url: null,
+						listen_count: null,
+						in_library: false
+					}
+				],
+				source: null,
+				fallback_message: null,
+				connect_service: null
+			}
+		});
+		render(DiscoverPage);
+
+		await expect.element(page.getByText('Cocteau Twins')).toBeVisible();
+		await expect
+			.element(page.getByRole('status', { name: 'Refreshing in the background' }))
+			.toBeVisible();
+		await expect
+			.element(page.getByRole('status', { name: 'Updating in the background' }))
+			.toBeVisible();
 	});
 
 	it('falls back to the generic empty state when nothing is degraded', async () => {

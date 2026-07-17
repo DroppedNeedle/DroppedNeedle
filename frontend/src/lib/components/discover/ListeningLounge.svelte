@@ -8,13 +8,15 @@
 	import { requestAlbum } from '$lib/utils/albumRequest';
 	import { albumHrefOrNull } from '$lib/utils/entityRoutes';
 	import type { HomeAlbum, HomeSection, TopPicksSection } from '$lib/types';
+	import LiveUpdatingBadge from '$lib/components/LiveUpdatingBadge.svelte';
 
 	interface Props {
 		section: HomeSection | null;
 		topPicks: TopPicksSection | null;
+		updating?: boolean;
 	}
 
-	let { section, topPicks }: Props = $props();
+	let { section, topPicks, updating = false }: Props = $props();
 
 	let requesting = $state(false);
 
@@ -111,6 +113,9 @@
 			</div>
 
 			<div class="ml-auto flex items-center gap-3">
+				{#if updating}
+					<LiveUpdatingBadge label="Updating lounge" className="px-2 py-0.5" />
+				{/if}
 				<button class="btn btn-secondary btn-sm gap-2" onclick={playAll}>
 					<Play class="h-4 w-4" fill="currentColor" />
 					Play all
@@ -214,7 +219,7 @@
 				<p class="min-w-0 flex-1 truncate text-sm">
 					<span class="font-semibold">{activeAlbum.artist_name}</span>
 					{#if deckSampler.currentTrack}
-						<span class="text-base-content/60">— {deckSampler.currentTrack.title}</span>
+						<span class="text-base-content/60">- {deckSampler.currentTrack.title}</span>
 					{/if}
 					{#if deckSampler.provider}
 						<span class="ml-2 text-[0.65rem] uppercase tracking-wide text-base-content/35">

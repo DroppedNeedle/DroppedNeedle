@@ -1,7 +1,14 @@
-import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from api.v1.schemas.discover import DiscoverResponse, DiscoverQueueItemLight
+import pytest
+
+from api.v1.schemas.discover import (
+    DiscoverQueueItemLight,
+    DiscoverResponse,
+    TopPickItem,
+    TopPicksSection,
+)
 from api.v1.schemas.home import HomeSection, HomeAlbum
 from api.v1.schemas.settings import (
     ListenBrainzConnectionSettings,
@@ -230,6 +237,35 @@ class TestDailyMixCorrectCountWith2QualifyingGenres:
         assert len(result) == 2
 
 
+class TestDailyMixPersonalizedGenres:
+    @pytest.mark.asyncio
+    async def test_listening_genres_are_ranked_ahead_of_global_library_genres(
+        self,
+    ) -> None:
+        genre_index = _make_genre_index(
+            top_genres=[("rock", 10), ("pop", 8)],
+            artists_by_genre={
+                "dream pop": ["a1", "a2", "a3"],
+                "rock": ["a4", "a5", "a6"],
+                "pop": ["a7", "a8", "a9"],
+            },
+        )
+        service = _make_service(genre_index=genre_index, cache=_make_cache())
+        service._build_single_daily_mix = AsyncMock(return_value=None)
+
+        await service._build_daily_mix_sections(
+            "u1",
+            "listenbrainz",
+            set(),
+            listening_genres=[SimpleNamespace(genre="Dream Pop")],
+        )
+
+        genre_index.get_artists_for_genres.assert_awaited_once_with(
+            ["dream pop", "rock", "pop"]
+        )
+        assert service._build_single_daily_mix.await_args_list[0].args[1] == "dream pop"
+
+
 class TestDailyMixSectionTypeIsAlbums:
     @pytest.mark.asyncio
     @patch("services.discover.homepage_service.build_similar_artist_pools")
@@ -385,7 +421,12 @@ class TestDailyMixExceptionReturnsEmptyList:
 class TestHasMeaningfulContentWithDailyMixes:
     def test_has_meaningful_content_with_daily_mixes(self) -> None:
         service = _make_service()
-        section = HomeSection(title="Mix", type="albums", items=[], source="lb")
+        section = HomeSection(
+            title="Mix",
+            type="albums",
+            items=[HomeAlbum(name="Album", artist_name="Artist")],
+            source="lb",
+        )
         response = DiscoverResponse(daily_mixes=[section])
         assert service._has_meaningful_content(response) is True
 
@@ -393,3 +434,66 @@ class TestHasMeaningfulContentWithDailyMixes:
         service = _make_service()
         response = DiscoverResponse()
         assert service._has_meaningful_content(response) is False
+
+
+class TestDiscoverAlbumDeduplication:
+    def test_removes_repeated_album_when_shelf_stays_healthy(self) -> None:
+        service = _make_service()
+        response = DiscoverResponse(
+            top_picks=TopPicksSection(
+                items=[
+                    TopPickItem(
+                        album=HomeAlbum(name="Featured", mbid="rg-shared"),
+                        match_pct=90,
+                    )
+                ]
+            ),
+            fresh_releases=HomeSection(
+                title="Fresh",
+                type="albums",
+                items=[
+                    HomeAlbum(name="Repeated", mbid="rg-shared"),
+                    HomeAlbum(name="One", mbid="rg-1"),
+                    HomeAlbum(name="Two", mbid="rg-2"),
+                    HomeAlbum(name="Three", mbid="rg-3"),
+                ],
+            ),
+        )
+
+        service._dedupe_album_sections(response)
+
+        assert [item.mbid for item in response.fresh_releases.items] == [
+            "rg-1",
+            "rg-2",
+            "rg-3",
+        ]
+
+    def test_keeps_original_shelf_when_deduplication_would_make_it_too_short(
+        self,
+    ) -> None:
+        service = _make_service()
+        response = DiscoverResponse(
+            top_picks=TopPicksSection(
+                items=[
+                    TopPickItem(
+                        album=HomeAlbum(name="Featured", mbid="rg-shared"),
+                        match_pct=90,
+                    )
+                ]
+            ),
+            fresh_releases=HomeSection(
+                title="Fresh",
+                type="albums",
+                items=[
+                    HomeAlbum(name="Repeated", mbid="rg-shared"),
+                    HomeAlbum(name="Only other album", mbid="rg-1"),
+                ],
+            ),
+        )
+
+        service._dedupe_album_sections(response)
+
+        assert [item.mbid for item in response.fresh_releases.items] == [
+            "rg-shared",
+            "rg-1",
+        ]

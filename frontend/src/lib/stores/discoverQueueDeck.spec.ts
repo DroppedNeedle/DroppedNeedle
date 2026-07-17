@@ -50,7 +50,11 @@ vi.mock('$lib/stores/cacheTtl', () => ({ getCacheTTLs: () => cacheTtls }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
 	authStore: { user: { id: 'user-1' } }
 }));
+vi.mock('$lib/queries/QueryClient', () => ({
+	invalidateQueriesWithPersister: vi.fn().mockResolvedValue(undefined)
+}));
 
+import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { discoverQueueDeck } from './discoverQueueDeck.svelte';
 
 function makeItem(mbid: string) {
@@ -117,6 +121,20 @@ describe('discoverQueueDeck state machine', () => {
 		expect(discoverQueueDeck.queue.map((i) => i.release_group_mbid)).toEqual(['rg-2']);
 	});
 
+	it('removeByMbid reconciles a queue that has not been loaded yet', () => {
+		cacheMock.getQueueCachedData.mockReturnValue({
+			data: { items: [makeItem('rg-1'), makeItem('rg-2')], currentIndex: 0, queueId: 'q1' },
+			timestamp: Date.now()
+		});
+
+		discoverQueueDeck.removeByMbid('rg-1');
+
+		expect(cacheMock.setQueueCachedData).toHaveBeenCalledWith(
+			expect.objectContaining({ items: [makeItem('rg-2')] }),
+			'user-1'
+		);
+	});
+
 	it('consumes a ready background build when there is no cache', async () => {
 		statusMock.fetchStatus.mockResolvedValue({ status: 'ready' });
 		apiMock.global.get.mockResolvedValue({
@@ -176,6 +194,9 @@ describe('discoverQueueDeck state machine', () => {
 			expect.anything()
 		);
 		expect(discoverQueueDeck.queue.map((i) => i.release_group_mbid)).toEqual(['rg-2']);
+		expect(invalidateQueriesWithPersister).toHaveBeenCalledWith({
+			queryKey: ['discover', 'user-1']
+		});
 	});
 
 	it('finish clears the cache and brews a fresh queue', async () => {

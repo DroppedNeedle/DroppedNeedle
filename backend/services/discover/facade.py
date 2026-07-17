@@ -12,6 +12,9 @@ import msgspec.structs
 
 if TYPE_CHECKING:
     from infrastructure.persistence.auth_store import UserRecord
+    from infrastructure.persistence.discovery_snapshot_store import (
+        DiscoverySnapshotStore,
+    )
     from services.home.genre_artwork_service import GenreArtworkService
 
 from fastapi import HTTPException
@@ -79,6 +82,7 @@ class DiscoverService:
         preview_repo: Any = None,
         ownership_service: Any = None,
         genre_artwork_service: "GenreArtworkService | None" = None,
+        discovery_snapshot_store: "DiscoverySnapshotStore | None" = None,
     ):
         self._integration = IntegrationHelpers(preferences_service)
         self._client_factory = client_factory
@@ -135,6 +139,7 @@ class DiscoverService:
             follow_service=follow_service,
             cover_repo=cover_repo,
             genre_artwork_service=genre_artwork_service,
+            snapshot_store=discovery_snapshot_store,
         )
 
         self._radio = radio_service

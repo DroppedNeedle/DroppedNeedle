@@ -3,12 +3,14 @@
 	import { Sparkles, ExternalLink } from 'lucide-svelte';
 	import HorizontalCarousel from './HorizontalCarousel.svelte';
 	import WeeklyExplorationCard from './WeeklyExplorationCard.svelte';
+	import LiveUpdatingBadge from './LiveUpdatingBadge.svelte';
 
 	interface Props {
 		section: SectionType;
+		updating?: boolean;
 	}
 
-	let { section }: Props = $props();
+	let { section, updating = false }: Props = $props();
 
 	function formatPlaylistDate(dateStr: string): string {
 		try {
@@ -33,6 +35,9 @@
 			<span class="badge badge-ghost badge-sm text-base-content/50">
 				{formattedDate}
 			</span>
+		{/if}
+		{#if updating}
+			<LiveUpdatingBadge label="Updating weekly picks" className="px-2 py-0.5" />
 		{/if}
 
 		{#if section.source_url}

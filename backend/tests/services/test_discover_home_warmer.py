@@ -24,21 +24,13 @@ def _auth_store(uids: list[str]):
     return store
 
 
-def _client_factory(lb_linked: set[str], lfm_linked: set[str]):
-    cf = MagicMock()
-    cf.is_listenbrainz_linked = AsyncMock(side_effect=lambda uid: uid in lb_linked)
-    cf.is_lastfm_linked = AsyncMock(side_effect=lambda uid: uid in lfm_linked)
-    return cf
-
-
 @pytest.mark.asyncio
-async def test_enumerate_keeps_only_music_source_linked_users():
+async def test_enumerate_includes_users_without_a_linked_music_source():
     store = _auth_store(["u1", "u2", "u3"])
-    cf = _client_factory(lb_linked={"u1"}, lfm_linked={"u3"})
 
-    eligible = await T._enumerate_warmer_users(store, cf)
+    eligible = await T._enumerate_warmer_users(store)
 
-    assert eligible == ["u1", "u3"]  # u2 has neither source linked
+    assert eligible == ["u1", "u2", "u3"]
 
 
 @pytest.mark.asyncio
@@ -102,13 +94,18 @@ async def test_warm_one_user_runs_thorough_build_and_tracks_attempts():
     discover.peek_freshness = AsyncMock(return_value=(True, True))
     home = MagicMock()
     home.warm_cache = AsyncMock()
+    queue = MagicMock()
+    queue.start_build = AsyncMock()
+    queue.wait_for_build = AsyncMock()
     last_warmed: dict = {}
     attempts: dict = {}
 
-    await T._warm_one_user("u1", discover, home, last_warmed, attempts)
+    await T._warm_one_user("u1", discover, home, last_warmed, attempts, queue)
 
     discover.warm_cache_thorough.assert_awaited_once_with("u1")
     home.warm_cache.assert_awaited_once_with("u1")
+    queue.start_build.assert_awaited_once_with("u1")
+    queue.wait_for_build.assert_awaited_once_with("u1")
     assert "u1" in last_warmed
     assert attempts["u1"] == 1
 
@@ -151,7 +148,7 @@ async def test_loop_disabled_kill_switch_warms_nobody_and_still_sleeps():
     with patch("core.tasks.asyncio.sleep", side_effect=fake_sleep), \
          patch("core.config.get_settings", return_value=settings):
         await T.warm_discover_home_periodically(
-            get_discover, MagicMock(), MagicMock(), MagicMock()
+            get_discover, MagicMock(), MagicMock()
         )
 
     assert len(sleeps) >= 2  # slept (startup + loop) despite doing no work

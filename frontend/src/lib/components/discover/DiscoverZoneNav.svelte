@@ -24,7 +24,7 @@
 
 {#if zones.length > 1 || action}
 	<nav
-		class="sticky top-0 z-30 -mx-4 mb-2 border-b border-base-content/5 bg-base-100/85 px-4 py-2 backdrop-blur-md sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8"
+		class="sticky top-16 z-30 -mx-4 mb-2 border-b border-base-content/5 bg-base-100/85 px-4 py-2 backdrop-blur-md sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8"
 		aria-label="Jump to a discover section"
 	>
 		<div class="flex items-center gap-2">

@@ -18,6 +18,7 @@
 	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
+	import LiveUpdatingBadge from '$lib/components/LiveUpdatingBadge.svelte';
 	import { api } from '$lib/api/client';
 	import { isDismissed } from '$lib/utils/dismissedPrompts';
 	import {
@@ -35,6 +36,8 @@
 		SlidersHorizontal
 	} from 'lucide-svelte';
 	import { getDiscoverQuery } from '$lib/queries/discover/DiscoverQuery.svelte';
+	import { getIgnoreDiscoveryMutation } from '$lib/queries/discover/DiscoverMutations.svelte';
+	import type { TopPickItem } from '$lib/types';
 	import { getSectionPrefsQuery } from '$lib/queries/section-prefs/SectionPrefsQuery.svelte';
 	import { discoverHasContent } from '$lib/utils/discoverContent';
 	import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
@@ -45,6 +48,7 @@
 	let playlistDiscoverOpen = $state(false);
 
 	const discoverQuery = getDiscoverQuery();
+	const ignoreDiscoveryMutation = getIgnoreDiscoveryMutation();
 	const sectionPrefsQuery = getSectionPrefsQuery();
 	// client-only chrome: the backend can't blank an action card, so filter here
 	const playlistDiscoveryEnabled = $derived(
@@ -56,7 +60,7 @@
 	const refreshing = $derived(discoverQuery.isFetching && !discoverQuery.isLoading);
 	const isUpdating = $derived(discoverQuery.isRefetching && !!discoverData);
 	const lastUpdated = $derived(
-		discoverQuery.dataUpdatedAt ? new Date(discoverQuery.dataUpdatedAt) : null
+		discoverData?.generated_at ? new Date(discoverData.generated_at * 1000) : null
 	);
 	const error = $derived(discoverQuery.error?.message ?? '');
 
@@ -64,6 +68,16 @@
 		await api.global.post(API.discoverRefresh());
 		await invalidateQueriesWithPersister({
 			queryKey: DiscoverQueryKeyFactory.discover(authStore.user?.id)
+		});
+	}
+
+	async function handleIgnoreTopPick(pick: TopPickItem) {
+		if (!pick.album.mbid || !pick.album.artist_mbid) return;
+		await ignoreDiscoveryMutation.mutateAsync({
+			releaseGroupMbid: pick.album.mbid,
+			artistMbid: pick.album.artist_mbid,
+			releaseName: pick.album.name,
+			artistName: pick.album.artist_name ?? ''
 		});
 	}
 
@@ -79,6 +93,9 @@
 		!!discoverData && !hasContent && (!!discoverData.refreshing || isUpdating)
 	);
 	let isUpdatingInBackground = $derived(!!discoverData?.refreshing && hasContent);
+	function sectionUpdating(section: string): boolean {
+		return discoverData?.section_status?.[section] === 'updating';
+	}
 	let dismissVersion = $state(0);
 	let servicePrompts = $derived.by(() => {
 		void dismissVersion;
@@ -106,8 +123,10 @@
 		if ((discoverData?.top_picks?.items?.length ?? 0) > 0)
 			list.push({ id: 'zone-picks', label: 'Top Picks' });
 		if (hasLounge) list.push({ id: 'zone-lounge', label: 'Lounge' });
+		if (hasWeeklyExploration) list.push({ id: 'zone-weekly', label: 'Weekly' });
+		if (playlistDiscoveryEnabled) list.push({ id: 'zone-playlist', label: 'Playlist' });
 		if (hasMadeForYou) list.push({ id: 'zone-made', label: 'Made For You' });
-		if (hasBecauseYouListened) list.push({ id: 'zone-because', label: 'For You' });
+		list.push({ id: 'zone-because', label: 'For You' });
 		if (hasNewFresh) list.push({ id: 'zone-fresh', label: 'New' });
 		if (hasFromYourLibrary) list.push({ id: 'zone-library', label: 'Your Library' });
 		if (hasBrowseGenres) list.push({ id: 'zone-genres', label: 'Genres' });
@@ -180,7 +199,10 @@
 		gradientClass="bg-gradient-to-br from-info/30 via-primary/20 to-secondary/10"
 		{loading}
 		isUpdating={isUpdating || isUpdatingInBackground}
+		refreshing={refreshing || isUpdatingInBackground}
 		{lastUpdated}
+		onRefresh={() => void handleRefresh()}
+		refreshLabel="Refresh recommendations"
 	>
 		{#snippet title()}
 			<Compass class="inline h-8 w-8 sm:h-10 sm:w-10 lg:h-12 lg:w-12 mr-2 align-text-bottom" />
@@ -209,10 +231,9 @@
 				{#if isBuilding}
 					<div class="mb-8 flex flex-col items-center justify-center gap-2 px-4 text-center">
 						<div class="flex items-center justify-center gap-3">
-							<span class="loading loading-spinner loading-sm text-primary"></span>
+							<LiveUpdatingBadge label="Preparing your Discover page" />
 							<p class="text-sm text-base-content/60">
-								Building your recommendations from your listening history. The first load can take a
-								moment.
+								Your recommendations will appear here as each section becomes ready.
 							</p>
 						</div>
 						{#if degradedSources.length > 0}
@@ -223,10 +244,10 @@
 						{/if}
 					</div>
 				{/if}
-				<div class="space-y-8">
-					{#each Array(3) as _, i (`loading-section-${i}`)}
+				<div class="space-y-8" aria-label="Loading Discover sections">
+					{#each ['Top Picks', 'Made For You', 'Because You Listened', 'New & Fresh'] as label (label)}
 						<section>
-							<div class="skeleton skeleton-shimmer mb-4 h-6 w-48"></div>
+							<SectionDivider {label} updating />
 							<CarouselSkeleton />
 						</section>
 					{/each}
@@ -249,33 +270,41 @@
 					</DiscoverZoneNav>
 					<div class="space-y-10 sm:space-y-12" class:is-refreshing={isUpdatingInBackground}>
 						{#if queueEnabled}
-							<div id="zone-queue" class="discover-section-enter scroll-mt-14">
+							<div id="zone-queue" class="scroll-mt-28">
 								<DiscoverQueueDeck />
 							</div>
 						{/if}
 
 						{#if discoverData.top_picks && discoverData.top_picks.items.length > 0}
-							<div id="zone-picks" class="discover-section-enter scroll-mt-14">
-								<TopPicksDeck section={discoverData.top_picks} />
+							<div id="zone-picks" class="scroll-mt-28">
+								<TopPicksDeck
+									section={discoverData.top_picks}
+									updating={sectionUpdating('picks')}
+									onignore={handleIgnoreTopPick}
+								/>
 							</div>
 						{/if}
 
 						{#if hasLounge}
-							<div id="zone-lounge" class="discover-section-enter scroll-mt-14">
+							<div id="zone-lounge" class="scroll-mt-28">
 								<ListeningLounge
 									section={discoverData.listeners_like_you}
 									topPicks={discoverData.top_picks}
+									updating={sectionUpdating('lounge')}
 								/>
 							</div>
 						{/if}
 
 						{#if hasWeeklyExploration && discoverData.weekly_exploration}
-							<div class="discover-section-enter">
-								<WeeklyExploration section={discoverData.weekly_exploration} />
+							<div id="zone-weekly" class="scroll-mt-28">
+								<WeeklyExploration
+									section={discoverData.weekly_exploration}
+									updating={sectionUpdating('weekly')}
+								/>
 							</div>
 						{/if}
 
-						<div class="discover-section-enter">
+						<div id="zone-playlist" class="scroll-mt-28">
 							<div class="grid grid-cols-1 gap-4">
 								{#if playlistDiscoveryEnabled}
 									<button
@@ -310,12 +339,12 @@
 						</div>
 
 						{#if hasMadeForYou}
-							<div id="zone-made" class="scroll-mt-14">
-								<SectionDivider label="Made For You">
+							<div id="zone-made" class="scroll-mt-28">
+								<SectionDivider label="Made For You" updating={sectionUpdating('made')}>
 									{#snippet icon()}<Sparkles class="w-3.5 h-3.5" />{/snippet}
 								</SectionDivider>
 
-								<div class="discover-section-enter space-y-8 sm:space-y-10">
+								<div class="space-y-8 sm:space-y-10">
 									{#if discoverData.daily_mixes?.length}
 										<div>
 											<h3
@@ -355,13 +384,13 @@
 							</div>
 						{/if}
 
-						<div id="zone-because" class="scroll-mt-14">
-							<SectionDivider label="Because You Listened">
+						<div id="zone-because" class="scroll-mt-28">
+							<SectionDivider label="Because You Listened" updating={sectionUpdating('because')}>
 								{#snippet icon()}<Heart class="w-3.5 h-3.5" />{/snippet}
 							</SectionDivider>
 
 							{#if hasBecauseYouListened}
-								<div class="discover-section-enter space-y-5 sm:space-y-6">
+								<div class="space-y-5 sm:space-y-6">
 									{#each discoverData.because_you_listen_to as entry, i (`${entry.seed_artist_mbid || entry.seed_artist}-${i}`)}
 										<div>
 											{#if i === 0}
@@ -390,12 +419,12 @@
 						</div>
 
 						{#if hasNewFresh}
-							<div id="zone-fresh" class="scroll-mt-14">
-								<SectionDivider label="New & Fresh">
+							<div id="zone-fresh" class="scroll-mt-28">
+								<SectionDivider label="New & Fresh" updating={sectionUpdating('fresh')}>
 									{#snippet icon()}<Music class="w-3.5 h-3.5" />{/snippet}
 								</SectionDivider>
 
-								<div class="discover-section-enter space-y-2">
+								<div class="space-y-2">
 									{#if discoverData.fresh_releases && discoverData.fresh_releases.items.length > 0}
 										<PlayableSection
 											section={discoverData.fresh_releases}
@@ -422,12 +451,12 @@
 						{/if}
 
 						{#if hasFromYourLibrary}
-							<div id="zone-library" class="scroll-mt-14">
-								<SectionDivider label="From Your Library">
+							<div id="zone-library" class="scroll-mt-28">
+								<SectionDivider label="From Your Library" updating={sectionUpdating('library')}>
 									{#snippet icon()}<Library class="w-3.5 h-3.5" />{/snippet}
 								</SectionDivider>
 
-								<div class="discover-section-enter space-y-2">
+								<div class="space-y-2">
 									{#if discoverData.rediscover && discoverData.rediscover.items.length > 0}
 										<HomeSection section={discoverData.rediscover} />
 									{/if}
@@ -444,12 +473,12 @@
 						{/if}
 
 						{#if hasBrowseGenres}
-							<div id="zone-genres" class="scroll-mt-14">
-								<SectionDivider label="Browse Genres">
+							<div id="zone-genres" class="scroll-mt-28">
+								<SectionDivider label="Browse Genres" updating={sectionUpdating('genres')}>
 									{#snippet icon()}<LayoutGrid class="w-3.5 h-3.5" />{/snippet}
 								</SectionDivider>
 
-								<div class="discover-section-enter space-y-2">
+								<div class="space-y-2">
 									{#if discoverData.unexplored_genres && shuffledGenres.length > 0}
 										<div class="mt-4 mb-4">
 											<GenrePills
@@ -474,12 +503,12 @@
 						{/if}
 
 						{#if hasTrending}
-							<div id="zone-trending" class="scroll-mt-14">
-								<SectionDivider label="Trending Now">
+							<div id="zone-trending" class="scroll-mt-28">
+								<SectionDivider label="Trending Now" updating={sectionUpdating('trending')}>
 									{#snippet icon()}<TrendingUp class="w-3.5 h-3.5" />{/snippet}
 								</SectionDivider>
 
-								<div class="discover-section-enter space-y-2">
+								<div class="space-y-2">
 									{#if discoverData.globally_trending && discoverData.globally_trending.items.length > 0}
 										<HomeSection section={discoverData.globally_trending} />
 									{/if}

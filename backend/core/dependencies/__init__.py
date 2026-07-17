@@ -21,6 +21,7 @@ from .cache_providers import (  # noqa: F401
     get_mbid_store,
     get_sync_state_store,
     get_scan_state_store,
+    get_discovery_snapshot_store,
     get_persistence_write_lock,
     get_preferences_service,
     get_cache_service,

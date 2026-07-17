@@ -27,8 +27,15 @@ async function fetchDiscover(
 		const prev = queryClient.getQueryData<DiscoverResponse>(
 			DiscoverQueryKeyFactory.discover(userId)
 		);
-		if (discoverHasContent(prev)) {
-			return { ...prev, refreshing: true } as DiscoverResponse;
+		if (prev && discoverHasContent(prev)) {
+			return {
+				...prev,
+				refreshing: true,
+				refresh_started_at: fresh.refresh_started_at,
+				section_status: Object.fromEntries(
+					Object.keys(prev.section_status ?? {}).map((section) => [section, 'updating'])
+				)
+			} as DiscoverResponse;
 		}
 	}
 	return fresh;

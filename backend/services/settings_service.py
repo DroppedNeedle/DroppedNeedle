@@ -83,11 +83,13 @@ class SettingsService:
         *,
         navidrome_library_getter=None,
         plex_library_getter=None,
+        discovery_snapshot_store=None,
     ):
         self._preferences_service = preferences_service
         self._cache = cache
         self._navidrome_library_getter = navidrome_library_getter
         self._plex_library_getter = plex_library_getter
+        self._discovery_snapshot_store = discovery_snapshot_store
 
     async def verify_jellyfin(
         self, settings: JellyfinConnectionSettings
@@ -176,6 +178,8 @@ class SettingsService:
             total += await self._cache.clear_prefix(prefix)
         for prefix in lastfm_prefixes():
             total += await self._cache.clear_prefix(prefix)
+        if self._discovery_snapshot_store is not None:
+            await self._discovery_snapshot_store.mark_discover_stale()
         logger.info(f"Cleared {total} home/discover/integration cache entries")
         return total
 

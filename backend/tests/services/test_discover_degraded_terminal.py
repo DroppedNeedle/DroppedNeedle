@@ -3,6 +3,7 @@ carrying the build's degradation summary (issue #147) - not loop cache-miss -> r
 -> skeleton forever - and must never overwrite a previous meaningful copy."""
 
 import pytest
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from api.v1.schemas.discover import DiscoverResponse
@@ -18,6 +19,7 @@ from services.discover.homepage_service import (
     DiscoverHomepageService,
 )
 from services.discover.integration_helpers import IntegrationHelpers
+from infrastructure.persistence.discovery_snapshot_store import DiscoverySnapshotStore
 
 
 def _make_prefs() -> MagicMock:
@@ -171,3 +173,24 @@ async def test_healthy_meaningful_build_has_no_status():
         await service.warm_cache("u1")
 
     assert cache.data[_cache_key(service)].service_status is None
+
+
+@pytest.mark.asyncio
+async def test_last_good_response_survives_service_restart(tmp_path):
+    snapshot_store = DiscoverySnapshotStore(tmp_path / "library.db", threading.Lock())
+    first_cache = _FakeCache()
+    first = _make_service(first_cache)
+    first._snapshot_store = snapshot_store
+    with patch.object(
+        first, "build_discover_data", AsyncMock(return_value=_meaningful_response())
+    ):
+        await first.warm_cache("u1")
+
+    restarted = _make_service(_FakeCache())
+    restarted._snapshot_store = snapshot_store
+    response = await restarted.get_discover_data("u1")
+
+    assert response.globally_trending is not None
+    assert response.globally_trending.items[0].name == "Album"
+    assert response.generated_at is not None
+    assert response.refreshing is False

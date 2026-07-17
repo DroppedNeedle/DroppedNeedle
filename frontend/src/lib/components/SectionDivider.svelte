@@ -1,12 +1,14 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import LiveUpdatingBadge from './LiveUpdatingBadge.svelte';
 
 	interface Props {
 		label: string;
 		icon?: Snippet;
+		updating?: boolean;
 	}
 
-	let { label, icon }: Props = $props();
+	let { label, icon, updating = false }: Props = $props();
 </script>
 
 <div class="flex items-center gap-3 pt-6 pb-2 sm:pt-8 sm:pb-3">
@@ -20,5 +22,8 @@
 	>
 		{label}
 	</span>
+	{#if updating}
+		<LiveUpdatingBadge label="Updating" className="px-2 py-0.5 text-[11px]" />
+	{/if}
 	<div class="h-px flex-1 bg-gradient-to-r from-base-content/8 to-transparent"></div>
 </div>

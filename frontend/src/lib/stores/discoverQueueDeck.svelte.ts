@@ -17,6 +17,7 @@ import {
 	setQueueCachedData
 } from '$lib/utils/discoverQueueCache';
 import { isAbortError } from '$lib/utils/errorHandling';
+import { invalidateDiscoverRecommendations } from '$lib/queries/discover/DiscoverInvalidation';
 import { SvelteMap } from 'svelte/reactivity';
 import type {
 	DiscoverQueueEnrichment,
@@ -282,9 +283,43 @@ function createDiscoverQueueDeck() {
 			persist();
 		},
 
+		removeByMbid(mbid: string): void {
+			const removedIndex = queue.findIndex((item) => item.release_group_mbid === mbid);
+			if (removedIndex < 0) {
+				const cached = getQueueCachedData(userId());
+				if (!cached) return;
+				const items = cached.data.items.filter((item) => item.release_group_mbid !== mbid);
+				if (items.length === cached.data.items.length) return;
+				if (items.length === 0) {
+					removeQueueCachedData(userId());
+					return;
+				}
+				setQueueCachedData(
+					{
+						...cached.data,
+						items,
+						currentIndex: Math.min(cached.data.currentIndex, items.length - 1)
+					},
+					userId()
+				);
+				return;
+			}
+
+			queue = queue.filter((item) => item.release_group_mbid !== mbid);
+			if (removedIndex < currentIndex) currentIndex--;
+			if (currentIndex >= queue.length) currentIndex = Math.max(0, queue.length - 1);
+			if (queue.length === 0) {
+				this.finish();
+				return;
+			}
+			void enrichWindow();
+			persist();
+		},
+
 		async ignoreCurrent(): Promise<void> {
 			const item = current;
 			if (!item) return;
+			let saved = false;
 			try {
 				await api.global.post(
 					API.discoverQueueIgnore(),
@@ -296,17 +331,12 @@ function createDiscoverQueueDeck() {
 					},
 					{ signal: abortController?.signal }
 				);
+				saved = true;
 			} catch {
 				// removing it locally is still right even if the ignore write failed
 			}
-			queue = queue.filter((_, i) => i !== currentIndex);
-			if (currentIndex >= queue.length) currentIndex = Math.max(0, queue.length - 1);
-			if (queue.length === 0) {
-				this.finish();
-				return;
-			}
-			void enrichWindow();
-			persist();
+			this.removeByMbid(item.release_group_mbid);
+			if (saved) await invalidateDiscoverRecommendations();
 		},
 
 		markCurrentRequested(): void {

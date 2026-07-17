@@ -7,6 +7,9 @@ from infrastructure.cache.cache_keys import (
     library_raw_albums_key,
     library_requested_mbids_key,
     HOME_RESPONSE_PREFIX,
+    DISCOVER_RESPONSE_PREFIX,
+    DAILY_MIX_PREFIX,
+    TOP_PICKS_PREFIX,
     ALBUM_INFO_PREFIX,
     ARTIST_INFO_PREFIX,
     LIBRARY_PREFIX,
@@ -25,6 +28,7 @@ from .cache_providers import (
     get_mbid_store,
     get_sync_state_store,
     get_scan_state_store,
+    get_discovery_snapshot_store,
     get_preferences_service,
 )
 from .repo_providers import (
@@ -289,6 +293,7 @@ def get_target_album_identification_service() -> "AlbumIdentificationService":
                 for prefix in library_identification_prefixes()
             )
         )
+        await get_discovery_snapshot_store().mark_discover_stale()
 
     return AlbumIdentificationService(
         store,
@@ -473,7 +478,9 @@ def get_library_scanner() -> "LibraryScanner":
         library_manager=get_library_manager(),
         scan_state_store=get_scan_state_store(),
         event_bus=get_sse_publisher(),
-        invalidate_albums=_build_scan_invalidation(get_cache(), get_disk_cache()),
+        invalidate_albums=_build_scan_invalidation(
+            get_cache(), get_disk_cache(), get_discovery_snapshot_store()
+        ),
     )
 
 
@@ -1068,7 +1075,7 @@ def get_target_request_service() -> "RequestService":
     )
 
 
-def _build_scan_invalidation(memory_cache, disk_cache):
+def _build_scan_invalidation(memory_cache, disk_cache, snapshot_store=None):
     """Bust the cached album pages of the release groups a scan or re-identify re-attributed,
     so they reflect the new identity without a manual refresh. The per-album entries are
     deleted for each changed group; the shared library/home list caches are cleared once."""
@@ -1084,12 +1091,17 @@ def _build_scan_invalidation(memory_cache, disk_cache):
             memory_cache.delete(library_raw_albums_key()),
             memory_cache.clear_prefix(f"{LIBRARY_PREFIX}library:"),
             memory_cache.clear_prefix(HOME_RESPONSE_PREFIX),
+            memory_cache.clear_prefix(DISCOVER_RESPONSE_PREFIX),
+            memory_cache.clear_prefix(DAILY_MIX_PREFIX),
+            memory_cache.clear_prefix(TOP_PICKS_PREFIX),
         ]
         await asyncio.gather(*per_album, *shared, return_exceptions=True)
         await asyncio.gather(
             *(disk_cache.delete_album(rg) for rg in changed_rgs),
             return_exceptions=True,
         )
+        if snapshot_store is not None:
+            await snapshot_store.mark_discover_stale()
 
     return invalidate
 
@@ -1409,7 +1421,11 @@ def get_settings_service() -> "SettingsService":
 
     preferences_service = get_preferences_service()
     cache = get_cache()
-    return SettingsService(preferences_service, cache)
+    return SettingsService(
+        preferences_service,
+        cache,
+        discovery_snapshot_store=get_discovery_snapshot_store(),
+    )
 
 
 @singleton
@@ -1421,6 +1437,7 @@ def get_target_settings_service() -> "SettingsService":
         get_cache(),
         navidrome_library_getter=get_target_navidrome_library_service,
         plex_library_getter=get_target_plex_library_service,
+        discovery_snapshot_store=get_discovery_snapshot_store(),
     )
 
 
@@ -1669,6 +1686,7 @@ def _build_discover_service(
         preview_repo=get_preview_repository(),
         ownership_service=ownership_service,
         genre_artwork_service=genre_artwork_service,
+        discovery_snapshot_store=get_discovery_snapshot_store(),
     )
 
 
@@ -1736,7 +1754,10 @@ def _build_discover_queue_manager(
 
     preferences_service = get_preferences_service()
     return DiscoverQueueManager(
-        discover_service, preferences_service, cover_repo=cover_repo
+        discover_service,
+        preferences_service,
+        cover_repo=cover_repo,
+        snapshot_store=get_discovery_snapshot_store(),
     )
 
 

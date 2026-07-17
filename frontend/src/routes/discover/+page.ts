@@ -3,8 +3,7 @@ import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { PageLoad } from './$types';
 
-export const load: PageLoad = async () => {
-	await queryClient.prefetchQuery(getDiscoverQueryOptions(authStore.user?.id));
-
+export const load: PageLoad = () => {
+	void queryClient.prefetchQuery(getDiscoverQueryOptions(authStore.user?.id));
 	return {};
 };

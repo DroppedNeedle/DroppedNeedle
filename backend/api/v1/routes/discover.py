@@ -120,6 +120,7 @@ async def get_queue_status(
     current_user: CurrentUserDep,
     queue_manager: DiscoverQueueManager = Depends(get_discover_queue_manager),
 ):
+    await queue_manager.ensure_loaded(current_user.id)
     return queue_manager.get_status(current_user.id)
 
 
@@ -145,10 +146,13 @@ async def ignore_queue_item(
     current_user: CurrentUserDep,
     body: DiscoverQueueIgnoreRequest = MsgSpecBody(DiscoverQueueIgnoreRequest),
     discover_service: DiscoverService = Depends(get_discover_service),
+    queue_manager: DiscoverQueueManager = Depends(get_discover_queue_manager),
 ):
     await discover_service.ignore_release(
         current_user.id, body.release_group_mbid, body.artist_mbid, body.release_name, body.artist_name
     )
+    await queue_manager.start_build(current_user.id, force=True)
+    await discover_service.refresh_discover_data(current_user.id)
 
 
 @router.get("/queue/ignored", response_model=list[DiscoverIgnoredRelease])

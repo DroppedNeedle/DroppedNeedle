@@ -47,6 +47,8 @@ LOCAL_FILES_PREFIX = "local_files_"
 
 HOME_RESPONSE_PREFIX = "home_response:"
 DISCOVER_RESPONSE_PREFIX = "discover_response:"
+DAILY_MIX_PREFIX = "daily_mix:"
+TOP_PICKS_PREFIX = "top_picks:"
 GENRE_ARTIST_PREFIX = "genre_artist:"
 GENRE_SECTION_PREFIX = "genre_section:"
 GENRE_ARTWORK_PREFIX = "genre_artwork:v2:"
@@ -93,6 +95,8 @@ def library_identification_prefixes() -> list[str]:
         LIBRARY_IDENTIFICATION_PREFIX,
         HOME_RESPONSE_PREFIX,
         DISCOVER_RESPONSE_PREFIX,
+        DAILY_MIX_PREFIX,
+        TOP_PICKS_PREFIX,
         GENRE_ARTIST_PREFIX,
         GENRE_SECTION_PREFIX,
         GENRE_ARTWORK_PREFIX,
@@ -151,6 +155,8 @@ def home_prefixes() -> list[str]:
     return [
         HOME_RESPONSE_PREFIX,
         DISCOVER_RESPONSE_PREFIX,
+        DAILY_MIX_PREFIX,
+        TOP_PICKS_PREFIX,
         GENRE_ARTIST_PREFIX,
         GENRE_SECTION_PREFIX,
         GENRE_ARTWORK_PREFIX,

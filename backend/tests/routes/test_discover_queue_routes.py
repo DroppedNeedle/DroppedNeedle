@@ -140,3 +140,25 @@ class TestQueueGenerateRoute:
         resp = client.post("/discover/queue/generate", json={"force": True})
         assert resp.status_code == 200
         mock_queue_manager.start_build.assert_awaited_once_with(_UID, force=True)
+
+
+class TestQueueIgnoreRoute:
+    def test_ignore_refreshes_recommendations_and_rebuilds_queue(
+        self, client, mock_discover_service, mock_queue_manager
+    ):
+        resp = client.post(
+            "/discover/queue/ignore",
+            json={
+                "release_group_mbid": "rg-1",
+                "artist_mbid": "artist-1",
+                "release_name": "Album",
+                "artist_name": "Artist",
+            },
+        )
+
+        assert resp.status_code == 204
+        mock_discover_service.ignore_release.assert_awaited_once_with(
+            _UID, "rg-1", "artist-1", "Album", "Artist"
+        )
+        mock_discover_service.refresh_discover_data.assert_awaited_once_with(_UID)
+        mock_queue_manager.start_build.assert_awaited_once_with(_UID, force=True)

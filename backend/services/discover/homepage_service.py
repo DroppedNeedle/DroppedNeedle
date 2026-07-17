@@ -7,6 +7,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+import msgspec
+
 from api.v1.schemas.discover import (
     DiscoverResponse,
     BecauseYouListenTo,
@@ -23,9 +25,10 @@ from api.v1.schemas.home import (
     DiscoverPreview,
 )
 from infrastructure.cache.memory_cache import CacheInterface
+from infrastructure.cache.cache_keys import DAILY_MIX_PREFIX, TOP_PICKS_PREFIX
 from infrastructure.cover_urls import prefer_artist_cover_url
 from infrastructure.degradation import DegradationContext, init_degradation_context
-from infrastructure.persistence import MBIDStore
+from infrastructure.persistence import DiscoverySnapshotStore, MBIDStore
 from infrastructure.serialization import clone_with_updates
 from repositories.protocols import (
     ListenBrainzRepositoryProtocol,
@@ -55,6 +58,7 @@ from services.discover.queue_strategies import (
 )
 from repositories.listenbrainz_repository import lb_popularity_degraded
 from services.discover.top_picks import TopPickCandidate, score_candidates
+from services.discover.snapshot_codec import decode_discover_response
 from services.weekly_exploration_service import WeeklyExplorationService
 
 logger = logging.getLogger(__name__)
@@ -212,6 +216,7 @@ class DiscoverHomepageService:
         follow_service: Any = None,
         cover_repo: Any = None,
         genre_artwork_service: Any = None,
+        snapshot_store: DiscoverySnapshotStore | None = None,
     ) -> None:
         self._lb_repo = listenbrainz_repo
         self._jf_repo = jellyfin_repo
@@ -230,6 +235,7 @@ class DiscoverHomepageService:
         self._follow_service = follow_service
         self._cover_repo = cover_repo
         self._genre_artwork = genre_artwork_service
+        self._snapshot_store = snapshot_store
         self._transformers = HomeDataTransformers(jellyfin_repo)
         self._weekly_exploration = WeeklyExplorationService(
             listenbrainz_repo, musicbrainz_repo
@@ -238,6 +244,8 @@ class DiscoverHomepageService:
         self._building_keys: set[str] = set()
         # cache_key -> unix time of the last successful build, for stale-while-revalidate
         self._built_at: dict[str, float] = {}
+        self._refresh_started_at: dict[str, float] = {}
+        self._stale_snapshot_keys: set[str] = set()
         # task keys that failed in the most recent _execute_tasks call
         self._last_failed_task_keys: set[str] = set()
 
@@ -251,10 +259,10 @@ class DiscoverHomepageService:
 
     def _daily_mix_cache_key(self, user_id: str, source: str) -> str:
         today = datetime.now(timezone.utc).date().isoformat()
-        return f"daily_mix:{user_id}:{source}:{today}"
+        return f"{DAILY_MIX_PREFIX}{user_id}:{source}:{today}"
 
     def _top_picks_cache_key(self, user_id: str, source: str) -> str:
-        return f"top_picks:{user_id}:{source}"
+        return f"{TOP_PICKS_PREFIX}{user_id}:{source}"
 
     async def _resolve_user_music(self, user_id: str, source: str | None):
         # request-scoped LB/Last.fm clients; never mutates a shared singleton's creds
@@ -291,6 +299,7 @@ class DiscoverHomepageService:
         task_name = f"discover-homepage-warm-{user_id}"
         if registry.is_running(task_name):
             return
+        self._refresh_started_at.setdefault(user_id, time.time())
         task = asyncio.create_task(self.warm_cache(user_id))
         try:
             registry.register(task_name, task)
@@ -301,31 +310,53 @@ class DiscoverHomepageService:
         _, _, _, _, lb_enabled, lfm_enabled, _ = await self._resolve_user_music(
             user_id, None
         )
-        building = user_id in self._building_keys
+        building = user_id in self._building_keys or user_id in getattr(
+            self, "_refresh_started_at", {}
+        )
+        cache_key = self._integration.get_discover_cache_key(
+            user_id, lb_enabled, lfm_enabled
+        )
+        cached: DiscoverResponse | None = None
         if self._memory_cache:
-            cache_key = self._integration.get_discover_cache_key(
-                user_id, lb_enabled, lfm_enabled
-            )
             cached = await self._memory_cache.get(cache_key)
-            if cached is not None and isinstance(cached, DiscoverResponse):
-                # stale-while-revalidate: serve the cached copy immediately, but rebuild
-                # in the background once it's older than the freshness window so the data
-                # always converges to fresh without ever showing the build screen again
-                age = time.time() - self._built_at.get(cache_key, 0.0)
-                if not building and age > STALE_REVALIDATE_SECONDS:
-                    self._trigger_warm(user_id)
-                    building = True
-                response = clone_with_updates(cached, {"refreshing": building})
-                await self._apply_genre_artwork(response)
-                return response
+            if not isinstance(cached, DiscoverResponse):
+                cached = None
+        if cached is None:
+            cached = await self._load_snapshot(cache_key)
+            if cached is not None and self._memory_cache:
+                await self._memory_cache.set(cache_key, cached, DISCOVER_CACHE_TTL)
+        if cached is not None:
+            # stale-while-revalidate: serve the cached copy immediately, but rebuild
+            # in the background once it's older than the freshness window so the data
+            # always converges to fresh without ever showing the build screen again
+            built_at = self._built_at.get(cache_key, cached.generated_at or 0.0)
+            self._built_at[cache_key] = built_at
+            force_stale = cache_key in getattr(self, "_stale_snapshot_keys", set())
+            age = float("inf") if force_stale else time.time() - built_at
+            if not building and age > STALE_REVALIDATE_SECONDS:
+                self._trigger_warm(user_id)
+                building = True
+            response = clone_with_updates(
+                cached,
+                {
+                    "refreshing": building,
+                    "refresh_started_at": getattr(self, "_refresh_started_at", {}).get(
+                        user_id
+                    )
+                    if building
+                    else None,
+                    "section_status": self._build_section_status(
+                        cached, updating=building
+                    ),
+                },
+            )
+            await self._apply_genre_artwork(response)
+            return response
         # cache miss (first build, restart-wiped cache, or a user whose build is
         # legitimately empty). Back off if a build was attempted within the freshness
         # window so an empty/failed build doesn't rebuild on every 3s poll and hammer
         # upstream APIs; if backed off we report refreshing=false so the UI settles on
         # the empty state instead of polling forever.
-        cache_key = self._integration.get_discover_cache_key(
-            user_id, lb_enabled, lfm_enabled
-        )
         attempted_recently = (
             time.time() - self._built_at.get(cache_key, 0.0) <= STALE_REVALIDATE_SECONDS
         )
@@ -335,8 +366,26 @@ class DiscoverHomepageService:
         return DiscoverResponse(
             integration_status=self._integration.get_integration_status(),
             service_prompts=self._build_service_prompts(lb_enabled, lfm_enabled),
+            refresh_started_at=getattr(self, "_refresh_started_at", {}).get(user_id),
+            section_status=self._build_section_status(None, updating=building),
             refreshing=building,
         )
+
+    async def _load_snapshot(self, cache_key: str) -> DiscoverResponse | None:
+        if getattr(self, "_snapshot_store", None) is None:
+            return None
+        saved = await self._snapshot_store.get_with_stale(cache_key)
+        if saved is None:
+            return None
+        payload, stale = saved
+        try:
+            response = decode_discover_response(payload)
+            if stale:
+                getattr(self, "_stale_snapshot_keys", set()).add(cache_key)
+            return response
+        except (msgspec.DecodeError, msgspec.ValidationError, TypeError, ValueError):
+            logger.warning("Ignoring an invalid Discover snapshot")
+            return None
 
     async def _apply_genre_artwork(self, response: DiscoverResponse) -> None:
         if self._genre_artwork is None or not response.genre_list:
@@ -351,15 +400,17 @@ class DiscoverHomepageService:
         )
 
     async def get_discover_preview(self, user_id: str) -> DiscoverPreview | None:
-        if not self._memory_cache:
-            return None
         _, _, _, _, lb_enabled, lfm_enabled, _ = await self._resolve_user_music(
             user_id, None
         )
         cache_key = self._integration.get_discover_cache_key(
             user_id, lb_enabled, lfm_enabled
         )
-        cached = await self._memory_cache.get(cache_key)
+        cached = await self._memory_cache.get(cache_key) if self._memory_cache else None
+        if not isinstance(cached, DiscoverResponse):
+            cached = await self._load_snapshot(cache_key)
+            if cached is not None and self._memory_cache:
+                await self._memory_cache.set(cache_key, cached, DISCOVER_CACHE_TTL)
         if not cached or not isinstance(cached, DiscoverResponse):
             return None
         if not cached.because_you_listen_to:
@@ -380,15 +431,17 @@ class DiscoverHomepageService:
         (top_picks.personalizing) OR - while LB popularity is degraded - has no top_picks at
         all yet (the both-pools-empty degraded case caches top_picks=None), so the warmer
         keeps re-warming until real personalised picks land instead of giving up for 6h."""
-        if not self._memory_cache:
-            return (False, False)
         _, _, _, _, lb_enabled, lfm_enabled, _ = await self._resolve_user_music(
             user_id, None
         )
         cache_key = self._integration.get_discover_cache_key(
             user_id, lb_enabled, lfm_enabled
         )
-        cached = await self._memory_cache.get(cache_key)
+        cached = await self._memory_cache.get(cache_key) if self._memory_cache else None
+        if not isinstance(cached, DiscoverResponse):
+            cached = await self._load_snapshot(cache_key)
+            if cached is not None and self._memory_cache:
+                await self._memory_cache.set(cache_key, cached, DISCOVER_CACHE_TTL)
         if not cached or not isinstance(cached, DiscoverResponse):
             return (False, False)
         tp = cached.top_picks
@@ -456,6 +509,11 @@ class DiscoverHomepageService:
             user_id, lb_enabled, lfm_enabled
         )
         self._built_at.pop(cache_key, None)
+        if getattr(self, "_memory_cache", None):
+            await asyncio.gather(
+                self._memory_cache.clear_prefix(f"{DAILY_MIX_PREFIX}{user_id}:"),
+                self._memory_cache.clear_prefix(f"{TOP_PICKS_PREFIX}{user_id}:"),
+            )
         self._trigger_warm(user_id)
 
     async def warm_cache(self, user_id: str) -> None:
@@ -465,6 +523,7 @@ class DiscoverHomepageService:
         if user_id in self._building_keys:
             return
         self._building_keys.add(user_id)
+        self._refresh_started_at.setdefault(user_id, time.time())
         cache_key = self._integration.get_discover_cache_key(
             user_id, lb_enabled, lfm_enabled
         )
@@ -474,11 +533,32 @@ class DiscoverHomepageService:
         ctx = init_degradation_context()
         try:
             response = await self.build_discover_data(user_id)
+            generated_at = time.time()
             response = clone_with_updates(
-                response, {"service_status": self._build_status_summary(ctx)}
+                response,
+                {
+                    "service_status": self._build_status_summary(ctx),
+                    "generated_at": generated_at,
+                    "refresh_started_at": None,
+                    "section_status": self._build_section_status(response),
+                    "refreshing": False,
+                },
             )
-            if self._memory_cache and self._has_meaningful_content(response):
-                await self._memory_cache.set(cache_key, response, DISCOVER_CACHE_TTL)
+            if self._has_meaningful_content(response):
+                if self._memory_cache:
+                    await self._memory_cache.set(
+                        cache_key, response, DISCOVER_CACHE_TTL
+                    )
+                if getattr(self, "_snapshot_store", None):
+                    try:
+                        await self._snapshot_store.save(
+                            cache_key,
+                            user_id,
+                            msgspec.json.encode(response),
+                            generated_at,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - memory copy stays usable
+                        logger.warning("Could not persist Discover snapshot: %s", exc)
                 self._spawn_cover_prewarm(user_id, response)
             else:
                 logger.warning(
@@ -499,6 +579,8 @@ class DiscoverHomepageService:
             )
         finally:
             self._building_keys.discard(user_id)
+            self._refresh_started_at.pop(user_id, None)
+            self._stale_snapshot_keys.discard(cache_key)
             # record the attempt time on every build (success, empty, or failure) so both
             # the stale-while-revalidate window and the cache-miss path back off instead of
             # rebuilding on every poll - including users whose build is legitimately empty
@@ -601,26 +683,81 @@ class DiscoverHomepageService:
         except RuntimeError:
             pass
 
+    @staticmethod
+    def _section_has_items(section: HomeSection | None) -> bool:
+        return bool(section and section.items)
+
     def _has_meaningful_content(self, response: DiscoverResponse) -> bool:
         return bool(
-            response.because_you_listen_to
-            or response.fresh_releases
-            or response.globally_trending
-            or response.artists_you_might_like
-            or response.popular_in_your_genres
-            or response.missing_essentials
-            or response.rediscover
-            or response.lastfm_weekly_artist_chart
-            or response.lastfm_weekly_album_chart
-            or response.lastfm_recent_scrobbles
-            or response.weekly_exploration
-            or response.daily_mixes
-            or response.top_picks
-            or response.radio_sections
-            or response.unexplored_genres
-            or response.listeners_like_you
-            or response.anniversaries
-            or response.new_from_followed
+            any(entry.section.items for entry in response.because_you_listen_to)
+            or self._section_has_items(response.fresh_releases)
+            or self._section_has_items(response.globally_trending)
+            or self._section_has_items(response.artists_you_might_like)
+            or self._section_has_items(response.popular_in_your_genres)
+            or self._section_has_items(response.missing_essentials)
+            or self._section_has_items(response.rediscover)
+            or self._section_has_items(response.lastfm_weekly_artist_chart)
+            or self._section_has_items(response.lastfm_weekly_album_chart)
+            or self._section_has_items(response.lastfm_recent_scrobbles)
+            or self._section_has_items(response.genre_list)
+            or bool(response.weekly_exploration and response.weekly_exploration.tracks)
+            or any(section.items for section in response.daily_mixes)
+            or bool(response.top_picks and response.top_picks.items)
+            or any(section.items for section in response.radio_sections)
+            or self._section_has_items(response.unexplored_genres)
+            or self._section_has_items(response.listeners_like_you)
+            or self._section_has_items(response.anniversaries)
+            or self._section_has_items(response.new_from_followed)
+        )
+
+    def _build_section_status(
+        self, response: DiscoverResponse | None, updating: bool = False
+    ) -> dict[str, str]:
+        if response is None:
+            return {zone: "loading" for zone in self._discover_zone_names()}
+
+        has = {
+            "picks": bool(response.top_picks and response.top_picks.items),
+            "lounge": self._section_has_items(response.listeners_like_you),
+            "weekly": bool(
+                response.weekly_exploration and response.weekly_exploration.tracks
+            ),
+            "made": any(section.items for section in response.daily_mixes)
+            or any(section.items for section in response.radio_sections),
+            "because": any(
+                entry.section.items for entry in response.because_you_listen_to
+            )
+            or self._section_has_items(response.artists_you_might_like)
+            or self._section_has_items(response.popular_in_your_genres),
+            "fresh": self._section_has_items(response.fresh_releases)
+            or self._section_has_items(response.new_from_followed)
+            or self._section_has_items(response.missing_essentials),
+            "library": self._section_has_items(response.rediscover)
+            or self._section_has_items(response.anniversaries)
+            or self._section_has_items(response.lastfm_recent_scrobbles),
+            "genres": self._section_has_items(response.unexplored_genres)
+            or self._section_has_items(response.genre_list),
+            "trending": self._section_has_items(response.globally_trending)
+            or self._section_has_items(response.lastfm_weekly_artist_chart)
+            or self._section_has_items(response.lastfm_weekly_album_chart),
+        }
+        return {
+            zone: "updating" if updating else ("ready" if present else "empty")
+            for zone, present in has.items()
+        }
+
+    @staticmethod
+    def _discover_zone_names() -> tuple[str, ...]:
+        return (
+            "picks",
+            "lounge",
+            "weekly",
+            "made",
+            "because",
+            "fresh",
+            "library",
+            "genres",
+            "trending",
         )
 
     async def build_discover_data(self, user_id: str) -> DiscoverResponse:
@@ -758,7 +895,12 @@ class DiscoverHomepageService:
                 results, library_album_mbids
             ),
             "daily_mixes": self._build_daily_mix_sections(
-                user_id, primary, library_album_mbids, lfm_enabled
+                user_id,
+                primary,
+                library_album_mbids,
+                lfm_enabled,
+                seed_artists=seed_artists,
+                listening_genres=results.get("lb_genres") or [],
             ),
             "top_picks": self._build_top_picks(
                 user_id,
@@ -853,7 +995,51 @@ class DiscoverHomepageService:
 
         response.service_prompts = self._build_service_prompts(lb_enabled, lfm_enabled)
 
+        self._dedupe_album_sections(response)
+
         return response
+
+    @staticmethod
+    def _dedupe_album_sections(response: DiscoverResponse) -> None:
+        """Prefer variety across shelves without making a healthy shelf disappear."""
+        seen: set[str] = set()
+        if response.top_picks:
+            for pick in response.top_picks.items:
+                if pick.album.mbid:
+                    seen.add(pick.album.mbid.lower())
+
+        def dedupe(section: HomeSection | None) -> None:
+            if section is None:
+                return
+            originals = list(section.items)
+            filtered: list[Any] = []
+            for item in originals:
+                if not isinstance(item, HomeAlbum) or not item.mbid:
+                    filtered.append(item)
+                    continue
+                if item.mbid.lower() not in seen:
+                    filtered.append(item)
+            album_count = sum(isinstance(item, HomeAlbum) for item in originals)
+            minimum = min(3, album_count)
+            filtered_album_count = sum(isinstance(item, HomeAlbum) for item in filtered)
+            kept = filtered if filtered_album_count >= minimum else originals
+            section.items = kept
+            for item in kept:
+                if isinstance(item, HomeAlbum) and item.mbid:
+                    seen.add(item.mbid.lower())
+
+        for section in (
+            response.fresh_releases,
+            response.new_from_followed,
+            response.missing_essentials,
+            response.listeners_like_you,
+            *response.daily_mixes,
+            *response.radio_sections,
+            response.globally_trending,
+            response.lastfm_weekly_album_chart,
+            response.lastfm_recent_scrobbles,
+        ):
+            dedupe(section)
 
     async def build_playlist_suggestions(
         self,
@@ -1139,6 +1325,8 @@ class DiscoverHomepageService:
         resolved_source: str,
         library_mbids: set[str],
         lfm_enabled: bool = False,
+        seed_artists: list[Any] | None = None,
+        listening_genres: list[Any] | None = None,
     ) -> list[HomeSection]:
         # 3-5 genre-clustered daily mixes, 60/40 new-to-familiar ratio
         try:
@@ -1151,12 +1339,42 @@ class DiscoverHomepageService:
                 if cached is not None:
                     return cached  # type: ignore[return-value]
 
+            preferred_genres: list[str] = []
+            for genre in listening_genres or []:
+                name = getattr(genre, "genre", None)
+                if name and name.lower() not in preferred_genres:
+                    preferred_genres.append(name.lower())
+            if not preferred_genres and seed_artists:
+                seed_mbids = [
+                    artist.artist_mbids[0]
+                    for artist in seed_artists
+                    if getattr(artist, "artist_mbids", None)
+                ]
+                if seed_mbids:
+                    genres_by_artist = await self._genre_index.get_genres_for_artists(
+                        seed_mbids
+                    )
+                    for genres in genres_by_artist.values():
+                        for genre in genres:
+                            lower = genre.lower()
+                            if lower not in preferred_genres:
+                                preferred_genres.append(lower)
+
             top_genres = await self._genre_index.get_top_genres(limit=20)
             if not top_genres:
                 await self._cache_daily_mix_result([], user_id, resolved_source)
                 return []
 
-            genre_names = [g for g, _ in top_genres[:10]]
+            global_counts = {genre.lower(): count for genre, count in top_genres}
+            ordered_genres = preferred_genres + [
+                genre.lower()
+                for genre, _ in top_genres
+                if genre.lower() not in preferred_genres
+            ]
+            ranked_genres = [
+                (genre, global_counts.get(genre, 0)) for genre in ordered_genres
+            ]
+            genre_names = [genre for genre, _ in ranked_genres[:10]]
             artists_by_genre = await self._genre_index.get_artists_for_genres(
                 genre_names
             )
@@ -1165,7 +1383,7 @@ class DiscoverHomepageService:
             MAX_CLUSTERS = 5
             candidate_clusters: list[tuple[str, list[str]]] = []
             seen_artists: set[str] = set()
-            for genre_lower, _count in top_genres:
+            for genre_lower, _count in ranked_genres:
                 artist_mbids = artists_by_genre.get(genre_lower, [])
                 unique = [a for a in artist_mbids if a not in seen_artists]
                 if len(unique) < MIN_ARTISTS_PER_CLUSTER:
@@ -1190,6 +1408,7 @@ class DiscoverHomepageService:
                         resolved_source,
                         library_mbids,
                         lfm_enabled,
+                        user_id=user_id,
                     )
                     if section:
                         sections.append(section)
@@ -1212,12 +1431,13 @@ class DiscoverHomepageService:
         resolved_source: str,
         library_mbids: set[str],
         lfm_enabled: bool = False,
+        user_id: str = "",
     ) -> HomeSection | None:
         genre_label = genre_lower.title()
         MAX_ITEMS = 12
 
         seed_count = min(3, len(cluster_artists))
-        seed_mbids = self._daily_rng("daily-mix", genre_lower).sample(
+        seed_mbids = self._daily_rng("daily-mix", user_id, genre_lower).sample(
             cluster_artists, seed_count
         )
 
@@ -1636,16 +1856,25 @@ class DiscoverHomepageService:
 
             # genre signals
             user_genres: set[str] = set()
-            if self._genre_index is not None:
-                try:
-                    top_genres = await self._genre_index.get_top_genres(limit=10)
-                    user_genres = {g.lower() for g, _ in top_genres}
-                except Exception:  # noqa: BLE001
-                    pass
             for g in results.get("lb_genres") or []:
                 name = getattr(g, "genre", None)
                 if name:
                     user_genres.add(name.lower())
+            if self._genre_index is not None:
+                seed_mbids = [
+                    seed.artist_mbids[0]
+                    for seed in seed_artists
+                    if getattr(seed, "artist_mbids", None)
+                ]
+                if seed_mbids:
+                    try:
+                        seed_genres = await self._genre_index.get_genres_for_artists(
+                            seed_mbids
+                        )
+                        for genres in seed_genres.values():
+                            user_genres.update(genre.lower() for genre in genres)
+                    except Exception:  # noqa: BLE001
+                        pass
             genres_by_artist: dict[str, list[str]] = {}
             if self._genre_index is not None:
                 artist_mbids = [c.artist_mbid for c in candidates if c.artist_mbid]
@@ -2655,10 +2884,19 @@ class DiscoverHomepageService:
         if not tasks:
             return {}
         keys = list(tasks.keys())
+        durations: dict[str, float] = {}
         # bound each upstream call so one slow/hanging service can't stall the whole
         # build (a timeout is caught below and that section is just dropped)
         _task_timeout = _scaled(DISCOVER_TASK_TIMEOUT_SECONDS)
-        coros = [asyncio.wait_for(c, timeout=_task_timeout) for c in tasks.values()]
+
+        async def timed(key: str, coro: Any) -> Any:
+            started = time.perf_counter()
+            try:
+                return await asyncio.wait_for(coro, timeout=_task_timeout)
+            finally:
+                durations[key] = time.perf_counter() - started
+
+        coros = [timed(key, coro) for key, coro in tasks.items()]
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
         results = {}
         self._last_failed_task_keys = set()
@@ -2669,6 +2907,16 @@ class DiscoverHomepageService:
                 self._last_failed_task_keys.add(key)
             else:
                 results[key] = result
+        slow = sorted(
+            ((key, duration) for key, duration in durations.items() if duration >= 5),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        if slow:
+            logger.info(
+                "Slow Discover sections: %s",
+                ", ".join(f"{key}={duration:.1f}s" for key, duration in slow),
+            )
         return results
 
     @staticmethod

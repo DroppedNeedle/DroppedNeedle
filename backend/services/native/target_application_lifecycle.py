@@ -193,12 +193,12 @@ async def start_target_operational_runtime(
         get_mbid_store,
         get_target_navidrome_library_service,
         get_now_playing_service,
-        get_per_user_client_factory,
         get_target_plex_library_service,
         get_request_history_store,
         get_target_artist_discovery_service,
         get_target_consumer_composition,
         get_target_discover_service,
+        get_target_discover_queue_manager,
         get_target_download_orchestrator,
         get_target_download_service,
         get_target_drop_import_service,
@@ -297,7 +297,7 @@ async def start_target_operational_runtime(
         get_target_discover_service,
         get_target_home_service,
         get_auth_store,
-        get_per_user_client_factory,
+        get_target_discover_queue_manager,
     )
     start_artist_discovery_cache_warming_task(
         get_target_artist_discovery_service,

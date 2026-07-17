@@ -9,24 +9,27 @@ import type { DiscoverResponse } from '$lib/types';
  */
 export function discoverHasContent(d: DiscoverResponse | null | undefined): boolean {
 	if (!d) return false;
+	const hasItems = (section: { items?: unknown[] } | null | undefined) =>
+		(section?.items?.length ?? 0) > 0;
 	return (
-		(d.because_you_listen_to?.length ?? 0) > 0 ||
-		d.fresh_releases != null ||
-		d.missing_essentials != null ||
-		d.rediscover != null ||
-		d.artists_you_might_like != null ||
-		d.popular_in_your_genres != null ||
-		d.globally_trending != null ||
-		d.lastfm_weekly_artist_chart != null ||
-		d.lastfm_weekly_album_chart != null ||
-		d.lastfm_recent_scrobbles != null ||
-		(d.genre_list?.items?.length ?? 0) > 0 ||
-		(d.daily_mixes?.length ?? 0) > 0 ||
-		(d.radio_sections?.length ?? 0) > 0 ||
+		d.because_you_listen_to?.some((entry) => hasItems(entry.section)) ||
+		hasItems(d.fresh_releases) ||
+		hasItems(d.missing_essentials) ||
+		hasItems(d.rediscover) ||
+		hasItems(d.artists_you_might_like) ||
+		hasItems(d.popular_in_your_genres) ||
+		hasItems(d.globally_trending) ||
+		hasItems(d.lastfm_weekly_artist_chart) ||
+		hasItems(d.lastfm_weekly_album_chart) ||
+		hasItems(d.lastfm_recent_scrobbles) ||
+		hasItems(d.genre_list) ||
+		(d.weekly_exploration?.tracks?.length ?? 0) > 0 ||
+		d.daily_mixes?.some(hasItems) ||
+		d.radio_sections?.some(hasItems) ||
 		(d.top_picks?.items?.length ?? 0) > 0 ||
-		d.listeners_like_you != null ||
-		d.anniversaries != null ||
-		d.new_from_followed != null ||
-		d.unexplored_genres != null
+		hasItems(d.listeners_like_you) ||
+		hasItems(d.anniversaries) ||
+		hasItems(d.new_from_followed) ||
+		hasItems(d.unexplored_genres)
 	);
 }

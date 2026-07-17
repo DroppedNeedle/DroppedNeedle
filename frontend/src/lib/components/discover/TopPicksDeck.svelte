@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { ChevronLeft, ChevronRight, Sparkles } from 'lucide-svelte';
+	import { ChevronLeft, ChevronRight, Sparkles, ThumbsDown } from 'lucide-svelte';
 	import { fly } from 'svelte/transition';
-	import type { TopPicksSection } from '$lib/types';
+	import type { TopPickItem, TopPicksSection } from '$lib/types';
+	import { SvelteSet } from 'svelte/reactivity';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import AlbumRequestButton from '$lib/components/AlbumRequestButton.svelte';
 	import RadioPlayButton from '$lib/components/discover/RadioPlayButton.svelte';
@@ -17,14 +18,20 @@
 
 	interface Props {
 		section: TopPicksSection;
+		updating?: boolean;
+		onignore?: (pick: TopPickItem) => Promise<void>;
 	}
 
-	let { section }: Props = $props();
+	let { section, updating = false, onignore }: Props = $props();
 
 	let featuredIndex = $state(0);
 	let slideDirection = $state(1);
 
-	const picks = $derived(section.items);
+	const dismissed = new SvelteSet<string>();
+	let dismissing = $state(false);
+	const picks = $derived(
+		section.items.filter((pick) => !pick.album.mbid || !dismissed.has(pick.album.mbid))
+	);
 	const featured = $derived(picks[featuredIndex]);
 	const featuredHref = $derived(featured ? albumHrefOrNull(featured.album.mbid) : null);
 	const featuredArtistHref = $derived(
@@ -45,6 +52,20 @@
 		if (index === featuredIndex) return;
 		slideDirection = index > featuredIndex ? 1 : -1;
 		featuredIndex = index;
+	}
+
+	async function ignoreFeatured() {
+		if (!featured?.album.mbid || !featured.album.artist_mbid || !onignore || dismissing) return;
+		dismissing = true;
+		try {
+			await onignore(featured);
+			dismissed.add(featured.album.mbid);
+			featuredIndex = 0;
+		} catch {
+			return;
+		} finally {
+			dismissing = false;
+		}
 	}
 
 	const RING_R = 26;
@@ -80,6 +101,10 @@
 						{#if section.personalizing}
 							<div class="mt-0.5">
 								<LiveUpdatingBadge label="Personalising your picks" />
+							</div>
+						{:else if updating}
+							<div class="mt-0.5">
+								<LiveUpdatingBadge label="Updating picks" className="px-2 py-0.5" />
 							</div>
 						{:else}
 							<p class="text-xs text-base-content/50">Scored against your taste</p>
@@ -223,6 +248,17 @@
 										variant="ghost"
 										label="Start radio"
 									/>
+								{/if}
+								{#if onignore && featured.album.mbid && featured.album.artist_mbid}
+									<button
+										class="btn btn-ghost btn-sm gap-1.5 text-base-content/60"
+										onclick={() => void ignoreFeatured()}
+										disabled={dismissing}
+										title="Show fewer recommendations like this"
+									>
+										<ThumbsDown class="h-4 w-4" />
+										<span class="hidden sm:inline">Not for me</span>
+									</button>
 								{/if}
 							</div>
 						</div>

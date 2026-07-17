@@ -13,15 +13,20 @@ describe('discoverHasContent', () => {
 	});
 
 	it('is true when any renderable section is present', () => {
-		expect(discoverHasContent(mk({ because_you_listen_to: [{}] as never }))).toBe(true);
-		expect(discoverHasContent(mk({ globally_trending: {} as never }))).toBe(true);
-		expect(discoverHasContent(mk({ daily_mixes: [{}] as never }))).toBe(true);
+		expect(
+			discoverHasContent(mk({ because_you_listen_to: [{ section: { items: [{}] } }] as never }))
+		).toBe(true);
+		expect(discoverHasContent(mk({ globally_trending: { items: [{}] } as never }))).toBe(true);
+		expect(discoverHasContent(mk({ daily_mixes: [{ items: [{}] }] as never }))).toBe(true);
 		expect(discoverHasContent(mk({ genre_list: { items: [{}] } as never }))).toBe(true);
+		expect(discoverHasContent(mk({ weekly_exploration: { tracks: [{}] } as never }))).toBe(true);
 	});
 
 	it('is false when list-shaped sections are empty', () => {
 		expect(
 			discoverHasContent(mk({ because_you_listen_to: [], genre_list: { items: [] } as never }))
 		).toBe(false);
+		expect(discoverHasContent(mk({ globally_trending: { items: [] } as never }))).toBe(false);
+		expect(discoverHasContent(mk({ daily_mixes: [{ items: [] }] as never }))).toBe(false);
 	});
 });

@@ -12,6 +12,7 @@ from infrastructure.cache.cache_keys import library_identification_prefixes
 from infrastructure.persistence import (
     LibraryDB,
     GenreIndex,
+    DiscoverySnapshotStore,
     YouTubeStore,
     MBIDStore,
     NativeLibraryStore,
@@ -74,6 +75,7 @@ def get_native_library_store() -> NativeLibraryStore:
                 for prefix in library_identification_prefixes()
             )
         )
+        await get_discovery_snapshot_store().mark_discover_stale()
 
     return NativeLibraryStore(
         db_path=settings.library_db_path,
@@ -115,6 +117,14 @@ def get_scan_state_store() -> ScanStateStore:
     settings = get_settings()
     lock = get_persistence_write_lock()
     return ScanStateStore(db_path=settings.library_db_path, write_lock=lock)
+
+
+@singleton
+def get_discovery_snapshot_store() -> DiscoverySnapshotStore:
+    settings = get_settings()
+    return DiscoverySnapshotStore(
+        db_path=settings.library_db_path, write_lock=get_persistence_write_lock()
+    )
 
 
 @singleton
