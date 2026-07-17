@@ -17,6 +17,8 @@ from api.v1.schemas.auth import (
     LoginRequest,
     OIDCAuthorizeResponse,
     OIDCExchangeRequest,
+    PasswordRecoveryCodeResponse,
+    PasswordRecoveryResetRequest,
     PlexPinResponse,
     PlexPollResponse,
     SessionListResponse,
@@ -148,6 +150,26 @@ async def login(
     return AuthResponse(token = token, user = user_to_response(user))
 
 
+@router.post("/password-recovery/reset", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_password_with_recovery_code(
+    body: PasswordRecoveryResetRequest = MsgSpecBody(PasswordRecoveryResetRequest),
+    auth: AuthService = Depends(get_auth_service),
+) -> None:
+    try:
+        await auth.reset_password_with_recovery_code(
+            username=body.username,
+            recovery_code=body.recovery_code,
+            new_password=body.new_password,
+        )
+    except AuthenticationError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired recovery code",
+        )
+    except RegistrationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
 @router.post("/logout", status_code = status.HTTP_204_NO_CONTENT)
 async def logout(
     request: Request,
@@ -237,6 +259,32 @@ async def admin_create_user(
         logger.debug(f"Admin user creation failed: {e}")
         raise HTTPException(status_code = status.HTTP_409_CONFLICT, detail = "Could not create user")
     return user_to_response(user)
+
+
+@router.post(
+    "/admin/users/{user_id}/password-recovery",
+    response_model=PasswordRecoveryCodeResponse,
+)
+async def admin_create_password_recovery_code(
+    user_id: str,
+    response: Response,
+    current_admin: CurrentAdminDep,
+    auth: AuthService = Depends(get_auth_service),
+) -> PasswordRecoveryCodeResponse:
+    try:
+        recovery_code, expires_at = await auth.create_password_recovery_code(user_id)
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    logger.info(
+        "Admin %s created a password recovery code for user %s",
+        current_admin.id[:8],
+        user_id[:8],
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return PasswordRecoveryCodeResponse(
+        recovery_code=recovery_code,
+        expires_at=expires_at,
+    )
 
 
 @router.get("/admin/import/jellyfin", response_model = ImportCandidateListResponse)

@@ -10,6 +10,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 
 vi.mock('$lib/api/client', () => ({
 	api: {
+		post: vi.fn(),
 		global: {
 			get: vi.fn(),
 			post: vi.fn()
@@ -22,6 +23,7 @@ import { createMutation, createQuery } from '@tanstack/svelte-query';
 
 const mockGet = vi.mocked(api.global.get);
 const mockPost = vi.mocked(api.global.post);
+const mockAuthenticatedPost = vi.mocked(api.post);
 const mockCreateMutation = vi.mocked(createMutation);
 const mockCreateQuery = vi.mocked(createQuery);
 
@@ -113,6 +115,39 @@ describe('auth mutations route through api.global', () => {
 		await lastMutationFn()(undefined);
 
 		expect(mockPost).toHaveBeenCalledWith(AUTH_ENDPOINTS.plexPin);
+	});
+
+	it('password recovery posts the code and new password without a session', async () => {
+		mockPost.mockResolvedValue(undefined);
+		const { createPasswordRecoveryResetMutation } = await import('./AuthMutations.svelte');
+		createPasswordRecoveryResetMutation();
+
+		await lastMutationFn()({
+			username: 'alice',
+			recovery_code: 'AAAA-BBBB-CCCC-DDDD-EEEE',
+			new_password: 'a new secure password'
+		});
+
+		expect(mockPost).toHaveBeenCalledWith('/api/v1/auth/password-recovery/reset', {
+			username: 'alice',
+			recovery_code: 'AAAA-BBBB-CCCC-DDDD-EEEE',
+			new_password: 'a new secure password'
+		});
+	});
+
+	it('admin recovery-code generation uses the authenticated client', async () => {
+		mockAuthenticatedPost.mockResolvedValue({
+			recovery_code: 'AAAA-BBBB-CCCC-DDDD-EEEE',
+			expires_at: '2026-07-17T17:00:00Z'
+		});
+		const { createPasswordRecoveryCodeMutation } = await import('./AuthMutations.svelte');
+		createPasswordRecoveryCodeMutation();
+
+		await lastMutationFn()('user/1');
+
+		expect(mockAuthenticatedPost).toHaveBeenCalledWith(
+			'/api/v1/auth/admin/users/user%2F1/password-recovery'
+		);
 	});
 });
 

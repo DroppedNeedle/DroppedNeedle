@@ -3,6 +3,8 @@ exercised through the real auth router with a temp AuthStore."""
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from fastapi import FastAPI
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -10,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from api.v1.routes.auth import router
 from core.dependencies.auth_providers import get_auth_service
 from infrastructure.persistence.auth_store import AuthStore, UserRecord
-from middleware import _get_current_admin, _get_current_user
+from middleware import AuthMiddleware, _get_current_admin, _get_current_user
 from services.auth_service import AuthService
 from tests.helpers import build_test_client, mock_admin_user, mock_user
 
@@ -166,3 +168,81 @@ def test_admin_create_user_forbidden_for_non_admin(tmp_path):
         json={"display_name": "Bob", "username": "bob", "password": PASSWORD},
     )
     assert resp.status_code == 403
+
+
+def test_admin_generates_code_and_public_route_resets_password(tmp_path):
+    app, auth = _app(tmp_path)
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    client = build_test_client(app)
+    user = client.post(
+        "/auth/admin/users",
+        json={
+            "display_name": "Bob",
+            "username": "bob",
+            "password": PASSWORD,
+            "role": "user",
+        },
+    ).json()
+
+    generated = client.post(f"/auth/admin/users/{user['id']}/password-recovery")
+    assert generated.status_code == 200
+    assert generated.headers["cache-control"] == "no-store"
+    recovery_code = generated.json()["recovery_code"]
+
+    reset = client.post(
+        "/auth/password-recovery/reset",
+        json={
+            "username": "Bob",
+            "recovery_code": recovery_code,
+            "new_password": "another correct staple value",
+        },
+    )
+    assert reset.status_code == 204
+    recovered, _ = asyncio.run(
+        auth.login_local(
+            username="bob", password="another correct staple value"
+        )
+    )
+    assert recovered.id == user["id"]
+
+
+def test_password_recovery_route_returns_generic_error(tmp_path):
+    app, _ = _app(tmp_path)
+    client = build_test_client(app)
+
+    response = client.post(
+        "/auth/password-recovery/reset",
+        json={
+            "username": "unknown",
+            "recovery_code": "WRONG-WRONG-WRONG-WRONG-WRONG",
+            "new_password": "another correct staple value",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "Invalid or expired recovery code"
+    assert AuthMiddleware._is_public("/api/v1/auth/password-recovery/reset")
+
+
+def test_password_recovery_rejects_passwords_over_bcrypt_limit(tmp_path):
+    app, _ = _app(tmp_path)
+    client = build_test_client(app)
+
+    response = client.post(
+        "/auth/password-recovery/reset",
+        json={
+            "username": "unknown",
+            "recovery_code": "WRONG-WRONG-WRONG-WRONG-WRONG",
+            "new_password": "a" * 73,
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "Password is too long. Use 72 UTF-8 bytes or fewer."
+
+
+def test_password_recovery_code_generation_forbidden_for_non_admin(tmp_path):
+    app, _ = _app(tmp_path)
+    app.add_middleware(_StateUserMiddleware, user=mock_user(role="user"))
+    client = build_test_client(app)
+
+    response = client.post("/auth/admin/users/user-1/password-recovery")
+    assert response.status_code == 403

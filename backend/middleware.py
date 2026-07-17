@@ -28,6 +28,7 @@ _PUBLIC_PATHS: frozenset[str] = frozenset({
     "/api/v1/auth/setup",
     "/api/v1/auth/providers",
     "/api/v1/auth/login",
+    "/api/v1/auth/password-recovery/reset",
     # Logout is public so an expired session can still clear the cookie
     "/api/v1/auth/logout",
     # Third-party login flows

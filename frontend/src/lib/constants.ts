@@ -1,6 +1,6 @@
 import type { MusicSource } from './stores/musicSource';
 
-export const AUTH_FREE_PATHS = ['/login', '/setup', '/auth/callback'];
+export const AUTH_FREE_PATHS = ['/login', '/setup', '/auth/callback', '/recover-password'];
 
 // concert distances are stored in km but displayed in miles (owner decision U6)
 export const KM_PER_MILE = 1.609;
@@ -131,6 +131,11 @@ export const STATUS_COLORS = {
 export const YOUTUBE_PLAYER_ELEMENT_ID = 'yt-player-embed';
 
 export const API = {
+	auth: {
+		passwordRecoveryReset: () => '/api/v1/auth/password-recovery/reset',
+		adminPasswordRecovery: (userId: string) =>
+			`/api/v1/auth/admin/users/${encodeURIComponent(userId)}/password-recovery`
+	},
 	artist: {
 		basic: (id: string) => `/api/v1/artists/${id}`,
 		extended: (id: string) => `/api/v1/artists/${id}/extended`,

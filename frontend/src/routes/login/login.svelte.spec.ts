@@ -65,6 +65,13 @@ describe('login local tab uses a username field', () => {
 		await expect.element(page.getByRole('button', { name: 'Username' })).toBeInTheDocument();
 	});
 
+	it('offers local-account recovery from the password field', async () => {
+		render(Login);
+		await expect
+			.element(page.getByRole('link', { name: 'Forgot password?' }))
+			.toHaveAttribute('href', '/recover-password');
+	});
+
 	it('submits the mixed-case username + password to the local login mutation', async () => {
 		render(Login);
 		await userEvent.fill(page.getByPlaceholder('Username'), 'Jane.Doe');

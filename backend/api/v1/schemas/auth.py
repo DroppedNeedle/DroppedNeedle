@@ -36,6 +36,17 @@ class LoginRequest(AppStruct):
     password: str
 
 
+class PasswordRecoveryResetRequest(AppStruct):
+    username: str
+    recovery_code: str
+    new_password: str
+
+
+class PasswordRecoveryCodeResponse(AppStruct):
+    recovery_code: str
+    expires_at: str
+
+
 class UserResponse(AppStruct):
     id: str
     display_name: str

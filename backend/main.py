@@ -774,6 +774,7 @@ app.add_middleware(
         "/api/v1/discover": (10.0, 20),
         "/api/v1/covers": (15.0, 30),
         "/api/v1/auth/login": (2.0, 5),
+        "/api/v1/auth/password-recovery/reset": (1.0, 5),
         "/api/v1/auth/setup": (1.0, 3),
         "/api/v1/auth/plex/poll": (5.0, 10),
         "/api/v1/auth/jellyfin/login": (2.0, 5),

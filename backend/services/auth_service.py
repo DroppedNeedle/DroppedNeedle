@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio, hashlib, httpx, logging, os, re, sqlite3, uuid, json
+import asyncio, hashlib, httpx, logging, os, re, secrets, sqlite3, uuid, json
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 import bcrypt as _bcrypt
 
@@ -16,6 +17,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _PW_KEY = "password_hash"
+_PASSWORD_MAX_BYTES = 72
+PASSWORD_RECOVERY_CODE_TTL_MINUTES = 15
+_RECOVERY_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+_RECOVERY_CODE_LENGTH = 20
 
 
 class AuthService:
@@ -209,7 +214,14 @@ class AuthService:
             raise AuthenticationError("Current password is incorrect")
         _validate_password(new_password)
         await _check_hibp(new_password)
-        await self._store.update_provider_data(local.id, _make_local_data(new_password))
+        changed = await self._store.change_local_password(
+            provider_id=local.id,
+            user_id=user_id,
+            expected_provider_data=local.provider_data or "",
+            provider_data=_make_local_data(new_password),
+        )
+        if not changed:
+            raise AuthenticationError("Your password changed while this request was running. Try again.")
         return await self._require_user(user_id)
 
     async def set_local_password(self, user_id: str, new_password: str) -> UserRecord:
@@ -237,6 +249,64 @@ class AuthService:
         except sqlite3.IntegrityError:
             raise RegistrationError("Could not set a local password")
         return user
+
+    async def create_password_recovery_code(self, user_id: str) -> tuple[str, str]:
+        user = await self._store.get_user_by_id(user_id)
+        local = await self._local_provider(user_id) if user is not None else None
+        if user is None or local is None:
+            raise AuthenticationError(
+                "Local password recovery is not available for this account"
+            )
+
+        canonical = "".join(
+            secrets.choice(_RECOVERY_CODE_ALPHABET)
+            for _ in range(_RECOVERY_CODE_LENGTH)
+        )
+        display_code = "-".join(
+            canonical[index : index + 4]
+            for index in range(0, len(canonical), 4)
+        )
+        expires_at = (
+            datetime.now(timezone.utc)
+            + timedelta(minutes=PASSWORD_RECOVERY_CODE_TTL_MINUTES)
+        ).isoformat()
+        await self._store.store_password_recovery_code(
+            user_id=user.id,
+            code_hash=_hash_recovery_code(canonical),
+            expires_at=expires_at,
+        )
+        logger.info("Password recovery code created for user %s", user.id[:8])
+        return display_code, expires_at
+
+    async def create_password_recovery_code_for_username(
+        self, username: str
+    ) -> tuple[str, str]:
+        """Host access is the ownership proof for CLI recovery."""
+        user = await self._store.get_user_by_username(username.strip().lower())
+        if user is None:
+            raise AuthenticationError(
+                "Local password recovery is not available for this account"
+            )
+        return await self.create_password_recovery_code(user.id)
+
+    async def reset_password_with_recovery_code(
+        self,
+        *,
+        username: str,
+        recovery_code: str,
+        new_password: str,
+    ) -> None:
+        _validate_password(new_password)
+        await _check_hibp(new_password)
+        canonical_code = re.sub(r"[\s-]", "", recovery_code).upper()
+        changed = await self._store.reset_password_with_recovery_code(
+            username=username.strip().lower(),
+            code_hash=_hash_recovery_code(canonical_code),
+            provider_data=_make_local_data(new_password),
+        )
+        if not changed:
+            raise AuthenticationError("Invalid or expired recovery code")
+        logger.info("Password recovered for local username")
 
     async def _local_provider(self, user_id: str):
         providers = await self._store.list_providers_for_user(user_id)
@@ -326,7 +396,13 @@ class AuthService:
         await self._store.revoke_token(token_id)
 
     async def cleanup_expired_tokens(self) -> int:
-        return await self._store.cleanup_expired_tokens()
+        token_count, recovery_count = await asyncio.gather(
+            self._store.cleanup_expired_tokens(),
+            self._store.cleanup_expired_password_recovery_codes(),
+        )
+        if recovery_count:
+            logger.info("Cleaned up %d expired password recovery code(s)", recovery_count)
+        return token_count
 
     async def _issue_session(self, user_id: str, *, user_agent: str | None = None) -> str:
         raw_token, token_hash = self._store.issue_token()
@@ -355,6 +431,10 @@ def _make_local_data(password: str) -> str:
     return json.dumps({_PW_KEY: hashed})
 
 
+def _hash_recovery_code(code: str) -> str:
+    return hashlib.sha256(code.encode()).hexdigest()
+
+
 def _verify_password(password: str, provider_data: str) -> bool:
     try:
         data = json.loads(provider_data)
@@ -379,6 +459,8 @@ def _dummy_verify() -> None:
 def _validate_password(password: str) -> None:
     if len(password) < 12:
         raise RegistrationError("Password must be at least 12 characters")
+    if len(password.encode("utf-8")) > _PASSWORD_MAX_BYTES:
+        raise RegistrationError("Password is too long. Use 72 UTF-8 bytes or fewer.")
 
 
 def _validate_email(email: str) -> None:

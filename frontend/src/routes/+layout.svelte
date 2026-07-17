@@ -578,7 +578,11 @@
 			{@render children()}
 		{/if}
 
-		<nav class="droppedneedle-bottom-nav md:hidden" aria-label="Primary navigation">
+		<nav
+			class="droppedneedle-bottom-nav md:hidden"
+			style:display={showAppShell ? undefined : 'none'}
+			aria-label="Primary navigation"
+		>
 			<a
 				href="/"
 				class="droppedneedle-bottom-nav__item"

@@ -28,6 +28,17 @@ export interface LocalLoginVars {
 	password: string;
 }
 
+export interface PasswordRecoveryResetVars {
+	username: string;
+	recovery_code: string;
+	new_password: string;
+}
+
+export interface PasswordRecoveryCodeResponse {
+	recovery_code: string;
+	expires_at: string;
+}
+
 export interface JellyfinLoginVars {
 	username: string;
 	password: string;

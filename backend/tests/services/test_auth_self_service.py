@@ -5,6 +5,7 @@ through a real AuthService + temp AuthStore."""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 import pytest
 
@@ -67,6 +68,7 @@ def test_change_password_flow(tmp_path):
         with pytest.raises(AuthenticationError):
             await auth.change_password(user.id, "wrong password here", PASSWORD2)
 
+        recovery_code, _ = await auth.create_password_recovery_code(user.id)
         await auth.change_password(user.id, PASSWORD, PASSWORD2)
         u, _ = await auth.login_local(username="cara", password=PASSWORD2)
         assert u.id == user.id
@@ -75,6 +77,41 @@ def test_change_password_flow(tmp_path):
 
         with pytest.raises(RegistrationError):
             await auth.change_password(user.id, PASSWORD2, "short")
+        with pytest.raises(AuthenticationError, match="Invalid or expired"):
+            await auth.reset_password_with_recovery_code(
+                username="cara",
+                recovery_code=recovery_code,
+                new_password=PASSWORD,
+            )
+
+    asyncio.run(scenario())
+
+
+def test_password_length_respects_bcrypt_byte_limit(tmp_path):
+    async def scenario():
+        _store, auth = _setup(tmp_path)
+        await auth.admin_create_user(
+            display_name="ASCII Limit",
+            username="ascii-limit",
+            password="a" * 72,
+        )
+        await auth.admin_create_user(
+            display_name="Unicode Limit",
+            username="unicode-limit",
+            password="é" * 36,
+        )
+        with pytest.raises(RegistrationError, match="72 UTF-8 bytes"):
+            await auth.admin_create_user(
+                display_name="ASCII Too Long",
+                username="ascii-too-long",
+                password="a" * 73,
+            )
+        with pytest.raises(RegistrationError, match="72 UTF-8 bytes"):
+            await auth.admin_create_user(
+                display_name="Unicode Too Long",
+                username="unicode-too-long",
+                password="é" * 37,
+            )
 
     asyncio.run(scenario())
 
@@ -113,6 +150,67 @@ def test_set_local_password_rejected_when_local_exists(tmp_path):
         user = await auth.admin_create_user(display_name="Local", username="localu", password=PASSWORD)
         with pytest.raises(RegistrationError):
             await auth.set_local_password(user.id, PASSWORD2)
+
+    asyncio.run(scenario())
+
+
+def test_password_recovery_code_resets_password_and_is_single_use(tmp_path):
+    async def scenario():
+        _store, auth = _setup(tmp_path)
+        user = await auth.admin_create_user(
+            display_name="Locked Admin",
+            username="locked-admin",
+            password=PASSWORD,
+            role="admin",
+        )
+        _, existing_token = await auth.login_local(
+            username="locked-admin", password=PASSWORD
+        )
+        code, expires_at = await auth.create_password_recovery_code(user.id)
+
+        assert len(code.split("-")) == 5
+        assert datetime.fromisoformat(expires_at) > datetime.now(timezone.utc)
+
+        await auth.reset_password_with_recovery_code(
+            username="LOCKED-ADMIN",
+            recovery_code=code.lower(),
+            new_password=PASSWORD2,
+        )
+        assert await auth.verify_token(existing_token) is None
+        recovered, _ = await auth.login_local(
+            username="locked-admin", password=PASSWORD2
+        )
+        assert recovered.id == user.id
+        with pytest.raises(AuthenticationError, match="Invalid or expired"):
+            await auth.reset_password_with_recovery_code(
+                username="locked-admin",
+                recovery_code=code,
+                new_password=PASSWORD,
+            )
+
+    asyncio.run(scenario())
+
+
+def test_password_recovery_rejects_unknown_and_sso_only_accounts(tmp_path):
+    async def scenario():
+        store, auth = _setup(tmp_path)
+        sso_user = await store.create_user(
+            id="sso-1",
+            display_name="SSO User",
+            role="user",
+            username="sso-user",
+        )
+        await store.create_auth_provider(
+            id="sso-provider",
+            user_id=sso_user.id,
+            provider="oidc",
+            provider_uid="oidc-1",
+        )
+
+        with pytest.raises(AuthenticationError, match="not available"):
+            await auth.create_password_recovery_code(sso_user.id)
+        with pytest.raises(AuthenticationError, match="not available"):
+            await auth.create_password_recovery_code_for_username("missing")
 
     asyncio.run(scenario())
 

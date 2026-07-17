@@ -134,6 +134,15 @@ class AuthStore:
                 CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires
                     ON auth_tokens(expires_at);
 
+                CREATE TABLE IF NOT EXISTS auth_password_recovery_codes (
+                    user_id TEXT PRIMARY KEY REFERENCES auth_users(id) ON DELETE CASCADE,
+                    code_hash TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_auth_password_recovery_expires
+                    ON auth_password_recovery_codes(expires_at);
+
                 CREATE TABLE IF NOT EXISTS auth_oidc_states (
                     state TEXT PRIMARY KEY,
                     created_at TEXT NOT NULL,
@@ -563,6 +572,33 @@ class AuthStore:
             )
         await self._write(operation)
 
+    async def change_local_password(
+        self,
+        *,
+        provider_id: str,
+        user_id: str,
+        expected_provider_data: str,
+        provider_data: str,
+    ) -> bool:
+        """Update an unchanged password and invalidate recovery in one transaction."""
+
+        def operation(conn: sqlite3.Connection) -> bool:
+            cursor = conn.execute(
+                """UPDATE auth_providers SET provider_data = ?
+                   WHERE id = ? AND user_id = ? AND provider = 'local'
+                     AND provider_data = ?""",
+                (provider_data, provider_id, user_id, expected_provider_data),
+            )
+            if cursor.rowcount == 0:
+                return False
+            conn.execute(
+                "DELETE FROM auth_password_recovery_codes WHERE user_id = ?",
+                (user_id,),
+            )
+            return True
+
+        return await self._write(operation)
+
     def issue_token(self) -> tuple[str, str]:
         """Generate a new raw token and its hash.
 
@@ -679,6 +715,90 @@ class AuthStore:
         if count:
             logger.info(f"Cleaned up {count} expired auth token(s)")
         return count
+
+    async def store_password_recovery_code(
+        self,
+        *,
+        user_id: str,
+        code_hash: str,
+        expires_at: str,
+    ) -> None:
+        """Replace a user's recovery code so only the newest code can be used."""
+        now = _now_iso()
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "DELETE FROM auth_password_recovery_codes WHERE expires_at <= ?",
+                (now,),
+            )
+            conn.execute(
+                """INSERT INTO auth_password_recovery_codes
+                   (user_id, code_hash, created_at, expires_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET
+                       code_hash = excluded.code_hash,
+                       created_at = excluded.created_at,
+                       expires_at = excluded.expires_at""",
+                (user_id, code_hash, now, expires_at),
+            )
+
+        await self._write(operation)
+
+    async def reset_password_with_recovery_code(
+        self,
+        *,
+        username: str,
+        code_hash: str,
+        provider_data: str,
+    ) -> bool:
+        """Consume a valid code, change the password, and revoke web sessions atomically."""
+        now = _now_iso()
+
+        def operation(conn: sqlite3.Connection) -> bool:
+            conn.execute(
+                "DELETE FROM auth_password_recovery_codes WHERE expires_at <= ?",
+                (now,),
+            )
+            row = conn.execute(
+                """SELECT recovery.user_id, provider.id AS provider_id
+                   FROM auth_password_recovery_codes AS recovery
+                   JOIN auth_users AS user ON user.id = recovery.user_id
+                   JOIN auth_providers AS provider
+                     ON provider.user_id = recovery.user_id AND provider.provider = 'local'
+                   WHERE user.username = ? AND recovery.code_hash = ?
+                     AND recovery.expires_at > ?""",
+                (username, code_hash, now),
+            ).fetchone()
+            if row is None:
+                return False
+
+            conn.execute(
+                "UPDATE auth_providers SET provider_data = ? WHERE id = ?",
+                (provider_data, row["provider_id"]),
+            )
+            conn.execute(
+                "UPDATE auth_tokens SET revoked = 1 WHERE user_id = ?",
+                (row["user_id"],),
+            )
+            conn.execute(
+                "DELETE FROM auth_password_recovery_codes WHERE user_id = ?",
+                (row["user_id"],),
+            )
+            return True
+
+        return await self._write(operation)
+
+    async def cleanup_expired_password_recovery_codes(self) -> int:
+        now = _now_iso()
+
+        def operation(conn: sqlite3.Connection) -> int:
+            cursor = conn.execute(
+                "DELETE FROM auth_password_recovery_codes WHERE expires_at <= ?",
+                (now,),
+            )
+            return cursor.rowcount
+
+        return await self._write(operation)
 
     async def store_oidc_state(self, state: str, ttl_seconds: int = 600, code_verifier: str | None = None) -> None:
         now = _now_iso()

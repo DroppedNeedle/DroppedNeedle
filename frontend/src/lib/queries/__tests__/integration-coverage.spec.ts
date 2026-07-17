@@ -14,6 +14,17 @@ import { API } from '$lib/constants';
 
 // [description, actual path produced by the API builder, expected backend route]
 const COVERAGE: Array<[string, string, string]> = [
+	// local password recovery
+	[
+		'password recovery reset',
+		API.auth.passwordRecoveryReset(),
+		'/api/v1/auth/password-recovery/reset'
+	],
+	[
+		'admin password recovery code',
+		API.auth.adminPasswordRecovery('U1'),
+		'/api/v1/auth/admin/users/U1/password-recovery'
+	],
 	// download-client (admin)
 	['download-client config', API.downloadClient.config(), '/api/v1/download-client/config'],
 	['download-client status', API.downloadClient.status(), '/api/v1/download-client/status'],

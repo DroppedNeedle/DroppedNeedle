@@ -18,7 +18,10 @@
 		Trash2,
 		Mail,
 		KeyRound,
-		Gauge
+		Gauge,
+		Copy,
+		Check,
+		Clock3
 	} from 'lucide-svelte';
 	import UserQuotaEditor from '$lib/components/settings/UserQuotaEditor.svelte';
 	import {
@@ -27,6 +30,7 @@
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { createPasswordRecoveryCodeMutation } from '$lib/queries/auth/AuthMutations.svelte';
 
 	interface UserRecord {
 		id: string;
@@ -53,6 +57,14 @@
 	let deleteDialogEl: HTMLDialogElement | undefined = $state();
 	let deleting = $state(false);
 	let deleteError = $state<string | null>(null);
+
+	const createRecoveryCode = createPasswordRecoveryCodeMutation();
+	let recoveryUser = $state<UserRecord | null>(null);
+	let recoveryDialogEl: HTMLDialogElement | undefined = $state();
+	let recoveryCode = $state<string | null>(null);
+	let recoveryExpiresAt = $state<string | null>(null);
+	let recoveryError = $state<string | null>(null);
+	let recoveryCopied = $state(false);
 
 	const totalPages = $derived(Math.max(1, Math.ceil(total / PAGE_SIZE)));
 	const rangeStart = $derived(total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1);
@@ -213,9 +225,74 @@
 		}
 	}
 
+	function openRecoveryDialog(user: UserRecord) {
+		recoveryUser = user;
+		recoveryCode = null;
+		recoveryExpiresAt = null;
+		recoveryError = null;
+		recoveryCopied = false;
+		createRecoveryCode.reset();
+	}
+
+	function closeRecoveryDialog() {
+		recoveryDialogEl?.close();
+		recoveryUser = null;
+		recoveryCode = null;
+		recoveryExpiresAt = null;
+		recoveryError = null;
+		recoveryCopied = false;
+		createRecoveryCode.reset();
+	}
+
+	async function handleCreateRecoveryCode() {
+		if (!recoveryUser) return;
+		const requestedUserId = recoveryUser.id;
+		recoveryError = null;
+		try {
+			const result = await createRecoveryCode.mutateAsync(requestedUserId);
+			if (recoveryUser?.id !== requestedUserId) return;
+			recoveryCode = result.recovery_code;
+			recoveryExpiresAt = result.expires_at;
+			toastStore.show({ message: 'Recovery code created', type: 'success' });
+		} catch (cause: unknown) {
+			if (recoveryUser?.id !== requestedUserId) return;
+			const message = cause instanceof Error ? cause.message : 'Could not create recovery code';
+			recoveryError = message;
+			toastStore.show({ message, type: 'error' });
+		}
+	}
+
+	function handleRecoveryCancel(event: Event) {
+		if (createRecoveryCode.isPending) event.preventDefault();
+	}
+
+	async function copyRecoveryCode() {
+		if (!recoveryCode) return;
+		try {
+			await navigator.clipboard.writeText(recoveryCode);
+			recoveryCopied = true;
+			setTimeout(() => (recoveryCopied = false), 2000);
+		} catch {
+			toastStore.show({ message: 'Could not copy recovery code', type: 'error' });
+		}
+	}
+
+	function recoveryExpiryLabel(value: string | null): string {
+		if (!value) return '';
+		const expires = new Date(value);
+		if (Number.isNaN(expires.getTime())) return '15 minutes after creation';
+		return expires.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	}
+
 	$effect(() => {
 		if (userToDelete) {
 			deleteDialogEl?.showModal();
+		}
+	});
+
+	$effect(() => {
+		if (recoveryUser) {
+			recoveryDialogEl?.showModal();
 		}
 	});
 
@@ -492,6 +569,17 @@
 							<Gauge class="h-4 w-4" />
 						</button>
 						<button
+							class="btn btn-ghost btn-sm btn-circle text-base-content/50 hover:bg-primary/10 hover:text-primary"
+							onclick={() => openRecoveryDialog(user)}
+							disabled={!user.providers.includes('local')}
+							aria-label={`Create recovery code for ${user.display_name}`}
+							title={user.providers.includes('local')
+								? 'Create password recovery code'
+								: 'This account does not have a local password'}
+						>
+							<KeyRound class="h-4 w-4" />
+						</button>
+						<button
 							class="btn btn-ghost btn-sm btn-circle text-error/70 hover:text-error hover:bg-error/10"
 							onclick={() => confirmDelete(user)}
 							disabled={user.id === authStore.user?.id}
@@ -631,5 +719,95 @@
 	</div>
 	<form method="dialog" class="modal-backdrop">
 		<button>close</button>
+	</form>
+</dialog>
+
+<dialog
+	bind:this={recoveryDialogEl}
+	class="modal"
+	oncancel={handleRecoveryCancel}
+	onclose={closeRecoveryDialog}
+>
+	<div class="modal-box max-w-md overflow-hidden p-0">
+		{#if recoveryCode}
+			<div class="border-b border-base-300 bg-primary/5 px-6 py-5">
+				<div class="flex items-center gap-3">
+					<div class="flex h-10 w-10 items-center justify-center rounded-box bg-primary/10">
+						<KeyRound class="h-5 w-5 text-primary" aria-hidden="true" />
+					</div>
+					<div>
+						<h3 class="text-lg font-bold">Recovery code ready</h3>
+						<p class="text-xs text-base-content/55">For {recoveryUser?.display_name}</p>
+					</div>
+				</div>
+			</div>
+			<div class="space-y-4 p-6">
+				<p class="text-sm leading-relaxed text-base-content/65">
+					Share this code privately. It can be used once and will not be shown again after you close
+					this window.
+				</p>
+				<div class="rounded-box border border-primary/20 bg-base-300/60 p-4 text-center">
+					<code class="block break-all font-mono text-lg font-semibold tracking-wider text-primary">
+						{recoveryCode}
+					</code>
+					<button class="btn btn-outline btn-sm mt-3 gap-2" onclick={() => void copyRecoveryCode()}>
+						{#if recoveryCopied}<Check class="h-4 w-4" /> Copied{:else}<Copy class="h-4 w-4" /> Copy code{/if}
+					</button>
+				</div>
+				<div class="flex items-center gap-2 text-xs text-base-content/50">
+					<Clock3 class="h-4 w-4 text-accent" aria-hidden="true" />
+					Expires at {recoveryExpiryLabel(recoveryExpiresAt)}. Creating another code will replace
+					this one.
+				</div>
+				<div class="modal-action mt-2">
+					<button class="btn btn-primary" onclick={closeRecoveryDialog}>Done</button>
+				</div>
+			</div>
+		{:else}
+			<div class="p-6">
+				<div class="flex items-start gap-3">
+					<div
+						class="flex h-10 w-10 shrink-0 items-center justify-center rounded-box bg-primary/10"
+					>
+						<KeyRound class="h-5 w-5 text-primary" aria-hidden="true" />
+					</div>
+					<div>
+						<h3 class="text-lg font-bold">Create recovery code</h3>
+						<p class="mt-1 text-sm leading-relaxed text-base-content/65">
+							Create a 15-minute, single-use code for
+							<span class="font-semibold text-base-content">{recoveryUser?.display_name}</span>?
+							Their current password remains valid until the code is used.
+						</p>
+					</div>
+				</div>
+
+				{#if recoveryError}
+					<div class="alert alert-error mt-4 py-2 text-sm" role="alert">{recoveryError}</div>
+				{/if}
+
+				<div class="modal-action">
+					<button
+						class="btn btn-ghost"
+						onclick={closeRecoveryDialog}
+						disabled={createRecoveryCode.isPending}
+					>
+						Cancel
+					</button>
+					<button
+						class="btn btn-primary"
+						onclick={() => void handleCreateRecoveryCode()}
+						disabled={createRecoveryCode.isPending}
+					>
+						{#if createRecoveryCode.isPending}
+							<span class="loading loading-spinner loading-sm"></span>
+						{/if}
+						Create code
+					</button>
+				</div>
+			</div>
+		{/if}
+	</div>
+	<form method="dialog" class="modal-backdrop">
+		<button disabled={createRecoveryCode.isPending}>close</button>
 	</form>
 </dialog>

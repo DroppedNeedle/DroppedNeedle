@@ -1,4 +1,5 @@
 import { api } from '$lib/api/client';
+import { API } from '$lib/constants';
 import { createMutation } from '@tanstack/svelte-query';
 import { AUTH_ENDPOINTS } from './endpoints';
 import type {
@@ -7,20 +8,30 @@ import type {
 	LocalLoginVars,
 	OidcAuthorizeResponse,
 	OidcExchangeVars,
+	PasswordRecoveryCodeResponse,
+	PasswordRecoveryResetVars,
 	PlexPinResponse,
 	SetupVars
 } from './types';
 
-/**
- * Auth mutations. Each routes through the unauthenticated `api.global` client, so
- * a non-2xx response rejects with an `ApiError` the caller surfaces via `.message`.
- * Mutations are not cached, so no queryKey/staleTime is needed.
- */
+/** Recovery redemption is public; code generation uses the authenticated admin client. */
 
 export const createLocalLoginMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: LocalLoginVars) =>
 			api.global.post<AuthSessionResponse>(AUTH_ENDPOINTS.login, vars)
+	}));
+
+export const createPasswordRecoveryResetMutation = () =>
+	createMutation(() => ({
+		mutationFn: (vars: PasswordRecoveryResetVars) =>
+			api.global.post<void>(API.auth.passwordRecoveryReset(), vars)
+	}));
+
+export const createPasswordRecoveryCodeMutation = () =>
+	createMutation(() => ({
+		mutationFn: (userId: string) =>
+			api.post<PasswordRecoveryCodeResponse>(API.auth.adminPasswordRecovery(userId))
 	}));
 
 export const createJellyfinLoginMutation = () =>

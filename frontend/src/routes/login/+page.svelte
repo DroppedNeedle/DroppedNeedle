@@ -223,6 +223,11 @@
 									{#if showPassword}<EyeOff class="h-4 w-4" />{:else}<Eye class="h-4 w-4" />{/if}
 								</button>
 							</label>
+							<div class="mt-1 flex justify-end">
+								<a href="/recover-password" class="link link-primary text-xs font-medium">
+									Forgot password?
+								</a>
+							</div>
 						</fieldset>
 						{#if localError}
 							<div class="alert alert-error py-2 text-sm">{localError}</div>
