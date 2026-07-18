@@ -20,6 +20,12 @@
 	import type { MusicSource } from '$lib/stores/musicSource';
 	import { scrobbleManager } from '$lib/stores/scrobble.svelte';
 
+	interface Props {
+		navidromeEnabled: boolean;
+	}
+
+	let { navidromeEnabled }: Props = $props();
+
 	const connectionsQuery = getConnectionsQuery();
 	const connections = $derived(connectionsQuery.data?.connections ?? []);
 	const lb = $derived(connections.find((c) => c.service === 'listenbrainz'));
@@ -53,6 +59,7 @@
 	// optimistic mirror so toggles feel instant; re-synced whenever the query settles
 	let scrobbleLastfm = $state(false);
 	let scrobbleListenbrainz = $state(false);
+	let navidromeHandlesExternalScrobbles = $state(true);
 	let primarySource = $state<MusicSource>('listenbrainz');
 	let nowPlayingVisibility = $state<NowPlayingVisibility>('full');
 	let autoRequestPersonalMix = $state(false);
@@ -62,6 +69,7 @@
 		if (prefs) {
 			scrobbleLastfm = prefs.scrobble_to_lastfm;
 			scrobbleListenbrainz = prefs.scrobble_to_listenbrainz;
+			navidromeHandlesExternalScrobbles = prefs.navidrome_handles_external_scrobbles;
 			primarySource = (prefs.primary_music_source as MusicSource) ?? 'listenbrainz';
 			nowPlayingVisibility = (prefs.now_playing_visibility as NowPlayingVisibility) ?? 'full';
 			autoRequestPersonalMix = prefs.auto_request_personal_mix;
@@ -128,6 +136,7 @@
 			if (prefs) {
 				scrobbleLastfm = prefs.scrobble_to_lastfm;
 				scrobbleListenbrainz = prefs.scrobble_to_listenbrainz;
+				navidromeHandlesExternalScrobbles = prefs.navidrome_handles_external_scrobbles;
 				primarySource = (prefs.primary_music_source as MusicSource) ?? 'listenbrainz';
 				nowPlayingVisibility = (prefs.now_playing_visibility as NowPlayingVisibility) ?? 'full';
 				autoRequestPersonalMix = prefs.auto_request_personal_mix;
@@ -388,6 +397,31 @@
 						onchange={() => savePrefs({ scrobble_to_listenbrainz: scrobbleListenbrainz })}
 					/>
 				</label>
+
+				{#if navidromeEnabled}
+					<label
+						class="flex cursor-pointer items-center justify-between gap-4 rounded-lg px-1 py-2 transition-colors hover:bg-base-300/20"
+					>
+						<div>
+							<span class="text-sm font-medium">Let Navidrome handle Last.fm and ListenBrainz</span>
+							<p class="text-xs text-base-content/40">
+								Keep this on while Navidrome sends plays to those accounts. To use DroppedNeedle
+								instead, first disable external scrobbles for the DroppedNeedle player in Navidrome.
+								Listening history is recorded either way.
+							</p>
+						</div>
+						<input
+							type="checkbox"
+							class="toggle toggle-primary toggle-sm"
+							bind:checked={navidromeHandlesExternalScrobbles}
+							disabled={updatePrefsMutation.isPending}
+							onchange={() =>
+								savePrefs({
+									navidrome_handles_external_scrobbles: navidromeHandlesExternalScrobbles
+								})}
+						/>
+					</label>
+				{/if}
 			</div>
 
 			<div class="section-divider-glow my-1"></div>

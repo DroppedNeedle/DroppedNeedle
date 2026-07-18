@@ -22,7 +22,12 @@ vi.mock('$lib/api/client', () => ({
 	}
 }));
 
-import { scrobbleManager, formatServiceTooltip } from './scrobble.svelte';
+import {
+	scrobbleManager,
+	formatServiceTooltip,
+	makeNowPlayingSubmission,
+	makeScrobbleSubmission
+} from './scrobble.svelte';
 import {
 	makeTrackKey,
 	shouldAccumulate,
@@ -83,6 +88,29 @@ describe('formatServiceTooltip', () => {
 	it('passes through unknown service names as-is', () => {
 		const detail = { spotify: { success: true } };
 		expect(formatServiceTooltip('scrobbled', detail)).toBe('Scrobbled to spotify');
+	});
+});
+
+describe('native scrobble payloads', () => {
+	it('include the playback source in now-playing reports', () => {
+		expect(makeNowPlayingSubmission('Artist', 'Song', 'Album', 180_000, 'navidrome')).toEqual({
+			track_name: 'Song',
+			artist_name: 'Artist',
+			album_name: 'Album',
+			duration_ms: 180_000,
+			source: 'navidrome'
+		});
+	});
+
+	it('include the playback source in completed scrobbles', () => {
+		expect(makeScrobbleSubmission('Artist', 'Song', 'Album', 180_000, 1234, 'navidrome')).toEqual({
+			track_name: 'Song',
+			artist_name: 'Artist',
+			album_name: 'Album',
+			duration_ms: 180_000,
+			timestamp: 1234,
+			source: 'navidrome'
+		});
 	});
 });
 

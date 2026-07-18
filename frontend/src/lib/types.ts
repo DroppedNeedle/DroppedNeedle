@@ -1207,6 +1207,7 @@ export type SpotifyImportResponse = {
 export type ScrobbleSettings = {
 	scrobble_to_lastfm: boolean;
 	scrobble_to_listenbrainz: boolean;
+	navidrome_handles_external_scrobbles: boolean;
 };
 
 export type NowPlayingSubmission = {
@@ -1215,6 +1216,7 @@ export type NowPlayingSubmission = {
 	album_name: string;
 	duration_ms: number;
 	mbid?: string;
+	source?: string;
 };
 
 export type ScrobbleSubmission = {
@@ -1224,6 +1226,7 @@ export type ScrobbleSubmission = {
 	timestamp: number;
 	duration_ms: number;
 	mbid?: string;
+	source?: string;
 };
 
 export type ServiceResult = {

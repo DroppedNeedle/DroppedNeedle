@@ -189,18 +189,24 @@ def test_scrobble_preferences_default(ctx):
     data = resp.json()
     assert data["scrobble_to_lastfm"] is False
     assert data["scrobble_to_listenbrainz"] is False
+    assert data["navidrome_handles_external_scrobbles"] is True
     assert data["primary_music_source"] == "listenbrainz"
 
 
 def test_scrobble_preferences_update(ctx):
     resp = ctx.client.put(
         "/me/scrobble-preferences",
-        json={"scrobble_to_lastfm": True, "primary_music_source": "lastfm"},
+        json={
+            "scrobble_to_lastfm": True,
+            "navidrome_handles_external_scrobbles": False,
+            "primary_music_source": "lastfm",
+        },
     )
     assert resp.status_code == 200
     data = ctx.client.get("/me/scrobble-preferences").json()
     assert data["scrobble_to_lastfm"] is True
     assert data["scrobble_to_listenbrainz"] is False
+    assert data["navidrome_handles_external_scrobbles"] is False
     assert data["primary_music_source"] == "lastfm"
 
 

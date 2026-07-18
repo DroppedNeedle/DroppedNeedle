@@ -90,6 +90,9 @@ class ScrobbleService:
         self, request: NowPlayingRequest, *, user_id: str
     ) -> ScrobbleResponse:
         prefs = await self._listening_prefs_store.get(user_id)
+        if request.source == "navidrome" and prefs.navidrome_handles_external_scrobbles:
+            return ScrobbleResponse(accepted=True, services={})
+
         tasks: dict[str, Any] = {}
         duration_sec = request.duration_ms // 1000 if request.duration_ms > 0 else 0
 
@@ -151,9 +154,16 @@ class ScrobbleService:
             )
             return ScrobbleResponse(accepted=True, services={})
 
+        prefs = await self._listening_prefs_store.get(user_id)
+        if request.source == "navidrome" and prefs.navidrome_handles_external_scrobbles:
+            logger.debug(
+                "External scrobble forwarding delegated to Navidrome for user %s",
+                user_id,
+            )
+            return ScrobbleResponse(accepted=True, services={})
+
         self._dispatch_to_plugins(request)
 
-        prefs = await self._listening_prefs_store.get(user_id)
         tasks: dict[str, Any] = {}
         duration_sec = request.duration_ms // 1000 if request.duration_ms > 0 else 0
 

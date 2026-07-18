@@ -22,6 +22,7 @@ class ConnectionActionResponse(AppStruct):
 class ScrobblePreferences(AppStruct):
     scrobble_to_lastfm: bool = False
     scrobble_to_listenbrainz: bool = False
+    navidrome_handles_external_scrobbles: bool = True
     primary_music_source: str = "listenbrainz"
     # now-playing presence visibility to other users
     now_playing_visibility: str = "full"
@@ -34,6 +35,7 @@ class ScrobblePreferences(AppStruct):
 class ScrobblePreferencesUpdate(AppStruct):
     scrobble_to_lastfm: bool | None = None
     scrobble_to_listenbrainz: bool | None = None
+    navidrome_handles_external_scrobbles: bool | None = None
     primary_music_source: Literal["listenbrainz", "lastfm"] | None = None
     now_playing_visibility: Literal["full", "track_hidden", "offline"] | None = None
     auto_request_personal_mix: bool | None = None

@@ -109,6 +109,7 @@ async def get_scrobble_preferences(
     return ScrobblePreferences(
         scrobble_to_lastfm=prefs.scrobble_to_lastfm,
         scrobble_to_listenbrainz=prefs.scrobble_to_listenbrainz,
+        navidrome_handles_external_scrobbles=prefs.navidrome_handles_external_scrobbles,
         primary_music_source=prefs.primary_music_source,
         now_playing_visibility=prefs.now_playing_visibility,
         auto_request_personal_mix=prefs.auto_request_personal_mix,
@@ -131,6 +132,7 @@ async def update_scrobble_preferences(
         current_user.id,
         scrobble_to_lastfm=body.scrobble_to_lastfm,
         scrobble_to_listenbrainz=body.scrobble_to_listenbrainz,
+        navidrome_handles_external_scrobbles=body.navidrome_handles_external_scrobbles,
         primary_music_source=body.primary_music_source,
         now_playing_visibility=body.now_playing_visibility,
         auto_request_personal_mix=body.auto_request_personal_mix,
@@ -155,6 +157,7 @@ async def update_scrobble_preferences(
     return ScrobblePreferences(
         scrobble_to_lastfm=prefs.scrobble_to_lastfm,
         scrobble_to_listenbrainz=prefs.scrobble_to_listenbrainz,
+        navidrome_handles_external_scrobbles=prefs.navidrome_handles_external_scrobbles,
         primary_music_source=prefs.primary_music_source,
         now_playing_visibility=prefs.now_playing_visibility,
         auto_request_personal_mix=prefs.auto_request_personal_mix,

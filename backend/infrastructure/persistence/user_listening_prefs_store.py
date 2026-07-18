@@ -26,6 +26,7 @@ class UserListeningPrefsRecord(msgspec.Struct, frozen=True):
     user_id: str
     scrobble_to_lastfm: bool
     scrobble_to_listenbrainz: bool
+    navidrome_handles_external_scrobbles: bool
     primary_music_source: str
     now_playing_visibility: str
     auto_request_personal_mix: bool
@@ -71,6 +72,7 @@ class UserListeningPrefsStore:
                   user_id TEXT PRIMARY KEY REFERENCES auth_users(id) ON DELETE CASCADE,
                   scrobble_to_lastfm INTEGER NOT NULL DEFAULT 0,
                   scrobble_to_listenbrainz INTEGER NOT NULL DEFAULT 0,
+                  navidrome_handles_external_scrobbles INTEGER NOT NULL DEFAULT 1,
                   primary_music_source TEXT NOT NULL DEFAULT 'listenbrainz',
                   now_playing_visibility TEXT NOT NULL DEFAULT 'full',
                   updated_at TEXT NOT NULL
@@ -85,6 +87,19 @@ class UserListeningPrefsStore:
                 )
             except sqlite3.OperationalError:
                 pass  # column already present
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(user_listening_prefs)")
+            }
+            if "navidrome_handles_external_scrobbles" not in columns:
+                conn.execute(
+                    "ALTER TABLE user_listening_prefs ADD COLUMN "
+                    "navidrome_handles_external_scrobbles INTEGER NOT NULL DEFAULT 1"
+                )
+                # Preserve existing forwarding behavior; new rows use Navidrome's default.
+                conn.execute(
+                    "UPDATE user_listening_prefs "
+                    "SET navidrome_handles_external_scrobbles = 0"
+                )
             # additive, idempotent: DBs created before the personal-mix feature lack the column
             try:
                 conn.execute(
@@ -176,6 +191,7 @@ class UserListeningPrefsStore:
                 user_id=user_id,
                 scrobble_to_lastfm=False,
                 scrobble_to_listenbrainz=False,
+                navidrome_handles_external_scrobbles=True,
                 primary_music_source=_DEFAULT_SOURCE,
                 now_playing_visibility=_DEFAULT_VISIBILITY,
                 auto_request_personal_mix=False,
@@ -185,6 +201,9 @@ class UserListeningPrefsStore:
             user_id=row["user_id"],
             scrobble_to_lastfm=bool(row["scrobble_to_lastfm"]),
             scrobble_to_listenbrainz=bool(row["scrobble_to_listenbrainz"]),
+            navidrome_handles_external_scrobbles=bool(
+                row["navidrome_handles_external_scrobbles"]
+            ),
             primary_music_source=row["primary_music_source"],
             now_playing_visibility=row["now_playing_visibility"],
             auto_request_personal_mix=bool(row["auto_request_personal_mix"]),
@@ -197,6 +216,7 @@ class UserListeningPrefsStore:
         *,
         scrobble_to_lastfm: bool | None = None,
         scrobble_to_listenbrainz: bool | None = None,
+        navidrome_handles_external_scrobbles: bool | None = None,
         primary_music_source: str | None = None,
         now_playing_visibility: str | None = None,
         auto_request_personal_mix: bool | None = None,
@@ -206,6 +226,11 @@ class UserListeningPrefsStore:
         # on INSERT, unset fields take their table defaults
         ins_lastfm = int(scrobble_to_lastfm) if scrobble_to_lastfm is not None else 0
         ins_lb = int(scrobble_to_listenbrainz) if scrobble_to_listenbrainz is not None else 0
+        ins_navidrome_owner = (
+            int(navidrome_handles_external_scrobbles)
+            if navidrome_handles_external_scrobbles is not None
+            else 1
+        )
         ins_source = primary_music_source if primary_music_source is not None else _DEFAULT_SOURCE
         ins_visibility = (
             now_playing_visibility if now_playing_visibility is not None else _DEFAULT_VISIBILITY
@@ -216,6 +241,11 @@ class UserListeningPrefsStore:
         # on UPDATE, NULL keeps the existing column value via COALESCE
         upd_lastfm = int(scrobble_to_lastfm) if scrobble_to_lastfm is not None else None
         upd_lb = int(scrobble_to_listenbrainz) if scrobble_to_listenbrainz is not None else None
+        upd_navidrome_owner = (
+            int(navidrome_handles_external_scrobbles)
+            if navidrome_handles_external_scrobbles is not None
+            else None
+        )
         upd_source = primary_music_source
         upd_visibility = now_playing_visibility
         upd_auto_request = (
@@ -227,12 +257,16 @@ class UserListeningPrefsStore:
                 """
                 INSERT INTO user_listening_prefs (
                     user_id, scrobble_to_lastfm, scrobble_to_listenbrainz,
+                    navidrome_handles_external_scrobbles,
                     primary_music_source, now_playing_visibility,
                     auto_request_personal_mix, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET
                     scrobble_to_lastfm = COALESCE(?, scrobble_to_lastfm),
                     scrobble_to_listenbrainz = COALESCE(?, scrobble_to_listenbrainz),
+                    navidrome_handles_external_scrobbles = COALESCE(
+                        ?, navidrome_handles_external_scrobbles
+                    ),
                     primary_music_source = COALESCE(?, primary_music_source),
                     now_playing_visibility = COALESCE(?, now_playing_visibility),
                     auto_request_personal_mix = COALESCE(?, auto_request_personal_mix),
@@ -242,12 +276,14 @@ class UserListeningPrefsStore:
                     user_id,
                     ins_lastfm,
                     ins_lb,
+                    ins_navidrome_owner,
                     ins_source,
                     ins_visibility,
                     ins_auto_request,
                     now,
                     upd_lastfm,
                     upd_lb,
+                    upd_navidrome_owner,
                     upd_source,
                     upd_visibility,
                     upd_auto_request,

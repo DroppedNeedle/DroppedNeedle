@@ -41,9 +41,41 @@ def store(tmp_path: Path) -> UserListeningPrefsStore:
 def test_migration_is_idempotent(tmp_path: Path):
     db_path = tmp_path / "library.db"
     lock = threading.Lock()
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE user_listening_prefs (
+              user_id TEXT PRIMARY KEY,
+              scrobble_to_lastfm INTEGER NOT NULL DEFAULT 0,
+              scrobble_to_listenbrainz INTEGER NOT NULL DEFAULT 0,
+              primary_music_source TEXT NOT NULL DEFAULT 'listenbrainz',
+              now_playing_visibility TEXT NOT NULL DEFAULT 'full',
+              auto_request_personal_mix INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO user_listening_prefs (user_id, updated_at) VALUES ('legacy', '')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
     UserListeningPrefsStore(db_path=db_path, write_lock=lock)
     UserListeningPrefsStore(db_path=db_path, write_lock=lock)
-    assert db_path.exists()
+    conn = sqlite3.connect(db_path)
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(user_listening_prefs)")}
+        value = conn.execute(
+            "SELECT navidrome_handles_external_scrobbles "
+            "FROM user_listening_prefs WHERE user_id = 'legacy'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert "navidrome_handles_external_scrobbles" in columns
+    assert value == 0
 
 
 @pytest.mark.asyncio
@@ -52,7 +84,17 @@ async def test_missing_row_returns_defaults(store: UserListeningPrefsStore):
     assert prefs.user_id == "user-a"
     assert prefs.scrobble_to_lastfm is False
     assert prefs.scrobble_to_listenbrainz is False
+    assert prefs.navidrome_handles_external_scrobbles is True
     assert prefs.primary_music_source == "listenbrainz"
+
+
+@pytest.mark.asyncio
+async def test_new_row_uses_navidrome_forwarding_default(
+    store: UserListeningPrefsStore,
+):
+    await store.upsert("user-a", scrobble_to_lastfm=True)
+    prefs = await store.get("user-a")
+    assert prefs.navidrome_handles_external_scrobbles is True
 
 
 @pytest.mark.asyncio
@@ -61,21 +103,28 @@ async def test_full_upsert_roundtrip(store: UserListeningPrefsStore):
         "user-a",
         scrobble_to_lastfm=True,
         scrobble_to_listenbrainz=True,
+        navidrome_handles_external_scrobbles=False,
         primary_music_source="lastfm",
     )
     prefs = await store.get("user-a")
     assert prefs.scrobble_to_lastfm is True
     assert prefs.scrobble_to_listenbrainz is True
+    assert prefs.navidrome_handles_external_scrobbles is False
     assert prefs.primary_music_source == "lastfm"
 
 
 @pytest.mark.asyncio
 async def test_partial_upsert_preserves_other_columns(store: UserListeningPrefsStore):
-    await store.upsert("user-a", scrobble_to_lastfm=True)
+    await store.upsert(
+        "user-a",
+        scrobble_to_lastfm=True,
+        navidrome_handles_external_scrobbles=False,
+    )
     await store.upsert("user-a", primary_music_source="lastfm")
     prefs = await store.get("user-a")
     assert prefs.scrobble_to_lastfm is True
     assert prefs.scrobble_to_listenbrainz is False
+    assert prefs.navidrome_handles_external_scrobbles is False
     assert prefs.primary_music_source == "lastfm"
 
 

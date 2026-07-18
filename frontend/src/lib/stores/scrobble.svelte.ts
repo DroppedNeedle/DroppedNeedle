@@ -7,6 +7,7 @@ import type {
 } from '$lib/types';
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
+import type { SourceType } from '$lib/player/types';
 import {
 	makeTrackKey,
 	shouldAccumulate,
@@ -26,6 +27,40 @@ interface TrackState {
 	scrobbled: boolean;
 	startedAt: number;
 	durationMs: number;
+}
+
+export function makeNowPlayingSubmission(
+	artistName: string,
+	trackName: string,
+	albumName: string,
+	durationMs: number,
+	source: SourceType
+): NowPlayingSubmission {
+	return {
+		track_name: trackName,
+		artist_name: artistName,
+		album_name: albumName,
+		duration_ms: durationMs,
+		source
+	};
+}
+
+export function makeScrobbleSubmission(
+	artistName: string,
+	trackName: string,
+	albumName: string,
+	durationMs: number,
+	timestamp: number,
+	source: SourceType
+): ScrobbleSubmission {
+	return {
+		track_name: trackName,
+		artist_name: artistName,
+		album_name: albumName,
+		duration_ms: durationMs,
+		timestamp,
+		source
+	};
 }
 
 function createScrobbleManager() {
@@ -58,15 +93,11 @@ function createScrobbleManager() {
 		artistName: string,
 		trackName: string,
 		albumName: string,
-		durationMs: number
+		durationMs: number,
+		source: SourceType
 	): Promise<void> {
 		try {
-			const body: NowPlayingSubmission = {
-				track_name: trackName,
-				artist_name: artistName,
-				album_name: albumName,
-				duration_ms: durationMs
-			};
+			const body = makeNowPlayingSubmission(artistName, trackName, albumName, durationMs, source);
 			await api.global.post(API.scrobble.nowPlaying(), body);
 		} catch {
 			status = 'error';
@@ -78,16 +109,18 @@ function createScrobbleManager() {
 		trackName: string,
 		albumName: string,
 		durationMs: number,
-		timestamp: number
+		timestamp: number,
+		source: SourceType
 	): Promise<void> {
 		try {
-			const body: ScrobbleSubmission = {
-				track_name: trackName,
-				artist_name: artistName,
-				album_name: albumName,
-				duration_ms: durationMs,
-				timestamp
-			};
+			const body = makeScrobbleSubmission(
+				artistName,
+				trackName,
+				albumName,
+				durationMs,
+				timestamp,
+				source
+			);
 			const data = await api.global.post<ScrobbleResponse>(API.scrobble.submit(), body);
 			lastServiceDetail = Object.fromEntries(
 				Object.entries(data.services).map(([k, v]) => [k, { success: v.success }])
@@ -210,7 +243,8 @@ function createScrobbleManager() {
 						currentNp.artistName,
 						currentNp.trackName,
 						currentNp.albumName,
-						track.durationMs
+						track.durationMs,
+						currentNp.sourceType
 					);
 				}
 
@@ -222,7 +256,8 @@ function createScrobbleManager() {
 						currentNp.trackName,
 						currentNp.albumName,
 						t.durationMs,
-						t.startedAt
+						t.startedAt,
+						currentNp.sourceType
 					).catch(() => {
 						t.scrobbled = false;
 					});

@@ -10,6 +10,7 @@ export type AutoRequestState = 'none' | 'pending' | 'approved' | 'rejected' | 'r
 export interface ScrobblePreferences {
 	scrobble_to_lastfm: boolean;
 	scrobble_to_listenbrainz: boolean;
+	navidrome_handles_external_scrobbles: boolean;
 	primary_music_source: string;
 	now_playing_visibility: string;
 	auto_request_personal_mix: boolean;
@@ -19,6 +20,7 @@ export interface ScrobblePreferences {
 export interface ScrobblePreferencesUpdate {
 	scrobble_to_lastfm?: boolean;
 	scrobble_to_listenbrainz?: boolean;
+	navidrome_handles_external_scrobbles?: boolean;
 	primary_music_source?: MusicSource;
 	now_playing_visibility?: NowPlayingVisibility;
 	auto_request_personal_mix?: boolean;

@@ -5,16 +5,17 @@
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 
-	type ArtistPageTocSection = {
+	type PageSection = {
 		id: string;
 		label: string;
 	};
 
 	interface Props {
-		sections: ArtistPageTocSection[];
+		sections: PageSection[];
+		className?: string;
 	}
 
-	let { sections }: Props = $props();
+	let { sections, className = '' }: Props = $props();
 
 	let activeSectionId = $state('');
 	let observer: IntersectionObserver | null = null;
@@ -107,7 +108,7 @@
 
 	$effect(() => {
 		// eslint-disable-next-line @typescript-eslint/no-unused-expressions
-		sections; // Track reactivity
+		sections;
 		if (!browser) return;
 
 		const timeoutId = window.setTimeout(setupObserver, 0);
@@ -125,9 +126,9 @@
 </script>
 
 {#if showToc}
-	<aside class="hidden xl:block">
+	<aside class="hidden xl:block {className}">
 		<nav class="sticky top-24" aria-label="Page sections">
-			<p class="text-[10px] font-semibold uppercase tracking-widest text-base-content/40 mb-2 pl-3">
+			<p class="mb-2 pl-3 text-[10px] font-semibold uppercase tracking-widest text-base-content/40">
 				On this page
 			</p>
 			<ul class="flex flex-col border-l border-base-content/10">
@@ -136,7 +137,7 @@
 						<a
 							href={`#${section.id}`}
 							onclick={(event) => scrollToSection(event, section.id)}
-							class="block py-1.5 pl-3 text-xs transition-colors duration-150 -ml-px border-l-2
+							class="-ml-px block border-l-2 py-1.5 pl-3 text-xs transition-colors duration-150
 								{activeSectionId === section.id
 								? 'border-primary text-primary font-semibold'
 								: 'border-transparent text-base-content/50 hover:text-base-content/80 hover:border-base-content/30'}"
@@ -151,7 +152,7 @@
 	</aside>
 
 	<div
-		class="xl:hidden fixed left-4 z-40"
+		class="fixed left-4 z-40 xl:hidden"
 		class:bottom-36={playerStore.isPlayerVisible}
 		class:bottom-6={!playerStore.isPlayerVisible}
 	>
@@ -160,9 +161,9 @@
 				<List class="h-5 w-5" />
 			</summary>
 			<div
-				class="dropdown-content z-[1] w-52 mb-2 rounded-box bg-base-200/95 backdrop-blur-md shadow-xl border border-base-content/10 p-3"
+				class="dropdown-content z-[1] mb-2 w-52 rounded-box border border-base-content/10 bg-base-200/95 p-3 shadow-xl backdrop-blur-md"
 			>
-				<p class="text-[10px] font-semibold uppercase tracking-widest text-base-content/40 mb-2">
+				<p class="mb-2 text-[10px] font-semibold uppercase tracking-widest text-base-content/40">
 					Jump to
 				</p>
 				<ul class="flex flex-col border-l border-base-content/10">
@@ -171,7 +172,7 @@
 							<a
 								href={`#${section.id}`}
 								onclick={(event) => scrollToSection(event, section.id)}
-								class="block py-1.5 pl-3 text-sm transition-colors duration-150 -ml-px border-l-2
+								class="-ml-px block border-l-2 py-1.5 pl-3 text-sm transition-colors duration-150
 									{activeSectionId === section.id
 									? 'border-primary text-primary font-semibold'
 									: 'border-transparent text-base-content/60 hover:text-base-content hover:border-base-content/30'}"

@@ -14,7 +14,7 @@
 	import TopAlbumsList from '$lib/components/TopAlbumsList.svelte';
 	import LastFmEnrichment from '$lib/components/LastFmEnrichment.svelte';
 	import LibraryAlbumsCarousel from '$lib/components/LibraryAlbumsCarousel.svelte';
-	import ArtistPageToc from '$lib/components/ArtistPageToc.svelte';
+	import PageSectionToc from '$lib/components/PageSectionToc.svelte';
 	import { requestAlbum } from '$lib/utils/albumRequest';
 	import { libraryStore } from '$lib/stores/library';
 	import { type MusicSource, isMusicSource } from '$lib/stores/musicSource';
@@ -262,7 +262,7 @@
 		</div>
 	{:else if artist}
 		<div class="xl:grid xl:grid-cols-[9rem_minmax(0,1fr)] xl:gap-4">
-			<ArtistPageToc sections={tocSections} />
+			<PageSectionToc sections={tocSections} />
 
 			<div class="xl:col-start-2 xl:row-start-1 space-y-4 sm:space-y-6 lg:space-y-8">
 				<section id="section-overview" class="space-y-4 scroll-mt-24">

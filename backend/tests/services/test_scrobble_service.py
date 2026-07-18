@@ -2,18 +2,24 @@ import time
 from datetime import datetime, timezone
 
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from api.v1.schemas.scrobble import NowPlayingRequest, ScrobbleRequest
 from infrastructure.persistence.user_listening_prefs_store import UserListeningPrefsRecord
+from services.navidrome_playback_service import NavidromePlaybackService
 from services.scrobble_service import ScrobbleService
 
 
-def _prefs(scrobble_lastfm: bool = True, scrobble_lb: bool = True) -> UserListeningPrefsRecord:
+def _prefs(
+    scrobble_lastfm: bool = True,
+    scrobble_lb: bool = True,
+    navidrome_handles_external: bool = False,
+) -> UserListeningPrefsRecord:
     return UserListeningPrefsRecord(
         user_id="u",
         scrobble_to_lastfm=scrobble_lastfm,
         scrobble_to_listenbrainz=scrobble_lb,
+        navidrome_handles_external_scrobbles=navidrome_handles_external,
         primary_music_source="listenbrainz",
         now_playing_visibility="full",
         auto_request_personal_mix=False,
@@ -26,6 +32,7 @@ def _make_service(
     lb_linked: bool = True,
     scrobble_lastfm: bool = True,
     scrobble_lb: bool = True,
+    navidrome_handles_external: bool = False,
 ):
     lastfm_repo = AsyncMock()
     lb_repo = AsyncMock()
@@ -33,7 +40,9 @@ def _make_service(
     factory.resolve_lastfm.return_value = lastfm_repo if lastfm_linked else None
     factory.resolve_listenbrainz.return_value = lb_repo if lb_linked else None
     prefs_store = AsyncMock()
-    prefs_store.get.return_value = _prefs(scrobble_lastfm, scrobble_lb)
+    prefs_store.get.return_value = _prefs(
+        scrobble_lastfm, scrobble_lb, navidrome_handles_external
+    )
     history_store = AsyncMock()
     service = ScrobbleService(factory, prefs_store, history_store)
     return service, lastfm_repo, lb_repo, factory, prefs_store, history_store
@@ -106,6 +115,26 @@ class TestReportNowPlaying:
         service, _, _, _, _, history = _make_service()
         await service.report_now_playing(_now_playing_req(), user_id="u")
         history.insert.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_navidrome_owned_now_playing_is_not_forwarded(self):
+        service, lastfm, lb, *_ = _make_service(navidrome_handles_external=True)
+        result = await service.report_now_playing(
+            _now_playing_req(source="navidrome"), user_id="u"
+        )
+        assert result.accepted is True
+        assert result.services == {}
+        lastfm.update_now_playing.assert_not_awaited()
+        lb.submit_now_playing.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_navidrome_now_playing_forwards_when_droppedneedle_is_owner(self):
+        service, lastfm, lb, *_ = _make_service(navidrome_handles_external=False)
+        await service.report_now_playing(
+            _now_playing_req(source="navidrome"), user_id="u"
+        )
+        lastfm.update_now_playing.assert_awaited_once()
+        lb.submit_now_playing.assert_awaited_once()
 
 
 class TestSubmitScrobble:
@@ -201,6 +230,56 @@ class TestSubmitScrobble:
         result = await service.submit_scrobble(_scrobble_req(), user_id="u")
         assert "lastfm" not in result.services
         lastfm.scrobble.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_navidrome_owned_scrobble_records_history_without_forwarding(self):
+        service, lastfm, lb, _, _, history = _make_service(
+            navidrome_handles_external=True
+        )
+        result = await service.submit_scrobble(
+            _scrobble_req(source="navidrome"), user_id="u"
+        )
+        assert result.accepted is True
+        assert result.services == {}
+        history.insert.assert_awaited_once()
+        assert history.insert.await_args.kwargs["source"] == "navidrome"
+        lastfm.scrobble.assert_not_awaited()
+        lb.submit_single_listen.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_navidrome_owned_path_keeps_server_scrobble_without_duplicate_forwarding(self):
+        navidrome_repo = MagicMock()
+        navidrome_repo.scrobble = AsyncMock(return_value=True)
+        navidrome = NavidromePlaybackService(navidrome_repo)
+        service, lastfm, lb, _, _, history = _make_service(
+            navidrome_handles_external=True
+        )
+
+        navidrome_accepted = await navidrome.scrobble("song-1")
+        result = await service.submit_scrobble(
+            _scrobble_req(source="navidrome"), user_id="u"
+        )
+
+        assert navidrome_accepted is True
+        assert result.accepted is True
+        navidrome_repo.scrobble.assert_awaited_once()
+        history.insert.assert_awaited_once()
+        lastfm.scrobble.assert_not_awaited()
+        lb.submit_single_listen.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_navidrome_still_forwards_when_droppedneedle_is_owner(self):
+        service, lastfm, lb, *_ = _make_service(navidrome_handles_external=False)
+        await service.submit_scrobble(_scrobble_req(source="navidrome"), user_id="u")
+        lastfm.scrobble.assert_awaited_once()
+        lb.submit_single_listen.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_navidrome_preference_does_not_suppress_local_plays(self):
+        service, lastfm, lb, *_ = _make_service(navidrome_handles_external=True)
+        await service.submit_scrobble(_scrobble_req(source="local"), user_id="u")
+        lastfm.scrobble.assert_awaited_once()
+        lb.submit_single_listen.assert_awaited_once()
 
 
 class TestTimestampValidation:

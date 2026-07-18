@@ -10,7 +10,7 @@ class NowPlayingRequest(AppStruct):
     album_name: str = ""
     duration_ms: int = 0
     mbid: str | None = None
-    # set by the inbound compat scrobble adapter; None for native callers
+    # native playback source, or normalized client name from the compat adapter
     source: str | None = None
     release_group_mbid: str | None = None
 
@@ -26,7 +26,7 @@ class ScrobbleRequest(AppStruct):
     album_name: str = ""
     duration_ms: int = 0
     mbid: str | None = None
-    # set by the inbound compat scrobble adapter; None for native callers
+    # native playback source, or normalized client name from the compat adapter
     source: str | None = None
     release_group_mbid: str | None = None
 
