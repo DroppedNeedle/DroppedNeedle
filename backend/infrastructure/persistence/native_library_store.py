@@ -12466,29 +12466,40 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
-    async def validate_migrated_catalog(self) -> dict[str, int]:
-        def operation(connection: sqlite3.Connection) -> dict[str, int]:
-            foreign_key_violations = sum(
+    @staticmethod
+    def _catalog_integrity_counts(
+        connection: sqlite3.Connection,
+    ) -> dict[str, int]:
+        return {
+            "foreign_key_violations": sum(
                 1 for _row in connection.execute("PRAGMA foreign_key_check")
-            )
-            orphan_tracks = int(
+            ),
+            "orphan_tracks": int(
                 connection.execute(
                     "SELECT COUNT(*) FROM local_tracks t LEFT JOIN local_albums a "
                     "ON a.id = t.local_album_id WHERE a.id IS NULL"
                 ).fetchone()[0]
-            )
-            duplicate_paths = int(
+            ),
+            "duplicate_paths": int(
                 connection.execute(
                     "SELECT COUNT(*) FROM (SELECT root_id, relative_path FROM local_tracks "
                     "GROUP BY root_id, relative_path HAVING COUNT(*) > 1)"
                 ).fetchone()[0]
-            )
-            unresolved_provenance = int(
+            ),
+            "unresolved_provenance": int(
                 connection.execute(
                     "SELECT COUNT(*) FROM library_migration_provenance "
                     "WHERE target_id IS NULL OR target_id = ''"
                 ).fetchone()[0]
-            )
+            ),
+        }
+
+    async def validate_catalog_integrity(self) -> dict[str, int]:
+        return await self._read(self._catalog_integrity_counts)
+
+    async def validate_migrated_catalog(self) -> dict[str, int]:
+        def operation(connection: sqlite3.Connection) -> dict[str, int]:
+            invariants = self._catalog_integrity_counts(connection)
             unresolved_references = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM library_migration_provenance p WHERE NOT ("
@@ -12569,13 +12580,7 @@ class NativeLibraryStore(PersistenceBase):
                     "WHEN 'subsonic_id' THEN 1 ELSE 0 END)"
                 ).fetchone()[0]
             )
-            return {
-                "foreign_key_violations": foreign_key_violations,
-                "orphan_tracks": orphan_tracks,
-                "duplicate_paths": duplicate_paths,
-                "unresolved_provenance": unresolved_provenance,
-                "unresolved_references": unresolved_references,
-            }
+            return {**invariants, "unresolved_references": unresolved_references}
 
         return await self._read(operation)
 

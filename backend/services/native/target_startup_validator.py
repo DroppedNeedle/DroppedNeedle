@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from core.exceptions import TargetStartupInvariantError
 from infrastructure.persistence.native_library_store import NativeLibraryStore
+
+logger = logging.getLogger(__name__)
+
+TargetStartupValidationPhase = Literal["cutover", "steady_state"]
 
 
 class TargetStartupValidator:
@@ -18,7 +23,7 @@ class TargetStartupValidator:
         self._store = store
         self._configured_root_ids = configured_root_ids
 
-    async def validate(self) -> dict[str, Any]:
+    async def validate(self, phase: TargetStartupValidationPhase) -> dict[str, Any]:
         state = await self._store.get_target_startup_state()
         marker = state["marker"]
         migration = state["migration"]
@@ -38,12 +43,23 @@ class TargetStartupValidator:
             raise TargetStartupInvariantError(
                 "The target catalog revision predates its migration marker."
             )
-        invariants = await self._store.validate_migrated_catalog()
-        if any(value != 0 for value in invariants.values()):
+        if phase == "cutover":
+            invariants = await self._store.validate_migrated_catalog()
+        elif phase == "steady_state":
+            invariants = await self._store.validate_catalog_integrity()
+        else:
+            raise ValueError(f"Unsupported target startup validation phase: {phase}")
+        failures = {name: count for name, count in invariants.items() if count != 0}
+        if failures:
+            logger.error(
+                "target_startup.catalog_integrity_failed phase=%s counters=%s",
+                phase,
+                ",".join(f"{name}={count}" for name, count in sorted(failures.items())),
+            )
             raise TargetStartupInvariantError(
                 "The target catalog failed startup integrity validation."
             )
-        if self._configured_root_ids is not None:
+        if phase == "cutover" and self._configured_root_ids is not None:
             configured = self._configured_root_ids()
             migrated = await self._store.get_migrated_root_ids()
             if configured != migrated:

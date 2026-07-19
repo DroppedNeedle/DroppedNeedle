@@ -545,7 +545,7 @@ async def _perform_target_migration() -> dict[str, Any]:
     validation = await TargetStartupValidator(
         get_native_library_store(),
         lambda: {root.id for root in resolver.settings.library_roots},
-    ).validate()
+    ).validate("cutover")
     print("[upgrade] Working-copy migration checks passed.", flush=True)
     return {
         "source_revision": report.source_revision,
@@ -737,6 +737,10 @@ def _admission_paths(settings: Settings, token: str) -> tuple[Path, Path]:
         raise AutomaticUpgradeError("The target startup admission token is invalid.")
     root = settings.cache_dir / "target-startup-admission"
     return root / f"{token}.validated.json", root / f"{token}.admitted.json"
+
+
+def target_startup_admission_pending() -> bool:
+    return bool(os.getenv(_ADMISSION_TOKEN_ENV, "").strip())
 
 
 async def await_target_startup_admission(settings: Settings) -> None:

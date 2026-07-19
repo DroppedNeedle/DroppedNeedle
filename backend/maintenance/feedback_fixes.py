@@ -674,7 +674,7 @@ async def _migrate_database(state: dict[str, Any]) -> dict[str, Any]:
     startup = await TargetStartupValidator(
         get_native_library_store(),
         lambda: {root.id for root in resolver.settings.library_roots},
-    ).validate()
+    ).validate("cutover")
     validation_seconds = time.perf_counter() - validation_started
     manifest = validate_complete_manifest(Path(state["manifest_root"]))
     post_migration_assets = derive_managed_assets(
@@ -1032,7 +1032,7 @@ async def _validate_target_database(state: dict[str, Any]) -> dict[str, Any]:
     return await TargetStartupValidator(
         get_native_library_store(),
         lambda: {root.id for root in resolver.settings.library_roots},
-    ).validate()
+    ).validate("cutover")
 
 
 def rollback(

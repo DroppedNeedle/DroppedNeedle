@@ -328,6 +328,7 @@ def test_offline_replacement_entrypoint_is_complete_and_single_worker() -> None:
 def test_production_target_application_always_runs_startup_validation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("DROPPEDNEEDLE_TARGET_ADMISSION_TOKEN", raising=False)
     reject = AsyncMock(
         side_effect=TargetStartupInvariantError("target migration validation failed")
     )
@@ -339,7 +340,7 @@ def test_production_target_application_always_runs_startup_validation(
     ):
         with build_test_client(app):
             pass
-    reject.assert_awaited_once()
+    reject.assert_awaited_once_with("steady_state")
 
 
 def test_target_lifecycle_retains_every_nonlegacy_source_task() -> None:
@@ -394,15 +395,21 @@ def test_target_lifecycle_events_sweep_uses_target_catalog_authority() -> None:
     assert calls[0].args[0].id == "get_target_events_watcher_service"
 
 
-def test_production_target_lifespan_runs_migrations_workers_and_operational_runtime(
+@pytest.mark.parametrize(
+    ("admission_token", "expected_phase"),
+    [(None, "steady_state"), ("a" * 32, "cutover")],
+)
+def test_production_target_lifespan_selects_validation_phase_and_runs_runtime(
     monkeypatch: pytest.MonkeyPatch,
+    admission_token: str | None,
+    expected_phase: str,
 ) -> None:
     import target_application as target_module
     from core.dependencies import auth_providers
     from maintenance import automatic_upgrade
 
     lifecycle_order: list[str] = []
-    validate = AsyncMock(side_effect=lambda: lifecycle_order.append("validate"))
+    validate = AsyncMock(side_effect=lambda _phase: lifecycle_order.append("validate"))
     admission = AsyncMock(side_effect=lambda _settings: lifecycle_order.append("admit"))
     init = AsyncMock()
     cleanup = AsyncMock()
@@ -466,12 +473,16 @@ def test_production_target_lifespan_runs_migrations_workers_and_operational_runt
         target_module.TaskRegistry.get_instance(), "cancel_all", AsyncMock()
     )
     monkeypatch.setenv("TZ", "Europe/London")
+    if admission_token is None:
+        monkeypatch.delenv("DROPPEDNEEDLE_TARGET_ADMISSION_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("DROPPEDNEEDLE_TARGET_ADMISSION_TOKEN", admission_token)
     app = create_production_target_application()
 
     with build_test_client(app):
         pass
 
-    validate.assert_awaited_once()
+    validate.assert_awaited_once_with(expected_phase)
     admission.assert_awaited_once()
     migrate.assert_awaited_once()
     operational.assert_awaited_once_with(
@@ -486,6 +497,48 @@ def test_production_target_lifespan_runs_migrations_workers_and_operational_runt
     timezone_name.assert_called_once_with()
     cleanup.assert_awaited_once()
     assert lifecycle_order == ["validate", "admit", "migrate", "operational"]
+
+
+def test_production_target_lifespan_rejects_malformed_admission_after_cutover_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.config as config_module
+    import target_application as target_module
+    from maintenance import automatic_upgrade
+
+    validate = AsyncMock()
+    monkeypatch.setenv("DROPPEDNEEDLE_TARGET_ADMISSION_TOKEN", "malformed")
+    monkeypatch.setattr(config_module, "migrate_legacy_config", lambda: None)
+    monkeypatch.setattr(
+        target_module,
+        "get_settings",
+        lambda: SimpleNamespace(log_level="INFO", debug=False, trusted_proxy_ips=[]),
+    )
+    monkeypatch.setattr(target_module, "init_app_state", AsyncMock())
+    monkeypatch.setattr(
+        target_module,
+        "get_target_library_policy_service",
+        lambda: SimpleNamespace(recover_pending_transition=AsyncMock()),
+    )
+    monkeypatch.setattr(target_module, "get_native_library_store", lambda: object())
+    monkeypatch.setattr(
+        target_module,
+        "get_preferences_service",
+        lambda: SimpleNamespace(
+            get_typed_library_settings=lambda: SimpleNamespace(library_roots=[])
+        ),
+    )
+    monkeypatch.setattr(target_module.TargetStartupValidator, "validate", validate)
+    app = create_production_target_application()
+
+    with pytest.raises(
+        automatic_upgrade.AutomaticUpgradeError,
+        match="admission token is invalid",
+    ):
+        with build_test_client(app):
+            pass
+
+    validate.assert_awaited_once_with("cutover")
 
 
 def test_target_provider_call_graph_has_no_direct_legacy_catalog_edge() -> None:

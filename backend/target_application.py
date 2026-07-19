@@ -507,6 +507,11 @@ async def production_target_lifespan(app: FastAPI):
     logger.info("target_startup.configuration_completed")
     await get_target_library_policy_service().recover_pending_transition()
 
+    from maintenance.automatic_upgrade import (
+        await_target_startup_admission,
+        target_startup_admission_pending,
+    )
+
     logger.info("target_startup.catalog_validation_started")
     validator = TargetStartupValidator(
         get_native_library_store(),
@@ -517,10 +522,11 @@ async def production_target_lifespan(app: FastAPI):
             .library_roots
         },
     )
-    await validator.validate()
+    validation_phase = (
+        "cutover" if target_startup_admission_pending() else "steady_state"
+    )
+    await validator.validate(validation_phase)
     logger.info("target_startup.catalog_validation_completed")
-
-    from maintenance.automatic_upgrade import await_target_startup_admission
 
     await await_target_startup_admission(settings)
     logger.info("target_startup.admission_completed")

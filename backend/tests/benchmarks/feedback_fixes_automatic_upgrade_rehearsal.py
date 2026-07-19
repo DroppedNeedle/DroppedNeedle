@@ -185,6 +185,11 @@ def _target_shape(database: Path) -> dict[str, Any]:
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
+        provenance = connection.execute(
+            "SELECT source_kind, source_key, target_kind, target_id, source_revision, "
+            "imported_at, migration_run_id FROM library_migration_provenance "
+            "ORDER BY source_kind, source_key"
+        ).fetchall()
         return {
             "integrity": str(
                 connection.execute("PRAGMA integrity_check").fetchone()[0]
@@ -202,6 +207,20 @@ def _target_shape(database: Path) -> dict[str, Any]:
                 connection.execute(
                     "SELECT COUNT(*) FROM library_migration_markers "
                     "WHERE marker = 'legacy_catalog_import_complete'"
+                ).fetchone()[0]
+            ),
+            "migration_run_count": int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM library_migration_runs"
+                ).fetchone()[0]
+            ),
+            "migration_provenance_count": len(provenance),
+            "migration_provenance_sha256": hashlib.sha256(
+                json.dumps(provenance, separators=(",", ":")).encode()
+            ).hexdigest(),
+            "favorite_count": int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM library_user_favorites"
                 ).fetchone()[0]
             ),
         }
@@ -275,6 +294,60 @@ print(json.dumps({
     "retained_working_copy_count": len(list(root.glob('*/working')))
     if root.is_dir() else 0,
 }))
+"""
+    return json.loads(
+        _run(["docker", "exec", container, "python", "-c", script]).strip()
+    )
+
+
+def _remove_migrated_favorite(container: str) -> dict[str, Any]:
+    script = """
+import asyncio
+import json
+import sqlite3
+import threading
+from pathlib import Path
+
+from infrastructure.persistence.native_library_store import NativeLibraryStore
+
+database = Path('/app/cache/library.db')
+
+async def mutate():
+    with sqlite3.connect(database) as connection:
+        favorite = connection.execute(
+            "SELECT source_key, target_id FROM library_migration_provenance "
+            "WHERE source_kind = 'favorite' ORDER BY source_key LIMIT 1"
+        ).fetchone()
+        provenance_before = connection.execute(
+            "SELECT source_kind, source_key, target_kind, target_id, source_revision, "
+            "imported_at, migration_run_id FROM library_migration_provenance "
+            "ORDER BY source_kind, source_key"
+        ).fetchall()
+    if favorite is None:
+        raise RuntimeError('The migrated rehearsal catalog has no favorite provenance.')
+    user_id, item_kind, _source_id = str(favorite[0]).split(':', 2)
+    target_id = str(favorite[1])
+    store = NativeLibraryStore(database, threading.Lock())
+    await store.remove_target_favorite(user_id, item_kind, target_id)
+    with sqlite3.connect(database) as connection:
+        remaining = int(connection.execute(
+            "SELECT COUNT(*) FROM library_user_favorites "
+            "WHERE user_id = ? AND item_kind = ? AND item_id = ?",
+            (user_id, item_kind, target_id),
+        ).fetchone()[0])
+        provenance_after = connection.execute(
+            "SELECT source_kind, source_key, target_kind, target_id, source_revision, "
+            "imported_at, migration_run_id FROM library_migration_provenance "
+            "ORDER BY source_kind, source_key"
+        ).fetchall()
+    cutover = await store.validate_migrated_catalog()
+    return {
+        'favorite_removed': remaining == 0,
+        'provenance_unchanged': provenance_after == provenance_before,
+        'cutover_unresolved_references': cutover['unresolved_references'],
+    }
+
+print(json.dumps(asyncio.run(mutate())))
 """
     return json.loads(
         _run(["docker", "exec", container, "python", "-c", script]).strip()
@@ -460,13 +533,34 @@ def run(output: Path) -> dict[str, Any]:
             if len(baked_source_revision) != 64:
                 raise RuntimeError("The target image has no baked source fingerprint.")
 
+            mutation = _remove_migrated_favorite(upgrade_container)
+            if (
+                not mutation["favorite_removed"]
+                or not mutation["provenance_unchanged"]
+                or mutation["cutover_unresolved_references"] < 1
+            ):
+                raise RuntimeError(
+                    "The rehearsal did not create a normal provenance-backed mutation."
+                )
+            mutated_shape = _target_shape(database)
+            if (
+                mutated_shape["favorite_count"] != upgraded_shape["favorite_count"] - 1
+                or mutated_shape["migration_run_count"]
+                != upgraded_shape["migration_run_count"]
+                or mutated_shape["migration_provenance_sha256"]
+                != upgraded_shape["migration_provenance_sha256"]
+            ):
+                raise RuntimeError(
+                    "The post-admission mutation changed migration audit evidence."
+                )
+
             restart_started = time.perf_counter()
             _run([*upgrade_command, "restart", "droppedneedle"])
             _wait_for_target(f"http://127.0.0.1:{upgrade_port}/health", 120)
             restart_seconds = time.perf_counter() - restart_started
             restarted_shape = _target_shape(database)
             backups_after_restart = _backup_count(upgrade_data)
-            if restarted_shape != upgraded_shape or backups_after_restart != 1:
+            if restarted_shape != mutated_shape or backups_after_restart != 1:
                 raise RuntimeError("A normal restart repeated or changed the upgrade.")
 
             fresh_started = time.perf_counter()
@@ -788,6 +882,8 @@ def run(output: Path) -> dict[str, Any]:
                 "upgraded_container_image_id": upgraded_container_image,
                 "source_database": source_shape,
                 "upgraded_database": upgraded_shape,
+                "post_admission_mutation": mutation,
+                "mutated_database": mutated_shape,
                 "restarted_database": restarted_shape,
                 "fresh_database": fresh_shape,
                 "deployment_matrix": {

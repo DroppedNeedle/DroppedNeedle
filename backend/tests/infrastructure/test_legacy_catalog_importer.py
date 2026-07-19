@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import sqlite3
 import threading
 from pathlib import Path
@@ -16,6 +17,7 @@ from infrastructure.persistence.native_library_store import (
     VARIOUS_ARTISTS_ID,
     NativeLibraryStore,
 )
+from models.local_catalog import LocalArtworkAssociation
 from services.native.legacy_catalog_importer import (
     REFERENCE_KINDS,
     LegacyCatalogImporter,
@@ -390,9 +392,27 @@ def _importer(
     return store, LegacyCatalogImporter(store, resolver, cover_reader or _CoverReader())
 
 
+async def _migrate_startup_fixture(
+    tmp_path: Path, migration_id: str
+) -> tuple[Path, NativeLibraryStore]:
+    root = tmp_path / "Music"
+    root.mkdir()
+    database = tmp_path / "library.db"
+    _create_source(database, root)
+    store, importer = _importer(database, root)
+    plan, _report = await importer.prepare(migration_id, now=100)
+    await importer.apply(
+        migration_id,
+        expected_source_revision=plan.source_revision,
+        now=101,
+    )
+    return database, store
+
+
 @pytest.mark.asyncio
 async def test_target_startup_requires_completed_marker_and_revalidates_after_reopen(
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     root = tmp_path / "Music"
     root.mkdir()
@@ -403,7 +423,7 @@ async def test_target_startup_requires_completed_marker_and_revalidates_after_re
     store, importer = _importer(target, root)
 
     with pytest.raises(TargetStartupInvariantError, match="marker is missing"):
-        await TargetStartupValidator(store).validate()
+        await TargetStartupValidator(store).validate("cutover")
 
     plan, _report = await importer.prepare("startup-validation", now=100)
     await importer.apply(
@@ -411,13 +431,15 @@ async def test_target_startup_requires_completed_marker_and_revalidates_after_re
         expected_source_revision=plan.source_revision,
         now=101,
     )
-    first = await TargetStartupValidator(store).validate()
+    first_cutover = await TargetStartupValidator(store).validate("cutover")
+    first_steady = await TargetStartupValidator(store).validate("steady_state")
     reopened = NativeLibraryStore(target, threading.Lock())
-    second = await TargetStartupValidator(reopened).validate()
+    second_cutover = await TargetStartupValidator(reopened).validate("cutover")
+    second_steady = await TargetStartupValidator(reopened).validate("steady_state")
 
     assert (
-        first["invariants"]
-        == second["invariants"]
+        first_cutover["invariants"]
+        == second_cutover["invariants"]
         == {
             "foreign_key_violations": 0,
             "orphan_tracks": 0,
@@ -426,23 +448,277 @@ async def test_target_startup_requires_completed_marker_and_revalidates_after_re
             "unresolved_references": 0,
         }
     )
-    with pytest.raises(TargetStartupInvariantError, match="configured library roots"):
-        await TargetStartupValidator(reopened, lambda: {"different-root"}).validate()
-    with sqlite3.connect(target) as connection:
-        connection.execute(
-            "UPDATE library_compat_id_map SET internal_id = 'wrong-target' "
-            "WHERE jf_id = (SELECT jf_id FROM library_compat_id_map LIMIT 1)"
-        )
+    assert (
+        first_steady["invariants"]
+        == second_steady["invariants"]
+        == {
+            "foreign_key_violations": 0,
+            "orphan_tracks": 0,
+            "duplicate_paths": 0,
+            "unresolved_provenance": 0,
+        }
+    )
+
+    await reopened.remove_target_favorite("alice", "track", TRACK_1)
+
     assert (await reopened.validate_migrated_catalog())["unresolved_references"] == 1
-    with pytest.raises(TargetStartupInvariantError, match="integrity validation"):
-        await TargetStartupValidator(reopened).validate()
-    with sqlite3.connect(target) as connection:
+    caplog.clear()
+    caplog.set_level(logging.ERROR, logger="services.native.target_startup_validator")
+    with pytest.raises(TargetStartupInvariantError) as error:
+        await TargetStartupValidator(reopened).validate("cutover")
+    assert str(error.value) == "The target catalog failed startup integrity validation."
+    assert [record.getMessage() for record in caplog.records] == [
+        "target_startup.catalog_integrity_failed phase=cutover "
+        "counters=unresolved_references=1"
+    ]
+    assert TRACK_1 not in caplog.text
+
+    await TargetStartupValidator(NativeLibraryStore(target, threading.Lock())).validate(
+        "steady_state"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured_roots",
+    [set(), {"root-2"}, {"root-1", "root-2"}],
+    ids=["removed", "changed", "added"],
+)
+async def test_steady_startup_accepts_post_admission_root_changes(
+    tmp_path: Path, configured_roots: set[str]
+) -> None:
+    _database, store = await _migrate_startup_fixture(tmp_path, "root-settings")
+    validator = TargetStartupValidator(store, lambda: configured_roots)
+
+    await validator.validate("steady_state")
+
+    with pytest.raises(TargetStartupInvariantError, match="configured library roots"):
+        await validator.validate("cutover")
+
+
+def _allow_duplicate_local_track_paths(database: Path) -> None:
+    with sqlite3.connect(database) as connection:
+        schema = str(
+            connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'local_tracks'"
+            ).fetchone()[0]
+        )
+        without_unique_path = schema.replace(
+            ",\n    UNIQUE(root_id, relative_path)\n", "\n"
+        )
+        assert without_unique_path != schema
+        replacement_schema = without_unique_path.replace(
+            "CREATE TABLE local_tracks",
+            "CREATE TABLE local_tracks_without_path_unique",
+            1,
+        )
+        connection.execute("PRAGMA foreign_keys=OFF")
+        for (trigger_name,) in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+        ).fetchall():
+            connection.execute(f'DROP TRIGGER "{trigger_name}"')
+        connection.execute(replacement_schema)
+        connection.execute(
+            "INSERT INTO local_tracks_without_path_unique SELECT * FROM local_tracks"
+        )
+        connection.execute("DROP TABLE local_tracks")
+        connection.execute(
+            "ALTER TABLE local_tracks_without_path_unique RENAME TO local_tracks"
+        )
+
+
+@pytest.mark.asyncio
+async def test_steady_startup_rejects_every_durable_integrity_failure(
+    tmp_path: Path,
+) -> None:
+    database, store = await _migrate_startup_fixture(tmp_path, "durable-integrity")
+    validator = TargetStartupValidator(store)
+
+    with sqlite3.connect(database) as connection:
+        marker = connection.execute(
+            "SELECT source_revision, target_catalog_revision, created_at "
+            "FROM library_migration_markers"
+        ).fetchone()
+        connection.execute("DELETE FROM library_migration_markers")
+    with pytest.raises(TargetStartupInvariantError, match="marker is missing"):
+        await validator.validate("steady_state")
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO library_migration_markers "
+            "(marker, source_revision, target_catalog_revision, created_at) "
+            "VALUES ('legacy_catalog_import_complete', ?, ?, ?)",
+            marker,
+        )
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE library_migration_runs SET state = 'failed' WHERE state = 'completed'"
+        )
+    with pytest.raises(TargetStartupInvariantError, match="migration run"):
+        await validator.validate("steady_state")
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE library_migration_runs SET state = 'completed' WHERE state = 'failed'"
+        )
+
+    with sqlite3.connect(database) as connection:
         connection.execute(
             "UPDATE library_migration_markers "
             "SET target_catalog_revision = target_catalog_revision + 100"
         )
     with pytest.raises(TargetStartupInvariantError, match="predates"):
-        await TargetStartupValidator(reopened).validate()
+        await validator.validate("steady_state")
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE library_migration_markers "
+            "SET target_catalog_revision = target_catalog_revision - 100"
+        )
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE library_play_history SET local_track_id = 'missing-track' "
+            "WHERE id = 'history-1'"
+        )
+    assert (await store.validate_catalog_integrity())["foreign_key_violations"] == 1
+    with pytest.raises(TargetStartupInvariantError, match="integrity validation"):
+        await validator.validate("steady_state")
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE library_play_history SET local_track_id = ? WHERE id = 'history-1'",
+            (TRACK_1,),
+        )
+
+    with sqlite3.connect(database) as connection:
+        album_id = str(
+            connection.execute(
+                "SELECT local_album_id FROM local_tracks WHERE id = ?", (TRACK_1,)
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "UPDATE local_tracks SET local_album_id = 'missing-album' WHERE id = ?",
+            (TRACK_1,),
+        )
+    assert (await store.validate_catalog_integrity())["orphan_tracks"] == 1
+    with pytest.raises(TargetStartupInvariantError, match="integrity validation"):
+        await validator.validate("steady_state")
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET local_album_id = ? WHERE id = ?",
+            (album_id, TRACK_1),
+        )
+
+    _allow_duplicate_local_track_paths(database)
+    with sqlite3.connect(database) as connection:
+        columns = [
+            str(row[1]) for row in connection.execute("PRAGMA table_info(local_tracks)")
+        ]
+        selected = ", ".join("?" if name == "id" else f'"{name}"' for name in columns)
+        connection.execute(
+            f"INSERT INTO local_tracks SELECT {selected} FROM local_tracks WHERE id = ?",
+            ("duplicate-track", TRACK_1),
+        )
+    assert (await store.validate_catalog_integrity())["duplicate_paths"] == 1
+    with pytest.raises(TargetStartupInvariantError, match="integrity validation"):
+        await validator.validate("steady_state")
+    with sqlite3.connect(database) as connection:
+        connection.execute("DELETE FROM local_tracks WHERE id = 'duplicate-track'")
+
+    with sqlite3.connect(database) as connection:
+        provenance = connection.execute(
+            "SELECT source_kind, source_key, target_id "
+            "FROM library_migration_provenance LIMIT 1"
+        ).fetchone()
+        connection.execute(
+            "UPDATE library_migration_provenance SET target_id = '' "
+            "WHERE source_kind = ? AND source_key = ?",
+            provenance[:2],
+        )
+    assert (await store.validate_catalog_integrity())["unresolved_provenance"] == 1
+    with pytest.raises(TargetStartupInvariantError, match="integrity validation"):
+        await validator.validate("steady_state")
+
+
+@pytest.mark.asyncio
+async def test_post_admission_mutations_preserve_steady_startup_integrity(
+    tmp_path: Path,
+) -> None:
+    database, store = await _migrate_startup_fixture(
+        tmp_path, "post-admission-mutations"
+    )
+    with sqlite3.connect(database) as connection:
+        provenance_before = connection.execute(
+            "SELECT source_kind, source_key, target_kind, target_id, source_revision, "
+            "imported_at, migration_run_id FROM library_migration_provenance "
+            "ORDER BY source_kind, source_key"
+        ).fetchall()
+        review = connection.execute(
+            "SELECT id, row_revision FROM library_identification_reviews "
+            "WHERE reason_code = 'legacy_unresolved'"
+        ).fetchone()
+        artwork = connection.execute(
+            "SELECT artwork.local_album_id, album.row_revision "
+            "FROM local_album_artwork artwork JOIN local_albums album "
+            "ON album.id = artwork.local_album_id LIMIT 1"
+        ).fetchone()
+
+    await store.remove_target_favorite("alice", "track", TRACK_1)
+    assert (
+        await store.remove_target_playlist_tracks(
+            "playlist-1", ["playlist-track-1"], "2026-07-19T00:00:00Z"
+        )
+        == 1
+    )
+    assert await store.delete_target_playlist("playlist-1") is True
+    await store.delete_target_bookmark("alice", TRACK_1)
+    await store.replace_target_play_queue(
+        "alice",
+        (TRACK_2,),
+        current_index=0,
+        position_ms=0,
+        changed_by_client="regression",
+        updated_at=200,
+    )
+    assert await store.clear_target_album_release_pin(RG) is True
+    await store.decide_review(
+        str(review[0]),
+        expected_review_revision=int(review[1]),
+        state="resolved",
+        reason_code="user_resolved",
+        decided_by_user_id="admin",
+        decided_at=200,
+    )
+    await store.set_artwork(
+        LocalArtworkAssociation(
+            local_album_id=str(artwork[0]),
+            cover_url=None,
+            source="manual",
+            source_locator="replacement.jpg",
+            updated_at=200,
+        ),
+        expected_album_revision=int(artwork[1]),
+    )
+
+    reopened = NativeLibraryStore(database, threading.Lock())
+    steady = await TargetStartupValidator(reopened).validate("steady_state")
+    cutover = await reopened.validate_migrated_catalog()
+    with sqlite3.connect(database) as connection:
+        provenance_after = connection.execute(
+            "SELECT source_kind, source_key, target_kind, target_id, source_revision, "
+            "imported_at, migration_run_id FROM library_migration_provenance "
+            "ORDER BY source_kind, source_key"
+        ).fetchall()
+        current_artwork_source = connection.execute(
+            "SELECT source FROM local_album_artwork WHERE local_album_id = ?",
+            (artwork[0],),
+        ).fetchone()[0]
+
+    assert all(count == 0 for count in steady["invariants"].values())
+    assert cutover["unresolved_references"] > 0
+    assert provenance_after == provenance_before
+    assert current_artwork_source == "manual"
+    with pytest.raises(TargetStartupInvariantError, match="integrity validation"):
+        await TargetStartupValidator(reopened).validate("cutover")
 
 
 @pytest.mark.asyncio

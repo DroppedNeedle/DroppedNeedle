@@ -1016,7 +1016,7 @@ async def run(
         applied = applied_outcome.report
         repeated = repeated_outcome.report
         startup_validation_started = perf_counter()
-        startup = await TargetStartupValidator(store).validate()
+        startup = await TargetStartupValidator(store).validate("cutover")
         startup_validation_seconds = perf_counter() - startup_validation_started
         reopened_twice = NativeLibraryStore(migration_database, threading.Lock())
         reopened_invariants = await reopened_twice.validate_migrated_catalog()
@@ -1066,7 +1066,7 @@ async def run(
             )
         startup_refused = False
         try:
-            await TargetStartupValidator(reopened_twice).validate()
+            await TargetStartupValidator(reopened_twice).validate("cutover")
         except Exception as exc:  # noqa: BLE001 - the report records only the type
             startup_refused = type(exc).__name__ == "TargetStartupInvariantError"
 
