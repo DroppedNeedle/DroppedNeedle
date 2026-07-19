@@ -52,7 +52,10 @@ _ALBUM_SEARCH_LIMIT = 8
 _TRACK_SAMPLE = 4
 
 _VA_MBID = "89ad4ac3-39f7-470e-963a-56509c546377"
-_VA_NAMES = {"", "various artists", "various", "va", "unknown"}
+# Credit names that mean Various Artists. Deliberately no "": an empty credit is
+# an unknown identity, not a VA claim - treating it as VA filed 197 single-artist
+# albums under /Various Artists/ (2026-07-19 incident).
+_VA_NAMES = {"various artists", "various", "va"}
 
 _NON_ALNUM = re.compile(r"[\W_]+", re.UNICODE)
 
@@ -487,9 +490,11 @@ class AlbumIdentifier:
     ) -> tuple[_ReleaseMeta, list[MBTrack]] | None:
         """Pick the release whose track count is closest to the folder's, then fetch its tracklist."""
         try:
+            # "artist-credits" is load-bearing: without it MB omits the credit and
+            # every album's artist read as "" (see the _VA_NAMES note).
             detail = await self._mb_repo.get_release_group_by_id(
                 rg_id,
-                includes=["releases", "media"],
+                includes=["artist-credits", "releases", "media"],
                 priority=RequestPriority.BACKGROUND_SYNC,
             )
         except Exception as exc:  # noqa: BLE001
@@ -499,13 +504,22 @@ class AlbumIdentifier:
             return None
         rg_title = detail.get("title", "") or ""
         rg_artist = extract_artist_name(detail) or ""
-        is_various = self._is_various(detail)
         primary_type = (detail.get("primary-type") or "").lower() or None
         secondary_types = frozenset(
             s.lower() for s in (detail.get("secondary-types") or [])
         )
         credit = detail.get("artist-credit") or []
         rg_artist_mbid = (credit[0].get("artist") or {}).get("id") if credit else None
+        if not rg_artist:
+            # The credit can still be missing (genuinely uncredited MB data, a
+            # transient hiccup); it is knowable, so resolve it rather than proceed
+            # with an empty identity.
+            resolved_mbid, resolved_name = await self.resolve_release_group_artist(
+                rg_id
+            )
+            rg_artist = resolved_name or ""
+            rg_artist_mbid = rg_artist_mbid or resolved_mbid
+        is_various = self._is_various(detail, rg_artist_mbid, rg_artist)
 
         scored: list[tuple[int, int, str, str]] = []
         fallback_id: str | None = None
@@ -552,12 +566,16 @@ class AlbumIdentifier:
         return meta, _build_mb_tracks(release)
 
     @staticmethod
-    def _is_various(rg_detail: dict) -> bool:
+    def _is_various(rg_detail: dict, artist_mbid: str | None, artist_name: str) -> bool:
+        """Whether the release group is ACTUALLY credited to Various Artists (by
+        VA MBID or credit name) - never merely uncredited (see ``_VA_NAMES``)."""
         for credit in rg_detail.get("artist-credit") or []:
             artist = credit.get("artist") or {}
             if artist.get("id") == _VA_MBID:
                 return True
-        return (extract_artist_name(rg_detail) or "").strip().lower() in _VA_NAMES
+        if artist_mbid == _VA_MBID:
+            return True
+        return artist_name.strip().lower() in _VA_NAMES
 
 
 def _build_mb_tracks(release: dict) -> list[MBTrack]:

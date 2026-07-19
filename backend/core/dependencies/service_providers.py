@@ -506,6 +506,8 @@ def _build_file_processor(library_manager, library_paths) -> "FileProcessor":
         download_store=get_download_store(),
         held_dir=Path(get_settings().cache_dir) / "held",
         recycle_bin=resolve_bin_path(policy.recycle_bin_path, library_paths),
+        # repairs an empty/"Various Artists" manifest credit before tagging/pathing
+        resolve_rg_artist=get_album_identifier().resolve_release_group_artist,
     )
 
 

@@ -286,6 +286,74 @@ async def test_resolve_release_group_artist_handles_missing_data():
 
 
 @pytest.mark.asyncio
+async def test_best_release_fetches_the_artist_credit():
+    """The RG detail fetch must include artist-credits: without it MusicBrainz
+    omits the credit entirely, the extracted artist was "" for EVERY album, and
+    "" used to classify as Various Artists (the 197-album /Various Artists/
+    misfiling incident)."""
+    repo = AsyncMock()
+    repo.get_release_group_by_id = AsyncMock(
+        return_value=_rg_detail("Santana", "Santana", [_release("rel-debut", [9])])
+    )
+    repo.get_release_by_id = AsyncMock(return_value=_release_tracks([_SANTANA]))
+
+    picked = await AlbumIdentifier(repo).release_tracks("rg-debut", 9)
+
+    assert picked is not None
+    meta, _tracks = picked
+    assert meta.artist == "Santana"
+    assert meta.is_various is False
+    kwargs = repo.get_release_group_by_id.await_args_list[0].kwargs
+    assert "artist-credits" in kwargs["includes"]
+
+
+@pytest.mark.asyncio
+async def test_creditless_release_group_is_not_various_and_resolves_credit():
+    """A detail response WITHOUT an artist-credit (pre-fix cache entries, MB
+    hiccups) is an UNKNOWN identity: never Various Artists - and the credit is
+    knowable, so it is resolved with a dedicated artist-credits lookup."""
+    creditless = _rg_detail("Definitely Maybe", "ignored", [_release("rel-dm", [11])])
+    del creditless["artist-credit"]
+
+    async def rg_detail(mbid, includes=None, priority=None):
+        if includes == ["artist-credits"]:  # the fallback resolve
+            return _rg_detail("Definitely Maybe", "Oasis", [])
+        return creditless
+
+    repo = AsyncMock()
+    repo.get_release_group_by_id = AsyncMock(side_effect=rg_detail)
+    repo.get_release_by_id = AsyncMock(
+        return_value=_release_tracks([[f"T{i}" for i in range(11)]])
+    )
+
+    picked = await AlbumIdentifier(repo).release_tracks("rg-dm", 11)
+
+    assert picked is not None
+    meta, _tracks = picked
+    assert meta.is_various is False  # empty credit is NOT a VA claim
+    assert meta.artist == "Oasis"  # resolved from the RG's own credit
+    assert meta.artist_mbid == "a1"
+
+
+@pytest.mark.asyncio
+async def test_release_group_credited_to_va_is_various():
+    """'Various Artists' stays reserved for release groups actually credited so."""
+    detail = _rg_detail("Now 94", "Various Artists", [_release("rel-now", [20])])
+    detail["artist-credit"][0]["artist"]["id"] = "89ad4ac3-39f7-470e-963a-56509c546377"
+    repo = AsyncMock()
+    repo.get_release_group_by_id = AsyncMock(return_value=detail)
+    repo.get_release_by_id = AsyncMock(
+        return_value=_release_tracks([[f"T{i}" for i in range(20)]])
+    )
+
+    picked = await AlbumIdentifier(repo).release_tracks("rg-now", 20)
+
+    assert picked is not None
+    meta, _tracks = picked
+    assert meta.is_various is True
+
+
+@pytest.mark.asyncio
 async def test_identify_returns_none_for_single_file():
     identifier = AlbumIdentifier(_santana_repo())
     assert await identifier.identify(_locals(["Waiting"])) is None
