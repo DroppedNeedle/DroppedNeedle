@@ -1,0 +1,78 @@
+# Fork-only workflow (alphyriver/DroppedNeedle): build + push the fork's image
+# to ghcr.io/<owner>/droppedneedle on every push to main (including upstream
+# auto-sync merges) and on version tags. Replaces upstream's dev-image/release
+# workflows, which push to the upstream org's registry and should be disabled
+# in this fork's Actions tab.
+#
+# Tags: `latest` + `sha-<short>` on main; the git tag (e.g. v2.3.0-fork.1) on tags.
+# Komodo/Renovate pin the versioned tags.
+
+name: Fork Image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'Dockerfile'
+      - 'entrypoint.sh'
+      - '.github/workflows/fork-image.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: fork-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/$OWNER/droppedneedle"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            {
+              echo "tags<<EOF"
+              echo "$IMAGE:$TAG"
+              echo "$IMAGE:latest"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            {
+              echo "tags<<EOF"
+              echo "$IMAGE:latest"
+              echo "$IMAGE:sha-$SHORT_SHA"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
