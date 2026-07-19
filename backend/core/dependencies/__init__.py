@@ -87,7 +87,7 @@ from .repo_providers import (  # noqa: F401
     get_free_music_store,
     get_drop_import_store,
     get_download_client,
-    get_download_client_for_source,
+    get_source_download_client,
 )
 
 from .service_providers import (  # noqa: F401

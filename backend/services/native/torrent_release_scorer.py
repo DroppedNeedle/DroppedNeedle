@@ -2,9 +2,9 @@
 
 Mirrors ``NewznabReleaseScorer`` (same tier bands, same shared spec pipeline, the
 same title/category quality reads - imported from it, not copied) with the torrent
-differences: **seeders replace grabs as the health signal** and a 0/None-seeder
-release is dropped outright (a dead torrent can't complete, unlike an
-under-propagated NZB which may still fill in). Identity is the same normalised
+differences: **seeders replace grabs as the health signal** and an explicit
+zero-seeder release is dropped outright. Missing counts remain available for
+manual review but can never auto-accept. Identity is the same normalised
 title+size key, namespaced ``source="torrent"`` in quarantine.
 """
 
@@ -82,9 +82,9 @@ class TorrentReleaseScorer:
         pipeline_drops: Counter[RejectCode] = Counter()
 
         for release in releases:
-            # A torrent with no (known) seeders is dead - it can never complete. Unlike
-            # Usenet propagation there's nothing to wait for, so drop it outright.
-            if not release.seeders:
+            # Explicit zero means dead. A missing count is uncertain rather than dead:
+            # retain it for manual review, but never allow it into the auto band.
+            if release.seeders == 0:
                 dropped_dead += 1
                 continue
             if _CAT_VIDEO in set(release.category_ids):
@@ -122,6 +122,8 @@ class TorrentReleaseScorer:
                 else "manual" if final >= manual_threshold
                 else "rejected"
             )
+            if release.seeders is None and band == "auto":
+                band = "manual"
             scored.append(
                 ScoredCandidate(
                     source="torrent",

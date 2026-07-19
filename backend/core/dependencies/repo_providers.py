@@ -792,7 +792,7 @@ def get_qbittorrent_client() -> "QbittorrentClient":
     http = HttpClientFactory.get_client(
         name="qbittorrent", timeout=60.0, connect_timeout=5.0
     )
-    return QbittorrentClient(http, qbt.url, qbt.username, qbt.password)
+    return QbittorrentClient(http, qbt.url, qbt.api_key)
 
 
 @singleton
@@ -807,15 +807,14 @@ def get_qbittorrent_download_client() -> "QbittorrentDownloadClient":
     return QbittorrentDownloadClient(
         get_qbittorrent_client(),
         qbt.url,
-        qbt.username,
-        qbt.password,
+        qbt.api_key,
         Path(qbt.downloads_mount),
         category=qbt.category,
     )
 
 
 def build_qbittorrent_download_client(
-    url: str, username: str, password: str
+    url: str, api_key: str
 ) -> "QbittorrentDownloadClient":
     """Transient client from caller-supplied credentials, for the Test-connection route."""
     from pathlib import Path
@@ -829,10 +828,9 @@ def build_qbittorrent_download_client(
         name="qbittorrent-verify", timeout=60.0, connect_timeout=5.0
     )
     return QbittorrentDownloadClient(
-        QbittorrentClient(http, url, username, password),
+        QbittorrentClient(http, url, api_key),
         url,
-        username,
-        password,
+        api_key,
         Path("/tmp"),
     )
 
@@ -852,38 +850,36 @@ def build_sabnzbd_download_client(url: str, api_key: str) -> "SabnzbdDownloadCli
     )
 
 
-@singleton
-def get_download_client_repository() -> "DownloadClientProtocol":
-    from core.exceptions import ConfigurationError
-
-    dc = get_preferences_service().get_download_client_settings()
-    match dc.client_type:
-        case "slskd":
-            return get_slskd_repository()
-        case other:
-            raise ConfigurationError(f"Unknown download client type: {other!r}")
+_DOWNLOAD_CLIENT_PROVIDERS = {
+    "slskd": get_slskd_repository,
+    "sabnzbd": get_sabnzbd_download_client,
+    "qbittorrent": get_qbittorrent_download_client,
+}
 
 
 def get_download_client(client_type: str) -> "DownloadClientProtocol":
-    """Resolve a download client by type (the fixed map: ``slskd``/``sabnzbd``/
-    ``qbittorrent``). NZBGet adds one case later (D5)."""
+    """Resolve a concrete adapter from the single client registry."""
     from core.exceptions import ConfigurationError
 
-    match client_type:
-        case "slskd":
-            return get_slskd_repository()
-        case "sabnzbd":
-            return get_sabnzbd_download_client()
-        case "qbittorrent":
-            return get_qbittorrent_download_client()
-        case other:
-            raise ConfigurationError(f"Unknown download client type: {other!r}")
+    provider = _DOWNLOAD_CLIENT_PROVIDERS.get(client_type)
+    if provider is None:
+        raise ConfigurationError(f"Unknown download client type: {client_type!r}")
+    return provider()
 
 
-# Fixed source → client_type map (assembled in get_sources, dispatched here).
-_SOURCE_CLIENT_TYPE = {"soulseek": "slskd", "usenet": "sabnzbd", "torrent": "qbittorrent"}
+def get_source_download_client(source: str, client_type: str) -> "DownloadClientProtocol":
+    """Resolve a configured client and verify that it supports the source."""
+    from core.exceptions import ConfigurationError
+
+    client = get_download_client(client_type)
+    if source not in client.supported_sources:
+        raise ConfigurationError(
+            f"Download client {client_type!r} does not support source {source!r}"
+        )
+    return client
 
 
-def get_download_client_for_source(source: str) -> "DownloadClientProtocol":
-    """Resolve the download client that owns a given acquisition source."""
-    return get_download_client(_SOURCE_CLIENT_TYPE.get(source, source))
+@singleton
+def get_download_client_repository() -> "DownloadClientProtocol":
+    dc = get_preferences_service().get_download_client_settings()
+    return get_source_download_client("soulseek", dc.client_type)

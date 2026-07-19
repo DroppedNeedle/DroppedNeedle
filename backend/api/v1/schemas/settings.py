@@ -295,16 +295,15 @@ class ProwlarrConnectionSettings(AppStruct):
 
 class QbittorrentConnectionSettings(AppStruct):
     """qBittorrent download-client connection (fork feature, torrent source).
-    Cookie auth (username/password - qBittorrent has no API key); ``password`` is
-    encrypted at rest, masked on read. ``category`` scopes DroppedNeedle's torrents
+    qBittorrent 5.2+ Bearer ``api_key`` authentication; the key is encrypted at
+    rest and masked on read. ``category`` scopes DroppedNeedle's torrents
     (and its save path, configured in qBittorrent); ``downloads_mount`` is where
     DroppedNeedle sees qBittorrent's completed dir (the remap target)."""
 
     enabled: bool = False
     client_type: str = "qbittorrent"
     url: str = ""
-    username: str = ""
-    password: str = ""
+    api_key: str = ""
     category: str = "droppedneedle"
     downloads_mount: str = "/qbittorrent-downloads"
 
@@ -389,7 +388,7 @@ DOWNLOAD_CLIENT_API_KEY_MASK = "slskd****"
 INDEXER_API_KEY_MASK = "indexer****"
 SABNZBD_API_KEY_MASK = "sabnzbd****"
 PROWLARR_API_KEY_MASK = "prowlarr****"
-QBITTORRENT_PASSWORD_MASK = "qbittorrent****"
+QBITTORRENT_API_KEY_MASK = "qbittorrent****"
 LIDARR_IMPORT_API_KEY_MASK = "lidarr****"
 SPOTIFY_SECRET_MASK = "spotify****"
 

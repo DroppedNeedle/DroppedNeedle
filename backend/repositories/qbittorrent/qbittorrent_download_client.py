@@ -61,16 +61,14 @@ class QbittorrentDownloadClient:
         self,
         client: QbittorrentClient,
         url: str,
-        username: str,
-        password: str,
+        api_key: str,
         downloads_mount: Path,
         *,
         category: str = "droppedneedle",
     ) -> None:
         self._client = client
         self._url = url
-        self._username = username
-        self._password = password
+        self._api_key = api_key
         self._mount = Path(downloads_mount)
         self._category = category
 
@@ -78,14 +76,24 @@ class QbittorrentDownloadClient:
     def client_name(self) -> str:
         return "qbittorrent"
 
+    @property
+    def supported_sources(self) -> frozenset[str]:
+        return frozenset({"torrent"})
+
     def is_configured(self) -> bool:
-        return bool(self._url and self._username and self._password)
+        return bool(self._url and self._api_key)
 
     async def health_check(self) -> ServiceStatus:
         try:
             version = await self._client.version()
         except Exception as exc:  # noqa: BLE001 - health check never raises
             return ServiceStatus(status="error", message=str(exc))
+        if not _supports_api_key(version):
+            return ServiceStatus(
+                status="error",
+                version=version or None,
+                message="qBittorrent 5.2 or newer is required for API-key authentication",
+            )
         return ServiceStatus(
             status="ok",
             version=version or None,
@@ -93,25 +101,38 @@ class QbittorrentDownloadClient:
         )
 
     async def enqueue(self, request: EnqueueRequest) -> TaskHandle:
-        urls = "\n".join(u for u in (request.magnet_uri, request.torrent_url) if u)
+        urls = [url for url in (request.magnet_uri, request.torrent_url) if url]
         if not urls:
             raise QbittorrentApiError(
                 "enqueue requires a magnet_uri or torrent_url for the torrent source"
             )
-        job_name = request.job_name or f"droppedneedle-{request.task_id}"
-        await self._client.add_torrent(
-            urls=urls, category=request.category or self._category, tag=job_name
-        )
-        # torrents/add returns no hash; correlate by the tag we just set. A magnet
-        # needs a beat to appear, so poll briefly.
-        for _ in range(_ADD_CORRELATE_ATTEMPTS):
-            rows = await self._client.torrents_info(tag=job_name)
-            if rows:
-                return TaskHandle(
-                    source="torrent", job_name=job_name, torrent_hash=rows[0].hash
+        correlation_id = request.job_name or f"droppedneedle-{request.task_id}"
+        existing = await self._recover(request, correlation_id)
+        if existing is not None:
+            return self._handle(existing, correlation_id)
+
+        last_error: QbittorrentApiError | None = None
+        for url in dict.fromkeys(urls):
+            try:
+                await self._client.add_torrent(
+                    urls=url, category=self._category, tag=correlation_id
                 )
-            await asyncio.sleep(_ADD_CORRELATE_DELAY)
-        raise QbittorrentApiError("qBittorrent accepted the add but no torrent appeared")
+            except QbittorrentApiError as exc:
+                last_error = exc
+                existing = await self._recover(request, correlation_id)
+                if existing is not None:
+                    return self._handle(existing, correlation_id)
+                continue
+            for _ in range(_ADD_CORRELATE_ATTEMPTS):
+                existing = await self._recover(request, correlation_id)
+                if existing is not None:
+                    return self._handle(existing, correlation_id)
+                await asyncio.sleep(_ADD_CORRELATE_DELAY)
+        if last_error is not None:
+            raise last_error
+        raise QbittorrentApiError(
+            "qBittorrent accepted the add but no torrent appeared"
+        )
 
     async def get_status(self, handle: TaskHandle) -> DownloadTaskStatus:
         info = await self._find(handle)
@@ -203,13 +224,35 @@ class QbittorrentDownloadClient:
 
     # --- internals --------------------------------------------------------------
 
-    async def _find(self, handle: TaskHandle) -> QbtTorrentInfo | None:
-        if handle.torrent_hash:
-            rows = await self._client.torrents_info(hashes=handle.torrent_hash)
+    async def _recover(
+        self, request: EnqueueRequest, correlation_id: str
+    ) -> QbtTorrentInfo | None:
+        rows = await self._client.torrents_info(tag=correlation_id)
+        if rows:
+            return rows[0]
+        if request.content_id:
+            rows = await self._client.torrents_info(hashes=request.content_id)
             if rows:
                 return rows[0]
-        if handle.job_name:
-            rows = await self._client.torrents_info(tag=handle.job_name)
+        return None
+
+
+    @staticmethod
+    def _handle(info: QbtTorrentInfo, correlation_id: str) -> TaskHandle:
+        return TaskHandle(
+            source="torrent",
+            job_name=correlation_id,
+            external_id=info.hash,
+            correlation_id=correlation_id,
+        )
+
+    async def _find(self, handle: TaskHandle) -> QbtTorrentInfo | None:
+        if handle.external_id:
+            rows = await self._client.torrents_info(hashes=handle.external_id)
+            if rows:
+                return rows[0]
+        if handle.correlation_id:
+            rows = await self._client.torrents_info(tag=handle.correlation_id)
             if rows:
                 return rows[0]
         return None
@@ -283,6 +326,14 @@ def _path_has_file(path: Path) -> bool:
         return path.is_dir() and any(p.is_file() for p in path.iterdir())
     except OSError:
         return False
+
+
+def _supports_api_key(version: str) -> bool:
+    """qBittorrent added Bearer API-key authentication in 5.2.0."""
+    import re
+
+    match = re.search(r"(\d+)\.(\d+)", version or "")
+    return bool(match and (int(match.group(1)), int(match.group(2))) >= (5, 2))
 
 
 def _map_status(info: QbtTorrentInfo) -> DownloadTaskStatus:

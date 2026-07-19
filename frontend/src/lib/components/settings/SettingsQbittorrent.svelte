@@ -22,9 +22,8 @@
 
 	let enabled = $state(false);
 	let url = $state('');
-	let username = $state('');
-	let password = $state('');
-	let showPassword = $state(false);
+	let apiKey = $state('');
+	let showKey = $state(false);
 	let category = $state('droppedneedle');
 	let downloadsMount = $state('/qbittorrent-downloads');
 	let seeded = $state(false);
@@ -35,8 +34,7 @@
 		if (d && !seeded) {
 			enabled = d.enabled;
 			url = d.url;
-			username = d.username;
-			password = d.password;
+			apiKey = d.api_key;
 			category = d.category || 'droppedneedle';
 			downloadsMount = d.downloads_mount || '/qbittorrent-downloads';
 			seeded = true;
@@ -59,8 +57,7 @@
 			enabled,
 			client_type: 'qbittorrent',
 			url,
-			username,
-			password,
+			api_key: apiKey,
 			category,
 			downloads_mount: downloadsMount
 		};
@@ -138,31 +135,22 @@
 				/>
 			</div>
 			<div class="form-control">
-				<label class="label" for="qbt-user"><span class="label-text">Username</span></label>
-				<input
-					id="qbt-user"
-					class="input input-bordered w-full font-mono text-sm"
-					bind:value={username}
-					placeholder="admin"
-				/>
-			</div>
-			<div class="form-control">
-				<label class="label" for="qbt-pass"><span class="label-text">Password</span></label>
+				<label class="label" for="qbt-key"><span class="label-text">API key</span></label>
 				<div class="join w-full">
 					<input
-						id="qbt-pass"
-						type={showPassword ? 'text' : 'password'}
+						id="qbt-key"
+						type={showKey ? 'text' : 'password'}
 						class="input input-bordered join-item flex-1 font-mono text-sm"
-						bind:value={password}
-						placeholder="Web UI password"
+						bind:value={apiKey}
+						placeholder="qBittorrent 5.2+ Web API key"
 					/>
 					<button
 						type="button"
 						class="btn join-item"
-						onclick={() => (showPassword = !showPassword)}
-						aria-label={showPassword ? 'Hide password' : 'Show password'}
+						onclick={() => (showKey = !showKey)}
+						aria-label={showKey ? 'Hide API key' : 'Show API key'}
 					>
-						{showPassword ? 'Hide' : 'Show'}
+						{showKey ? 'Hide' : 'Show'}
 					</button>
 				</div>
 			</div>
@@ -171,7 +159,7 @@
 					type="button"
 					class="btn btn-outline btn-sm"
 					onclick={onTest}
-					disabled={test.isPending || !url}
+					disabled={test.isPending || !url || !apiKey}
 				>
 					{#if test.isPending}<span class="loading loading-spinner loading-xs"></span>{/if}
 					Test connection

@@ -31,6 +31,11 @@ class FakeDownloadClient:
     def client_name(self) -> str:
         return "fake"
 
+
+    @property
+    def supported_sources(self) -> frozenset[str]:
+        return frozenset({"torrent"})
+
     def is_configured(self) -> bool:
         return True
 

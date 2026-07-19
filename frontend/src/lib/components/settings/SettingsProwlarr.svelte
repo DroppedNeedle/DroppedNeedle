@@ -19,6 +19,7 @@
 	let url = $state('');
 	let apiKey = $state('');
 	let showKey = $state(false);
+	let categoriesText = $state('3000');
 	let seeded = $state(false);
 	let testResult = $state<ProwlarrTestResult | null>(null);
 
@@ -28,6 +29,7 @@
 			enabled = d.enabled;
 			url = d.url;
 			apiKey = d.api_key;
+			categoriesText = d.categories.join(', ') || '3000';
 			seeded = true;
 		}
 	});
@@ -44,7 +46,11 @@
 	);
 
 	function current(): ProwlarrConnectionSettings {
-		return { enabled, url, api_key: apiKey, categories: [3000] };
+		const categories = categoriesText
+			.split(',')
+			.map((value) => Number.parseInt(value.trim(), 10))
+			.filter((value) => Number.isInteger(value) && value > 0);
+		return { enabled, url, api_key: apiKey, categories: categories.length ? categories : [3000] };
 	}
 
 	async function onSave() {
@@ -128,6 +134,22 @@
 						{showKey ? 'Hide' : 'Show'}
 					</button>
 				</div>
+			</div>
+			<div class="form-control">
+				<label class="label" for="prowlarr-categories"
+					><span class="label-text">Categories</span></label
+				>
+				<input
+					id="prowlarr-categories"
+					class="input input-bordered w-full font-mono text-sm"
+					bind:value={categoriesText}
+					placeholder="3000, 3010, 3040"
+				/>
+				<span class="label"
+					><span class="label-text-alt"
+						>Comma-separated Prowlarr category IDs used for searches.</span
+					></span
+				>
 			</div>
 			<div class="flex flex-wrap items-center gap-3">
 				<button

@@ -47,7 +47,6 @@ def _strategy(tmp_path, *, indexer=None, client=None, store=None, file_processor
         manifest_codec=MagicMock(),
         naming_template="{artist}/{album}",
         album_service=None,
-        category="droppedneedle",
     )
 
 

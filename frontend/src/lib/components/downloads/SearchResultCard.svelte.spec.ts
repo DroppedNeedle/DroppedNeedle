@@ -120,3 +120,31 @@ describe('SearchResultCard.svelte', () => {
 		await expect.element(page.getByText('unknown')).toBeInTheDocument();
 	});
 });
+
+it('renders the torrent variant with indexer, format, size, and seeders', async () => {
+	const torrent = makeCandidate({
+		source: 'torrent',
+		username: '',
+		files: [],
+		torrent_release: {
+			indexer_id: 'red',
+			indexer_name: 'RED',
+			guid: 't1',
+			title: 'Radiohead - OK Computer FLAC',
+			download_url: 'https://prowlarr/download/1',
+			magnet_url: 'magnet:?xt=urn:btih:abc',
+			info_hash: 'abc',
+			size_bytes: 1_500_000_000,
+			category_ids: [3040],
+			seeders: 17
+		}
+	});
+	renderCard({ candidate: torrent, albumTitle: 'OK Computer' });
+	await expect.element(page.getByText('RED')).toBeInTheDocument();
+	await expect.element(page.getByText('FLAC', { exact: true })).toBeInTheDocument();
+	await expect.element(page.getByText('1.4 GB')).toBeInTheDocument();
+	await expect.element(page.getByText('17')).toBeInTheDocument();
+	await expect
+		.element(page.getByRole('button', { name: 'Pick release from RED' }))
+		.toBeInTheDocument();
+});

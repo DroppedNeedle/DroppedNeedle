@@ -1850,8 +1850,7 @@ export interface QbittorrentConnectionSettings {
 	enabled: boolean;
 	client_type: string;
 	url: string;
-	username: string;
-	password: string;
+	api_key: string;
 	category: string;
 	downloads_mount: string;
 }
@@ -1927,6 +1926,22 @@ export interface UsenetRelease {
 	usenet_date?: number | null;
 }
 
+export interface TorrentRelease {
+	indexer_id: string;
+	indexer_name: string;
+	guid: string;
+	title: string;
+	download_url: string;
+	magnet_url: string;
+	info_hash: string;
+	size_bytes: number;
+	category_ids: number[];
+	seeders?: number | null;
+	leechers?: number | null;
+	grabs?: number | null;
+	publish_date?: number | null;
+}
+
 export interface ScoredCandidate {
 	// "soulseek" | "usenet" - selects the review-card variant (D16). Optional for
 	// backward-compat with older cached candidate blobs (default soulseek).
@@ -1935,6 +1950,7 @@ export interface ScoredCandidate {
 	parent_directory: string;
 	files: DownloadSearchResultFile[];
 	usenet_release?: UsenetRelease | null;
+	torrent_release?: TorrentRelease | null;
 	coherence: number;
 	file_confidence: number;
 	final_score: number;

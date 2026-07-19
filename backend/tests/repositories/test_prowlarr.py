@@ -31,6 +31,7 @@ def _indexer(rows=None, *, enabled=True):
     client = AsyncMock()
     client.search.return_value = rows or []
     client.system_status.return_value = ProwlarrSystemStatus(version="2.1.0")
+    client.absolute_url = lambda value: value
     return ProwlarrIndexer(client, categories=[3000], enabled=enabled), client
 
 

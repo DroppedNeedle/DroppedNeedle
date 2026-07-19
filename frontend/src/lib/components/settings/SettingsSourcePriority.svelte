@@ -19,7 +19,7 @@
 	const META: Record<string, { label: string; sub: string; icon: typeof Rss }> = {
 		soulseek: { label: 'Soulseek', sub: 'slskd', icon: HardDriveDownload },
 		usenet: { label: 'Usenet', sub: 'SABnzbd', icon: Rss },
-		torrent: { label: 'Torrents', sub: 'qBittorrent via Prowlarr', icon: Magnet }
+		torrent: { label: 'Torrents', sub: 'Torrent client via Prowlarr', icon: Magnet }
 	};
 
 	const order = $derived(priorityQuery.data?.order ?? ['soulseek', 'usenet', 'torrent']);

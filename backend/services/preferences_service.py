@@ -34,7 +34,7 @@ from api.v1.schemas.settings import (
     INDEXER_API_KEY_MASK,
     SABNZBD_API_KEY_MASK,
     PROWLARR_API_KEY_MASK,
-    QBITTORRENT_PASSWORD_MASK,
+    QBITTORRENT_API_KEY_MASK,
     LIDARR_IMPORT_API_KEY_MASK,
     DownloadPolicySettings,
     LidarrImportConnectionSettings,
@@ -449,27 +449,27 @@ class PreferencesService:
     # --- qBittorrent download client (fork, torrent source) ------------------------
 
     def get_qbittorrent_connection(self) -> QbittorrentConnectionSettings:
-        """qBittorrent connection with the ``password`` MASKED (safe for API responses)."""
+        """qBittorrent connection with the ``api_key`` MASKED (safe for API responses)."""
         data = self._load_config().get("download_clients", {}).get("qbittorrent", {})
         settings = (
             msgspec.convert(data, type=QbittorrentConnectionSettings)
             if data
             else QbittorrentConnectionSettings()
         )
-        if settings.password:
-            settings.password = QBITTORRENT_PASSWORD_MASK
+        if settings.api_key:
+            settings.api_key = QBITTORRENT_API_KEY_MASK
         return settings
 
     def get_qbittorrent_connection_raw(self) -> QbittorrentConnectionSettings:
-        """qBittorrent connection with the ``password`` DECRYPTED (for the client)."""
+        """qBittorrent connection with the ``api_key`` DECRYPTED (for the client)."""
         data = self._load_config().get("download_clients", {}).get("qbittorrent", {})
         settings = (
             msgspec.convert(data, type=QbittorrentConnectionSettings)
             if data
             else QbittorrentConnectionSettings()
         )
-        stored = data.get("password", "")
-        settings.password = decrypt(stored)[0] if stored else ""
+        stored = data.get("api_key", "")
+        settings.api_key = decrypt(stored)[0] if stored else ""
         return settings
 
     def save_qbittorrent_connection(self, settings: QbittorrentConnectionSettings) -> None:
@@ -477,17 +477,16 @@ class PreferencesService:
             config = self._load_config().copy()
             clients = dict(config.get("download_clients", {}))
             current = clients.get("qbittorrent", {})
-            password = settings.password
-            if password == QBITTORRENT_PASSWORD_MASK:
-                password = current.get("password", "")  # preserve on masked sentinel
-            elif password:
-                password = encrypt(password)
+            api_key = settings.api_key
+            if api_key == QBITTORRENT_API_KEY_MASK:
+                api_key = current.get("api_key", "")  # preserve on masked sentinel
+            elif api_key:
+                api_key = encrypt(api_key)
             clients["qbittorrent"] = {
                 "enabled": settings.enabled,
                 "client_type": "qbittorrent",
                 "url": settings.url,
-                "username": settings.username,
-                "password": password,
+                "api_key": api_key,
                 "category": settings.category,
                 "downloads_mount": settings.downloads_mount,
             }
@@ -660,8 +659,12 @@ class PreferencesService:
     def is_torrent_ready(self) -> bool:
         """qBittorrent (torrent) is enabled with a URL AND Prowlarr is configured -
         Prowlarr is the torrent source's only search path (no per-tracker config)."""
-        qbt = self.get_qbittorrent_connection()
-        return qbt.enabled and bool(qbt.url) and self.is_prowlarr_configured()
+        qbt = self.get_qbittorrent_connection_raw()
+        return (
+            qbt.enabled
+            and bool(qbt.client_type and qbt.url and qbt.api_key)
+            and self.is_prowlarr_configured()
+        )
 
     def is_builtin_download_ready(self) -> bool:
         """A user-configured download client (Soulseek, Usenet, or torrent) is set up.

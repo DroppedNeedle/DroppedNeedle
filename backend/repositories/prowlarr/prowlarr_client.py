@@ -14,6 +14,7 @@ transport errors + 5xx on idempotent GETs are retried with backoff.
 
 import asyncio
 import logging
+from urllib.parse import urljoin
 from typing import Any
 
 import httpx
@@ -59,6 +60,10 @@ class ProwlarrClient:
 
     def _headers(self) -> dict[str, str]:
         return {"X-Api-Key": self._api_key}
+
+    def absolute_url(self, value: str) -> str:
+        """Resolve Prowlarr-relative result links against the configured origin."""
+        return urljoin(f"{self._base_url}/", value)
 
     async def system_status(self, *, timeout: float = 15.0) -> ProwlarrSystemStatus:
         data = await self._get_json("system/status", timeout=timeout)

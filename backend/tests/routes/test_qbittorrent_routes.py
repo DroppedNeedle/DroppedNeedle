@@ -1,4 +1,4 @@
-"""qBittorrent route tests: admin auth, masked password on GET, save clears the
+"""qBittorrent route tests: admin auth, masked API key on GET, save clears the
 provider chain, Test reports the version."""
 
 from unittest.mock import AsyncMock, MagicMock
@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException
 
 from api.v1.routes import qbittorrent
 from api.v1.schemas.settings import (
-    QBITTORRENT_PASSWORD_MASK,
+    QBITTORRENT_API_KEY_MASK,
     QbittorrentConnectionSettings,
 )
 from core.dependencies import get_preferences_service
@@ -19,11 +19,10 @@ from tests.helpers import build_test_client, mock_admin_user
 def _prefs():
     prefs = MagicMock()
     prefs.get_qbittorrent_connection.return_value = QbittorrentConnectionSettings(
-        enabled=True, url="http://qbt:8080", username="admin",
-        password=QBITTORRENT_PASSWORD_MASK,
+        enabled=True, url="http://qbt:8080", api_key=QBITTORRENT_API_KEY_MASK,
     )
     prefs.get_qbittorrent_connection_raw.return_value = QbittorrentConnectionSettings(
-        enabled=True, url="http://qbt:8080", username="admin", password="real-pass"
+        enabled=True, url="http://qbt:8080", api_key="real-key"
     )
     prefs.save_qbittorrent_connection.return_value = None
     return prefs
@@ -45,7 +44,7 @@ def test_get_qbittorrent_admin_masked():
     app.dependency_overrides[_get_current_admin] = mock_admin_user
     resp = build_test_client(app).get("/download-clients/qbittorrent")
     assert resp.status_code == 200
-    assert resp.json()["password"] == QBITTORRENT_PASSWORD_MASK
+    assert resp.json()["api_key"] == QBITTORRENT_API_KEY_MASK
 
 
 def test_get_qbittorrent_non_admin_forbidden():
@@ -67,7 +66,7 @@ def test_put_qbittorrent_saves_and_clears_providers(monkeypatch):
         "/download-clients/qbittorrent",
         json={
             "enabled": True, "url": "http://qbt:8080",
-            "username": "admin", "password": "new-pass",
+            "api_key": "new-key",
         },
     )
     assert resp.status_code == 200
@@ -81,14 +80,14 @@ def test_test_qbittorrent_reports_version(monkeypatch):
         status="ok", version="5.2.1", message="qBittorrent 5.2.1"
     )
     monkeypatch.setattr(
-        qbittorrent, "build_qbittorrent_download_client", lambda url, user, pw: client
+        qbittorrent, "build_qbittorrent_download_client", lambda url, key: client
     )
 
     app = _app()
     app.dependency_overrides[_get_current_admin] = mock_admin_user
     resp = build_test_client(app).post(
         "/download-clients/qbittorrent/test",
-        json={"enabled": True, "url": "http://qbt:8080", "username": "a", "password": "p"},
+        json={"enabled": True, "url": "http://qbt:8080", "api_key": "key"},
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -100,12 +99,26 @@ def test_test_qbittorrent_unreachable_reports_invalid(monkeypatch):
     client = AsyncMock()
     client.health_check.return_value = ServiceStatus(status="error", message="conn refused")
     monkeypatch.setattr(
-        qbittorrent, "build_qbittorrent_download_client", lambda url, user, pw: client
+        qbittorrent, "build_qbittorrent_download_client", lambda url, key: client
     )
     app = _app()
     app.dependency_overrides[_get_current_admin] = mock_admin_user
     resp = build_test_client(app).post(
         "/download-clients/qbittorrent/test",
-        json={"enabled": True, "url": "http://qbt:8080", "username": "a", "password": "p"},
+        json={"enabled": True, "url": "http://qbt:8080", "api_key": "key"},
     )
     assert resp.json()["valid"] is False
+
+
+def test_test_qbittorrent_missing_key_reports_invalid(monkeypatch):
+    build = MagicMock()
+    monkeypatch.setattr(qbittorrent, "build_qbittorrent_download_client", build)
+    app = _app()
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    resp = build_test_client(app).post(
+        "/download-clients/qbittorrent/test",
+        json={"enabled": True, "url": "http://qbt:8080", "api_key": ""},
+    )
+    assert resp.json()["valid"] is False
+    assert "required" in resp.json()["message"]
+    build.assert_not_called()

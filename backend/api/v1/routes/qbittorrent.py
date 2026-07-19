@@ -1,5 +1,5 @@
 """qBittorrent connection admin routes (fork feature, torrent source): GET/PUT
-settings + test. Admin-only; ``password`` masked on GET, preserved on PUT when the
+settings + test. Admin-only; ``api_key`` masked on GET, preserved on PUT when the
 masked sentinel comes back. Kept in its own module (same ``/download-clients``
 prefix as the SABnzbd routes) to hold the upstream-merge surface down to the
 router registration line.
@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends
 
 from api.v1.schemas.download import QbittorrentTestResponse
 from api.v1.schemas.settings import (
-    QBITTORRENT_PASSWORD_MASK,
+    QBITTORRENT_API_KEY_MASK,
     QbittorrentConnectionSettings,
 )
 from core.dependencies import (
@@ -74,13 +74,17 @@ async def test_qbittorrent(
     settings: QbittorrentConnectionSettings = MsgSpecBody(QbittorrentConnectionSettings),
     preferences=Depends(get_preferences_service),
 ):
-    """Tests the submitted url/credentials (not stored config). A masked password
+    """Tests the submitted url/credentials (not stored config). A masked API key
     resolves to the stored one."""
-    password = settings.password
-    if password == QBITTORRENT_PASSWORD_MASK:
-        password = preferences.get_qbittorrent_connection_raw().password
+    api_key = settings.api_key
+    if api_key == QBITTORRENT_API_KEY_MASK:
+        api_key = preferences.get_qbittorrent_connection_raw().api_key
 
-    client = build_qbittorrent_download_client(settings.url, settings.username, password)
+    if not api_key:
+        return QbittorrentTestResponse(
+            valid=False, message="qBittorrent API key is required"
+        )
+    client = build_qbittorrent_download_client(settings.url, api_key)
     try:
         status = await client.health_check()
     except ExternalServiceError as exc:

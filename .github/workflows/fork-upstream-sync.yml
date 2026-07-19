@@ -1,5 +1,5 @@
 # Fork-only workflow (alphyriver/DroppedNeedle): keep the fork current with
-# HabiRabbu/DroppedNeedle.
+# DroppedNeedle/DroppedNeedle.
 #
 # Daily (and on demand) it merges upstream/main into the fork's main. A clean
 # merge is pushed directly using the SYNC_TOKEN PAT secret - a PAT (not the
@@ -27,7 +27,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  UPSTREAM_REPO: https://github.com/HabiRabbu/DroppedNeedle.git
+  UPSTREAM_REPO: https://github.com/DroppedNeedle/DroppedNeedle.git
 
 jobs:
   sync:

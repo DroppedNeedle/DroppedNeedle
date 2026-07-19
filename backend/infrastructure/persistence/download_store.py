@@ -1225,9 +1225,6 @@ def _row_to_task(row: sqlite3.Row | None) -> DownloadTask | None:
     return msgspec.convert(dict(row), type=DownloadTask, strict=False)
 
 
-# source -> the download client_type that owns it (fixed v1 map).
-_SOURCE_CLIENT_TYPE = {"soulseek": "slskd", "usenet": "sabnzbd"}
-
 
 def _quarantine_row_to_admin(row: dict[str, Any]) -> dict[str, Any]:
     """Project a ``(source, identity, …)`` quarantine row onto the legacy admin API
@@ -1246,7 +1243,7 @@ def _quarantine_row_to_admin(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row.get("id"),
         "source": source,
-        "client_id": _SOURCE_CLIENT_TYPE.get(source, source),
+        "client_id": source,
         "username": username,
         "filename": filename,
         "identity": identity,

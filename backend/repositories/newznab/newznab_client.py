@@ -245,13 +245,11 @@ def _parse_items(
         try:
             release = _parse_item(item, indexer_id, indexer_name, request_url)
         except _TorznabFeed:
-            # Torrent/magnet enclosures: this is a Torznab indexer; bail the feed.
+            # A mixed or malformed feed must not discard valid NZB siblings.
             logger.warning(
-                "newznab indexer %s returned torrent enclosures - did you add a "
-                "Torznab indexer as Generic Newznab?",
-                indexer_name,
+                "newznab: skipping torrent item returned by %s", indexer_name
             )
-            return []
+            continue
         except Exception as exc:  # noqa: BLE001 - one bad item must not sink the feed
             logger.warning("newznab: skipping unparseable item from %s: %s", indexer_name, exc)
             continue
@@ -281,7 +279,12 @@ def _parse_item(
             if "x-nzb" in etype:
                 break
     if not nzb_url:
-        return None  # not an NZB item - drop it (<link> is intentionally ignored)
+        link = (item.findtext("link") or "").strip()
+        if link.startswith("magnet:") or link.lower().endswith(".torrent"):
+            raise _TorznabFeed()
+        nzb_url = link or None
+    if not nzb_url:
+        return None
 
     attrs = _attr_map(item)
     size = _to_int(_first(attrs.get("size"))) or enclosure_size

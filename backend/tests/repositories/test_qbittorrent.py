@@ -2,12 +2,13 @@
 private-tracker cancel rule (never delete a completed torrent), and path remap."""
 
 from pathlib import Path
+import httpx
 from unittest.mock import AsyncMock
 
 import pytest
 
 from repositories.protocols.download_client import EnqueueRequest, TaskHandle
-from repositories.qbittorrent.qbittorrent_client import QbittorrentApiError
+from repositories.qbittorrent.qbittorrent_client import QbittorrentApiError, QbittorrentClient
 from repositories.qbittorrent.qbittorrent_download_client import (
     QbittorrentDownloadClient,
     _map_status,
@@ -30,7 +31,7 @@ def _client(infos=None):
     api.torrents_info.return_value = infos if infos is not None else []
     api.delete_torrents.return_value = True
     return QbittorrentDownloadClient(
-        api, "http://qbt:8080", "admin", "pass", Path("/qbittorrent-downloads")
+        api, "http://qbt:8080", "api-key", Path("/qbittorrent-downloads")
     ), api
 
 
@@ -71,7 +72,8 @@ def test_completed_reports_full_bytes_while_seeding():
 
 @pytest.mark.asyncio
 async def test_enqueue_correlates_by_tag_and_returns_hash():
-    client, api = _client([_info()])
+    client, api = _client()
+    api.torrents_info.side_effect = [[], [_info()]]
     handle = await client.enqueue(
         EnqueueRequest(
             task_id="t1", source="torrent", magnet_uri="magnet:?xt=x",
@@ -79,7 +81,8 @@ async def test_enqueue_correlates_by_tag_and_returns_hash():
         )
     )
     assert handle.source == "torrent"
-    assert handle.torrent_hash == "abc123"
+    assert handle.external_id == "abc123"
+    assert handle.correlation_id == "droppedneedle-t1-0"
     assert handle.job_name == "droppedneedle-t1-0"
     add_kwargs = api.add_torrent.await_args.kwargs
     assert add_kwargs["tag"] == "droppedneedle-t1-0"
@@ -129,3 +132,49 @@ async def test_get_status_unmatched_reports_zero_transfers():
     status = await client.get_status(TaskHandle(source="torrent", job_name="nope"))
     assert status.status == "queued"
     assert status.matched_transfers == 0
+
+
+@pytest.mark.asyncio
+async def test_raw_client_sends_bearer_header_on_every_request():
+    seen = []
+
+    def handler(request):
+        seen.append(request.headers.get("Authorization"))
+        return httpx.Response(200, text="v5.2.1")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = QbittorrentClient(http, "http://qbt", "secret")
+        assert await client.version() == "v5.2.1"
+    assert seen == ["Bearer secret"]
+
+
+@pytest.mark.asyncio
+async def test_raw_client_rejects_http_200_fails_add_response():
+    def handler(request):
+        return httpx.Response(200, text="Fails.")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = QbittorrentClient(http, "http://qbt", "secret")
+        with pytest.raises(QbittorrentApiError):
+            await client.add_torrent(urls="magnet:?xt=x")
+
+
+@pytest.mark.asyncio
+async def test_health_rejects_qbittorrent_before_5_2():
+    client, api = _client()
+    api.version.return_value = "v5.1.2"
+    status = await client.health_check()
+    assert status.status == "error"
+    assert "5.2" in status.message
+
+
+@pytest.mark.asyncio
+async def test_raw_client_marks_invalid_api_key_as_auth_error():
+    def handler(request):
+        return httpx.Response(401, text="Unauthorized")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = QbittorrentClient(http, "http://qbt", "bad")
+        with pytest.raises(QbittorrentApiError) as exc:
+            await client.version()
+    assert exc.value.auth is True

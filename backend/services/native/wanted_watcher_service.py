@@ -815,6 +815,10 @@ class WantedWatcherService:
             return usenet_identity(
                 candidate.usenet_release.title, candidate.usenet_release.size_bytes
             )
+        if candidate.source == "torrent" and candidate.torrent_release is not None:
+            return usenet_identity(
+                candidate.torrent_release.title, candidate.torrent_release.size_bytes
+            )
         return soulseek_identity(candidate.username, candidate.parent_directory)
 
     @staticmethod

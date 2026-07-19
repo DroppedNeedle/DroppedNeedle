@@ -2002,7 +2002,7 @@ def _build_download_orchestrator(
         get_download_client_repository,
         get_download_store,
         get_prowlarr_indexer,
-        get_qbittorrent_download_client,
+        get_source_download_client,
         get_sabnzbd_download_client,
         get_slskd_indexer,
         get_usenet_search_indexer,
@@ -2058,10 +2058,9 @@ def _build_download_orchestrator(
         usenet_post_processing=sab.post_processing,
         usenet_min_release_age_minutes=policy.usenet_min_release_age_minutes,
         torrent_indexer=get_prowlarr_indexer(),
-        torrent_client=get_qbittorrent_download_client(),
+        torrent_client=get_source_download_client("torrent", qbt.client_type),
         torrent_scorer=get_torrent_release_scorer(),
         torrent_enabled=torrent_enabled,
-        torrent_category=qbt.category,
         # Fresh reader (not the snapshot above) so an automatic re-dispatch re-gates a
         # stored candidate against the CURRENT quality range even mid-flight (Phase 2).
         get_download_policy=lambda: get_preferences_service().get_download_policy(),
@@ -2109,6 +2108,7 @@ def _build_download_service(
         get_album_release_pin_store,
         get_download_client_repository,
         get_download_store,
+        get_prowlarr_indexer,
         get_slskd_indexer,
         get_usenet_search_indexer,
     )
@@ -2139,6 +2139,9 @@ def _build_download_service(
         usenet_indexer=get_usenet_search_indexer(),
         usenet_scorer=get_newznab_release_scorer(),
         usenet_enabled=usenet_enabled,
+        torrent_indexer=get_prowlarr_indexer(),
+        torrent_scorer=get_torrent_release_scorer(),
+        torrent_enabled=torrent_enabled,
         soulseek_enabled=dc.enabled,
         upgrade_allowed=policy.upgrade_allowed,
         quality_cutoff=policy.quality_cutoff,

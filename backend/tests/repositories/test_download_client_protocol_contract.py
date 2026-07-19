@@ -75,9 +75,9 @@ def _make_qbittorrent_client():
     )
 
     http = httpx.AsyncClient()
-    client = QbittorrentClient(http, "http://qbt:8080", "admin", "pass")
+    client = QbittorrentClient(http, "http://qbt:8080", "key")
     return QbittorrentDownloadClient(
-        client, "http://qbt:8080", "admin", "pass", Path("/qbittorrent-downloads")
+        client, "http://qbt:8080", "key", Path("/qbittorrent-downloads")
     )
 
 
@@ -115,6 +115,8 @@ def test_impl_conforms_to_protocol(factory):
     assert isinstance(impl, DownloadClientProtocol)
     assert isinstance(impl.client_name, str)
     assert impl.client_name
+    assert isinstance(impl.supported_sources, frozenset)
+    assert impl.supported_sources
 
     # SIGNATURE + async level (the gap isinstance does NOT cover).
     for name in _PROTO_METHODS:
@@ -144,3 +146,19 @@ def test_impl_conforms_to_indexer_protocol(factory):
         assert inspect.iscoroutinefunction(impl_fn) == inspect.iscoroutinefunction(
             proto_fn
         ), name
+
+
+def test_registry_routes_torrent_to_second_fake_client(monkeypatch):
+    from core.dependencies import repo_providers
+    from core.exceptions import ConfigurationError
+
+    fake = FakeDownloadClient()
+    monkeypatch.setitem(
+        repo_providers._DOWNLOAD_CLIENT_PROVIDERS, "fake-torrent", lambda: fake
+    )
+    assert (
+        repo_providers.get_source_download_client("torrent", "fake-torrent")
+        is fake
+    )
+    with pytest.raises(ConfigurationError, match="does not support"):
+        repo_providers.get_source_download_client("usenet", "fake-torrent")

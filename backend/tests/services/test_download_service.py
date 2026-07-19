@@ -1145,3 +1145,31 @@ async def test_upgrade_origin_never_fetches_an_unheld_recording():
 
     assert result == ALREADY_IN_LIBRARY
     store.create_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_torrent_only_manual_search_and_scout_use_torrent_pipeline():
+    service, store, _bus, *_ = _make_service()
+    torrent_indexer = AsyncMock()
+    torrent_release = object()
+    torrent_indexer.search_album.return_value = [
+        SimpleNamespace(torrent=torrent_release)
+    ]
+    torrent_candidate = ScoredCandidate(
+        source="torrent", final_score=0.81, tier="manual"
+    )
+    torrent_scorer = AsyncMock()
+    torrent_scorer.rank.return_value = [torrent_candidate]
+    service._soulseek_enabled = False
+    service._torrent_enabled = True
+    service._torrent_indexer = torrent_indexer
+    service._torrent_scorer = torrent_scorer
+
+    await service._run_search("job1", "A", "B", 2001, 10)
+    saved = store.set_search_job_candidates.await_args.args[1]
+    assert saved == [torrent_candidate]
+
+    scouted = await service.scout_album("A", "B", 2001, 10)
+    assert scouted == [torrent_candidate]
+    assert torrent_indexer.search_album.await_count == 2
+    assert torrent_scorer.rank.await_count == 2

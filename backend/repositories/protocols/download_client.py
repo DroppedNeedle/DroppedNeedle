@@ -47,7 +47,7 @@ class EnqueueRequest(AppStruct):
     """Client-agnostic hand-off (D8). slskd reads ``source``/``files``; SABnzbd
     reads ``nzb_url``/``job_name``/``category``/``priority``/``post_processing``.
     ``job_name`` (``droppedneedle-{task_id}``) is the PRE-enqueue correlation key
-    that survives a crash before ``nzo_id`` exists."""
+    that survives a crash before the client assigns an ``external_id``."""
 
     task_id: str
     source: str
@@ -57,27 +57,36 @@ class EnqueueRequest(AppStruct):
     category: str | None = None
     priority: int | None = None
     post_processing: int | None = None
-    # Torrent source (qBittorrent): at least one of magnet_uri/torrent_url is required.
+    # Content-addressed sources may provide both a preferred URI and a fallback.
     magnet_uri: str | None = None
     torrent_url: str | None = None
+    content_id: str | None = None
 
 
 class TaskHandle(AppStruct):
     """Client-agnostic task correlation (D8), replacing ``TaskRef``.
 
-    slskd populates ``username`` + ``filenames`` (no batch id, C2). SABnzbd
-    populates ``job_name`` BEFORE enqueue (recoverable on crash) and fills
-    ``nzo_id`` after the add returns. The manifest persists the whole handle.
+    Implementations populate client-neutral ``external_id`` and ``correlation_id``.
+    The legacy vendor fields remain decode-only compatibility inputs for manifests
+    written by earlier releases. The manifest persists the whole handle.
     """
 
     source: str
     username: str = ""
     filenames: list[str] = []
     job_name: str = ""
+    # Generic client-owned identifier and pre-enqueue correlation key. Legacy
+    # vendor fields remain decode-compatible aliases for persisted manifests.
+    external_id: str = ""
+    correlation_id: str = ""
     nzo_id: str = ""
-    # qBittorrent populates job_name BEFORE enqueue (crash-recoverable, mirrors SABnzbd)
-    # and fills torrent_hash after the add is correlated.
     torrent_hash: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.external_id:
+            self.external_id = self.nzo_id or self.torrent_hash
+        if not self.correlation_id:
+            self.correlation_id = self.job_name
 
 
 class DownloadTaskStatus(AppStruct):
@@ -139,6 +148,9 @@ class DownloadClientProtocol(Protocol):
 
     @property
     def client_name(self) -> str: ...
+
+    @property
+    def supported_sources(self) -> frozenset[str]: ...
 
     def is_configured(self) -> bool: ...
 

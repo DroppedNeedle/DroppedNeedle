@@ -389,7 +389,7 @@ class UsenetStrategy:
         return candidate.username
 
     def is_cancelable(self, task, manifest) -> bool:  # noqa: ANN001, ARG002
-        # SABnzbd is correlated by the nzo_id/job_name in the handle alone.
+        # The client is correlated by the identifiers in the generic handle alone.
         return manifest.handle is not None
 
     def local_fault_message(self, attempt_mount: bool) -> str:
@@ -524,8 +524,8 @@ class UsenetStrategy:
                     task_id=task.id,
                     source="usenet",
                     nzb_url=release.nzb_url,
-                    job_name=job_name,
                     category=self._category,
+                    job_name=job_name,
                     priority=self._priority,
                     post_processing=self._post_processing,
                 )
@@ -534,7 +534,7 @@ class UsenetStrategy:
             logger.exception("Usenet enqueue failed for task %s", task.id)
             raise OrchestrationError("enqueue failed") from exc
 
-        # Re-persist the manifest with the nzo_id filled in (the post-enqueue batch id).
+        # Re-persist the manifest with the post-enqueue external identifier.
         manifest.handle = handle
         manifest_path.write_bytes(self._manifest_codec.encode(manifest))
         logger.info(
@@ -544,7 +544,7 @@ class UsenetStrategy:
                 "source": "usenet",
                 "release_group_mbid": task.release_group_mbid,
                 "job_name": job_name,
-                "nzo_id": handle.nzo_id,
+                "external_id": handle.external_id,
                 "tracklist": len(expected_tracks),
                 "total_size_bytes": release.size_bytes,
                 "via_album_nzb": task.download_type == "track",
@@ -630,26 +630,26 @@ class UsenetStrategy:
 
 
 class TorrentStrategy:
-    """Prowlarr (torznab) search + qBittorrent download. Always searches the ALBUM (a
+    """Prowlarr (Torznab) search + a torrent-capable download client. Always searches the album (a
     per-track grab fetches the album torrent, mirroring Usenet D4); imports the completed
     torrent's folder against the MB tracklist.
 
     **Private-tracker seeding rule:** the torrent's payload must keep seeding after
     import, but ``FileProcessor`` MOVES its input files into the library. So
     ``import_files`` first COPIES the completed files into a per-task scratch dir under
-    staging and hands the COPIES to the folder import - qBittorrent's files are never
-    touched, and ``QbittorrentDownloadClient.cancel`` never deletes a completed torrent.
+    staging and hands the COPIES to the folder import - the torrent client's files are never
+    touched, and the client adapter policy never deletes a completed torrent.
     """
 
     name = "torrent"
     # A 0-seeder/stalled torrent moves 0 bytes and nothing will change that (unlike a
     # queued SABnzbd job) - let the queued watchdog give up on it instead of the 6h ceiling.
     applies_queued_timeout = True
-    has_local_disk_faults = False  # qBittorrent doesn't reliably distinguish local faults
+    has_local_disk_faults = False  # delegated clients report mount health separately
 
     def __init__(  # noqa: ANN001
         self, *, indexer, scorer, client, store, file_processor, import_settle_seconds,
-        staging, manifest_codec, naming_template, album_service, category, library=None,
+        staging, manifest_codec, naming_template, album_service, library=None,
     ):
         self._indexer = indexer
         self._scorer = scorer
@@ -661,7 +661,6 @@ class TorrentStrategy:
         self._manifest_codec = manifest_codec
         self._naming_template = naming_template
         self._album_service = album_service
-        self._category = category
         self._library = library
 
     @property
@@ -676,11 +675,11 @@ class TorrentStrategy:
         return candidate.username
 
     def is_cancelable(self, task, manifest) -> bool:  # noqa: ANN001, ARG002
-        # qBittorrent is correlated by the torrent_hash/job_name(tag) in the handle alone.
+        # The concrete client owns correlation details inside the generic handle.
         return manifest.handle is not None
 
     def local_fault_message(self, attempt_mount: bool) -> str:  # noqa: ARG002
-        return "downloads directory not accessible - check the qBittorrent downloads mount"
+        return "downloads directory not accessible - check the torrent client downloads mount"
 
     async def maybe_blocklist_on_failure(self, task, status, *, completed, enumerated_any):  # noqa: ANN001, ANN201, ARG002
         """Blocklist a dead/under-delivering torrent by its title+size identity before
@@ -772,15 +771,15 @@ class TorrentStrategy:
                     source="torrent",
                     magnet_uri=release.magnet_url or None,
                     torrent_url=release.download_url or None,
+                    content_id=release.info_hash or None,
                     job_name=job_name,
-                    category=self._category,
                 )
             )
         except Exception as exc:  # noqa: BLE001 - any client error -> task failed
             logger.exception("Torrent enqueue failed for task %s", task.id)
             raise OrchestrationError("enqueue failed") from exc
 
-        # Re-persist the manifest with the torrent hash filled in.
+        # Re-persist the manifest with the client-owned external id filled in.
         manifest.handle = handle
         manifest_path.write_bytes(self._manifest_codec.encode(manifest))
         logger.info(
@@ -790,7 +789,7 @@ class TorrentStrategy:
                 "source": "torrent",
                 "release_group_mbid": task.release_group_mbid,
                 "job_name": job_name,
-                "torrent_hash": handle.torrent_hash,
+                "external_id": handle.external_id,
                 "tracklist": len(expected_tracks),
                 "total_size_bytes": release.size_bytes,
                 "via_album_torrent": task.download_type == "track",
@@ -799,7 +798,7 @@ class TorrentStrategy:
 
     async def import_files(self, task, manifest, *, only_filenames=None, completed=False):  # noqa: ANN001, ANN201, ARG002
         # Folder-based import (D18) with the seeding-safe COPY step: the file processor
-        # MOVES its inputs into the library, so hand it copies, never qBittorrent's payload.
+        # MOVES its inputs into the library, so hand it copies, never the torrent client payload.
         files = await self._client.list_completed_files(manifest.handle)
         if not files and completed:
             files = await self._settle_files(manifest.handle)
@@ -811,16 +810,21 @@ class TorrentStrategy:
         if not files and completed:
             if not await self._client.downloads_mount_healthy():
                 logger.warning("download.torrent_mount_unhealthy", extra={"task_id": task.id})
+                await asyncio.to_thread(self._cleanup_scratch, task.id)
                 return ProcessResult(
                     succeeded=[],
                     failed=[FileFailure(filename="", reason=DOWNLOADS_MOUNT_UNAVAILABLE)],
                 ), enumerated
-        copies = await asyncio.to_thread(self._copy_for_import, task.id, files)
-        result = await self._file_processor.process_downloaded_folder(manifest, copies)
-        await asyncio.to_thread(self._cleanup_scratch, task.id)
-        if result.succeeded:
-            await self._store.set_final_path(task.id, str(Path(result.succeeded[0]).parent))
-        return result, enumerated
+        try:
+            copies = await asyncio.to_thread(self._copy_for_import, task.id, files)
+            result = await self._file_processor.process_downloaded_folder(manifest, copies)
+            if result.succeeded:
+                await self._store.set_final_path(
+                    task.id, str(Path(result.succeeded[0]).parent)
+                )
+            return result, enumerated
+        finally:
+            await asyncio.to_thread(self._cleanup_scratch, task.id)
 
     def _copy_for_import(self, task_id: str, files: "list[Path]") -> "list[Path]":
         """Copy the torrent's completed audio files into a per-task scratch dir under

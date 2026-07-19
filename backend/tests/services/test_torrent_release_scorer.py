@@ -50,9 +50,11 @@ async def test_zero_seeders_is_dropped():
 
 
 @pytest.mark.asyncio
-async def test_none_seeders_is_dropped():
+async def test_missing_seeders_is_manual_only():
     rel = _release("Radiohead - In Rainbows [FLAC]", [3040], seeders=None)
-    assert await _scorer().rank(_TARGET, [rel]) == []
+    ranked = await _scorer().rank(_TARGET, [rel])
+    assert len(ranked) == 1
+    assert ranked[0].tier == "manual"
 
 
 @pytest.mark.asyncio

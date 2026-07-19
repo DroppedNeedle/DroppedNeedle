@@ -65,9 +65,6 @@ from services.native.track_matcher import TrackMatcher
 
 logger = logging.getLogger(__name__)
 
-# Fixed source -> client_type map (the DownloadTask.download_client value).
-_CLIENT_FOR_SOURCE = {"soulseek": "slskd", "usenet": "sabnzbd", "torrent": "qbittorrent"}
-
 # 6-hour ceiling on a single download's poll loop (absolute backstop; the
 # minutes-scale stall/queued watchdogs normally resolve a stuck transfer long
 # before this).
@@ -194,10 +191,9 @@ class DownloadOrchestrator:
         usenet_min_release_age_minutes: float = 30.0,
         usenet_import_settle_seconds: float = 2.0,
         torrent_indexer=None,  # IndexerProtocol | None (ProwlarrIndexer)
-        torrent_client=None,  # DownloadClientProtocol | None (QbittorrentDownloadClient)
+        torrent_client=None,  # DownloadClientProtocol | None
         torrent_scorer=None,  # TorrentReleaseScorer | None
-        torrent_enabled: bool = False,  # Prowlarr AND qBittorrent are both enabled
-        torrent_category: str | None = None,
+        torrent_enabled: bool = False,  # indexer and a torrent-capable client enabled
         # Fresh reader of the current download policy: re-check a stored candidate
         # against the live quality range before an automatic re-dispatch (failover /
         # track-repull). None = not wired (tests) -> re-gate skipped.
@@ -290,7 +286,7 @@ class DownloadOrchestrator:
                 min_release_age_seconds=usenet_min_release_age_minutes * 60.0,
                 library=library_manager,
             )
-        # Same shape as Usenet: created whenever a qBittorrent client exists so a torrent
+        # Same shape as Usenet: created whenever a torrent-capable client exists so a torrent
         # task can still IMPORT even if search is disabled; search is gated by
         # ``_source_enabled`` (the live ``_torrent_enabled`` toggle, which needs Prowlarr).
         if torrent_client is not None:
@@ -305,7 +301,6 @@ class DownloadOrchestrator:
                 manifest_codec=manifest_codec,
                 naming_template=naming_template,
                 album_service=album_service,
-                category=torrent_category,
                 library=library_manager,
             )
 
@@ -506,7 +501,7 @@ class DownloadOrchestrator:
                     source_directory=selected.parent_directory,
                     preflight_score=selected.final_score,
                     source=selected.source,
-                    download_client=_CLIENT_FOR_SOURCE.get(selected.source, "slskd"),
+                    download_client=self.client_name_for_source(selected.source),
                 )
                 return True
 
@@ -556,6 +551,10 @@ class DownloadOrchestrator:
         no SABnzbd client resolved to the slskd client): the Usenet strategy exists iff a
         SABnzbd client exists, so a missing one falls through to Soulseek's client here."""
         return self._strategies.get(source) or self._strategies["soulseek"]
+
+    def client_name_for_source(self, source: str) -> str:
+        """Return the concrete adapter selected for an acquisition source."""
+        return self._strategy(source).client.client_name
 
     def _download_client_for(self, task) -> "DownloadClientProtocol":  # noqa: ANN001
         """The download client that owns this task's source (D2/D3)."""
@@ -883,7 +882,7 @@ class DownloadOrchestrator:
             cand.parent_directory,
             cand.final_score,
             source=cand.source,
-            download_client=_CLIENT_FOR_SOURCE.get(cand.source, "slskd"),
+            download_client=self.client_name_for_source(cand.source),
         )
         task = await self._store.get_task(task.id)
         logger.info("download.track_duration_fallback", extra={"task_id": task.id})
@@ -979,7 +978,7 @@ class DownloadOrchestrator:
                 cand.parent_directory,
                 cand.final_score,
                 source=cand.source,
-                download_client=_CLIENT_FOR_SOURCE.get(cand.source, "slskd"),
+                download_client=self.client_name_for_source(cand.source),
             )
             return await self._store.get_task(task.id)
         return None
