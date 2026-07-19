@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   backend:
-    if: github.repository == "alphyriver/DroppedNeedle"
+    if: github.repository == 'alphyriver/DroppedNeedle'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +37,7 @@ jobs:
       - run: python -m pytest backend/tests
 
   frontend:
-    if: github.repository == "alphyriver/DroppedNeedle"
+    if: github.repository == 'alphyriver/DroppedNeedle'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -61,7 +61,7 @@ jobs:
       - run: pnpm exec vitest run --project client
 
   build:
-    if: github.repository == "alphyriver/DroppedNeedle"
+    if: github.repository == 'alphyriver/DroppedNeedle'
     needs: [backend, frontend]
     runs-on: ubuntu-latest
     steps:
