@@ -42,6 +42,9 @@ concurrency:
 jobs:
   cla:
     name: Check CLA signature
+    # Upstream-only: forks have neither the cla-signatures branch nor the
+    # signature store, so the check can only fail there.
+    if: github.repository == 'DroppedNeedle/DroppedNeedle'
     runs-on: ubuntu-latest
     steps:
       - name: Check or record CLA signature
