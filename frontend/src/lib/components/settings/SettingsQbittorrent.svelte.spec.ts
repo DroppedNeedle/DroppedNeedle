@@ -26,7 +26,9 @@ import SettingsQbittorrent from './SettingsQbittorrent.svelte';
 it('renders and saves the masked qBittorrent API key', async () => {
 	render(SettingsQbittorrent);
 	await page.getByRole('button', { name: 'Expand' }).click();
-	await expect.element(page.getByLabelText('API key')).toHaveValue('qbittorrent****');
+	await expect.element(page.getByLabelText('API key', { exact: true })).toHaveValue(
+		'qbittorrent****'
+	);
 	await page.getByRole('button', { name: 'Save settings' }).click();
 	expect(saveMutate).toHaveBeenCalledWith(expect.objectContaining({ api_key: 'qbittorrent****' }));
 });
