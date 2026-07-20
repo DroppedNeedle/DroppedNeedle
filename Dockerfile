@@ -26,11 +26,13 @@ FROM python:3.13.5-slim
 ARG COMMIT_TAG
 ARG BUILD_DATE
 ARG DROPPEDNEEDLE_SOURCE_REVISION=unknown
+ARG IMAGE_SOURCE=https://github.com/DroppedNeedle/DroppedNeedle
+ARG DROPPEDNEEDLE_RELEASES_REPOSITORY=DroppedNeedle/DroppedNeedle
 
 LABEL org.opencontainers.image.title="DroppedNeedle" \
       org.opencontainers.image.description="Music request and discovery app with a built-in native library + download engine" \
-      org.opencontainers.image.url="https://github.com/DroppedNeedle/DroppedNeedle" \
-      org.opencontainers.image.source="https://github.com/DroppedNeedle/DroppedNeedle" \
+      org.opencontainers.image.url="${IMAGE_SOURCE}" \
+      org.opencontainers.image.source="${IMAGE_SOURCE}" \
       org.opencontainers.image.version="${COMMIT_TAG}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.licenses="AGPL-3.0" \
@@ -42,7 +44,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=8688 \
     COMMIT_TAG=${COMMIT_TAG} \
     BUILD_DATE=${BUILD_DATE} \
-    DROPPEDNEEDLE_SOURCE_REVISION=${DROPPEDNEEDLE_SOURCE_REVISION}
+    DROPPEDNEEDLE_SOURCE_REVISION=${DROPPEDNEEDLE_SOURCE_REVISION} \
+    DROPPEDNEEDLE_RELEASES_REPOSITORY=${DROPPEDNEEDLE_RELEASES_REPOSITORY}
 
 WORKDIR /app
 

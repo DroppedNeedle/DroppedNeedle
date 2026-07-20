@@ -1,4 +1,5 @@
 import logging
+import os
 
 import httpx
 import msgspec
@@ -9,8 +10,8 @@ from infrastructure.cache.memory_cache import CacheInterface
 
 logger = logging.getLogger(__name__)
 
-GITHUB_API_URL = "https://api.github.com/repos/DroppedNeedle/DroppedNeedle/releases"
-GITHUB_RELEASES_CACHE_KEY = f"{GITHUB_RELEASES_PREFIX}all"
+DEFAULT_RELEASES_REPOSITORY = "DroppedNeedle/DroppedNeedle"
+RELEASES_REPOSITORY_ENV = "DROPPEDNEEDLE_RELEASES_REPOSITORY"
 GITHUB_RELEASES_CACHE_TTL = 3600
 
 
@@ -30,16 +31,26 @@ class GitHubRepository:
     def __init__(self, http_client: httpx.AsyncClient, cache: CacheInterface):
         self._client = http_client
         self._cache = cache
+        configured_repository = os.environ.get(RELEASES_REPOSITORY_ENV)
+        self._releases_repository = (
+            configured_repository or DEFAULT_RELEASES_REPOSITORY
+        ).strip("/")
+        self._api_url = (
+            f"https://api.github.com/repos/{self._releases_repository}/releases"
+        )
+        self._cache_key = (
+            f"{GITHUB_RELEASES_PREFIX}{self._releases_repository.lower()}:all"
+        )
 
     async def fetch_releases(self) -> list[GitHubRelease]:
         """Fetch all non-draft releases from GitHub, with 1hr server-side cache."""
-        cached = await self._cache.get(GITHUB_RELEASES_CACHE_KEY)
+        cached = await self._cache.get(self._cache_key)
         if cached is not None:
             return cached
 
         try:
             response = await self._client.get(
-                GITHUB_API_URL,
+                self._api_url,
                 headers={"Accept": "application/vnd.github+json"},
                 timeout=10.0,
             )
@@ -64,7 +75,7 @@ class GitHubRepository:
             ]
 
             await self._cache.set(
-                GITHUB_RELEASES_CACHE_KEY,
+                self._cache_key,
                 releases,
                 ttl_seconds=GITHUB_RELEASES_CACHE_TTL,
             )

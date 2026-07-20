@@ -1,11 +1,7 @@
-# Fork-only workflow: CI-gated multi-architecture publication, with automatic fork
-# versioning. Tag scheme: v<upstream-base-version>-fork.<N> (e.g. v2.3.0-fork.1) - a
-# hyphenated pre-release identifier, since Docker tags can't carry semver's `+build`
-# metadata. `version` computes the next tag on every branch push (including the daily
-# fork-upstream-sync merge) and resets the counter whenever a new upstream base tag is
-# merged; `release` then tags + publishes a GitHub Release for that same build - no
-# separate rebuild. A manually-pushed `v*` tag or workflow_dispatch run just builds/
-# pushes the image as before (nothing to compute; the ref already is the tag).
+# Fork-only workflow: CI-gated multi-architecture publication with PEP 440
+# post-release tags (v<upstream-base-version>.post<N>). The counter resets when a
+# newer plain upstream release tag becomes reachable. Main pushes publish and release
+# the computed tag; tag and manual runs build without depending on skipped outputs.
 name: Fork Image
 
 on:
@@ -18,6 +14,7 @@ on:
       - "Dockerfile"
       - "entrypoint.sh"
       - ".github/workflows/fork-image.yml"
+      - ".github/scripts/next-fork-version.sh"
   workflow_dispatch:
 
 permissions:
@@ -91,26 +88,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          # Already tagged (e.g. a re-run/duplicate push of the same commit) - skip,
-          # don't mint a second tag/release for an unchanged HEAD.
-          if [[ -n "$(git tag --points-at HEAD)" ]]; then
-            echo "HEAD is already tagged - skipping." >&2
-            echo "tag=" >> "$GITHUB_OUTPUT"
-            exit 0
+          TAG=$(bash .github/scripts/next-fork-version.sh)
+          if [[ -n "$TAG" ]]; then
+            echo "Computed fork tag: $TAG" >&2
+          else
+            echo "HEAD already has a post-release tag - skipping." >&2
           fi
-
-          # Nearest plain upstream version tag reachable from HEAD (excludes our own
-          # -fork.N tags), e.g. v2.3.0.
-          BASE=$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-fork*' --abbrev=0)
-
-          # Highest existing -fork.N build against that same base; next tag is N+1
-          # (starts at 1 when the base has no fork tags yet).
-          LAST_N=$(git tag -l "${BASE}-fork.*" | sed -E "s/^${BASE}-fork\.([0-9]+)$/\1/" | sort -n | tail -1)
-          NEXT_N=$(( ${LAST_N:-0} + 1 ))
-
-          TAG="${BASE}-fork.${NEXT_N}"
-          echo "Computed fork tag: $TAG" >&2
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
   build:
@@ -126,7 +109,7 @@ jobs:
       needs.frontend.result == 'success'
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ needs.version.outputs.tag }}
+      tag: ${{ steps.metadata.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -136,22 +119,34 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Compute image tags
-        id: tags
+      - name: Compute image metadata and tags
+        id: metadata
         shell: bash
+        env:
+          COMPUTED_TAG: ${{ needs.version.outputs.tag }}
         run: |
+          set -euo pipefail
           IMAGE="ghcr.io/alphyriver/droppedneedle"
           SHORT_SHA=$(git rev-parse --short HEAD)
-          FORK_TAG="${{ needs.version.outputs.tag }}"
+          CREATED=$(git log -1 --pretty=%cI)
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          elif [[ -n "$COMPUTED_TAG" ]]; then
+            VERSION="$COMPUTED_TAG"
+          else
+            VERSION="dev"
+          fi
           {
+            echo "version=$VERSION"
+            echo "created=$CREATED"
             echo "tags<<EOF"
             echo "$IMAGE:latest"
             echo "$IMAGE:sha-$SHORT_SHA"
             if [[ "$GITHUB_REF" == refs/tags/* ]]; then
               echo "$IMAGE:${GITHUB_REF#refs/tags/}"
             fi
-            if [[ -n "$FORK_TAG" ]]; then
-              echo "$IMAGE:$FORK_TAG"
+            if [[ -n "$COMPUTED_TAG" ]]; then
+              echo "$IMAGE:$COMPUTED_TAG"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
@@ -161,7 +156,13 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.tags.outputs.tags }}
+          tags: ${{ steps.metadata.outputs.tags }}
+          build-args: |
+            COMMIT_TAG=${{ steps.metadata.outputs.version }}
+            BUILD_DATE=${{ steps.metadata.outputs.created }}
+            DROPPEDNEEDLE_SOURCE_REVISION=${{ github.sha }}
+            IMAGE_SOURCE=https://github.com/${{ github.repository }}
+            DROPPEDNEEDLE_RELEASES_REPOSITORY=${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
