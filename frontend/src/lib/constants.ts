@@ -527,9 +527,15 @@ export const API = {
 	downloadClients: {
 		sabnzbd: () => '/api/v1/download-clients/sabnzbd',
 		sabnzbdTest: () => '/api/v1/download-clients/sabnzbd/test',
+		qbittorrent: () => '/api/v1/download-clients/qbittorrent',
+		qbittorrentTest: () => '/api/v1/download-clients/qbittorrent/test',
 		policy: () => '/api/v1/download-clients/policy',
 		sourcePriority: () => '/api/v1/download-clients/source-priority',
 		wanted: () => '/api/v1/download-clients/wanted'
+	},
+	prowlarr: {
+		settings: () => '/api/v1/prowlarr',
+		test: () => '/api/v1/prowlarr/test'
 	},
 	connectApps: {
 		settings: () => '/api/v1/connect-apps/settings',

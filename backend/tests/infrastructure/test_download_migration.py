@@ -66,6 +66,8 @@ def test_new_manifest_with_explicit_handle_is_not_clobbered():
     assert decoded.handle.source == "usenet"
     assert decoded.handle.job_name == "droppedneedle-t2"
     assert decoded.handle.nzo_id == "SAB_1"
+    assert decoded.handle.external_id == "SAB_1"
+    assert decoded.handle.correlation_id == "droppedneedle-t2"
     assert decoded.source_username is None
 
 
@@ -145,5 +147,5 @@ def test_quarantine_admin_projection_round_trips_soulseek_identity(tmp_path: Pat
     rows = asyncio.run(store.list_quarantine())
     assert rows[0]["username"] == "peerX"
     assert rows[0]["filename"] == "bad.flac"
-    assert rows[0]["client_id"] == "slskd"
+    assert rows[0]["client_id"] == "soulseek"
     assert rows[0]["source"] == "soulseek"

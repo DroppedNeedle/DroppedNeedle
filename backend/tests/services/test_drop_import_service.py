@@ -138,11 +138,14 @@ def _build_service(
 
 
 async def _wait_job(store, job_id: str):
+    # Real wall-clock deadline (~5s): the job does genuine file I/O and tag
+    # parsing in worker threads, so bare sleep(0) turns can run out before it
+    # finishes on a slow machine.
     for _ in range(500):
         job = await store.get_job(job_id)
         if job is not None and job.status != JobStatus.PROCESSING:
             return job
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
     raise AssertionError("job never reached a terminal state")
 
 

@@ -1,0 +1,103 @@
+# Fork-only workflow: CI-gated multi-architecture publication.
+name: Fork Image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "Dockerfile"
+      - "entrypoint.sh"
+      - ".github/workflows/fork-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: fork-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    if: github.repository == 'alphyriver/DroppedNeedle'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - run: pip install -r backend/requirements-dev.txt
+      - run: ruff check backend
+      # The maintenance tests assume a deploy-style checkout: a repo-root
+      # docker-compose.yml (gitignored) plus a dirty worktree (the marker file).
+      - run: cp docker-compose.example.yml docker-compose.yml && touch .ci-dirty-worktree-marker
+      - run: python -m pytest backend/tests
+
+  frontend:
+    if: github.repository == 'alphyriver/DroppedNeedle'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run lint
+      - run: pnpm run format:check
+      - run: pnpm run check
+      - run: pnpm exec vitest run --project server
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec vitest run --project client
+
+  build:
+    if: github.repository == 'alphyriver/DroppedNeedle'
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute image tags
+        id: tags
+        shell: bash
+        run: |
+          IMAGE="ghcr.io/alphyriver/droppedneedle"
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          {
+            echo "tags<<EOF"
+            echo "$IMAGE:latest"
+            echo "$IMAGE:sha-$SHORT_SHA"
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              echo "$IMAGE:${GITHUB_REF#refs/tags/}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false

@@ -50,13 +50,38 @@ class UsenetRelease(AppStruct):
     password: int = 0
 
 
+class TorrentRelease(AppStruct):
+    """One torrent release from a Torznab-capable indexer (release-granular, like
+    ``UsenetRelease``). Shaped from Prowlarr's ``/api/v1/search`` JSON: a release
+    carries a ``download_url`` (a .torrent fetch, possibly proxied through Prowlarr)
+    and/or a ``magnet_url``; at least one is required to enqueue. ``seeders`` is the
+    health signal (0 seeders = dead, dropped at scoring). ``publish_date`` is a unix
+    timestamp. Identity for dedup/quarantine is the same normalised title+size key
+    Usenet uses (``models.download_identity.usenet_identity``)."""
+
+    indexer_id: str
+    indexer_name: str
+    guid: str
+    title: str
+    download_url: str = ""
+    magnet_url: str = ""
+    info_hash: str = ""
+    size_bytes: int = 0
+    category_ids: list[int] = []
+    seeders: int | None = None
+    leechers: int | None = None
+    grabs: int | None = None
+    publish_date: float | None = None
+
+
 class IndexerResult(AppStruct):
-    """A single search result, tagged by ``source`` so both pipelines share one
-    protocol return type. Exactly one of ``soulseek``/``usenet`` is set."""
+    """A single search result, tagged by ``source`` so all pipelines share one
+    protocol return type. Exactly one of ``soulseek``/``usenet``/``torrent`` is set."""
 
     source: str
     soulseek: DownloadSearchResult | None = None
     usenet: UsenetRelease | None = None
+    torrent: TorrentRelease | None = None
 
 
 @runtime_checkable

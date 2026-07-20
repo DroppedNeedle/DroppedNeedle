@@ -7,7 +7,7 @@ service/persistence-layer domain types.
 
 from infrastructure.msgspec_fastapi import AppStruct
 from repositories.protocols.download_client import DownloadSearchResult
-from repositories.protocols.indexer import UsenetRelease
+from repositories.protocols.indexer import TorrentRelease, UsenetRelease
 
 
 class ScoredCandidate(AppStruct):
@@ -31,6 +31,7 @@ class ScoredCandidate(AppStruct):
     parent_directory: str = ""
     files: list[DownloadSearchResult] = []
     usenet_release: UsenetRelease | None = None
+    torrent_release: TorrentRelease | None = None
     coherence: float = 0.0
     file_confidence: float = 0.0
     final_score: float = 0.0

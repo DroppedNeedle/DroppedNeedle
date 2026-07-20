@@ -1830,6 +1830,37 @@ export interface SourcePriority {
 	order: string[];
 }
 
+export interface ProwlarrConnectionSettings {
+	enabled: boolean;
+	url: string;
+	api_key: string;
+	categories: number[];
+}
+
+export interface ProwlarrTestResult {
+	valid: boolean;
+	version?: string | null;
+	message: string;
+	indexers_total: number;
+	indexers_usenet: number;
+	indexers_torrent: number;
+}
+
+export interface QbittorrentConnectionSettings {
+	enabled: boolean;
+	client_type: string;
+	url: string;
+	api_key: string;
+	category: string;
+	downloads_mount: string;
+}
+
+export interface QbittorrentTestResult {
+	valid: boolean;
+	version?: string | null;
+	message: string;
+}
+
 export interface DownloadPolicySettings {
 	quality_min: string;
 	quality_max: string;
@@ -1895,6 +1926,22 @@ export interface UsenetRelease {
 	usenet_date?: number | null;
 }
 
+export interface TorrentRelease {
+	indexer_id: string;
+	indexer_name: string;
+	guid: string;
+	title: string;
+	download_url: string;
+	magnet_url: string;
+	info_hash: string;
+	size_bytes: number;
+	category_ids: number[];
+	seeders?: number | null;
+	leechers?: number | null;
+	grabs?: number | null;
+	publish_date?: number | null;
+}
+
 export interface ScoredCandidate {
 	// "soulseek" | "usenet" - selects the review-card variant (D16). Optional for
 	// backward-compat with older cached candidate blobs (default soulseek).
@@ -1903,6 +1950,7 @@ export interface ScoredCandidate {
 	parent_directory: string;
 	files: DownloadSearchResultFile[];
 	usenet_release?: UsenetRelease | null;
+	torrent_release?: TorrentRelease | null;
 	coherence: number;
 	file_confidence: number;
 	final_score: number;

@@ -66,6 +66,10 @@ class SlskdRepository:
     def client_name(self) -> str:
         return "slskd"
 
+    @property
+    def supported_sources(self) -> frozenset[str]:
+        return frozenset({"soulseek"})
+
     def is_configured(self) -> bool:
         return bool(self._url and self._api_key)
 

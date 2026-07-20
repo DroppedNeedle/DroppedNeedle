@@ -62,5 +62,15 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           pip install -r requirements-dev.txt
 
+      # The maintenance tests (tests/infrastructure/test_feedback_fixes_maintenance.py,
+      # test_maintenance_manifest.py) assume a deploy-style checkout: a repo-root
+      # docker-compose.yml plus a DIRTY worktree. The compose copy is gitignored, so
+      # it can't dirty the tree itself - add a non-ignored marker file for that.
+      - name: Provide deploy-style checkout state for maintenance tests
+        working-directory: .
+        run: |
+          cp docker-compose.example.yml docker-compose.yml
+          touch .ci-dirty-worktree-marker
+
       - name: Run tests
         run: python -m pytest

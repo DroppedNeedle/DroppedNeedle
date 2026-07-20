@@ -61,6 +61,10 @@ class SabnzbdDownloadClient:
     def client_name(self) -> str:
         return "sabnzbd"
 
+    @property
+    def supported_sources(self) -> frozenset[str]:
+        return frozenset({"usenet"})
+
     def is_configured(self) -> bool:
         return bool(self._url and self._api_key)
 
@@ -95,7 +99,12 @@ class SabnzbdDownloadClient:
         )
         if not response.nzo_ids:
             raise SabnzbdApiError("SABnzbd rejected the NZB (no nzo_id returned)")
-        return TaskHandle(source="usenet", job_name=job_name, nzo_id=response.nzo_ids[0])
+        return TaskHandle(
+            source="usenet",
+            job_name=job_name,
+            external_id=response.nzo_ids[0],
+            correlation_id=job_name,
+        )
 
     async def get_status(self, handle: TaskHandle) -> DownloadTaskStatus:
         queue = await self._client.queue()
@@ -178,13 +187,13 @@ class SabnzbdDownloadClient:
 
     @staticmethod
     def _matches(slot_id: str, slot_name: str, handle: TaskHandle) -> bool:
-        if handle.nzo_id and slot_id == handle.nzo_id:
+        if handle.external_id and slot_id == handle.external_id:
             return True
-        return bool(handle.job_name) and slot_name == handle.job_name
+        return bool(handle.correlation_id) and slot_name == handle.correlation_id
 
     async def _resolve_nzo_id(self, handle: TaskHandle) -> str:
-        if handle.nzo_id:
-            return handle.nzo_id
+        if handle.external_id:
+            return handle.external_id
         slot = await self._find_history_slot(handle)
         if slot is not None:
             return slot.nzo_id
@@ -202,8 +211,8 @@ class SabnzbdDownloadClient:
         # release. job_name search is only the pre-enqueue crash-recovery fallback.
         history = await self._client.history(
             limit=_HISTORY_LIMIT,
-            nzo_ids=handle.nzo_id or None,
-            search=None if handle.nzo_id else (handle.job_name or None),
+            nzo_ids=handle.external_id or None,
+            search=None if handle.external_id else (handle.correlation_id or None),
         )
         for slot in history.slots:
             if self._matches(slot.nzo_id, slot.name, handle):

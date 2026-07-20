@@ -50,9 +50,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Fixed v1 source -> client_type map (the DownloadTask.download_client value).
-_CLIENT_FOR_SOURCE = {"soulseek": "slskd", "usenet": "sabnzbd"}
-
 ALREADY_IN_LIBRARY = "already_in_library"
 
 _LOSSLESS = {"flac", "alac", "wav", "ape", "wv"}
@@ -109,6 +106,9 @@ class DownloadService:
         usenet_indexer=None,  # IndexerProtocol | None
         usenet_scorer=None,  # NewznabReleaseScorer | None
         usenet_enabled: bool = False,
+        torrent_indexer=None,  # IndexerProtocol | None
+        torrent_scorer=None,  # TorrentReleaseScorer | None
+        torrent_enabled: bool = False,
         soulseek_enabled: bool = True,  # the slskd enable toggle (separate from is_configured)
         upgrade_allowed: bool = False,
         quality_cutoff: str = "lossless",
@@ -122,6 +122,13 @@ class DownloadService:
         self._usenet_indexer = usenet_indexer
         self._usenet_scorer = usenet_scorer
         self._usenet_enabled = usenet_enabled and usenet_indexer is not None
+        self._torrent_indexer = torrent_indexer
+        self._torrent_scorer = torrent_scorer
+        self._torrent_enabled = (
+            torrent_enabled
+            and torrent_indexer is not None
+            and torrent_scorer is not None
+        )
         self._soulseek_enabled = soulseek_enabled
         # Cutoff/upgrade (step 8). Default upgrade_allowed=False -> the album gate is the prior
         # binary "have it -> skip"; opt in to re-acquire a sub-cutoff album as an upgrade.
@@ -312,6 +319,11 @@ class DownloadService:
                 candidates.extend(await self._search_usenet(target))
             except Exception:
                 logger.exception("usenet album search failed for job %s", job_id)
+        if self._torrent_enabled:
+            try:
+                candidates.extend(await self._search_torrent(target))
+            except Exception:
+                logger.exception("torrent album search failed for job %s", job_id)
 
         if not candidates and not soulseek_ok:
             await self._store.update_search_job_status(
@@ -383,6 +395,19 @@ class DownloadService:
             track_count=target.track_count,
         )
 
+    async def _search_torrent(self, target: TargetAlbum) -> list[ScoredCandidate]:
+        indexer_results = await self._torrent_indexer.search_album(
+            target.artist_name, target.album_title, target.year, target.track_count
+        )
+        releases = [r.torrent for r in indexer_results if r.torrent is not None]
+        return await self._torrent_scorer.rank(
+            target,
+            releases,
+            auto_accept_threshold=self._auto,
+            manual_threshold=self._manual,
+            track_count=target.track_count,
+        )
+
     async def scout_album(
         self,
         artist_name: str,
@@ -429,6 +454,13 @@ class DownloadService:
             except Exception:
                 logger.exception(
                     "usenet scout search failed for %s", release_group_mbid
+                )
+        if self._torrent_enabled:
+            try:
+                candidates.extend(await self._search_torrent(target))
+            except Exception:
+                logger.exception(
+                    "torrent scout search failed for %s", release_group_mbid
                 )
         return candidates
 
@@ -486,7 +518,7 @@ class DownloadService:
                 source_directory=candidate.parent_directory,
                 preflight_score=candidate.final_score,
                 source=candidate.source,
-                download_client=_CLIENT_FOR_SOURCE.get(candidate.source, "slskd"),
+                download_client=self._orchestrator.client_name_for_source(candidate.source),
             )
             self._orchestrator.dispatch(parked.id)
             return parked.id
@@ -518,7 +550,7 @@ class DownloadService:
             track_duration_seconds=track_duration_seconds,
             origin="user",
             source=candidate.source,
-            download_client=_CLIENT_FOR_SOURCE.get(candidate.source, "slskd"),
+            download_client=self._orchestrator.client_name_for_source(candidate.source),
             source_username=candidate.username,
             source_directory=candidate.parent_directory,
             preflight_score=candidate.final_score,

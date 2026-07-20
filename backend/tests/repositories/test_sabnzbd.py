@@ -45,7 +45,7 @@ async def test_auth_error_surfaces():
 
 
 @pytest.mark.asyncio
-async def test_enqueue_returns_handle_with_nzo_id(monkeypatch):
+async def test_enqueue_returns_handle_with_external_id(monkeypatch):
     mock = sabnzbd_mock.SabnzbdMock()
     mock.add_nzo_ids = ["nzo-xyz"]
     dc = _dc(mock)
@@ -59,7 +59,8 @@ async def test_enqueue_returns_handle_with_nzo_id(monkeypatch):
                        job_name="droppedneedle-t1", category="audio")
     )
     assert handle.source == "usenet"
-    assert handle.nzo_id == "nzo-xyz"
+    assert handle.external_id == "nzo-xyz"
+    assert handle.correlation_id == "droppedneedle-t1"
     assert handle.job_name == "droppedneedle-t1"
 
 

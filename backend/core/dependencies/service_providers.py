@@ -1970,6 +1970,20 @@ def get_newznab_release_scorer() -> "NewznabReleaseScorer":
 
 
 @singleton
+def get_torrent_release_scorer() -> "TorrentReleaseScorer":
+    from services.native.torrent_release_scorer import TorrentReleaseScorer
+
+    from .repo_providers import get_download_store
+
+    policy = get_preferences_service().get_download_policy()
+    return TorrentReleaseScorer(
+        get_download_store(),
+        flac_mp3_only=policy.flac_mp3_only,
+        policy=_build_spec_policy(policy),
+    )
+
+
+@singleton
 def get_download_manifest_codec() -> "ManifestCodec":
     from models.download_manifest import ManifestCodec
 
@@ -1987,9 +2001,11 @@ def _build_download_orchestrator(
     from .repo_providers import (
         get_download_client_repository,
         get_download_store,
-        get_newznab_indexer,
+        get_prowlarr_indexer,
+        get_source_download_client,
         get_sabnzbd_download_client,
         get_slskd_indexer,
+        get_usenet_search_indexer,
     )
 
     prefs = get_preferences_service()
@@ -1997,7 +2013,9 @@ def _build_download_orchestrator(
     policy = prefs.get_download_policy()
     dc = prefs.get_download_client_settings_raw()
     sab = prefs.get_sabnzbd_connection_raw()
+    qbt = prefs.get_qbittorrent_connection_raw()
     usenet_enabled = prefs.is_usenet_ready()
+    torrent_enabled = prefs.is_torrent_ready()
     # manifest is metadata only (audio lands in the client's dir), so staging need not be
     # on the library filesystem; default it under cache_dir
     staging_path = (
@@ -2028,7 +2046,7 @@ def _build_download_orchestrator(
         auto_retry_base_interval_minutes=policy.auto_retry_base_interval_minutes,
         request_history=get_request_history_store(),
         on_import_callback=on_import_callback,
-        usenet_indexer=get_newznab_indexer(),
+        usenet_indexer=get_usenet_search_indexer(),
         usenet_client=get_sabnzbd_download_client(),
         usenet_scorer=get_newznab_release_scorer(),
         usenet_enabled=usenet_enabled,
@@ -2039,6 +2057,10 @@ def _build_download_orchestrator(
         usenet_priority=sab.priority,
         usenet_post_processing=sab.post_processing,
         usenet_min_release_age_minutes=policy.usenet_min_release_age_minutes,
+        torrent_indexer=get_prowlarr_indexer(),
+        torrent_client=get_source_download_client("torrent", qbt.client_type),
+        torrent_scorer=get_torrent_release_scorer(),
+        torrent_enabled=torrent_enabled,
         # Fresh reader (not the snapshot above) so an automatic re-dispatch re-gates a
         # stored candidate against the CURRENT quality range even mid-flight (Phase 2).
         get_download_policy=lambda: get_preferences_service().get_download_policy(),
@@ -2086,14 +2108,16 @@ def _build_download_service(
         get_album_release_pin_store,
         get_download_client_repository,
         get_download_store,
-        get_newznab_indexer,
+        get_prowlarr_indexer,
         get_slskd_indexer,
+        get_usenet_search_indexer,
     )
 
     prefs = get_preferences_service()
     dc = prefs.get_download_client_settings_raw()
     policy = prefs.get_download_policy()
     usenet_enabled = prefs.is_usenet_ready()
+    torrent_enabled = prefs.is_torrent_ready()
     # The service is "enabled" if ANY source can act (slskd OR usenet), so a Usenet-only
     # install isn't blocked by the slskd-disabled guard.
     return DownloadService(
@@ -2111,10 +2135,13 @@ def _build_download_service(
         track_matcher=get_track_matcher(),
         auto_accept_threshold=policy.preflight_score_auto_accept,
         manual_threshold=policy.preflight_score_manual_min,
-        enabled=dc.enabled or usenet_enabled,
-        usenet_indexer=get_newznab_indexer(),
+        enabled=dc.enabled or usenet_enabled or torrent_enabled,
+        usenet_indexer=get_usenet_search_indexer(),
         usenet_scorer=get_newznab_release_scorer(),
         usenet_enabled=usenet_enabled,
+        torrent_indexer=get_prowlarr_indexer(),
+        torrent_scorer=get_torrent_release_scorer(),
+        torrent_enabled=torrent_enabled,
         soulseek_enabled=dc.enabled,
         upgrade_allowed=policy.upgrade_allowed,
         quality_cutoff=policy.quality_cutoff,

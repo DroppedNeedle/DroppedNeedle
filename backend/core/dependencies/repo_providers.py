@@ -733,6 +733,108 @@ def get_sabnzbd_download_client() -> "SabnzbdDownloadClient":
     )
 
 
+@singleton
+def get_prowlarr_client() -> "ProwlarrClient":
+    from repositories.prowlarr.prowlarr_client import ProwlarrClient
+
+    pr = get_preferences_service().get_prowlarr_connection_raw()
+    http = HttpClientFactory.get_client(
+        name="prowlarr", timeout=60.0, connect_timeout=5.0
+    )
+    return ProwlarrClient(http, pr.url, pr.api_key)
+
+
+@singleton
+def get_prowlarr_indexer() -> "ProwlarrIndexer":
+    """The single-connection Prowlarr indexer (fork feature): one ``IndexerProtocol``
+    covering every indexer the user manages in Prowlarr. Returns BOTH ``usenet`` and
+    ``torrent`` result arms; each strategy filters the arm it owns."""
+    from repositories.prowlarr.prowlarr_indexer import ProwlarrIndexer
+
+    prefs = get_preferences_service()
+    pr = prefs.get_prowlarr_connection_raw()
+    retry_interval_s = (
+        prefs.get_download_policy().auto_retry_base_interval_minutes * 60.0
+    )
+    search_cache_ttl = max(30.0, min(300.0, retry_interval_s * 0.5))
+    return ProwlarrIndexer(
+        get_prowlarr_client(),
+        categories=pr.categories,
+        enabled=pr.enabled and bool(pr.url and pr.api_key),
+        search_cache_ttl=search_cache_ttl,
+    )
+
+
+def get_usenet_search_indexer() -> "IndexerProtocol":
+    """The indexer the USENET strategy searches with: Prowlarr when configured
+    (one connection, all indexers), else the per-indexer Newznab fan-out."""
+    if get_preferences_service().is_prowlarr_configured():
+        return get_prowlarr_indexer()
+    return get_newznab_indexer()
+
+
+def build_prowlarr_client(url: str, api_key: str) -> "ProwlarrClient":
+    """Transient (not cached) client from caller-supplied credentials, for the
+    Prowlarr Test-connection route."""
+    from repositories.prowlarr.prowlarr_client import ProwlarrClient
+
+    http = HttpClientFactory.get_client(
+        name="prowlarr-verify", timeout=30.0, connect_timeout=5.0
+    )
+    return ProwlarrClient(http, url, api_key)
+
+
+@singleton
+def get_qbittorrent_client() -> "QbittorrentClient":
+    from repositories.qbittorrent.qbittorrent_client import QbittorrentClient
+
+    qbt = get_preferences_service().get_qbittorrent_connection_raw()
+    http = HttpClientFactory.get_client(
+        name="qbittorrent", timeout=60.0, connect_timeout=5.0
+    )
+    return QbittorrentClient(http, qbt.url, qbt.api_key)
+
+
+@singleton
+def get_qbittorrent_download_client() -> "QbittorrentDownloadClient":
+    from pathlib import Path
+
+    from repositories.qbittorrent.qbittorrent_download_client import (
+        QbittorrentDownloadClient,
+    )
+
+    qbt = get_preferences_service().get_qbittorrent_connection_raw()
+    return QbittorrentDownloadClient(
+        get_qbittorrent_client(),
+        qbt.url,
+        qbt.api_key,
+        Path(qbt.downloads_mount),
+        category=qbt.category,
+    )
+
+
+def build_qbittorrent_download_client(
+    url: str, api_key: str
+) -> "QbittorrentDownloadClient":
+    """Transient client from caller-supplied credentials, for the Test-connection route."""
+    from pathlib import Path
+
+    from repositories.qbittorrent.qbittorrent_client import QbittorrentClient
+    from repositories.qbittorrent.qbittorrent_download_client import (
+        QbittorrentDownloadClient,
+    )
+
+    http = HttpClientFactory.get_client(
+        name="qbittorrent-verify", timeout=60.0, connect_timeout=5.0
+    )
+    return QbittorrentDownloadClient(
+        QbittorrentClient(http, url, api_key),
+        url,
+        api_key,
+        Path("/tmp"),
+    )
+
+
 def build_sabnzbd_download_client(url: str, api_key: str) -> "SabnzbdDownloadClient":
     """Transient client from caller-supplied credentials, for the Test-connection route."""
     from pathlib import Path
@@ -748,36 +850,36 @@ def build_sabnzbd_download_client(url: str, api_key: str) -> "SabnzbdDownloadCli
     )
 
 
-@singleton
-def get_download_client_repository() -> "DownloadClientProtocol":
-    from core.exceptions import ConfigurationError
-
-    dc = get_preferences_service().get_download_client_settings()
-    match dc.client_type:
-        case "slskd":
-            return get_slskd_repository()
-        case other:
-            raise ConfigurationError(f"Unknown download client type: {other!r}")
+_DOWNLOAD_CLIENT_PROVIDERS = {
+    "slskd": get_slskd_repository,
+    "sabnzbd": get_sabnzbd_download_client,
+    "qbittorrent": get_qbittorrent_download_client,
+}
 
 
 def get_download_client(client_type: str) -> "DownloadClientProtocol":
-    """Resolve a download client by type (the fixed v1 map: ``slskd``/``sabnzbd``).
-    NZBGet adds one case later (D5)."""
+    """Resolve a concrete adapter from the single client registry."""
     from core.exceptions import ConfigurationError
 
-    match client_type:
-        case "slskd":
-            return get_slskd_repository()
-        case "sabnzbd":
-            return get_sabnzbd_download_client()
-        case other:
-            raise ConfigurationError(f"Unknown download client type: {other!r}")
+    provider = _DOWNLOAD_CLIENT_PROVIDERS.get(client_type)
+    if provider is None:
+        raise ConfigurationError(f"Unknown download client type: {client_type!r}")
+    return provider()
 
 
-# Fixed v1 source → client_type map (assembled in get_sources, dispatched here).
-_SOURCE_CLIENT_TYPE = {"soulseek": "slskd", "usenet": "sabnzbd"}
+def get_source_download_client(source: str, client_type: str) -> "DownloadClientProtocol":
+    """Resolve a configured client and verify that it supports the source."""
+    from core.exceptions import ConfigurationError
+
+    client = get_download_client(client_type)
+    if source not in client.supported_sources:
+        raise ConfigurationError(
+            f"Download client {client_type!r} does not support source {source!r}"
+        )
+    return client
 
 
-def get_download_client_for_source(source: str) -> "DownloadClientProtocol":
-    """Resolve the download client that owns a given acquisition source."""
-    return get_download_client(_SOURCE_CLIENT_TYPE.get(source, source))
+@singleton
+def get_download_client_repository() -> "DownloadClientProtocol":
+    dc = get_preferences_service().get_download_client_settings()
+    return get_source_download_client("soulseek", dc.client_type)

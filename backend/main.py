@@ -109,6 +109,8 @@ from api.v1.routes import auth as auth_routes
 from api.v1.routes import download_client as download_client_routes
 from api.v1.routes import download_clients as download_clients_routes
 from api.v1.routes import indexers as indexers_routes
+from api.v1.routes import prowlarr as prowlarr_routes
+from api.v1.routes import qbittorrent as qbittorrent_routes
 from api.v1.routes import lidarr_import as lidarr_import_routes
 from api.v1.routes import import_drop as import_drop_routes
 from api.v1.routes import free_music as free_music_routes
@@ -853,6 +855,8 @@ v1_router.include_router(auth_routes.router)
 v1_router.include_router(download_client_routes.router)
 v1_router.include_router(download_clients_routes.router)
 v1_router.include_router(indexers_routes.router)
+v1_router.include_router(prowlarr_routes.router)
+v1_router.include_router(qbittorrent_routes.router)
 v1_router.include_router(lidarr_import_routes.router)
 v1_router.include_router(import_drop_routes.router)
 v1_router.include_router(free_music_routes.router)

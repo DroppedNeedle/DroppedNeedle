@@ -1,0 +1,89 @@
+# Fork-only workflow (alphyriver/DroppedNeedle): keep the fork current with
+# DroppedNeedle/DroppedNeedle.
+#
+# Daily (and on demand) it merges upstream/main into the fork's main. A clean
+# merge is pushed directly using the SYNC_TOKEN PAT secret - a PAT (not the
+# default GITHUB_TOKEN) so the push triggers the fork's CI + image workflows.
+# On a conflict it force-pushes upstream's head to the `upstream-sync` branch,
+# opens (or updates) a PR into main for manual resolution, and fails the job so
+# GitHub sends a notification. Never rebases, never force-pushes main.
+#
+# Setup (one-time): create a classic PAT with `repo` + `workflow` scope and add
+# it as the SYNC_TOKEN repository secret.
+
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/DroppedNeedle/DroppedNeedle.git
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "upstream-sync[bot]"
+          git config user.email "upstream-sync@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: git fetch "$UPSTREAM_REPO" main:refs/remotes/upstream/main
+
+      - name: Check for new upstream commits
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count main..upstream/main)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "Fork is $BEHIND commit(s) behind upstream."
+
+      - name: Merge upstream/main
+        id: merge
+        if: steps.check.outputs.behind != '0'
+        run: |
+          if git merge --no-edit upstream/main; then
+            echo "result=clean" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort
+            echo "result=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push clean merge
+        if: steps.merge.outputs.result == 'clean'
+        run: git push origin main
+
+      - name: Open conflict PR
+        if: steps.merge.outputs.result == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          git push -f origin upstream/main:refs/heads/upstream-sync
+          gh pr create \
+            --base main --head upstream-sync \
+            --title "Upstream sync: manual merge needed" \
+            --body "Automatic merge of upstream/main conflicted with the fork's changes (most likely in the acquisition seams: strategy.py, repo_providers.py, settings +page.svelte). Resolve locally: \`git fetch origin upstream-sync && git merge origin/upstream-sync\` on main, fix conflicts, push." \
+            2>/dev/null || echo "Conflict PR already open - branch updated."
+
+      - name: Fail on conflict (notification)
+        if: steps.merge.outputs.result == 'conflict'
+        run: |
+          echo "::error::Upstream merge conflicted - see the upstream-sync PR."
+          exit 1

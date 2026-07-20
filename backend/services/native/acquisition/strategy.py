@@ -389,7 +389,7 @@ class UsenetStrategy:
         return candidate.username
 
     def is_cancelable(self, task, manifest) -> bool:  # noqa: ANN001, ARG002
-        # SABnzbd is correlated by the nzo_id/job_name in the handle alone.
+        # The client is correlated by the identifiers in the generic handle alone.
         return manifest.handle is not None
 
     def local_fault_message(self, attempt_mount: bool) -> str:
@@ -524,8 +524,8 @@ class UsenetStrategy:
                     task_id=task.id,
                     source="usenet",
                     nzb_url=release.nzb_url,
-                    job_name=job_name,
                     category=self._category,
+                    job_name=job_name,
                     priority=self._priority,
                     post_processing=self._post_processing,
                 )
@@ -534,7 +534,7 @@ class UsenetStrategy:
             logger.exception("Usenet enqueue failed for task %s", task.id)
             raise OrchestrationError("enqueue failed") from exc
 
-        # Re-persist the manifest with the nzo_id filled in (the post-enqueue batch id).
+        # Re-persist the manifest with the post-enqueue external identifier.
         manifest.handle = handle
         manifest_path.write_bytes(self._manifest_codec.encode(manifest))
         logger.info(
@@ -544,7 +544,7 @@ class UsenetStrategy:
                 "source": "usenet",
                 "release_group_mbid": task.release_group_mbid,
                 "job_name": job_name,
-                "nzo_id": handle.nzo_id,
+                "external_id": handle.external_id,
                 "tracklist": len(expected_tracks),
                 "total_size_bytes": release.size_bytes,
                 "via_album_nzb": task.download_type == "track",
@@ -618,6 +618,283 @@ class UsenetStrategy:
         """Re-poll the completed job's folder for audio, tolerating the window where a
         separate NFS client's directory-attribute cache delays visibility. Returns as soon
         as any file appears, else [] after polling for up to ``_USENET_SETTLE_SECONDS``."""
+        interval = self._import_settle
+        tries = max(1, int(_USENET_SETTLE_SECONDS / interval)) if interval > 0 else 5
+        for _ in range(tries):
+            if interval > 0:
+                await asyncio.sleep(interval)
+            files = await self._client.list_completed_files(handle)
+            if files:
+                return files
+        return []
+
+
+class TorrentStrategy:
+    """Prowlarr (Torznab) search + a torrent-capable download client. Always searches the album (a
+    per-track grab fetches the album torrent, mirroring Usenet D4); imports the completed
+    torrent's folder against the MB tracklist.
+
+    **Private-tracker seeding rule:** the torrent's payload must keep seeding after
+    import, but ``FileProcessor`` MOVES its input files into the library. So
+    ``import_files`` first COPIES the completed files into a per-task scratch dir under
+    staging and hands the COPIES to the folder import - the torrent client's files are never
+    touched, and the client adapter policy never deletes a completed torrent.
+    """
+
+    name = "torrent"
+    # A 0-seeder/stalled torrent moves 0 bytes and nothing will change that (unlike a
+    # queued SABnzbd job) - let the queued watchdog give up on it instead of the 6h ceiling.
+    applies_queued_timeout = True
+    has_local_disk_faults = False  # delegated clients report mount health separately
+
+    def __init__(  # noqa: ANN001
+        self, *, indexer, scorer, client, store, file_processor, import_settle_seconds,
+        staging, manifest_codec, naming_template, album_service, library=None,
+    ):
+        self._indexer = indexer
+        self._scorer = scorer
+        self._client = client
+        self._store = store
+        self._file_processor = file_processor
+        self._import_settle = import_settle_seconds
+        self._staging = Path(staging)
+        self._manifest_codec = manifest_codec
+        self._naming_template = naming_template
+        self._album_service = album_service
+        self._library = library
+
+    @property
+    def client(self):  # noqa: ANN201
+        return self._client
+
+    def candidate_identity(self, candidate) -> str:  # noqa: ANN001
+        if candidate.torrent_release is not None:
+            return usenet_identity(
+                candidate.torrent_release.title, candidate.torrent_release.size_bytes
+            )
+        return candidate.username
+
+    def is_cancelable(self, task, manifest) -> bool:  # noqa: ANN001, ARG002
+        # The concrete client owns correlation details inside the generic handle.
+        return manifest.handle is not None
+
+    def local_fault_message(self, attempt_mount: bool) -> str:  # noqa: ARG002
+        return "downloads directory not accessible - check the torrent client downloads mount"
+
+    async def maybe_blocklist_on_failure(self, task, status, *, completed, enumerated_any):  # noqa: ANN001, ANN201, ARG002
+        """Blocklist a dead/under-delivering torrent by its title+size identity before
+        failover. No propagation leniency (torrents don't propagate - a dead torrent
+        stays dead), so both a hard failure and a confirmed under-delivery blocklist."""
+        if task.search_job_id is None or task.candidate_index is None:
+            return
+        candidates = await self._store.get_search_job_candidates(task.search_job_id)
+        if not (0 <= task.candidate_index < len(candidates)):
+            return
+        release = candidates[task.candidate_index].torrent_release
+        if release is None:
+            return
+        stored_reason = "verify_failed" if (completed and enumerated_any) else "download_failed"
+        await self._store.record_quarantine(
+            source="torrent",
+            identity=usenet_identity(release.title, release.size_bytes),
+            reason=stored_reason,
+            release_group_mbid=task.release_group_mbid,
+        )
+        logger.info(
+            "download.quarantined",
+            extra={
+                "task_id": task.id,
+                "source": "torrent",
+                "reason": stored_reason,
+                "identity": usenet_identity(release.title, release.size_bytes),
+            },
+        )
+
+    async def search_and_score(self, task, *, timeout, auto, manual):  # noqa: ANN001, ANN201
+        held_tier = await _upgrade_held_tier(self._library, task)
+        target = TargetAlbum(
+            artist_name=task.artist_name, album_title=task.album_title,
+            year=task.year, track_count=task.track_count,
+            release_group_mbid=task.release_group_mbid,
+        )
+        indexer_results = await self._indexer.search_album(
+            task.artist_name, task.album_title, task.year, task.track_count, timeout=timeout
+        )
+        releases = [r.torrent for r in indexer_results if r.torrent is not None]
+        return await self._scorer.rank(
+            target, releases, auto_accept_threshold=auto,
+            manual_threshold=manual, track_count=task.track_count,
+            held_tier=held_tier,
+        )
+
+    async def enqueue(self, task, candidate, *, strict_track_duration, hold_on_wrong_track=False):  # noqa: ANN001, ANN201, ARG002
+        release = candidate.torrent_release
+        if release is None:
+            raise OrchestrationError("torrent candidate has no release")
+        use_canonical = (
+            task.download_type == "track"
+            and strict_track_duration
+            and bool(task.track_duration_seconds)
+        )
+        expected_tracks = await self._expected_tracks(task)
+        if not expected_tracks:
+            raise OrchestrationError("could not resolve the album tracklist")
+        # Unique per failover candidate (same reasoning as the Usenet job_name).
+        job_name = f"droppedneedle-{task.id}-{task.candidate_index or 0}"
+        await self._store.update_status(
+            task.id, "downloading", files_total=len(expected_tracks),
+            total_size_bytes=release.size_bytes, started_at=time.time(),
+        )
+        manifest = DownloadManifest(
+            task_id=task.id,
+            handle=TaskHandle(source="torrent", job_name=job_name),
+            origin=task.origin,
+            release_group_mbid=task.release_group_mbid,
+            release_mbid=task.release_mbid,
+            artist_mbid=task.artist_mbid,
+            artist_name=task.artist_name,
+            album_title=task.album_title,
+            year=task.year,
+            is_track=use_canonical,
+            naming_template=self._naming_template,
+            target_files=[],
+            expected_tracks=expected_tracks,
+        )
+        self._staging.joinpath(task.id).mkdir(parents=True, exist_ok=True)
+        manifest_path = self._staging / task.id / "manifest.json"
+        manifest_path.write_bytes(self._manifest_codec.encode(manifest))
+
+        try:
+            handle = await self._client.enqueue(
+                EnqueueRequest(
+                    task_id=task.id,
+                    source="torrent",
+                    magnet_uri=release.magnet_url or None,
+                    torrent_url=release.download_url or None,
+                    content_id=release.info_hash or None,
+                    job_name=job_name,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - any client error -> task failed
+            logger.exception("Torrent enqueue failed for task %s", task.id)
+            raise OrchestrationError("enqueue failed") from exc
+
+        # Re-persist the manifest with the client-owned external id filled in.
+        manifest.handle = handle
+        manifest_path.write_bytes(self._manifest_codec.encode(manifest))
+        logger.info(
+            "download.enqueued",
+            extra={
+                "task_id": task.id,
+                "source": "torrent",
+                "release_group_mbid": task.release_group_mbid,
+                "job_name": job_name,
+                "external_id": handle.external_id,
+                "tracklist": len(expected_tracks),
+                "total_size_bytes": release.size_bytes,
+                "via_album_torrent": task.download_type == "track",
+            },
+        )
+
+    async def import_files(self, task, manifest, *, only_filenames=None, completed=False):  # noqa: ANN001, ANN201, ARG002
+        # Folder-based import (D18) with the seeding-safe COPY step: the file processor
+        # MOVES its inputs into the library, so hand it copies, never the torrent client payload.
+        files = await self._client.list_completed_files(manifest.handle)
+        if not files and completed:
+            files = await self._settle_files(manifest.handle)
+        enumerated = len(files)
+        logger.info(
+            "download.processing",
+            extra={"task_id": task.id, "source": "torrent", "enumerated": enumerated},
+        )
+        if not files and completed:
+            if not await self._client.downloads_mount_healthy():
+                logger.warning("download.torrent_mount_unhealthy", extra={"task_id": task.id})
+                await asyncio.to_thread(self._cleanup_scratch, task.id)
+                return ProcessResult(
+                    succeeded=[],
+                    failed=[FileFailure(filename="", reason=DOWNLOADS_MOUNT_UNAVAILABLE)],
+                ), enumerated
+        try:
+            copies = await asyncio.to_thread(self._copy_for_import, task.id, files)
+            result = await self._file_processor.process_downloaded_folder(manifest, copies)
+            if result.succeeded:
+                await self._store.set_final_path(
+                    task.id, str(Path(result.succeeded[0]).parent)
+                )
+            return result, enumerated
+        finally:
+            await asyncio.to_thread(self._cleanup_scratch, task.id)
+
+    def _copy_for_import(self, task_id: str, files: "list[Path]") -> "list[Path]":
+        """Copy the torrent's completed audio files into a per-task scratch dir under
+        staging, preserving structure relative to their common parent (multi-disc albums
+        reuse filenames across disc folders). Sync I/O - the caller offloads it."""
+        import os
+        import shutil
+
+        if not files:
+            return []
+        scratch = self._staging / task_id / "torrent-import"
+        common = Path(os.path.commonpath([str(f.parent) for f in files]))
+        out: list[Path] = []
+        for src in files:
+            try:
+                rel = src.relative_to(common)
+            except ValueError:
+                rel = Path(src.name)
+            dest = scratch / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.copy2(src, dest)
+            except OSError as exc:
+                logger.warning("torrent import copy failed for %s: %s", src.name, exc)
+                continue
+            out.append(dest)
+        return out
+
+    def _cleanup_scratch(self, task_id: str) -> None:
+        """Best-effort removal of whatever the import left in the scratch dir (imported
+        files were MOVED out of it; failures may leave copies behind)."""
+        import shutil
+
+        scratch = self._staging / task_id / "torrent-import"
+        shutil.rmtree(scratch, ignore_errors=True)
+
+    async def _expected_tracks(self, task):  # noqa: ANN001, ANN201
+        """The MB tracklist the folder-import matches files against (same shape as
+        ``UsenetStrategy._expected_tracks``)."""
+        if task.download_type == "track":
+            return [
+                ExpectedTrack(
+                    track_number=task.track_number or 1,
+                    disc_number=task.disc_number or 1,
+                    duration_seconds=task.track_duration_seconds,
+                    recording_mbid=task.recording_mbid,
+                    title=task.track_title,
+                )
+            ]
+        if self._album_service is None or not task.release_group_mbid:
+            return []
+        try:
+            info = await self._album_service.get_album_tracks_info(task.release_group_mbid)
+        except Exception:  # noqa: BLE001 - tracklist resolution must not crash the task
+            logger.warning("Could not resolve MB tracklist for %s", task.release_group_mbid)
+            return []
+        return [
+            ExpectedTrack(
+                track_number=track.position,
+                disc_number=track.disc_number or 1,
+                duration_seconds=(track.length / 1000.0) if track.length else None,
+                recording_mbid=track.recording_id,
+                title=track.title,
+            )
+            for track in info.tracks
+        ]
+
+    async def _settle_files(self, handle):  # noqa: ANN001, ANN201
+        """Re-poll the completed torrent's folder for audio (NFS attribute-cache lag
+        cover, same budget as the Usenet settle)."""
         interval = self._import_settle
         tries = max(1, int(_USENET_SETTLE_SECONDS / interval)) if interval > 0 else 5
         for _ in range(tries):

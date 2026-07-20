@@ -42,6 +42,26 @@ class SabnzbdTestResponse(AppStruct):
     complete_dir: str | None = None
 
 
+class ProwlarrTestResponse(AppStruct):
+    """Result of testing Prowlarr: version + the managed-indexer summary so the
+    admin sees exactly what one connection covers (usenet vs torrent counts)."""
+
+    valid: bool
+    version: str | None = None
+    message: str = ""
+    indexers_total: int = 0
+    indexers_usenet: int = 0
+    indexers_torrent: int = 0
+
+
+class QbittorrentTestResponse(AppStruct):
+    """Result of testing qBittorrent: version only (categories are free-form)."""
+
+    valid: bool
+    version: str | None = None
+    message: str = ""
+
+
 class IndexerReorderRequest(AppStruct):
     ordered_ids: list[str]
 

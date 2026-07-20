@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { BadgeCheck, Disc3, Download, Files, Library, Signal } from 'lucide-svelte';
+	import { BadgeCheck, Disc3, Download, Files, Library, Magnet, Signal } from 'lucide-svelte';
 
 	import type { ScoredCandidate } from '$lib/types';
 
@@ -25,6 +25,7 @@
 	const RING_C = 2 * Math.PI * RING_R;
 
 	const isUsenet = $derived(candidate.source === 'usenet' && Boolean(candidate.usenet_release));
+	const isTorrent = $derived(candidate.source === 'torrent' && Boolean(candidate.torrent_release));
 	const percent = $derived(Math.round(candidate.final_score * 100));
 
 	// --- soulseek signals ---
@@ -41,7 +42,7 @@
 	});
 
 	// --- usenet signals (from the release: category is the reliable quality signal) ---
-	const rel = $derived(candidate.usenet_release);
+	const rel = $derived(isTorrent ? candidate.torrent_release : candidate.usenet_release);
 	const usenetFormat = $derived.by(() => {
 		const cats = rel?.category_ids ?? [];
 		if (cats.includes(3040)) return 'FLAC';
@@ -57,8 +58,11 @@
 		return `${Math.round(b / 1024 ** 2)} MB`;
 	});
 	const ageLabel = $derived.by(() => {
-		if (!rel?.usenet_date) return '';
-		const days = Math.floor((Date.now() / 1000 - rel.usenet_date) / 86400);
+		const published = isTorrent
+			? candidate.torrent_release?.publish_date
+			: candidate.usenet_release?.usenet_date;
+		if (!published) return '';
+		const days = Math.floor((Date.now() / 1000 - published) / 86400);
 		if (days <= 0) return 'today';
 		return days >= 30 ? `${Math.floor(days / 30)}mo` : `${days}d`;
 	});
@@ -72,20 +76,20 @@
 	);
 
 	const breakdown = $derived(
-		isUsenet
-			? `${rel?.indexer_name ?? 'Usenet'} · ${usenetFormat} · ${sizeLabel}` +
-					`${rel?.grabs ? ` · ${rel.grabs} grabs` : ''}${ageLabel ? ` · ${ageLabel}` : ''}`
+		isUsenet || isTorrent
+			? `${rel?.indexer_name ?? (isTorrent ? 'Torrent' : 'Usenet')} · ${usenetFormat} · ${sizeLabel}` +
+					`${isTorrent && rel && 'seeders' in rel ? ` · ${rel.seeders ?? 'unknown'} seeders` : rel?.grabs ? ` · ${rel.grabs} grabs` : ''}${ageLabel ? ` · ${ageLabel}` : ''}`
 			: `Coherence ${Math.round(candidate.coherence * 100)}% · ` +
 					`File confidence ${Math.round(candidate.file_confidence * 100)}% · ` +
 					`${freeSlot ? 'Free slot' : 'Queued'}${uploadSpeed ? ` · ${Math.round(uploadSpeed / 1000)} KB/s` : ''}`
 	);
 
 	const heading = $derived(
-		isUsenet
+		isUsenet || isTorrent
 			? albumTitle || rel?.title || 'Unknown'
 			: candidate.parent_directory || 'Unknown folder'
 	);
-	const subtitle = $derived(isUsenet ? (rel?.title ?? '') : candidate.username);
+	const subtitle = $derived(isUsenet || isTorrent ? (rel?.title ?? '') : candidate.username);
 
 	const dashoffset = $derived(RING_C * (1 - Math.max(0, Math.min(1, candidate.final_score))));
 </script>
@@ -95,7 +99,9 @@
 		class="sleeve grid size-14 shrink-0 place-items-center rounded-md bg-base-300"
 		aria-hidden="true"
 	>
-		{#if isUsenet}
+		{#if isTorrent}
+			<Magnet class="size-7 text-base-content/60" />
+		{:else if isUsenet}
 			<Download class="size-7 text-base-content/60" />
 		{:else}
 			<Disc3 class="size-7 text-base-content/60" />
@@ -106,7 +112,7 @@
 		<p class="truncate font-semibold" title={heading}>{heading}</p>
 		<p class="truncate text-sm text-base-content/60" title={subtitle}>{subtitle}</p>
 		<div class="mt-1.5 flex flex-wrap items-center gap-1.5">
-			{#if isUsenet}
+			{#if isUsenet || isTorrent}
 				<span class="badge badge-ghost badge-sm gap-1">
 					<Library class="size-3" aria-hidden="true" />{rel?.indexer_name}
 				</span>
@@ -116,13 +122,17 @@
 					>{usenetFormat}</span
 				>
 				<span class="badge badge-ghost badge-sm">{sizeLabel}</span>
-				{#if rel?.grabs}
+				{#if isTorrent && rel && 'seeders' in rel}
+					<span class="badge badge-ghost badge-sm gap-1" aria-label="Seeders">
+						<Signal class="size-3" aria-hidden="true" />{rel.seeders ?? 'unknown'}
+					</span>
+				{:else if rel?.grabs}
 					<span class="badge badge-ghost badge-sm gap-1" aria-label="Grabs">
 						<Signal class="size-3" aria-hidden="true" />{rel.grabs}
 					</span>
 				{/if}
 				{#if ageLabel}<span class="badge badge-ghost badge-sm">{ageLabel}</span>{/if}
-				{#if viaAlbumNzb}
+				{#if isUsenet && viaAlbumNzb}
 					<span class="badge badge-ghost badge-sm" title="Grabs the album NZB to extract one track"
 						>via album NZB</span
 					>
@@ -186,7 +196,7 @@
 		class="btn btn-primary btn-sm shrink-0"
 		onclick={onPick}
 		disabled={picking || disabled}
-		aria-label={isUsenet
+		aria-label={isUsenet || isTorrent
 			? `Pick release from ${rel?.indexer_name}`
 			: `Pick candidate from ${candidate.username}`}
 	>
