@@ -1,4 +1,11 @@
-# Fork-only workflow: CI-gated multi-architecture publication.
+# Fork-only workflow: CI-gated multi-architecture publication, with automatic fork
+# versioning. Tag scheme: v<upstream-base-version>-fork.<N> (e.g. v2.3.0-fork.1) - a
+# hyphenated pre-release identifier, since Docker tags can't carry semver's `+build`
+# metadata. `version` computes the next tag on every branch push (including the daily
+# fork-upstream-sync merge) and resets the counter whenever a new upstream base tag is
+# merged; `release` then tags + publishes a GitHub Release for that same build - no
+# separate rebuild. A manually-pushed `v*` tag or workflow_dispatch run just builds/
+# pushes the image as before (nothing to compute; the ref already is the tag).
 name: Fork Image
 
 on:
@@ -14,7 +21,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 concurrency:
@@ -63,10 +70,63 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm exec vitest run --project client
 
-  build:
-    if: github.repository == 'alphyriver/DroppedNeedle'
+  # Computes the next fork release tag on a branch push (merge to main, including the
+  # daily upstream-sync auto-merge). Not run for a manually-pushed v* tag or a
+  # workflow_dispatch replay - there's nothing to compute in either case.
+  version:
+    if: |
+      github.repository == 'alphyriver/DroppedNeedle' &&
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/heads/')
     needs: [backend, frontend]
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.compute.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute next fork tag
+        id: compute
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Already tagged (e.g. a re-run/duplicate push of the same commit) - skip,
+          # don't mint a second tag/release for an unchanged HEAD.
+          if [[ -n "$(git tag --points-at HEAD)" ]]; then
+            echo "HEAD is already tagged - skipping." >&2
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Nearest plain upstream version tag reachable from HEAD (excludes our own
+          # -fork.N tags), e.g. v2.3.0.
+          BASE=$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-fork*' --abbrev=0)
+
+          # Highest existing -fork.N build against that same base; next tag is N+1
+          # (starts at 1 when the base has no fork tags yet).
+          LAST_N=$(git tag -l "${BASE}-fork.*" | sed -E "s/^${BASE}-fork\.([0-9]+)$/\1/" | sort -n | tail -1)
+          NEXT_N=$(( ${LAST_N:-0} + 1 ))
+
+          TAG="${BASE}-fork.${NEXT_N}"
+          echo "Computed fork tag: $TAG" >&2
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [backend, frontend, version]
+    # `always()` because `version` is conditionally skipped (not failed) for a
+    # tag-triggered/workflow_dispatch run - a skipped `needs` would otherwise skip
+    # this job too. Still requires backend+frontend to have actually succeeded, and
+    # only for this repo (a fork of a fork shouldn't publish images to our registry).
+    if: |
+      always() &&
+      github.repository == 'alphyriver/DroppedNeedle' &&
+      needs.backend.result == 'success' &&
+      needs.frontend.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ needs.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -82,12 +142,16 @@ jobs:
         run: |
           IMAGE="ghcr.io/alphyriver/droppedneedle"
           SHORT_SHA=$(git rev-parse --short HEAD)
+          FORK_TAG="${{ needs.version.outputs.tag }}"
           {
             echo "tags<<EOF"
             echo "$IMAGE:latest"
             echo "$IMAGE:sha-$SHORT_SHA"
             if [[ "$GITHUB_REF" == refs/tags/* ]]; then
               echo "$IMAGE:${GITHUB_REF#refs/tags/}"
+            fi
+            if [[ -n "$FORK_TAG" ]]; then
+              echo "$IMAGE:$FORK_TAG"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
@@ -101,3 +165,33 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
+
+  # Tags the commit that was just built and creates a GitHub Release for it. Same
+  # branch-push guard as `version` - skipped for tag-triggered/workflow_dispatch runs
+  # and for a no-op re-run (version.outputs.tag is empty in both cases).
+  release:
+    if: |
+      github.repository == 'alphyriver/DroppedNeedle' &&
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/heads/') &&
+      needs.version.outputs.tag != ''
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create and push tag
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          git config user.name "fork-release[bot]"
+          git config user.email "fork-release@users.noreply.github.com"
+          git tag -a "$TAG" -m "Fork build $TAG"
+          git push origin "$TAG"
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          generate_release_notes: true
+          make_latest: true
