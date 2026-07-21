@@ -1,5 +1,6 @@
 """Tests for LibraryDB paginated query methods."""
 
+import sqlite3
 import threading
 from pathlib import Path
 
@@ -45,6 +46,23 @@ def _make_artists(count: int) -> list[dict]:
             }
         )
     return artists
+
+
+def test_membership_lookup_uses_normalized_active_indexes(db: LibraryDB) -> None:
+    with sqlite3.connect(db.db_path) as connection:
+        album_plan = connection.execute(
+            "EXPLAIN QUERY PLAN SELECT DISTINCT release_group_mbid FROM library_files "
+            "WHERE lower(release_group_mbid) IN (?) AND deleted_at IS NULL",
+            ("album-1",),
+        ).fetchall()
+        artist_plan = connection.execute(
+            "EXPLAIN QUERY PLAN SELECT artist_mbid FROM library_files "
+            "WHERE deleted_at IS NULL AND lower(artist_mbid) IN (?)",
+            ("artist-1",),
+        ).fetchall()
+
+    assert any("idx_library_files_album_lower_active" in row[3] for row in album_plan)
+    assert any("idx_library_files_artist_lower_active" in row[3] for row in artist_plan)
 
 
 async def _seed(db: LibraryDB, n_albums: int = 100, n_artists: int = 20) -> None:
@@ -176,6 +194,42 @@ async def test_albums_empty_library(db: LibraryDB):
     items, total = await db.get_albums_paginated(limit=10, offset=0)
     assert total == 0
     assert len(items) == 0
+
+
+@pytest.mark.asyncio
+async def test_bounded_home_album_queries(db: LibraryDB):
+    await _seed(db, n_albums=100)
+
+    recent = await db.get_recent_albums(limit=3)
+    anniversaries = await db.get_anniversary_albums(
+        current_year=2030,
+        anniversary_years=(10, 20),
+        limit=4,
+    )
+
+    assert [album["mbid"] for album in recent] == [
+        "album-0100",
+        "album-0099",
+        "album-0098",
+    ]
+    assert len(anniversaries) <= 4
+    assert all(album["year"] in {2010, 2020} for album in anniversaries)
+
+
+@pytest.mark.asyncio
+async def test_enrichment_cursor_keeps_artist_and_album_with_same_mbid(db: LibraryDB):
+    shared_mbid = "11111111-1111-4111-8111-111111111111"
+    await db.save_library(
+        [{"mbid": shared_mbid, "name": "Artist"}],
+        [{"mbid": shared_mbid, "title": "Album", "artist_name": "Artist"}],
+    )
+
+    first = await db.get_enrichment_candidates(after_mbid=None, limit=1)
+    cursor = f"{first[0][0]}:{first[0][1]}"
+    second = await db.get_enrichment_candidates(after_mbid=cursor, limit=1)
+
+    assert [first[0][0], second[0][0]] == ["album", "artist"]
+    assert first[0][1] == second[0][1] == shared_mbid
 
 
 # --- Artist pagination ---

@@ -34,6 +34,7 @@ interface RequestOptions extends Omit<RequestInit, 'method' | 'body'> {
 	signal?: AbortSignal;
 	raw?: boolean;
 	cache?: RequestCache;
+	timeoutMs?: number;
 }
 
 async function handleResponse<T = void>(res: Response): Promise<T> {
@@ -59,7 +60,7 @@ async function handleResponse<T = void>(res: Response): Promise<T> {
 				message = parsed.detail;
 			}
 		} catch {
-			// text wasn't JSON — use raw text as message
+			// preserve non-JSON error bodies
 		}
 		throw new ApiError(res.status, message, code, details);
 	}
@@ -99,9 +100,19 @@ function createClient(fetchFn: FetchFn): ApiClient {
 		body?: unknown,
 		opts?: RequestOptions
 	): Promise<T> {
-		const { raw, ...fetchOpts } = opts ?? {};
+		const { raw, timeoutMs, signal, ...fetchOpts } = opts ?? {};
 		// credentials: 'include' sends the httpOnly session cookie cross-origin (dev proxy)
-		const init: RequestInit = { method, credentials: 'include', ...fetchOpts };
+		const deadlineSignal = timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined;
+		const requestSignal =
+			signal && deadlineSignal
+				? AbortSignal.any([signal, deadlineSignal])
+				: (signal ?? deadlineSignal);
+		const init: RequestInit = {
+			method,
+			credentials: 'include',
+			...fetchOpts,
+			signal: requestSignal
+		};
 
 		if (body !== undefined && body !== null) {
 			if (body instanceof FormData) {

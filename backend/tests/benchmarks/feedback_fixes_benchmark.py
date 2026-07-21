@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.util
 import json
 import os
 import platform
@@ -40,6 +41,8 @@ from infrastructure.observability.library_metrics import (
     LibraryMetrics,
     sample_event_loop_delay,
 )
+from infrastructure.persistence._database import PriorityWriteLock
+from infrastructure.persistence.auth_store import AuthStore
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from infrastructure.persistence.maintenance_manifest import capture_source_identity
 from infrastructure.sse_publisher import SSEPublisher
@@ -56,11 +59,14 @@ from services.native.library_policy_resolver import LibraryPolicyResolver
 from services.native.library_reconciler import LibraryReconciler
 from services.native.library_scan_coordinator import LibraryScanCoordinator
 from services.native.library_scan_events import LibraryScanEventPublisher
+from services.native.identification_queue_service import IdentificationQueueService
+from services.native.local_album_grouping_service import LocalAlbumGroupingService
 from services.native.album_evidence_engine import MATCHER_VERSION
 from tests.benchmarks.feedback_fixes_phase10_scenarios import (
     benchmark_evidence_protection,
     benchmark_fingerprint_playback,
     benchmark_flat_grouping,
+    benchmark_staged_flat_grouping,
     benchmark_identification_backlog,
     benchmark_sse_protocol,
 )
@@ -74,33 +80,30 @@ SCAN_RSS_LIMIT_BYTES = 512 * 1024 * 1024
 WAL_LIMIT_BYTES = 512 * 1024 * 1024
 EVENT_LOOP_P99_LIMIT_SECONDS = 0.1
 WRITE_LOCK_P95_LIMIT_SECONDS = 0.25
-WRITE_LOCK_MAX_SECONDS = 5.0
+WRITE_LOCK_MAX_SECONDS = 2.0
 PLAYBACK_MAX_SECONDS = 2.0
 
 
-class _MeasuredLock:
+class _MeasuredLock(PriorityWriteLock):
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        super().__init__()
         self.waits: list[float] = []
-        self.acquisitions = 0
+        self.foreground_waits: list[float] = []
+        self.background_waits: list[float] = []
 
-    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+    def acquire(self) -> None:
         started = perf_counter()
-        acquired = self._lock.acquire(blocking, timeout)
-        if acquired:
-            self.waits.append(perf_counter() - started)
-            self.acquisitions += 1
-        return acquired
+        super().acquire()
+        elapsed = perf_counter() - started
+        self.waits.append(elapsed)
+        self.foreground_waits.append(elapsed)
 
-    def release(self) -> None:
-        self._lock.release()
-
-    def __enter__(self) -> "_MeasuredLock":
-        self.acquire()
-        return self
-
-    def __exit__(self, *_args: object) -> None:
-        self.release()
+    def acquire_background(self) -> None:
+        started = perf_counter()
+        super().acquire_background()
+        elapsed = perf_counter() - started
+        self.waits.append(elapsed)
+        self.background_waits.append(elapsed)
 
 
 class _BenchmarkStore(NativeLibraryStore):
@@ -108,6 +111,9 @@ class _BenchmarkStore(NativeLibraryStore):
         self, db_path: Path, write_lock: _MeasuredLock, metrics: LibraryMetrics
     ) -> None:
         self._benchmark_metrics = metrics
+        self.foreground_probe_transactions = 0
+        self.grouping_transactions = 0
+        self.grouping_active = False
         super().__init__(db_path, write_lock)  # type: ignore[arg-type]
 
     def _connect(self) -> sqlite3.Connection:
@@ -116,6 +122,37 @@ class _BenchmarkStore(NativeLibraryStore):
             lambda _sql: self._benchmark_metrics.increment("sql_statements")
         )
         return connection
+
+    async def foreground_write_probe(self, sequence: int) -> None:
+        def operation(connection: sqlite3.Connection) -> None:
+            connection.execute(
+                "INSERT INTO benchmark_foreground_probe (id, sequence) VALUES (1, ?) "
+                "ON CONFLICT(id) DO UPDATE SET sequence = excluded.sequence",
+                (sequence,),
+            )
+
+        await self._write(operation)
+        self.foreground_probe_transactions += 1
+
+    def _execute_background(self, operation: Any) -> Any:
+        try:
+            return super()._execute_background(operation)
+        finally:
+            if self.grouping_active:
+                self.grouping_transactions += 1
+
+
+class _MeasuredGroupingService(LocalAlbumGroupingService):
+    def __init__(self, store: _BenchmarkStore) -> None:
+        super().__init__(store, IdentificationQueueService(store))
+        self._benchmark_store = store
+
+    async def regroup_run(self, *args: Any, **kwargs: Any) -> int:
+        self._benchmark_store.grouping_active = True
+        try:
+            return await super().regroup_run(*args, **kwargs)
+        finally:
+            self._benchmark_store.grouping_active = False
 
 
 class _SyntheticTagReader:
@@ -303,6 +340,7 @@ def _scan_request(resolver: LibraryPolicyResolver) -> ScanRequest:
 
 async def _profile_scan(
     coordinator: LibraryScanCoordinator,
+    store: _BenchmarkStore,
     root: Path,
     database: Path,
     metrics: LibraryMetrics,
@@ -310,10 +348,9 @@ async def _profile_scan(
 ) -> tuple[object, float]:
     stopped = asyncio.Event()
 
-    async def sample() -> None:
+    async def sample_runtime() -> None:
         loop = asyncio.get_running_loop()
         expected = loop.time() + 0.01
-        next_playback = loop.time()
         while not stopped.is_set():
             await asyncio.sleep(max(0.0, expected - loop.time()))
             metrics.observe(
@@ -325,21 +362,45 @@ async def _profile_scan(
                 metrics.set_peak("wal_bytes", float(wal.stat().st_size))
             except FileNotFoundError:
                 pass
-            if loop.time() >= next_playback:
-                elapsed = await playback.sample()
-                metrics.increment("playback_starts")
-                metrics.observe("playback_start_seconds", elapsed)
-                next_playback = loop.time() + 0.5
             expected += 0.01
 
-    monitor = asyncio.create_task(sample())
+    async def sample_playback() -> None:
+        while not stopped.is_set():
+            elapsed = await playback.sample()
+            metrics.increment("playback_starts")
+            metrics.observe("playback_start_seconds", elapsed)
+            auth_elapsed = await playback.sample_auth_me()
+            metrics.increment("auth_me_requests")
+            metrics.observe("auth_me_seconds", auth_elapsed)
+            try:
+                await asyncio.wait_for(stopped.wait(), timeout=0.5)
+            except TimeoutError:
+                pass
+
+    async def sample_foreground_write() -> None:
+        sequence = 0
+        while not stopped.is_set():
+            started = perf_counter()
+            await store.foreground_write_probe(sequence)
+            metrics.observe("foreground_write_seconds", perf_counter() - started)
+            sequence += 1
+            try:
+                await asyncio.wait_for(stopped.wait(), timeout=0.1)
+            except TimeoutError:
+                pass
+
+    monitors = [
+        asyncio.create_task(sample_runtime()),
+        asyncio.create_task(sample_playback()),
+        asyncio.create_task(sample_foreground_write()),
+    ]
     started = perf_counter()
     try:
         result = await coordinator.run_once({"benchmark-root": root})
         return result, perf_counter() - started
     finally:
         stopped.set()
-        await monitor
+        await asyncio.gather(*monitors)
 
 
 async def benchmark_target_scan(
@@ -367,10 +428,14 @@ async def benchmark_target_scan(
         with playback_path.open("ab") as playback_stream:
             playback_stream.truncate(256 * 1024)
         database = workspace / "target.db"
-        with sqlite3.connect(database) as connection:
-            connection.execute("CREATE TABLE auth_users (id TEXT PRIMARY KEY)")
         metrics = LibraryMetrics.for_library_workload()
         lock = _MeasuredLock()
+        AuthStore(database, lock)
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                "CREATE TABLE benchmark_foreground_probe "
+                "(id INTEGER PRIMARY KEY, sequence INTEGER NOT NULL)"
+            )
         store = _BenchmarkStore(database, lock, metrics)
         reader = _SyntheticTagReader(root)
         resolver = LibraryPolicyResolver(
@@ -413,7 +478,7 @@ async def benchmark_target_scan(
         coordinator = LibraryScanCoordinator(
             store,
             LibraryInventoryScanner(store, directory_walker=counted_walk),
-            LibraryIndexer(store, reader),
+            LibraryIndexer(store, reader, _MeasuredGroupingService(store)),
             LibraryReconciler(store),
             lambda: resolver,
             events,
@@ -437,6 +502,9 @@ async def benchmark_target_scan(
             flush=True,
         )
         idle_rss = metrics.sample_rss() or 0
+        lock.waits.clear()
+        lock.foreground_waits.clear()
+        lock.background_waits.clear()
         fingerprint_calls = 0
         external_calls = 0
 
@@ -447,7 +515,10 @@ async def benchmark_target_scan(
             fingerprints_before = fingerprint_calls
             external_before = external_calls
             sql_before = metrics.snapshot().counters["sql_statements"]
-            locks_before = lock.acquisitions
+            all_locks_before = len(lock.waits)
+            background_locks_before = len(lock.background_waits)
+            probes_before = store.foreground_probe_transactions
+            grouping_before = store.grouping_transactions
             event_before = len(publisher.events)
             print(
                 json.dumps(
@@ -462,7 +533,7 @@ async def benchmark_target_scan(
             )
             requested = await coordinator.request_run(_scan_request(resolver))
             completed, elapsed = await _profile_scan(
-                coordinator, root, database, metrics, playback_probe
+                coordinator, store, root, database, metrics, playback_probe
             )
             print(
                 json.dumps(
@@ -487,6 +558,12 @@ async def benchmark_target_scan(
                 for earlier, later in zip(counter_times, counter_times[1:])
             ]
             first_event_at = float(scenario_events[0]["at"]) if scenario_events else 0.0
+            scan_write_transactions = (
+                len(lock.waits)
+                - all_locks_before
+                - (store.foreground_probe_transactions - probes_before)
+                - (store.grouping_transactions - grouping_before)
+            )
             return {
                 "name": name,
                 "state": completed.state if completed is not None else None,
@@ -501,10 +578,14 @@ async def benchmark_target_scan(
                 "walks": walk_calls - walks_before,
                 "sql_statements": metrics.snapshot().counters["sql_statements"]
                 - sql_before,
-                "write_transactions": lock.acquisitions - locks_before,
+                "write_transactions": scan_write_transactions,
+                "background_write_transactions": len(lock.background_waits)
+                - background_locks_before,
+                "grouping_write_transactions": store.grouping_transactions
+                - grouping_before,
                 "files_per_write_transaction": (
-                    count / (lock.acquisitions - locks_before)
-                    if lock.acquisitions - locks_before
+                    count / scan_write_transactions
+                    if scan_write_transactions
                     else None
                 ),
                 "sse_events": len(scenario_events),
@@ -587,10 +668,11 @@ async def benchmark_target_scan(
         snapshot = asdict(metrics.snapshot())
         peak_rss = int(snapshot["peaks"].get("rss_bytes", idle_rss))
         wal_bytes = int(snapshot["peaks"].get("wal_bytes", 0))
-        lock_p95 = _percentile(lock.waits, 0.95) or 0.0
-        lock_max = max(lock.waits, default=0.0)
+        lock_p95 = _percentile(lock.foreground_waits, 0.95) or 0.0
+        lock_max = max(lock.foreground_waits, default=0.0)
         event_loop = snapshot["distributions"].get("event_loop_delay_seconds", {})
         playback = snapshot["distributions"].get("playback_start_seconds", {})
+        auth_me = snapshot["distributions"].get("auth_me_seconds", {})
         idle_playback_p95 = _percentile(idle_playback, 0.95) or 0.0
         loaded_playback_p95 = playback.get("p95") or 0.0
         playback_http_evidence = playback_probe.evidence()
@@ -653,10 +735,14 @@ async def benchmark_target_scan(
             ),
             "write_lock_wait_p95_seconds": lock_p95,
             "write_lock_wait_max_seconds": lock_max,
+            "foreground_write_samples": len(lock.foreground_waits),
+            "background_write_samples": len(lock.background_waits),
             "event_loop_delay_p99_seconds": event_loop.get("p99", 0.0),
             "idle_playback_start_p95_seconds": idle_playback_p95,
             "loaded_playback_start_p95_seconds": loaded_playback_p95,
             "loaded_playback_samples": playback.get("count", 0),
+            "auth_me_p95_seconds": auth_me.get("p95") or 0.0,
+            "auth_me_samples": auth_me.get("count", 0),
             "loaded_minus_idle_playback_p95_seconds": max(
                 0.0, loaded_playback_p95 - idle_playback_p95
             ),
@@ -666,6 +752,10 @@ async def benchmark_target_scan(
                 "unchanged_one_walk": unchanged["walks"] == 1,
                 "unchanged_zero_tag_reads": unchanged["tag_reads"] == 0,
                 "small_change_one_tag_read": changed["tag_reads"] == 1,
+                "first_scan_transaction_ratio": count < 4_096
+                or first["write_transactions"] / count < 0.03,
+                "unchanged_transaction_ratio": count < 4_096
+                or unchanged["write_transactions"] / count < 0.02,
                 "zero_scan_fingerprints": all(
                     scenario["fingerprints"] == 0
                     for scenario in (first, unchanged, changed)
@@ -682,6 +772,7 @@ async def benchmark_target_scan(
                 "write_lock_max": lock_max <= WRITE_LOCK_MAX_SECONDS,
                 "playback": loaded_playback_p95 <= idle_playback_p95 + 0.5
                 and loaded_playback_p95 <= PLAYBACK_MAX_SECONDS,
+                "auth_me": (auth_me.get("p95") or 0.0) <= 0.5,
                 "sse_rate": all(
                     scenario["sse_rate_passed"]
                     for scenario in (first, unchanged, changed)
@@ -727,6 +818,7 @@ async def benchmark_unavailable_root() -> dict[str, object]:
             "state": completed.state if completed else None,
             "terminal_code": completed.terminal_code if completed else None,
             "tag_reads": len(reader.calls),
+            "tag_read_paths": [str(path.relative_to(root)) for path in reader.calls],
             "fingerprints": 0,
             "external_calls": 0,
             "counters": snapshot.counters,
@@ -737,6 +829,121 @@ async def benchmark_unavailable_root() -> dict[str, object]:
             and not reader.calls
             and snapshot.counters.get("missing_count", 0) == 0,
         }
+
+
+async def benchmark_migration_handoff_scan() -> dict[str, object]:
+    """Run the immediate verification scan against the database migration produced."""
+
+    fixture_path = (
+        Path(__file__).parents[1]
+        / "infrastructure"
+        / "test_legacy_catalog_importer.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "feedback_fixes_scan_handoff_fixture", fixture_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("The migration handoff fixture could not be loaded.")
+    fixture = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixture)
+    with tempfile.TemporaryDirectory(prefix="feedback-migration-scan-") as directory:
+        workspace = Path(directory)
+        root = workspace / "Music"
+        root.mkdir()
+        database = workspace / "library.db"
+        fixture._create_source(database, root)
+        files = (
+            ("Compilation/01.flac", 100, 10_500_000_000),
+            ("Compilation/02.flac", 200, 10_750_000_000),
+            ("Local Album/01.flac", 300, 11_500_000_000),
+            ("Rejected/01.flac", 250, 13_000_000_000),
+        )
+        for relative_path, size, mtime_ns in files:
+            path = root / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("wb") as stream:
+                stream.truncate(size)
+            os.utime(path, ns=(mtime_ns, mtime_ns))
+        _fixture_store, importer = fixture._importer(database, root)
+        plan, _ = await importer.prepare("benchmark-handoff", now=100)
+        await importer.apply(
+            "benchmark-handoff",
+            expected_source_revision=plan.source_revision,
+            now=101,
+        )
+        with sqlite3.connect(database) as connection:
+            legacy_before = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM local_tracks "
+                    "WHERE stat_revision_kind!='exact'"
+                ).fetchone()[0]
+            )
+        metrics = LibraryMetrics.for_library_workload()
+        lock = _MeasuredLock()
+        store = _BenchmarkStore(database, lock, metrics)
+        reader = _SyntheticTagReader(root)
+        resolver = LibraryPolicyResolver(
+            TypedLibrarySettings(
+                library_roots=[
+                    LibraryRootSettings(
+                        id="root-1", path=str(root), label="Migrated", policy="automatic"
+                    )
+                ]
+            )
+        )
+        coordinator = LibraryScanCoordinator(
+            store,
+            LibraryInventoryScanner(store),
+            LibraryIndexer(store, reader),
+            LibraryReconciler(store),
+            lambda: resolver,
+        )
+        request = ScanRequest(
+            kind="incremental",
+            trigger="startup_resume",
+            policy_revision=resolver.policy_revision,
+            scopes=[
+                ScanScope(
+                    root_id="root-1",
+                    relative_path=".",
+                    policy_revision=resolver.policy_revision,
+                )
+            ],
+        )
+        await coordinator.request_run(request)
+        transactions_before = len(lock.waits)
+        started = perf_counter()
+        completed = await coordinator.run_once({"root-1": root})
+        elapsed = perf_counter() - started
+        snapshot = await coordinator.snapshot(completed.id) if completed else None
+        with sqlite3.connect(database) as connection:
+            exact_after = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM local_tracks "
+                    "WHERE stat_revision_kind='exact'"
+                ).fetchone()[0]
+            )
+            migrated_tracks = int(
+                connection.execute("SELECT COUNT(*) FROM local_tracks").fetchone()[0]
+            )
+        report = {
+            "state": completed.state if completed is not None else None,
+            "elapsed_seconds": elapsed,
+            "migrated_tracks": migrated_tracks,
+            "legacy_revisions_before_scan": legacy_before,
+            "exact_revisions_after_scan": exact_after,
+            "tag_reads": len(reader.calls),
+            "tag_read_paths": [str(path.relative_to(root)) for path in reader.calls],
+            "write_transactions": len(lock.waits) - transactions_before,
+            "counters": snapshot.counters if snapshot is not None else {},
+        }
+        report["passed"] = (
+            report["state"] == "completed"
+            and legacy_before > 0
+            and exact_after == migrated_tracks
+            and report["tag_reads"] == 0
+        )
+        return report
 
 
 async def benchmark_scan_control_latency() -> dict[str, object]:
@@ -795,6 +1002,8 @@ async def benchmark_scan_control_latency() -> dict[str, object]:
             release.set()
             completed = await worker
             checkpoint_seconds = perf_counter() - checkpoint_started
+            acknowledged_in_time = request_seconds <= 1.0
+            checkpointed_in_time = checkpoint_seconds <= 2.0
             return {
                 "requested_state": requested.state,
                 "terminal_state": completed.state if completed else None,
@@ -802,7 +1011,9 @@ async def benchmark_scan_control_latency() -> dict[str, object]:
                 "request_to_checkpoint_seconds": checkpoint_seconds,
                 "passed": completed is not None
                 and completed.state
-                == ("paused" if control == "pause" else "cancelled"),
+                == ("paused" if control == "pause" else "cancelled")
+                and acknowledged_in_time
+                and checkpointed_in_time,
             }
 
     pause = await run_control("pause")
@@ -810,11 +1021,11 @@ async def benchmark_scan_control_latency() -> dict[str, object]:
     return {
         "pause": pause,
         "stop": stop,
-        "normally_within_few_seconds": max(
+        "within_control_deadline": max(
             float(pause["request_to_checkpoint_seconds"]),
             float(stop["request_to_checkpoint_seconds"]),
         )
-        <= 5.0,
+        <= 2.0,
         "passed": pause["passed"] and stop["passed"],
     }
 
@@ -1136,6 +1347,7 @@ def _evaluate_gates(report: dict[str, object]) -> list[dict[str, object]]:
     lock_max = max(float(run["write_lock_wait_max_seconds"]) for run in target_runs)
     playback_p95 = float(full["loaded_playback_start_p95_seconds"])
     idle_playback_p95 = float(full["idle_playback_start_p95_seconds"])
+    auth_me_p95 = max(float(run["auth_me_p95_seconds"]) for run in target_runs)
     return [
         _gate(
             "scan-115k-complete",
@@ -1171,6 +1383,26 @@ def _evaluate_gates(report: dict[str, object]) -> list[dict[str, object]]:
             ),
         ),
         _gate(
+            "scan-transaction-ratios",
+            "first index <0.03 and unchanged <0.02 SQLite write transactions per file",
+            {
+                "first": full["first_local_index"]["write_transactions"]
+                / full["file_count"],
+                "unchanged": full["unchanged"]["write_transactions"]
+                / full["file_count"],
+            },
+            full["first_local_index"]["write_transactions"] / full["file_count"]
+            < 0.03
+            and full["unchanged"]["write_transactions"] / full["file_count"]
+            < 0.02,
+        ),
+        _gate(
+            "migration-immediate-scan",
+            "the migrated database is scanned in place with zero unchanged tag reads",
+            report["migration_handoff_scan"],
+            bool(report["migration_handoff_scan"]["passed"]),
+        ),
+        _gate(
             "scan-call-elimination",
             "filesystem scans make zero fingerprints and external calls",
             {
@@ -1203,7 +1435,7 @@ def _evaluate_gates(report: dict[str, object]) -> list[dict[str, object]]:
         ),
         _gate(
             "write-lock-max",
-            "<= 5 s",
+            "<= 2 s",
             lock_max,
             lock_max <= WRITE_LOCK_MAX_SECONDS,
         ),
@@ -1221,6 +1453,18 @@ def _evaluate_gates(report: dict[str, object]) -> list[dict[str, object]]:
             and full["playback_http_evidence"]["authentication_rejections"] == 1
             and full["playback_http_evidence"]["status_codes"] == [206]
             and int(full["playback_http_evidence"]["bytes_received"]) > 0,
+        ),
+        _gate(
+            "active-scan-auth-me-p95",
+            "production token validation and user loading <= 500 ms",
+            {
+                "p95_seconds": auth_me_p95,
+                "samples": full["auth_me_samples"],
+                "backend": full["playback_http_evidence"][
+                    "authentication_backend"
+                ],
+            },
+            auth_me_p95 <= 0.5 and int(full["auth_me_samples"]) > 0,
         ),
         _gate(
             "evidence-storage",
@@ -1253,10 +1497,17 @@ def _evaluate_gates(report: dict[str, object]) -> list[dict[str, object]]:
         ),
         _gate(
             "flat-directory",
-            "10,000-file flat grouping avoids a quadratic continuity matrix",
+            "flat-directory grouping is durable and keeps background transactions bounded",
             {
-                "seconds": flat["grouping_seconds"],
-                "matrix_cells": flat["quadratic_matrix_cells"],
+                "files": flat["file_count"],
+                "seconds": flat["elapsed_seconds"],
+                "peak_python_bytes": flat["peak_python_bytes"],
+                "background_transaction_p95_seconds": flat[
+                    "background_transaction_p95_seconds"
+                ],
+                "background_transaction_max_seconds": flat[
+                    "background_transaction_max_seconds"
+                ],
             },
             bool(flat["passed"]),
         ),
@@ -1361,7 +1612,9 @@ def _write_markdown(report: dict[str, object], output: Path) -> None:
 
 
 async def _run_phase10(
-    generated_sizes: list[int], target_sizes: list[int]
+    generated_sizes: list[int],
+    target_sizes: list[int],
+    flat_grouping_size: int = 10_000,
 ) -> dict[str, object]:
     source_identity = _source_identity()
     report: dict[str, object] = {
@@ -1388,8 +1641,11 @@ async def _run_phase10(
         "target_scan_runs": [
             await benchmark_target_scan(size) for size in target_sizes
         ],
+        "migration_handoff_scan": await benchmark_migration_handoff_scan(),
         "box_set_change": await benchmark_target_scan(100, layout="box_set"),
-        "adversarial_flat_grouping": benchmark_flat_grouping(),
+        "adversarial_flat_grouping": await benchmark_staged_flat_grouping(
+            flat_grouping_size
+        ),
         "latency_injected_filesystem": await benchmark_target_scan(
             1_000, stat_delay_seconds=0.001
         ),
@@ -1421,10 +1677,13 @@ def main() -> None:
     parser.add_argument(
         "--target-sizes", nargs="+", type=int, default=[10_000, 115_000]
     )
+    parser.add_argument("--flat-grouping-size", type=int, default=10_000)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--markdown-output", type=Path)
     args = parser.parse_args()
-    report = asyncio.run(_run_phase10(args.sizes, args.target_sizes))
+    report = asyncio.run(
+        _run_phase10(args.sizes, args.target_sizes, args.flat_grouping_size)
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"

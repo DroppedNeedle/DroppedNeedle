@@ -123,9 +123,7 @@ class DiscoverQueueService:
             except Exception:  # noqa: BLE001
                 logger.warning("Failed to load ignored release MBIDs from cache")
 
-        library_album_mbids = await self._mbid.get_library_album_mbids(
-            library_configured
-        )
+        library_album_mbids: set[str] = set()
         listened_release_group_mbids = (
             await self._mbid.get_user_listened_release_group_mbids(
                 lb_enabled,
@@ -157,6 +155,10 @@ class DiscoverQueueService:
                 resolved_source=resolved_source,
             )
 
+        candidate_owned = await self._mbid.get_library_album_mbids(
+            library_configured,
+            [item.release_group_mbid for item in items],
+        )
         if self._ownership is not None:
             from services.native.library_ownership_service import (
                 AlbumOwnershipCandidate,
@@ -174,6 +176,14 @@ class DiscoverQueueService:
             )
             for item, projection in zip(items, projections):
                 item.in_library = projection.owned
+                if projection.owned:
+                    candidate_owned.add(item.release_group_mbid.casefold())
+
+        items = [
+            item
+            for item in items
+            if item.release_group_mbid.casefold() not in candidate_owned
+        ]
 
         return DiscoverQueueResponse(
             items=items,
@@ -274,7 +284,7 @@ class DiscoverQueueService:
         library_mbids: set[str] = set()
         if self._library_db:
             try:
-                library_mbids = await self._library_db.get_all_album_mbids()
+                library_mbids = await self._library_db.existing_library_mbids(mbids)
             except Exception:  # noqa: BLE001
                 logger.warning(
                     "Failed to load album MBIDs from library cache for validation"
@@ -283,7 +293,9 @@ class DiscoverQueueService:
             try:
                 library_configured = self._integration.is_library_configured()
                 if library_configured:
-                    library_mbids = await self._mbid.get_library_album_mbids(True)
+                    library_mbids = await self._mbid.get_library_album_mbids(
+                        True, mbids
+                    )
             except Exception:  # noqa: BLE001
                 logger.warning("Failed to load album MBIDs from Lidarr for validation")
         if not library_mbids:

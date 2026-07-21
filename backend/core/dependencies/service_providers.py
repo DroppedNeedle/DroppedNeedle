@@ -60,6 +60,13 @@ logger = logging.getLogger(__name__)
 
 
 @singleton
+def get_background_workload_gate() -> "BackgroundWorkloadGate":
+    from services.native.background_workload_gate import BackgroundWorkloadGate
+
+    return BackgroundWorkloadGate()
+
+
+@singleton
 def get_cached_local_artwork_service() -> "CachedLocalArtworkService":
     from core.config import get_settings
     from services.home.cached_local_artwork_service import CachedLocalArtworkService
@@ -253,6 +260,7 @@ def get_target_library_scan_coordinator() -> "LibraryScanCoordinator":
         LibraryReconciler(store),
         get_library_policy_resolver,
         LibraryScanEventPublisher(store, get_sse_publisher()),
+        workload_gate=get_background_workload_gate(),
     )
 
 
@@ -1320,6 +1328,7 @@ def _build_home_service(
         play_history_store=play_history_store,
         ownership_service=ownership_service,
         genre_artwork_service=genre_artwork_service,
+        workload_gate=get_background_workload_gate(),
     )
 
 
@@ -1693,6 +1702,7 @@ def _build_discover_service(
         ownership_service=ownership_service,
         genre_artwork_service=genre_artwork_service,
         discovery_snapshot_store=get_discovery_snapshot_store(),
+        workload_gate=get_background_workload_gate(),
     )
 
 

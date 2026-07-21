@@ -21,6 +21,7 @@ from types import SimpleNamespace
 import msgspec
 
 from infrastructure.audio.fingerprinter import AudioFingerprinter
+from infrastructure.persistence.auth_store import AuthStore
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from models.identification import (
     CandidateEvidence,
@@ -28,12 +29,14 @@ from models.identification import (
     GroupingTrack,
     TrackEvidence,
 )
+from models.library_work import ScanRun
 from services.native.identification_queue_service import IdentificationQueueService
 from services.native.library_activity_events import activity_events
 from services.native.local_album_grouper import (
     LocalAlbumGrouper,
     assign_album_continuity,
 )
+from services.native.local_album_grouping_service import LocalAlbumGroupingService
 from services.native.reidentification_service import (
     IdentificationWorkArbiter,
     ReidentificationService,
@@ -50,9 +53,9 @@ def _percentile(values: list[float], fraction: float) -> float | None:
 
 
 def _create_store(database: Path) -> NativeLibraryStore:
-    with sqlite3.connect(database) as connection:
-        connection.execute("CREATE TABLE auth_users (id TEXT PRIMARY KEY)")
-    return NativeLibraryStore(database, threading.Lock())
+    lock = threading.Lock()
+    AuthStore(database, lock)
+    return NativeLibraryStore(database, lock)
 
 
 def _seed_artist_and_albums(
@@ -135,6 +138,141 @@ def benchmark_flat_grouping(count: int = 10_000) -> dict[str, object]:
     }
 
 
+async def benchmark_staged_flat_grouping(count: int = 10_000) -> dict[str, object]:
+    """Exercise the durable production grouping path for one adversarial directory."""
+
+    with tempfile.TemporaryDirectory(prefix="feedback-staged-flat-") as directory:
+        database = Path(directory) / "target.db"
+        store = _create_store(database)
+        _seed_artist_and_albums(database, count, prefix="flat-old-album")
+        with sqlite3.connect(database) as connection:
+            connection.execute("PRAGMA foreign_keys = ON")
+            for batch_start in range(0, count, 5_000):
+                batch_end = min(batch_start + 5_000, count)
+                connection.executemany(
+                    "INSERT INTO local_tracks "
+                    "(id,local_album_id,root_id,file_path,relative_path,path_hash,"
+                    "file_size_bytes,file_mtime_ns,stat_revision,stat_revision_kind,"
+                    "tag_revision,title,title_folded,artist_name,artist_name_folded,"
+                    "album_title,album_title_folded,album_artist_name,"
+                    "album_artist_name_folded,disc_number,track_number,file_format,"
+                    "ingest_source,imported_at,membership_source,desired_policy_revision,"
+                    "applied_policy_revision,applied_policy) VALUES "
+                    "(?,?,?,?,?,?,?,?,?,'exact',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        (
+                            f"flat-track-{index:08d}",
+                            "flat-old-album-0",
+                            "benchmark-root",
+                            f"/music/flat/track-{index:08d}.flac",
+                            f"flat/track-{index:08d}.flac",
+                            f"flat-hash-{index:08d}",
+                            100,
+                            index + 1,
+                            f"100:{index + 1}",
+                            f"tag-{index:08d}",
+                            f"Track {index}",
+                            f"track {index}",
+                            "Benchmark Artist",
+                            "benchmark artist",
+                            f"Track {index}",
+                            f"track {index}",
+                            "Benchmark Artist",
+                            "benchmark artist",
+                            1,
+                            0,
+                            "flac",
+                            "scan",
+                            1,
+                            "automatic",
+                            "policy",
+                            "policy",
+                            "automatic",
+                        )
+                        for index in range(batch_start, batch_end)
+                    ),
+                )
+                connection.commit()
+        await store.create_scan_run(
+            ScanRun(
+                id="staged-flat-run",
+                kind="incremental",
+                trigger="manual",
+                queued_at=1,
+            )
+        )
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                "INSERT INTO library_scan_grouping_contexts "
+                "(run_id,root_id,relative_directory) "
+                "VALUES ('staged-flat-run','benchmark-root','flat')"
+            )
+
+        background_transaction_seconds: list[float] = []
+        execute_background = store._execute_background
+
+        def measured_background(operation):
+            transaction_started = perf_counter()
+            try:
+                return execute_background(operation)
+            finally:
+                background_transaction_seconds.append(
+                    perf_counter() - transaction_started
+                )
+
+        store._execute_background = measured_background
+        tracemalloc.start()
+        started = perf_counter()
+        enqueued = await LocalAlbumGroupingService(
+            store, IdentificationQueueService(store)
+        ).regroup_run("staged-flat-run", now=2)
+        elapsed = perf_counter() - started
+        _current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        with sqlite3.connect(database) as connection:
+            context_state = connection.execute(
+                "SELECT state FROM library_scan_grouping_contexts "
+                "WHERE run_id='staged-flat-run'"
+            ).fetchone()[0]
+            retained = connection.execute(
+                "SELECT COUNT(*) FROM local_tracks track WHERE track.local_album_id "
+                "LIKE 'flat-old-album-%'"
+            ).fetchone()[0]
+            matched = connection.execute(
+                "SELECT COUNT(*) FROM library_scan_grouping_old_nodes "
+                "WHERE run_id='staged-flat-run' "
+                "AND matched_grouping_token IS NOT NULL"
+            ).fetchone()[0]
+            staged = connection.execute(
+                "SELECT COUNT(*) FROM library_scan_grouping_evidence "
+                "WHERE run_id='staged-flat-run'"
+            ).fetchone()[0]
+        transaction_p95 = _percentile(background_transaction_seconds, 0.95) or 0.0
+        transaction_max = max(background_transaction_seconds, default=0.0)
+        wal = database.with_name(f"{database.name}-wal")
+        return {
+            "file_count": count,
+            "fixture": "durable-flat-untagged-directory",
+            "elapsed_seconds": elapsed,
+            "peak_python_bytes": peak,
+            "retained_album_ids": retained,
+            "disk_backed_matches": matched,
+            "staged_evidence_rows": staged,
+            "identification_enqueued": enqueued,
+            "context_state": context_state,
+            "background_transaction_p95_seconds": transaction_p95,
+            "background_transaction_max_seconds": transaction_max,
+            "wal_bytes": wal.stat().st_size if wal.exists() else 0,
+            "passed": context_state == "completed"
+            and retained == 1
+            and matched == 1
+            and staged == count
+            and enqueued == count
+            and transaction_p95 <= 0.25
+            and transaction_max <= 2.0,
+        }
+
+
 async def benchmark_identification_backlog(
     backlog_count: int = 50_000,
 ) -> dict[str, object]:
@@ -147,7 +285,10 @@ async def benchmark_identification_backlog(
         seed_started = perf_counter()
         with sqlite3.connect(database) as connection:
             connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("INSERT INTO auth_users(id) VALUES ('admin')")
+            connection.execute(
+                "INSERT INTO auth_users(id,display_name,role,created_at) "
+                "VALUES ('admin','Benchmark Admin','admin','2026-01-01T00:00:00Z')"
+            )
             connection.executemany(
                 "INSERT INTO library_identification_jobs "
                 "(id, local_album_id, kind, state, priority, enqueue_sequence, "
@@ -273,7 +414,10 @@ async def benchmark_evidence_protection() -> dict[str, object]:
             )
         with sqlite3.connect(database) as connection:
             connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("INSERT INTO auth_users(id) VALUES ('admin')")
+            connection.execute(
+                "INSERT INTO auth_users(id,display_name,role,created_at) "
+                "VALUES ('admin','Benchmark Admin','admin','2026-01-01T00:00:00Z')"
+            )
             connection.executemany(
                 "INSERT INTO library_identification_attempts "
                 "(id, local_album_id, trigger, input_tag_revision, input_policy_revision, "

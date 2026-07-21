@@ -37,6 +37,11 @@ export type Album = {
 	selected_release_mbid?: string | null;
 };
 
+export interface LibraryMembershipResponse {
+	owned_ids: string[];
+	requested_ids: string[];
+}
+
 export type SuggestResult = {
 	type: 'artist' | 'album';
 	title: string;

@@ -1284,6 +1284,11 @@ async def test_target_tag_and_removal_writers_audit_without_deleting_stable_rows
     membership.tracks[0].file_format = info.file_format
     membership.tracks[0].duration_seconds = info.duration_seconds
     await store.create_catalog_membership(membership)
+    with sqlite3.connect(store.db_path) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET stat_revision_kind = 'legacy_float' WHERE id = ?",
+            (track_id,),
+        )
     preferences = SimpleNamespace(
         get_typed_library_settings=lambda: SimpleNamespace(
             library_roots=[SimpleNamespace(path=str(root))]
@@ -1314,6 +1319,11 @@ async def test_target_tag_and_removal_writers_audit_without_deleting_stable_rows
     assert updated.musicbrainz_recording_id is None
     assert AudioTagger().read_tags(path)[0].title == "Edited locally"
     assert await store.get_catalog_revision() > before_revision
+    with sqlite3.connect(store.db_path) as connection:
+        stat_revision_kind = connection.execute(
+            "SELECT stat_revision_kind FROM local_tracks WHERE id = ?", (track_id,)
+        ).fetchone()[0]
+    assert stat_revision_kind == "exact"
 
     removed = await writer.remove_track(
         track_id, actor_user_id="user-1", delete_file=True

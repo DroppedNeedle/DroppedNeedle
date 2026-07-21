@@ -33,10 +33,12 @@ def _user() -> UserRecord:
 async def test_verify_token_does_not_wait_for_activity_write_and_coalesces() -> None:
     release_touch = asyncio.Event()
     store = AsyncMock()
-    store.verify_token.return_value = _token(
-        last_seen_at=(datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    store.verify_token_with_user.return_value = (
+        _user(),
+        _token(
+            last_seen_at=(datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+        ),
     )
-    store.get_user_by_id.return_value = _user()
 
     async def blocked_touch(_token_id: str) -> None:
         await release_touch.wait()
@@ -58,10 +60,10 @@ async def test_verify_token_does_not_wait_for_activity_write_and_coalesces() -> 
 @pytest.mark.asyncio
 async def test_recent_token_skips_activity_write() -> None:
     store = AsyncMock()
-    store.verify_token.return_value = _token(
-        last_seen_at=datetime.now(timezone.utc).isoformat()
+    store.verify_token_with_user.return_value = (
+        _user(),
+        _token(last_seen_at=datetime.now(timezone.utc).isoformat()),
     )
-    store.get_user_by_id.return_value = _user()
     service = AuthService(store)
 
     assert await service.verify_token("raw-token") is not None

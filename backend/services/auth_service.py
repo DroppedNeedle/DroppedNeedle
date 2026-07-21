@@ -330,13 +330,11 @@ class AuthService:
     async def verify_token(
         self, raw_token: str
     ) -> tuple[UserRecord, TokenRecord] | None:
-        token = await self._store.verify_token(raw_token)
-        if token is None:
+        result = await self._store.verify_token_with_user(raw_token)
+        if result is None:
             return None
 
-        user = await self._store.get_user_by_id(token.user_id)
-        if user is None:
-            return None
+        user, token = result
 
         self._schedule_token_touch(token)
 

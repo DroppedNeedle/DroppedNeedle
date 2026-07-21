@@ -59,3 +59,20 @@ async def test_library_invalidation_marks_page_and_queue_snapshots_stale(
 
     assert await store.get_with_stale("discover_response:u1") == (b"home", True)
     assert await store.get_with_stale("discover_queue:u1") == (b"queue", True)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_is_rejected_after_catalog_revision_changes(tmp_path) -> None:
+    store = DiscoverySnapshotStore(tmp_path / "library.db", threading.Lock())
+    await store.save("discover_response:u1", "u1", b"home", 123.0)
+
+    connection = sqlite3.connect(store.db_path)
+    try:
+        connection.execute(
+            "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    assert await store.get_with_stale("discover_response:u1") is None

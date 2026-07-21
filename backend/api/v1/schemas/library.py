@@ -47,6 +47,15 @@ class LibraryMbidsResponse(AppStruct):
     requested_mbids: list[str] = []
 
 
+class LibraryMembershipRequest(AppStruct):
+    album_ids: list[str] = []
+
+
+class LibraryMembershipResponse(AppStruct):
+    owned_ids: list[str] = []
+    requested_ids: list[str] = []
+
+
 class LibraryGroupedResponse(AppStruct):
     library: list[LibraryGroupedArtist] = []
 

@@ -199,6 +199,9 @@ class LibraryService:
             logger.error(f"Failed to fetch requested mbids: {e}")
             raise ExternalServiceError(f"Failed to fetch requested mbids: {e}")
 
+    async def get_membership(self, album_ids: list[str]) -> set[str]:
+        return await self._library_db.existing_library_mbids(album_ids)
+
     async def get_artists(self, limit: int | None = None) -> list[LibraryArtist]:
         try:
             artists_data = await self._library_db.get_artists(limit=limit)

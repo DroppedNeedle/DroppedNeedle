@@ -7,6 +7,7 @@ from typing import Literal
 import msgspec
 
 from infrastructure.msgspec_fastapi import AppStruct
+from models.local_catalog import LocalAlbum, LocalArtist, LocalArtistCredit, LocalTrack
 
 
 class IdentificationJob(AppStruct):
@@ -173,6 +174,18 @@ class ScanInventoryItem(AppStruct):
     ]
     policy_revision: str = ""
     local_track_id: str | None = None
+    scope_relative_path: str = "."
+
+
+class ScannedTrackWrite(msgspec.Struct):
+    artist: LocalArtist
+    album: LocalAlbum
+    track: LocalTrack
+    credit: LocalArtistCredit
+    root_id: str
+    relative_path: str
+    comparison_result: Literal["new", "changed"]
+    grouping_context: str
 
 
 class MigrationProvenance(AppStruct):

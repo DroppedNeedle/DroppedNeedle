@@ -5,7 +5,7 @@ import random
 from types import SimpleNamespace
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import msgspec
 
@@ -63,6 +63,9 @@ from services.weekly_exploration_service import WeeklyExplorationService
 from infrastructure.validators import is_valid_mbid
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from services.native.background_workload_gate import BackgroundWorkloadGate
 
 
 def _log_task_error(task: "asyncio.Task[None]") -> None:
@@ -218,6 +221,8 @@ class DiscoverHomepageService:
         cover_repo: Any = None,
         genre_artwork_service: Any = None,
         snapshot_store: DiscoverySnapshotStore | None = None,
+        workload_gate: "BackgroundWorkloadGate | None" = None,
+        ownership_service: Any = None,
     ) -> None:
         self._lb_repo = listenbrainz_repo
         self._jf_repo = jellyfin_repo
@@ -237,6 +242,8 @@ class DiscoverHomepageService:
         self._cover_repo = cover_repo
         self._genre_artwork = genre_artwork_service
         self._snapshot_store = snapshot_store
+        self._workload_gate = workload_gate
+        self._ownership = ownership_service
         self._transformers = HomeDataTransformers(jellyfin_repo)
         self._weekly_exploration = WeeklyExplorationService(
             listenbrainz_repo, musicbrainz_repo
@@ -462,6 +469,8 @@ class DiscoverHomepageService:
         builders choose their path. Without this, the first build after an idle gap (the gate's TTL
         expired with no call to re-mark it) would take the stale LB path, 500, and cache a
         trending-only result."""
+        if self._workload_gate is not None:
+            await self._workload_gate.wait_until_available()
         (
             lb_client,
             _lfm,
@@ -518,6 +527,8 @@ class DiscoverHomepageService:
         self._trigger_warm(user_id)
 
     async def warm_cache(self, user_id: str) -> None:
+        if self._workload_gate is not None:
+            await self._workload_gate.wait_until_available()
         _, _, _, _, lb_enabled, lfm_enabled, _ = await self._resolve_user_music(
             user_id, None
         )
@@ -587,6 +598,100 @@ class DiscoverHomepageService:
             # rebuilding on every poll - including users whose build is legitimately empty
             self._built_at[cache_key] = time.time()
 
+    async def _apply_candidate_ownership(self, response: DiscoverResponse) -> None:
+        albums: list[HomeAlbum] = []
+        artists: list[HomeArtist] = []
+
+        def collect(section: HomeSection | None) -> None:
+            if section is None:
+                return
+            albums.extend(item for item in section.items if isinstance(item, HomeAlbum))
+            artists.extend(
+                item for item in section.items if isinstance(item, HomeArtist)
+            )
+
+        if response.top_picks is not None:
+            albums.extend(pick.album for pick in response.top_picks.items)
+        for because in response.because_you_listen_to:
+            collect(because.section)
+        for section in (
+            response.fresh_releases,
+            response.missing_essentials,
+            response.rediscover,
+            response.artists_you_might_like,
+            response.popular_in_your_genres,
+            response.globally_trending,
+            response.lastfm_weekly_artist_chart,
+            response.lastfm_weekly_album_chart,
+            response.lastfm_recent_scrobbles,
+            response.listeners_like_you,
+            response.anniversaries,
+            response.new_from_followed,
+            response.unexplored_genres,
+            response.genre_list,
+            *response.daily_mixes,
+            *response.radio_sections,
+        ):
+            collect(section)
+
+        if albums:
+            if self._ownership is not None:
+                from services.native.library_ownership_service import (
+                    AlbumOwnershipCandidate,
+                )
+
+                projections = await self._ownership.project_albums(
+                    [
+                        AlbumOwnershipCandidate(
+                            release_group_mbid=album.mbid,
+                            title=album.name,
+                            album_artist=album.artist_name or "",
+                            year=(
+                                int(album.release_date[:4])
+                                if album.release_date
+                                and album.release_date[:4].isdigit()
+                                else None
+                            ),
+                        )
+                        for album in albums
+                    ]
+                )
+                for album, projection in zip(albums, projections):
+                    album.in_library = projection.owned
+                    if projection.local_album_id is not None:
+                        album.local_id = projection.local_album_id
+            else:
+                owned_albums = await self._mbid.get_library_album_mbids(
+                    self._integration.is_library_configured(),
+                    [album.mbid for album in albums if album.mbid],
+                )
+                for album in albums:
+                    if album.mbid and album.mbid.casefold() in owned_albums:
+                        album.in_library = True
+
+        artist_ids = [artist.mbid for artist in artists if artist.mbid]
+        if artist_ids:
+            try:
+                owned_artists = await self._library_repo.existing_artist_mbids(
+                    artist_ids
+                )
+            except Exception as exc:  # noqa: BLE001 - ownership flags are best-effort
+                logger.warning("native artist mbid lookup failed: %s", exc)
+            else:
+                normalized = {identifier.casefold() for identifier in owned_artists}
+                for artist in artists:
+                    if artist.mbid and artist.mbid.casefold() in normalized:
+                        artist.in_library = True
+
+        if response.missing_essentials is not None:
+            response.missing_essentials.items = [
+                item
+                for item in response.missing_essentials.items
+                if not isinstance(item, HomeAlbum) or not item.in_library
+            ]
+            if not response.missing_essentials.items:
+                response.missing_essentials = None
+
     @staticmethod
     def _build_status_summary(ctx: DegradationContext) -> dict[str, str] | None:
         """The build's degradation summary, plus the LB-popularity health gate: sections
@@ -648,6 +753,8 @@ class DiscoverHomepageService:
 
             async def warm_album(mbid: str, size: str) -> None:
                 async with semaphore:
+                    if self._workload_gate is not None:
+                        await self._workload_gate.wait_until_available()
                     try:
                         await self._cover_repo.get_release_group_cover(
                             mbid, size=size, priority=RequestPriority.BACKGROUND_SYNC
@@ -661,6 +768,8 @@ class DiscoverHomepageService:
 
             async def warm_artist(mbid: str) -> None:
                 async with semaphore:
+                    if self._workload_gate is not None:
+                        await self._workload_gate.wait_until_available()
                     try:
                         await self._cover_repo.get_artist_image(
                             mbid, size=250, priority=RequestPriority.BACKGROUND_SYNC
@@ -774,13 +883,8 @@ class DiscoverHomepageService:
         jf_enabled = self._integration.is_jellyfin_enabled()
         library_configured = self._integration.is_library_configured()
 
-        library_mbids = await self._mbid.get_library_artist_mbids(library_configured)
-        # album sections must check ALBUM membership; checking release-group mbids
-        # against the artist set made in_library always-false (owned albums showed
-        # download buttons) and neutered the don't-suggest-what-you-own exclusions
-        library_album_mbids = await self._mbid.get_library_album_mbids(
-            library_configured
-        )
+        library_mbids: set[str] = set()
+        library_album_mbids: set[str] = set()
 
         seed_artists = await self._get_seed_artists(
             lb_enabled,
@@ -853,14 +957,20 @@ class DiscoverHomepageService:
             tasks["jf_most_played"] = self._jf_repo.get_most_played_artists(limit=50)
 
         if library_configured:
-            tasks["library_artists"] = self._library_repo.get_artists_from_library(
-                include_unmonitored=True
-            )
-            tasks["library_albums"] = self._library_repo.get_library(
-                include_unmonitored=True
-            )
+            tasks["library_artists"] = self._library_repo.get_home_artists(limit=500)
+            tasks["library_albums"] = self._library_repo.get_home_albums(limit=500)
 
         results = await self._execute_tasks(tasks)
+        library_mbids = {
+            str(artist["mbid"]).lower()
+            for artist in (results.get("library_artists") or [])
+            if artist.get("mbid")
+        }
+        library_album_mbids = {
+            album.musicbrainz_id.lower()
+            for album in (results.get("library_albums") or [])
+            if album.musicbrainz_id
+        }
         degraded = self._degraded_sources(
             list(tasks.keys()), self._last_failed_task_keys
         )
@@ -996,6 +1106,7 @@ class DiscoverHomepageService:
 
         response.service_prompts = self._build_service_prompts(lb_enabled, lfm_enabled)
 
+        await self._apply_candidate_ownership(response)
         self._dedupe_album_sections(response)
 
         return response
@@ -1709,10 +1820,7 @@ class DiscoverHomepageService:
                     return cached["section"]  # type: ignore[return-value]
 
             _, count = self._integration.get_discover_picks_settings()
-            library_configured = self._integration.is_library_configured()
-            library_album_mbids = await self._mbid.get_library_album_mbids(
-                library_configured
-            )
+            library_album_mbids: set[str] = set()
             listened = await self._mbid.get_user_listened_release_group_mbids(
                 lb_enabled, username, primary
             )
@@ -1843,6 +1951,18 @@ class DiscoverHomepageService:
                         from_trending=True,
                     )
                 )
+
+            library_album_mbids = await self._mbid.get_library_album_mbids(
+                self._integration.is_library_configured(),
+                [candidate.release_group_mbid for candidate in candidates],
+            )
+            if library_album_mbids:
+                candidates = [
+                    candidate
+                    for candidate in candidates
+                    if candidate.release_group_mbid.casefold()
+                    not in library_album_mbids
+                ]
 
             # Degraded = we're leaning on the Last.fm->MB personalisation path but it
             # produced no personalised (non-trending) picks this build. Cache such a
@@ -1980,10 +2100,7 @@ class DiscoverHomepageService:
             if not names:
                 return None
 
-            library_configured = self._integration.is_library_configured()
-            library_album_mbids = await self._mbid.get_library_album_mbids(
-                library_configured
-            )
+            library_album_mbids: set[str] = set()
             ignored: set[str] = set()
             if self._mbid_store is not None:
                 try:
@@ -2051,12 +2168,16 @@ class DiscoverHomepageService:
         """Library albums hitting a round anniversary this year."""
         if self._library_db is None:
             return None
+        this_year = datetime.now(timezone.utc).year
         try:
-            albums = await self._library_db.get_albums()
+            albums = await self._library_db.get_anniversary_albums(
+                current_year=this_year,
+                anniversary_years=self._ANNIVERSARY_YEARS,
+                limit=12,
+            )
         except Exception as e:  # noqa: BLE001
             logger.debug("Anniversaries builder failed to read the library: %s", e)
             return None
-        this_year = datetime.now(timezone.utc).year
         matches: list[tuple[int, dict[str, Any]]] = []
         for album in albums:
             year = album.get("year")

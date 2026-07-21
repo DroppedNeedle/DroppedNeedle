@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 import threading
+import time
 from typing import Any, TypeVar
 
 import msgspec
@@ -49,6 +50,7 @@ from models.library_work import (
     ScanRequestResult,
     ScanRun,
     ScanScope,
+    ScannedTrackWrite,
 )
 from models.local_catalog import (
     CatalogMembership,
@@ -361,8 +363,14 @@ class NativeLibraryStore(PersistenceBase):
         db_path: Path,
         write_lock: threading.Lock,
         invalidator: Callable[[], Awaitable[None]] | None = None,
+        scan_invalidator: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._invalidator = invalidator
+        self._scan_invalidator = scan_invalidator or invalidator
+        self._scan_invalidation_lock = asyncio.Lock()
+        self._scan_invalidation_pending = False
+        self._last_scan_invalidation_at = 0.0
+        self._scan_catalog_dirty = False
         self._provider_album_snapshot: tuple[int, frozenset[str]] | None = None
         self._provider_album_snapshot_lock = asyncio.Lock()
         super().__init__(db_path, write_lock)
@@ -395,6 +403,52 @@ class NativeLibraryStore(PersistenceBase):
     async def _invalidate(self) -> None:
         if self._invalidator is not None:
             await self._invalidator()
+
+    async def _write_scan(
+        self, operation: Callable[[sqlite3.Connection], _T]
+    ) -> _T:
+        def tracked(connection: sqlite3.Connection) -> tuple[_T, bool]:
+            before = int(
+                connection.execute(
+                    "SELECT value FROM library_catalog_revision WHERE singleton = 1"
+                ).fetchone()[0]
+            )
+            result = operation(connection)
+            after = int(
+                connection.execute(
+                    "SELECT value FROM library_catalog_revision WHERE singleton = 1"
+                ).fetchone()[0]
+            )
+            return result, before != after
+
+        result, catalog_changed = await super()._background_write(tracked)
+        if catalog_changed:
+            async with self._scan_invalidation_lock:
+                self._scan_catalog_dirty = True
+                now = time.monotonic()
+                if now - self._last_scan_invalidation_at >= 30.0:
+                    if self._scan_invalidator is not None:
+                        await self._scan_invalidator()
+                    self._last_scan_invalidation_at = now
+                    self._scan_invalidation_pending = False
+                else:
+                    self._scan_invalidation_pending = True
+        return result
+
+    async def flush_scan_invalidation(self, *, terminal: bool = False) -> None:
+        async with self._scan_invalidation_lock:
+            if terminal and self._scan_catalog_dirty:
+                await self._invalidate()
+                self._last_scan_invalidation_at = time.monotonic()
+                self._scan_invalidation_pending = False
+                self._scan_catalog_dirty = False
+                return
+            if not self._scan_invalidation_pending:
+                return
+            if self._scan_invalidator is not None:
+                await self._scan_invalidator()
+            self._last_scan_invalidation_at = time.monotonic()
+            self._scan_invalidation_pending = False
 
     def _connect(self) -> sqlite3.Connection:
         connection = super()._connect()
@@ -506,6 +560,7 @@ class NativeLibraryStore(PersistenceBase):
                 "ALTER TABLE local_tracks ADD COLUMN tag_album_artist_name TEXT",
                 "ALTER TABLE local_tracks ADD COLUMN manual_excluded INTEGER NOT NULL DEFAULT 0 CHECK(manual_excluded IN (0,1))",
                 "ALTER TABLE local_tracks ADD COLUMN genre_folded TEXT",
+                "ALTER TABLE local_tracks ADD COLUMN stat_revision_kind TEXT NOT NULL DEFAULT 'unclassified' CHECK(stat_revision_kind IN ('exact','legacy_float','legacy_review','unclassified'))",
                 "ALTER TABLE library_identity_repair_findings ADD COLUMN expected_identity_revision INTEGER",
                 "ALTER TABLE library_identity_repair_findings ADD COLUMN reason_code TEXT NOT NULL DEFAULT ''",
                 "ALTER TABLE library_identity_repair_findings ADD COLUMN apply_eligible INTEGER NOT NULL DEFAULT 0 CHECK(apply_eligible IN (0,1))",
@@ -520,6 +575,25 @@ class NativeLibraryStore(PersistenceBase):
                 "ALTER TABLE library_scan_runs ADD COLUMN phase_started_at REAL",
                 "ALTER TABLE library_scan_runs ADD COLUMN phase_timings_json TEXT NOT NULL DEFAULT '{}'",
                 "ALTER TABLE library_scan_runs ADD COLUMN new_count INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE library_scan_runs ADD COLUMN inventory_cleanup_pending INTEGER NOT NULL DEFAULT 0 CHECK(inventory_cleanup_pending IN (0,1))",
+                "ALTER TABLE library_scan_run_scopes ADD COLUMN discovery_generation INTEGER NOT NULL DEFAULT 1",
+                "ALTER TABLE library_scan_inventory ADD COLUMN scope_relative_path TEXT NOT NULL DEFAULT '.'",
+                "ALTER TABLE library_scan_inventory ADD COLUMN discovery_generation INTEGER NOT NULL DEFAULT 1",
+                "ALTER TABLE library_scan_grouping_contexts ADD COLUMN staging_state TEXT NOT NULL DEFAULT 'pending' CHECK(staging_state IN ('pending','tracks','tokens','groups','continuity','albums','memberships','retirement','queue','completed'))",
+                "ALTER TABLE library_scan_grouping_contexts ADD COLUMN staging_cursor TEXT",
+                "ALTER TABLE library_scan_grouping_contexts ADD COLUMN application_cursor TEXT",
+                "ALTER TABLE library_scan_grouping_contexts ADD COLUMN queue_cursor TEXT",
+                "ALTER TABLE library_scan_grouping_contexts ADD COLUMN grouping_merge_target TEXT",
+                "ALTER TABLE library_scan_grouping_contexts ADD COLUMN grouping_merge_ready INTEGER NOT NULL DEFAULT 0 CHECK(grouping_merge_ready IN (0,1))",
+                "ALTER TABLE library_scan_grouping_groups ADD COLUMN tag_revision_accumulator TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000'",
+                "ALTER TABLE library_scan_grouping_groups ADD COLUMN stat_revision_accumulator TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000'",
+                "ALTER TABLE library_scan_grouping_groups ADD COLUMN policy_revision_accumulator TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000'",
+                "ALTER TABLE library_scan_grouping_groups ADD COLUMN automatic_track_count INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE library_scan_grouping_groups ADD COLUMN local_metadata_track_count INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE library_scan_grouping_groups ADD COLUMN excluded_track_count INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE library_scan_grouping_groups ADD COLUMN embedded_identity_count INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE library_scan_grouping_old_nodes ADD COLUMN matched_grouping_token TEXT",
+                "ALTER TABLE library_scan_grouping_new_nodes ADD COLUMN matched_old_album_id TEXT REFERENCES local_albums(id) ON DELETE RESTRICT",
                 "ALTER TABLE library_migration_runs ADD COLUMN root_revision TEXT NOT NULL DEFAULT ''",
             ):
                 try:
@@ -530,6 +604,44 @@ class NativeLibraryStore(PersistenceBase):
             connection.execute(
                 "UPDATE local_tracks SET genre_folded = fold(genre) "
                 "WHERE genre IS NOT NULL AND genre != '' AND genre_folded IS NULL"
+            )
+            connection.execute(
+                "UPDATE local_tracks SET stat_revision_kind = 'exact' "
+                "WHERE stat_revision_kind = 'unclassified' "
+                "AND stat_revision = CAST(file_size_bytes AS TEXT) || ':' || CAST(file_mtime_ns AS TEXT)"
+            )
+            connection.execute(
+                "UPDATE local_tracks SET stat_revision_kind = 'legacy_review', "
+                "tags_read_at = COALESCE(tags_read_at, imported_at) "
+                "WHERE stat_revision_kind = 'unclassified' AND ingest_source = 'legacy_review'"
+            )
+            connection.execute(
+                "UPDATE local_tracks SET stat_revision_kind = 'legacy_float' "
+                "WHERE stat_revision_kind = 'unclassified' "
+                "AND membership_source = 'legacy_import'"
+            )
+            connection.execute(
+                "UPDATE library_scan_inventory AS inventory "
+                "SET scope_relative_path = ("
+                "SELECT scope.relative_path FROM library_scan_run_scopes AS scope "
+                "WHERE scope.run_id = inventory.run_id "
+                "AND scope.root_id = inventory.root_id "
+                "AND (inventory.relative_path = scope.relative_path "
+                "OR inventory.relative_path LIKE scope.relative_path || '/%') "
+                "ORDER BY length(scope.relative_path) DESC, scope.scope_sequence LIMIT 1"
+                ") WHERE inventory.scope_relative_path = '.' "
+                "AND NOT EXISTS ("
+                "SELECT 1 FROM library_scan_run_scopes AS root_scope "
+                "WHERE root_scope.run_id = inventory.run_id "
+                "AND root_scope.root_id = inventory.root_id "
+                "AND root_scope.relative_path = '.'"
+                ") AND EXISTS ("
+                "SELECT 1 FROM library_scan_run_scopes AS matching_scope "
+                "WHERE matching_scope.run_id = inventory.run_id "
+                "AND matching_scope.root_id = inventory.root_id "
+                "AND (inventory.relative_path = matching_scope.relative_path "
+                "OR inventory.relative_path LIKE matching_scope.relative_path || '/%')"
+                ")"
             )
             connection.execute(
                 "UPDATE local_albums SET title_folded = fold(title), "
@@ -1300,7 +1412,8 @@ class NativeLibraryStore(PersistenceBase):
             }
             connection.execute(
                 "UPDATE local_tracks SET file_size_bytes = ?, file_mtime_ns = ?, "
-                "stat_revision = ?, tag_revision = ?, tags_read_at = ?, "
+                "stat_revision = ?, stat_revision_kind = 'exact', "
+                "tag_revision = ?, tags_read_at = ?, "
                 "metadata_incomplete = 0, title = ?, title_folded = ?, artist_name = ?, "
                 "artist_name_folded = ?, album_title = ?, album_title_folded = ?, "
                 "album_artist_name = ?, album_artist_name_folded = ?, tag_album_title = ?, "
@@ -2074,6 +2187,41 @@ class NativeLibraryStore(PersistenceBase):
                 "ORDER BY identity.provider_artist_id"
             ).fetchall()
             return {str(row["provider_artist_id"]) for row in rows}
+
+        return await self._read(operation)
+
+    async def target_existing_provider_artist_ids(
+        self, identifiers: list[str]
+    ) -> set[str]:
+        normalized = sorted(
+            {value.strip().casefold() for value in identifiers if value.strip()}
+        )
+        if not normalized:
+            return set()
+
+        def operation(connection: sqlite3.Connection) -> set[str]:
+            found: set[str] = set()
+            for offset in range(0, len(normalized), 500):
+                batch = normalized[offset : offset + 500]
+                placeholders = ",".join("?" for _ in batch)
+                rows = connection.execute(
+                    "SELECT identity.provider_artist_id FROM "
+                    "local_artist_external_identities identity WHERE "
+                    f"lower(identity.provider_artist_id) IN ({placeholders}) AND ("
+                    "EXISTS (SELECT 1 FROM local_album_artists credit "
+                    "JOIN local_tracks track ON track.local_album_id=credit.local_album_id "
+                    "WHERE credit.local_artist_id=identity.local_artist_id "
+                    "AND track.availability='indexed') OR EXISTS ("
+                    "SELECT 1 FROM local_track_artists credit JOIN local_tracks track "
+                    "ON track.id=credit.local_track_id WHERE "
+                    "credit.local_artist_id=identity.local_artist_id "
+                    "AND track.availability='indexed'))",
+                    batch,
+                ).fetchall()
+                found.update(
+                    str(row["provider_artist_id"]).casefold() for row in rows
+                )
+            return found
 
         return await self._read(operation)
 
@@ -4531,6 +4679,7 @@ class NativeLibraryStore(PersistenceBase):
             "INSERT INTO local_tracks "
             "(id, local_album_id, root_id, file_path, relative_path, path_hash, "
             "file_size_bytes, file_mtime_ns, stat_revision, tag_revision, tags_read_at, "
+            "stat_revision_kind, "
             "metadata_incomplete, title, title_folded, artist_name, artist_name_folded, "
             "album_title, album_title_folded, album_artist_name, album_artist_name_folded, "
             "tag_album_title, tag_album_artist_name, "
@@ -4541,9 +4690,9 @@ class NativeLibraryStore(PersistenceBase):
             "bit_rate, sample_rate, bit_depth, channels, replaygain_track_gain, "
             "replaygain_album_gain, replaygain_track_peak, replaygain_album_peak, availability, "
             "missing_since, excluded_at, ingest_source, download_task_id, source_path, "
-            "imported_at, membership_source, membership_locked, desired_policy_revision, "
+            "imported_at, membership_source, membership_locked, manual_excluded, desired_policy_revision, "
             "applied_policy_revision, applied_policy, row_revision) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 track.id,
                 track.local_album_id,
@@ -4556,6 +4705,7 @@ class NativeLibraryStore(PersistenceBase):
                 track.stat_revision,
                 track.tag_revision,
                 track.tags_read_at,
+                track.stat_revision_kind,
                 int(track.metadata_incomplete),
                 track.title,
                 _fold(track.title),
@@ -4602,6 +4752,7 @@ class NativeLibraryStore(PersistenceBase):
                 track.imported_at,
                 track.membership_source,
                 int(track.membership_locked),
+                int(track.manual_excluded),
                 track.desired_policy_revision,
                 track.applied_policy_revision,
                 track.applied_policy,
@@ -4684,6 +4835,7 @@ class NativeLibraryStore(PersistenceBase):
         candidates: list[tuple[str, str | None, str, str]],
         *,
         now: float,
+        background: bool = False,
     ) -> dict[str, tuple[str, bool]]:
         """Resolve one bounded artist batch in a single store-owned transaction."""
 
@@ -4705,6 +4857,8 @@ class NativeLibraryStore(PersistenceBase):
                 )
             return resolved
 
+        if background:
+            return await super()._background_write(operation)
         return await self._write(operation)
 
     @staticmethod
@@ -5331,15 +5485,52 @@ class NativeLibraryStore(PersistenceBase):
         return await self._write(operation)
 
     async def enqueue_identification_job_results(
-        self, jobs: list[IdentificationJob]
+        self,
+        jobs: list[IdentificationJob],
+        *,
+        scan_run_id: str | None = None,
+        grouping_context: tuple[str, str] | None = None,
+        queue_cursor: str | None = None,
+        background: bool = False,
     ) -> list[tuple[str, bool]]:
         """Enqueue one bounded job batch in a single store-owned transaction."""
 
         def operation(connection: sqlite3.Connection) -> list[tuple[str, bool]]:
-            return [
+            results = [
                 self._enqueue_identification_job_result(connection, job) for job in jobs
             ]
+            created = sum(created for _, created in results)
+            if scan_run_id is not None and created:
+                updated = connection.execute(
+                    "UPDATE library_scan_runs SET identification_enqueued_count = "
+                    "identification_enqueued_count + ?, row_revision = row_revision + 1, "
+                    "event_revision = event_revision + 1 WHERE id = ? "
+                    "AND row_revision < ? AND event_revision < ?",
+                    (created, scan_run_id, MAX_REVISION, MAX_REVISION),
+                )
+                if updated.rowcount != 1:
+                    raise RevisionOverflowError(
+                        "A scan run revision reached its maximum value."
+                    )
+                self._bump_stream(connection, "scan")
+            if grouping_context is not None:
+                if scan_run_id is None or queue_cursor is None:
+                    raise ValueError(
+                        "A grouping queue cursor requires its scan run and context."
+                    )
+                root_id, relative_directory = grouping_context
+                updated = connection.execute(
+                    "UPDATE library_scan_grouping_contexts SET queue_cursor=?,"
+                    "row_revision=row_revision+1 WHERE run_id=? AND root_id=? "
+                    "AND relative_directory=? AND state='pending'",
+                    (queue_cursor, scan_run_id, root_id, relative_directory),
+                )
+                if updated.rowcount != 1:
+                    raise StaleRevisionError("The grouping context is no longer pending.")
+            return results
 
+        if background:
+            return await super()._background_write(operation)
         return await self._write(operation)
 
     def _enqueue_identification_job_result(
@@ -6950,7 +7141,7 @@ class NativeLibraryStore(PersistenceBase):
             self._bump_stream(connection, "scan")
             return self._scan_state_from_row(updated)
 
-        return await self._write(operation)
+        return await super()._background_write(operation)
 
     async def get_resumable_scan_run(self) -> ScanRun | None:
         def operation(connection: sqlite3.Connection) -> ScanRun | None:
@@ -6964,7 +7155,7 @@ class NativeLibraryStore(PersistenceBase):
         return await self._read(operation)
 
     async def prepare_scan_discovery_resume(self, run_id: str) -> None:
-        """Keep completed scopes and restart only a partially discovered scope."""
+        """Start a new generation for each partially discovered scope."""
 
         def operation(connection: sqlite3.Connection) -> None:
             incomplete = connection.execute(
@@ -6974,25 +7165,19 @@ class NativeLibraryStore(PersistenceBase):
             ).fetchall()
             for scope in incomplete:
                 connection.execute(
-                    "DELETE FROM library_scan_inventory WHERE run_id = ? AND root_id = ? "
-                    "AND (relative_path = ? OR relative_path LIKE ? ESCAPE '\\')",
-                    (
-                        run_id,
-                        scope["root_id"],
-                        scope["relative_path"],
-                        "%"
-                        if scope["relative_path"] == "."
-                        else _escape_like(str(scope["relative_path"])) + "/%",
-                    ),
-                )
-                connection.execute(
                     "UPDATE library_scan_run_scopes SET discovery_state = 'pending', "
-                    "error_code = NULL, row_revision = row_revision + 1 "
+                    "discovery_generation = discovery_generation + 1, "
+                    "discovered_count = 0, error_code = NULL, row_revision = row_revision + 1 "
                     "WHERE run_id = ? AND root_id = ? AND relative_path = ?",
                     (run_id, scope["root_id"], scope["relative_path"]),
                 )
             discovered = connection.execute(
-                "SELECT COUNT(*) FROM library_scan_inventory WHERE run_id = ?",
+                "SELECT COUNT(*) FROM library_scan_inventory inventory "
+                "JOIN library_scan_run_scopes scope ON scope.run_id = inventory.run_id "
+                "AND scope.root_id = inventory.root_id "
+                "AND scope.relative_path = inventory.scope_relative_path "
+                "AND scope.discovery_generation = inventory.discovery_generation "
+                "WHERE inventory.run_id = ?",
                 (run_id,),
             ).fetchone()[0]
             connection.execute(
@@ -7001,7 +7186,55 @@ class NativeLibraryStore(PersistenceBase):
                 (discovered, run_id),
             )
 
-        await self._write(operation)
+        await super()._background_write(operation)
+
+    async def finalize_scan_discovery(self, run_id: str, *, updated_at: float) -> ScanRun:
+        def operation(connection: sqlite3.Connection) -> ScanRun:
+            total = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM library_scan_inventory inventory "
+                    "JOIN library_scan_run_scopes scope ON scope.run_id = inventory.run_id "
+                    "AND scope.root_id = inventory.root_id "
+                    "AND scope.relative_path = inventory.scope_relative_path "
+                    "AND scope.discovery_generation = inventory.discovery_generation "
+                    "WHERE inventory.run_id = ?",
+                    (run_id,),
+                ).fetchone()[0]
+            )
+            updated = connection.execute(
+                "UPDATE library_scan_runs SET total_count = ?, discovered_count = ?, "
+                "updated_at = ?, heartbeat_at = ?, row_revision = row_revision + 1, "
+                "event_revision = event_revision + 1 WHERE id = ? RETURNING *",
+                (total, total, updated_at, updated_at, run_id),
+            ).fetchone()
+            if updated is None:
+                raise ResourceNotFoundError("Scan run not found.")
+            self._bump_stream(connection, "scan")
+            return self._scan_state_from_row(updated)
+
+        return await super()._background_write(operation)
+
+    async def cleanup_stale_scan_inventory(
+        self, run_id: str, *, limit: int = 5_000
+    ) -> int:
+        """Delete one bounded page left behind by older discovery generations."""
+
+        def operation(connection: sqlite3.Connection) -> int:
+            return int(
+                connection.execute(
+                    "DELETE FROM library_scan_inventory WHERE rowid IN ("
+                    "SELECT inventory.rowid FROM library_scan_inventory inventory "
+                    "LEFT JOIN library_scan_run_scopes scope "
+                    "ON scope.run_id=inventory.run_id "
+                    "AND scope.root_id=inventory.root_id "
+                    "AND scope.relative_path=inventory.scope_relative_path "
+                    "AND scope.discovery_generation=inventory.discovery_generation "
+                    "WHERE inventory.run_id=? AND scope.run_id IS NULL LIMIT ?)",
+                    (run_id, max(1, limit)),
+                ).rowcount
+            )
+
+        return await super()._background_write(operation)
 
     async def get_scan_scope_discovery_state(
         self, run_id: str, root_id: str, relative_path: str
@@ -7015,6 +7248,21 @@ class NativeLibraryStore(PersistenceBase):
             if row is None:
                 raise ResourceNotFoundError("Scan scope not found.")
             return str(row["discovery_state"])
+
+        return await self._read(operation)
+
+    async def get_scan_scope_discovery_generation(
+        self, run_id: str, root_id: str, relative_path: str
+    ) -> int:
+        def operation(connection: sqlite3.Connection) -> int:
+            row = connection.execute(
+                "SELECT discovery_generation FROM library_scan_run_scopes "
+                "WHERE run_id = ? AND root_id = ? AND relative_path = ?",
+                (run_id, root_id, relative_path),
+            ).fetchone()
+            if row is None:
+                raise ResourceNotFoundError("Scan scope not found.")
+            return int(row["discovery_generation"])
 
         return await self._read(operation)
 
@@ -7130,10 +7378,6 @@ class NativeLibraryStore(PersistenceBase):
                     "WHERE id = ? AND stop_requested_at IS NOT NULL",
                     (now, run_id),
                 )
-            if new_state in {"cancelled", "superseded_policy_changed"}:
-                connection.execute(
-                    "DELETE FROM library_scan_inventory WHERE run_id = ?", (run_id,)
-                )
             if new_state == "completed" and updated["kind"] == "policy_reconcile":
                 policy_state = connection.execute(
                     "SELECT * FROM library_policy_state WHERE singleton = 1"
@@ -7182,14 +7426,16 @@ class NativeLibraryStore(PersistenceBase):
                     )
             if terminal:
                 connection.execute(
-                    "DELETE FROM library_scan_runs WHERE id IN (SELECT id FROM "
-                    "library_scan_runs WHERE terminal_at IS NOT NULL ORDER BY terminal_at DESC, "
-                    "id DESC LIMIT -1 OFFSET 50)"
+                    "UPDATE library_scan_runs SET inventory_cleanup_pending = (EXISTS("
+                    "SELECT 1 FROM library_scan_inventory WHERE run_id = ?) OR EXISTS("
+                    "SELECT 1 FROM library_scan_grouping_contexts WHERE run_id = ?)) "
+                    "WHERE id = ?",
+                    (run_id, run_id, run_id),
                 )
             self._bump_stream(connection, "scan")
             return self._scan_state_from_row(updated)
 
-        return await self._write(operation)
+        return await super()._background_write(operation)
 
     async def request_scan_control(
         self,
@@ -7299,7 +7545,11 @@ class NativeLibraryStore(PersistenceBase):
                 )
             if terminal:
                 connection.execute(
-                    "DELETE FROM library_scan_inventory WHERE run_id = ?", (run_id,)
+                    "UPDATE library_scan_runs SET inventory_cleanup_pending = (EXISTS("
+                    "SELECT 1 FROM library_scan_inventory WHERE run_id = ?) OR EXISTS("
+                    "SELECT 1 FROM library_scan_grouping_contexts WHERE run_id = ?)) "
+                    "WHERE id = ?",
+                    (run_id, run_id, run_id),
                 )
             stream_revision = self._bump_stream(connection, "scan")
             return self._scan_state_from_row(updated), stream_revision
@@ -7333,7 +7583,7 @@ class NativeLibraryStore(PersistenceBase):
             if cursor.rowcount != 1:
                 raise ResourceNotFoundError("Scan scope not found.")
 
-        await self._write(operation)
+        await super()._background_write(operation)
 
     async def get_scan_inventory_batch(
         self, run_id: str, *, processing_state: str, limit: int
@@ -7342,8 +7592,13 @@ class NativeLibraryStore(PersistenceBase):
             return [
                 dict(row)
                 for row in connection.execute(
-                    "SELECT * FROM library_scan_inventory WHERE run_id = ? "
-                    "AND processing_state = ? ORDER BY root_id, relative_path LIMIT ?",
+                    "SELECT inventory.* FROM library_scan_inventory inventory "
+                    "JOIN library_scan_run_scopes scope ON scope.run_id = inventory.run_id "
+                    "AND scope.root_id = inventory.root_id "
+                    "AND scope.relative_path = inventory.scope_relative_path "
+                    "AND scope.discovery_generation = inventory.discovery_generation "
+                    "WHERE inventory.run_id = ? AND inventory.processing_state = ? "
+                    "ORDER BY inventory.root_id, inventory.relative_path LIMIT ?",
                     (run_id, processing_state, limit),
                 ).fetchall()
             ]
@@ -7376,7 +7631,7 @@ class NativeLibraryStore(PersistenceBase):
                 ],
             )
 
-        await self._write(operation)
+        await super()._background_write(operation)
 
     async def add_scan_counters(
         self,
@@ -7423,7 +7678,7 @@ class NativeLibraryStore(PersistenceBase):
             self._bump_stream(connection, "scan")
             return self._scan_state_from_row(updated)
 
-        return await self._write(operation)
+        return await super()._background_write(operation)
 
     async def recover_scan_runs(self, *, now: float) -> list[ScanRun]:
         def operation(connection: sqlite3.Connection) -> list[ScanRun]:
@@ -7439,7 +7694,11 @@ class NativeLibraryStore(PersistenceBase):
                     (now, now, row["id"]),
                 )
                 connection.execute(
-                    "DELETE FROM library_scan_inventory WHERE run_id = ?", (row["id"],)
+                    "UPDATE library_scan_runs SET inventory_cleanup_pending = (EXISTS("
+                    "SELECT 1 FROM library_scan_inventory WHERE run_id = ?) OR EXISTS("
+                    "SELECT 1 FROM library_scan_grouping_contexts WHERE run_id = ?)) "
+                    "WHERE id = ?",
+                    (row["id"], row["id"], row["id"]),
                 )
             connection.execute(
                 "UPDATE library_scan_runs SET state = 'paused', requested_control = 'none', "
@@ -7471,7 +7730,77 @@ class NativeLibraryStore(PersistenceBase):
             ).fetchall()
             return [self._scan_state_from_row(row) for row in rows]
 
-        return await self._write(operation)
+        return await super()._background_write(operation)
+
+    async def cleanup_terminal_scan_inventory(
+        self, *, limit: int = 5_000
+    ) -> tuple[str | None, int, bool]:
+        """Remove one bounded terminal inventory page and resume after restarts."""
+
+        def operation(
+            connection: sqlite3.Connection,
+        ) -> tuple[str | None, int, bool]:
+            row = connection.execute(
+                "SELECT id FROM library_scan_runs WHERE terminal_at IS NOT NULL "
+                "AND inventory_cleanup_pending = 1 ORDER BY terminal_at, id LIMIT 1"
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    "DELETE FROM library_scan_runs WHERE id IN ("
+                    "SELECT id FROM library_scan_runs WHERE terminal_at IS NOT NULL "
+                    "AND inventory_cleanup_pending = 0 ORDER BY terminal_at DESC, id DESC "
+                    "LIMIT -1 OFFSET 50)"
+                )
+                return None, 0, True
+            run_id = str(row["id"])
+            for table in (
+                "library_scan_grouping_evidence",
+                "library_scan_grouping_edges",
+                "library_scan_grouping_new_nodes",
+                "library_scan_grouping_old_nodes",
+                "library_scan_grouping_values",
+                "library_scan_grouping_groups",
+            ):
+                deleted = connection.execute(
+                    f"DELETE FROM {table} WHERE rowid IN ("
+                    f"SELECT rowid FROM {table} WHERE run_id=? LIMIT ?)",
+                    (run_id, max(1, limit)),
+                ).rowcount
+                if deleted:
+                    return run_id, deleted, False
+            deleted_contexts = connection.execute(
+                "DELETE FROM library_scan_grouping_contexts WHERE rowid IN ("
+                "SELECT rowid FROM library_scan_grouping_contexts "
+                "WHERE run_id=? LIMIT ?)",
+                (run_id, max(1, limit)),
+            ).rowcount
+            if deleted_contexts:
+                return run_id, deleted_contexts, False
+            deleted = connection.execute(
+                "DELETE FROM library_scan_inventory WHERE rowid IN ("
+                "SELECT rowid FROM library_scan_inventory WHERE run_id = ? "
+                "ORDER BY root_id, relative_path LIMIT ?)",
+                (run_id, max(1, limit)),
+            ).rowcount
+            remaining = connection.execute(
+                "SELECT 1 FROM library_scan_inventory WHERE run_id = ? LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            done = remaining is None
+            if done:
+                connection.execute(
+                    "UPDATE library_scan_runs SET inventory_cleanup_pending = 0 WHERE id = ?",
+                    (run_id,),
+                )
+                connection.execute(
+                    "DELETE FROM library_scan_runs WHERE id IN ("
+                    "SELECT id FROM library_scan_runs WHERE terminal_at IS NOT NULL "
+                    "AND inventory_cleanup_pending = 0 ORDER BY terminal_at DESC, id DESC "
+                    "LIMIT -1 OFFSET 50)"
+                )
+            return run_id, deleted, done
+
+        return await super()._background_write(operation)
 
     async def add_scan_inventory_batch(
         self,
@@ -7480,14 +7809,17 @@ class NativeLibraryStore(PersistenceBase):
         *,
         expected_run_revision: int,
         updated_at: float,
+        discovery_generation: int = 1,
     ) -> tuple[int, int]:
         def operation(connection: sqlite3.Connection) -> tuple[int, int]:
             connection.executemany(
                 "INSERT INTO library_scan_inventory "
-                "(run_id, root_id, relative_path, absolute_path, file_size_bytes, "
+                "(run_id, root_id, relative_path, scope_relative_path, discovery_generation, absolute_path, file_size_bytes, "
                 "file_mtime_ns, stat_revision, policy_revision, effective_policy, "
-                "comparison_result, local_track_id) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                "comparison_result, local_track_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(run_id, root_id, relative_path) DO UPDATE SET "
+                "scope_relative_path = excluded.scope_relative_path, "
+                "discovery_generation = excluded.discovery_generation, "
                 "absolute_path = excluded.absolute_path, file_size_bytes = excluded.file_size_bytes, "
                 "file_mtime_ns = excluded.file_mtime_ns, stat_revision = excluded.stat_revision, "
                 "policy_revision = excluded.policy_revision, "
@@ -7500,6 +7832,8 @@ class NativeLibraryStore(PersistenceBase):
                         run_id,
                         item.root_id,
                         item.relative_path,
+                        item.scope_relative_path,
+                        discovery_generation,
                         item.absolute_path,
                         item.file_size_bytes,
                         item.file_mtime_ns,
@@ -7512,6 +7846,19 @@ class NativeLibraryStore(PersistenceBase):
                     for item in items
                 ],
             )
+            if items:
+                connection.execute(
+                    "UPDATE library_scan_run_scopes SET discovered_count = discovered_count + ?, "
+                    "row_revision = row_revision + 1 WHERE run_id = ? AND root_id = ? "
+                    "AND relative_path = ? AND discovery_generation = ?",
+                    (
+                        len(items),
+                        run_id,
+                        items[0].root_id,
+                        items[0].scope_relative_path,
+                        discovery_generation,
+                    ),
+                )
             updated = connection.execute(
                 "UPDATE library_scan_runs SET discovered_count = discovered_count + ?, "
                 "updated_at = ?, row_revision = row_revision + 1, event_revision = event_revision + 1 "
@@ -7539,35 +7886,187 @@ class NativeLibraryStore(PersistenceBase):
                 )
             return int(updated["row_revision"]), self._bump_stream(connection, "scan")
 
-        return await self._write(operation)
+        return await super()._background_write(operation)
 
     async def classify_scan_paths(
-        self, root_id: str, paths: list[tuple[str, str]]
+        self, root_id: str, paths: list[tuple[str, int, int, float, str]]
     ) -> dict[str, tuple[str, str | None]]:
-        """Return comparison result and stable track ID for discovered paths."""
+        """Classify one inventory page and promote compatible legacy revisions."""
+
+        if not paths:
+            return {}
+
+        def has_legacy_candidates(connection: sqlite3.Connection) -> bool:
+            relative_paths = [path[0] for path in paths]
+            placeholders = ",".join("?" for _ in relative_paths)
+            return (
+                connection.execute(
+                    "SELECT 1 FROM local_tracks WHERE root_id=? "
+                    f"AND relative_path IN ({placeholders}) "
+                    "AND stat_revision_kind!='exact' LIMIT 1",
+                    (root_id, *relative_paths),
+                ).fetchone()
+                is not None
+            )
+
+        needs_promotion = await self._read(has_legacy_candidates)
 
         def operation(
             connection: sqlite3.Connection,
         ) -> dict[str, tuple[str, str | None]]:
             result: dict[str, tuple[str, str | None]] = {}
-            for relative_path, stat_revision in paths:
-                row = connection.execute(
-                    "SELECT id, stat_revision, availability FROM local_tracks "
-                    "WHERE root_id = ? AND relative_path = ?",
-                    (root_id, relative_path),
-                ).fetchone()
-                if row is None:
+            values = ",".join("(?,?,?,?,?)" for _ in paths)
+            parameters: list[Any] = []
+            for path in paths:
+                parameters.extend(path)
+            rows = connection.execute(
+                "WITH incoming(relative_path, file_size_bytes, file_mtime_ns, "
+                f"file_mtime, stat_revision) AS (VALUES {values}) "
+                "SELECT incoming.*, track.id, track.file_size_bytes AS saved_size, "
+                "track.file_mtime_ns AS saved_mtime_ns, "
+                "track.stat_revision AS saved_revision, track.stat_revision_kind, "
+                "track.tags_read_at FROM incoming "
+                "LEFT JOIN local_tracks track ON track.root_id = ? "
+                "AND track.relative_path = incoming.relative_path",
+                (*parameters, root_id),
+            ).fetchall()
+            promotions: list[tuple[str, int, int, str]] = []
+            for row in rows:
+                relative_path = str(row["relative_path"])
+                if row["id"] is None:
                     result[relative_path] = ("new", None)
-                elif (
-                    str(row["stat_revision"]) == stat_revision
-                    and row["availability"] == "indexed"
-                ):
-                    result[relative_path] = ("unchanged", str(row["id"]))
-                else:
-                    result[relative_path] = ("changed", str(row["id"]))
+                    continue
+                kind = str(row["stat_revision_kind"] or "unclassified")
+                same_size = int(row["saved_size"]) == int(row["file_size_bytes"])
+                unchanged = False
+                if kind in {"exact", "unclassified"}:
+                    unchanged = str(row["saved_revision"]) == str(
+                        row["stat_revision"]
+                    )
+                elif kind == "legacy_float":
+                    unchanged = same_size and int(
+                        float(row["file_mtime"]) * 1_000_000_000
+                    ) == int(row["saved_mtime_ns"])
+                elif kind == "legacy_review" and row["tags_read_at"] is not None:
+                    unchanged = same_size and float(row["file_mtime"]) <= float(
+                        row["tags_read_at"]
+                    )
+                track_id = str(row["id"])
+                result[relative_path] = (
+                    "unchanged" if unchanged else "changed",
+                    track_id,
+                )
+                if unchanged and kind != "exact":
+                    promotions.append(
+                        (
+                            str(row["stat_revision"]),
+                            int(row["file_size_bytes"]),
+                            int(row["file_mtime_ns"]),
+                            track_id,
+                        )
+                    )
+            connection.executemany(
+                "UPDATE local_tracks SET stat_revision = ?, file_size_bytes = ?, "
+                "file_mtime_ns = ?, stat_revision_kind = 'exact' WHERE id = ?",
+                promotions,
+            )
             return result
 
+        if needs_promotion:
+            return await super()._background_write(operation)
         return await self._read(operation)
+
+    async def normalize_pending_legacy_inventory(
+        self, run_id: str, *, limit: int
+    ) -> int:
+        """Repair migration-shaped rows in a persisted, already-discovered scan."""
+
+        def has_candidates(connection: sqlite3.Connection) -> bool:
+            return (
+                connection.execute(
+                    "SELECT 1 FROM library_scan_inventory inventory JOIN local_tracks track "
+                    "ON track.root_id=inventory.root_id "
+                    "AND track.relative_path=inventory.relative_path "
+                    "WHERE inventory.run_id=? AND inventory.processing_state='pending' "
+                    "AND inventory.comparison_result='changed' "
+                    "AND track.stat_revision_kind IN "
+                    "('legacy_float','legacy_review','unclassified') LIMIT 1",
+                    (run_id,),
+                ).fetchone()
+                is not None
+            )
+
+        if not await self._read(has_candidates):
+            return 0
+
+        def operation(connection: sqlite3.Connection) -> int:
+            rows = connection.execute(
+                "SELECT inventory.root_id, inventory.relative_path, "
+                "inventory.file_size_bytes, inventory.file_mtime_ns, "
+                "inventory.stat_revision, track.id, track.file_size_bytes AS saved_size, "
+                "track.file_mtime_ns AS saved_mtime_ns, track.stat_revision_kind, "
+                "track.tags_read_at, track.availability FROM library_scan_inventory inventory "
+                "JOIN library_scan_run_scopes scope ON scope.run_id = inventory.run_id "
+                "AND scope.root_id = inventory.root_id "
+                "AND scope.relative_path = inventory.scope_relative_path "
+                "AND scope.discovery_generation = inventory.discovery_generation "
+                "JOIN local_tracks track ON track.root_id = inventory.root_id "
+                "AND track.relative_path = inventory.relative_path "
+                "WHERE inventory.run_id = ? AND inventory.processing_state = 'pending' "
+                "AND inventory.comparison_result = 'changed' "
+                "AND track.stat_revision_kind IN ('legacy_float','legacy_review','unclassified') "
+                "ORDER BY inventory.root_id, inventory.relative_path LIMIT ?",
+                (run_id, limit),
+            ).fetchall()
+            repaired: list[sqlite3.Row] = []
+            for row in rows:
+                same_size = int(row["saved_size"]) == int(row["file_size_bytes"])
+                kind = str(row["stat_revision_kind"])
+                if kind == "legacy_float":
+                    legacy_current_ns = int(
+                        (int(row["file_mtime_ns"]) / 1_000_000_000)
+                        * 1_000_000_000
+                    )
+                    unchanged = (
+                        same_size
+                        and int(row["saved_mtime_ns"]) == legacy_current_ns
+                    )
+                elif kind == "legacy_review":
+                    unchanged = (
+                        same_size
+                        and row["tags_read_at"] is not None
+                        and int(row["file_mtime_ns"])
+                        <= int(float(row["tags_read_at"]) * 1_000_000_000)
+                    )
+                else:
+                    unchanged = False
+                if unchanged and row["availability"] == "indexed":
+                    repaired.append(row)
+            connection.executemany(
+                "UPDATE local_tracks SET stat_revision = ?, file_size_bytes = ?, "
+                "file_mtime_ns = ?, stat_revision_kind = 'exact' WHERE id = ?",
+                [
+                    (
+                        row["stat_revision"],
+                        row["file_size_bytes"],
+                        row["file_mtime_ns"],
+                        row["id"],
+                    )
+                    for row in repaired
+                ],
+            )
+            connection.executemany(
+                "UPDATE library_scan_inventory SET comparison_result = 'unchanged', "
+                "local_track_id = ?, row_revision = row_revision + 1 "
+                "WHERE run_id = ? AND root_id = ? AND relative_path = ?",
+                [
+                    (row["id"], run_id, row["root_id"], row["relative_path"])
+                    for row in repaired
+                ],
+            )
+            return len(repaired)
+
+        return await super()._background_write(operation)
 
     async def estimate_scan_scope(self, scopes: list[ScanScope]) -> int:
         def operation(connection: sqlite3.Connection) -> int:
@@ -7608,6 +8107,268 @@ class NativeLibraryStore(PersistenceBase):
             return [dict(row) for row in rows]
 
         return await self._read(operation)
+
+    def _upsert_scanned_track_tx(
+        self,
+        connection: sqlite3.Connection,
+        write: ScannedTrackWrite,
+        *,
+        scan_run_id: str,
+    ) -> tuple[str, bool]:
+        artist = write.artist
+        resolved_artist_id, _ = self._resolve_or_create_local_artist(
+            connection,
+            display_name=artist.display_name,
+            sort_name=artist.sort_name,
+            kind=artist.kind,
+            candidate_id=artist.id,
+            normalized=_normalize_exact(artist.display_name),
+            folded=_fold(artist.display_name) or "",
+            normalized_sort=_normalize_exact(artist.sort_name),
+            now=artist.updated_at,
+        )
+        album = msgspec.structs.replace(
+            write.album, album_artist_id=resolved_artist_id
+        )
+        credit = msgspec.structs.replace(
+            write.credit, local_artist_id=resolved_artist_id
+        )
+        track = write.track
+        connection.execute(
+            "INSERT INTO local_albums "
+            "(id, root_id, grouping_key, title, title_folded, album_artist_name, "
+            "album_artist_name_folded, album_artist_id, album_artist_sort_name, year, "
+            "original_release_date, primary_genre, is_compilation, grouping_source, "
+            "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET title = excluded.title, "
+            "title_folded = excluded.title_folded, album_artist_name = excluded.album_artist_name, "
+            "album_artist_name_folded = excluded.album_artist_name_folded, "
+            "album_artist_id = excluded.album_artist_id, year = excluded.year, "
+            "primary_genre = excluded.primary_genre, updated_at = excluded.updated_at, "
+            "row_revision = local_albums.row_revision + 1",
+            (
+                album.id,
+                album.root_id,
+                album.grouping_key,
+                album.title,
+                _fold(album.title),
+                album.album_artist_name,
+                _fold(album.album_artist_name),
+                album.album_artist_id,
+                album.album_artist_sort_name,
+                album.year,
+                album.original_release_date,
+                album.primary_genre,
+                int(album.is_compilation),
+                album.grouping_source,
+                album.created_at,
+                album.updated_at,
+            ),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO local_album_artists "
+            "(local_album_id, position, local_artist_id, role, credited_name) "
+            "VALUES (?,0,?,?,?)",
+            (album.id, resolved_artist_id, credit.role, credit.credited_name),
+        )
+        existing = connection.execute(
+            "SELECT id,membership_locked,local_album_id,tag_revision,duration_seconds,"
+            "file_format,bit_rate,sample_rate,bit_depth,channels,availability "
+            "FROM local_tracks "
+            "WHERE root_id = ? AND relative_path = ?",
+            (track.root_id, track.relative_path),
+        ).fetchone()
+        if existing is None:
+            self._insert_track(connection, track)
+            track_id = track.id
+            catalog_changed = True
+        else:
+            track_id = str(existing["id"])
+            local_album_id = (
+                str(existing["local_album_id"])
+                if bool(existing["membership_locked"])
+                else track.local_album_id
+            )
+            catalog_changed = any(
+                (
+                    str(existing["local_album_id"]) != local_album_id,
+                    str(existing["tag_revision"]) != track.tag_revision,
+                    existing["duration_seconds"] != track.duration_seconds,
+                    existing["file_format"] != track.file_format,
+                    existing["bit_rate"] != track.bit_rate,
+                    existing["sample_rate"] != track.sample_rate,
+                    existing["bit_depth"] != track.bit_depth,
+                    existing["channels"] != track.channels,
+                    existing["availability"] != "indexed",
+                )
+            )
+            connection.execute(
+                "UPDATE local_tracks SET local_album_id = ?, file_path = ?, path_hash = ?, "
+                "file_size_bytes = ?, file_mtime_ns = ?, stat_revision = ?, "
+                "stat_revision_kind = ?, tag_revision = ?, tags_read_at = ?, "
+                "metadata_incomplete = ?, title = ?, title_folded = ?, "
+                "artist_name = ?, artist_name_folded = ?, album_title = ?, "
+                "album_title_folded = ?, album_artist_name = ?, album_artist_name_folded = ?, "
+                "tag_album_title = ?, tag_album_artist_name = ?, "
+                "disc_number = ?, track_number = ?, year = ?, genre = ?, genre_folded = ?, title_sort = ?, "
+                "artist_sort = ?, album_sort = ?, album_artist_sort = ?, disc_subtitle = ?, "
+                "is_compilation = ?, embedded_release_group_mbid = ?, embedded_release_mbid = ?, "
+                "embedded_recording_mbid = ?, embedded_artist_mbid = ?, "
+                "embedded_album_artist_mbid = ?, duration_seconds = ?, file_format = ?, bit_rate = ?, "
+                "sample_rate = ?, bit_depth = ?, channels = ?, replaygain_track_gain = ?, "
+                "replaygain_album_gain = ?, replaygain_track_peak = ?, replaygain_album_peak = ?, "
+                "availability = 'indexed', missing_since = NULL, excluded_at = NULL, "
+                "ingest_source = ?, download_task_id = ?, source_path = ?, imported_at = ?, "
+                "desired_policy_revision = ?, applied_policy_revision = ?, applied_policy = ?, "
+                "row_revision = row_revision + 1 WHERE id = ?",
+                (
+                    local_album_id,
+                    track.file_path,
+                    track.path_hash,
+                    track.file_size_bytes,
+                    track.file_mtime_ns,
+                    track.stat_revision,
+                    track.stat_revision_kind,
+                    track.tag_revision,
+                    track.tags_read_at,
+                    int(track.metadata_incomplete),
+                    track.title,
+                    _fold(track.title),
+                    track.artist_name,
+                    _fold(track.artist_name),
+                    track.album_title,
+                    _fold(track.album_title),
+                    track.album_artist_name,
+                    _fold(track.album_artist_name),
+                    track.tag_album_title,
+                    track.tag_album_artist_name,
+                    track.disc_number,
+                    track.track_number,
+                    track.year,
+                    track.genre,
+                    _fold(track.genre),
+                    track.title_sort,
+                    track.artist_sort,
+                    track.album_sort,
+                    track.album_artist_sort,
+                    track.disc_subtitle,
+                    int(track.is_compilation),
+                    track.embedded_release_group_mbid,
+                    track.embedded_release_mbid,
+                    track.embedded_recording_mbid,
+                    track.embedded_artist_mbid,
+                    track.embedded_album_artist_mbid,
+                    track.duration_seconds,
+                    track.file_format,
+                    track.bit_rate,
+                    track.sample_rate,
+                    track.bit_depth,
+                    track.channels,
+                    track.replaygain_track_gain,
+                    track.replaygain_album_gain,
+                    track.replaygain_track_peak,
+                    track.replaygain_album_peak,
+                    track.ingest_source,
+                    track.download_task_id,
+                    track.source_path,
+                    track.imported_at,
+                    track.desired_policy_revision,
+                    track.applied_policy_revision,
+                    track.applied_policy,
+                    track_id,
+                ),
+            )
+        connection.execute(
+            "INSERT OR IGNORE INTO local_track_artists "
+            "(local_track_id, position, local_artist_id, role, credited_name) "
+            "VALUES (?,0,?,?,?)",
+            (track_id, resolved_artist_id, credit.role, credit.credited_name),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO library_scan_grouping_contexts "
+            "(run_id, root_id, relative_directory) VALUES (?,?,?)",
+            (scan_run_id, track.root_id, write.grouping_context),
+        )
+        return track_id, catalog_changed
+
+    async def commit_scan_index_batch(
+        self,
+        run_id: str,
+        *,
+        writes: list[ScannedTrackWrite],
+        states: dict[str, list[tuple[str, str]]],
+        failures: list[tuple[str, str, str]],
+        increments: dict[str, int],
+        updated_at: float,
+    ) -> ScanRun:
+        """Commit catalog, inventory, counters, heartbeat, and stream atomically."""
+
+        def operation(connection: sqlite3.Connection) -> ScanRun:
+            catalog_changed = False
+            for write in writes:
+                track_id, changed = self._upsert_scanned_track_tx(
+                    connection, write, scan_run_id=run_id
+                )
+                catalog_changed = catalog_changed or changed
+                connection.execute(
+                    "UPDATE library_scan_inventory SET processing_state = 'indexed', "
+                    "local_track_id = ?, failure_code = NULL, row_revision = row_revision + 1 "
+                    "WHERE run_id = ? AND root_id = ? AND relative_path = ?",
+                    (track_id, run_id, write.root_id, write.relative_path),
+                )
+            for state, keys in states.items():
+                connection.executemany(
+                    "UPDATE library_scan_inventory SET processing_state = ?, "
+                    "failure_code = NULL, row_revision = row_revision + 1 "
+                    "WHERE run_id = ? AND root_id = ? AND relative_path = ?",
+                    [(state, run_id, root_id, path) for root_id, path in keys],
+                )
+            connection.executemany(
+                "UPDATE library_scan_inventory SET processing_state = 'failed', "
+                "failure_code = ?, row_revision = row_revision + 1 "
+                "WHERE run_id = ? AND root_id = ? AND relative_path = ?",
+                [
+                    (failure_code, run_id, root_id, path)
+                    for root_id, path, failure_code in failures
+                ],
+            )
+            if catalog_changed:
+                self._bump_catalog(connection)
+            allowed = {
+                "inspected_count",
+                "new_count",
+                "changed_count",
+                "indexed_count",
+                "unchanged_count",
+                "excluded_count",
+                "errored_count",
+            }
+            if set(increments) - allowed:
+                raise ValueError("Unknown scan counter increment")
+            assignments = [f"{name} = {name} + ?" for name in increments]
+            parameters: list[Any] = [increments[name] for name in increments]
+            assignments.extend(
+                [
+                    "updated_at = ?",
+                    "heartbeat_at = ?",
+                    "row_revision = row_revision + 1",
+                    "event_revision = event_revision + 1",
+                ]
+            )
+            parameters.extend([updated_at, updated_at, run_id, MAX_REVISION, MAX_REVISION])
+            updated = connection.execute(
+                f"UPDATE library_scan_runs SET {', '.join(assignments)} WHERE id = ? "
+                "AND row_revision < ? AND event_revision < ? RETURNING *",
+                parameters,
+            ).fetchone()
+            if updated is None:
+                raise RevisionOverflowError(
+                    "A scan run revision reached its maximum value."
+                )
+            self._bump_stream(connection, "scan")
+            return self._scan_state_from_row(updated)
+
+        return await self._write_scan(operation)
 
     async def upsert_scanned_track(
         self,
@@ -7700,7 +8461,8 @@ class NativeLibraryStore(PersistenceBase):
                 )
                 connection.execute(
                     "UPDATE local_tracks SET local_album_id = ?, file_path = ?, path_hash = ?, "
-                    "file_size_bytes = ?, file_mtime_ns = ?, stat_revision = ?, tag_revision = ?, "
+                    "file_size_bytes = ?, file_mtime_ns = ?, stat_revision = ?, "
+                    "stat_revision_kind = ?, tag_revision = ?, "
                     "tags_read_at = ?, metadata_incomplete = ?, title = ?, title_folded = ?, "
                     "artist_name = ?, artist_name_folded = ?, album_title = ?, "
                     "album_title_folded = ?, album_artist_name = ?, album_artist_name_folded = ?, "
@@ -7723,6 +8485,7 @@ class NativeLibraryStore(PersistenceBase):
                         track.file_size_bytes,
                         track.file_mtime_ns,
                         track.stat_revision,
+                        track.stat_revision_kind,
                         track.tag_revision,
                         track.tags_read_at,
                         int(track.metadata_incomplete),
@@ -7816,12 +8579,1299 @@ class NativeLibraryStore(PersistenceBase):
                 "JOIN local_albums a ON a.id = t.local_album_id "
                 "WHERE t.root_id = ? AND t.relative_path >= ? "
                 "AND t.relative_path < ? "
+                "AND (length(substr(t.relative_path, length(?) + 1)) - "
+                "length(replace(substr(t.relative_path, length(?) + 1), '/', ''))) <= 1 "
                 "ORDER BY t.relative_path, t.id",
-                (root_id, prefix, upper_bound),
+                (root_id, prefix, upper_bound, prefix, prefix),
             ).fetchall()
             return [dict(row) for row in rows]
 
         return await self._read(operation)
+
+    async def count_grouping_context_candidates(
+        self, root_id: str, relative_directory: str, *, limit: int
+    ) -> int:
+        prefix = (
+            "" if relative_directory == "." else f"{relative_directory.rstrip('/')}/"
+        )
+        upper_bound = f"{prefix}\U0010ffff"
+
+        def operation(connection: sqlite3.Connection) -> int:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM (SELECT 1 FROM local_tracks "
+                "WHERE root_id = ? AND relative_path >= ? AND relative_path < ? "
+                "AND (length(substr(relative_path, length(?) + 1)) - "
+                "length(replace(substr(relative_path, length(?) + 1), '/', ''))) <= 1 "
+                "LIMIT ?)",
+                (root_id, prefix, upper_bound, prefix, prefix, limit),
+            ).fetchone()
+            return int(row["count"])
+
+        return await self._read(operation)
+
+    async def get_grouping_context_track_page(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        *,
+        limit: int,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        prefix = (
+            "" if relative_directory == "." else f"{relative_directory.rstrip('/')}/"
+        )
+        upper_bound = f"{prefix}\U0010ffff"
+
+        def operation(
+            connection: sqlite3.Connection,
+        ) -> tuple[list[dict[str, Any]], str | None]:
+            context = connection.execute(
+                "SELECT staging_cursor FROM library_scan_grouping_contexts "
+                "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                "AND state='pending'",
+                (run_id, root_id, relative_directory),
+            ).fetchone()
+            if context is None:
+                raise StaleRevisionError("The grouping context is no longer pending.")
+            cursor_path = ""
+            cursor_id = ""
+            if context["staging_cursor"]:
+                cursor_path, cursor_id = json.loads(str(context["staging_cursor"]))
+            rows = connection.execute(
+                "SELECT t.*, a.created_at AS album_created_at FROM local_tracks t "
+                "JOIN local_albums a ON a.id=t.local_album_id "
+                "WHERE t.root_id=? AND t.relative_path>=? AND t.relative_path<? "
+                "AND (length(substr(t.relative_path, length(?) + 1)) - "
+                "length(replace(substr(t.relative_path, length(?) + 1), '/', ''))) <= 1 "
+                "AND (t.relative_path>? OR (t.relative_path=? AND t.id>?)) "
+                "ORDER BY t.relative_path,t.id LIMIT ?",
+                (
+                    root_id,
+                    prefix,
+                    upper_bound,
+                    prefix,
+                    prefix,
+                    cursor_path,
+                    cursor_path,
+                    cursor_id,
+                    limit,
+                ),
+            ).fetchall()
+            next_cursor = (
+                json.dumps([rows[-1]["relative_path"], rows[-1]["id"]])
+                if rows
+                else None
+            )
+            return [dict(row) for row in rows], next_cursor
+
+        return await self._read(operation)
+
+    async def stage_grouping_track_page(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        evidence: list[dict[str, Any]],
+        *,
+        next_cursor: str | None,
+        exhausted: bool,
+    ) -> None:
+        def operation(connection: sqlite3.Connection) -> None:
+            context = connection.execute(
+                "SELECT state,staging_state FROM library_scan_grouping_contexts "
+                "WHERE run_id=? AND root_id=? AND relative_directory=?",
+                (run_id, root_id, relative_directory),
+            ).fetchone()
+            if context is None or context["state"] != "pending":
+                raise StaleRevisionError("The grouping context is no longer pending.")
+            if evidence:
+                connection.executemany(
+                    "INSERT OR REPLACE INTO library_scan_grouping_evidence "
+                    "(run_id,root_id,relative_directory,local_track_id,preliminary_key,"
+                    "title,title_normalized,album_artist_name,album_artist_normalized,"
+                    "track_number,old_album_id,album_created_at,reason_code) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    [
+                        (
+                            run_id,
+                            root_id,
+                            relative_directory,
+                            row["local_track_id"],
+                            row["preliminary_key"],
+                            row["title"],
+                            row["title_normalized"],
+                            row["album_artist_name"],
+                            row["album_artist_normalized"],
+                            row["track_number"],
+                            row["old_album_id"],
+                            row["album_created_at"],
+                            row["reason_code"],
+                        )
+                        for row in evidence
+                    ],
+                )
+            connection.execute(
+                "UPDATE library_scan_grouping_contexts SET staging_cursor=?,"
+                "staging_state=?,row_revision=row_revision+1 WHERE run_id=? "
+                "AND root_id=? AND relative_directory=?",
+                (
+                    None if exhausted else next_cursor,
+                    "tokens" if exhausted else "tracks",
+                    run_id,
+                    root_id,
+                    relative_directory,
+                ),
+            )
+
+        await super()._background_write(operation)
+
+    async def prepare_staged_grouping_tokens(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        *,
+        limit: int,
+    ) -> bool:
+        parameters = (run_id, root_id, relative_directory)
+
+        def inspect_merge_target(connection: sqlite3.Connection) -> str | None:
+            context = connection.execute(
+                "SELECT grouping_merge_target,grouping_merge_ready "
+                "FROM library_scan_grouping_contexts "
+                "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                "AND state='pending'",
+                parameters,
+            ).fetchone()
+            if context is None:
+                raise StaleRevisionError("The grouping context is no longer pending.")
+            if bool(context["grouping_merge_ready"]):
+                return context["grouping_merge_target"]
+            tagged = connection.execute(
+                "SELECT preliminary_key FROM library_scan_grouping_evidence "
+                "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                "AND preliminary_key!='missing' "
+                "AND preliminary_key NOT LIKE 'manual:%' "
+                "GROUP BY preliminary_key ORDER BY preliminary_key LIMIT 2",
+                parameters,
+            ).fetchall()
+            if len(tagged) != 1:
+                return None
+            candidate = str(tagged[0]["preliminary_key"])
+            invalid_missing = connection.execute(
+                "SELECT 1 FROM library_scan_grouping_evidence missing "
+                "WHERE missing.run_id=? AND missing.root_id=? "
+                "AND missing.relative_directory=? "
+                "AND missing.preliminary_key='missing' "
+                "AND (missing.track_number<=0 OR EXISTS ("
+                "SELECT 1 FROM library_scan_grouping_evidence tagged "
+                "WHERE tagged.run_id=missing.run_id "
+                "AND tagged.root_id=missing.root_id "
+                "AND tagged.relative_directory=missing.relative_directory "
+                "AND tagged.preliminary_key=? "
+                "AND tagged.track_number=missing.track_number "
+                "AND tagged.track_number>0)) LIMIT 1",
+                (*parameters, candidate),
+            ).fetchone()
+            return candidate if invalid_missing is None else None
+
+        merge_target = await self._read(inspect_merge_target)
+
+        def operation(connection: sqlite3.Connection) -> int:
+            context = connection.execute(
+                "SELECT staging_cursor,grouping_merge_target,grouping_merge_ready "
+                "FROM library_scan_grouping_contexts "
+                "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                "AND state='pending'",
+                parameters,
+            ).fetchone()
+            if context is None:
+                raise StaleRevisionError("The grouping context is no longer pending.")
+            effective_merge_target = context["grouping_merge_target"]
+            if not bool(context["grouping_merge_ready"]):
+                connection.execute(
+                    "UPDATE library_scan_grouping_contexts SET "
+                    "grouping_merge_target=?,grouping_merge_ready=1,"
+                    "row_revision=row_revision+1 WHERE run_id=? AND root_id=? "
+                    "AND relative_directory=?",
+                    (merge_target, *parameters),
+                )
+                effective_merge_target = merge_target
+            cursor = str(context["staging_cursor"] or "")
+            rows = connection.execute(
+                "SELECT evidence.local_track_id,evidence.preliminary_key,evidence.title,"
+                "evidence.title_normalized,evidence.album_artist_name,"
+                "evidence.album_artist_normalized,evidence.old_album_id,"
+                "evidence.reason_code,track.tag_revision,track.stat_revision,"
+                "track.applied_policy_revision,track.applied_policy,"
+                "track.embedded_release_group_mbid,track.embedded_release_mbid FROM "
+                "library_scan_grouping_evidence evidence JOIN local_tracks track "
+                "ON track.id=evidence.local_track_id WHERE evidence.run_id=? "
+                "AND evidence.root_id=? AND evidence.relative_directory=? "
+                "AND evidence.local_track_id>? ORDER BY evidence.local_track_id LIMIT ?",
+                (*parameters, cursor, limit),
+            ).fetchall()
+            if not rows:
+                connection.execute(
+                    "UPDATE library_scan_grouping_contexts SET staging_state='groups',"
+                    "staging_cursor=NULL,row_revision=row_revision+1 WHERE run_id=? "
+                    "AND root_id=? AND relative_directory=?",
+                    parameters,
+                )
+                return 0
+            assigned: list[tuple[sqlite3.Row, str]] = []
+            for row in rows:
+                preliminary_key = str(row["preliminary_key"])
+                token = (
+                    preliminary_key
+                    if preliminary_key != "missing"
+                    else effective_merge_target
+                    or f"untagged:{row['local_track_id']}"
+                )
+                assigned.append((row, token))
+            connection.executemany(
+                "UPDATE library_scan_grouping_evidence SET grouping_token=? "
+                "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                "AND local_track_id=?",
+                [
+                    (
+                        token,
+                        run_id,
+                        root_id,
+                        relative_directory,
+                        row["local_track_id"],
+                    )
+                    for row, token in assigned
+                ],
+            )
+            for row, token in assigned:
+                connection.execute(
+                    "INSERT OR IGNORE INTO library_scan_grouping_groups "
+                    "(run_id,root_id,relative_directory,grouping_token,grouping_key,"
+                    "title,album_artist_name,reason_code) VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        run_id,
+                        root_id,
+                        relative_directory,
+                        token,
+                        "",
+                        "",
+                        "",
+                        "AMBIGUOUS_FALLBACK_GROUP",
+                    ),
+                )
+                values = (
+                    (
+                        "title",
+                        str(row["title_normalized"]),
+                        str(row["title"]).strip(),
+                    ),
+                    (
+                        "artist",
+                        str(row["album_artist_normalized"]),
+                        str(row["album_artist_name"]).strip(),
+                    ),
+                    (
+                        "reason",
+                        str(row["reason_code"]),
+                        str(row["reason_code"]),
+                    ),
+                )
+                for kind, normalized, display in values:
+                    if not normalized or (
+                        kind == "reason" and normalized == "MISSING_ALBUM_TAGS"
+                    ):
+                        continue
+                    connection.execute(
+                        "INSERT INTO library_scan_grouping_values "
+                        "(run_id,root_id,relative_directory,grouping_token,value_kind,"
+                        "normalized_value,display_value,occurrence_count) "
+                        "VALUES (?,?,?,?,?,?,?,1) ON CONFLICT "
+                        "(run_id,root_id,relative_directory,grouping_token,value_kind,"
+                        "normalized_value) DO UPDATE SET "
+                        "occurrence_count=occurrence_count+1,"
+                        "display_value=MIN(display_value,excluded.display_value)",
+                        (
+                            run_id,
+                            root_id,
+                            relative_directory,
+                            token,
+                            kind,
+                            normalized,
+                            display,
+                    ),
+                )
+
+            revision_modulus = 1 << 256
+            revision_sums: dict[str, list[int]] = {}
+            policy_counts: dict[str, list[int]] = {}
+            for row, token in assigned:
+                sums = revision_sums.setdefault(token, [0, 0, 0])
+                revision_values = (
+                    f"{row['local_track_id']}:{row['tag_revision'] or ''}",
+                    f"{row['local_track_id']}:{row['stat_revision']}",
+                    f"{row['local_track_id']}:{row['applied_policy_revision']}:"
+                    f"{row['applied_policy']}",
+                )
+                for index, value in enumerate(revision_values):
+                    sums[index] = (
+                        sums[index]
+                        + int.from_bytes(hashlib.sha256(value.encode()).digest(), "big")
+                    ) % revision_modulus
+                counts = policy_counts.setdefault(token, [0, 0, 0, 0])
+                policy_index = {
+                    "automatic": 0,
+                    "local_metadata": 1,
+                    "excluded": 2,
+                }[str(row["applied_policy"])]
+                counts[policy_index] += 1
+                counts[3] += int(
+                    row["embedded_release_group_mbid"] is not None
+                    or row["embedded_release_mbid"] is not None
+                )
+            for token, sums in revision_sums.items():
+                group = connection.execute(
+                    "SELECT tag_revision_accumulator,stat_revision_accumulator,"
+                    "policy_revision_accumulator FROM library_scan_grouping_groups "
+                    "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                    "AND grouping_token=?",
+                    (run_id, root_id, relative_directory, token),
+                ).fetchone()
+                accumulated = [
+                    (int(str(group[column]), 16) + sums[index]) % revision_modulus
+                    for index, column in enumerate(
+                        (
+                            "tag_revision_accumulator",
+                            "stat_revision_accumulator",
+                            "policy_revision_accumulator",
+                        )
+                    )
+                ]
+                counts = policy_counts[token]
+                connection.execute(
+                    "UPDATE library_scan_grouping_groups SET "
+                    "tag_revision_accumulator=?,stat_revision_accumulator=?,"
+                    "policy_revision_accumulator=?,"
+                    "automatic_track_count=automatic_track_count+?,"
+                    "local_metadata_track_count=local_metadata_track_count+?,"
+                    "excluded_track_count=excluded_track_count+?,"
+                    "embedded_identity_count=embedded_identity_count+? "
+                    "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                    "AND grouping_token=?",
+                    (
+                        *(f"{value:064x}" for value in accumulated),
+                        *counts,
+                        run_id,
+                        root_id,
+                        relative_directory,
+                        token,
+                    ),
+                )
+
+            overlaps: dict[tuple[str, str], int] = {}
+            for row, token in assigned:
+                key = (str(row["old_album_id"]), token)
+                overlaps[key] = overlaps.get(key, 0) + 1
+            for (old_album_id, token), overlap_count in overlaps.items():
+                total = int(
+                    connection.execute(
+                        "INSERT INTO library_scan_grouping_edges "
+                        "(run_id,root_id,relative_directory,old_album_id,grouping_token,"
+                        "overlap_count) VALUES (?,?,?,?,?,?) ON CONFLICT "
+                        "(run_id,root_id,relative_directory,old_album_id,grouping_token) "
+                        "DO UPDATE SET overlap_count=overlap_count+excluded.overlap_count "
+                        "RETURNING overlap_count",
+                        (
+                            run_id,
+                            root_id,
+                            relative_directory,
+                            old_album_id,
+                            token,
+                            overlap_count,
+                        ),
+                    ).fetchone()[0]
+                )
+                if total != overlap_count:
+                    continue
+                connection.execute(
+                    "INSERT INTO library_scan_grouping_old_nodes "
+                    "(run_id,root_id,relative_directory,old_album_id,degree) "
+                    "VALUES (?,?,?,?,1) ON CONFLICT "
+                    "(run_id,root_id,relative_directory,old_album_id) "
+                    "DO UPDATE SET degree=degree+1",
+                    (run_id, root_id, relative_directory, old_album_id),
+                )
+                connection.execute(
+                    "INSERT INTO library_scan_grouping_new_nodes "
+                    "(run_id,root_id,relative_directory,grouping_token,degree) "
+                    "VALUES (?,?,?,?,1) ON CONFLICT "
+                    "(run_id,root_id,relative_directory,grouping_token) "
+                    "DO UPDATE SET degree=degree+1",
+                    (run_id, root_id, relative_directory, token),
+                )
+            connection.execute(
+                "UPDATE library_scan_grouping_contexts SET staging_cursor=?,"
+                "row_revision=row_revision+1 WHERE run_id=? AND root_id=? "
+                "AND relative_directory=?",
+                (rows[-1]["local_track_id"], *parameters),
+            )
+            return len(rows)
+
+        return await super()._background_write(operation) == 0
+
+    async def stage_grouping_summary_page(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        *,
+        limit: int,
+    ) -> bool:
+        def operation(connection: sqlite3.Connection) -> bool:
+            context = connection.execute(
+                "SELECT staging_cursor FROM library_scan_grouping_contexts "
+                "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                "AND state='pending'",
+                (run_id, root_id, relative_directory),
+            ).fetchone()
+            if context is None:
+                raise StaleRevisionError("The grouping context is no longer pending.")
+            cursor = str(context["staging_cursor"] or "")
+            tokens = connection.execute(
+                "SELECT grouping_token FROM library_scan_grouping_groups "
+                "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                "AND grouping_token>? ORDER BY grouping_token LIMIT ?",
+                (run_id, root_id, relative_directory, cursor, limit),
+            ).fetchall()
+            if not tokens:
+                connection.execute(
+                    "UPDATE library_scan_grouping_contexts SET staging_state='continuity',"
+                    "staging_cursor=NULL,row_revision=row_revision+1 WHERE run_id=? "
+                    "AND root_id=? AND relative_directory=?",
+                    (run_id, root_id, relative_directory),
+                )
+                return True
+            token_values = [str(row["grouping_token"]) for row in tokens]
+            fallback_title = (
+                relative_directory.rstrip("/").rsplit("/", 1)[-1]
+                if relative_directory != "."
+                else "Unknown Album"
+            )
+            for token in token_values:
+                title_row = connection.execute(
+                    "SELECT display_value FROM library_scan_grouping_values "
+                    "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                    "AND grouping_token=? AND value_kind='title' "
+                    "ORDER BY occurrence_count DESC,normalized_value LIMIT 1",
+                    (run_id, root_id, relative_directory, token),
+                ).fetchone()
+                artist_row = connection.execute(
+                    "SELECT display_value FROM library_scan_grouping_values "
+                    "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                    "AND grouping_token=? AND value_kind='artist' "
+                    "ORDER BY occurrence_count DESC,normalized_value LIMIT 1",
+                    (run_id, root_id, relative_directory, token),
+                ).fetchone()
+                reason_row = connection.execute(
+                    "SELECT display_value FROM library_scan_grouping_values "
+                    "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                    "AND grouping_token=? AND value_kind='reason' "
+                    "ORDER BY normalized_value LIMIT 1",
+                    (run_id, root_id, relative_directory, token),
+                ).fetchone()
+                title = str(title_row["display_value"] if title_row else fallback_title)
+                artist = str(
+                    artist_row["display_value"] if artist_row else "Unknown Artist"
+                )
+                directory = (
+                    token.removeprefix("manual:")
+                    if token.startswith("manual:")
+                    else relative_directory
+                )
+                base_key = (
+                    f"{root_id}:{directory}:{_normalize_exact(title)}:"
+                    f"{_normalize_exact(artist)}"
+                )
+                grouping_key = (
+                    f"{base_key}:{token.removeprefix('untagged:')}"
+                    if token.startswith("untagged:")
+                    else base_key
+                )
+                connection.execute(
+                    "UPDATE library_scan_grouping_groups SET grouping_key=?,title=?,"
+                    "album_artist_name=?,reason_code=? WHERE run_id=? AND root_id=? "
+                    "AND relative_directory=? AND grouping_token=?",
+                    (
+                        grouping_key,
+                        title,
+                        artist,
+                        str(
+                            reason_row["display_value"]
+                            if reason_row
+                            else "AMBIGUOUS_FALLBACK_GROUP"
+                        ),
+                        run_id,
+                        root_id,
+                        relative_directory,
+                        token,
+                    ),
+                )
+            connection.execute(
+                "UPDATE library_scan_grouping_contexts SET staging_cursor=?,"
+                "row_revision=row_revision+1 WHERE run_id=? AND root_id=? "
+                "AND relative_directory=?",
+                (token_values[-1], run_id, root_id, relative_directory),
+            )
+            return False
+
+        return await super()._background_write(operation)
+
+    async def get_grouping_staging_state(
+        self, run_id: str, root_id: str, relative_directory: str
+    ) -> str:
+        def operation(connection: sqlite3.Connection) -> str:
+            row = connection.execute(
+                "SELECT staging_state FROM library_scan_grouping_contexts "
+                "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                "AND state='pending'",
+                (run_id, root_id, relative_directory),
+            ).fetchone()
+            if row is None:
+                raise StaleRevisionError("The grouping context is no longer pending.")
+            return str(row["staging_state"])
+
+        return await self._read(operation)
+
+    async def assign_isolated_grouping_continuity(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        *,
+        limit: int,
+    ) -> int:
+        def operation(connection: sqlite3.Connection) -> int:
+            rows = connection.execute(
+                "SELECT edge.old_album_id,edge.grouping_token FROM "
+                "library_scan_grouping_edges edge JOIN library_scan_grouping_old_nodes "
+                "old_node USING(run_id,root_id,relative_directory,old_album_id) "
+                "JOIN library_scan_grouping_new_nodes new_node "
+                "USING(run_id,root_id,relative_directory,grouping_token) "
+                "WHERE edge.run_id=? "
+                "AND edge.root_id=? AND edge.relative_directory=? AND edge.processed=0 "
+                "AND old_node.degree=1 AND new_node.degree=1 "
+                "ORDER BY edge.old_album_id,edge.grouping_token LIMIT ?",
+                (
+                    run_id,
+                    root_id,
+                    relative_directory,
+                    limit,
+                ),
+            ).fetchall()
+            for row in rows:
+                connection.execute(
+                    "UPDATE library_scan_grouping_groups SET retained_album_id=?,"
+                    "continuity_reason_code='MAXIMUM_TRACK_OVERLAP' WHERE run_id=? "
+                    "AND root_id=? AND relative_directory=? AND grouping_token=?",
+                    (
+                        row["old_album_id"],
+                        run_id,
+                        root_id,
+                        relative_directory,
+                        row["grouping_token"],
+                    ),
+                )
+                connection.execute(
+                    "UPDATE library_scan_grouping_edges SET processed=1 WHERE run_id=? "
+                    "AND root_id=? AND relative_directory=? AND old_album_id=? "
+                    "AND grouping_token=?",
+                    (
+                        run_id,
+                        root_id,
+                        relative_directory,
+                        row["old_album_id"],
+                        row["grouping_token"],
+                    ),
+                )
+            return len(rows)
+
+        return await super()._background_write(operation)
+
+    async def get_next_grouping_edge(
+        self, run_id: str, root_id: str, relative_directory: str
+    ) -> dict[str, Any] | None:
+        def operation(connection: sqlite3.Connection) -> dict[str, Any] | None:
+            return _row(
+                connection.execute(
+                    "SELECT edges.old_album_id,edges.grouping_token,edges.overlap_count,"
+                    "albums.created_at AS album_created_at,groups.grouping_key FROM "
+                    "library_scan_grouping_edges edges JOIN local_albums albums "
+                    "ON albums.id=edges.old_album_id JOIN library_scan_grouping_groups groups "
+                    "USING(run_id,root_id,relative_directory,grouping_token) JOIN "
+                    "library_scan_grouping_old_nodes old_node "
+                    "USING(run_id,root_id,relative_directory,old_album_id) JOIN "
+                    "library_scan_grouping_new_nodes new_node "
+                    "USING(run_id,root_id,relative_directory,grouping_token) "
+                    "WHERE edges.run_id=? AND edges.root_id=? "
+                    "AND edges.relative_directory=? AND edges.processed=0 "
+                    "AND old_node.matched_grouping_token IS NULL "
+                    "AND new_node.matched_old_album_id IS NULL "
+                    "ORDER BY edges.old_album_id,edges.grouping_token LIMIT 1",
+                    (run_id, root_id, relative_directory),
+                ).fetchone()
+            )
+
+        return await self._read(operation)
+
+    async def get_grouping_edges_for_old_albums(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        old_album_ids: list[str],
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        if not old_album_ids:
+            return []
+
+        def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+            placeholders = ",".join("?" for _ in old_album_ids)
+            rows = connection.execute(
+                "SELECT edges.old_album_id,edges.grouping_token,edges.overlap_count,"
+                "albums.created_at AS album_created_at,groups.grouping_key FROM "
+                "library_scan_grouping_edges edges JOIN local_albums albums "
+                "ON albums.id=edges.old_album_id JOIN library_scan_grouping_groups groups "
+                "USING(run_id,root_id,relative_directory,grouping_token) "
+                "WHERE edges.run_id=? AND edges.root_id=? "
+                "AND edges.relative_directory=? AND edges.processed=0 "
+                f"AND edges.old_album_id IN ({placeholders}) "
+                "ORDER BY edges.old_album_id,edges.grouping_token LIMIT ?",
+                (run_id, root_id, relative_directory, *old_album_ids, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+        return await self._read(operation)
+
+    async def get_grouping_edges_for_tokens(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        grouping_tokens: list[str],
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        if not grouping_tokens:
+            return []
+
+        def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+            placeholders = ",".join("?" for _ in grouping_tokens)
+            rows = connection.execute(
+                "SELECT edges.old_album_id,edges.grouping_token,edges.overlap_count,"
+                "albums.created_at AS album_created_at,groups.grouping_key FROM "
+                "library_scan_grouping_edges edges JOIN local_albums albums "
+                "ON albums.id=edges.old_album_id JOIN library_scan_grouping_groups groups "
+                "USING(run_id,root_id,relative_directory,grouping_token) "
+                "WHERE edges.run_id=? AND edges.root_id=? "
+                "AND edges.relative_directory=? AND edges.processed=0 "
+                f"AND edges.grouping_token IN ({placeholders}) "
+                "ORDER BY edges.grouping_token,edges.old_album_id LIMIT ?",
+                (run_id, root_id, relative_directory, *grouping_tokens, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+        return await self._read(operation)
+
+    async def discard_resolved_grouping_edges(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        *,
+        limit: int,
+    ) -> int:
+        def operation(connection: sqlite3.Connection) -> int:
+            rows = connection.execute(
+                "SELECT edges.old_album_id,edges.grouping_token FROM "
+                "library_scan_grouping_edges edges JOIN "
+                "library_scan_grouping_old_nodes old_node "
+                "USING(run_id,root_id,relative_directory,old_album_id) JOIN "
+                "library_scan_grouping_new_nodes new_node "
+                "USING(run_id,root_id,relative_directory,grouping_token) "
+                "WHERE edges.run_id=? AND edges.root_id=? "
+                "AND edges.relative_directory=? AND edges.processed=0 "
+                "AND (old_node.matched_grouping_token IS NOT NULL "
+                "OR new_node.matched_old_album_id IS NOT NULL) "
+                "ORDER BY edges.old_album_id,edges.grouping_token LIMIT ?",
+                (run_id, root_id, relative_directory, limit),
+            ).fetchall()
+            connection.executemany(
+                "UPDATE library_scan_grouping_edges SET processed=1 WHERE run_id=? "
+                "AND root_id=? AND relative_directory=? AND old_album_id=? "
+                "AND grouping_token=?",
+                [
+                    (
+                        run_id,
+                        root_id,
+                        relative_directory,
+                        row["old_album_id"],
+                        row["grouping_token"],
+                    )
+                    for row in rows
+                ],
+            )
+            return len(rows)
+
+        return await super()._background_write(operation)
+
+    async def apply_next_sparse_grouping_continuity(
+        self, run_id: str, root_id: str, relative_directory: str
+    ) -> bool:
+        def operation(connection: sqlite3.Connection) -> bool:
+            edge = connection.execute(
+                "SELECT edges.old_album_id,edges.grouping_token,edges.overlap_count "
+                "FROM library_scan_grouping_edges edges JOIN "
+                "library_scan_grouping_old_nodes old_node "
+                "USING(run_id,root_id,relative_directory,old_album_id) JOIN "
+                "library_scan_grouping_new_nodes new_node "
+                "USING(run_id,root_id,relative_directory,grouping_token) JOIN "
+                "local_albums albums ON albums.id=edges.old_album_id JOIN "
+                "library_scan_grouping_groups groups "
+                "USING(run_id,root_id,relative_directory,grouping_token) "
+                "WHERE edges.run_id=? AND edges.root_id=? "
+                "AND edges.relative_directory=? AND edges.processed=0 "
+                "AND old_node.matched_grouping_token IS NULL "
+                "AND new_node.matched_old_album_id IS NULL "
+                "ORDER BY edges.overlap_count DESC,albums.created_at,"
+                "edges.old_album_id,groups.grouping_key LIMIT 1",
+                (run_id, root_id, relative_directory),
+            ).fetchone()
+            if edge is None:
+                return False
+            old_album_id = str(edge["old_album_id"])
+            grouping_token = str(edge["grouping_token"])
+            overlap_count = int(edge["overlap_count"])
+            old_ties = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM library_scan_grouping_edges edges JOIN "
+                    "library_scan_grouping_new_nodes node "
+                    "USING(run_id,root_id,relative_directory,grouping_token) "
+                    "WHERE edges.run_id=? AND edges.root_id=? "
+                    "AND edges.relative_directory=? AND edges.old_album_id=? "
+                    "AND edges.processed=0 AND node.matched_old_album_id IS NULL "
+                    "AND edges.overlap_count=?",
+                    (
+                        run_id,
+                        root_id,
+                        relative_directory,
+                        old_album_id,
+                        overlap_count,
+                    ),
+                ).fetchone()[0]
+            )
+            new_ties = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM library_scan_grouping_edges edges JOIN "
+                    "library_scan_grouping_old_nodes node "
+                    "USING(run_id,root_id,relative_directory,old_album_id) "
+                    "WHERE edges.run_id=? AND edges.root_id=? "
+                    "AND edges.relative_directory=? AND edges.grouping_token=? "
+                    "AND edges.processed=0 AND node.matched_grouping_token IS NULL "
+                    "AND edges.overlap_count=?",
+                    (
+                        run_id,
+                        root_id,
+                        relative_directory,
+                        grouping_token,
+                        overlap_count,
+                    ),
+                ).fetchone()[0]
+            )
+            reason = (
+                "CONTINUITY_TIE_BROKEN"
+                if old_ties > 1 or new_ties > 1
+                else "MAXIMUM_TRACK_OVERLAP"
+            )
+            connection.execute(
+                "UPDATE library_scan_grouping_old_nodes SET matched_grouping_token=? "
+                "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                "AND old_album_id=? AND matched_grouping_token IS NULL",
+                (
+                    grouping_token,
+                    run_id,
+                    root_id,
+                    relative_directory,
+                    old_album_id,
+                ),
+            )
+            connection.execute(
+                "UPDATE library_scan_grouping_new_nodes SET matched_old_album_id=? "
+                "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                "AND grouping_token=? AND matched_old_album_id IS NULL",
+                (
+                    old_album_id,
+                    run_id,
+                    root_id,
+                    relative_directory,
+                    grouping_token,
+                ),
+            )
+            connection.execute(
+                "UPDATE library_scan_grouping_groups SET retained_album_id=?,"
+                "continuity_reason_code=? WHERE run_id=? AND root_id=? "
+                "AND relative_directory=? AND grouping_token=?",
+                (
+                    old_album_id,
+                    reason,
+                    run_id,
+                    root_id,
+                    relative_directory,
+                    grouping_token,
+                ),
+            )
+            connection.execute(
+                "UPDATE library_scan_grouping_edges SET processed=1 WHERE run_id=? "
+                "AND root_id=? AND relative_directory=? AND old_album_id=? "
+                "AND grouping_token=?",
+                (
+                    run_id,
+                    root_id,
+                    relative_directory,
+                    old_album_id,
+                    grouping_token,
+                ),
+            )
+            return True
+
+        return await super()._background_write(operation)
+
+    async def apply_grouping_continuity_component(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        edges: list[dict[str, Any]],
+        assignments: dict[str, tuple[str, str]],
+    ) -> None:
+        def operation(connection: sqlite3.Connection) -> None:
+            for token, (album_id, reason) in assignments.items():
+                connection.execute(
+                    "UPDATE library_scan_grouping_groups SET retained_album_id=?,"
+                    "continuity_reason_code=? WHERE run_id=? AND root_id=? "
+                    "AND relative_directory=? AND grouping_token=?",
+                    (
+                        album_id,
+                        reason,
+                        run_id,
+                        root_id,
+                        relative_directory,
+                        token,
+                    ),
+                )
+            connection.executemany(
+                "UPDATE library_scan_grouping_edges SET processed=1 WHERE run_id=? "
+                "AND root_id=? AND relative_directory=? AND old_album_id=? "
+                "AND grouping_token=?",
+                [
+                    (
+                        run_id,
+                        root_id,
+                        relative_directory,
+                        edge["old_album_id"],
+                        edge["grouping_token"],
+                    )
+                    for edge in edges
+                ],
+            )
+
+        await super()._background_write(operation)
+
+    async def finish_grouping_continuity(
+        self, run_id: str, root_id: str, relative_directory: str
+    ) -> None:
+        def operation(connection: sqlite3.Connection) -> None:
+            connection.execute(
+                "UPDATE library_scan_grouping_contexts SET staging_state='albums',"
+                "staging_cursor=NULL,row_revision=row_revision+1 WHERE run_id=? "
+                "AND root_id=? AND relative_directory=? AND state='pending'",
+                (run_id, root_id, relative_directory),
+            )
+
+        await super()._background_write(operation)
+
+    async def get_unprovisioned_grouping_groups(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+            rows = connection.execute(
+                "SELECT * FROM library_scan_grouping_groups WHERE run_id=? "
+                "AND root_id=? AND relative_directory=? AND local_album_id IS NULL "
+                "ORDER BY grouping_token LIMIT ?",
+                (run_id, root_id, relative_directory, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+        return await self._read(operation)
+
+    async def provision_staged_grouping_groups(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        groups: list[dict[str, Any]],
+        *,
+        now: float,
+    ) -> None:
+        def operation(connection: sqlite3.Connection) -> int:
+            changed = False
+            for group in groups:
+                album_id = str(group["local_album_id"])
+                artist_id = str(group["local_artist_id"])
+                existing = connection.execute(
+                    "SELECT * FROM local_albums WHERE id=?", (album_id,)
+                ).fetchone()
+                if existing is None:
+                    connection.execute(
+                        "INSERT INTO local_albums (id,root_id,grouping_key,title,"
+                        "title_folded,album_artist_name,album_artist_name_folded,"
+                        "album_artist_id,grouping_source,created_at,updated_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,'automatic',?,?)",
+                        (
+                            album_id,
+                            root_id,
+                            group["grouping_key"],
+                            group["title"],
+                            _fold(group["title"]),
+                            group["album_artist_name"],
+                            _fold(group["album_artist_name"]),
+                            artist_id,
+                            now,
+                            now,
+                        ),
+                    )
+                    changed = True
+                elif not bool(existing["grouping_locked"]) and (
+                    existing["grouping_key"] != group["grouping_key"]
+                    or existing["title"] != group["title"]
+                    or existing["album_artist_name"] != group["album_artist_name"]
+                    or existing["album_artist_id"] != artist_id
+                    or existing["retired_into_album_id"] is not None
+                ):
+                    connection.execute(
+                        "UPDATE local_albums SET grouping_key=?,title=?,title_folded=?,"
+                        "album_artist_name=?,album_artist_name_folded=?,album_artist_id=?,"
+                        "retired_into_album_id=NULL,updated_at=?,row_revision=row_revision+1 "
+                        "WHERE id=?",
+                        (
+                            group["grouping_key"],
+                            group["title"],
+                            _fold(group["title"]),
+                            group["album_artist_name"],
+                            _fold(group["album_artist_name"]),
+                            artist_id,
+                            now,
+                            album_id,
+                        ),
+                    )
+                    changed = True
+                if group["reason_code"] != "MANUAL_MEMBERSHIP_RESTORED":
+                    credit = connection.execute(
+                        "SELECT local_artist_id,credited_name FROM local_album_artists "
+                        "WHERE local_album_id=? AND position=0",
+                        (album_id,),
+                    ).fetchone()
+                    if credit is None or credit["local_artist_id"] != artist_id or (
+                        credit["credited_name"] != group["album_artist_name"]
+                    ):
+                        connection.execute(
+                            "INSERT INTO local_album_artists "
+                            "(local_album_id,position,local_artist_id,role,credited_name) "
+                            "VALUES (?,0,?,'primary',?) ON CONFLICT(local_album_id,position) "
+                            "DO UPDATE SET local_artist_id=excluded.local_artist_id,"
+                            "credited_name=excluded.credited_name,"
+                            "row_revision=local_album_artists.row_revision+1",
+                            (album_id, artist_id, group["album_artist_name"]),
+                        )
+                        changed = True
+                connection.execute(
+                    "UPDATE library_scan_grouping_groups SET local_album_id=?,"
+                    "local_artist_id=? WHERE run_id=? AND root_id=? "
+                    "AND relative_directory=? AND grouping_token=?",
+                    (
+                        album_id,
+                        artist_id,
+                        run_id,
+                        root_id,
+                        relative_directory,
+                        group["grouping_token"],
+                    ),
+                )
+            if changed:
+                return self._bump_catalog(connection)
+            return int(
+                connection.execute(
+                    "SELECT value FROM library_catalog_revision WHERE singleton=1"
+                ).fetchone()[0]
+            )
+
+        await self._write_scan(operation)
+
+    async def finish_grouping_album_provisioning(
+        self, run_id: str, root_id: str, relative_directory: str
+    ) -> None:
+        def operation(connection: sqlite3.Connection) -> None:
+            connection.execute(
+                "UPDATE library_scan_grouping_contexts SET staging_state='memberships',"
+                "application_cursor=NULL,row_revision=row_revision+1 WHERE run_id=? "
+                "AND root_id=? AND relative_directory=? AND state='pending'",
+                (run_id, root_id, relative_directory),
+            )
+
+        await super()._background_write(operation)
+
+    async def apply_staged_grouping_membership_page(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        *,
+        limit: int,
+    ) -> bool:
+        def operation(connection: sqlite3.Connection) -> int:
+            context = connection.execute(
+                "SELECT application_cursor FROM library_scan_grouping_contexts "
+                "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                "AND state='pending'",
+                (run_id, root_id, relative_directory),
+            ).fetchone()
+            if context is None:
+                raise StaleRevisionError("The grouping context is no longer pending.")
+            cursor = str(context["application_cursor"] or "")
+            rows = connection.execute(
+                "SELECT evidence.local_track_id,groups.local_album_id FROM "
+                "library_scan_grouping_evidence evidence JOIN "
+                "library_scan_grouping_groups groups USING "
+                "(run_id,root_id,relative_directory,grouping_token) "
+                "WHERE evidence.run_id=? AND evidence.root_id=? "
+                "AND evidence.relative_directory=? AND evidence.local_track_id>? "
+                "ORDER BY evidence.local_track_id LIMIT ?",
+                (run_id, root_id, relative_directory, cursor, limit),
+            ).fetchall()
+            if not rows:
+                connection.execute(
+                    "UPDATE library_scan_grouping_contexts SET "
+                    "staging_state='retirement',application_cursor=NULL,"
+                    "row_revision=row_revision+1 WHERE run_id=? AND root_id=? "
+                    "AND relative_directory=?",
+                    (run_id, root_id, relative_directory),
+                )
+                return 0
+            changed = False
+            for row in rows:
+                result = connection.execute(
+                    "UPDATE local_tracks SET local_album_id=?,"
+                    "membership_source='automatic',row_revision=row_revision+1 "
+                    "WHERE id=? AND membership_locked=0 AND "
+                    "(local_album_id!=? OR membership_source!='automatic')",
+                    (
+                        row["local_album_id"],
+                        row["local_track_id"],
+                        row["local_album_id"],
+                    ),
+                )
+                changed = changed or result.rowcount > 0
+            connection.execute(
+                "UPDATE library_scan_grouping_contexts SET application_cursor=?,"
+                "row_revision=row_revision+1 WHERE run_id=? AND root_id=? "
+                "AND relative_directory=?",
+                (rows[-1]["local_track_id"], run_id, root_id, relative_directory),
+            )
+            if changed:
+                self._bump_catalog(connection)
+            return len(rows)
+
+        return await self._write_scan(operation) == 0
+
+    async def retire_staged_grouping_albums(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        *,
+        now: float,
+        limit: int,
+    ) -> bool:
+        def operation(connection: sqlite3.Connection) -> int:
+            context = connection.execute(
+                "SELECT application_cursor FROM library_scan_grouping_contexts "
+                "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                "AND state='pending'",
+                (run_id, root_id, relative_directory),
+            ).fetchone()
+            if context is None:
+                raise StaleRevisionError("The grouping context is no longer pending.")
+            cursor = str(context["application_cursor"] or "")
+            albums = connection.execute(
+                "SELECT DISTINCT old_album_id FROM library_scan_grouping_evidence "
+                "WHERE run_id=? AND root_id=? AND relative_directory=? "
+                "AND old_album_id>? ORDER BY old_album_id LIMIT ?",
+                (run_id, root_id, relative_directory, cursor, limit),
+            ).fetchall()
+            if not albums:
+                connection.execute(
+                    "UPDATE library_scan_grouping_contexts SET staging_state='queue',"
+                    "application_cursor=NULL,queue_cursor=NULL,"
+                    "row_revision=row_revision+1 WHERE run_id=? AND root_id=? "
+                    "AND relative_directory=?",
+                    (run_id, root_id, relative_directory),
+                )
+                return 0
+            changed = False
+            for row in albums:
+                old_album_id = str(row["old_album_id"])
+                remaining = connection.execute(
+                    "SELECT 1 FROM local_tracks WHERE local_album_id=? LIMIT 1",
+                    (old_album_id,),
+                ).fetchone()
+                if remaining is not None:
+                    continue
+                successors = connection.execute(
+                    "SELECT groups.local_album_id,edges.overlap_count FROM "
+                    "library_scan_grouping_edges edges JOIN "
+                    "library_scan_grouping_groups groups USING "
+                    "(run_id,root_id,relative_directory,grouping_token) "
+                    "WHERE edges.run_id=? AND edges.root_id=? "
+                    "AND edges.relative_directory=? AND edges.old_album_id=? "
+                    "ORDER BY edges.overlap_count DESC,groups.local_album_id",
+                    (run_id, root_id, relative_directory, old_album_id),
+                ).fetchall()
+                successor: str | None = None
+                if successors and (
+                    len(successors) == 1
+                    or successors[0]["overlap_count"] > successors[1]["overlap_count"]
+                ):
+                    successor = str(successors[0]["local_album_id"])
+                connection.execute(
+                    "UPDATE local_albums SET retired_into_album_id=?,updated_at=?,"
+                    "row_revision=row_revision+1 WHERE id=?",
+                    (successor, now, old_album_id),
+                )
+                if successor is not None:
+                    connection.execute(
+                        "INSERT OR IGNORE INTO local_album_aliases "
+                        "(alias,local_album_id,kind,created_at) "
+                        "VALUES (?,?,'merged_album',?)",
+                        (old_album_id, successor, now),
+                    )
+                changed = True
+            connection.execute(
+                "UPDATE library_scan_grouping_contexts SET application_cursor=?,"
+                "row_revision=row_revision+1 WHERE run_id=? AND root_id=? "
+                "AND relative_directory=?",
+                (albums[-1]["old_album_id"], run_id, root_id, relative_directory),
+            )
+            if changed:
+                self._bump_catalog(connection)
+            return len(albums)
+
+        return await self._write_scan(operation) == 0
+
+    async def get_staged_grouping_queue_page(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+            context = connection.execute(
+                "SELECT queue_cursor FROM library_scan_grouping_contexts WHERE "
+                "run_id=? AND root_id=? AND relative_directory=? AND state='pending'",
+                (run_id, root_id, relative_directory),
+            ).fetchone()
+            if context is None:
+                raise StaleRevisionError("The grouping context is no longer pending.")
+            rows = connection.execute(
+                "SELECT groups.grouping_token,groups.local_album_id,"
+                "groups.tag_revision_accumulator,groups.stat_revision_accumulator,"
+                "groups.policy_revision_accumulator,groups.automatic_track_count,"
+                "groups.local_metadata_track_count,groups.excluded_track_count,"
+                "groups.embedded_identity_count FROM library_scan_grouping_groups groups "
+                "WHERE groups.run_id=? "
+                "AND groups.root_id=? AND groups.relative_directory=? "
+                "AND groups.grouping_token>? ORDER BY groups.grouping_token LIMIT ?",
+                (
+                    run_id,
+                    root_id,
+                    relative_directory,
+                    str(context["queue_cursor"] or ""),
+                    limit,
+                ),
+            ).fetchall()
+            result: list[dict[str, Any]] = []
+            for row in rows:
+                automatic = int(row["automatic_track_count"])
+                local_metadata = int(row["local_metadata_track_count"])
+                excluded = int(row["excluded_track_count"])
+                if (automatic > 0 and local_metadata == 0 and excluded == 0) or (
+                    local_metadata > 0
+                    and automatic == 0
+                    and excluded == 0
+                    and int(row["embedded_identity_count"]) > 0
+                ):
+                    result.append(
+                        {
+                            "grouping_token": str(row["grouping_token"]),
+                            "local_album_id": str(row["local_album_id"]),
+                            "input_revision": ":".join(
+                                str(row[column])
+                                for column in (
+                                    "tag_revision_accumulator",
+                                    "stat_revision_accumulator",
+                                    "policy_revision_accumulator",
+                                )
+                            ),
+                            "trigger": (
+                                "automatic"
+                                if automatic > 0
+                                else "post_processing"
+                            ),
+                        }
+                    )
+                else:
+                    result.append(
+                        {
+                            "grouping_token": str(row["grouping_token"]),
+                            "local_album_id": None,
+                        }
+                    )
+            return result
+
+        return await self._read(operation)
+
+    async def advance_staged_grouping_queue(
+        self,
+        run_id: str,
+        root_id: str,
+        relative_directory: str,
+        grouping_token: str,
+    ) -> None:
+        def operation(connection: sqlite3.Connection) -> None:
+            connection.execute(
+                "UPDATE library_scan_grouping_contexts SET queue_cursor=?,"
+                "row_revision=row_revision+1 WHERE run_id=? AND root_id=? "
+                "AND relative_directory=? AND state='pending'",
+                (grouping_token, run_id, root_id, relative_directory),
+            )
+
+        await super()._background_write(operation)
 
     async def apply_grouping_context(
         self,
@@ -7912,6 +9962,7 @@ class NativeLibraryStore(PersistenceBase):
         def operation(connection: sqlite3.Connection) -> None:
             updated = connection.execute(
                 "UPDATE library_scan_grouping_contexts SET state = 'completed', "
+                "staging_state = 'completed', "
                 "row_revision = row_revision + 1 WHERE run_id = ? AND root_id = ? "
                 "AND relative_directory = ? AND state = 'pending'",
                 (run_id, root_id, relative_directory),
@@ -7919,7 +9970,7 @@ class NativeLibraryStore(PersistenceBase):
             if updated != 1:
                 raise StaleRevisionError("The grouping context is no longer pending.")
 
-        await self._write(operation)
+        await super()._background_write(operation)
 
     async def _apply_grouping_batch(
         self,
@@ -8105,7 +10156,7 @@ class NativeLibraryStore(PersistenceBase):
                     )
             return self._bump_catalog(connection)
 
-        return await self._write(operation)
+        return await self._write_scan(operation)
 
     async def reconcile_scan_scope_batch(
         self,
@@ -8120,7 +10171,7 @@ class NativeLibraryStore(PersistenceBase):
 
         def operation(connection: sqlite3.Connection) -> dict[str, int | bool]:
             scope = connection.execute(
-                "SELECT discovery_state, reconciliation_cursor FROM "
+                "SELECT discovery_state, discovery_generation, reconciliation_cursor FROM "
                 "library_scan_run_scopes WHERE run_id = ? "
                 "AND root_id = ? AND relative_path = ?",
                 (run_id, root_id, relative_path),
@@ -8139,14 +10190,30 @@ class NativeLibraryStore(PersistenceBase):
             path_clause = "1 = 1"
             path_params: tuple[Any, ...] = ()
             if relative_path != ".":
-                path_clause = "relative_path LIKE ? ESCAPE '\\'"
+                path_clause = "track.relative_path LIKE ? ESCAPE '\\'"
                 path_params = (_escape_like(relative_path.rstrip("/")) + "/%",)
             candidates = connection.execute(
-                "SELECT id, local_album_id, relative_path, availability, manual_excluded, "
-                "applied_policy, applied_policy_revision FROM local_tracks WHERE root_id = ? "
-                f"AND ({path_clause}) AND relative_path > COALESCE(?, '') "
-                "ORDER BY relative_path LIMIT ?",
-                (root_id, *path_params, scope["reconciliation_cursor"], limit),
+                "SELECT track.id,track.local_album_id,track.relative_path,"
+                "track.availability,track.manual_excluded,track.applied_policy,"
+                "track.applied_policy_revision,inventory.effective_policy AS "
+                "inventory_effective_policy,inventory.policy_revision AS "
+                "inventory_policy_revision FROM local_tracks AS track LEFT JOIN "
+                "library_scan_inventory AS inventory ON inventory.run_id=? "
+                "AND inventory.root_id=track.root_id "
+                "AND inventory.relative_path=track.relative_path "
+                "AND inventory.scope_relative_path=? "
+                "AND inventory.discovery_generation=? WHERE track.root_id=? "
+                f"AND ({path_clause}) AND track.relative_path > COALESCE(?, '') "
+                "ORDER BY track.relative_path LIMIT ?",
+                (
+                    run_id,
+                    relative_path,
+                    scope["discovery_generation"],
+                    root_id,
+                    *path_params,
+                    scope["reconciliation_cursor"],
+                    limit,
+                ),
             ).fetchall()
             counts = {
                 "missing": 0,
@@ -8158,14 +10225,37 @@ class NativeLibraryStore(PersistenceBase):
             queued_albums: set[str] = set()
             missing_track_ids: set[str] = set()
             missing_album_ids: set[str] = set()
+            candidate_album_ids = sorted(
+                {str(track["local_album_id"]) for track in candidates}
+            )
+            protected_albums: set[str] = set()
+            active_dedupes: set[str] = set()
+            if candidate_album_ids:
+                placeholders = ",".join("?" for _ in candidate_album_ids)
+                protected_albums = {
+                    str(row["local_album_id"])
+                    for row in connection.execute(
+                        "SELECT local_album_id FROM local_album_external_identities "
+                        f"WHERE local_album_id IN ({placeholders}) UNION SELECT "
+                        "local_album_id FROM library_identification_reviews WHERE "
+                        f"local_album_id IN ({placeholders}) AND state='keep_tagged'",
+                        (*candidate_album_ids, *candidate_album_ids),
+                    ).fetchall()
+                }
+                active_dedupes = {
+                    str(row["dedupe_key"])
+                    for row in connection.execute(
+                        "SELECT dedupe_key FROM library_identification_jobs WHERE "
+                        f"local_album_id IN ({placeholders}) "
+                        "AND state IN ('queued','running','paused')",
+                        candidate_album_ids,
+                    ).fetchall()
+                    if row["dedupe_key"] is not None
+                }
             for track in candidates:
-                inventory = connection.execute(
-                    "SELECT effective_policy, policy_revision FROM library_scan_inventory "
-                    "WHERE run_id = ? "
-                    "AND root_id = ? AND relative_path = ?",
-                    (run_id, root_id, track["relative_path"]),
-                ).fetchone()
-                if inventory is None:
+                inventory_policy = track["inventory_effective_policy"]
+                inventory_revision = track["inventory_policy_revision"]
+                if inventory_policy is None:
                     missing_track_ids.add(str(track["id"]))
                     missing_album_ids.add(str(track["local_album_id"]))
                     if track["availability"] != "missing":
@@ -8176,13 +10266,12 @@ class NativeLibraryStore(PersistenceBase):
                         )
                         counts["missing"] += 1
                 elif (
-                    inventory is not None
-                    and inventory["effective_policy"] == "excluded"
+                    inventory_policy == "excluded"
                     and (
                         track["availability"] != "excluded"
                         or track["applied_policy"] != "excluded"
                         or track["applied_policy_revision"]
-                        != inventory["policy_revision"]
+                        != inventory_revision
                     )
                 ):
                     connection.execute(
@@ -8192,19 +10281,18 @@ class NativeLibraryStore(PersistenceBase):
                         "row_revision = row_revision + 1 WHERE id = ?",
                         (
                             now,
-                            inventory["policy_revision"],
-                            inventory["policy_revision"],
+                            inventory_revision,
+                            inventory_revision,
                             track["id"],
                         ),
                     )
                     counts["excluded"] += 1
                 elif (
-                    inventory is not None
-                    and inventory["effective_policy"] != "excluded"
+                    inventory_policy != "excluded"
                     and (
-                        track["applied_policy"] != inventory["effective_policy"]
+                        track["applied_policy"] != inventory_policy
                         or track["applied_policy_revision"]
-                        != inventory["policy_revision"]
+                        != inventory_revision
                         or (
                             track["availability"] != "indexed"
                             and not bool(track["manual_excluded"])
@@ -8222,34 +10310,23 @@ class NativeLibraryStore(PersistenceBase):
                         "applied_policy_revision = ?, applied_policy = ?, "
                         "row_revision = row_revision + 1 WHERE id = ?",
                         (
-                            inventory["policy_revision"],
-                            inventory["policy_revision"],
-                            inventory["effective_policy"],
+                            inventory_revision,
+                            inventory_revision,
+                            inventory_policy,
                             track["id"],
                         ),
                     )
                     counts["restored"] += int(restored)
                     album_id = str(track["local_album_id"])
                     if (
-                        inventory["effective_policy"] == "automatic"
+                        inventory_policy == "automatic"
                         and track["applied_policy"] != "automatic"
                         and not bool(track["manual_excluded"])
                         and album_id not in queued_albums
                     ):
-                        protected = connection.execute(
-                            "SELECT 1 FROM local_album_external_identities WHERE local_album_id = ? "
-                            "UNION ALL SELECT 1 FROM library_identification_reviews WHERE "
-                            "local_album_id = ? AND state = 'keep_tagged' LIMIT 1",
-                            (album_id, album_id),
-                        ).fetchone()
-                        if protected is None:
-                            dedupe = f"automatic:{album_id}:policy:{inventory['policy_revision']}"
-                            active = connection.execute(
-                                "SELECT 1 FROM library_identification_jobs WHERE dedupe_key = ? "
-                                "AND state IN ('queued','running','paused')",
-                                (dedupe,),
-                            ).fetchone()
-                            if active is None:
+                        if album_id not in protected_albums:
+                            dedupe = f"automatic:{album_id}:policy:{inventory_revision}"
+                            if dedupe not in active_dedupes:
                                 sequence = self._increment_singleton(
                                     connection,
                                     "library_enqueue_sequence",
@@ -8265,13 +10342,14 @@ class NativeLibraryStore(PersistenceBase):
                                         str(uuid.uuid4()),
                                         album_id,
                                         sequence,
-                                        str(inventory["policy_revision"]),
+                                        str(inventory_revision),
                                         dedupe,
                                         now,
                                         now,
                                     ),
                                 )
                                 counts["identification_enqueued"] += 1
+                                active_dedupes.add(dedupe)
                             queued_albums.add(album_id)
             for offset in range(0, len(missing_track_ids), 500):
                 track_ids = sorted(missing_track_ids)[offset : offset + 500]
@@ -8296,7 +10374,10 @@ class NativeLibraryStore(PersistenceBase):
                     "AND track.availability = 'indexed')",
                     (now, now, *album_ids),
                 ).rowcount
-            if any(counts.values()):
+            if any(
+                counts[key]
+                for key in ("missing", "excluded", "restored", "reviews_resolved")
+            ):
                 self._bump_catalog(connection)
             done = len(candidates) < limit
             cursor = (
@@ -8317,10 +10398,35 @@ class NativeLibraryStore(PersistenceBase):
                     relative_path,
                 ),
             )
+            scan_counter_values = (
+                counts["missing"],
+                counts["excluded"],
+                counts["identification_enqueued"],
+            )
+            if any(scan_counter_values):
+                updated = connection.execute(
+                    "UPDATE library_scan_runs SET missing_count=missing_count+?,"
+                    "excluded_count=excluded_count+?,identification_enqueued_count="
+                    "identification_enqueued_count+?,updated_at=?,"
+                    "row_revision=row_revision+1,event_revision=event_revision+1 "
+                    "WHERE id=? AND row_revision<? AND event_revision<?",
+                    (
+                        *scan_counter_values,
+                        now,
+                        run_id,
+                        MAX_REVISION,
+                        MAX_REVISION,
+                    ),
+                )
+                if updated.rowcount != 1:
+                    raise RevisionOverflowError(
+                        "A scan run revision reached its maximum value."
+                    )
+                self._bump_stream(connection, "scan")
             counts["done"] = done
             return counts
 
-        return await self._write(operation)
+        return await self._write_scan(operation)
 
     async def apply_desired_policy(
         self,

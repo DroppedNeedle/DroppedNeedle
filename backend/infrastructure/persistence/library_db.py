@@ -337,9 +337,15 @@ class LibraryDB(PersistenceBase):
         )
         for index_sql in (
             "CREATE INDEX IF NOT EXISTS idx_library_files_album ON library_files(release_group_mbid)",
+            "CREATE INDEX IF NOT EXISTS idx_library_files_album_lower_active "
+            "ON library_files(lower(release_group_mbid)) WHERE deleted_at IS NULL",
             "CREATE INDEX IF NOT EXISTS idx_library_files_path ON library_files(file_path)",
             "CREATE INDEX IF NOT EXISTS idx_library_files_recording ON library_files(recording_mbid)",
             "CREATE INDEX IF NOT EXISTS idx_library_files_artist ON library_files(artist_mbid)",
+            "CREATE INDEX IF NOT EXISTS idx_library_files_artist_lower_active "
+            "ON library_files(lower(artist_mbid)) WHERE deleted_at IS NULL",
+            "CREATE INDEX IF NOT EXISTS idx_library_files_album_artist_lower_active "
+            "ON library_files(lower(album_artist_mbid)) WHERE deleted_at IS NULL",
             "CREATE INDEX IF NOT EXISTS idx_library_files_task ON library_files(download_task_id)",
             "CREATE INDEX IF NOT EXISTS idx_library_files_deleted ON library_files(deleted_at)",
             "CREATE INDEX IF NOT EXISTS idx_library_files_album_track "
@@ -577,12 +583,109 @@ class LibraryDB(PersistenceBase):
 
         return await self._read(operation)
 
+    async def get_artist_mbid_page(
+        self, *, after_mbid: str, limit: int
+    ) -> list[str]:
+        def operation(conn: sqlite3.Connection) -> list[str]:
+            rows = conn.execute(
+                "SELECT mbid_lower FROM library_artists WHERE mbid_lower>? "
+                "ORDER BY mbid_lower LIMIT ?",
+                (after_mbid.casefold(), max(1, limit)),
+            ).fetchall()
+            return [str(row["mbid_lower"]) for row in rows]
+
+        return await self._read(operation)
+
     async def get_albums(self) -> list[dict[str, Any]]:
         def operation(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             rows = conn.execute(
                 "SELECT raw_json FROM library_albums ORDER BY COALESCE(date_added, 0) DESC, title COLLATE NOCASE ASC"
             ).fetchall()
             return _decode_rows(rows)
+
+        return await self._read(operation)
+
+    async def get_recent_albums(self, *, limit: int) -> list[dict[str, Any]]:
+        def operation(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+            rows = conn.execute(
+                "SELECT raw_json FROM library_albums "
+                "ORDER BY COALESCE(date_added,0) DESC,mbid_lower LIMIT ?",
+                (max(1, limit),),
+            ).fetchall()
+            return _decode_rows(rows)
+
+        return await self._read(operation)
+
+    async def get_anniversary_albums(
+        self, *, current_year: int, anniversary_years: tuple[int, ...], limit: int
+    ) -> list[dict[str, Any]]:
+        release_years = [current_year - age for age in anniversary_years]
+        if not release_years:
+            return []
+
+        def operation(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+            placeholders = ",".join("?" for _ in release_years)
+            rows = conn.execute(
+                "SELECT raw_json FROM library_albums "
+                f"WHERE year IN ({placeholders}) "
+                "ORDER BY (? - year) DESC,year DESC,mbid_lower LIMIT ?",
+                (*release_years, current_year, max(1, limit)),
+            ).fetchall()
+            return _decode_rows(rows)
+
+        return await self._read(operation)
+
+    async def get_enrichment_candidates(
+        self, *, after_mbid: str | None, limit: int
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """Return one keyset page for catalog-wide metadata enrichment."""
+
+        cursor_type = ""
+        cursor_mbid = ""
+        legacy_cursor = after_mbid or ""
+        if after_mbid and ":" in after_mbid:
+            candidate_type, candidate_mbid = after_mbid.split(":", 1)
+            if candidate_type in {"artist", "album"}:
+                cursor_type = candidate_type
+                cursor_mbid = candidate_mbid.casefold()
+                legacy_cursor = ""
+
+        def operation(
+            conn: sqlite3.Connection,
+        ) -> list[tuple[str, str, dict[str, Any]]]:
+            union = (
+                "SELECT entity_type,mbid_lower,raw_json FROM ("
+                "SELECT 'artist' entity_type,mbid_lower,raw_json FROM library_artists "
+                "UNION ALL SELECT 'album',mbid_lower,raw_json FROM library_albums) "
+            )
+            if legacy_cursor:
+                rows = conn.execute(
+                    union
+                    + "WHERE mbid_lower>? ORDER BY mbid_lower,entity_type LIMIT ?",
+                    (legacy_cursor.casefold(), max(1, limit)),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    union
+                    + "WHERE entity_type>? OR (entity_type=? AND mbid_lower>?) "
+                    "ORDER BY entity_type,mbid_lower LIMIT ?",
+                    (cursor_type, cursor_type, cursor_mbid, max(1, limit)),
+                ).fetchall()
+            candidates: list[tuple[str, str, dict[str, Any]]] = []
+            for row in rows:
+                try:
+                    payload = _decode_json(row["raw_json"])
+                except Exception:  # noqa: BLE001 - malformed cached metadata is skipped
+                    continue
+                if isinstance(payload, dict):
+                    candidates.append(
+                        (
+                            str(row["entity_type"]),
+                            str(row["mbid_lower"]),
+                            payload,
+                        )
+                    )
+            return candidates
 
         return await self._read(operation)
 
@@ -1563,6 +1666,60 @@ class LibraryDB(PersistenceBase):
                     if row["release_mbid"]:
                         mbids.add(str(row["release_mbid"]))
             return mbids
+
+        return await self._read(operation)
+
+    async def existing_library_mbids(self, identifiers: list[str]) -> set[str]:
+        normalized = list(
+            dict.fromkeys(value.strip().casefold() for value in identifiers if value.strip())
+        )
+        if not normalized:
+            return set()
+
+        def operation(conn: sqlite3.Connection) -> set[str]:
+            found: set[str] = set()
+            for offset in range(0, len(normalized), 500):
+                batch = normalized[offset : offset + 500]
+                placeholders = ",".join("?" for _ in batch)
+                rows = conn.execute(
+                    "SELECT DISTINCT release_group_mbid FROM library_files "
+                    f"WHERE lower(release_group_mbid) IN ({placeholders}) "
+                    "AND deleted_at IS NULL",
+                    batch,
+                ).fetchall()
+                found.update(str(row["release_group_mbid"]).casefold() for row in rows)
+            return found
+
+        return await self._read(operation)
+
+    async def existing_library_artist_mbids(
+        self, identifiers: list[str]
+    ) -> set[str]:
+        normalized = list(
+            dict.fromkeys(
+                value.strip().casefold() for value in identifiers if value.strip()
+            )
+        )
+        if not normalized:
+            return set()
+
+        def operation(conn: sqlite3.Connection) -> set[str]:
+            found: set[str] = set()
+            for offset in range(0, len(normalized), 500):
+                batch = normalized[offset : offset + 500]
+                placeholders = ",".join("?" for _ in batch)
+                rows = conn.execute(
+                    "SELECT artist_mbid,album_artist_mbid FROM library_files "
+                    "WHERE deleted_at IS NULL AND ("
+                    f"lower(artist_mbid) IN ({placeholders}) OR "
+                    f"lower(album_artist_mbid) IN ({placeholders}))",
+                    (*batch, *batch),
+                ).fetchall()
+                for row in rows:
+                    for column in ("artist_mbid", "album_artist_mbid"):
+                        if row[column]:
+                            found.add(str(row[column]).casefold())
+            return found
 
         return await self._read(operation)
 

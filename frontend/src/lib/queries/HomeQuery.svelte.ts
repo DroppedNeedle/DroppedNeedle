@@ -22,14 +22,12 @@ function sectionCount(d: HomeResponse | null | undefined): number {
 	return sections.filter((s) => s != null).length;
 }
 
-// Server-side SWR pairs with this client guard: while the backend is still
-// building (a thin, `refreshing` response), keep showing the richer copy we
-// already have instead of dropping sections and re-growing them.
+// keep the richer cached response while the server finishes its SWR rebuild
 async function fetchHome(
 	userId: string | null | undefined,
 	signal?: AbortSignal
 ): Promise<HomeResponse> {
-	const fresh = await api.global.get<HomeResponse>(API.home(), { signal });
+	const fresh = await api.global.get<HomeResponse>(API.home(), { signal, timeoutMs: 15_000 });
 	if (fresh.refreshing) {
 		const { queryClient } = await import('$lib/queries/QueryClient');
 		const prev = queryClient.getQueryData<HomeResponse>(HomeQueryKeyFactory.home(userId));
@@ -43,10 +41,8 @@ async function fetchHome(
 export const getHomeQuery = () =>
 	createQuery(() => ({
 		staleTime: CACHE_TTL.HOME,
-		// Read the current user reactively so a switch re-keys + invalidates cleanly.
 		queryKey: HomeQueryKeyFactory.home(authStore.user?.id),
 		queryFn: ({ signal }) => fetchHome(authStore.user?.id, signal),
-		// while the backend streams the full build in, poll until it lands
 		refetchInterval: (query: { state: { data?: HomeResponse | undefined } }) =>
-			query.state.data?.refreshing ? 3000 : false
+			query.state.data?.refreshing ? 10_000 : false
 	}));

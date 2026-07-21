@@ -21,7 +21,8 @@ class DiscoverySnapshotStore(PersistenceBase):
                     user_id TEXT NOT NULL,
                     payload BLOB NOT NULL,
                     saved_at REAL NOT NULL,
-                    stale INTEGER NOT NULL DEFAULT 0
+                    stale INTEGER NOT NULL DEFAULT 0,
+                    catalog_revision INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
@@ -29,6 +30,20 @@ class DiscoverySnapshotStore(PersistenceBase):
                 conn,
                 "ALTER TABLE discovery_snapshots "
                 "ADD COLUMN stale INTEGER NOT NULL DEFAULT 0",
+            )
+            self._safe_alter(
+                conn,
+                "ALTER TABLE discovery_snapshots "
+                "ADD COLUMN catalog_revision INTEGER NOT NULL DEFAULT 0",
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS library_catalog_revision ("
+                "singleton INTEGER PRIMARY KEY CHECK(singleton = 1), "
+                "value INTEGER NOT NULL DEFAULT 0)"
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO library_catalog_revision(singleton, value) "
+                "VALUES (1, 0)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_discovery_snapshots_user "
@@ -49,7 +64,10 @@ class DiscoverySnapshotStore(PersistenceBase):
     async def get(self, snapshot_key: str) -> bytes | None:
         def operation(conn: sqlite3.Connection) -> bytes | None:
             row = conn.execute(
-                "SELECT payload FROM discovery_snapshots WHERE snapshot_key = ?",
+                "SELECT snapshot.payload FROM discovery_snapshots snapshot "
+                "JOIN library_catalog_revision revision ON revision.singleton = 1 "
+                "WHERE snapshot.snapshot_key = ? "
+                "AND snapshot.catalog_revision = revision.value",
                 (snapshot_key,),
             ).fetchone()
             return bytes(row["payload"]) if row is not None else None
@@ -59,7 +77,11 @@ class DiscoverySnapshotStore(PersistenceBase):
     async def get_with_stale(self, snapshot_key: str) -> tuple[bytes, bool] | None:
         def operation(conn: sqlite3.Connection) -> tuple[bytes, bool] | None:
             row = conn.execute(
-                "SELECT payload, stale FROM discovery_snapshots WHERE snapshot_key = ?",
+                "SELECT snapshot.payload, snapshot.stale "
+                "FROM discovery_snapshots snapshot "
+                "JOIN library_catalog_revision revision ON revision.singleton = 1 "
+                "WHERE snapshot.snapshot_key = ? "
+                "AND snapshot.catalog_revision = revision.value",
                 (snapshot_key,),
             ).fetchone()
             if row is None:
@@ -72,18 +94,24 @@ class DiscoverySnapshotStore(PersistenceBase):
         self, snapshot_key: str, user_id: str, payload: bytes, saved_at: float
     ) -> None:
         def operation(conn: sqlite3.Connection) -> None:
+            catalog_revision = int(
+                conn.execute(
+                    "SELECT value FROM library_catalog_revision WHERE singleton = 1"
+                ).fetchone()[0]
+            )
             conn.execute(
                 """
                 INSERT INTO discovery_snapshots
-                    (snapshot_key, user_id, payload, saved_at, stale)
-                VALUES (?, ?, ?, ?, 0)
+                    (snapshot_key, user_id, payload, saved_at, stale, catalog_revision)
+                VALUES (?, ?, ?, ?, 0, ?)
                 ON CONFLICT(snapshot_key) DO UPDATE SET
                     user_id = excluded.user_id,
                     payload = excluded.payload,
                     saved_at = excluded.saved_at,
-                    stale = 0
+                    stale = 0,
+                    catalog_revision = excluded.catalog_revision
                 """,
-                (snapshot_key, user_id, payload, saved_at),
+                (snapshot_key, user_id, payload, saved_at, catalog_revision),
             )
 
         await self._write(operation)

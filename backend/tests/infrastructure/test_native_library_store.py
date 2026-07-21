@@ -60,6 +60,26 @@ def _seed_auth(path: Path) -> None:
         )
 
 
+def test_candidate_identity_lookups_use_normalized_indexes(db_path: Path) -> None:
+    NativeLibraryStore(db_path, threading.Lock())
+    with sqlite3.connect(db_path) as connection:
+        album_plan = connection.execute(
+            "EXPLAIN QUERY PLAN SELECT release_group_mbid "
+            "FROM local_album_external_identities "
+            "WHERE lower(release_group_mbid) IN (?)",
+            ("album-1",),
+        ).fetchall()
+        artist_plan = connection.execute(
+            "EXPLAIN QUERY PLAN SELECT provider_artist_id "
+            "FROM local_artist_external_identities "
+            "WHERE lower(provider_artist_id) IN (?)",
+            ("artist-1",),
+        ).fetchall()
+
+    assert any("idx_local_album_identity_rg_lower" in row[3] for row in album_plan)
+    assert any("idx_local_artist_identity_provider_lower" in row[3] for row in artist_plan)
+
+
 @pytest.fixture
 def db_path(tmp_path: Path) -> Path:
     path = tmp_path / "library.db"
@@ -1160,6 +1180,89 @@ async def test_scan_batch_rolls_back_inventory_counter_and_cursors(
         )
         == 0
     )
+
+
+@pytest.mark.asyncio
+async def test_discovery_generation_ignores_and_boundedly_cleans_old_rows(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.create_scan_run(
+        ScanRun(id="scan-generation", kind="incremental", trigger="manual", queued_at=1)
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO library_scan_run_scopes "
+            "(run_id,scope_sequence,root_id,relative_path,effective_policy,"
+            "policy_revision) VALUES ('scan-generation',0,'root-1','.',"
+            "'automatic','policy-1')"
+        )
+        connection.commit()
+    await store.add_scan_inventory_batch(
+        "scan-generation",
+        [
+            ScanInventoryItem(
+                root_id="root-1",
+                relative_path=f"{index}.flac",
+                absolute_path=f"/music/{index}.flac",
+                file_size_bytes=1,
+                file_mtime_ns=1,
+                stat_revision="1:1",
+                effective_policy="automatic",
+                comparison_result="new",
+            )
+            for index in range(2)
+        ],
+        expected_run_revision=1,
+        updated_at=2,
+        discovery_generation=1,
+    )
+
+    await store.prepare_scan_discovery_resume("scan-generation")
+
+    assert await store.get_scan_inventory_batch(
+        "scan-generation", processing_state="pending", limit=10
+    ) == []
+    assert await store.cleanup_stale_scan_inventory("scan-generation", limit=1) == 1
+    assert _scalar(db_path, "SELECT COUNT(*) FROM library_scan_inventory") == 1
+    assert await store.cleanup_stale_scan_inventory("scan-generation", limit=1) == 1
+    assert _scalar(db_path, "SELECT COUNT(*) FROM library_scan_inventory") == 0
+
+
+@pytest.mark.asyncio
+async def test_schema_backfills_inventory_scope_for_persisted_subdirectory_scan(
+    db_path: Path,
+) -> None:
+    lock = threading.Lock()
+    store = NativeLibraryStore(db_path, lock)
+    await store.create_scan_run(
+        ScanRun(id="scan-subdirectory", kind="incremental", trigger="manual", queued_at=1)
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO library_scan_run_scopes "
+            "(run_id,scope_sequence,root_id,relative_path,effective_policy,"
+            "policy_revision) VALUES ('scan-subdirectory',0,'root-1','Artist/Album',"
+            "'automatic','policy-1')"
+        )
+        connection.execute(
+            "INSERT INTO library_scan_inventory "
+            "(run_id,root_id,relative_path,absolute_path,file_size_bytes,file_mtime_ns,"
+            "stat_revision,policy_revision,effective_policy,comparison_result) "
+            "VALUES ('scan-subdirectory','root-1','Artist/Album/01.flac',"
+            "'/music/Artist/Album/01.flac',1,1,'1:1','policy-1','automatic','new')"
+        )
+        connection.execute(
+            "ALTER TABLE library_scan_inventory DROP COLUMN scope_relative_path"
+        )
+
+    NativeLibraryStore(db_path, lock)
+
+    with sqlite3.connect(db_path) as connection:
+        stored_scope = connection.execute(
+            "SELECT scope_relative_path FROM library_scan_inventory "
+            "WHERE run_id = 'scan-subdirectory'"
+        ).fetchone()
+    assert stored_scope == ("Artist/Album",)
 
 
 @pytest.mark.asyncio

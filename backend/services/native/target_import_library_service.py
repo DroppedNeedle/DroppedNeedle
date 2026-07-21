@@ -16,6 +16,7 @@ import msgspec
 from models.local_catalog import LocalAlbum, LocalArtist, LocalArtistCredit, LocalTrack
 from services.local_files_service import AUDIO_EXTENSIONS
 from services.native.identification_revisions import album_input_revisions
+from services.native.file_revision import revision_from_stat
 from services.native.local_album_grouper import (
     grouping_directory,
     normalize_group_value,
@@ -182,7 +183,7 @@ class TargetImportLibraryService:
             path_hash=hashlib.sha256(relative_path.encode()).hexdigest(),
             file_size_bytes=stat.st_size,
             file_mtime_ns=stat.st_mtime_ns,
-            stat_revision=f"{stat.st_size}:{stat.st_mtime_ns}",
+            stat_revision=revision_from_stat(stat),
             tag_revision=tag_revision,
             tags_read_at=now,
             title=tag.title.strip() or audio_path.stem,

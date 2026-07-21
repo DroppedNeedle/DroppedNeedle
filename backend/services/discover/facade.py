@@ -16,6 +16,7 @@ if TYPE_CHECKING:
         DiscoverySnapshotStore,
     )
     from services.home.genre_artwork_service import GenreArtworkService
+    from services.native.background_workload_gate import BackgroundWorkloadGate
 
 from fastapi import HTTPException
 
@@ -83,6 +84,7 @@ class DiscoverService:
         ownership_service: Any = None,
         genre_artwork_service: "GenreArtworkService | None" = None,
         discovery_snapshot_store: "DiscoverySnapshotStore | None" = None,
+        workload_gate: "BackgroundWorkloadGate | None" = None,
     ):
         self._integration = IntegrationHelpers(preferences_service)
         self._client_factory = client_factory
@@ -140,6 +142,8 @@ class DiscoverService:
             cover_repo=cover_repo,
             genre_artwork_service=genre_artwork_service,
             snapshot_store=discovery_snapshot_store,
+            workload_gate=workload_gate,
+            ownership_service=ownership_service,
         )
 
         self._radio = radio_service

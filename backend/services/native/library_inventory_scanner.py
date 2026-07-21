@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+import time
+import logging
 from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path, PurePosixPath
 
@@ -14,12 +16,14 @@ from infrastructure.persistence.native_library_store import NativeLibraryStore
 from models.library_work import ScanInventoryItem, ScanRun, ScanScope
 from services.local_files_service import AUDIO_EXTENSIONS
 from services.native.library_policy_resolver import LibraryPolicyResolver
+from services.native.file_revision import revision_from_stat
 
 INVENTORY_QUEUE_SIZE = 256
-INVENTORY_BATCH_SIZE = 128
+INVENTORY_BATCH_SIZE = 256
 
 Checkpoint = Callable[[str, str], Awaitable[bool]]
 DirectoryWalker = Callable[..., Iterator[tuple[str, list[str], list[str]]]]
+logger = logging.getLogger(__name__)
 
 
 class LibraryInventoryScanner:
@@ -51,6 +55,11 @@ class LibraryInventoryScanner:
                 continue
             if not await checkpoint(run.id, scope.policy_revision):
                 return (await self._store.get_scan_run(run.id))[0]
+            discovery_generation = (
+                await self._store.get_scan_scope_discovery_generation(
+                    run.id, scope.root_id, scope.relative_path
+                )
+            )
             root = root_paths.get(scope.root_id)
             if root is None and scope.root_path is not None:
                 root = Path(scope.root_path)
@@ -91,7 +100,13 @@ class LibraryInventoryScanner:
                     terminal_code="ROOT_UNAVAILABLE",
                 )
             current, completed = await self._walk_scope(
-                current, scope, root, selected, resolver, checkpoint
+                current,
+                scope,
+                root,
+                selected,
+                resolver,
+                checkpoint,
+                discovery_generation,
             )
             if not completed:
                 current = (await self._store.get_scan_run(run.id))[0]
@@ -122,6 +137,7 @@ class LibraryInventoryScanner:
         selected: Path,
         resolver: LibraryPolicyResolver,
         checkpoint: Checkpoint,
+        discovery_generation: int = 1,
     ) -> tuple[ScanRun, bool]:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[Path, os.stat_result] | BaseException | None] = (
@@ -165,9 +181,21 @@ class LibraryInventoryScanner:
         current = run
         completed = True
         discard_remaining = False
+        discovered = 0
+        stale_cleanup_pending = True
+        last_checkpoint = time.monotonic()
+        last_log = last_checkpoint
         try:
             while True:
-                item = await queue.get()
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=0.25)
+                except TimeoutError:
+                    if not await checkpoint(run.id, scope.policy_revision):
+                        completed = False
+                        stopped.set()
+                        discard_remaining = True
+                    last_checkpoint = time.monotonic()
+                    continue
                 if item is None:
                     break
                 if discard_remaining:
@@ -180,17 +208,48 @@ class LibraryInventoryScanner:
                 batch.append(item)
                 if len(batch) >= INVENTORY_BATCH_SIZE:
                     current = await self._persist_batch(
-                        current, scope, root, batch, resolver
+                        current,
+                        scope,
+                        root,
+                        batch,
+                        resolver,
+                        discovery_generation,
                     )
+                    discovered += len(batch)
                     batch = []
+                    if stale_cleanup_pending:
+                        stale_cleanup_pending = bool(
+                            await self._store.cleanup_stale_scan_inventory(run.id)
+                        )
                     if not await checkpoint(run.id, scope.policy_revision):
                         completed = False
                         stopped.set()
                         discard_remaining = True
+                    last_checkpoint = time.monotonic()
+                elif time.monotonic() - last_checkpoint >= 0.25:
+                    if not await checkpoint(run.id, scope.policy_revision):
+                        completed = False
+                        stopped.set()
+                        discard_remaining = True
+                    last_checkpoint = time.monotonic()
+                if time.monotonic() - last_log >= 30.0:
+                    logger.info(
+                        "library_scan event=discovery_progress discovered=%d",
+                        discovered + len(batch),
+                    )
+                    last_log = time.monotonic()
             if batch and completed:
                 current = await self._persist_batch(
-                    current, scope, root, batch, resolver
+                    current,
+                    scope,
+                    root,
+                    batch,
+                    resolver,
+                    discovery_generation,
                 )
+                discovered += len(batch)
+                if stale_cleanup_pending:
+                    await self._store.cleanup_stale_scan_inventory(run.id)
         except asyncio.CancelledError:
             stopped.set()
             while not producer_task.done():
@@ -221,13 +280,18 @@ class LibraryInventoryScanner:
         root: Path,
         batch: list[tuple[Path, os.stat_result]],
         resolver: LibraryPolicyResolver,
+        discovery_generation: int,
     ) -> ScanRun:
         raw: list[tuple[Path, str, os.stat_result, str]] = []
         for path, stat in batch:
             relative = PurePosixPath(*path.relative_to(root).parts).as_posix()
-            raw.append((path, relative, stat, f"{stat.st_size}:{stat.st_mtime_ns}"))
+            raw.append((path, relative, stat, revision_from_stat(stat)))
         comparisons = await self._store.classify_scan_paths(
-            scope.root_id, [(relative, revision) for _, relative, _, revision in raw]
+            scope.root_id,
+            [
+                (relative, stat.st_size, stat.st_mtime_ns, stat.st_mtime, revision)
+                for _, relative, stat, revision in raw
+            ],
         )
         items: list[ScanInventoryItem] = []
         for path, relative, stat, revision in raw:
@@ -250,12 +314,15 @@ class LibraryInventoryScanner:
                     effective_policy=effective_policy,
                     comparison_result=comparison,
                     local_track_id=track_id,
+                    scope_relative_path=scope.relative_path,
                 )
             )
+        updated_at = time.time()
         revision, _ = await self._store.add_scan_inventory_batch(
             run.id,
             items,
             expected_run_revision=run.row_revision,
-            updated_at=run.updated_at,
+            updated_at=updated_at,
+            discovery_generation=discovery_generation,
         )
-        return msgspec.structs.replace(run, row_revision=revision)
+        return msgspec.structs.replace(run, row_revision=revision, updated_at=updated_at)

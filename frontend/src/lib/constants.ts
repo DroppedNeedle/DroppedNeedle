@@ -7,7 +7,6 @@ export const KM_PER_MILE = 1.609;
 
 const CACHE_KEY_GROUPS = {
 	core: {
-		LIBRARY_MBIDS: 'droppedneedle_library_mbids',
 		RECENTLY_ADDED: 'droppedneedle_recently_added',
 		HOME_CACHE: 'droppedneedle_home_cache',
 		DISCOVER_QUEUE: 'droppedneedle_discover_queue',
@@ -132,6 +131,8 @@ export const YOUTUBE_PLAYER_ELEMENT_ID = 'yt-player-embed';
 
 export const API = {
 	auth: {
+		setupStatus: () => '/api/v1/auth/setup/status',
+		me: () => '/api/v1/auth/me',
 		passwordRecoveryReset: () => '/api/v1/auth/password-recovery/reset',
 		adminPasswordRecovery: (userId: string) =>
 			`/api/v1/auth/admin/users/${encodeURIComponent(userId)}/password-recovery`
@@ -181,6 +182,7 @@ export const API = {
 	},
 	library: {
 		mbids: () => '/api/v1/library/mbids',
+		membership: () => '/api/v1/library/membership',
 		albums: (page = 1, sort = 'recent', q?: string, format?: string, pageSize = 50) => {
 			let url = `/api/v1/library/albums?page=${page}&page_size=${pageSize}&sort=${sort}`;
 			if (q) url += `&q=${encodeURIComponent(q)}`;

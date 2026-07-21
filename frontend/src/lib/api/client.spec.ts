@@ -85,6 +85,19 @@ describe('api client', () => {
 			);
 		});
 
+		it('combines caller cancellation with a request deadline', async () => {
+			const controller = new AbortController();
+			mockPageFetch.mockResolvedValue(jsonResponse({ ok: true }));
+
+			await api.get('/api/v1/test', { signal: controller.signal, timeoutMs: 10_000 });
+
+			const init = mockPageFetch.mock.calls[0]![1]!;
+			expect(init).not.toHaveProperty('timeoutMs');
+			expect(init.signal).not.toBe(controller.signal);
+			controller.abort();
+			expect(init.signal?.aborted).toBe(true);
+		});
+
 		it('passes cache option through', async () => {
 			mockPageFetch.mockResolvedValue(jsonResponse({ ok: true }));
 			await api.get('/api/v1/test', { cache: 'no-cache' });
@@ -349,7 +362,7 @@ describe('api client', () => {
 				expect((e as SessionExpiredError).status).toBe(401);
 				expect((e as SessionExpiredError).code).toBe('session_expired');
 			}
-			// Never returns undefined — the Promise<T> contract is honoured by throwing.
+			// the Promise<T> contract is preserved by throwing
 			expect(authMock.clear).toHaveBeenCalledOnce();
 			expect(win.location.href).toBe('/login');
 		});

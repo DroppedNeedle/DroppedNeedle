@@ -151,6 +151,7 @@ from core.dependencies import (
     init_app_state,
     get_target_album_identification_service,
     get_target_identification_queue,
+    get_background_workload_gate,
     get_library_policy_resolver,
 )
 from core.config import get_settings
@@ -588,7 +589,9 @@ async def production_target_lifespan(app: FastAPI):
             schedule_settings_getter=schedule_settings,
         )
         start_target_identification_worker(
-            get_target_identification_queue, get_target_album_identification_service
+            get_target_identification_queue,
+            get_target_album_identification_service,
+            get_background_workload_gate(),
         )
         start_target_operation_worker(get_target_library_operation_supervisor)
         await start_target_operational_runtime(

@@ -208,6 +208,7 @@ async def start_target_operational_runtime(
         get_target_personal_mix_service,
         get_target_requests_page_service,
         get_target_wanted_watcher_service,
+        get_background_workload_gate,
         get_wanted_store,
         get_youtube_store,
     )
@@ -298,15 +299,21 @@ async def start_target_operational_runtime(
         get_target_home_service,
         get_auth_store,
         get_target_discover_queue_manager,
+        workload_gate=get_background_workload_gate(),
     )
     start_artist_discovery_cache_warming_task(
         get_target_artist_discovery_service,
         library,
         interval=advanced.artist_discovery_warm_interval,
         delay=advanced.artist_discovery_warm_delay,
+        workload_gate=get_background_workload_gate(),
     )
     start_audiodb_sweep_task(
-        get_audiodb_image_service(), library, preferences, precache_service=None
+        get_audiodb_image_service(),
+        library,
+        preferences,
+        precache_service=None,
+        workload_gate=get_background_workload_gate(),
     )
     get_audiodb_browse_queue().start_consumer(get_audiodb_image_service(), preferences)
 

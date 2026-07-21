@@ -418,7 +418,7 @@ class TestAnniversaries:
         this_year = datetime.now(timezone.utc).year
         svc = _svc()
         svc._library_db = MagicMock()
-        svc._library_db.get_albums = AsyncMock(
+        svc._library_db.get_anniversary_albums = AsyncMock(
             return_value=[
                 {"mbid": "rg-30", "title": "Thirty", "artist_name": "A", "year": this_year - 30},
                 {"mbid": "rg-10", "title": "Ten", "artist_name": "B", "year": this_year - 10},
@@ -432,13 +432,18 @@ class TestAnniversaries:
         assert section is not None
         assert [i.mbid for i in section.items] == ["rg-30", "rg-10"]
         assert all(i.in_library for i in section.items)
+        svc._library_db.get_anniversary_albums.assert_awaited_once_with(
+            current_year=this_year,
+            anniversary_years=svc._ANNIVERSARY_YEARS,
+            limit=12,
+        )
 
     @pytest.mark.asyncio
     async def test_none_without_library_db_or_matches(self):
         svc = _svc()
         assert await svc._build_anniversaries() is None
         svc._library_db = MagicMock()
-        svc._library_db.get_albums = AsyncMock(return_value=[])
+        svc._library_db.get_anniversary_albums = AsyncMock(return_value=[])
         assert await svc._build_anniversaries() is None
 
 

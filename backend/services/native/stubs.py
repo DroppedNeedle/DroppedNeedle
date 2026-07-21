@@ -69,6 +69,14 @@ class LibraryStub:
         self._log_once("get_library_mbids")
         return set()
 
+    async def existing_album_mbids(self, identifiers: list[str]) -> set[str]:
+        self._log_once("existing_album_mbids")
+        return set()
+
+    async def existing_artist_mbids(self, identifiers: list[str]) -> set[str]:
+        self._log_once("existing_artist_mbids")
+        return set()
+
     async def get_artist_mbids(self) -> set[str]:
         self._log_once("get_artist_mbids")
         return set()
@@ -83,6 +91,16 @@ class LibraryStub:
 
     async def get_recently_imported(self, limit: int = 20) -> list[LibraryAlbum]:
         self._log_once("get_recently_imported")
+        return []
+
+    async def get_home_albums(self, limit: int = 15) -> list[LibraryAlbum]:
+        del limit
+        self._log_once("get_home_albums")
+        return []
+
+    async def get_home_artists(self, limit: int = 15) -> list[dict[str, Any]]:
+        del limit
+        self._log_once("get_home_artists")
         return []
 
     async def get_album_image_url(self, album_mbid: str, size: int | None = 500) -> str | None:

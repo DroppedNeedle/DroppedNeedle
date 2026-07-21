@@ -19,11 +19,13 @@ import type {
 	LibraryArtistSummary,
 	LibraryScanSchedule,
 	LibraryStats,
+	LibraryMembershipResponse,
 	NativeAlbumsResponse,
 	NativeArtistsResponse,
 	NativeTrackListItem,
 	NativeTrackPage
 } from '$lib/types';
+import { authStore } from '$lib/stores/authStore.svelte';
 
 export interface LibraryAlbumsParams {
 	page: number;
@@ -31,6 +33,41 @@ export interface LibraryAlbumsParams {
 	q: string;
 	format: string;
 }
+
+export const getLibraryMembershipQueryOptions = (
+	userId: string | undefined,
+	identifiers: string[]
+) => {
+	const albumIds = identifiers
+		.map((id) => id.trim().toLowerCase())
+		.filter((id, index, allIds) => Boolean(id) && allIds.indexOf(id) === index)
+		.sort();
+	return queryOptions({
+		enabled: Boolean(userId && albumIds.length),
+		staleTime: 30_000,
+		queryKey: LibraryQueryKeyFactory.membership(userId, albumIds),
+		queryFn: async ({ signal }) => {
+			let ownedIds: string[] = [];
+			let requestedIds: string[] = [];
+			for (let offset = 0; offset < albumIds.length; offset += 500) {
+				const membership = await api.global.post<LibraryMembershipResponse>(
+					API.library.membership(),
+					{ album_ids: albumIds.slice(offset, offset + 500) },
+					{ signal }
+				);
+				ownedIds = ownedIds.concat(membership.owned_ids ?? []);
+				requestedIds = requestedIds.concat(membership.requested_ids ?? []);
+			}
+			return {
+				owned_ids: ownedIds.sort(),
+				requested_ids: requestedIds.sort()
+			};
+		}
+	});
+};
+
+export const getLibraryMembershipQuery = (getAlbumIds: Getter<string[]>) =>
+	createQuery(() => getLibraryMembershipQueryOptions(authStore.user?.id, getAlbumIds()));
 
 export const getLibraryAlbumsQueryOptions = ({ page, sort, q, format }: LibraryAlbumsParams) =>
 	queryOptions({

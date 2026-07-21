@@ -114,7 +114,6 @@
 			currentPath = window.location.pathname;
 		}
 		navigationProgress.finish();
-		libraryStore.refreshIfStale(10_000);
 	});
 
 	let cleanupResumeListeners: (() => void) | null = null;
@@ -160,14 +159,15 @@
 	// them - nowPlayingReporter.start() synchronously reads player $state, which would
 	// otherwise restart every service on each play/pause.
 	$effect(() => {
-		if (authStore.isAuthenticated) {
+		const sessionUserId = authStore.user?.id ?? null;
+		untrack(() => libraryStore.setSession(sessionUserId));
+		if (sessionUserId) {
 			const cancelDeferred = untrack(() => {
 				// integration status feeds the home entry cards and the services panel
 				// (only some pages call ensureLoaded themselves)
 				void integrationStore.ensureLoaded();
 				return deferInit(() => {
 					initCacheTTLs();
-					libraryStore.initialize();
 					void imageSettingsStore.load();
 					void restorePlayerSession();
 					void scrobbleManager.init();

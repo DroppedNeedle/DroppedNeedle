@@ -6,6 +6,7 @@
 	import AlbumImage from './AlbumImage.svelte';
 	import SampleButton from './discover/SampleButton.svelte';
 	import LibraryBadge from './LibraryBadge.svelte';
+	import { getLibraryMembershipQuery } from '$lib/queries/library/LibraryQueries.svelte';
 
 	interface Release {
 		id: string;
@@ -41,14 +42,21 @@
 		onDownloadAll = undefined
 	}: Props = $props();
 
-	let notInLibraryCount = $derived(
-		releases.filter(
-			(r) =>
-				!(libraryStore.isInLibrary(r.id) || (!$libraryStore.initialized && r.in_library)) &&
-				!r.requested &&
-				!libraryStore.isRequested(r.id)
-		).length
-	);
+	const membershipQuery = getLibraryMembershipQuery(() => releases.map((release) => release.id));
+	const membership = $derived(membershipQuery.data);
+	const ownedIds = $derived(new Set(membership?.owned_ids ?? []));
+	const requestedIds = $derived(new Set(membership?.requested_ids ?? []));
+	const isOwned = (release: Release) =>
+		ownedIds.has(release.id.toLowerCase()) ||
+		libraryStore.isInLibrary(release.id) ||
+		(!membership && release.in_library);
+	const isRequested = (release: Release) =>
+		!isOwned(release) &&
+		(requestedIds.has(release.id.toLowerCase()) ||
+			release.requested ||
+			libraryStore.isRequested(release.id));
+
+	let notInLibraryCount = $derived(releases.filter((r) => !isOwned(r) && !isRequested(r)).length);
 
 	function handleDeleted(rg: Release) {
 		rg.in_library = false;
@@ -128,7 +136,7 @@
 							</div>
 						</a>
 						<div class="flex items-center gap-1 shrink-0 ml-auto mr-3 sm:mr-4">
-							{#if !libraryStore.isInLibrary(rg.id) && artistName}
+							{#if !isOwned(rg) && artistName}
 								<SampleButton
 									sampleKey={rg.id}
 									artist={artistName}
@@ -137,7 +145,7 @@
 									size="sm"
 								/>
 							{/if}
-							{#if libraryStore.isInLibrary(rg.id) || (!$libraryStore.initialized && rg.in_library)}
+							{#if isOwned(rg)}
 								<LibraryBadge
 									status="library"
 									musicbrainzId={rg.id}
@@ -146,7 +154,7 @@
 									size="lg"
 									ondeleted={() => handleDeleted(rg)}
 								/>
-							{:else if !libraryStore.isInLibrary(rg.id) && (rg.requested || libraryStore.isRequested(rg.id))}
+							{:else if isRequested(rg)}
 								<LibraryBadge
 									status="requested"
 									musicbrainzId={rg.id}

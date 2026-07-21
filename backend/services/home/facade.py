@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from services.native.library_ownership_service import LibraryOwnershipService
     from services.home.genre_artwork_service import GenreArtworkService
+    from services.native.background_workload_gate import BackgroundWorkloadGate
 
 # full cache entries live long; freshness is governed by the SWR window below so an
 # expired-but-present copy is still served instantly while a rebuild runs behind it
@@ -86,6 +87,7 @@ class HomeService:
         play_history_store: PlayHistoryStore | None = None,
         ownership_service: "LibraryOwnershipService | None" = None,
         genre_artwork_service: "GenreArtworkService | None" = None,
+        workload_gate: "BackgroundWorkloadGate | None" = None,
     ):
         self._lb_repo = listenbrainz_repo
         self._jf_repo = jellyfin_repo
@@ -100,6 +102,7 @@ class HomeService:
         self._play_history_store = play_history_store
         self._ownership = ownership_service
         self._genre_artwork = genre_artwork_service
+        self._workload_gate = workload_gate
         self._transformers = HomeDataTransformers(jellyfin_repo)
 
         self._helpers = HomeIntegrationHelpers(preferences_service)
@@ -140,6 +143,29 @@ class HomeService:
             album.in_library = projection.owned
             if projection.local_album_id is not None:
                 album.local_id = projection.local_album_id
+
+    async def _apply_artist_ownership(self, response: HomeResponse) -> None:
+        artists: list[HomeArtist] = []
+        for field in msgspec.structs.fields(HomeResponse):
+            section = getattr(response, field.name)
+            if isinstance(section, HomeSection):
+                artists.extend(
+                    item for item in section.items if isinstance(item, HomeArtist)
+                )
+        if response.discover_preview is not None:
+            artists.extend(response.discover_preview.items)
+        candidate_ids = [artist.mbid for artist in artists if artist.mbid]
+        if not candidate_ids:
+            return
+        try:
+            owned = await self._library_repo.existing_artist_mbids(candidate_ids)
+        except Exception as exc:  # noqa: BLE001 - ownership flags are best-effort
+            logger.warning("native artist mbid lookup failed: %s", exc)
+            return
+        owned_ids = {identifier.casefold() for identifier in owned}
+        for artist in artists:
+            if artist.mbid and artist.mbid.casefold() in owned_ids:
+                artist.in_library = True
 
     def _resolve_source(self, source: str | None = None) -> str:
         return self._helpers.resolve_source(source)
@@ -252,6 +278,8 @@ class HomeService:
             pass
 
     async def warm_cache(self, user_id: str) -> None:
+        if self._workload_gate is not None:
+            await self._workload_gate.wait_until_available()
         if user_id in self._building:
             return
         self._building.add(user_id)
@@ -321,12 +349,8 @@ class HomeService:
         )
         tasks: dict[str, Any] = {}
         if integration_status.library:
-            tasks["library_albums"] = self._library_repo.get_library(
-                include_unmonitored=True
-            )
-            tasks["library_artists"] = self._library_repo.get_artists_from_library(
-                include_unmonitored=True
-            )
+            tasks["library_albums"] = self._library_repo.get_home_albums(limit=15)
+            tasks["library_artists"] = self._library_repo.get_home_artists(limit=15)
             tasks["recently_imported"] = self._library_repo.get_recently_imported(
                 limit=15
             )
@@ -363,6 +387,7 @@ class HomeService:
             user_id, music.lb_enabled, music.lfm_enabled
         )
         await self._apply_album_ownership(response)
+        await self._apply_artist_ownership(response)
         return response
 
     async def _build_full(self, user_id: str, music: _HomeUserMusic) -> HomeResponse:
@@ -401,19 +426,8 @@ class HomeService:
         # library home sections are driven by the native library (the scanner is
         # always present, D8), not by whether a download client is configured
         if integration_status.library:
-            tasks["library_albums"] = self._library_repo.get_library(
-                include_unmonitored=True
-            )
-            # get_library() is an empty stub on native installs, so the album-membership
-            # set must come from get_library_mbids() (the authoritative native set the
-            # frontend's /library/mbids also uses) - otherwise chart albums already in the
-            # library are flagged in_library=False and wrongly show a download button.
-            tasks["library_album_mbids"] = self._library_repo.get_library_mbids(
-                include_release_ids=False
-            )
-            tasks["library_artists"] = self._library_repo.get_artists_from_library(
-                include_unmonitored=True
-            )
+            tasks["library_albums"] = self._library_repo.get_home_albums(limit=15)
+            tasks["library_artists"] = self._library_repo.get_home_artists(limit=15)
             tasks["recently_imported"] = self._library_repo.get_recently_imported(
                 limit=15
             )
@@ -446,7 +460,9 @@ class HomeService:
             a.get("mbid", "").lower() for a in library_artists if a.get("mbid")
         }
         library_album_mbids = {
-            m.lower() for m in (results.get("library_album_mbids") or set())
+            album.musicbrainz_id.lower()
+            for album in library_albums
+            if album.musicbrainz_id
         }
 
         response = HomeResponse(integration_status=integration_status)
@@ -520,6 +536,7 @@ class HomeService:
         )
 
         await self._apply_album_ownership(response)
+        await self._apply_artist_ownership(response)
 
         return response
 

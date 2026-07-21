@@ -46,6 +46,7 @@ from services.native.local_album_grouper import (
     normalize_group_value,
 )
 from services.native.library_policy_resolver import LibraryPolicyResolver
+from services.native.file_revision import exact_stat_revision
 
 MIGRATION_NAMESPACE = UUIDType("3eb2364c-7086-4cb9-9360-6cf704259a40")
 REFERENCE_KINDS = (
@@ -638,8 +639,8 @@ class LegacyCatalogImporter:
             path_map[str(row.get("file_path"))] = (file_id, album_id)
             track_map[file_id] = file_id
             mtime_ns = int(_as_float(row.get("file_mtime")) * 1_000_000_000)
-            stat_revision = _hash(
-                [resolved.relative_path, _as_int(row.get("file_size_bytes")), mtime_ns]
+            stat_revision = exact_stat_revision(
+                _as_int(row.get("file_size_bytes")), mtime_ns
             )
             tag_revision = _hash(
                 [
@@ -662,6 +663,7 @@ class LegacyCatalogImporter:
                     file_size_bytes=_as_int(row.get("file_size_bytes")),
                     file_mtime_ns=mtime_ns,
                     stat_revision=stat_revision,
+                    stat_revision_kind="legacy_float",
                     tag_revision=tag_revision,
                     tags_read_at=_as_float(row.get("tagged_at")) or None,
                     title=str(row.get("track_title") or "Unknown Track"),
@@ -1060,10 +1062,18 @@ class LegacyCatalogImporter:
                         relative_path=resolved.relative_path,
                         path_hash=_hash([root_id, resolved.relative_path]),
                         file_size_bytes=_as_int(row.get("file_size")),
-                        file_mtime_ns=0,
-                        stat_revision=_hash(
-                            [resolved.relative_path, row.get("file_size"), 0]
+                        file_mtime_ns=int(
+                            _as_float(row.get("created_at"), prepared_at)
+                            * 1_000_000_000
                         ),
+                        stat_revision=exact_stat_revision(
+                            _as_int(row.get("file_size")),
+                            int(
+                                _as_float(row.get("created_at"), prepared_at)
+                                * 1_000_000_000
+                            ),
+                        ),
+                        stat_revision_kind="legacy_review",
                         tag_revision=_hash(
                             [
                                 row.get("extracted_title"),
@@ -1071,6 +1081,7 @@ class LegacyCatalogImporter:
                                 album_name,
                             ]
                         ),
+                        tags_read_at=_as_float(row.get("created_at"), prepared_at),
                         title=str(row.get("extracted_title") or Path(path).stem),
                         artist_name=str(
                             row.get("extracted_artist") or "Unknown Artist"
@@ -1087,6 +1098,7 @@ class LegacyCatalogImporter:
                             or "unknown"
                         ),
                         availability="excluded" if excluded else "indexed",
+                        manual_excluded=excluded,
                         excluded_at=_as_float(row.get("resolved_at"))
                         if excluded
                         else None,

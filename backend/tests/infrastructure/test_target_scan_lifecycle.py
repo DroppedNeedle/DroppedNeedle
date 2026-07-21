@@ -277,9 +277,13 @@ async def test_indexer_reports_durable_progress_after_each_bounded_batch(
     )
     updates: list[int] = []
 
-    async def record_progress(increments: dict[str, int]) -> None:
-        updates.append(increments["inspected_count"])
-        await target_store.add_scan_counters(run.id, increments, updated_at=12)
+    previous = 0
+
+    async def record_progress(updated_run: ScanRun) -> None:
+        nonlocal previous
+        inspected = updated_run.counters["inspected_count"]
+        updates.append(inspected - previous)
+        previous = inspected
 
     await LibraryIndexer(target_store, _TagReader()).index(
         run,
@@ -293,6 +297,77 @@ async def test_indexer_reports_durable_progress_after_each_bounded_batch(
     assert counters["inspected_count"] == file_count
     assert counters["indexed_count"] == file_count
     assert counters["new_count"] == file_count
+
+
+@pytest.mark.asyncio
+async def test_file_changed_during_both_tag_reads_is_recorded_without_catalog_write(
+    target_store: NativeLibraryStore, tmp_path: Path
+) -> None:
+    root = tmp_path / "music"
+    root.mkdir()
+    track = root / "track-1.flac"
+    track.write_bytes(b"audio")
+    resolver = _resolver(root)
+    coordinator = _coordinator(target_store, resolver)
+    requested = await coordinator.request_run(_request(resolver))
+    run = await target_store.claim_next_scan_run(now=10)
+    assert run is not None and run.id == requested.run_id
+    _, scopes, _ = await target_store.get_scan_run(run.id)
+
+    async def continue_work(_run_id: str, _revision: str) -> bool:
+        return True
+
+    run = await LibraryInventoryScanner(target_store).discover(
+        run, scopes, {"root-a": root}, resolver, continue_work
+    )
+    run = await target_store.transition_scan_run(
+        run.id,
+        expected_state="discovering",
+        expected_revision=run.row_revision,
+        new_state="indexing",
+        now=11,
+    )
+
+    class MutatingReader:
+        calls = 0
+
+        def read_tags(self, path: Path) -> tuple[AudioTag, AudioInfo]:
+            self.calls += 1
+            path.write_bytes(path.read_bytes() + b"x")
+            return (
+                AudioTag(
+                    title="Track 1",
+                    artist="Artist",
+                    album="Album",
+                    album_artist="Artist",
+                    track_number=1,
+                ),
+                AudioInfo(
+                    duration_seconds=1,
+                    bitrate=1,
+                    sample_rate=44_100,
+                    channels=2,
+                    file_format="flac",
+                    file_size_bytes=path.stat().st_size,
+                    bit_depth=16,
+                ),
+            )
+
+    reader = MutatingReader()
+    counts = await LibraryIndexer(target_store, reader).index(
+        run, resolver.policy_revision, continue_work
+    )
+
+    inventory = await target_store.get_scan_inventory_batch(
+        run.id, processing_state="failed", limit=10
+    )
+    _, _, counters = await target_store.get_scan_run(run.id)
+    assert reader.calls == 2
+    assert counts["tag_reads"] == 2
+    assert inventory[0]["failure_code"] == "FILE_CHANGED_DURING_READ"
+    assert counters["inspected_count"] == 1
+    assert counters["errored_count"] == 1
+    assert await target_store.row_count("local_tracks") == 0
 
 
 @pytest.mark.asyncio
@@ -510,6 +585,7 @@ async def test_only_latest_fifty_terminal_runs_are_retained(
             new_state="completed",
             now=ordinal * 10 + 4,
         )
+    await target_store.cleanup_terminal_scan_inventory()
     assert await target_store.row_count("library_scan_runs") == 50
     assert len(await coordinator.history(limit=50)) == 50
     first_page, cursor = await coordinator.history_page(limit=20)
@@ -552,7 +628,7 @@ async def test_one_walk_incremental_tag_revisions_and_no_repeat(
     assert walk_count == 1
     assert len(reader.calls) == 2
     assert INVENTORY_QUEUE_SIZE == 256
-    assert INVENTORY_BATCH_SIZE == 128
+    assert INVENTORY_BATCH_SIZE == 256
 
     await coordinator.request_run(_request(resolver, trigger="automatic"))
     repeated = await coordinator.run_once({"root-a": root})
@@ -580,6 +656,79 @@ async def test_one_walk_incremental_tag_revisions_and_no_repeat(
     assert len(reader.calls) == 5
     tracks = await target_store.search_local_tracks("Track")
     assert len(tracks) == 2
+
+
+@pytest.mark.asyncio
+async def test_scan_transaction_ratios_and_tag_read_gates(
+    target_store: NativeLibraryStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "music"
+    album = root / "Artist" / "Album"
+    album.mkdir(parents=True)
+    file_count = 4_096
+    for index in range(file_count):
+        (album / f"track-{index}.flac").write_bytes(b"audio")
+    resolver = _resolver(root)
+    reader = _TagReader()
+
+    class NoGrouping:
+        async def regroup_run(
+            self,
+            _run_id: str,
+            *,
+            now: float,
+            checkpoint=None,
+            frozen_policy_revision: str = "",
+        ) -> int:
+            del now, checkpoint, frozen_policy_revision
+            return 0
+
+    coordinator = LibraryScanCoordinator(
+        target_store,
+        LibraryInventoryScanner(target_store),
+        LibraryIndexer(target_store, reader, grouping=NoGrouping()),
+        LibraryReconciler(target_store),
+        lambda: resolver,
+        clock=lambda: 1_800_000_000.0,
+    )
+    original_execute_background = target_store._execute_background
+    background_transactions = 0
+
+    def count_background_transaction(operation):
+        nonlocal background_transactions
+        background_transactions += 1
+        return original_execute_background(operation)
+
+    monkeypatch.setattr(
+        target_store, "_execute_background", count_background_transaction
+    )
+    await coordinator.request_run(_request(resolver))
+    first = await coordinator.run_once({"root-a": root})
+
+    assert first is not None and first.state == "completed"
+    assert len(reader.calls) == file_count
+    assert background_transactions / file_count < 0.03
+    catalog_revision = await target_store.get_catalog_revision()
+
+    background_transactions = 0
+    await coordinator.request_run(_request(resolver))
+    unchanged = await coordinator.run_once({"root-a": root})
+
+    assert unchanged is not None and unchanged.state == "completed"
+    assert len(reader.calls) == file_count
+    assert background_transactions / file_count < 0.02
+    assert await target_store.get_catalog_revision() == catalog_revision
+
+    changed_path = album / "track-0.flac"
+    changed_path.write_bytes(b"changed")
+    await coordinator.request_run(_request(resolver))
+    changed = await coordinator.run_once({"root-a": root})
+
+    assert changed is not None and changed.state == "completed"
+    assert len(reader.calls) == file_count + 1
+    assert await target_store.get_catalog_revision() == catalog_revision
 
 
 @pytest.mark.asyncio
@@ -636,6 +785,58 @@ async def test_blocking_tag_read_stays_pausing_until_the_safe_boundary(
     result = await worker
     assert result is not None and result.state == "paused"
     assert await target_store.search_local_tracks("Track") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("control", "expected_state"), [("pause", "paused"), ("stop", "cancelled")]
+)
+async def test_control_at_discovery_phase_boundary_is_settled(
+    target_store: NativeLibraryStore,
+    tmp_path: Path,
+    control: str,
+    expected_state: str,
+) -> None:
+    root = tmp_path / "music"
+    root.mkdir()
+    resolver = _resolver(root)
+    coordinator = _coordinator(target_store, resolver)
+    await coordinator.request_run(_request(resolver))
+
+    async def request_at_boundary(run, *_args, **_kwargs):
+        current, _, _ = await target_store.get_scan_run(run.id)
+        await coordinator.control(current.id, control, current.row_revision)
+        return run
+
+    coordinator._inventory.discover = request_at_boundary  # type: ignore[method-assign]
+
+    result = await coordinator.run_once({"root-a": root})
+
+    assert result is not None and result.state == expected_state
+    persisted, _, _ = await target_store.get_scan_run(result.id)
+    assert persisted.state == expected_state
+
+
+@pytest.mark.asyncio
+async def test_control_winning_discovery_revision_race_is_settled(
+    target_store: NativeLibraryStore, tmp_path: Path
+) -> None:
+    root = tmp_path / "music"
+    root.mkdir()
+    resolver = _resolver(root)
+    coordinator = _coordinator(target_store, resolver)
+    await coordinator.request_run(_request(resolver))
+
+    async def lose_revision_race(run, *_args, **_kwargs):
+        current, _, _ = await target_store.get_scan_run(run.id)
+        await coordinator.control(current.id, "pause", current.row_revision)
+        raise StaleRevisionError("control won the scan batch revision race")
+
+    coordinator._inventory.discover = lose_revision_race  # type: ignore[method-assign]
+
+    result = await coordinator.run_once({"root-a": root})
+
+    assert result is not None and result.state == "paused"
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,13 @@ export const LibraryQueryKeyFactory = {
 	activityPrefix: () => [...LibraryQueryKeyFactory.all, 'activity'] as const,
 	activity: (userId: string | undefined) =>
 		[...LibraryQueryKeyFactory.activityPrefix(), userId ?? 'anonymous'] as const,
+	membership: (userId: string | undefined, albumIds: string[]) =>
+		[
+			...LibraryQueryKeyFactory.all,
+			'membership',
+			userId ?? 'anonymous',
+			[...albumIds].sort()
+		] as const,
 	operationsPrefix: () => [...LibraryQueryKeyFactory.all, 'operations'] as const,
 	currentRuns: () => [...LibraryQueryKeyFactory.operationsPrefix(), 'current-runs'] as const,
 	runHistory: (cursor: string | undefined) =>

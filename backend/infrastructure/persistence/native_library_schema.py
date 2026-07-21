@@ -258,6 +258,8 @@ CREATE TABLE IF NOT EXISTS local_tracks (
     file_size_bytes INTEGER NOT NULL CHECK(file_size_bytes >= 0),
     file_mtime_ns INTEGER NOT NULL,
     stat_revision TEXT NOT NULL,
+    stat_revision_kind TEXT NOT NULL DEFAULT 'unclassified'
+        CHECK(stat_revision_kind IN ('exact','legacy_float','legacy_review','unclassified')),
     tag_revision TEXT,
     tags_read_at REAL,
     metadata_incomplete INTEGER NOT NULL DEFAULT 0 CHECK(metadata_incomplete IN (0,1)),
@@ -722,6 +724,8 @@ CREATE TABLE IF NOT EXISTS library_scan_runs (
     stop_requested_at REAL,
     pause_requested_at REAL,
     control_latency_ms INTEGER,
+    inventory_cleanup_pending INTEGER NOT NULL DEFAULT 0
+        CHECK(inventory_cleanup_pending IN (0,1)),
     row_revision INTEGER NOT NULL DEFAULT 1 CHECK(row_revision BETWEEN 1 AND 9223372036854775807),
     event_revision INTEGER NOT NULL DEFAULT 0 CHECK(event_revision BETWEEN 0 AND 9223372036854775807)
 );
@@ -738,6 +742,7 @@ CREATE TABLE IF NOT EXISTS library_scan_run_scopes (
     estimated_count INTEGER,
     discovered_count INTEGER NOT NULL DEFAULT 0,
     discovery_state TEXT NOT NULL DEFAULT 'pending',
+    discovery_generation INTEGER NOT NULL DEFAULT 1,
     reconciliation_state TEXT NOT NULL DEFAULT 'pending',
     reconciliation_cursor TEXT,
     phase_timings_json TEXT NOT NULL DEFAULT '{}',
@@ -761,6 +766,8 @@ CREATE TABLE IF NOT EXISTS library_scan_inventory (
     run_id TEXT NOT NULL REFERENCES library_scan_runs(id) ON DELETE CASCADE,
     root_id TEXT NOT NULL,
     relative_path TEXT NOT NULL,
+    scope_relative_path TEXT NOT NULL DEFAULT '.',
+    discovery_generation INTEGER NOT NULL DEFAULT 1,
     absolute_path TEXT NOT NULL,
     file_size_bytes INTEGER NOT NULL,
     file_mtime_ns INTEGER NOT NULL,
@@ -781,9 +788,123 @@ CREATE TABLE IF NOT EXISTS library_scan_grouping_contexts (
     root_id TEXT NOT NULL,
     relative_directory TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','completed','failed')),
+    staging_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK(staging_state IN ('pending','tracks','tokens','groups','continuity','albums','memberships','retirement','queue','completed')),
+    staging_cursor TEXT,
+    application_cursor TEXT,
+    queue_cursor TEXT,
+    grouping_merge_target TEXT,
+    grouping_merge_ready INTEGER NOT NULL DEFAULT 0
+        CHECK(grouping_merge_ready IN (0,1)),
     failure_code TEXT,
     row_revision INTEGER NOT NULL DEFAULT 1 CHECK(row_revision BETWEEN 1 AND 9223372036854775807),
     PRIMARY KEY(run_id, root_id, relative_directory)
+);
+
+CREATE TABLE IF NOT EXISTS library_scan_grouping_evidence (
+    run_id TEXT NOT NULL,
+    root_id TEXT NOT NULL,
+    relative_directory TEXT NOT NULL,
+    local_track_id TEXT NOT NULL REFERENCES local_tracks(id) ON DELETE CASCADE,
+    preliminary_key TEXT NOT NULL,
+    grouping_token TEXT,
+    title TEXT NOT NULL,
+    title_normalized TEXT NOT NULL,
+    album_artist_name TEXT NOT NULL,
+    album_artist_normalized TEXT NOT NULL,
+    track_number INTEGER NOT NULL,
+    old_album_id TEXT NOT NULL REFERENCES local_albums(id) ON DELETE RESTRICT,
+    album_created_at REAL NOT NULL,
+    reason_code TEXT NOT NULL,
+    PRIMARY KEY(run_id, root_id, relative_directory, local_track_id),
+    FOREIGN KEY(run_id, root_id, relative_directory)
+        REFERENCES library_scan_grouping_contexts(run_id, root_id, relative_directory)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS library_scan_grouping_groups (
+    run_id TEXT NOT NULL,
+    root_id TEXT NOT NULL,
+    relative_directory TEXT NOT NULL,
+    grouping_token TEXT NOT NULL,
+    grouping_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    album_artist_name TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    retained_album_id TEXT REFERENCES local_albums(id) ON DELETE RESTRICT,
+    continuity_reason_code TEXT,
+    local_album_id TEXT,
+    local_artist_id TEXT REFERENCES local_artists(id) ON DELETE RESTRICT,
+    tag_revision_accumulator TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+    stat_revision_accumulator TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+    policy_revision_accumulator TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+    automatic_track_count INTEGER NOT NULL DEFAULT 0,
+    local_metadata_track_count INTEGER NOT NULL DEFAULT 0,
+    excluded_track_count INTEGER NOT NULL DEFAULT 0,
+    embedded_identity_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(run_id, root_id, relative_directory, grouping_token),
+    FOREIGN KEY(run_id, root_id, relative_directory)
+        REFERENCES library_scan_grouping_contexts(run_id, root_id, relative_directory)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS library_scan_grouping_values (
+    run_id TEXT NOT NULL,
+    root_id TEXT NOT NULL,
+    relative_directory TEXT NOT NULL,
+    grouping_token TEXT NOT NULL,
+    value_kind TEXT NOT NULL CHECK(value_kind IN ('title','artist','reason')),
+    normalized_value TEXT NOT NULL,
+    display_value TEXT NOT NULL,
+    occurrence_count INTEGER NOT NULL CHECK(occurrence_count > 0),
+    PRIMARY KEY(
+        run_id, root_id, relative_directory, grouping_token,
+        value_kind, normalized_value
+    ),
+    FOREIGN KEY(run_id, root_id, relative_directory, grouping_token)
+        REFERENCES library_scan_grouping_groups(
+            run_id, root_id, relative_directory, grouping_token
+        ) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS library_scan_grouping_edges (
+    run_id TEXT NOT NULL,
+    root_id TEXT NOT NULL,
+    relative_directory TEXT NOT NULL,
+    old_album_id TEXT NOT NULL REFERENCES local_albums(id) ON DELETE RESTRICT,
+    grouping_token TEXT NOT NULL,
+    overlap_count INTEGER NOT NULL CHECK(overlap_count > 0),
+    processed INTEGER NOT NULL DEFAULT 0 CHECK(processed IN (0,1)),
+    PRIMARY KEY(run_id, root_id, relative_directory, old_album_id, grouping_token),
+    FOREIGN KEY(run_id, root_id, relative_directory, grouping_token)
+        REFERENCES library_scan_grouping_groups(run_id, root_id, relative_directory, grouping_token)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS library_scan_grouping_old_nodes (
+    run_id TEXT NOT NULL,
+    root_id TEXT NOT NULL,
+    relative_directory TEXT NOT NULL,
+    old_album_id TEXT NOT NULL REFERENCES local_albums(id) ON DELETE RESTRICT,
+    degree INTEGER NOT NULL CHECK(degree > 0),
+    matched_grouping_token TEXT,
+    PRIMARY KEY(run_id, root_id, relative_directory, old_album_id),
+    FOREIGN KEY(run_id, root_id, relative_directory)
+        REFERENCES library_scan_grouping_contexts(run_id, root_id, relative_directory)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS library_scan_grouping_new_nodes (
+    run_id TEXT NOT NULL,
+    root_id TEXT NOT NULL,
+    relative_directory TEXT NOT NULL,
+    grouping_token TEXT NOT NULL,
+    degree INTEGER NOT NULL CHECK(degree > 0),
+    matched_old_album_id TEXT REFERENCES local_albums(id) ON DELETE RESTRICT,
+    PRIMARY KEY(run_id, root_id, relative_directory, grouping_token),
+    FOREIGN KEY(run_id, root_id, relative_directory, grouping_token)
+        REFERENCES library_scan_grouping_groups(run_id, root_id, relative_directory, grouping_token)
+        ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS library_work_control (
@@ -870,6 +991,8 @@ CREATE INDEX IF NOT EXISTS idx_local_tracks_policy ON local_tracks(root_id, appl
 CREATE INDEX IF NOT EXISTS idx_local_tracks_search ON local_tracks(title_folded, artist_name_folded, album_title_folded);
 CREATE INDEX IF NOT EXISTS idx_local_tracks_path_hash ON local_tracks(path_hash);
 CREATE INDEX IF NOT EXISTS idx_local_album_identity_rg ON local_album_external_identities(release_group_mbid);
+CREATE INDEX IF NOT EXISTS idx_local_album_identity_rg_lower ON local_album_external_identities(lower(release_group_mbid));
+CREATE INDEX IF NOT EXISTS idx_local_artist_identity_provider_lower ON local_artist_external_identities(lower(provider_artist_id));
 CREATE INDEX IF NOT EXISTS idx_local_track_identity_recording ON local_track_external_identities(recording_mbid);
 CREATE INDEX IF NOT EXISTS idx_album_alias_target ON local_album_aliases(local_album_id);
 CREATE INDEX IF NOT EXISTS idx_artist_alias_target ON local_artist_aliases(local_artist_id);
@@ -899,6 +1022,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_runs_single_queued
 ON library_scan_runs((1)) WHERE state = 'queued';
 CREATE INDEX IF NOT EXISTS idx_scan_inventory_processing ON library_scan_inventory(run_id, processing_state, root_id, relative_path);
 CREATE INDEX IF NOT EXISTS idx_scan_grouping_pending ON library_scan_grouping_contexts(run_id, state, root_id, relative_directory);
+CREATE INDEX IF NOT EXISTS idx_scan_grouping_evidence_token ON library_scan_grouping_evidence(run_id, root_id, relative_directory, grouping_token, local_track_id);
+CREATE INDEX IF NOT EXISTS idx_scan_grouping_evidence_preliminary ON library_scan_grouping_evidence(run_id, root_id, relative_directory, preliminary_key, local_track_id);
+CREATE INDEX IF NOT EXISTS idx_scan_grouping_groups_key ON library_scan_grouping_groups(run_id, root_id, relative_directory, grouping_key);
+CREATE INDEX IF NOT EXISTS idx_scan_grouping_value_winner ON library_scan_grouping_values(run_id, root_id, relative_directory, grouping_token, value_kind, occurrence_count DESC, normalized_value);
+CREATE INDEX IF NOT EXISTS idx_scan_grouping_value_order ON library_scan_grouping_values(run_id, root_id, relative_directory, grouping_token, value_kind, normalized_value);
+CREATE INDEX IF NOT EXISTS idx_scan_grouping_edges_pending ON library_scan_grouping_edges(run_id, root_id, relative_directory, processed, old_album_id, grouping_token);
+CREATE INDEX IF NOT EXISTS idx_scan_grouping_old_degree ON library_scan_grouping_old_nodes(run_id, root_id, relative_directory, degree, old_album_id);
+CREATE INDEX IF NOT EXISTS idx_scan_grouping_new_degree ON library_scan_grouping_new_nodes(run_id, root_id, relative_directory, degree, grouping_token);
 CREATE INDEX IF NOT EXISTS idx_scan_inventory_track ON library_scan_inventory(local_track_id);
 CREATE INDEX IF NOT EXISTS idx_migration_provenance_target ON library_migration_provenance(target_kind, target_id);
 CREATE INDEX IF NOT EXISTS idx_reference_tombstone_legacy_file ON library_reference_tombstones(legacy_file_id);

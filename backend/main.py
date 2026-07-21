@@ -485,9 +485,12 @@ async def lifespan(app: FastAPI):
     from core.tasks import warm_library_cache
     from core.dependencies import (
         get_album_service,
+        get_background_workload_gate,
         get_library_db,
         get_sync_state_store,
     )
+
+    background_workload_gate = get_background_workload_gate()
 
     def handle_cache_warming_error(task: asyncio.Task):
         try:
@@ -503,7 +506,12 @@ async def lifespan(app: FastAPI):
             logger.error("Error checking cache warming task: %s", e)
 
     cache_task = asyncio.create_task(
-        warm_library_cache(library_service, get_album_service(), get_library_db())
+        warm_library_cache(
+            library_service,
+            get_album_service(),
+            get_library_db(),
+            background_workload_gate,
+        )
     )
     cache_task.add_done_callback(handle_cache_warming_error)
     TaskRegistry.get_instance().register("library-cache-warmup", cache_task)
@@ -520,6 +528,7 @@ async def lifespan(app: FastAPI):
         async def resume_sync():
             try:
                 await asyncio.sleep(5)
+                await background_workload_gate.wait_until_available()
                 artists = await library_db.get_artists()
                 albums = await library_db.get_albums()
                 if artists or albums:
@@ -561,6 +570,7 @@ async def lifespan(app: FastAPI):
         get_home_service,
         get_auth_store,
         get_discover_queue_manager,
+        workload_gate=background_workload_gate,
     )
 
     from core.dependencies import get_artist_discovery_service
@@ -570,6 +580,7 @@ async def lifespan(app: FastAPI):
         get_library_db(),
         interval=advanced_settings.artist_discovery_warm_interval,
         delay=advanced_settings.artist_discovery_warm_delay,
+        workload_gate=background_workload_gate,
     )
 
     from core.dependencies import get_audiodb_image_service
@@ -579,6 +590,7 @@ async def lifespan(app: FastAPI):
         get_library_db(),
         get_preferences_service(),
         precache_service=library_service._precache_service,
+        workload_gate=background_workload_gate,
     )
 
     from core.dependencies import get_audiodb_browse_queue

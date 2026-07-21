@@ -61,7 +61,6 @@
 		createRejectPersonalMixMutation
 	} from '$lib/queries/scrobble-preferences/ScrobblePreferencesMutations.svelte';
 	import { isAbortError } from '$lib/utils/errorHandling';
-	import { libraryStore } from '$lib/stores/library';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		getCutoffUnmetQuery,
@@ -187,7 +186,6 @@
 
 	let activeItems = $state<ActiveRequestItem[]>([]);
 	let activeCount = $state(0);
-	let prevActiveCount = 0;
 	let activeLoading = $state(true);
 	let activeError = $state<string | null>(null);
 
@@ -255,10 +253,6 @@
 			}
 			activeItems = data.items;
 			activeCount = data.count;
-			if (prevActiveCount > 0 && data.count < prevActiveCount) {
-				libraryStore.refresh();
-			}
-			prevActiveCount = data.count;
 			activeError = null;
 		} catch (e) {
 			if (isAbortError(e)) {

@@ -68,6 +68,10 @@ class IdentificationQueueService:
         albums: list[tuple[str, str, str]],
         *,
         now: float | None = None,
+        scan_run_id: str | None = None,
+        grouping_context: tuple[str, str] | None = None,
+        queue_cursor: str | None = None,
+        background: bool = False,
     ) -> list[tuple[str, bool]]:
         jobs = [
             self._album_job(
@@ -80,7 +84,13 @@ class IdentificationQueueService:
             )
             for album_id, input_revision, kind in albums
         ]
-        return await self._store.enqueue_identification_job_results(jobs)
+        return await self._store.enqueue_identification_job_results(
+            jobs,
+            scan_run_id=scan_run_id,
+            grouping_context=grouping_context,
+            queue_cursor=queue_cursor,
+            background=background,
+        )
 
     @staticmethod
     def _album_job(

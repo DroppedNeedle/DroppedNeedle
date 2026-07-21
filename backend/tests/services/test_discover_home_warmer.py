@@ -163,6 +163,7 @@ from services.discover.homepage_service import DiscoverHomepageService  # noqa: 
 def _homepage() -> DiscoverHomepageService:
     svc = DiscoverHomepageService.__new__(DiscoverHomepageService)
     svc._memory_cache = None
+    svc._workload_gate = None
     svc._lfm_repo = MagicMock()
     svc._mbid = MagicMock()
     svc._integration = MagicMock()

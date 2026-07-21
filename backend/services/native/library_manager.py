@@ -241,6 +241,12 @@ class LibraryManager(LibraryStub):
         native imports written to ``library_files``."""
         return await self._db.get_library_mbids(include_release_ids=include_release_ids)
 
+    async def existing_album_mbids(self, identifiers: list[str]) -> set[str]:
+        return await self._db.existing_library_mbids(identifiers)
+
+    async def existing_artist_mbids(self, identifiers: list[str]) -> set[str]:
+        return await self._db.existing_library_artist_mbids(identifiers)
+
     async def get_albums(
         self,
         page: int = 1,

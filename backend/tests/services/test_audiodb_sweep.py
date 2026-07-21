@@ -25,8 +25,14 @@ def _make_prefs(settings=None, cursor=None):
 
 def _make_library_db(artists=None, albums=None):
     cache = AsyncMock()
-    cache.get_artists = AsyncMock(return_value=artists or [])
-    cache.get_albums = AsyncMock(return_value=albums or [])
+    candidates = [
+        ("artist", item["mbid"], item)
+        for item in artists or []
+    ] + [
+        ("album", item["mbid"], item)
+        for item in albums or []
+    ]
+    cache.get_enrichment_candidates = AsyncMock(return_value=candidates)
     return cache
 
 

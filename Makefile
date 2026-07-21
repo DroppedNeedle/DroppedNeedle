@@ -101,6 +101,7 @@ NPM    ?= pnpm
 	feedback-fixes-maintenance-rehearsal \
 	feedback-fixes-cli-rehearsal \
 	feedback-fixes-automatic-upgrade-rehearsal \
+	post-upgrade-million-rehearsal \
 	issue-224-performance \
 	backend-test-discover-all \
 	test-discover-all \
@@ -603,6 +604,14 @@ feedback-fixes-cli-rehearsal: $(BACKEND_VENV_STAMP) ## Run the exact staged main
 feedback-fixes-automatic-upgrade-rehearsal: $(BACKEND_VENV_STAMP) ## Prove a normal image update, restart, and fresh install need no maintenance command
 	cd "$(BACKEND_DIR)" && .venv/bin/python -m tests.benchmarks.feedback_fixes_automatic_upgrade_rehearsal \
 		--output "$(ROOT_DIR)/.dev-notes/benchmarks/feedback-fixes-automatic-upgrade-latest.json"
+
+post-upgrade-million-rehearsal: feedback-fixes-million-maintenance-rehearsal $(BACKEND_VENV_STAMP) ## Rehearse migration plus million-file mixed and flat post-upgrade scans
+	mkdir -p "$(ROOT_DIR)/.dev-notes/tmp"
+	cd "$(BACKEND_DIR)" && TMPDIR="$(ROOT_DIR)/.dev-notes/tmp" .venv/bin/python -m tests.benchmarks.feedback_fixes_benchmark \
+		--sizes 1000000 \
+		--target-sizes 115000 1000000 \
+		--flat-grouping-size 1000000 \
+		--output "$(ROOT_DIR)/.dev-notes/benchmarks/post-upgrade-million-latest.json"
 
 backend-test-plex: $(BACKEND_VENV_STAMP) ## Run all Plex integration backend tests
 	$(PYTEST) tests/repositories/test_plex_repository.py tests/services/test_plex_playback_service.py tests/services/test_plex_library_service.py tests/routes/test_plex_routes.py tests/routes/test_plex_settings.py tests/routes/test_plex_auth.py tests/services/test_plex_integration_status.py tests/services/test_plex_settings_lifecycle.py -v

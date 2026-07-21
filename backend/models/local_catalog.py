@@ -10,6 +10,9 @@ from infrastructure.msgspec_fastapi import AppStruct
 
 ArtistKind = Literal["person", "group", "various_artists", "unknown"]
 Availability = Literal["indexed", "excluded", "missing"]
+StatRevisionKind = Literal[
+    "exact", "legacy_float", "legacy_review", "unclassified"
+]
 IdentificationDecisionSource = Literal[
     "embedded", "automatic", "manual", "legacy_import"
 ]
@@ -66,6 +69,7 @@ class LocalTrack(AppStruct):
     stat_revision: str
     title: str
     album_title: str
+    stat_revision_kind: StatRevisionKind = "exact"
     disc_number: int = 1
     track_number: int = 0
     artist_name: str | None = None
@@ -107,6 +111,7 @@ class LocalTrack(AppStruct):
     imported_at: float = 0.0
     membership_source: Literal["automatic", "legacy_import", "manual"] = "automatic"
     membership_locked: bool = False
+    manual_excluded: bool = False
     desired_policy_revision: str = ""
     applied_policy_revision: str = ""
     applied_policy: Literal["local_metadata", "automatic", "excluded"] = "automatic"

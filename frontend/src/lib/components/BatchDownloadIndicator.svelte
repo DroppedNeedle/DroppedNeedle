@@ -4,8 +4,6 @@
 	import { libraryStore } from '$lib/stores/library';
 	import { playerStore } from '$lib/stores/player.svelte';
 
-	const POLL_INTERVAL_MS = 15_000;
-
 	let completedPerJob = $derived.by(() => {
 		const { mbidSet } = $libraryStore;
 		const counts: Record<string, number> = {};
@@ -22,19 +20,6 @@
 	let allComplete = $derived.by(() =>
 		batchDownloadStore.jobs.every((job) => (completedPerJob[job.artistId] ?? 0) >= job.total)
 	);
-
-	// Poll library while batch downloads are in progress
-	$effect(() => {
-		if (!batchDownloadStore.hasActive || allComplete) return;
-
-		libraryStore.refresh();
-
-		const interval = setInterval(() => {
-			libraryStore.refresh();
-		}, POLL_INTERVAL_MS);
-
-		return () => clearInterval(interval);
-	});
 
 	$effect(() => {
 		if (allComplete && batchDownloadStore.jobs.length > 0) {

@@ -9,6 +9,7 @@ from tests.benchmarks.feedback_fixes_benchmark import (
     benchmark_evidence_storage,
     benchmark_inventory,
     benchmark_latency,
+    benchmark_migration_handoff_scan,
     benchmark_scan_control_latency,
     benchmark_target_scan,
     benchmark_unavailable_root,
@@ -21,6 +22,7 @@ from tests.benchmarks.feedback_fixes_phase10_scenarios import (
     benchmark_evidence_protection,
     benchmark_fingerprint_playback,
     benchmark_flat_grouping,
+    benchmark_staged_flat_grouping,
     benchmark_identification_backlog,
     benchmark_sse_protocol,
 )
@@ -60,6 +62,16 @@ async def test_target_scan_benchmark_exercises_incremental_stack() -> None:
 
 
 @pytest.mark.asyncio
+async def test_migration_handoff_scan_reuses_the_migrated_database() -> None:
+    report = await benchmark_migration_handoff_scan()
+
+    assert report["legacy_revisions_before_scan"] == report["migrated_tracks"]
+    assert report["exact_revisions_after_scan"] == report["migrated_tracks"]
+    assert report["tag_reads"] == 0
+    assert report["passed"] is True
+
+
+@pytest.mark.asyncio
 async def test_box_set_network_unavailable_and_control_benchmarks() -> None:
     box = await benchmark_target_scan(100, layout="box_set")
     slow = await benchmark_target_scan(60, stat_delay_seconds=0.0005)
@@ -78,6 +90,25 @@ def test_flat_grouping_benchmark_uses_sparse_continuity() -> None:
 
     assert report["group_count"] == 1_000
     assert report["quadratic_matrix_cells"] == 0
+    assert report["passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_staged_flat_grouping_benchmark_uses_durable_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "services.native.local_album_grouping_service.STAGED_GROUPING_THRESHOLD", 50
+    )
+    monkeypatch.setattr(
+        "services.native.local_album_grouping_service.CONTINUITY_COMPONENT_EDGE_LIMIT",
+        50,
+    )
+    report = await benchmark_staged_flat_grouping(100)
+
+    assert report["staged_evidence_rows"] == 100
+    assert report["retained_album_ids"] == 1
+    assert report["disk_backed_matches"] == 1
     assert report["passed"] is True
 
 

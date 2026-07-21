@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 
 from core.config import get_settings
 from infrastructure.cache.memory_cache import InMemoryCache, CacheInterface
 from infrastructure.cache.disk_cache import DiskMetadataCache
-from infrastructure.cache.cache_keys import library_identification_prefixes
+from infrastructure.cache.cache_keys import (
+    home_prefixes,
+    library_identification_prefixes,
+    ARTIST_DISCOVERY_PREFIX,
+    DISCOVER_QUEUE_ENRICH_PREFIX,
+)
 from infrastructure.persistence import (
     LibraryDB,
     GenreIndex,
@@ -19,6 +23,7 @@ from infrastructure.persistence import (
     ScanStateStore,
     SyncStateStore,
 )
+from infrastructure.persistence._database import PriorityWriteLock
 
 from ._registry import singleton
 
@@ -46,8 +51,8 @@ def get_disk_cache() -> DiskMetadataCache:
 
 
 @singleton
-def get_persistence_write_lock() -> threading.Lock:
-    return threading.Lock()
+def get_persistence_write_lock() -> PriorityWriteLock:
+    return PriorityWriteLock(foreground_burst=8)
 
 
 @singleton
@@ -77,10 +82,28 @@ def get_native_library_store() -> NativeLibraryStore:
         )
         await get_discovery_snapshot_store().mark_discover_stale()
 
+    async def invalidate_scan_batch() -> None:
+        from services.search_service import SearchService
+
+        SearchService.clear_cached_results()
+        deferred = set(home_prefixes()) | {
+            ARTIST_DISCOVERY_PREFIX,
+            DISCOVER_QUEUE_ENRICH_PREFIX,
+        }
+        cache = get_cache()
+        await asyncio.gather(
+            *(
+                cache.clear_prefix(prefix)
+                for prefix in library_identification_prefixes()
+                if prefix not in deferred
+            )
+        )
+
     return NativeLibraryStore(
         db_path=settings.library_db_path,
         write_lock=get_persistence_write_lock(),
         invalidator=invalidate,
+        scan_invalidator=invalidate_scan_batch,
     )
 
 

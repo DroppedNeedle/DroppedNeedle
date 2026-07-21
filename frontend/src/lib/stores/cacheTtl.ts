@@ -11,7 +11,6 @@ import {
 	updatePlexAlbumsListCacheTTL
 } from '$lib/utils/plexLibraryCache';
 import { updateLocalFilesSidebarCacheTTL } from '$lib/utils/localFilesCache';
-import { libraryStore } from '$lib/stores/library';
 import { recentlyAddedStore } from '$lib/stores/recentlyAdded';
 
 export interface CacheTTLs {
@@ -49,7 +48,6 @@ let initialized = false;
 
 function applyTTLs(ttls: CacheTTLs): void {
 	updateHomeCacheTTL(ttls.home);
-	libraryStore.updateCacheTTL(ttls.library);
 	recentlyAddedStore.updateCacheTTL(ttls.recentlyAdded);
 	updateDiscoveryCacheTTL(ttls.discover);
 	updateDiscoverQueueCacheTTL(ttls.discoverQueue);

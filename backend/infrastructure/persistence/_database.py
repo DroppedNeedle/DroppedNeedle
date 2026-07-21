@@ -1,6 +1,7 @@
 """Shared SQLite infrastructure for all persistence stores."""
 
 import asyncio
+from contextlib import contextmanager
 import json
 import sqlite3
 import threading
@@ -9,6 +10,72 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 T = TypeVar("T")
+
+
+class PriorityWriteLock:
+    """A foreground-first process lock with bounded background starvation."""
+
+    def __init__(self, *, foreground_burst: int = 8) -> None:
+        if foreground_burst < 1:
+            raise ValueError("foreground_burst must be positive")
+        self._condition = threading.Condition()
+        self._foreground_burst = foreground_burst
+        self._active = False
+        self._foreground_waiters = 0
+        self._background_waiters = 0
+        self._foreground_grants = 0
+
+    def __enter__(self) -> "PriorityWriteLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.release()
+
+    def acquire(self) -> None:
+        with self._condition:
+            self._foreground_waiters += 1
+            try:
+                while self._active or (
+                    self._background_waiters
+                    and self._foreground_grants >= self._foreground_burst
+                ):
+                    self._condition.wait()
+                self._active = True
+                self._foreground_grants += 1
+            finally:
+                self._foreground_waiters -= 1
+
+    def acquire_background(self) -> None:
+        with self._condition:
+            if self._background_waiters == 0:
+                self._foreground_grants = 0
+            self._background_waiters += 1
+            try:
+                while self._active or (
+                    self._foreground_waiters
+                    and self._foreground_grants < self._foreground_burst
+                ):
+                    self._condition.wait()
+                self._active = True
+                self._foreground_grants = 0
+            finally:
+                self._background_waiters -= 1
+
+    def release(self) -> None:
+        with self._condition:
+            if not self._active:
+                raise RuntimeError("Cannot release an unlocked persistence lock")
+            self._active = False
+            self._condition.notify_all()
+
+    @contextmanager
+    def background(self):
+        self.acquire_background()
+        try:
+            yield self
+        finally:
+            self.release()
 
 
 def _fold_text(value: Any) -> Any:
@@ -61,7 +128,9 @@ class PersistenceBase:
     operate on a single database file with serialised writes.
     """
 
-    def __init__(self, db_path: Path, write_lock: threading.Lock) -> None:
+    def __init__(
+        self, db_path: Path, write_lock: threading.Lock | PriorityWriteLock
+    ) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._write_lock = write_lock
@@ -102,6 +171,21 @@ class PersistenceBase:
 
     async def _write(self, operation: Any) -> Any:
         return await asyncio.to_thread(self._execute, operation, True)
+
+    def _execute_background(self, operation: Any) -> Any:
+        background = getattr(self._write_lock, "background", None)
+        lock_context = background() if background is not None else self._write_lock
+        with lock_context:
+            conn = self._connect()
+            try:
+                result = operation(conn)
+                conn.commit()
+                return result
+            finally:
+                conn.close()
+
+    async def _background_write(self, operation: Any) -> Any:
+        return await asyncio.to_thread(self._execute_background, operation)
 
     def _ensure_tables(self) -> None:
         raise NotImplementedError

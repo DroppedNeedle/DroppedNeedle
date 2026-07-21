@@ -42,6 +42,23 @@ async def test_spotify_state_unknown_returns_none(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_token_and_user_are_loaded_in_one_joined_read(tmp_path: Path):
+    store = AuthStore(tmp_path / "auth.db")
+    user = await store.create_user(
+        id="user-1", display_name="Alice", role="admin", username="alice"
+    )
+    raw_token, token_hash = store.issue_token()
+    await store.store_token(id="token-1", user_id=user.id, token_hash=token_hash)
+
+    result = await store.verify_token_with_user(raw_token)
+
+    assert result is not None
+    loaded_user, loaded_token = result
+    assert loaded_user.id == user.id
+    assert loaded_token.user_id == user.id
+
+
+@pytest.mark.asyncio
 async def test_password_recovery_is_single_use_and_revokes_sessions(tmp_path: Path):
     store = AuthStore(tmp_path / "auth.db")
     user = await store.create_user(

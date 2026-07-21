@@ -18,6 +18,7 @@ from models.audio import AudioTag
 from services.local_files_service import LocalFilesService
 from services.native.target_native_library_service import TargetNativeLibraryService
 from services.native.recycle_bin import recycle
+from services.native.file_revision import revision_from_stat
 
 
 class TargetCatalogWriterService:
@@ -69,7 +70,7 @@ class TargetCatalogWriterService:
             info=info,
             file_size_bytes=stat.st_size,
             file_mtime_ns=stat.st_mtime_ns,
-            stat_revision=f"{stat.st_size}:{stat.st_mtime_ns}",
+            stat_revision=revision_from_stat(stat),
             tag_revision=hashlib.sha256(msgspec.json.encode(persisted_tag)).hexdigest(),
             actor_user_id=actor_user_id,
             updated_at=time.time(),

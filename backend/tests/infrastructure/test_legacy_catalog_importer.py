@@ -994,6 +994,86 @@ async def test_coherent_copy_import_reconciles_catalog_references_and_artwork(
     }
     assert (await store.get_local_track(TRACK_1))["id"] == TRACK_1
     assert (await store.get_local_track(TRACK_2))["id"] == TRACK_2
+    migrated_track = await store.get_local_track(TRACK_1)
+    assert migrated_track["stat_revision_kind"] == "legacy_float"
+    assert migrated_track["stat_revision"] == "100:10500000000"
+    with sqlite3.connect(target) as connection:
+        review_kinds = connection.execute(
+            "SELECT stat_revision_kind FROM local_tracks "
+            "WHERE ingest_source = 'legacy_review'"
+        ).fetchall()
+    assert review_kinds and all(row[0] == "legacy_review" for row in review_kinds)
+
+    exact_ns = 1_700_000_000_123_456_789
+    legacy_float_ns = int((exact_ns / 1_000_000_000) * 1_000_000_000)
+    assert legacy_float_ns != exact_ns
+    with sqlite3.connect(target) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET file_size_bytes=100,file_mtime_ns=?,"
+            "stat_revision=?,stat_revision_kind='legacy_float' WHERE id=?",
+            (legacy_float_ns, f"100:{legacy_float_ns}", TRACK_2),
+        )
+        connection.execute(
+            "INSERT INTO library_scan_runs "
+            "(id,kind,trigger,state,phase,aggregate_scope,queued_at,updated_at) "
+            "VALUES ('persisted-upgrade-scan','incremental','manual','indexing',"
+            "'indexing','root-1',1,1)"
+        )
+        connection.execute(
+            "INSERT INTO library_scan_run_scopes "
+            "(run_id,scope_sequence,root_id,relative_path,effective_policy,"
+            "policy_revision,discovery_state) VALUES "
+            "('persisted-upgrade-scan',0,'root-1','.','automatic','policy','completed')"
+        )
+        connection.execute(
+            "INSERT INTO library_scan_inventory "
+            "(run_id,root_id,relative_path,absolute_path,file_size_bytes,"
+            "file_mtime_ns,stat_revision,policy_revision,effective_policy,"
+            "comparison_result,local_track_id) SELECT 'persisted-upgrade-scan',"
+            "root_id,relative_path,file_path,100,?,?,'policy','automatic','changed',id "
+            "FROM local_tracks WHERE id=?",
+            (exact_ns, f"100:{exact_ns}", TRACK_2),
+        )
+    assert (
+        await store.normalize_pending_legacy_inventory(
+            "persisted-upgrade-scan", limit=256
+        )
+        == 1
+    )
+    with sqlite3.connect(target) as connection:
+        repaired = connection.execute(
+            "SELECT stat_revision_kind,stat_revision FROM local_tracks WHERE id=?",
+            (TRACK_2,),
+        ).fetchone()
+        comparison = connection.execute(
+            "SELECT comparison_result FROM library_scan_inventory "
+            "WHERE run_id='persisted-upgrade-scan'"
+        ).fetchone()[0]
+        connection.execute(
+            "DELETE FROM library_scan_runs WHERE id='persisted-upgrade-scan'"
+        )
+    assert repaired == ("exact", f"100:{exact_ns}")
+    assert comparison == "unchanged"
+
+    revision_before_promotion = await store.get_catalog_revision()
+    classification = await store.classify_scan_paths(
+        "root-1",
+        [
+            (
+                str(migrated_track["relative_path"]),
+                100,
+                10_500_000_000,
+                10.5,
+                "100:10500000000",
+            )
+        ],
+    )
+    assert classification[str(migrated_track["relative_path"])] == (
+        "unchanged",
+        TRACK_1,
+    )
+    assert (await store.get_local_track(TRACK_1))["stat_revision_kind"] == "exact"
+    assert await store.get_catalog_revision() == revision_before_promotion
     assert compilation.membership.album.album_artist_id == VARIOUS_ARTISTS_ID
     assert compilation.artwork.cover_url == "/api/v1/covers/verified"
     assert compilation.artwork.source == "provider"
@@ -1054,7 +1134,8 @@ async def test_coherent_copy_import_reconciles_catalog_references_and_artwork(
             ("a" * 32,),
         ).fetchone()
         excluded = connection.execute(
-            "SELECT availability FROM local_tracks WHERE availability = 'excluded'"
+            "SELECT availability,manual_excluded FROM local_tracks "
+            "WHERE availability = 'excluded'"
         ).fetchall()
         queue = connection.execute(
             "SELECT file_id FROM compat_play_queue_items ORDER BY item_index"
@@ -1085,6 +1166,7 @@ async def test_coherent_copy_import_reconciles_catalog_references_and_artwork(
         }
     assert jf_album["target_id"] == compilation.membership.album.id
     assert len(excluded) == 1
+    assert excluded[0]["manual_excluded"] == 1
     assert [row["file_id"] for row in queue] == [TRACK_1, TRACK_1]
     assert {row["reason_code"] for row in decisions} == {
         "legacy_accepted",

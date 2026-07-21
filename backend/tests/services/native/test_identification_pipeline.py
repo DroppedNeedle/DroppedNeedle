@@ -1161,9 +1161,291 @@ async def test_post_index_grouping_rolls_disc_directories_together_and_aliases_u
 
 
 @pytest.mark.asyncio
-async def test_flat_grouping_indexes_refreshed_rows_once_and_reuses_artist_resolution() -> (
-    None
-):
+async def test_grouping_context_track_read_excludes_deeper_descendants(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await _seed_album(store, "direct")
+    await _seed_album(store, "deep")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET relative_path='box/01.flac' WHERE id='track-direct'"
+        )
+        connection.execute(
+            "UPDATE local_tracks SET relative_path='box/nested/deeper/01.flac' "
+            "WHERE id='track-deep'"
+        )
+
+    rows = await store.get_grouping_context_tracks("root", "box")
+
+    assert [row["id"] for row in rows] == ["track-direct"]
+
+
+@pytest.mark.asyncio
+async def test_large_flat_grouping_uses_durable_pages_and_preserves_continuity(
+    store: NativeLibraryStore,
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "services.native.local_album_grouping_service.STAGED_GROUPING_THRESHOLD", 5
+    )
+    monkeypatch.setattr(
+        "services.native.local_album_grouping_service.STAGING_BATCH_SIZE", 5
+    )
+    artist = LocalArtist(
+        id="flat-artist",
+        display_name="Flat Artist",
+        folded_name="flat artist",
+        normalized_name="flat artist",
+        kind="group",
+        created_at=1,
+        updated_at=1,
+    )
+    album = LocalAlbum(
+        id="flat-album",
+        root_id="root",
+        grouping_key="flat-old",
+        title="Flat Album",
+        album_artist_id=artist.id,
+        album_artist_name=artist.display_name,
+        created_at=1,
+        updated_at=1,
+    )
+    tracks = [
+        LocalTrack(
+            id=f"flat-track-{index:03}",
+            local_album_id=album.id,
+            root_id="root",
+            file_path=f"/music/flat/{index:03}.flac",
+            relative_path=f"flat/{index:03}.flac",
+            path_hash=f"flat-hash-{index:03}",
+            file_size_bytes=100,
+            file_mtime_ns=1,
+            stat_revision=f"100:{index}",
+            tag_revision=f"tag-{index}",
+            title=f"Track {index}",
+            artist_name=artist.display_name,
+            album_title=album.title,
+            album_artist_name=artist.display_name,
+            tag_album_title=album.title,
+            tag_album_artist_name=artist.display_name,
+            track_number=index,
+            duration_seconds=180,
+            file_format="flac",
+            imported_at=1,
+            applied_policy="automatic",
+            applied_policy_revision="policy-1",
+        )
+        for index in range(1, 13)
+    ]
+    await store.create_catalog_membership(
+        CatalogMembership(
+            album=album,
+            artists=[artist],
+            tracks=tracks,
+            album_credits=[LocalArtistCredit(local_artist_id=artist.id, position=0)],
+            track_credits={
+                track.id: [LocalArtistCredit(local_artist_id=artist.id, position=0)]
+                for track in tracks
+            },
+        )
+    )
+    await store.create_scan_run(
+        ScanRun(
+            id="large-grouping-run",
+            kind="incremental",
+            trigger="manual",
+            queued_at=1,
+        )
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO library_scan_grouping_contexts "
+            "(run_id,root_id,relative_directory) "
+            "VALUES ('large-grouping-run','root','flat')"
+        )
+
+    checkpoint_calls = 0
+
+    async def pause_after_two_pages(_run_id: str, _policy_revision: str) -> bool:
+        nonlocal checkpoint_calls
+        checkpoint_calls += 1
+        return checkpoint_calls <= 3
+
+    first_enqueued = await LocalAlbumGroupingService(
+        store, IdentificationQueueService(store)
+    ).regroup_run(
+        "large-grouping-run",
+        now=2,
+        checkpoint=pause_after_two_pages,
+        frozen_policy_revision="policy-1",
+    )
+    with sqlite3.connect(db_path) as connection:
+        partial = connection.execute(
+            "SELECT state,staging_state FROM library_scan_grouping_contexts "
+            "WHERE run_id='large-grouping-run'"
+        ).fetchone()
+        partial_staged = connection.execute(
+            "SELECT COUNT(*) FROM library_scan_grouping_evidence "
+            "WHERE run_id='large-grouping-run'"
+        ).fetchone()[0]
+    assert first_enqueued == 0
+    assert partial == ("pending", "tracks")
+    assert 0 < partial_staged < len(tracks)
+
+    enqueued = await LocalAlbumGroupingService(
+        store, IdentificationQueueService(store)
+    ).regroup_run("large-grouping-run", now=3)
+
+    with sqlite3.connect(db_path) as connection:
+        context = connection.execute(
+            "SELECT state,staging_state FROM library_scan_grouping_contexts "
+            "WHERE run_id='large-grouping-run'"
+        ).fetchone()
+        album_ids = connection.execute(
+            "SELECT DISTINCT local_album_id FROM local_tracks "
+            "WHERE relative_path LIKE 'flat/%'"
+        ).fetchall()
+        staged = connection.execute(
+            "SELECT COUNT(*) FROM library_scan_grouping_evidence "
+            "WHERE run_id='large-grouping-run'"
+        ).fetchone()[0]
+    assert context == ("completed", "completed")
+    assert album_ids == [("flat-album",)]
+    assert staged == len(tracks)
+    assert enqueued == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["split", "merge"])
+async def test_large_ambiguous_continuity_uses_bounded_disk_matcher(
+    store: NativeLibraryStore,
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    shape: str,
+) -> None:
+    monkeypatch.setattr(
+        "services.native.local_album_grouping_service.STAGED_GROUPING_THRESHOLD", 3
+    )
+    monkeypatch.setattr(
+        "services.native.local_album_grouping_service.CONTINUITY_COMPONENT_EDGE_LIMIT",
+        3,
+    )
+    monkeypatch.setattr(
+        "services.native.local_album_grouping_service.STAGING_BATCH_SIZE", 3
+    )
+    suffixes = [f"sparse-{index:02}" for index in range(8)]
+    if shape == "split":
+        artist = LocalArtist(
+            id="sparse-artist",
+            display_name="Sparse Artist",
+            folded_name="sparse artist",
+            normalized_name="sparse artist",
+            kind="group",
+            created_at=1,
+            updated_at=1,
+        )
+        album = LocalAlbum(
+            id="sparse-old-album",
+            root_id="root",
+            grouping_key="sparse-old",
+            title="Before",
+            album_artist_id=artist.id,
+            album_artist_name=artist.display_name,
+            created_at=1,
+            updated_at=1,
+        )
+        tracks = [
+            LocalTrack(
+                id=f"track-{suffix}",
+                local_album_id=album.id,
+                root_id="root",
+                file_path=f"/music/sparse/{suffix}.flac",
+                relative_path=f"sparse/{suffix}.flac",
+                path_hash=f"hash-{suffix}",
+                file_size_bytes=1,
+                file_mtime_ns=1,
+                stat_revision=f"1:{index}",
+                tag_revision=f"tag-{index}",
+                title=f"Track {index}",
+                artist_name=artist.display_name,
+                album_title=f"Split {index}",
+                album_artist_name=artist.display_name,
+                tag_album_title=f"Split {index}",
+                tag_album_artist_name=artist.display_name,
+                file_format="flac",
+                imported_at=1,
+                applied_policy="automatic",
+                applied_policy_revision="policy-1",
+            )
+            for index, suffix in enumerate(suffixes)
+        ]
+        await store.create_catalog_membership(
+            CatalogMembership(
+                album=album,
+                artists=[artist],
+                tracks=tracks,
+                album_credits=[
+                    LocalArtistCredit(local_artist_id=artist.id, position=0)
+                ],
+                track_credits={
+                    track.id: [
+                        LocalArtistCredit(local_artist_id=artist.id, position=0)
+                    ]
+                    for track in tracks
+                },
+            )
+        )
+    else:
+        for index, suffix in enumerate(suffixes):
+            await _seed_album(store, suffix)
+            with sqlite3.connect(db_path) as connection:
+                connection.execute(
+                    "UPDATE local_tracks SET relative_path=?,tag_album_title='Merged',"
+                    "tag_album_artist_name='Artist' WHERE id=?",
+                    (f"sparse/{index:02}.flac", f"track-{suffix}"),
+                )
+    await store.create_scan_run(
+        ScanRun(id=f"sparse-{shape}", kind="incremental", trigger="manual", queued_at=1)
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO library_scan_grouping_contexts "
+            "(run_id,root_id,relative_directory) VALUES (?, 'root', 'sparse')",
+            (f"sparse-{shape}",),
+        )
+
+    await LocalAlbumGroupingService(
+        store, IdentificationQueueService(store)
+    ).regroup_run(f"sparse-{shape}", now=2)
+
+    with sqlite3.connect(db_path) as connection:
+        processed, total = connection.execute(
+            "SELECT SUM(processed),COUNT(*) FROM library_scan_grouping_edges "
+            "WHERE run_id=?",
+            (f"sparse-{shape}",),
+        ).fetchone()
+        matched_old = connection.execute(
+            "SELECT COUNT(*) FROM library_scan_grouping_old_nodes WHERE run_id=? "
+            "AND matched_grouping_token IS NOT NULL",
+            (f"sparse-{shape}",),
+        ).fetchone()[0]
+        matched_new = connection.execute(
+            "SELECT COUNT(*) FROM library_scan_grouping_new_nodes WHERE run_id=? "
+            "AND matched_old_album_id IS NOT NULL",
+            (f"sparse-{shape}",),
+        ).fetchone()[0]
+    assert processed == total == len(suffixes)
+    assert matched_old == matched_new == 1
+
+
+@pytest.mark.asyncio
+async def test_flat_grouping_indexes_refreshed_rows_once_and_reuses_artist_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "services.native.local_album_grouping_service.STAGED_GROUPING_THRESHOLD", 2_000
+    )
     class CountingRows(list):
         def __init__(self, rows):
             super().__init__(rows)
@@ -1222,6 +1504,11 @@ async def test_flat_grouping_indexes_refreshed_rows_once_and_reuses_artist_resol
                 ]
             )
 
+        async def count_grouping_context_candidates(
+            self, _root_id, _directory, *, limit
+        ):
+            return min(len(rows), limit)
+
         async def get_grouping_context_tracks(self, _root_id, _directory):
             if not self.applied:
                 return rows
@@ -1236,8 +1523,10 @@ async def test_flat_grouping_indexes_refreshed_rows_once_and_reuses_artist_resol
             )
             return self.refreshed
 
-        async def resolve_or_create_local_artists(self, candidates, *, now):
-            del now
+        async def resolve_or_create_local_artists(
+            self, candidates, *, now, background=False
+        ):
+            del now, background
             self.resolve_calls += len(candidates)
             return {
                 candidate_id: ("artist", False)

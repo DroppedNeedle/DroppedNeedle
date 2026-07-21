@@ -168,7 +168,7 @@ class TestHomeServiceSourceSelection:
         download_client_conn.enabled = True
         download_client_conn.url = "http://slskd.local"
         prefs.get_download_client_settings.return_value = download_client_conn
-        service._library_repo.get_library.return_value = [
+        service._library_repo.get_home_albums.return_value = [
             LibraryAlbum(
                 artist="Artist",
                 album="Album",
@@ -176,10 +176,7 @@ class TestHomeServiceSourceSelection:
                 artist_mbid="artist-123",
             )
         ]
-        # album membership now comes from the native get_library_mbids() set (get_library()
-        # is an empty stub on native installs), keyed on release-group mbid
-        service._library_repo.get_library_mbids.return_value = {"rg-123"}
-        service._library_repo.get_artists_from_library.return_value = [{"mbid": "artist-123"}]
+        service._library_repo.get_home_artists.return_value = [{"mbid": "artist-123"}]
         lb_repo.get_sitewide_top_release_groups.return_value = [
             ListenBrainzReleaseGroup(
                 release_group_name="Album",

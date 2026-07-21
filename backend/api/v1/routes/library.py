@@ -8,6 +8,8 @@ from api.v1.schemas.library import (
     AlbumRemoveResponse,
     SyncLibraryResponse,
     LibraryMbidsResponse,
+    LibraryMembershipRequest,
+    LibraryMembershipResponse,
     LibraryGroupedResponse,
     TrackResolveRequest,
     TrackResolveResponse,
@@ -28,8 +30,9 @@ from core.dependencies import (
     get_library_scanner,
     get_preferences_service,
     get_wanted_watcher_service,
+    RequestHistoryStoreDep,
 )
-from core.exceptions import ExternalServiceError
+from core.exceptions import ExternalServiceError, ValidationError
 from infrastructure.msgspec_fastapi import MsgSpecRoute, MsgSpecBody
 from middleware import CurrentAdminDep, CurrentCuratorDep, CurrentUserDep
 from models.audio import AudioTag
@@ -156,6 +159,27 @@ async def get_library_mbids(
         library_service.get_requested_mbids(),
     )
     return LibraryMbidsResponse(mbids=mbids, requested_mbids=requested)
+
+
+@router.post("/membership", response_model=LibraryMembershipResponse)
+async def get_library_membership(
+    _user: CurrentUserDep,
+    request_history: RequestHistoryStoreDep,
+    body: LibraryMembershipRequest = MsgSpecBody(LibraryMembershipRequest),
+    library_service: LibraryService = Depends(get_library_service),
+) -> LibraryMembershipResponse:
+    album_ids = list(
+        dict.fromkeys(value.strip().casefold() for value in body.album_ids if value.strip())
+    )
+    if len(album_ids) > 500:
+        raise ValidationError("Library membership accepts at most 500 album IDs.")
+    owned, requested = await asyncio.gather(
+        library_service.get_membership(album_ids),
+        request_history.async_existing_requested_mbids(album_ids),
+    )
+    return LibraryMembershipResponse(
+        owned_ids=sorted(owned), requested_ids=sorted(requested)
+    )
 
 
 @router.get("/grouped", response_model=LibraryGroupedResponse)

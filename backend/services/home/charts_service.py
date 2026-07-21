@@ -140,28 +140,6 @@ class HomeChartsService:
         artist_offset: int = 0,
         album_offset: int = 0,
     ) -> GenreDetailResponse:
-        library_results = await asyncio.gather(
-            self._library_repo.get_artists_from_library(include_unmonitored=True),
-            self._native_album_mbids(),
-            return_exceptions=True,
-        )
-        library_failed = any(isinstance(r, BaseException) for r in library_results[:2])
-        if library_failed:
-            logger.warning(
-                "Lidarr unavailable for genre '%s', proceeding with MusicBrainz data only",
-                genre,
-            )
-        library_artists = (
-            library_results[0]
-            if not isinstance(library_results[0], BaseException)
-            else []
-        )
-        library_mbids = {
-            a.get("mbid", "").lower() for a in library_artists if a.get("mbid")
-        }
-        library_album_mbids = (
-            library_results[1] if isinstance(library_results[1], set) else set()
-        )
         library_section = None
         if self._genre_index:
             lib_artists_data = await self._genre_index.get_artists_by_genre(
@@ -212,7 +190,6 @@ class HomeChartsService:
                 name=result.title,
                 image_url=None,
                 listen_count=None,
-                in_library=result.musicbrainz_id.lower() in library_mbids,
             )
             for result in mb_artist_results
         ]
@@ -224,10 +201,13 @@ class HomeChartsService:
                 artist_mbid=None,
                 image_url=None,
                 release_date=str(result.year) if result.year else None,
-                in_library=result.musicbrainz_id.lower() in library_album_mbids,
             )
             for result in mb_album_results
         ]
+        await asyncio.gather(
+            self._mark_artist_ownership(popular_artists),
+            self._mark_album_ownership(popular_albums),
+        )
         popular_section = GenrePopularSection(
             artists=popular_artists,
             albums=popular_albums,
@@ -263,29 +243,29 @@ class HomeChartsService:
         if resolved == "lastfm" and self._lfm_repo:
             return await self._get_trending_artists_lastfm(limit)
 
-        library_artists = await self._library_repo.get_artists_from_library(
-            include_unmonitored=True
-        )
-        library_mbids = {
-            a.get("mbid", "").lower() for a in library_artists if a.get("mbid")
-        }
         ranges = ["this_week", "this_month", "this_year", "all_time"]
         tasks = {
             r: self._lb_repo.get_sitewide_top_artists(range_=r, count=limit + 1)
             for r in ranges
         }
         results = await self._execute_tasks(tasks)
-        response_data = {}
+        transformed: dict[str, list[HomeArtist]] = {}
         for r in ranges:
             lb_artists = results.get(r) or []
-            artists = [
+            transformed[r] = [
                 a
                 for a in (
-                    self._transformers.lb_artist_to_home(artist, library_mbids)
+                    self._transformers.lb_artist_to_home(artist, set())
                     for artist in lb_artists
                 )
                 if a is not None
             ]
+        await self._mark_artist_ownership(
+            [artist for artists in transformed.values() for artist in artists]
+        )
+        response_data = {}
+        for r in ranges:
+            artists = transformed[r]
             featured = artists[0] if artists else None
             items = artists[1:limit] if len(artists) > 1 else []
             response_data[r] = TrendingTimeRange(
@@ -319,23 +299,18 @@ class HomeChartsService:
                 limit=limit,
                 offset=offset,
             )
-        library_artists, lb_artists = await asyncio.gather(
-            self._library_repo.get_artists_from_library(include_unmonitored=True),
-            self._lb_repo.get_sitewide_top_artists(
-                range_=range_key, count=limit + 1, offset=offset
-            ),
+        lb_artists = await self._lb_repo.get_sitewide_top_artists(
+            range_=range_key, count=limit + 1, offset=offset
         )
-        library_mbids = {
-            a.get("mbid", "").lower() for a in library_artists if a.get("mbid")
-        }
         artists = [
             a
             for a in (
-                self._transformers.lb_artist_to_home(artist, library_mbids)
+                self._transformers.lb_artist_to_home(artist, set())
                 for artist in lb_artists
             )
             if a is not None
         ]
+        await self._mark_artist_ownership(artists)
         has_more = len(artists) > limit
         items = artists[:limit]
         return TrendingArtistsRangeResponse(
@@ -347,21 +322,38 @@ class HomeChartsService:
             has_more=has_more,
         )
 
-    async def _native_album_mbids(self) -> set[str]:
-        """Release-group MBIDs in the native library (lowercased) for in_library flags.
-
-        get_library() is an empty stub on native installs, so album membership must be
-        read from get_library_mbids() - the same authoritative set behind /library/mbids.
-        Without this, chart albums already in the library show a stray download button.
-        """
+    async def _native_album_mbids(self, candidate_ids: list[str]) -> set[str]:
+        """Return ownership for a bounded candidate set."""
         try:
-            mbids = await self._library_repo.get_library_mbids(
-                include_release_ids=False
-            )
+            mbids = await self._library_repo.existing_album_mbids(candidate_ids)
         except Exception as exc:  # noqa: BLE001 - membership is best-effort
             logger.warning("native album mbid lookup failed: %s", exc)
             return set()
         return {m.lower() for m in mbids}
+
+    async def _native_artist_mbids(self, candidate_ids: list[str]) -> set[str]:
+        try:
+            mbids = await self._library_repo.existing_artist_mbids(candidate_ids)
+        except Exception as exc:  # noqa: BLE001 - membership is best-effort
+            logger.warning("native artist mbid lookup failed: %s", exc)
+            return set()
+        return {m.casefold() for m in mbids}
+
+    async def _mark_album_ownership(self, albums: list[HomeAlbum]) -> None:
+        owned = await self._native_album_mbids(
+            [album.mbid for album in albums if album.mbid]
+        )
+        for album in albums:
+            if album.mbid and album.mbid.casefold() in owned:
+                album.in_library = True
+
+    async def _mark_artist_ownership(self, artists: list[HomeArtist]) -> None:
+        owned = await self._native_artist_mbids(
+            [artist.mbid for artist in artists if artist.mbid]
+        )
+        for artist in artists:
+            if artist.mbid and artist.mbid.casefold() in owned:
+                artist.in_library = True
 
     async def get_popular_albums(
         self, limit: int = 10, source: str | None = None
@@ -370,20 +362,25 @@ class HomeChartsService:
         if resolved == "lastfm" and self._lfm_repo:
             return await self._get_popular_albums_lastfm(limit)
 
-        library_mbids = await self._native_album_mbids()
         ranges = ["this_week", "this_month", "this_year", "all_time"]
         tasks = {
             r: self._lb_repo.get_sitewide_top_release_groups(range_=r, count=limit + 1)
             for r in ranges
         }
         results = await self._execute_tasks(tasks)
-        response_data = {}
+        transformed: dict[str, list[HomeAlbum]] = {}
         for r in ranges:
             lb_albums = results.get(r) or []
-            albums = [
-                self._transformers.lb_release_to_home(a, library_mbids)
+            transformed[r] = [
+                self._transformers.lb_release_to_home(a, set())
                 for a in lb_albums
             ]
+        await self._mark_album_ownership(
+            [album for albums in transformed.values() for album in albums]
+        )
+        response_data = {}
+        for r in ranges:
+            albums = transformed[r]
             featured = albums[0] if albums else None
             items = albums[1:limit] if len(albums) > 1 else []
             response_data[r] = PopularTimeRange(
@@ -417,19 +414,13 @@ class HomeChartsService:
                 limit=limit,
                 offset=offset,
             )
-        library_mbids_raw, lb_albums = await asyncio.gather(
-            self._native_album_mbids(),
-            self._lb_repo.get_sitewide_top_release_groups(
-                range_=range_key, count=limit + 1, offset=offset
-            ),
-            return_exceptions=True,
-        )
-        library_mbids = (
-            library_mbids_raw if isinstance(library_mbids_raw, set) else set()
+        lb_albums = await self._lb_repo.get_sitewide_top_release_groups(
+            range_=range_key, count=limit + 1, offset=offset
         )
         albums = [
-            self._transformers.lb_release_to_home(a, library_mbids) for a in lb_albums
+            self._transformers.lb_release_to_home(a, set()) for a in lb_albums
         ]
+        await self._mark_album_ownership(albums)
         has_more = len(albums) > limit
         items = albums[:limit]
         return PopularAlbumsRangeResponse(
@@ -444,21 +435,16 @@ class HomeChartsService:
     async def _get_trending_artists_lastfm(
         self, limit: int = 10
     ) -> TrendingArtistsResponse:
-        library_artists = await self._library_repo.get_artists_from_library(
-            include_unmonitored=True
-        )
-        library_mbids = {
-            a.get("mbid", "").lower() for a in library_artists if a.get("mbid")
-        }
         lfm_artists = await self._lfm_repo.get_global_top_artists(limit=limit + 1)
         artists = [
             a
             for a in (
-                self._transformers.lastfm_artist_to_home(artist, library_mbids)
+                self._transformers.lastfm_artist_to_home(artist, set())
                 for artist in lfm_artists
             )
             if a is not None
         ]
+        await self._mark_artist_ownership(artists)
         featured = artists[0] if artists else None
         items = artists[1:limit] if len(artists) > 1 else []
         single_range = TrendingTimeRange(
@@ -479,7 +465,6 @@ class HomeChartsService:
         self, limit: int = 10, lfm_repo: Any = None, lfm_username: str | None = None
     ) -> PopularAlbumsResponse:
         ranges = ["this_week", "this_month", "this_year", "all_time"]
-        library_mbids = await self._native_album_mbids()
         repo = lfm_repo or self._lfm_repo
         # per-user your-top passes its own username; sitewide passes none and falls
         # back to the global account
@@ -511,6 +496,12 @@ class HomeChartsService:
                 this_year=empty_range,
                 all_time=empty_range,
             )
+        all_lfm_albums = [
+            album for range_key in ranges for album in (results.get(range_key) or [])
+        ]
+        owned = await self._native_album_mbids(
+            [album.mbid for album in all_lfm_albums if album.mbid]
+        )
         response_data: dict[str, PopularTimeRange] = {}
         for range_key in ranges:
             lfm_albums = results.get(range_key) or []
@@ -522,7 +513,7 @@ class HomeChartsService:
                     artist_mbid=None,
                     image_url=album.image_url or None,
                     listen_count=album.playcount,
-                    in_library=(album.mbid or "").lower() in library_mbids
+                    in_library=(album.mbid or "").lower() in owned
                     if album.mbid
                     else False,
                     source="lastfm",
@@ -548,21 +539,16 @@ class HomeChartsService:
         self, range_key: str = "this_week", limit: int = 25, offset: int = 0
     ) -> TrendingArtistsRangeResponse:
         total_to_fetch = min(limit + offset + 1, 200)
-        lfm_artists, library_artists = await asyncio.gather(
-            self._lfm_repo.get_global_top_artists(limit=total_to_fetch),
-            self._library_repo.get_artists_from_library(include_unmonitored=True),
-        )
-        library_mbids = {
-            a.get("mbid", "").lower() for a in library_artists if a.get("mbid")
-        }
+        lfm_artists = await self._lfm_repo.get_global_top_artists(limit=total_to_fetch)
         artists = [
             a
             for a in (
-                self._transformers.lastfm_artist_to_home(artist, library_mbids)
+                self._transformers.lastfm_artist_to_home(artist, set())
                 for artist in lfm_artists
             )
             if a is not None
         ]
+        await self._mark_artist_ownership(artists)
         start = min(offset, len(artists))
         end = start + limit
         return TrendingArtistsRangeResponse(
@@ -595,17 +581,10 @@ class HomeChartsService:
             )
 
         total_to_fetch = min(limit + offset + 1, 200)
-        lfm_albums, library_mbids_raw = await asyncio.gather(
-            repo.get_user_top_albums(
-                username,
-                period=self._lastfm_period_for_range(range_key),
-                limit=total_to_fetch,
-            ),
-            self._native_album_mbids(),
-            return_exceptions=True,
-        )
-        library_mbids = (
-            library_mbids_raw if isinstance(library_mbids_raw, set) else set()
+        lfm_albums = await repo.get_user_top_albums(
+            username,
+            period=self._lastfm_period_for_range(range_key),
+            limit=total_to_fetch,
         )
         albums = [
             HomeAlbum(
@@ -615,13 +594,11 @@ class HomeChartsService:
                 artist_mbid=None,
                 image_url=album.image_url or None,
                 listen_count=album.playcount,
-                in_library=(album.mbid or "").lower() in library_mbids
-                if album.mbid
-                else False,
                 source="lastfm",
             )
             for album in lfm_albums
         ]
+        await self._mark_album_ownership(albums)
         start = min(offset, len(albums))
         end = start + limit
         return PopularAlbumsRangeResponse(
@@ -660,7 +637,6 @@ class HomeChartsService:
                 this_week=empty, this_month=empty, this_year=empty, all_time=empty
             )
 
-        library_mbids = await self._native_album_mbids()
         ranges = ["this_week", "this_month", "this_year", "all_time"]
         tasks = {
             r: lb_client.get_user_top_release_groups(
@@ -669,12 +645,18 @@ class HomeChartsService:
             for r in ranges
         }
         results = await self._execute_tasks(tasks)
-        response_data: dict[str, PopularTimeRange] = {}
+        transformed: dict[str, list[HomeAlbum]] = {}
         for r in ranges:
             rgs = results.get(r) or []
-            albums = [
-                self._transformers.lb_release_to_home(rg, library_mbids) for rg in rgs
+            transformed[r] = [
+                self._transformers.lb_release_to_home(rg, set()) for rg in rgs
             ]
+        await self._mark_album_ownership(
+            [album for albums in transformed.values() for album in albums]
+        )
+        response_data: dict[str, PopularTimeRange] = {}
+        for r in ranges:
+            albums = transformed[r]
             response_data[r] = PopularTimeRange(
                 range_key=r,
                 label=HomeDataTransformers.get_range_label(r),
@@ -726,19 +708,13 @@ class HomeChartsService:
                 has_more=False,
             )
 
-        library_mbids_raw, rgs = await asyncio.gather(
-            self._native_album_mbids(),
-            lb_client.get_user_top_release_groups(
-                username=lb_username, range_=range_key, count=limit + 1, offset=offset
-            ),
-            return_exceptions=True,
-        )
-        library_mbids = (
-            library_mbids_raw if isinstance(library_mbids_raw, set) else set()
+        rgs = await lb_client.get_user_top_release_groups(
+            username=lb_username, range_=range_key, count=limit + 1, offset=offset
         )
         albums = [
-            self._transformers.lb_release_to_home(rg, library_mbids) for rg in rgs
+            self._transformers.lb_release_to_home(rg, set()) for rg in rgs
         ]
+        await self._mark_album_ownership(albums)
         has_more = len(albums) > limit
         items = albums[:limit]
         return PopularAlbumsRangeResponse(

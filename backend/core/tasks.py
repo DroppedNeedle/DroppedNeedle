@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from infrastructure.persistence.wanted_store import WantedStore
     from services.requests_page_service import RequestsPageService
     from services.native.new_release_service import NewReleaseService
+    from services.native.background_workload_gate import BackgroundWorkloadGate
     from services.personal_mix_service import PersonalMixService
     from repositories.coverart_disk_cache import CoverDiskCache
 
@@ -322,11 +323,14 @@ async def warm_library_cache(
     library_service: LibraryService,
     album_service: "AlbumService",
     library_db: "LibraryDB",
+    workload_gate: "BackgroundWorkloadGate | None" = None,
 ) -> None:
     try:
         await asyncio.sleep(5)
 
-        albums_data = await library_db.get_albums()
+        if workload_gate is not None:
+            await workload_gate.wait_until_available()
+        albums_data = await library_db.get_recent_albums(limit=30)
 
         if not albums_data:
             return
@@ -336,6 +340,8 @@ async def warm_library_cache(
 
         warmed = 0
         for i, album_data in enumerate(albums_to_warm):
+            if workload_gate is not None:
+                await workload_gate.wait_until_available()
             mbid = album_data.get("mbid")
             if is_valid_mbid(mbid):
                 try:
@@ -409,6 +415,7 @@ async def warm_artist_discovery_cache_periodically(
     library_db: "LibraryDB",
     interval: int = 14400,
     delay: float = 0.5,
+    workload_gate: "BackgroundWorkloadGate | None" = None,
 ) -> None:
     await asyncio.sleep(
         300
@@ -416,29 +423,36 @@ async def warm_artist_discovery_cache_periodically(
 
     while True:
         try:
-            artists = await library_db.get_artists()
-            if not artists:
-                await asyncio.sleep(interval)
-                continue
+            artist_cursor = ""
+            while True:
+                if workload_gate is not None:
+                    await workload_gate.wait_until_available()
+                page = await library_db.get_artist_mbid_page(
+                    after_mbid=artist_cursor, limit=500
+                )
+                if not page:
+                    break
 
-            mbids = [
-                a["mbid"]
-                for a in artists
-                if is_valid_mbid(a.get("mbid"))
-            ]
-            if not mbids:
-                await asyncio.sleep(interval)
-                continue
+                artist_cursor = page[-1]
+                mbids = [mbid for mbid in page if is_valid_mbid(mbid)]
+                for offset in range(0, len(mbids), 5):
+                    if workload_gate is not None:
+                        await workload_gate.wait_until_available()
+                    await artist_discovery_service_getter().precache_artist_discovery(
+                        mbids[offset : offset + 5], delay=delay
+                    )
 
-            await artist_discovery_service_getter().precache_artist_discovery(
-                mbids, delay=delay
-            )
+                if len(page) < 500:
+                    break
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error("Artist discovery cache warming failed: %s", e, exc_info=True)
 
-        await asyncio.sleep(interval)
+        try:
+            await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            break
 
 
 def start_artist_discovery_cache_warming_task(
@@ -446,6 +460,7 @@ def start_artist_discovery_cache_warming_task(
     library_db: "LibraryDB",
     interval: int = 14400,
     delay: float = 0.5,
+    workload_gate: "BackgroundWorkloadGate | None" = None,
 ) -> asyncio.Task:
     task = asyncio.create_task(
         warm_artist_discovery_cache_periodically(
@@ -453,6 +468,7 @@ def start_artist_discovery_cache_warming_task(
             library_db,
             interval=interval,
             delay=delay,
+            workload_gate=workload_gate,
         )
     )
     TaskRegistry.get_instance().register("artist-discovery-warming", task)
@@ -538,7 +554,13 @@ async def _run_registered_warmer_build(name: str, coro) -> None:
 
 
 async def _warm_one_user(
-    uid: str, discover, home, last_warmed: dict, attempts: dict, queue_manager=None
+    uid: str,
+    discover,
+    home,
+    last_warmed: dict,
+    attempts: dict,
+    queue_manager=None,
+    workload_gate: "BackgroundWorkloadGate | None" = None,
 ) -> None:
     registry = TaskRegistry.get_instance()
     if registry.is_running(f"discover-homepage-warm-{uid}"):
@@ -548,11 +570,17 @@ async def _warm_one_user(
     # MusicBrainz resolution actually completes and banks), registered under the SAME name the
     # on-visit SWR path uses so the two never double-run; then home (reads the discover cache).
     # _run_registered_warmer_build hard-caps it at DISCOVER_WARMER_HARD_CAP.
+    if workload_gate is not None:
+        await workload_gate.wait_until_available()
     await _run_registered_warmer_build(
         f"discover-homepage-warm-{uid}", discover.warm_cache_thorough(uid)
     )
+    if workload_gate is not None:
+        await workload_gate.wait_until_available()
     await _run_registered_warmer_build(f"home-warm-{uid}", home.warm_cache(uid))
     if queue_manager is not None:
+        if workload_gate is not None:
+            await workload_gate.wait_until_available()
         await queue_manager.start_build(uid)
         try:
             await asyncio.wait_for(
@@ -575,6 +603,7 @@ async def warm_discover_home_periodically(
     get_auth_store,
     get_queue_manager=None,
     interval: int = DISCOVER_WARMER_INTERVAL,
+    workload_gate: "BackgroundWorkloadGate | None" = None,
 ) -> None:
     from core.config import get_settings
 
@@ -590,6 +619,8 @@ async def warm_discover_home_periodically(
 
     while True:
         try:
+            if workload_gate is not None:
+                await workload_gate.wait_until_available()
             if not get_settings().discover_warmer_enabled:
                 await asyncio.sleep(interval)
                 continue
@@ -617,6 +648,7 @@ async def warm_discover_home_periodically(
                         last_warmed,
                         attempts,
                         get_queue_manager() if get_queue_manager else None,
+                        workload_gate,
                     )
         except asyncio.CancelledError:
             break
@@ -631,6 +663,7 @@ def start_discover_home_warmer_task(
     get_home_service,
     get_auth_store,
     get_queue_manager=None,
+    workload_gate: "BackgroundWorkloadGate | None" = None,
 ) -> asyncio.Task:
     task = asyncio.create_task(
         warm_discover_home_periodically(
@@ -638,6 +671,7 @@ def start_discover_home_warmer_task(
             get_home_service,
             get_auth_store,
             get_queue_manager,
+            workload_gate=workload_gate,
         )
     )
     task.add_done_callback(
@@ -662,6 +696,7 @@ async def warm_audiodb_cache_periodically(
     library_db: "LibraryDB",
     preferences_service: "PreferencesService",
     precache_service: "LibraryPrecacheService | None" = None,
+    workload_gate: "BackgroundWorkloadGate | None" = None,
 ) -> None:
     if precache_service is None:
         logger.warning(
@@ -673,46 +708,31 @@ async def warm_audiodb_cache_periodically(
         try:
             await asyncio.sleep(_AUDIODB_SWEEP_INTERVAL)
 
+            if workload_gate is not None:
+                await workload_gate.wait_until_available()
+
             settings = preferences_service.get_advanced_settings()
             if not settings.audiodb_enabled:
                 continue
 
-            artists = await library_db.get_artists()
-            albums = await library_db.get_albums()
-            if not artists and not albums:
+            cursor = preferences_service.get_setting("audiodb_sweep_cursor")
+            all_items = await library_db.get_enrichment_candidates(
+                after_mbid=cursor,
+                limit=_AUDIODB_SWEEP_MAX_ITEMS,
+            )
+            if not all_items:
+                preferences_service.save_setting("audiodb_sweep_cursor", None)
+                preferences_service.save_setting("audiodb_sweep_last_completed", time())
                 continue
 
-            cursor = preferences_service.get_setting("audiodb_sweep_cursor")
-            all_items: list[tuple[str, str, dict]] = []
-
-            for a in artists or []:
-                mbid = a.get("mbid")
-                if is_valid_mbid(mbid):
-                    all_items.append(("artist", mbid, a))
-            for a in albums or []:
-                mbid = (
-                    a.get("mbid")
-                    if isinstance(a, dict)
-                    else getattr(a, "musicbrainz_id", None)
-                )
-                if is_valid_mbid(mbid):
-                    all_items.append(("album", mbid, a))
-
-            all_items.sort(key=lambda x: x[1])
-
-            if cursor:
-                start_idx = 0
-                for i, (_, mbid, _) in enumerate(all_items):
-                    if mbid > cursor:
-                        start_idx = i
-                        break
-                else:
-                    start_idx = 0
-                    cursor = None
-                all_items = all_items[start_idx:]
-
             items_needing_refresh: list[tuple[str, str, dict]] = []
+            inspected_cursor = cursor
+            inspection_complete = True
             for entity_type, mbid, data in all_items:
+                if workload_gate is not None and workload_gate.scan_active:
+                    inspection_complete = False
+                    break
+                inspected_cursor = f"{entity_type}:{mbid}"
                 if len(items_needing_refresh) >= _AUDIODB_SWEEP_MAX_ITEMS:
                     break
                 if entity_type == "artist":
@@ -723,14 +743,25 @@ async def warm_audiodb_cache_periodically(
                     items_needing_refresh.append((entity_type, mbid, data))
 
             if not items_needing_refresh:
-                preferences_service.save_setting("audiodb_sweep_cursor", None)
-                preferences_service.save_setting("audiodb_sweep_last_completed", time())
+                page_complete = inspection_complete and (
+                    len(all_items) < _AUDIODB_SWEEP_MAX_ITEMS
+                )
+                preferences_service.save_setting(
+                    "audiodb_sweep_cursor", None if page_complete else inspected_cursor
+                )
+                if page_complete:
+                    preferences_service.save_setting(
+                        "audiodb_sweep_last_completed", time()
+                    )
                 continue
 
             processed = 0
+            processed_cursor = cursor
             bytes_ok = 0
             bytes_fail = 0
             for entity_type, mbid, data in items_needing_refresh:
+                if workload_gate is not None and workload_gate.scan_active:
+                    break
                 if not preferences_service.get_advanced_settings().audiodb_enabled:
                     break
 
@@ -797,16 +828,27 @@ async def warm_audiodb_cache_periodically(
                     )
 
                 processed += 1
+                processed_cursor = f"{entity_type}:{mbid}"
                 if processed % _AUDIODB_SWEEP_CURSOR_PERSIST_INTERVAL == 0:
-                    preferences_service.save_setting("audiodb_sweep_cursor", mbid)
+                    preferences_service.save_setting(
+                        "audiodb_sweep_cursor", processed_cursor
+                    )
 
                 await asyncio.sleep(_AUDIODB_SWEEP_INTER_ITEM_DELAY)
 
-            if processed >= len(items_needing_refresh):
-                preferences_service.save_setting("audiodb_sweep_cursor", None)
-                preferences_service.save_setting("audiodb_sweep_last_completed", time())
+            if processed >= len(items_needing_refresh) and inspection_complete:
+                page_complete = len(all_items) < _AUDIODB_SWEEP_MAX_ITEMS
+                preferences_service.save_setting(
+                    "audiodb_sweep_cursor", None if page_complete else inspected_cursor
+                )
+                if page_complete:
+                    preferences_service.save_setting(
+                        "audiodb_sweep_last_completed", time()
+                    )
             else:
-                preferences_service.save_setting("audiodb_sweep_cursor", mbid)
+                preferences_service.save_setting(
+                    "audiodb_sweep_cursor", processed_cursor
+                )
 
         except asyncio.CancelledError:
             break
@@ -819,6 +861,7 @@ def start_audiodb_sweep_task(
     library_db: "LibraryDB",
     preferences_service: "PreferencesService",
     precache_service: "LibraryPrecacheService | None" = None,
+    workload_gate: "BackgroundWorkloadGate | None" = None,
 ) -> asyncio.Task:
     task = asyncio.create_task(
         warm_audiodb_cache_periodically(
@@ -826,6 +869,7 @@ def start_audiodb_sweep_task(
             library_db,
             preferences_service,
             precache_service=precache_service,
+            workload_gate=workload_gate,
         )
     )
     TaskRegistry.get_instance().register("audiodb-sweep", task)

@@ -253,26 +253,39 @@ class MbidResolutionService:
             release_ids, allow_passthrough=False,
         )
 
-    async def get_library_artist_mbids(self, library_configured: bool) -> set[str]:
+    async def get_library_artist_mbids(
+        self, library_configured: bool, candidate_ids: list[str] | None = None
+    ) -> set[str]:
         if not library_configured:
             return set()
         try:
-            artists = await self._library_repo.get_artists_from_library(include_unmonitored=True)
+            if candidate_ids is not None:
+                return await self._library_repo.existing_artist_mbids(candidate_ids)
+            artists = await self._library_repo.get_home_artists(limit=500)
             return {a.get("mbid", "").lower() for a in artists if a.get("mbid")}
         except Exception:  # noqa: BLE001
             logger.warning("Failed to fetch library artists from Lidarr")
             return set()
 
-    async def get_library_album_mbids(self, library_configured: bool) -> set[str]:
+    async def get_library_album_mbids(
+        self, library_configured: bool, candidate_ids: list[str] | None = None
+    ) -> set[str]:
         if not library_configured:
-            if self._library_db:
+            if self._library_db and candidate_ids is not None:
                 try:
-                    return await self._library_db.get_all_album_mbids()
+                    return await self._library_db.existing_library_mbids(candidate_ids)
                 except Exception:  # noqa: BLE001
                     logger.warning("Failed to fetch album MBIDs from library cache")
             return set()
         try:
-            return await self._library_repo.get_library_mbids(include_release_ids=False)
+            if candidate_ids is not None:
+                return await self._library_repo.existing_album_mbids(candidate_ids)
+            albums = await self._library_repo.get_home_albums(limit=500)
+            return {
+                album.musicbrainz_id.casefold()
+                for album in albums
+                if album.musicbrainz_id
+            }
         except Exception:  # noqa: BLE001
             logger.warning("Failed to fetch library album MBIDs from Lidarr")
             return set()

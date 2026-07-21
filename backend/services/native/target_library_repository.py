@@ -134,6 +134,20 @@ class TargetLibraryRepository:
     async def get_artist_mbids(self) -> set[str]:
         return await self._store.target_provider_artist_ids()
 
+    async def existing_album_mbids(self, identifiers: list[str]) -> set[str]:
+        normalized = {
+            value.strip().casefold() for value in identifiers if value.strip()
+        }
+        rows = await self._store.target_album_ownership_rows(provider_ids=normalized)
+        return {
+            str(row["release_group_mbid"]).casefold()
+            for row in rows
+            if row.get("release_group_mbid")
+        }
+
+    async def existing_artist_mbids(self, identifiers: list[str]) -> set[str]:
+        return await self._store.target_existing_provider_artist_ids(identifiers)
+
     async def get_all_album_mbids(self) -> set[str]:
         return await self.get_library_mbids()
 
@@ -252,6 +266,27 @@ class TargetLibraryRepository:
             limit=limit, offset=0, sort="recent"
         )
         return [self._to_library_album(row) for row in rows]
+
+    async def get_home_albums(self, limit: int = 15) -> list[LibraryAlbum]:
+        rows, _ = await self._store.list_target_albums(
+            limit=min(max(limit, 1), 500), offset=0, sort="recent"
+        )
+        return [self._to_library_album(row) for row in rows]
+
+    async def get_home_artists(self, limit: int = 15) -> list[dict[str, Any]]:
+        rows, _ = await self._store.list_target_artists(
+            limit=min(max(limit, 1), 500), offset=0, sort_order="asc"
+        )
+        return [
+            {
+                "mbid": row.get("provider_artist_mbid"),
+                "local_id": row["artist_mbid"],
+                "name": row["artist_name"],
+                "album_count": int(row.get("album_count") or 0),
+                "date_added": row.get("date_added"),
+            }
+            for row in rows
+        ]
 
     async def get_albums_page(
         self,

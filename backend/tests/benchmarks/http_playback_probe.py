@@ -15,6 +15,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from infrastructure.msgspec_fastapi import MsgSpecJSONResponse
+from infrastructure.persistence.auth_store import AuthStore
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from models.local_catalog import (
     CatalogMembership,
@@ -24,6 +25,7 @@ from models.local_catalog import (
     LocalTrack,
 )
 from services.local_files_service import LocalFilesService
+from services.auth_service import AuthService
 from services.native.target_library_repository import TargetLibraryRepository
 
 
@@ -42,16 +44,6 @@ class _Preferences:
 
     def get_advanced_settings(self) -> SimpleNamespace:
         return SimpleNamespace(cache_ttl_local_files_recently_added=120)
-
-
-class _AuthService:
-    async def verify_token(self, raw_token: str):
-        if raw_token != "feedback-fixes-benchmark-token":
-            return None
-        return (
-            SimpleNamespace(id="benchmark-user", role="admin"),
-            SimpleNamespace(id="benchmark-token"),
-        )
 
 
 async def seed_http_playback_track(store: NativeLibraryStore, audio_path: Path) -> None:
@@ -126,13 +118,14 @@ class AuthenticatedHTTPPlaybackProbe:
         self.status_codes: set[int] = set()
         self.content_ranges: set[str] = set()
         self.bytes_received = 0
+        self._raw_token = ""
 
     async def __aenter__(self) -> "AuthenticatedHTTPPlaybackProbe":
         if "ROOT_APP_DIR" not in os.environ:
             import_root = self._allowed_root / ".feedback-fixes-benchmark-app"
             import_root.mkdir(parents=True, exist_ok=True)
             os.environ["ROOT_APP_DIR"] = str(import_root)
-        from api.v1.routes import stream
+        from api.v1.routes import auth, stream
         from core.dependencies import get_local_files_service
         from middleware import AuthMiddleware
 
@@ -143,12 +136,30 @@ class AuthenticatedHTTPPlaybackProbe:
             SimpleNamespace(),
         )
         app = FastAPI(default_response_class=MsgSpecJSONResponse)
+        app.include_router(auth.router, prefix="/api/v1")
         app.include_router(stream.router, prefix="/api/v1")
         app.dependency_overrides[get_local_files_service] = lambda: local_files
         app.add_middleware(AuthMiddleware)
+        auth_store = AuthStore(self._store.db_path, self._store._write_lock)
+        user = await auth_store.get_user_by_id("benchmark-user")
+        if user is None:
+            await auth_store.create_user(
+                id="benchmark-user",
+                display_name="Benchmark User",
+                role="admin",
+                username="benchmark-user",
+            )
+        self._raw_token, token_hash = auth_store.issue_token()
+        await auth_store.store_token(
+            id="benchmark-token",
+            user_id="benchmark-user",
+            token_hash=token_hash,
+            user_agent="post-upgrade-rehearsal",
+        )
+        auth_service = AuthService(auth_store)
         self._auth_patch = patch(
             "core.dependencies.auth_providers.get_auth_service",
-            return_value=_AuthService(),
+            return_value=auth_service,
         )
         self._auth_patch.start()
         with socket.socket() as listener:
@@ -190,6 +201,7 @@ class AuthenticatedHTTPPlaybackProbe:
             raise RuntimeError(
                 "The authenticated playback benchmark returned no bytes."
             )
+        await self.sample_auth_me()
         return self
 
     async def __aexit__(self, *_args: object) -> None:
@@ -210,7 +222,7 @@ class AuthenticatedHTTPPlaybackProbe:
             "GET",
             f"/api/v1/stream/local/{PLAYBACK_TRACK_ID}",
             headers={
-                "Authorization": "Bearer feedback-fixes-benchmark-token",
+                "Authorization": f"Bearer {self._raw_token}",
                 "Range": "bytes=0-65535",
             },
         ) as response:
@@ -239,11 +251,28 @@ class AuthenticatedHTTPPlaybackProbe:
         self.samples += 1
         return perf_counter() - started
 
+    async def sample_auth_me(self) -> float:
+        if self._client is None:
+            raise RuntimeError("The playback probe has not started.")
+        from time import perf_counter
+
+        started = perf_counter()
+        response = await self._client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {self._raw_token}"},
+        )
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Authenticated profile returned HTTP {response.status_code}."
+            )
+        return perf_counter() - started
+
     def evidence(self) -> dict[str, object]:
         return {
             "transport": "HTTP/1.1 over loopback TCP with uvicorn and httpx",
             "endpoint": f"/api/v1/stream/local/{PLAYBACK_TRACK_ID}",
             "authentication": "Bearer token through AuthMiddleware",
+            "authentication_backend": "AuthService joined token and user lookup",
             "catalog_lookup": "TargetLibraryRepository over NativeLibraryStore SQLite",
             "range": "bytes=0-65535",
             "latency_boundary": "request start through first streamed response bytes",

@@ -50,6 +50,17 @@ class LibraryOwnershipService:
         _revision, values = await self._store.target_provider_album_snapshot()
         return {value.casefold() for value in values}
 
+    async def existing_provider_album_ids(self, identifiers: list[str]) -> set[str]:
+        normalized = {
+            value.strip().casefold() for value in identifiers if value.strip()
+        }
+        rows = await self._store.target_album_ownership_rows(provider_ids=normalized)
+        return {
+            str(row["release_group_mbid"]).casefold()
+            for row in rows
+            if row.get("release_group_mbid")
+        }
+
     async def provider_album_id(self, identifier: str) -> str:
         resolved = await self._store.resolve_target_id("album", identifier)
         if resolved is None:

@@ -52,7 +52,8 @@ vi.mock('$lib/stores/library', () => ({
 			cb({});
 			return () => {};
 		}),
-		initialize: vi.fn()
+		initialize: vi.fn(),
+		setSession: vi.fn()
 	}
 }));
 vi.mock('$lib/stores/integration', () => ({
@@ -153,7 +154,6 @@ import { nowPlayingStore } from '$lib/stores/nowPlayingSessions.svelte';
 import { nowPlayingReporter } from '$lib/stores/nowPlayingReporter.svelte';
 import { pendingApprovalCountStore } from '$lib/stores/pendingApprovalCountStore.svelte';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
-import { libraryStore } from '$lib/stores/library';
 import { initCacheTTLs } from '$lib/stores/cacheTtl';
 
 type IntegrationState = {
@@ -271,7 +271,6 @@ describe('+layout.svelte auth-reactive session state (#155)', () => {
 		renderLayout();
 		await vi.waitFor(() => expect(vi.mocked(integrationStore.reset)).toHaveBeenCalled());
 		expect(integrationStore.ensureLoaded).not.toHaveBeenCalled();
-		expect(libraryStore.initialize).not.toHaveBeenCalled();
 		expect(initCacheTTLs).not.toHaveBeenCalled();
 		expect(downloadsActivityMock.start).not.toHaveBeenCalled();
 		expect(syncStatusMock.connect).not.toHaveBeenCalled();

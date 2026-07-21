@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -13,13 +15,17 @@ import msgspec
 
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from models.audio import AudioInfo, AudioTag
-from models.library_work import ScanRun
+from models.library_work import ScanRun, ScannedTrackWrite
 from models.local_catalog import LocalAlbum, LocalArtist, LocalArtistCredit, LocalTrack
 from services.native.identification_queue_service import IdentificationQueueService
 from services.native.local_album_grouper import grouping_directory
 from services.native.local_album_grouping_service import LocalAlbumGroupingService
+from services.native.file_revision import revision_from_stat
 
-INDEX_BATCH_SIZE = 64
+INDEX_FETCH_SIZE = 256
+TAG_BATCH_SIZE = 64
+INDEX_BATCH_SIZE = TAG_BATCH_SIZE
+CHECKPOINT_INTERVAL_SECONDS = 0.25
 _SCAN_NAMESPACE = uuid.UUID("c65f5557-43c6-4550-bd8a-ea7dcaac6411")
 
 
@@ -27,7 +33,7 @@ class AudioTagReaderProtocol(Protocol):
     def read_tags(self, path: Path) -> tuple[AudioTag, AudioInfo]: ...
 
 
-IndexProgressCallback = Callable[[dict[str, int]], Awaitable[None]]
+IndexProgressCallback = Callable[[ScanRun], Awaitable[None]]
 
 
 class LibraryIndexer:
@@ -61,12 +67,18 @@ class LibraryIndexer:
             "identification_enqueued": 0,
         }
         while True:
+            await self._store.normalize_pending_legacy_inventory(
+                run.id, limit=INDEX_FETCH_SIZE
+            )
             batch = await self._store.get_scan_inventory_batch(
-                run.id, processing_state="pending", limit=INDEX_BATCH_SIZE
+                run.id, processing_state="pending", limit=INDEX_FETCH_SIZE
             )
             if not batch:
                 counts["identification_enqueued"] += await self._grouping.regroup_run(
-                    run.id, now=run.updated_at or run.queued_at
+                    run.id,
+                    now=run.updated_at or run.queued_at,
+                    checkpoint=checkpoint,
+                    frozen_policy_revision=frozen_policy_revision,
                 )
                 return counts
             batch_counts = {
@@ -77,12 +89,22 @@ class LibraryIndexer:
                 "excluded": 0,
                 "errored": 0,
             }
+            writes: list[ScannedTrackWrite] = []
+            states: dict[str, list[tuple[str, str]]] = {
+                "unchanged": [],
+                "excluded": [],
+            }
+            failures: list[tuple[str, str, str]] = []
+            last_checkpoint = time.monotonic()
             for item in batch:
-                if checkpoint is not None and not await checkpoint(
-                    run.id, frozen_policy_revision
+                if len(writes) >= TAG_BATCH_SIZE:
+                    break
+                if checkpoint is not None and (
+                    time.monotonic() - last_checkpoint >= CHECKPOINT_INTERVAL_SECONDS
                 ):
-                    await self._report_progress(batch_counts, progress)
-                    return counts
+                    if not await checkpoint(run.id, frozen_policy_revision):
+                        return counts
+                    last_checkpoint = time.monotonic()
                 key = [(str(item["root_id"]), str(item["relative_path"]))]
                 if item["comparison_result"] == "excluded" or (
                     item["comparison_result"] == "unchanged"
@@ -93,76 +115,121 @@ class LibraryIndexer:
                         if item["comparison_result"] == "unchanged"
                         else "excluded"
                     )
-                    await self._store.mark_scan_inventory_batch(
-                        run.id, key, processing_state=state
-                    )
-                    counts["unchanged"] += item["comparison_result"] == "unchanged"
-                    counts["excluded"] += item["comparison_result"] == "excluded"
+                    states[state].extend(key)
                     batch_counts["unchanged"] += (
                         item["comparison_result"] == "unchanged"
                     )
                     batch_counts["excluded"] += item["comparison_result"] == "excluded"
                     continue
                 try:
-                    tag, info = await asyncio.to_thread(
-                        self._tag_reader.read_tags, Path(str(item["absolute_path"]))
+                    stable = await self._read_stable_tags(
+                        item,
+                        run_id=run.id,
+                        frozen_policy_revision=frozen_policy_revision,
+                        checkpoint=checkpoint,
                     )
-                    counts["tag_reads"] += 1
+                    counts["tag_reads"] += stable[3]
+                    if stable[4]:
+                        return counts
+                    if stable[0] is None or stable[1] is None or stable[2] is None:
+                        failures.append((*key[0], "FILE_CHANGED_DURING_READ"))
+                        batch_counts["errored"] += 1
+                        continue
+                    tag, info, stat = stable[:3]
+                    tagged_item = {
+                        **item,
+                        "file_size_bytes": stat.st_size,
+                        "file_mtime_ns": stat.st_mtime_ns,
+                        "stat_revision": revision_from_stat(stat),
+                    }
+                    writes.append(
+                        self._prepare_tagged(run.id, tagged_item, tag, info)
+                    )
                     if checkpoint is not None and not await checkpoint(
                         run.id, frozen_policy_revision
                     ):
-                        await self._report_progress(batch_counts, progress)
                         return counts
-                    await self._persist_tagged(run.id, item, tag, info)
-                    await self._store.mark_scan_inventory_batch(
-                        run.id, key, processing_state="indexed"
-                    )
-                    counts["indexed"] += 1
                     batch_counts["indexed"] += 1
                     if item["comparison_result"] == "new":
-                        counts["new"] += 1
                         batch_counts["new"] += 1
                     elif item["comparison_result"] == "changed":
-                        counts["changed"] += 1
                         batch_counts["changed"] += 1
                 except (OSError, ValueError):
-                    await self._store.mark_scan_inventory_batch(
-                        run.id,
-                        key,
-                        processing_state="failed",
-                        failure_code="TAG_READ_FAILED",
-                    )
-                    counts["errored"] += 1
+                    failures.append((*key[0], "TAG_READ_FAILED"))
                     batch_counts["errored"] += 1
-            await self._report_progress(batch_counts, progress)
+            if checkpoint is not None and not await checkpoint(
+                run.id, frozen_policy_revision
+            ):
+                return counts
+            increments = {
+                "inspected_count": sum(
+                    batch_counts[name]
+                    for name in ("indexed", "unchanged", "excluded", "errored")
+                ),
+                "new_count": batch_counts["new"],
+                "changed_count": batch_counts["changed"],
+                "indexed_count": batch_counts["indexed"],
+                "unchanged_count": batch_counts["unchanged"],
+                "excluded_count": batch_counts["excluded"],
+                "errored_count": batch_counts["errored"],
+            }
+            run = await self._store.commit_scan_index_batch(
+                run.id,
+                writes=writes,
+                states=states,
+                failures=failures,
+                increments=increments,
+                updated_at=time.time(),
+            )
+            for name in ("indexed", "new", "changed", "unchanged", "excluded", "errored"):
+                counts[name] += batch_counts[name]
+            await self._report_progress(run, progress)
+
+    async def _read_stable_tags(
+        self,
+        item: dict[str, object],
+        *,
+        run_id: str,
+        frozen_policy_revision: str,
+        checkpoint: Callable[[str, str], Awaitable[bool]] | None,
+    ) -> tuple[AudioTag | None, AudioInfo | None, os.stat_result | None, int, bool]:
+        path = Path(str(item["absolute_path"]))
+        expected_size = int(item["file_size_bytes"])
+        expected_mtime_ns = int(item["file_mtime_ns"])
+        reads = 0
+        for _attempt in range(2):
+            tag, info = await asyncio.to_thread(self._tag_reader.read_tags, path)
+            reads += 1
+            if checkpoint is not None and not await checkpoint(
+                run_id, frozen_policy_revision
+            ):
+                return None, None, None, reads, True
+            stat = await asyncio.to_thread(path.stat)
+            if checkpoint is not None and not await checkpoint(
+                run_id, frozen_policy_revision
+            ):
+                return None, None, None, reads, True
+            if stat.st_size == expected_size and stat.st_mtime_ns == expected_mtime_ns:
+                return tag, info, stat, reads, False
+            expected_size = stat.st_size
+            expected_mtime_ns = stat.st_mtime_ns
+        return None, None, None, reads, False
 
     @staticmethod
     async def _report_progress(
-        counts: dict[str, int], progress: IndexProgressCallback | None
+        run: ScanRun, progress: IndexProgressCallback | None
     ) -> None:
-        if progress is None or not any(counts.values()):
+        if progress is None:
             return
-        await progress(
-            {
-                "inspected_count": sum(
-                    counts[name] for name in ("indexed", "unchanged", "errored")
-                ),
-                "new_count": counts["new"],
-                "changed_count": counts["changed"],
-                "indexed_count": counts["indexed"],
-                "unchanged_count": counts["unchanged"],
-                "excluded_count": counts["excluded"],
-                "errored_count": counts["errored"],
-            }
-        )
+        await progress(run)
 
-    async def _persist_tagged(
+    def _prepare_tagged(
         self,
         run_id: str,
         item: dict[str, object],
         tag: AudioTag,
         info: AudioInfo,
-    ) -> int:
+    ) -> ScannedTrackWrite:
         root_id = str(item["root_id"])
         relative_path = str(item["relative_path"])
         directory = grouping_directory(relative_path)
@@ -176,13 +243,7 @@ class LibraryIndexer:
                 f"artist:{album_artist}:{tag.album_artist_sort or ''}:group",
             )
         )
-        artist_id, _ = await self._store.resolve_or_create_local_artist(
-            display_name=album_artist,
-            sort_name=tag.album_artist_sort,
-            kind="group",
-            candidate_id=artist_candidate_id,
-            now=float(item["file_mtime_ns"]) / 1_000_000_000,
-        )
+        artist_id = artist_candidate_id
         grouping_key = (
             f"{directory}\x00{album_title.casefold()}\x00{album_artist.casefold()}"
         )
@@ -266,7 +327,7 @@ class LibraryIndexer:
             applied_policy_revision=str(item.get("policy_revision", "")),
             applied_policy=item["effective_policy"],
         )
-        persisted_track_id, _ = await self._store.upsert_scanned_track(
+        return ScannedTrackWrite(
             artist=artist,
             album=album,
             track=track,
@@ -275,8 +336,8 @@ class LibraryIndexer:
                 position=0,
                 credited_name=album_artist,
             ),
-            scan_run_id=run_id,
+            root_id=root_id,
+            relative_path=relative_path,
+            comparison_result=item["comparison_result"],
             grouping_context=directory,
         )
-        item["local_track_id"] = persisted_track_id
-        return 0

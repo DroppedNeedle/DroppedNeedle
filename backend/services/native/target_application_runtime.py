@@ -12,6 +12,7 @@ from core.task_registry import TaskRegistry
 from services.native.album_identification_service import AlbumIdentificationService
 from services.native.identification_queue_service import IdentificationQueueService
 from services.native.library_operation_supervisor import LibraryOperationSupervisor
+from services.native.background_workload_gate import BackgroundWorkloadGate
 
 logger = logging.getLogger(__name__)
 WORKER_INTERVAL_SECONDS = 1.0
@@ -38,14 +39,20 @@ async def run_target_identification_worker(
     service_getter: Callable[[], AlbumIdentificationService],
     *,
     worker_id: str | None = None,
+    workload_gate: BackgroundWorkloadGate | None = None,
 ) -> None:
     owner = worker_id or _worker_id("identification")
     while True:
         try:
-            queue = queue_getter()
-            await queue.recover()
-            if not await queue.is_paused():
-                job = await queue.claim(owner)
+            if workload_gate is None or not workload_gate.scan_active:
+                queue = queue_getter()
+                await queue.recover()
+                if await queue.is_paused():
+                    await asyncio.sleep(WORKER_INTERVAL_SECONDS)
+                    continue
+                job = None
+                if workload_gate is None or not workload_gate.scan_active:
+                    job = await queue.claim(owner)
                 if job is not None:
                     await service_getter().run_claimed_job(job, owner)
         except asyncio.CancelledError:
@@ -82,10 +89,13 @@ async def run_target_operation_worker(
 def start_target_identification_worker(
     queue_getter: Callable[[], IdentificationQueueService],
     service_getter: Callable[[], AlbumIdentificationService],
+    workload_gate: BackgroundWorkloadGate | None = None,
 ) -> asyncio.Task[None]:
     name = "target-library-identification-worker"
     task = asyncio.create_task(
-        run_target_identification_worker(queue_getter, service_getter)
+        run_target_identification_worker(
+            queue_getter, service_getter, workload_gate=workload_gate
+        )
     )
     TaskRegistry.get_instance().register(name, task)
     task.add_done_callback(lambda item: _log_worker_error(item, name=name))

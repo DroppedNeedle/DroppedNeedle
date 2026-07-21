@@ -4,7 +4,10 @@
 
 	const status = $derived(page.status);
 	const isNotFound = $derived(status === 404);
-	const heading = $derived(isNotFound ? 'Off the record' : 'Something broke');
+	const isBusy = $derived(status === 503);
+	const heading = $derived(
+		isNotFound ? 'Off the record' : isBusy ? 'Server busy' : 'Something broke'
+	);
 	const blurb = $derived(
 		page.error?.message ??
 			(isNotFound ? "That page isn't in the crate." : 'An unexpected error occurred.')
@@ -52,7 +55,7 @@
 		letter-spacing: -0.01em;
 		color: oklch(from var(--color-base-content) l c h / 0.05);
 		-webkit-text-stroke: 2px oklch(from var(--color-base-content) l c h / 0.18);
-		text-shadow: 0 3px 2px rgb(0 0 0 / 0.45);
+		text-shadow: 0 3px 2px oklch(from var(--color-base-content) 0 0 h / 0.45);
 		user-select: none;
 	}
 

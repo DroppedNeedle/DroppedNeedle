@@ -658,6 +658,56 @@ class AuthStore:
 
         return await self._read(operation)
 
+    async def verify_token_with_user(
+        self, raw_token: str
+    ) -> tuple[UserRecord, TokenRecord] | None:
+        candidate_hash = _hash_token(raw_token)
+        now = _now_iso()
+
+        def operation(
+            conn: sqlite3.Connection,
+        ) -> tuple[UserRecord, TokenRecord] | None:
+            row = conn.execute(
+                "SELECT token.id AS token_id, token.user_id AS token_user_id, "
+                "token.token_hash, token.issued_at, token.expires_at, "
+                "token.last_seen_at, token.revoked, token.user_agent, "
+                "user.id AS user_id, user.display_name, user.email, "
+                "user.avatar_url, user.role, user.created_at, user.last_login_at, "
+                "user.username, user.username_display "
+                "FROM auth_tokens token JOIN auth_users user ON user.id = token.user_id "
+                "WHERE token.token_hash = ? AND token.revoked = 0 "
+                "AND token.expires_at > ?",
+                (candidate_hash, now),
+            ).fetchone()
+            if row is None or not hmac.compare_digest(
+                str(row["token_hash"]).encode(), candidate_hash.encode()
+            ):
+                return None
+            user = UserRecord(
+                id=str(row["user_id"]),
+                display_name=str(row["display_name"]),
+                role=str(row["role"]),
+                created_at=str(row["created_at"]),
+                last_login_at=row["last_login_at"],
+                email=row["email"],
+                avatar_url=row["avatar_url"],
+                username=row["username"],
+                username_display=row["username_display"],
+            )
+            token = TokenRecord(
+                id=str(row["token_id"]),
+                user_id=str(row["token_user_id"]),
+                token_hash=str(row["token_hash"]),
+                issued_at=str(row["issued_at"]),
+                expires_at=str(row["expires_at"]),
+                last_seen_at=str(row["last_seen_at"]),
+                revoked=bool(row["revoked"]),
+                user_agent=row["user_agent"],
+            )
+            return user, token
+
+        return await self._read(operation)
+
     async def touch_token(self, token_id: str) -> None:
         now = _now_iso()
 

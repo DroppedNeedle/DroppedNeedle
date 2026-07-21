@@ -13,6 +13,7 @@ import pytest
 from api.v1.schemas.settings import LibraryScanScheduleSettings
 from core import tasks
 from infrastructure.queue.priority_queue import RequestPriority
+from services.native.background_workload_gate import BackgroundWorkloadGate
 
 
 class _Prefs:
@@ -71,16 +72,15 @@ async def test_artist_cache_warmer_resolves_rebuilt_service_each_cycle(monkeypat
     service = SimpleNamespace(precache_artist_discovery=AsyncMock())
     service_getter = MagicMock(return_value=service)
     library = SimpleNamespace(
-        get_artists=AsyncMock(
-            return_value=[{"mbid": "60000000-0000-4000-8000-000000000001"}]
+        get_artist_mbid_page=AsyncMock(
+            return_value=["60000000-0000-4000-8000-000000000001"]
         )
     )
     monkeypatch.setattr(tasks.asyncio, "sleep", stop_after_first_cycle)
 
-    with pytest.raises(asyncio.CancelledError):
-        await tasks.warm_artist_discovery_cache_periodically(
-            service_getter, library, interval=10, delay=0
-        )
+    await tasks.warm_artist_discovery_cache_periodically(
+        service_getter, library, interval=10, delay=0
+    )
 
     service_getter.assert_called_once_with()
     service.precache_artist_discovery.assert_awaited_once()
@@ -98,10 +98,10 @@ async def test_artist_cache_warmer_filters_local_ids_before_upstream_calls(monke
 
     service_getter = MagicMock()
     library = SimpleNamespace(
-        get_artists=AsyncMock(
+        get_artist_mbid_page=AsyncMock(
             return_value=[
-                {"mbid": "f110a324f991fab25548b41e2efeb1bf"},
-                {"mbid": "unknown_artist"},
+                "f110a324f991fab25548b41e2efeb1bf",
+                "unknown_artist",
             ]
         )
     )
@@ -121,7 +121,7 @@ async def test_library_cache_warmer_uses_background_musicbrainz_priority(monkeyp
     album_service.is_album_cached = AsyncMock(return_value=False)
     album_service.get_album_info = AsyncMock()
     library_db = MagicMock()
-    library_db.get_albums = AsyncMock(
+    library_db.get_recent_albums = AsyncMock(
         return_value=[{"mbid": "11111111-1111-1111-1111-111111111111"}]
     )
 
@@ -131,6 +131,54 @@ async def test_library_cache_warmer_uses_background_musicbrainz_priority(monkeyp
         "11111111-1111-1111-1111-111111111111",
         priority=RequestPriority.BACKGROUND_SYNC,
     )
+    library_db.get_recent_albums.assert_awaited_once_with(limit=30)
+
+
+@pytest.mark.asyncio
+async def test_discover_warmer_rechecks_gate_between_units() -> None:
+    gate = BackgroundWorkloadGate()
+    discover_finished = asyncio.Event()
+    home_finished = asyncio.Event()
+
+    async def warm_discover(_user_id: str) -> None:
+        gate.set_scan_active(True)
+        discover_finished.set()
+
+    async def warm_home(_user_id: str) -> None:
+        gate.set_scan_active(True)
+        home_finished.set()
+
+    discover = SimpleNamespace(
+        warm_cache_thorough=warm_discover,
+        peek_freshness=AsyncMock(return_value=(True, False)),
+    )
+    home = SimpleNamespace(warm_cache=warm_home)
+    queue = SimpleNamespace(
+        start_build=AsyncMock(), wait_for_build=AsyncMock(return_value=None)
+    )
+    worker = asyncio.create_task(
+        tasks._warm_one_user(
+            "gate-test-user",
+            discover,
+            home,
+            {},
+            {},
+            queue,
+            gate,
+        )
+    )
+
+    await discover_finished.wait()
+    await asyncio.sleep(0)
+    assert not home_finished.is_set()
+    gate.set_scan_active(False)
+    await home_finished.wait()
+    await asyncio.sleep(0)
+    queue.start_build.assert_not_awaited()
+    gate.set_scan_active(False)
+    await worker
+
+    queue.start_build.assert_awaited_once_with("gate-test-user")
 
 
 def test_interval_overdue_runs_immediately():

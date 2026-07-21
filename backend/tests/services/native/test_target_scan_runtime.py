@@ -32,6 +32,7 @@ from services.native.target_application_runtime import (
     run_target_identification_worker,
     run_target_operation_worker,
 )
+from services.native.background_workload_gate import BackgroundWorkloadGate
 
 
 @pytest.mark.asyncio
@@ -183,6 +184,73 @@ async def test_target_identification_worker_recovers_claims_and_survives_iterati
 
     assert queue.recover.await_count == 2
     service.run_claimed_job.assert_awaited_once_with({"id": "job-1"}, "test-worker")
+
+
+@pytest.mark.asyncio
+async def test_identification_worker_starts_no_new_unit_while_scan_is_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue = AsyncMock()
+    queue.is_paused.return_value = False
+    queue.claim.return_value = {"id": "job-1"}
+    service = AsyncMock()
+    gate = BackgroundWorkloadGate()
+    gate.set_scan_active(True)
+    sleeps = 0
+
+    async def release_then_stop(_seconds: float) -> None:
+        nonlocal sleeps
+        sleeps += 1
+        if sleeps == 1:
+            gate.set_scan_active(False)
+        else:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        "services.native.target_application_runtime.asyncio.sleep", release_then_stop
+    )
+
+    await run_target_identification_worker(
+        lambda: queue,
+        lambda: service,
+        worker_id="test-worker",
+        workload_gate=gate,
+    )
+
+    queue.claim.assert_awaited_once_with("test-worker")
+    service.run_claimed_job.assert_awaited_once_with({"id": "job-1"}, "test-worker")
+
+
+@pytest.mark.asyncio
+async def test_identification_worker_rechecks_gate_immediately_before_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue = AsyncMock()
+    gate = BackgroundWorkloadGate()
+
+    async def activate_scan() -> bool:
+        gate.set_scan_active(True)
+        return False
+
+    queue.is_paused.side_effect = activate_scan
+    service = AsyncMock()
+
+    async def stop(_seconds: float) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        "services.native.target_application_runtime.asyncio.sleep", stop
+    )
+
+    await run_target_identification_worker(
+        lambda: queue,
+        lambda: service,
+        worker_id="test-worker",
+        workload_gate=gate,
+    )
+
+    queue.claim.assert_not_awaited()
+    service.run_claimed_job.assert_not_awaited()
 
 
 @pytest.mark.asyncio

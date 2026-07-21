@@ -17,18 +17,21 @@ from api.v1.schemas.library_target import (
 )
 from api.v1.schemas.library import (
     LibraryMbidsResponse,
+    LibraryMembershipRequest,
+    LibraryMembershipResponse,
     TrackResolveRequest,
     TrackResolveResponse,
     TrackTagUpdateRequest,
 )
 from api.v1.schemas.library_scan_target import LegacyScanShimResponse
-from core.exceptions import ResourceNotFoundError
+from core.exceptions import ResourceNotFoundError, ValidationError
 from core.dependencies.type_aliases import (
     LibraryPolicyResolverDep,
     PreferencesServiceDep,
     RequestHistoryStoreDep,
     TargetCatalogWriterServiceDep,
     TargetLibraryScanCoordinatorDep,
+    TargetLibraryOwnershipServiceDep,
     TargetNativeLibraryServiceDep,
     CachedLocalArtworkServiceDep,
     WantedWatcherServiceDep,
@@ -169,6 +172,27 @@ async def get_target_provider_ids(
     return LibraryMbidsResponse(
         mbids=provider_ids.musicbrainz_release_group_ids,
         requested_mbids=sorted(requested_ids),
+    )
+
+
+@router.post("/membership", response_model=LibraryMembershipResponse)
+async def get_target_membership(
+    _user: CurrentUserDep,
+    ownership: TargetLibraryOwnershipServiceDep,
+    request_history: RequestHistoryStoreDep,
+    body: LibraryMembershipRequest = MsgSpecBody(LibraryMembershipRequest),
+) -> LibraryMembershipResponse:
+    album_ids = list(
+        dict.fromkeys(value.strip().casefold() for value in body.album_ids if value.strip())
+    )
+    if len(album_ids) > 500:
+        raise ValidationError("Library membership accepts at most 500 album IDs.")
+    owned, requested = await asyncio.gather(
+        ownership.existing_provider_album_ids(album_ids),
+        request_history.async_existing_requested_mbids(album_ids),
+    )
+    return LibraryMembershipResponse(
+        owned_ids=sorted(owned), requested_ids=sorted(requested)
     )
 
 

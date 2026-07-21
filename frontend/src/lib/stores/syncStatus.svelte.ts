@@ -1,6 +1,5 @@
 import { browser } from '$app/environment';
 import { api } from '$lib/api/client';
-import { libraryStore } from '$lib/stores/library';
 import { getApiUrl } from '$lib/api/api-utils';
 
 type SyncStatus = {
@@ -82,10 +81,6 @@ function createSyncStatusStore() {
 		if (newStatus.is_syncing && !wasSyncing) {
 			isDismissed = false;
 			isMinimized = false;
-		}
-
-		if (wasSyncing && !newStatus.is_syncing && !newStatus.error_message && browser) {
-			libraryStore.refresh();
 		}
 
 		handleStatusUpdate(newStatus);

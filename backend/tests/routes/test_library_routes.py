@@ -11,8 +11,10 @@ from api.v1.routes.library import router
 from api.v1.schemas.library import AlbumRemoveResponse
 from core.dependencies import (
     get_album_service,
+    get_library_service,
     get_library_manager,
     get_library_scanner,
+    get_request_history_store,
 )
 from core.exceptions import ResourceNotFoundError
 from infrastructure.persistence.library_db import LibraryDB
@@ -205,6 +207,34 @@ def test_rescan_returns_202_for_admin(client):
 def test_albums_requires_auth(app):
     client = build_test_client(app)  # no auth override
     assert client.get("/library/albums").status_code == 401
+
+
+def test_membership_is_authenticated_and_candidate_scoped(app):
+    client = build_test_client(app)
+    assert client.post("/library/membership", json={"album_ids": []}).status_code == 401
+
+    service = AsyncMock()
+    service.get_membership.return_value = {"owned-rg"}
+    history = AsyncMock()
+    history.async_existing_requested_mbids.return_value = {"requested-rg"}
+    app.dependency_overrides[get_library_service] = lambda: service
+    app.dependency_overrides[get_request_history_store] = lambda: history
+    override_user_auth(app, role="user")
+
+    response = build_test_client(app).post(
+        "/library/membership",
+        json={"album_ids": ["OWNED-RG", "requested-rg", "owned-rg"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "owned_ids": ["owned-rg"],
+        "requested_ids": ["requested-rg"],
+    }
+    service.get_membership.assert_awaited_once_with(["owned-rg", "requested-rg"])
+    history.async_existing_requested_mbids.assert_awaited_once_with(
+        ["owned-rg", "requested-rg"]
+    )
 
 
 async def _seed_mezzanine(manager: LibraryManager):
