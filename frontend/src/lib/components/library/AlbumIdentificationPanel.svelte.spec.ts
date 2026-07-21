@@ -137,6 +137,10 @@ beforeEach(() => {
 	h.jobs = {};
 	h.queryError = false;
 	h.start.mockResolvedValue(job({ state: 'queued' }));
+	h.select.mockResolvedValue(job({ state: 'succeeded' }));
+	h.pause.mockResolvedValue(job({ state: 'paused' }));
+	h.resume.mockResolvedValue(job({ state: 'running' }));
+	h.stop.mockResolvedValue(job({ state: 'stopped' }));
 });
 
 describe('AlbumIdentificationPanel', () => {

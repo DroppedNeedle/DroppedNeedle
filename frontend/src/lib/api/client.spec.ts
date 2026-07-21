@@ -16,7 +16,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	}
 }));
 
-import { api, ApiError, SessionExpiredError } from './client';
+import { api, ApiError, SessionExpiredError, TransportError } from './client';
 import { pageFetch } from '$lib/utils/navigationAbort';
 
 const mockPageFetch = vi.mocked(pageFetch);
@@ -344,6 +344,47 @@ describe('api client', () => {
 			expect(err.status).toBe(404);
 			expect(err.message).toBe('Not found');
 			expect(err.code).toBe('NOT_FOUND');
+		});
+	});
+
+	describe('transport failures', () => {
+		it('classifies a network failure with the request method and path', async () => {
+			authMock.isAuthenticated = true;
+			mockGlobalFetch.mockRejectedValue(new TypeError('Failed to fetch'));
+
+			await expect(
+				api.global.post('/api/v1/library/reviews/bulk-apply?token=secret', {})
+			).rejects.toMatchObject({
+				name: 'TransportError',
+				code: 'TRANSPORT_NETWORK',
+				method: 'POST',
+				path: '/api/v1/library/reviews/bulk-apply',
+				details: { method: 'POST', path: '/api/v1/library/reviews/bulk-apply' }
+			});
+			expect(authMock.clear).not.toHaveBeenCalled();
+		});
+
+		it('uses the timeout transport code without clearing the session', async () => {
+			authMock.isAuthenticated = true;
+			mockGlobalFetch.mockImplementation(
+				(_url, init) =>
+					new Promise((_resolve, reject) => {
+						init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+					})
+			);
+
+			try {
+				await api.global.get('/api/v1/slow', { timeoutMs: 1 });
+				expect.unreachable('should have timed out');
+			} catch (cause) {
+				expect(cause).toBeInstanceOf(TransportError);
+				expect(cause).toMatchObject({
+					code: 'TRANSPORT_TIMEOUT',
+					method: 'GET',
+					path: '/api/v1/slow'
+				});
+			}
+			expect(authMock.clear).not.toHaveBeenCalled();
 		});
 	});
 

@@ -16,6 +16,7 @@ export interface AuthUser {
 function createAuthStore() {
 	let user = $state<AuthUser | null>(null);
 	let initialized = $state(false);
+	let setupRequired = $state(false);
 
 	return {
 		get user() {
@@ -23,6 +24,9 @@ function createAuthStore() {
 		},
 		get initialized() {
 			return initialized;
+		},
+		get setupRequired() {
+			return setupRequired;
 		},
 		get isAuthenticated() {
 			return user !== null;
@@ -44,6 +48,10 @@ function createAuthStore() {
 
 		markInitialized() {
 			initialized = true;
+		},
+
+		setSetupRequired(required: boolean) {
+			setupRequired = required;
 		}
 	};
 }

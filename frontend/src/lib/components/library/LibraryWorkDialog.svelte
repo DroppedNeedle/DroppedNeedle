@@ -11,7 +11,9 @@
 		applyBulkLibraryReview,
 		previewBulkLibraryReview
 	} from '$lib/queries/library/LibraryReviewMutations.svelte';
-	import type { ScanKind } from '$lib/queries/library/LibraryOperationsTypes';
+	import type { OperationResponse, ScanKind } from '$lib/queries/library/LibraryOperationsTypes';
+	import { ApiError, TransportError } from '$lib/api/client';
+	import { createUuid } from '$lib/utils/uuid';
 
 	interface Props {
 		open: boolean;
@@ -43,6 +45,11 @@
 	const pause = controlLibraryOperation('pause');
 	const resume = controlLibraryOperation('resume');
 	const stop = controlLibraryOperation('stop');
+	const retryError = $derived(retryApply.error ?? retryPreview.error);
+	const retryIsStale = $derived(
+		retryError instanceof ApiError && retryError.code === 'STALE_REVISION'
+	);
+	const retryIsTransport = $derived(retryError instanceof TransportError);
 
 	const roots = $derived(treeQuery.data?.roots ?? []);
 	const selectedNodes = $derived.by(() => {
@@ -116,33 +123,45 @@
 				: [...rootSelection, id];
 		}
 		retryPreview.reset();
+		retryApply.reset();
 	}
 
 	function selectWholeLibrary(): void {
 		selected = [];
 		retryPreview.reset();
+		retryApply.reset();
 	}
 
 	function close(): void {
 		selected = [];
 		retryPreview.reset();
+		retryApply.reset();
 		onclose();
 		opener?.focus();
 	}
 
 	async function previewRetry(): Promise<void> {
-		await retryPreview.mutateAsync({ action: 'retry', selection: retrySelection });
+		try {
+			await retryPreview.mutateAsync({ action: 'retry', selection: retrySelection });
+		} catch {
+			// mutation state keeps the error visible in this dialog
+		}
 	}
 
 	async function startRetry(): Promise<void> {
 		if (!retryPreview.data) return;
-		const job = await retryApply.mutateAsync({
-			preview_token: retryPreview.data.preview_token,
-			idempotency_key: crypto.randomUUID(),
-			action: 'retry',
-			selection: retrySelection,
-			confirm_local_metadata: retryPreview.data.requires_local_metadata_confirmation
-		});
+		let job: OperationResponse;
+		try {
+			job = await retryApply.mutateAsync({
+				preview_token: retryPreview.data.preview_token,
+				idempotency_key: createUuid(),
+				action: 'retry',
+				selection: retrySelection,
+				confirm_local_metadata: retryPreview.data.requires_local_metadata_confirmation
+			});
+		} catch {
+			return;
+		}
 		activeJobId = job.id;
 		try {
 			sessionStorage.setItem(storageKey, job.id);
@@ -154,6 +173,7 @@
 	function startAnotherRetry(): void {
 		activeJobId = null;
 		retryPreview.reset();
+		retryApply.reset();
 	}
 </script>
 
@@ -273,14 +293,25 @@
 		{/if}
 		{#if retryPreview.isError || retryApply.isError}
 			<div class="alert alert-error mt-4 text-sm">
-				<span>Library settings or review state changed. Reload the scopes and preview again.</span>
-				<button
-					class="btn btn-sm"
-					onclick={() => {
-						retryPreview.reset();
-						void treeQuery.refetch();
-					}}>Reload scopes</button
-				>
+				{#if retryIsStale}
+					<span>Library settings or review state changed. Reload the scopes and preview again.</span
+					>
+					<button
+						class="btn btn-sm"
+						onclick={() => {
+							retryPreview.reset();
+							retryApply.reset();
+							void treeQuery.refetch();
+						}}>Reload scopes</button
+					>
+				{:else if retryIsTransport}
+					<span
+						>DroppedNeedle could not reach the server, so the retry did not start. You can try again
+						without closing this dialog.</span
+					>
+				{:else}
+					<span>The retry could not start. No library data was changed.</span>
+				{/if}
 			</div>
 		{/if}
 
@@ -292,19 +323,22 @@
 					{#if job.state === 'running'}<button
 							class="btn btn-ghost btn-sm"
 							onclick={() =>
-								void pause.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })}
-							><CirclePause class="h-4 w-4" /> Pause</button
+								void pause
+									.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })
+									.catch(() => undefined)}><CirclePause class="h-4 w-4" /> Pause</button
 						>{:else if job.state === 'paused'}<button
 							class="btn btn-ghost btn-sm"
 							onclick={() =>
-								void resume.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })}
-							><CirclePlay class="h-4 w-4" /> Resume</button
+								void resume
+									.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })
+									.catch(() => undefined)}><CirclePlay class="h-4 w-4" /> Resume</button
 						>{/if}
 					{#if ['queued', 'running', 'paused'].includes(job.state)}<button
 							class="btn btn-ghost btn-sm text-error"
 							onclick={() =>
-								void stop.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })}
-							><OctagonX class="h-4 w-4" /> Stop</button
+								void stop
+									.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })
+									.catch(() => undefined)}><OctagonX class="h-4 w-4" /> Stop</button
 						>{/if}
 				</div>
 				<progress

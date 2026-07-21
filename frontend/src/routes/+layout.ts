@@ -19,21 +19,18 @@ export const load: LayoutLoad = async ({ url }) => {
 	const path = url.pathname;
 	const isAuthFree = AUTH_FREE_PATHS.some((p) => path.startsWith(p));
 
-	let setupRequired = false;
-	try {
-		const status = await api.global.get<{ required: boolean }>(API.auth.setupStatus(), {
-			timeoutMs: BOOTSTRAP_TIMEOUT_MS
-		});
-		setupRequired = status.required;
-	} catch {
-		throw error(503, BUSY_MESSAGE);
-	}
-
-	if (setupRequired && !isAuthFree) {
-		throw redirect(302, '/setup');
-	}
-
+	let setupRequired = authStore.setupRequired;
 	if (!authStore.initialized) {
+		try {
+			const status = await api.global.get<{ required: boolean }>(API.auth.setupStatus(), {
+				timeoutMs: BOOTSTRAP_TIMEOUT_MS
+			});
+			setupRequired = status.required;
+			authStore.setSetupRequired(setupRequired);
+		} catch {
+			throw error(503, BUSY_MESSAGE);
+		}
+
 		try {
 			const user = await api.global.get<{
 				id: string;
@@ -72,6 +69,10 @@ export const load: LayoutLoad = async ({ url }) => {
 		authStore.markInitialized();
 	}
 
+	if (setupRequired && !isAuthFree) {
+		throw redirect(302, '/setup');
+	}
+
 	// initialized stays true after in-app login; reset persisted caches on account switches
 	if (browser && authStore.user) {
 		const lastId = localStorage.getItem(LAST_USER_ID_KEY);
@@ -102,5 +103,5 @@ export const load: LayoutLoad = async ({ url }) => {
 		}
 	}
 
-	return { primarySource };
+	return { primarySource, user: authStore.user };
 };

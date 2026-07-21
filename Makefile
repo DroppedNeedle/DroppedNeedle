@@ -115,6 +115,7 @@ NPM    ?= pnpm
 	feedback-fixes-automatic-upgrade-rehearsal \
 	post-upgrade-million-rehearsal \
 	issue-224-performance \
+	library-actions-hunter-rehearsal \
 	backend-test-discover-all \
 	test-discover-all \
 	test-audiodb-all test-mus14-all test-sync-all \
@@ -686,6 +687,11 @@ feedback-fixes-benchmark: $(BACKEND_VENV_STAMP) ## Run the non-default Feedback 
 
 issue-224-performance: $(BACKEND_VENV_STAMP) ## Run the reported-scale issue #224 ownership benchmark
 	cd "$(BACKEND_DIR)" && .venv/bin/python -m tests.benchmarks.issue_224_performance
+
+library-actions-hunter-rehearsal: $(BACKEND_VENV_STAMP) ## Rehearse LAN library actions with one million tracks and an active scan
+	mkdir -p "$(ROOT_DIR)/.dev-notes/tmp"
+	cd "$(BACKEND_DIR)" && TMPDIR="$(ROOT_DIR)/.dev-notes/tmp" .venv/bin/python -m tests.benchmarks.library_actions_hunter_rehearsal \
+		--output "$(ROOT_DIR)/.dev-notes/benchmarks/library-actions-hunter-latest.json"
 
 feedback-fixes-root-mapping: $(BACKEND_VENV_STAMP) ## Rehearse typed-root migration and path mapping in scratch
 	cd "$(BACKEND_DIR)" && .venv/bin/python -m tests.benchmarks.feedback_fixes_root_mapping \

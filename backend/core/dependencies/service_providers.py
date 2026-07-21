@@ -437,6 +437,7 @@ def get_target_explicit_reidentification_worker() -> "ExplicitReidentificationWo
         AlbumCandidateService(get_musicbrainz_identification_repository()),
         AlbumEvidenceEngine(),
         ConditionalFingerprintService(store, get_audio_fingerprinter()),
+        get_background_workload_gate(),
     )
 
 
@@ -451,6 +452,7 @@ def get_target_library_operation_supervisor() -> "LibraryOperationSupervisor":
         get_target_library_operation_service(),
         get_target_identity_repair_service(),
         get_target_explicit_reidentification_worker(),
+        get_background_workload_gate(),
     )
 
 

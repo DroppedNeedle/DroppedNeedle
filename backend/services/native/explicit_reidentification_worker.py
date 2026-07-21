@@ -20,6 +20,7 @@ from services.native.album_identification_service import (
     _candidate_key,
     _to_grouping_track,
 )
+from services.native.background_workload_gate import BackgroundWorkloadGate
 from services.native.conditional_fingerprint_service import (
     FINGERPRINTER_VERSION,
     ConditionalFingerprintService,
@@ -35,11 +36,13 @@ class ExplicitReidentificationWorker:
         candidates: AlbumCandidateService,
         evidence: AlbumEvidenceEngine,
         fingerprints: ConditionalFingerprintService | None = None,
+        workload_gate: BackgroundWorkloadGate | None = None,
     ) -> None:
         self._store = store
         self._candidates = candidates
         self._evidence = evidence
         self._fingerprints = fingerprints
+        self._workload_gate = workload_gate
 
     async def run_claimed(
         self,
@@ -82,8 +85,24 @@ class ExplicitReidentificationWorker:
             )
 
         async def checkpoint() -> bool:
+            if self._workload_gate is not None and self._workload_gate.scan_active:
+                return False
             current = await self._store.get_operation_job(str(job["id"]))
-            return current is not None and current["control_request"] == "none"
+            return (
+                current is not None
+                and current["control_request"] == "none"
+                and (self._workload_gate is None or not self._workload_gate.scan_active)
+            )
+
+        async def halt() -> dict:
+            if self._workload_gate is not None and self._workload_gate.scan_active:
+                return await self._store.defer_explicit_operation_for_scan(
+                    str(job["id"]), worker_id, now=timestamp
+                )
+            paused = await self._store.checkpoint_operation_control(
+                str(job["id"]), worker_id, now=timestamp
+            )
+            return paused or job
 
         degradation = init_degradation_context()
         try:
@@ -108,10 +127,7 @@ class ExplicitReidentificationWorker:
                 checkpoint=checkpoint,
             )
             if not await checkpoint():
-                paused = await self._store.checkpoint_operation_control(
-                    str(job["id"]), worker_id, now=timestamp
-                )
-                return paused or job
+                return await halt()
             decision = self._evidence.decide(tracks, candidates)
             if self._fingerprints is not None and decision.outcome in (
                 "ambiguous",
@@ -143,10 +159,7 @@ class ExplicitReidentificationWorker:
                         continue
                     requested += 1
                     if not await checkpoint():
-                        paused = await self._store.checkpoint_operation_control(
-                            str(job["id"]), worker_id, now=timestamp
-                        )
-                        return paused or job
+                        return await halt()
                     if outcome is not None and outcome.state == "failed":
                         raise ExternalServiceError(
                             "Fingerprint evidence is temporarily unavailable."
@@ -163,6 +176,8 @@ class ExplicitReidentificationWorker:
                         explicit=True,
                         checkpoint=checkpoint,
                     )
+                    if not await checkpoint():
+                        return await halt()
                     decision = self._evidence.decide(tracks, candidates)
             attempt_id = str(uuid.uuid4())
             records = [

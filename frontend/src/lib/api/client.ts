@@ -30,6 +30,26 @@ export class SessionExpiredError extends ApiError {
 	}
 }
 
+export type TransportErrorCode = 'TRANSPORT_TIMEOUT' | 'TRANSPORT_ABORTED' | 'TRANSPORT_NETWORK';
+
+export class TransportError extends ApiError {
+	readonly method: string;
+	readonly path: string;
+
+	constructor(code: TransportErrorCode, method: string, path: string) {
+		const message =
+			code === 'TRANSPORT_TIMEOUT'
+				? 'The request timed out'
+				: code === 'TRANSPORT_ABORTED'
+					? 'The request was cancelled'
+					: 'The server could not be reached';
+		super(0, message, code, { method, path });
+		this.name = 'TransportError';
+		this.method = method;
+		this.path = path;
+	}
+}
+
 interface RequestOptions extends Omit<RequestInit, 'method' | 'body'> {
 	signal?: AbortSignal;
 	raw?: boolean;
@@ -94,6 +114,14 @@ interface ApiClient {
 }
 
 function createClient(fetchFn: FetchFn): ApiClient {
+	function transportPath(url: string): string {
+		try {
+			return new URL(url, 'http://droppedneedle.invalid').pathname;
+		} catch {
+			return url.split('?', 1)[0] ?? url;
+		}
+	}
+
 	async function request<T>(
 		method: string,
 		url: string,
@@ -128,7 +156,21 @@ function createClient(fetchFn: FetchFn): ApiClient {
 
 		const requestUrl = getApiUrl(url);
 
-		const res = await fetchFn(requestUrl, init);
+		let res: Response;
+		try {
+			res = await fetchFn(requestUrl, init);
+		} catch (cause) {
+			const timedOut = deadlineSignal?.aborted === true && signal?.aborted !== true;
+			const aborted =
+				!timedOut &&
+				((cause instanceof DOMException && cause.name === 'AbortError') ||
+					requestSignal?.aborted === true);
+			throw new TransportError(
+				timedOut ? 'TRANSPORT_TIMEOUT' : aborted ? 'TRANSPORT_ABORTED' : 'TRANSPORT_NETWORK',
+				method,
+				transportPath(url)
+			);
+		}
 
 		if (raw) return res as unknown as T;
 		return handleResponse<T>(res);

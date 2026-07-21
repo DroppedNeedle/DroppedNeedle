@@ -72,6 +72,8 @@ UNKNOWN_ARTIST_ID = "00000000-0000-4000-8000-000000000002"
 AUTOMATIC_SAFE_EVIDENCE_REASONS = frozenset(
     {"SUPPORTED", "ACCEPTED", "SUPPORTED_EMBEDDED_IDS"}
 )
+BULK_PREVIEW_BATCH_SIZE = 500
+BULK_PREVIEW_CLEANUP_BATCH_SIZE = 5_000
 _T = TypeVar("_T")
 logger = logging.getLogger(__name__)
 
@@ -286,7 +288,9 @@ def _review_filter_predicate(
             if normalized not in {"true", "false"}:
                 raise ValueError(f"Invalid boolean review selection filter: {key}")
             expression = (
-                "COALESCE(stats.metadata_incomplete_count, t.metadata_incomplete, 0)"
+                "COALESCE((SELECT SUM(album_track.metadata_incomplete) "
+                "FROM local_tracks album_track WHERE album_track.local_album_id = a.id), "
+                "t.metadata_incomplete, 0)"
                 if key == "metadata_incomplete"
                 else "COALESCE(attempt.candidate_count, 0)"
             )
@@ -345,14 +349,46 @@ def _review_filter_predicate(
                     continue
                 escaped = _escape_like(prefix)
                 scope_clauses.append(
-                    f"({root_clause} AND (COALESCE(stats.relative_path, t.relative_path, '') = ? "
-                    "OR COALESCE(stats.relative_path, t.relative_path, '') LIKE ? ESCAPE '\\'))"
+                    f"({root_clause} AND (COALESCE((SELECT MIN(album_track.relative_path) "
+                    "FROM local_tracks album_track WHERE album_track.local_album_id = a.id), "
+                    "t.relative_path, '') = ? OR COALESCE((SELECT MIN(album_track.relative_path) "
+                    "FROM local_tracks album_track WHERE album_track.local_album_id = a.id), "
+                    "t.relative_path, '') LIKE ? ESCAPE '\\'))"
                 )
                 parameters.extend((prefix, f"{escaped}/%"))
             clauses.append("(" + " OR ".join(scope_clauses) + ")")
         else:
             raise ValueError(f"Unsupported review selection filter: {key}")
     return clauses, parameters
+
+
+def _bulk_preview_ineligibility(
+    action: str,
+    row: dict[str, Any],
+    candidate_key: str | None,
+    candidate_evidence: CandidateEvidence | None,
+) -> str | None:
+    if (
+        str(row["state"]) == "excluded"
+        or (action == "retry" and str(row["effective_policy"]) == "excluded")
+    ) and action != "exclude":
+        return "EXCLUDED"
+    if action == "keep_tagged" and row.get("release_group_mbid"):
+        return "IDENTITY_REQUIRES_DETACH"
+    if action == "accept_candidate" and (
+        not candidate_key or candidate_evidence is None
+    ):
+        return "CANDIDATE_NOT_AVAILABLE"
+    if action == "accept_candidate" and candidate_evidence is not None:
+        if candidate_evidence.reason_code not in AUTOMATIC_SAFE_EVIDENCE_REASONS:
+            return "CANDIDATE_NOT_AUTOMATIC_SAFE"
+        current_identity = row.get("release_group_mbid")
+        if (
+            current_identity
+            and current_identity != candidate_evidence.release_group_mbid
+        ):
+            return "IDENTITY_CONFLICT"
+    return None
 
 
 class NativeLibraryStore(PersistenceBase):
@@ -570,6 +606,13 @@ class NativeLibraryStore(PersistenceBase):
                 "ALTER TABLE library_policy_state ADD COLUMN cancelled_work_count INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE library_policy_state ADD COLUMN pending_scopes_json TEXT NOT NULL DEFAULT '[]'",
                 "ALTER TABLE library_bulk_review_previews ADD COLUMN requires_local_metadata_confirmation INTEGER NOT NULL DEFAULT 0 CHECK(requires_local_metadata_confirmation IN (0,1))",
+                "ALTER TABLE library_bulk_review_previews ADD COLUMN state TEXT NOT NULL DEFAULT 'ready' CHECK(state IN ('staging','ready'))",
+                "ALTER TABLE library_bulk_review_previews ADD COLUMN summary_json TEXT NOT NULL DEFAULT '{}'",
+                "ALTER TABLE library_bulk_review_previews ADD COLUMN cursor_updated_at REAL",
+                "ALTER TABLE library_bulk_review_previews ADD COLUMN cursor_review_id TEXT",
+                "ALTER TABLE library_bulk_review_previews ADD COLUMN subject_count INTEGER NOT NULL DEFAULT 0 CHECK(subject_count >= 0)",
+                "ALTER TABLE library_bulk_review_snapshots ADD COLUMN staging_state TEXT NOT NULL DEFAULT 'ready' CHECK(staging_state IN ('staging','ready'))",
+                "ALTER TABLE library_bulk_review_snapshots ADD COLUMN staging_cursor INTEGER NOT NULL DEFAULT -1 CHECK(staging_cursor >= -1)",
                 "ALTER TABLE library_scan_runs ADD COLUMN phase_started_at REAL",
                 "ALTER TABLE library_scan_runs ADD COLUMN phase_timings_json TEXT NOT NULL DEFAULT '{}'",
                 "ALTER TABLE library_scan_runs ADD COLUMN new_count INTEGER NOT NULL DEFAULT 0",
@@ -11721,7 +11764,47 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
-    async def preview_review_selection(
+    async def cleanup_bulk_review_preview_batch(
+        self,
+        *,
+        now: float,
+        batch_size: int = BULK_PREVIEW_CLEANUP_BATCH_SIZE,
+    ) -> dict[str, int]:
+        limit = min(max(batch_size, 1), BULK_PREVIEW_CLEANUP_BATCH_SIZE)
+
+        def operation(connection: sqlite3.Connection) -> dict[str, int]:
+            deleted_subjects = connection.execute(
+                "DELETE FROM library_bulk_review_preview_subjects WHERE rowid IN ("
+                "SELECT subject.rowid FROM library_bulk_review_preview_subjects subject "
+                "JOIN library_bulk_review_previews preview "
+                "ON preview.preview_token = subject.preview_token "
+                "WHERE preview.expires_at < ? AND NOT EXISTS ("
+                "SELECT 1 FROM library_bulk_review_snapshots snapshot "
+                "WHERE snapshot.preview_token = preview.preview_token "
+                "AND snapshot.staging_state = 'staging') "
+                "ORDER BY preview.expires_at, subject.rowid LIMIT ?)",
+                (now, limit),
+            ).rowcount
+            deleted_previews = connection.execute(
+                "DELETE FROM library_bulk_review_previews WHERE preview_token IN ("
+                "SELECT preview.preview_token FROM library_bulk_review_previews preview "
+                "WHERE preview.expires_at < ? AND NOT EXISTS ("
+                "SELECT 1 FROM library_bulk_review_preview_subjects subject "
+                "WHERE subject.preview_token = preview.preview_token) AND NOT EXISTS ("
+                "SELECT 1 FROM library_bulk_review_snapshots snapshot "
+                "WHERE snapshot.preview_token = preview.preview_token "
+                "AND snapshot.staging_state = 'staging') "
+                "ORDER BY preview.expires_at, preview.preview_token LIMIT ?)",
+                (now, limit),
+            ).rowcount
+            return {
+                "deleted_subjects": int(deleted_subjects),
+                "deleted_previews": int(deleted_previews),
+            }
+
+        return await super()._background_write(operation)
+
+    async def create_bulk_review_preview(
         self,
         *,
         review_ids: list[str],
@@ -11732,77 +11815,26 @@ class NativeLibraryStore(PersistenceBase):
         catalog_revision: int | None,
         created_at: float,
         expires_at: float,
-        candidate_key: str | None = None,
-    ) -> list[dict[str, Any]]:
-        def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-            clauses: list[str] = []
-            parameters: list[Any] = []
-            if review_ids:
-                clauses.append(f"r.id IN ({','.join('?' for _ in review_ids)})")
-                parameters.extend(review_ids)
-            else:
-                filter_clauses, filter_parameters = _review_filter_predicate(
-                    normalized_filter
-                )
-                clauses.extend(filter_clauses)
-                parameters.extend(filter_parameters)
-            if not clauses:
-                return []
-            raw_rows = connection.execute(
-                "SELECT r.*, a.root_id, COALESCE(t.applied_policy, at.applied_policy, 'automatic') "
-                "effective_policy, COALESCE(stats.track_count, 1) track_count, "
-                "identity.release_group_mbid, COALESCE(attempt.candidate_count, 0) candidate_count, "
-                "candidate.evidence_json candidate_evidence_json "
-                "FROM library_identification_reviews r "
-                "LEFT JOIN local_albums a ON a.id = r.local_album_id "
-                "LEFT JOIN local_tracks t ON t.id = r.local_track_id "
-                "LEFT JOIN local_tracks at ON at.id = (SELECT id FROM local_tracks "
-                "WHERE local_album_id = a.id ORDER BY id LIMIT 1) "
-                "LEFT JOIN (SELECT local_album_id, COUNT(*) track_count, "
-                "SUM(metadata_incomplete) metadata_incomplete_count, MIN(relative_path) relative_path "
-                "FROM local_tracks "
-                "GROUP BY local_album_id) stats ON stats.local_album_id = a.id "
-                "LEFT JOIN local_album_external_identities identity ON identity.local_album_id = a.id "
-                "LEFT JOIN library_identification_attempts attempt ON attempt.id = r.attempt_id "
-                "LEFT JOIN library_identification_evidence candidate ON "
-                "candidate.attempt_id = r.attempt_id AND candidate.candidate_key = ? "
-                "LEFT JOIN library_identification_jobs job ON job.id = (SELECT id FROM "
-                "library_identification_jobs WHERE local_album_id = a.id "
-                "AND state IN ('queued','running','paused') ORDER BY updated_at DESC LIMIT 1) "
-                f"WHERE {' AND '.join(clauses)} ORDER BY r.updated_at DESC, r.id DESC",
-                (candidate_key, *parameters),
-            ).fetchall()
-            rows: list[dict[str, Any]] = []
-            for raw in raw_rows:
-                row = dict(raw)
-                evidence_rows = connection.execute(
-                    "SELECT candidate_key, evidence_json "
-                    "FROM library_identification_evidence WHERE attempt_id = ? "
-                    "ORDER BY candidate_key",
-                    (row["attempt_id"],),
-                ).fetchall()
-                row["candidate_keys"] = [
-                    str(evidence_row["candidate_key"])
-                    for evidence_row in evidence_rows
-                    if msgspec.json.decode(
-                        bytes(evidence_row["evidence_json"]),
-                        type=CandidateEvidence,
-                    ).reason_code
-                    in AUTOMATIC_SAFE_EVIDENCE_REASONS
-                ]
-                rows.append(row)
-            connection.execute(
-                "DELETE FROM library_bulk_review_previews WHERE expires_at < ?",
-                (created_at,),
-            )
-            requires_local_metadata_confirmation = action == "retry" and any(
-                str(row["effective_policy"]) == "local_metadata" for row in rows
-            )
+    ) -> None:
+        await self.cleanup_bulk_review_preview_batch(now=created_at)
+
+        def operation(connection: sqlite3.Connection) -> None:
+            summary = {
+                "eligible_count": 0,
+                "reasons": {},
+                "album_count": 0,
+                "track_count": 0,
+                "_roots": [],
+                "_policies": [],
+                "_common_candidate_keys": None,
+                "_stale_revisions": 0,
+            }
             connection.execute(
                 "INSERT INTO library_bulk_review_previews "
                 "(preview_token, action, selection_json, normalized_filter_json, "
-                "catalog_revision, requires_local_metadata_confirmation, created_at, expires_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
+                "catalog_revision, requires_local_metadata_confirmation, state, "
+                "summary_json, subject_count, created_at, expires_at) "
+                "VALUES (?,?,?,?,?,0,'staging',?,0,?,?)",
                 (
                     preview_token,
                     action,
@@ -11811,11 +11843,187 @@ class NativeLibraryStore(PersistenceBase):
                     if normalized_filter
                     else None,
                     catalog_revision,
-                    int(requires_local_metadata_confirmation),
+                    json.dumps(summary, sort_keys=True),
                     created_at,
                     expires_at,
                 ),
             )
+
+        await super()._background_write(operation)
+
+    async def stage_bulk_review_preview_batch(
+        self,
+        preview_token: str,
+        *,
+        batch_size: int = BULK_PREVIEW_BATCH_SIZE,
+    ) -> dict[str, Any]:
+        limit = min(max(batch_size, 1), BULK_PREVIEW_BATCH_SIZE)
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            preview = connection.execute(
+                "SELECT * FROM library_bulk_review_previews WHERE preview_token = ?",
+                (preview_token,),
+            ).fetchone()
+            if preview is None:
+                raise StaleRevisionError("The bulk preview no longer exists.")
+            if str(preview["state"]) == "ready":
+                return {
+                    "complete": True,
+                    "staged_count": 0,
+                    "summary": json.loads(str(preview["summary_json"])),
+                }
+            action = str(preview["action"])
+            selection = json.loads(str(preview["selection_json"]))
+            review_ids = [str(value) for value in selection.get("review_ids", [])]
+            expected_revisions = {
+                str(key): int(value)
+                for key, value in selection.get("expected_revisions", {}).items()
+            }
+            normalized_filter = json.loads(
+                str(preview["normalized_filter_json"] or "{}")
+            )
+            candidate_key = selection.get("candidate_key")
+            clauses: list[str] = []
+            parameters: list[Any] = []
+            if review_ids:
+                clauses.append("r.id IN (SELECT value FROM json_each(?))")
+                parameters.append(json.dumps(review_ids))
+            else:
+                filter_clauses, filter_parameters = _review_filter_predicate(
+                    normalized_filter
+                )
+                clauses.extend(filter_clauses)
+                parameters.extend(filter_parameters)
+            if preview["cursor_updated_at"] is not None:
+                clauses.append("(r.updated_at < ? OR (r.updated_at = ? AND r.id < ?))")
+                parameters.extend(
+                    (
+                        float(preview["cursor_updated_at"]),
+                        float(preview["cursor_updated_at"]),
+                        str(preview["cursor_review_id"]),
+                    )
+                )
+            where = " AND ".join(clauses) if clauses else "0 = 1"
+            raw_rows = connection.execute(
+                "SELECT r.*, a.root_id, COALESCE(t.applied_policy, at.applied_policy, 'automatic') "
+                "effective_policy, identity.release_group_mbid, "
+                "COALESCE(attempt.candidate_count, 0) candidate_count "
+                "FROM library_identification_reviews r "
+                "LEFT JOIN local_albums a ON a.id = r.local_album_id "
+                "LEFT JOIN local_tracks t ON t.id = r.local_track_id "
+                "LEFT JOIN local_tracks at ON at.id = (SELECT id FROM local_tracks "
+                "WHERE local_album_id = a.id ORDER BY id LIMIT 1) "
+                "LEFT JOIN local_album_external_identities identity ON identity.local_album_id = a.id "
+                "LEFT JOIN library_identification_attempts attempt ON attempt.id = r.attempt_id "
+                "LEFT JOIN library_identification_jobs job ON job.id = (SELECT id FROM "
+                "library_identification_jobs WHERE local_album_id = a.id "
+                "AND state IN ('queued','running','paused') ORDER BY updated_at DESC LIMIT 1) "
+                f"WHERE {where} ORDER BY r.updated_at DESC, r.id DESC LIMIT ?",
+                (*parameters, limit + 1),
+            ).fetchall()
+            page = [dict(row) for row in raw_rows[:limit]]
+            album_ids = sorted(
+                {
+                    str(row["local_album_id"])
+                    for row in page
+                    if row["local_album_id"] is not None
+                }
+            )
+            track_counts: dict[str, int] = {}
+            if album_ids:
+                track_counts = {
+                    str(row["local_album_id"]): int(row["track_count"])
+                    for row in connection.execute(
+                        "SELECT local_album_id, COUNT(*) track_count FROM local_tracks "
+                        "WHERE local_album_id IN (SELECT value FROM json_each(?)) "
+                        "GROUP BY local_album_id",
+                        (json.dumps(album_ids),),
+                    ).fetchall()
+                }
+            for row in page:
+                row["track_count"] = track_counts.get(str(row["local_album_id"]), 1)
+            attempt_ids = sorted(
+                {
+                    str(row["attempt_id"])
+                    for row in page
+                    if row["attempt_id"] is not None
+                }
+            )
+            evidence_by_attempt: dict[str, list[tuple[str, CandidateEvidence]]] = {}
+            if attempt_ids:
+                evidence_rows = connection.execute(
+                    "SELECT attempt_id, candidate_key, evidence_json "
+                    "FROM library_identification_evidence "
+                    "WHERE attempt_id IN (SELECT value FROM json_each(?)) "
+                    "ORDER BY attempt_id, candidate_key",
+                    (json.dumps(attempt_ids),),
+                ).fetchall()
+                for evidence_row in evidence_rows:
+                    evidence_by_attempt.setdefault(
+                        str(evidence_row["attempt_id"]), []
+                    ).append(
+                        (
+                            str(evidence_row["candidate_key"]),
+                            msgspec.json.decode(
+                                bytes(evidence_row["evidence_json"]),
+                                type=CandidateEvidence,
+                            ),
+                        )
+                    )
+
+            summary = json.loads(str(preview["summary_json"]))
+            roots = set(summary.pop("_roots", []))
+            policies = set(summary.pop("_policies", []))
+            common_raw = summary.pop("_common_candidate_keys", None)
+            common_candidates = set(common_raw) if common_raw is not None else None
+            stale_revisions = int(summary.pop("_stale_revisions", 0))
+            reasons = {
+                str(key): int(value)
+                for key, value in summary.get("reasons", {}).items()
+            }
+            requires_local_metadata = bool(
+                preview["requires_local_metadata_confirmation"]
+            )
+            for row in page:
+                evidence = evidence_by_attempt.get(str(row["attempt_id"]), [])
+                safe_candidates = {
+                    key
+                    for key, item in evidence
+                    if item.reason_code in AUTOMATIC_SAFE_EVIDENCE_REASONS
+                }
+                common_candidates = (
+                    safe_candidates
+                    if common_candidates is None
+                    else common_candidates & safe_candidates
+                )
+                selected_evidence = next(
+                    (item for key, item in evidence if key == candidate_key), None
+                )
+                reason = _bulk_preview_ineligibility(
+                    action, row, candidate_key, selected_evidence
+                )
+                if reason is None:
+                    summary["eligible_count"] = int(summary["eligible_count"]) + 1
+                else:
+                    reasons[reason] = reasons.get(reason, 0) + 1
+                summary["album_count"] = int(summary["album_count"]) + int(
+                    row["local_album_id"] is not None
+                )
+                summary["track_count"] = int(summary["track_count"]) + int(
+                    row["track_count"]
+                )
+                roots.add(str(row["root_id"]))
+                policy = str(row["effective_policy"])
+                policies.add(policy)
+                requires_local_metadata = requires_local_metadata or (
+                    action == "retry" and policy == "local_metadata"
+                )
+                if review_ids and int(row["row_revision"]) != expected_revisions.get(
+                    str(row["id"]), -1
+                ):
+                    stale_revisions += 1
+
+            start_ordinal = int(preview["subject_count"])
             connection.executemany(
                 "INSERT INTO library_bulk_review_preview_subjects "
                 "(preview_token, ordinal, review_id, local_album_id, local_track_id, "
@@ -11824,19 +12032,106 @@ class NativeLibraryStore(PersistenceBase):
                 [
                     (
                         preview_token,
-                        ordinal,
+                        start_ordinal + ordinal,
                         row["id"],
                         row["local_album_id"],
                         row["local_track_id"],
                         row["row_revision"],
                         row["input_revision"],
                     )
-                    for ordinal, row in enumerate(rows)
+                    for ordinal, row in enumerate(page)
                 ],
             )
-            return rows
+            complete = len(raw_rows) <= limit
+            subject_count = start_ordinal + len(page)
+            summary["reasons"] = reasons
+            summary["_roots"] = sorted(roots)
+            summary["_policies"] = sorted(policies)
+            summary["_common_candidate_keys"] = (
+                sorted(common_candidates) if common_candidates is not None else None
+            )
+            summary["_stale_revisions"] = stale_revisions
+            if complete:
+                missing = (
+                    max(0, len(set(review_ids)) - subject_count) if review_ids else 0
+                )
+                references = {"playlists": 0, "history": 0}
+                if action == "exclude" and subject_count:
+                    predicate = (
+                        "EXISTS (SELECT 1 FROM library_bulk_review_preview_subjects subject "
+                        "WHERE subject.preview_token = ? AND ("
+                        "subject.local_album_id = target.local_album_id OR "
+                        "subject.local_track_id = target.local_track_id))"
+                    )
+                    references = {
+                        "playlists": int(
+                            connection.execute(
+                                "SELECT COUNT(*) FROM library_playlist_tracks target WHERE "
+                                + predicate,
+                                (preview_token,),
+                            ).fetchone()[0]
+                        ),
+                        "history": int(
+                            connection.execute(
+                                "SELECT COUNT(*) FROM library_play_history target WHERE "
+                                + predicate,
+                                (preview_token,),
+                            ).fetchone()[0]
+                        ),
+                    }
+                final_summary = {
+                    "eligible_count": int(summary["eligible_count"]),
+                    "ineligible_count": sum(reasons.values()),
+                    "stale_count": stale_revisions + missing,
+                    "reasons": reasons,
+                    "album_count": int(summary["album_count"]),
+                    "track_count": int(summary["track_count"]),
+                    "root_count": len(roots),
+                    "crosses_policy_boundaries": len(policies) > 1,
+                    "estimated_job_count": int(summary["eligible_count"])
+                    if action == "retry"
+                    else 0,
+                    "playlist_reference_count": references["playlists"],
+                    "history_reference_count": references["history"],
+                    "requires_local_metadata_confirmation": requires_local_metadata,
+                    "common_candidate_keys": sorted(common_candidates or set()),
+                }
+                connection.execute(
+                    "UPDATE library_bulk_review_previews SET state = 'ready', "
+                    "summary_json = ?, subject_count = ?, "
+                    "requires_local_metadata_confirmation = ? "
+                    "WHERE preview_token = ? AND state = 'staging'",
+                    (
+                        json.dumps(final_summary, sort_keys=True),
+                        subject_count,
+                        int(requires_local_metadata),
+                        preview_token,
+                    ),
+                )
+                return {
+                    "complete": True,
+                    "staged_count": len(page),
+                    "summary": final_summary,
+                }
 
-        return await self._write(operation)
+            cursor = page[-1]
+            connection.execute(
+                "UPDATE library_bulk_review_previews SET summary_json = ?, "
+                "subject_count = ?, requires_local_metadata_confirmation = ?, "
+                "cursor_updated_at = ?, cursor_review_id = ? "
+                "WHERE preview_token = ? AND state = 'staging'",
+                (
+                    json.dumps(summary, sort_keys=True),
+                    subject_count,
+                    int(requires_local_metadata),
+                    float(cursor["updated_at"]),
+                    str(cursor["id"]),
+                    preview_token,
+                ),
+            )
+            return {"complete": False, "staged_count": len(page), "summary": {}}
+
+        return await super()._background_write(operation)
 
     async def get_identification_review_detail(
         self, review_id: str
@@ -12355,7 +12650,7 @@ class NativeLibraryStore(PersistenceBase):
         confirm_local_metadata: bool,
         created_at: float,
     ) -> dict[str, Any]:
-        """Create the control header and immutable exact work selection together."""
+        """Create the header; work is staged separately in restart-safe batches."""
 
         def operation(connection: sqlite3.Connection) -> dict[str, Any]:
             if job.idempotency_key:
@@ -12380,6 +12675,7 @@ class NativeLibraryStore(PersistenceBase):
                 preview is None
                 or float(preview["expires_at"]) < created_at
                 or str(preview["action"]) != preview_action
+                or str(preview["state"]) != "ready"
                 or str(preview["selection_json"])
                 != json.dumps(expected_selection, sort_keys=True)
             ):
@@ -12394,11 +12690,15 @@ class NativeLibraryStore(PersistenceBase):
                 raise StaleRevisionError(
                     "Confirm the one-off lookup for Local metadata content."
                 )
-            rows = connection.execute(
-                "SELECT * FROM library_bulk_review_preview_subjects "
-                "WHERE preview_token = ? ORDER BY ordinal",
-                (preview_token,),
-            ).fetchall()
+            subject_count = int(preview["subject_count"])
+            if subject_count == 0:
+                subject_count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM library_bulk_review_preview_subjects "
+                        "WHERE preview_token = ?",
+                        (preview_token,),
+                    ).fetchone()[0]
+                )
             connection.execute(
                 "INSERT INTO library_operation_jobs "
                 "(id, kind, state, requested_by_user_id, input_catalog_revision, "
@@ -12408,7 +12708,7 @@ class NativeLibraryStore(PersistenceBase):
                     job.id,
                     job.requested_by_user_id,
                     job.input_catalog_revision,
-                    len(rows),
+                    subject_count,
                     job.idempotency_key,
                     created_at,
                     created_at,
@@ -12416,29 +12716,24 @@ class NativeLibraryStore(PersistenceBase):
             )
             connection.execute(
                 "INSERT INTO library_bulk_review_snapshots "
-                "(job_id, action, selection_json, normalized_filter_json, preview_token, created_at) "
-                "VALUES (?,?,?,?,?,?)",
+                "(job_id, action, selection_json, normalized_filter_json, preview_token, "
+                "staging_state, staging_cursor, created_at) "
+                "VALUES (?,?,?,?,?,'staging',-1,?)",
                 (
                     job.id,
                     action,
-                    json.dumps([str(row["review_id"]) for row in rows]),
+                    json.dumps(
+                        review_ids
+                        if review_ids
+                        else {"normalized_filter": normalized_filter},
+                        sort_keys=True,
+                    ),
                     json.dumps(normalized_filter, sort_keys=True)
                     if normalized_filter
                     else None,
                     preview_token,
                     created_at,
                 ),
-            )
-            connection.execute(
-                "INSERT INTO library_operation_work "
-                "(job_id, ordinal, local_album_id, local_track_id, expected_subject_revision, "
-                "expected_input_revision, action, idempotency_key, updated_at) "
-                "SELECT ?, ordinal, local_album_id, local_track_id, "
-                "expected_subject_revision, expected_input_revision, ?, "
-                "? || ':' || review_id || ':' || ?, ? "
-                "FROM library_bulk_review_preview_subjects WHERE preview_token = ? "
-                "ORDER BY ordinal",
-                (job.id, action, job.id, action, created_at, preview_token),
             )
             self._bump_stream(connection, "operation")
             created = connection.execute(
@@ -12447,6 +12742,73 @@ class NativeLibraryStore(PersistenceBase):
             return dict(created)
 
         return await self._write(operation)
+
+    async def stage_bulk_review_operation_batch(
+        self,
+        job_id: str,
+        worker_id: str,
+        *,
+        now: float,
+        batch_size: int = BULK_PREVIEW_BATCH_SIZE,
+    ) -> dict[str, Any]:
+        limit = min(max(batch_size, 1), BULK_PREVIEW_BATCH_SIZE)
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            job = connection.execute(
+                "SELECT id FROM library_operation_jobs WHERE id = ? AND state = 'running' "
+                "AND lease_owner = ?",
+                (job_id, worker_id),
+            ).fetchone()
+            if job is None:
+                raise StaleRevisionError(
+                    "The operation lease changed while its work was staged."
+                )
+            snapshot = connection.execute(
+                "SELECT * FROM library_bulk_review_snapshots WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if snapshot is None:
+                raise ResourceNotFoundError("Bulk review snapshot not found.")
+            if str(snapshot["staging_state"]) == "ready":
+                return {"complete": True, "staged_count": 0}
+            rows = connection.execute(
+                "SELECT * FROM library_bulk_review_preview_subjects "
+                "WHERE preview_token = ? AND ordinal > ? ORDER BY ordinal LIMIT ?",
+                (snapshot["preview_token"], snapshot["staging_cursor"], limit + 1),
+            ).fetchall()
+            page = rows[:limit]
+            connection.executemany(
+                "INSERT OR IGNORE INTO library_operation_work "
+                "(job_id, ordinal, local_album_id, local_track_id, expected_subject_revision, "
+                "expected_input_revision, action, idempotency_key, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                [
+                    (
+                        job_id,
+                        row["ordinal"],
+                        row["local_album_id"],
+                        row["local_track_id"],
+                        row["expected_subject_revision"],
+                        row["expected_input_revision"],
+                        snapshot["action"],
+                        f"{job_id}:{row['review_id']}:{snapshot['action']}",
+                        now,
+                    )
+                    for row in page
+                ],
+            )
+            complete = len(rows) <= limit
+            cursor = (
+                int(page[-1]["ordinal"]) if page else int(snapshot["staging_cursor"])
+            )
+            connection.execute(
+                "UPDATE library_bulk_review_snapshots SET staging_state = ?, "
+                "staging_cursor = ? WHERE job_id = ?",
+                ("ready" if complete else "staging", cursor, job_id),
+            )
+            return {"complete": complete, "staged_count": len(page)}
+
+        return await super()._background_write(operation)
 
     async def create_reidentification_operation(
         self,
@@ -13092,6 +13454,32 @@ class NativeLibraryStore(PersistenceBase):
                 parameters=(job_id, worker_id),
             )
             return False
+
+        return await self._write(operation)
+
+    async def defer_explicit_operation_for_scan(
+        self, job_id: str, worker_id: str, *, now: float
+    ) -> dict[str, Any]:
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            connection.execute(
+                "UPDATE library_operation_work SET state = 'pending', updated_at = ?, "
+                "row_revision = row_revision + 1 WHERE job_id = ? AND state = 'running'",
+                (now, job_id),
+            )
+            deferred = connection.execute(
+                "UPDATE library_operation_jobs SET state = 'queued', lease_owner = NULL, "
+                "lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?, "
+                "row_revision = row_revision + 1, event_revision = event_revision + 1 "
+                "WHERE id = ? AND kind = 'explicit_reidentification' AND state = 'running' "
+                "AND lease_owner = ? RETURNING *",
+                (now, job_id, worker_id),
+            ).fetchone()
+            if deferred is None:
+                raise StaleRevisionError(
+                    "The re-identification lease changed while it waited for the scan."
+                )
+            self._bump_stream(connection, "operation")
+            return dict(deferred)
 
         return await self._write(operation)
 
@@ -14999,30 +15387,40 @@ class NativeLibraryStore(PersistenceBase):
         def operation(
             connection: sqlite3.Connection,
         ) -> dict[tuple[str, str], tuple[int, int]]:
-            counts: dict[tuple[str, str], tuple[int, int]] = {}
-            for root_id, relative_path in scopes:
-                prefix = relative_path.strip("/")
-                if prefix in {"", "."}:
-                    row = connection.execute(
-                        "SELECT SUM(availability = 'indexed') AS indexed_count, "
-                        "SUM(availability IN ('indexed','excluded')) AS on_disk_count "
-                        "FROM local_tracks WHERE root_id = ?",
-                        (root_id,),
-                    ).fetchone()
-                else:
-                    escaped_prefix = _escape_like(prefix)
-                    row = connection.execute(
-                        "SELECT SUM(availability = 'indexed') AS indexed_count, "
-                        "SUM(availability IN ('indexed','excluded')) AS on_disk_count "
-                        "FROM local_tracks WHERE root_id = ? AND "
-                        "(relative_path = ? OR relative_path LIKE ? ESCAPE '\\')",
-                        (root_id, prefix, f"{escaped_prefix}/%"),
-                    ).fetchone()
-                counts[(root_id, relative_path)] = (
-                    int(row["indexed_count"] or 0),
-                    int(row["on_disk_count"] or 0),
+            requested = [
+                {
+                    "root_id": root_id,
+                    "relative_path": relative_path,
+                    "prefix": relative_path.strip("/"),
+                    "escaped_prefix": _escape_like(relative_path.strip("/")),
+                }
+                for root_id, relative_path in dict.fromkeys(scopes)
+            ]
+            if not requested:
+                return {}
+            rows = connection.execute(
+                "WITH requested AS (SELECT "
+                "json_extract(value, '$.root_id') root_id, "
+                "json_extract(value, '$.relative_path') relative_path, "
+                "json_extract(value, '$.prefix') prefix, "
+                "json_extract(value, '$.escaped_prefix') escaped_prefix "
+                "FROM json_each(?)) "
+                "SELECT requested.root_id, requested.relative_path, "
+                "COALESCE(SUM(track.availability = 'indexed'), 0) indexed_count, "
+                "COALESCE(SUM(track.availability IN ('indexed','excluded')), 0) on_disk_count "
+                "FROM requested LEFT JOIN local_tracks track ON track.root_id = requested.root_id "
+                "AND (requested.prefix IN ('', '.') OR track.relative_path = requested.prefix "
+                "OR track.relative_path LIKE requested.escaped_prefix || '/%' ESCAPE '\\') "
+                "GROUP BY requested.root_id, requested.relative_path",
+                (json.dumps(requested, sort_keys=True),),
+            ).fetchall()
+            return {
+                (str(row["root_id"]), str(row["relative_path"])): (
+                    int(row["indexed_count"]),
+                    int(row["on_disk_count"]),
                 )
-            return counts
+                for row in rows
+            }
 
         return await self._read(operation)
 
@@ -15030,31 +15428,56 @@ class NativeLibraryStore(PersistenceBase):
         self, scopes: list[ScanScope]
     ) -> tuple[int, int]:
         def operation(connection: sqlite3.Connection) -> tuple[int, int]:
-            tracks: dict[str, str] = {}
-            for scope in scopes:
-                prefix = scope.relative_path.strip("/")
-                if prefix in {"", "."}:
-                    rows = connection.execute(
-                        "SELECT id, availability FROM local_tracks WHERE root_id = ?",
-                        (scope.root_id,),
-                    ).fetchall()
-                else:
-                    escaped_prefix = _escape_like(prefix)
-                    rows = connection.execute(
-                        "SELECT id, availability FROM local_tracks WHERE root_id = ? AND "
-                        "(relative_path = ? OR relative_path LIKE ? ESCAPE '\\')",
-                        (scope.root_id, prefix, f"{escaped_prefix}/%"),
-                    ).fetchall()
-                tracks.update(
-                    {str(row["id"]): str(row["availability"]) for row in rows}
-                )
-            return (
-                sum(availability == "indexed" for availability in tracks.values()),
-                sum(
-                    availability in {"indexed", "excluded"}
-                    for availability in tracks.values()
-                ),
+            normalized = sorted(
+                {
+                    (
+                        scope.root_id,
+                        scope.relative_path.strip("/")
+                        if scope.relative_path.strip("/") not in {"", "."}
+                        else ".",
+                    )
+                    for scope in scopes
+                },
+                key=lambda item: (item[0], len(item[1]), item[1]),
             )
+            collapsed: list[tuple[str, str]] = []
+            for root_id, prefix in normalized:
+                if any(
+                    parent_root == root_id
+                    and (
+                        parent_prefix == "."
+                        or prefix == parent_prefix
+                        or prefix.startswith(f"{parent_prefix}/")
+                    )
+                    for parent_root, parent_prefix in collapsed
+                ):
+                    continue
+                collapsed.append((root_id, prefix))
+            requested = [
+                {
+                    "root_id": root_id,
+                    "prefix": prefix,
+                    "escaped_prefix": _escape_like(prefix),
+                }
+                for root_id, prefix in collapsed
+            ]
+            if not requested:
+                return (0, 0)
+            row = connection.execute(
+                "WITH requested AS (SELECT "
+                "json_extract(value, '$.root_id') root_id, "
+                "json_extract(value, '$.prefix') prefix, "
+                "json_extract(value, '$.escaped_prefix') escaped_prefix "
+                "FROM json_each(?)) "
+                "SELECT COALESCE(SUM(track.availability = 'indexed'), 0) indexed_count, "
+                "COALESCE(SUM(track.availability IN ('indexed','excluded')), 0) on_disk_count "
+                "FROM local_tracks track WHERE EXISTS (SELECT 1 FROM requested "
+                "WHERE requested.root_id = track.root_id AND (requested.prefix IN ('', '.') "
+                "OR track.relative_path = requested.prefix "
+                "OR track.relative_path LIKE requested.escaped_prefix || '/%' ESCAPE '\\'))",
+                (json.dumps(requested, sort_keys=True),),
+            ).fetchone()
+            return (int(row["indexed_count"]), int(row["on_disk_count"]))
 
         return await self._read(operation)
 

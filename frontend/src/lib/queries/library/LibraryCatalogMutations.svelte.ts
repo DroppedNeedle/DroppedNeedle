@@ -3,6 +3,7 @@ import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { toastStore } from '$lib/stores/toast';
 import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
+import { createUuid } from '$lib/utils/uuid';
 import type { MembershipPreviewResponse, OperationResponse } from './LibraryOperationsTypes';
 
 export interface MembershipPreviewInput {
@@ -40,7 +41,7 @@ export function reidentifyLibraryAlbum() {
 			api.global.post<OperationResponse>(API.library.reidentifyAlbum(input.albumId), {
 				expected_album_revision: input.expectedAlbumRevision,
 				expected_input_revision: input.expectedInputRevision,
-				idempotency_key: crypto.randomUUID(),
+				idempotency_key: createUuid(),
 				one_off_local_metadata: input.oneOffLocalMetadata
 			}),
 		onSuccess: async () => {
@@ -105,7 +106,7 @@ export function applyAlbumMembership(kind: 'split' | 'merge' | 'move' | 'reset')
 			return api.global.post<CatalogCorrectionResponse>(url, {
 				...input.request,
 				preview_token: input.previewToken,
-				idempotency_key: crypto.randomUUID(),
+				idempotency_key: createUuid(),
 				identity_choice: input.identityChoice
 			});
 		},
@@ -135,7 +136,7 @@ export function applyArtistMerge() {
 		) =>
 			api.global.post<CatalogCorrectionResponse>(API.library.mergeArtists(), {
 				...input,
-				idempotency_key: crypto.randomUUID()
+				idempotency_key: createUuid()
 			}),
 		onSuccess: async () => {
 			await invalidateLibraryCatalog();

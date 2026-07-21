@@ -139,6 +139,10 @@ beforeEach(() => {
 		isError: false
 	};
 	h.create.mockResolvedValue(repair({ state: 'queued', repair_summary: null }));
+	h.apply.mockResolvedValue(repair({ state: 'succeeded' }));
+	h.pause.mockResolvedValue(repair({ state: 'paused' }));
+	h.resume.mockResolvedValue(repair({ state: 'running' }));
+	h.stop.mockResolvedValue(repair({ state: 'stopped' }));
 });
 
 describe('LibraryRepairPanel', () => {

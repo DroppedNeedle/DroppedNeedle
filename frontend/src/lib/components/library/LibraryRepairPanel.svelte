@@ -96,13 +96,24 @@
 	}
 
 	async function startCheck(): Promise<void> {
-		await createRepair.mutateAsync(estimateRootIds);
+		try {
+			await createRepair.mutateAsync(estimateRootIds);
+		} catch {
+			return;
+		}
 		startDialog.close();
 	}
 
 	async function applySelected(): Promise<void> {
 		if (!selected) return;
-		await applyRepair.mutateAsync({ jobId: selected.id, expectedRevision: selected.row_revision });
+		try {
+			await applyRepair.mutateAsync({
+				jobId: selected.id,
+				expectedRevision: selected.row_revision
+			});
+		} catch {
+			return;
+		}
 		applyDialog.close();
 	}
 
@@ -162,25 +173,31 @@
 							>{:else if repair.state === 'running'}<button
 								class="btn btn-ghost btn-xs"
 								onclick={() =>
-									void pause.mutateAsync({
-										jobId: repair.id,
-										expectedRevision: repair.row_revision
-									})}><CirclePause class="h-3.5 w-3.5" /> Pause</button
+									void pause
+										.mutateAsync({
+											jobId: repair.id,
+											expectedRevision: repair.row_revision
+										})
+										.catch(() => undefined)}><CirclePause class="h-3.5 w-3.5" /> Pause</button
 							>{:else if repair.state === 'paused'}<button
 								class="btn btn-ghost btn-xs"
 								onclick={() =>
-									void resume.mutateAsync({
-										jobId: repair.id,
-										expectedRevision: repair.row_revision
-									})}><CirclePlay class="h-3.5 w-3.5" /> Resume</button
+									void resume
+										.mutateAsync({
+											jobId: repair.id,
+											expectedRevision: repair.row_revision
+										})
+										.catch(() => undefined)}><CirclePlay class="h-3.5 w-3.5" /> Resume</button
 							>{/if}
 						{#if repair.control_request === 'none' && ['queued', 'running', 'paused'].includes(repair.state)}<button
 								class="btn btn-ghost btn-xs text-error"
 								onclick={() =>
-									void stop.mutateAsync({
-										jobId: repair.id,
-										expectedRevision: repair.row_revision
-									})}><OctagonX class="h-3.5 w-3.5" /> Stop</button
+									void stop
+										.mutateAsync({
+											jobId: repair.id,
+											expectedRevision: repair.row_revision
+										})
+										.catch(() => undefined)}><OctagonX class="h-3.5 w-3.5" /> Stop</button
 							>{/if}
 						{#if repair.repair_summary}<button
 								class="btn btn-outline btn-xs"

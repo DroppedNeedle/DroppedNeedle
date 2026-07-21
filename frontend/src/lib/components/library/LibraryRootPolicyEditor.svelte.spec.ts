@@ -41,6 +41,15 @@ vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({
 import LibraryRootPolicyEditor from './LibraryRootPolicyEditor.svelte';
 
 describe('LibraryRootPolicyEditor', () => {
+	function disableRandomUuid(): () => void {
+		const descriptor = Object.getOwnPropertyDescriptor(crypto, 'randomUUID');
+		Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: undefined });
+		return () => {
+			if (descriptor) Object.defineProperty(crypto, 'randomUUID', descriptor);
+			else Reflect.deleteProperty(crypto, 'randomUUID');
+		};
+	}
+
 	it('renders backend effective rows with inheritance, availability, and counts', async () => {
 		render(LibraryRootPolicyEditor, {
 			props: {
@@ -121,5 +130,53 @@ describe('LibraryRootPolicyEditor', () => {
 				rules: []
 			}
 		]);
+	});
+
+	it('adds an override with a v4 UUID when randomUUID is unavailable on a LAN origin', async () => {
+		const restoreRandomUuid = disableRandomUuid();
+		const onchange = vi.fn();
+		try {
+			render(LibraryRootPolicyEditor, {
+				props: {
+					roots: [
+						{
+							id: 'root-1',
+							path: '/music',
+							label: 'Main library',
+							policy: 'automatic',
+							rules: []
+						}
+					],
+					onchange
+				}
+			} as unknown as Parameters<typeof render>[1]);
+
+			await page.getByRole('button', { name: 'Rules' }).click();
+			await page.getByRole('button', { name: 'Add override' }).click();
+			const dialog = page.getByRole('dialog', { name: 'Add directory override' });
+			await dialog.getByLabelText('Relative path').fill('Bootlegs/Live');
+			await dialog.getByRole('button', { name: 'Add override', exact: true }).click();
+
+			const update = onchange.mock.calls[0]?.[0];
+			expect(update).toEqual([
+				expect.objectContaining({
+					id: 'root-1',
+					rules: [
+						expect.objectContaining({
+							relative_path: 'Bootlegs/Live',
+							policy: 'automatic'
+						})
+					]
+				})
+			]);
+			expect(update[0].rules[0].id).toMatch(
+				/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+			);
+			await expect
+				.element(page.getByRole('heading', { name: 'Add directory override' }))
+				.not.toBeInTheDocument();
+		} finally {
+			restoreRandomUuid();
+		}
 	});
 });

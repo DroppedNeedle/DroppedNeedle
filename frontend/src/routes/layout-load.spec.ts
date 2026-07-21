@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
 	apiGet: vi.fn(),
 	user: null as TestUser | null,
 	initialized: false,
+	setupRequired: false,
 	clear: vi.fn(),
 	markInitialized: vi.fn()
 }));
@@ -57,6 +58,9 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 		get initialized() {
 			return state.initialized;
 		},
+		get setupRequired() {
+			return state.setupRequired;
+		},
 		get isAuthenticated() {
 			return state.user !== null;
 		},
@@ -70,6 +74,9 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 		markInitialized() {
 			state.markInitialized();
 			state.initialized = true;
+		},
+		setSetupRequired(required: boolean) {
+			state.setupRequired = required;
 		}
 	}
 }));
@@ -88,8 +95,8 @@ const user: TestUser = {
 	providers: ['local']
 };
 
-function loadPage() {
-	return load({ url: new URL('http://localhost/') } as Parameters<typeof load>[0]);
+function loadPage(path = '/') {
+	return load({ url: new URL(path, 'http://localhost') } as Parameters<typeof load>[0]);
 }
 
 describe('+layout load session bootstrap', () => {
@@ -99,6 +106,7 @@ describe('+layout load session bootstrap', () => {
 		state.markInitialized.mockReset();
 		state.user = null;
 		state.initialized = false;
+		state.setupRequired = false;
 	});
 
 	it('keeps the session intact and reports a busy server when /auth/me times out', async () => {
@@ -132,15 +140,41 @@ describe('+layout load session bootstrap', () => {
 	it('bounds the optional preferences request without discarding the session', async () => {
 		state.user = user;
 		state.initialized = true;
-		state.apiGet
-			.mockResolvedValueOnce({ required: false })
-			.mockRejectedValueOnce(new DOMException('Timed out', 'TimeoutError'));
+		state.apiGet.mockRejectedValueOnce(new DOMException('Timed out', 'TimeoutError'));
 
-		await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz' });
-		expect(state.apiGet).toHaveBeenNthCalledWith(2, '/scrobble-preferences', {
+		await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
+		expect(state.apiGet).toHaveBeenNthCalledWith(1, '/scrobble-preferences', {
 			timeoutMs: 10_000
 		});
 		expect(state.clear).not.toHaveBeenCalled();
 		expect(state.user).toBe(user);
+	});
+
+	it('runs setup and session hydration only once across in-app navigation', async () => {
+		state.apiGet
+			.mockResolvedValueOnce({ required: false })
+			.mockResolvedValueOnce(user)
+			.mockResolvedValue({ primary_music_source: 'invalid' });
+
+		await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
+		await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
+
+		expect(state.apiGet.mock.calls.filter(([url]) => url === '/setup-status')).toHaveLength(1);
+		expect(state.apiGet.mock.calls.filter(([url]) => url === '/me')).toHaveLength(1);
+	});
+
+	it('retains setup state across navigation without repeating bootstrap requests', async () => {
+		state.apiGet
+			.mockResolvedValueOnce({ required: true })
+			.mockRejectedValueOnce(new ApiError(401, 'Unauthorized'));
+
+		await expect(loadPage('/login')).resolves.toEqual({
+			primarySource: 'listenbrainz',
+			user: null
+		});
+		await expect(loadPage()).rejects.toMatchObject({ status: 302, location: '/setup' });
+
+		expect(state.apiGet.mock.calls.filter(([url]) => url === '/setup-status')).toHaveLength(1);
+		expect(state.apiGet.mock.calls.filter(([url]) => url === '/me')).toHaveLength(1);
 	});
 });

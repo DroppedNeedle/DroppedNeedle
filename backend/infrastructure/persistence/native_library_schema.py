@@ -587,6 +587,8 @@ CREATE TABLE IF NOT EXISTS library_bulk_review_snapshots (
     selection_json TEXT NOT NULL,
     normalized_filter_json TEXT,
     preview_token TEXT NOT NULL,
+    staging_state TEXT NOT NULL DEFAULT 'ready' CHECK(staging_state IN ('staging','ready')),
+    staging_cursor INTEGER NOT NULL DEFAULT -1 CHECK(staging_cursor >= -1),
     created_at REAL NOT NULL
 );
 
@@ -597,6 +599,11 @@ CREATE TABLE IF NOT EXISTS library_bulk_review_previews (
     normalized_filter_json TEXT,
     catalog_revision INTEGER,
     requires_local_metadata_confirmation INTEGER NOT NULL DEFAULT 0 CHECK(requires_local_metadata_confirmation IN (0,1)),
+    state TEXT NOT NULL DEFAULT 'ready' CHECK(state IN ('staging','ready')),
+    summary_json TEXT NOT NULL DEFAULT '{}',
+    cursor_updated_at REAL,
+    cursor_review_id TEXT,
+    subject_count INTEGER NOT NULL DEFAULT 0 CHECK(subject_count >= 0),
     created_at REAL NOT NULL,
     expires_at REAL NOT NULL
 );

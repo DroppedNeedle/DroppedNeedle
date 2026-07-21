@@ -493,10 +493,9 @@ class LibraryReviewService:
             request.action, selection, int(timestamp), uuid.uuid4().hex
         )
         try:
-            selected = await self._store.preview_review_selection(
+            await self._store.create_bulk_review_preview(
                 review_ids=request.selection.review_ids,
                 normalized_filter=normalized_filter,
-                candidate_key=request.candidate_key,
                 preview_token=token,
                 action=request.action,
                 selection=selection,
@@ -504,70 +503,17 @@ class LibraryReviewService:
                 created_at=timestamp,
                 expires_at=timestamp + PREVIEW_TTL_SECONDS,
             )
+            while True:
+                staged = await self._store.stage_bulk_review_preview_batch(token)
+                if staged["complete"]:
+                    summary = staged["summary"]
+                    break
         except ValueError as error:
             raise ValidationError(str(error)) from error
-        indexed = {str(row["id"]): row for row in selected}
-        stale = (
-            sum(
-                int(row["row_revision"])
-                != request.selection.expected_revisions.get(str(row["id"]), -1)
-                for row in selected
-            )
-            if request.selection.review_ids
-            else 0
-        )
-        missing = len(set(request.selection.review_ids) - set(indexed))
-        stale += missing
-        reasons: dict[str, int] = {}
-        eligible = 0
-        policies: set[str] = set()
-        roots: set[str] = set()
-        for row in selected:
-            reason = self._bulk_ineligibility(
-                request.action, row, request.candidate_key
-            )
-            if reason:
-                reasons[reason] = reasons.get(reason, 0) + 1
-            else:
-                eligible += 1
-            policies.add(str(row["effective_policy"]))
-            roots.add(str(row["root_id"]))
-        candidate_sets = [set(row.get("candidate_keys", [])) for row in selected]
-        common_candidate_keys = (
-            sorted(set.intersection(*candidate_sets)) if candidate_sets else []
-        )
-        references = {"playlists": 0, "history": 0}
-        if request.action == "exclude":
-            references = await self._store.count_target_references(
-                album_ids=[
-                    str(row["local_album_id"])
-                    for row in selected
-                    if row["local_album_id"] is not None
-                ],
-                track_ids=[
-                    str(row["local_track_id"])
-                    for row in selected
-                    if row["local_track_id"] is not None
-                ],
-            )
         return BulkReviewPreviewResponse(
             preview_token=token,
             action=request.action,
-            eligible_count=eligible,
-            ineligible_count=sum(reasons.values()),
-            stale_count=stale,
-            reasons=reasons,
-            album_count=sum(row["local_album_id"] is not None for row in selected),
-            track_count=sum(int(row["track_count"]) for row in selected),
-            root_count=len(roots),
-            crosses_policy_boundaries=len(policies) > 1,
-            estimated_job_count=eligible if request.action == "retry" else 0,
-            playlist_reference_count=references["playlists"],
-            history_reference_count=references["history"],
-            requires_local_metadata_confirmation=(
-                request.action == "retry" and "local_metadata" in policies
-            ),
-            common_candidate_keys=common_candidate_keys,
+            **summary,
         )
 
     async def apply_bulk(
@@ -677,29 +623,3 @@ class LibraryReviewService:
                 else "manual_candidate_override"
             )
         return actions
-
-    @staticmethod
-    def _bulk_ineligibility(
-        action: str, row: dict[str, Any], candidate_key: str | None
-    ) -> str | None:
-        if (
-            str(row["state"]) == "excluded"
-            or (action == "retry" and str(row["effective_policy"]) == "excluded")
-        ) and action != "exclude":
-            return "EXCLUDED"
-        if action == "keep_tagged" and row.get("release_group_mbid"):
-            return "IDENTITY_REQUIRES_DETACH"
-        if action == "accept_candidate" and (
-            not candidate_key or row.get("candidate_evidence_json") is None
-        ):
-            return "CANDIDATE_NOT_AVAILABLE"
-        if action == "accept_candidate":
-            evidence = msgspec.json.decode(
-                bytes(row["candidate_evidence_json"]), type=CandidateEvidence
-            )
-            if evidence.reason_code not in AUTOMATIC_SAFE_EVIDENCE_REASONS:
-                return "CANDIDATE_NOT_AUTOMATIC_SAFE"
-            current_identity = row.get("release_group_mbid")
-            if current_identity and current_identity != evidence.release_group_mbid:
-                return "IDENTITY_CONFLICT"
-        return None

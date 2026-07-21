@@ -121,11 +121,15 @@
 		kind: 'incremental' | 'rescan_files' | 'policy_reconcile',
 		scopeIds: string[] = []
 	): Promise<void> {
-		await requestRun.mutateAsync({
-			kind,
-			scope_ids: scopeIds,
-			expected_policy_revision: policyRevision
-		});
+		try {
+			await requestRun.mutateAsync({
+				kind,
+				scope_ids: scopeIds,
+				expected_policy_revision: policyRevision
+			});
+		} catch {
+			return;
+		}
 		workDialogOpen = false;
 	}
 
@@ -227,10 +231,12 @@
 							class="btn btn-outline btn-sm"
 							disabled={resumeRun.isPending}
 							onclick={() =>
-								void resumeRun.mutateAsync({
-									runId: activeRun.id,
-									expectedRevision: activeRun.row_revision
-								})}
+								void resumeRun
+									.mutateAsync({
+										runId: activeRun.id,
+										expectedRevision: activeRun.row_revision
+									})
+									.catch(() => undefined)}
 							aria-label="Resume local scan"><CirclePlay class="h-4 w-4" /> Resume</button
 						>
 					{:else if activeRun && !['pausing', 'stopping'].includes(activeRun.state)}
@@ -238,10 +244,12 @@
 							class="btn btn-outline btn-sm"
 							disabled={pauseRun.isPending}
 							onclick={() =>
-								void pauseRun.mutateAsync({
-									runId: activeRun.id,
-									expectedRevision: activeRun.row_revision
-								})}
+								void pauseRun
+									.mutateAsync({
+										runId: activeRun.id,
+										expectedRevision: activeRun.row_revision
+									})
+									.catch(() => undefined)}
 							aria-label="Pause local scan"><CirclePause class="h-4 w-4" /> Pause</button
 						>
 					{/if}
@@ -365,13 +373,17 @@
 							class="btn btn-outline btn-sm"
 							disabled={resumeIdentification.isPending}
 							onclick={() =>
-								void resumeIdentification.mutateAsync(identification.control_revision ?? 0)}
+								void resumeIdentification
+									.mutateAsync(identification.control_revision ?? 0)
+									.catch(() => undefined)}
 							aria-label="Resume identification"><CirclePlay class="h-4 w-4" /> Resume</button
 						>{:else if identification?.waiting_count && identification.control_revision}<button
 							class="btn btn-outline btn-sm"
 							disabled={pauseIdentification.isPending || identification.state === 'pausing'}
 							onclick={() =>
-								void pauseIdentification.mutateAsync(identification.control_revision ?? 0)}
+								void pauseIdentification
+									.mutateAsync(identification.control_revision ?? 0)
+									.catch(() => undefined)}
 							aria-label="Pause identification"
 							><CirclePause class="h-4 w-4" />
 							{identification.state === 'pausing' ? 'Pausing...' : 'Pause'}</button
@@ -537,11 +549,15 @@
 				class="btn btn-error"
 				disabled={stopRun.isPending || !activeRun}
 				onclick={async () => {
-					if (activeRun)
-						await stopRun.mutateAsync({
-							runId: activeRun.id,
-							expectedRevision: activeRun.row_revision
-						});
+					try {
+						if (activeRun)
+							await stopRun.mutateAsync({
+								runId: activeRun.id,
+								expectedRevision: activeRun.row_revision
+							});
+					} catch {
+						return;
+					}
 					stopDialog.close();
 				}}
 				>{#if stopRun.isPending}<span class="loading loading-spinner loading-sm"></span>{/if} Stop scan</button

@@ -11,6 +11,7 @@
 		ReviewActionRequest,
 		ReviewDetailResponse
 	} from '$lib/queries/library/LibraryOperationsTypes';
+	import { createUuid } from '$lib/utils/uuid';
 
 	type ReviewCandidate = ReviewDetailResponse['candidates'][number];
 
@@ -59,7 +60,7 @@
 			expected_catalog_revision: detail.catalog_revision,
 			expected_identity_revision: detail.identity_revision,
 			expected_evidence_revision: detail.evidence_revision || null,
-			idempotency_key: crypto.randomUUID(),
+			idempotency_key: createUuid(),
 			confirmation: confirm
 		};
 	}
@@ -77,7 +78,7 @@
 				expected_catalog_revision: detail.catalog_revision,
 				expected_identity_revision: detail.identity_revision,
 				expected_evidence_revision: candidate.evidence_revision,
-				idempotency_key: crypto.randomUUID(),
+				idempotency_key: createUuid(),
 				confirmation: true,
 				candidate_key: candidate.candidate_key,
 				manual_override: manualOverride
@@ -97,7 +98,11 @@
 
 	async function confirmOverride(): Promise<void> {
 		if (!overrideCandidate) return;
-		await acceptCandidate(overrideCandidate, true);
+		try {
+			await acceptCandidate(overrideCandidate, true);
+		} catch {
+			return;
+		}
 		overrideDialog.close();
 		overrideCandidate = null;
 	}
@@ -115,9 +120,13 @@
 	async function confirmAction(): Promise<void> {
 		const request = body(true);
 		if (!request || !reviewId || !confirmation) return;
-		if (confirmation === 'detach') await detach.mutateAsync({ reviewId, body: request });
-		if (confirmation === 'exclude') await exclude.mutateAsync({ reviewId, body: request });
-		if (confirmation === 'retry') await retry.mutateAsync({ reviewId, body: request });
+		try {
+			if (confirmation === 'detach') await detach.mutateAsync({ reviewId, body: request });
+			if (confirmation === 'exclude') await exclude.mutateAsync({ reviewId, body: request });
+			if (confirmation === 'retry') await retry.mutateAsync({ reviewId, body: request });
+		} catch {
+			return;
+		}
 		confirmDialog.close();
 	}
 
@@ -261,7 +270,7 @@
 										disabled={accept.isPending}
 										onclick={(event) =>
 											candidate.automatic_safe
-												? void acceptCandidate(candidate, false)
+												? void acceptCandidate(candidate, false).catch(() => undefined)
 												: openOverrideConfirmation(candidate, event)}
 										>{candidate.automatic_safe ? 'Use this release' : 'Use anyway...'}</button
 									>
@@ -325,7 +334,10 @@
 							disabled={keep.isPending}
 							onclick={() => {
 								const request = body();
-								if (request) void keep.mutateAsync({ reviewId: detail.review.id, body: request });
+								if (request)
+									void keep
+										.mutateAsync({ reviewId: detail.review.id, body: request })
+										.catch(() => undefined);
 							}}><Check class="h-4 w-4" /> Keep as tagged</button
 						>{/if}
 					{#if detail.available_actions.includes('detach_keep_tagged')}<button
@@ -346,7 +358,9 @@
 							onclick={() => {
 								const request = body();
 								if (request)
-									void restore.mutateAsync({ reviewId: detail.review.id, body: request });
+									void restore
+										.mutateAsync({ reviewId: detail.review.id, body: request })
+										.catch(() => undefined);
 							}}>Restore availability</button
 						>{/if}
 					<button class="btn btn-ghost" onclick={() => dialog.close()}>Leave for later</button>

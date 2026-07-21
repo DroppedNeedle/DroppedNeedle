@@ -9,6 +9,7 @@ import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyF
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import type { OperationResponse } from './LibraryOperationsTypes';
+import { createUuid } from '$lib/utils/uuid';
 
 async function invalidateRepairs(catalogChanged = false): Promise<void> {
 	if (catalogChanged) searchStore.clear();
@@ -31,7 +32,7 @@ export function createLibraryRepair() {
 	return createMutation(() => ({
 		mutationFn: (rootIds: string[]) =>
 			api.global.post<OperationResponse>(API.library.identityRepairs(), {
-				idempotency_key: crypto.randomUUID(),
+				idempotency_key: createUuid(),
 				root_ids: rootIds,
 				target_matcher_version: 'feedback-fixes-v1'
 			}),

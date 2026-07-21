@@ -34,6 +34,7 @@
 				password
 			});
 			authStore.setUser(toAuthUser(data.user));
+			authStore.setSetupRequired(false);
 			goto('/');
 		} catch (e) {
 			error =

@@ -9,9 +9,11 @@
 	} from '$lib/queries/library/LibraryReviewMutations.svelte';
 	import type {
 		BulkReviewAction,
+		OperationResponse,
 		ReviewListItem
 	} from '$lib/queries/library/LibraryOperationsTypes';
 	import type { LibraryReviewFilters } from '$lib/queries/library/LibraryReviewQueries.svelte';
+	import { createUuid } from '$lib/utils/uuid';
 
 	interface Props {
 		selected: ReviewListItem[];
@@ -103,14 +105,19 @@
 
 	async function applyPreview(): Promise<void> {
 		if (!preview.data) return;
-		const job = await apply.mutateAsync({
-			preview_token: preview.data.preview_token,
-			idempotency_key: crypto.randomUUID(),
-			action,
-			selection,
-			candidate_key: candidateKey,
-			confirm_local_metadata: preview.data.requires_local_metadata_confirmation
-		});
+		let job: OperationResponse;
+		try {
+			job = await apply.mutateAsync({
+				preview_token: preview.data.preview_token,
+				idempotency_key: createUuid(),
+				action,
+				selection,
+				candidate_key: candidateKey,
+				confirm_local_metadata: preview.data.requires_local_metadata_confirmation
+			});
+		} catch {
+			return;
+		}
 		activeJobId = job.id;
 		try {
 			sessionStorage.setItem(storageKey, job.id);
@@ -165,17 +172,23 @@
 			<strong class="mr-auto">Bulk review · {job.state}</strong>{#if job.state === 'running'}<button
 					class="btn btn-ghost btn-xs"
 					onclick={() =>
-						void pause.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })}
+						void pause
+							.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })
+							.catch(() => undefined)}
 					aria-label="Pause bulk review"><CirclePause class="h-3.5 w-3.5" /> Pause</button
 				>{:else if job.state === 'paused'}<button
 					class="btn btn-ghost btn-xs"
 					onclick={() =>
-						void resume.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })}
+						void resume
+							.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })
+							.catch(() => undefined)}
 					aria-label="Resume bulk review"><CirclePlay class="h-3.5 w-3.5" /> Resume</button
 				>{/if}{#if ['queued', 'running', 'paused'].includes(job.state)}<button
 					class="btn btn-ghost btn-xs text-error"
 					onclick={() =>
-						void stop.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })}
+						void stop
+							.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })
+							.catch(() => undefined)}
 					aria-label="Stop bulk review"><OctagonX class="h-3.5 w-3.5" /> Stop</button
 				>{/if}{#if operationFinished}<button
 					class="btn btn-ghost btn-xs"

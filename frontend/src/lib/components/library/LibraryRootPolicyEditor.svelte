@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { ChevronDown, FolderPlus, Plus, Trash2 } from 'lucide-svelte';
 	import { getLibraryPolicyTreeQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
+	import { createUuid } from '$lib/utils/uuid';
 	import type {
 		LibraryIdentificationPolicy,
 		LibraryPolicyTreeNode,
@@ -48,7 +49,7 @@
 		onchange([
 			...roots,
 			{
-				id: crypto.randomUUID(),
+				id: createUuid(),
 				path: newRootPath.trim(),
 				label: newRootLabel.trim(),
 				policy: newRootPolicy,
@@ -67,7 +68,7 @@
 			...root,
 			rules: [
 				...root.rules,
-				{ id: crypto.randomUUID(), relative_path: newRulePath.trim(), policy: newRulePolicy }
+				{ id: createUuid(), relative_path: newRulePath.trim(), policy: newRulePolicy }
 			]
 		}));
 		newRulePath = '';

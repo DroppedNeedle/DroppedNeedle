@@ -161,6 +161,17 @@ class LibraryOperationService:
             )
             if controlled is not None and controlled["state"] != "running":
                 return self._response(controlled)
+            staged = await self._store.stage_bulk_review_operation_batch(
+                str(job["id"]), worker_id, now=timestamp
+            )
+            if staged["complete"]:
+                break
+        while True:
+            controlled = await self._store.checkpoint_operation_control(
+                str(job["id"]), worker_id, now=timestamp
+            )
+            if controlled is not None and controlled["state"] != "running":
+                return self._response(controlled)
             work = await self._store.claim_operation_work(
                 str(job["id"]), worker_id, now=timestamp
             )

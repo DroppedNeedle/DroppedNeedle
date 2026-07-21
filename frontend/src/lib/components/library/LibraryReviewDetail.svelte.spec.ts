@@ -207,6 +207,15 @@ beforeEach(() => {
 });
 
 describe('LibraryReviewDetail', () => {
+	function disableRandomUuid(): () => void {
+		const descriptor = Object.getOwnPropertyDescriptor(crypto, 'randomUUID');
+		Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: undefined });
+		return () => {
+			if (descriptor) Object.defineProperty(crypto, 'randomUUID', descriptor);
+			else Reflect.deleteProperty(crypto, 'randomUUID');
+		};
+	}
+
 	it('shows stable local links, compilation credit, evidence, and safe/manual candidate actions', async () => {
 		render(LibraryReviewDetail, {
 			props: { reviewId: 'review-1', onclose: vi.fn() }
@@ -313,17 +322,35 @@ describe('LibraryReviewDetail', () => {
 		);
 	});
 
-	it('starts retry as a durable operation without refresh timers', async () => {
-		render(LibraryReviewDetail, {
-			props: { reviewId: 'review-1', onclose: vi.fn() }
-		} as unknown as Parameters<typeof render>[1]);
-		await page.getByRole('button', { name: 'Retry identification' }).first().click();
-		await page.getByRole('button', { name: 'Retry identification' }).last().click();
-		expect(h.retry).toHaveBeenCalledWith(
-			expect.objectContaining({
-				reviewId: 'review-1',
-				body: expect.objectContaining({ confirmation: true })
-			})
-		);
+	it('starts retry with a fallback v4 UUID and catches a network rejection', async () => {
+		const restoreRandomUuid = disableRandomUuid();
+		const unhandled: PromiseRejectionEvent[] = [];
+		const recordUnhandled = (event: PromiseRejectionEvent) => unhandled.push(event);
+		window.addEventListener('unhandledrejection', recordUnhandled);
+		try {
+			h.retry.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+			render(LibraryReviewDetail, {
+				props: { reviewId: 'review-1', onclose: vi.fn() }
+			} as unknown as Parameters<typeof render>[1]);
+			await page.getByRole('button', { name: 'Retry identification' }).first().click();
+			const confirmation = page.getByRole('dialog', { name: 'Retry identification?' });
+			await confirmation.getByRole('button', { name: 'Retry identification' }).click();
+			await expect.element(confirmation).toBeVisible();
+			const request = h.retry.mock.calls[0]?.[0];
+			expect(request).toEqual(
+				expect.objectContaining({
+					reviewId: 'review-1',
+					body: expect.objectContaining({ confirmation: true })
+				})
+			);
+			expect(request.body.idempotency_key).toMatch(
+				/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(unhandled).toEqual([]);
+		} finally {
+			window.removeEventListener('unhandledrejection', recordUnhandled);
+			restoreRandomUuid();
+		}
 	});
 });

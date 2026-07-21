@@ -54,6 +54,7 @@ from models.local_catalog import (
 )
 from services.native.album_candidate_service import AlbumCandidateService
 from services.native.album_evidence_engine import AlbumEvidenceEngine
+from services.native.background_workload_gate import BackgroundWorkloadGate
 from services.native.catalog_correction_service import CatalogCorrectionService
 from services.native.conditional_fingerprint_service import (
     ConditionalFingerprintService,
@@ -98,6 +99,15 @@ class _IdentificationProvider:
                 )
             ],
         )
+
+
+class _CountingIdentificationProvider(_IdentificationProvider):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def search_album_candidate_ids(self, query, limit, priority):
+        self.calls += 1
+        return await super().search_album_candidate_ids(query, limit, priority)
 
 
 class _RepairProvider(_IdentificationProvider):
@@ -502,6 +512,18 @@ async def test_review_supports_every_signed_filter_sort_and_typed_invalid_values
     for review_filter in filters:
         result = await service.list_reviews(limit=10, **review_filter)
         assert [item.id for item in result.items] == ["review-2"]
+    preview = await service.preview_bulk(
+        BulkReviewPreviewRequest(
+            action="exclude",
+            selection=BulkReviewSelection(
+                normalized_filter={"job_state": "queued"},
+                catalog_revision=await store.get_catalog_revision(),
+            ),
+        ),
+        now=30,
+    )
+    assert preview.eligible_count == 1
+    assert preview.album_count == 1
     for sort in (
         "newest",
         "oldest",
@@ -984,6 +1006,23 @@ async def test_filter_bulk_apply_uses_preview_snapshot_across_concurrent_changes
         now=11,
     )
     with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_bulk_review_previews SET expires_at = 0 "
+            "WHERE preview_token = ?",
+            (preview.preview_token,),
+        )
+    protected_cleanup = await store.cleanup_bulk_review_preview_batch(
+        now=20, batch_size=1
+    )
+    assert protected_cleanup == {"deleted_subjects": 0, "deleted_previews": 0}
+    worker = LibraryOperationService(store)
+    claimed = await worker.claim("worker", now=12)
+    assert claimed is not None
+    staged = await store.stage_bulk_review_operation_batch(
+        operation.id, "worker", now=12
+    )
+    assert staged == {"complete": True, "staged_count": 2}
+    with sqlite3.connect(db_path) as connection:
         materialized = [
             row[0]
             for row in connection.execute(
@@ -999,16 +1038,221 @@ async def test_filter_bulk_apply_uses_preview_snapshot_across_concurrent_changes
             ).fetchone()[0]
         )
     assert materialized == ["album-2", "album-1"]
-    assert snapshot == ["review-2", "review-1"]
+    assert snapshot == {"normalized_filter": {"state": "needs_review"}}
     assert "review-3" not in snapshot
 
-    claimed = await LibraryOperationService(store).claim("worker", now=12)
-    assert claimed is not None
-    done = await LibraryOperationService(store).run_bulk_claimed(
-        claimed, "worker", "admin", now=13
-    )
+    done = await worker.run_bulk_claimed(claimed, "worker", "admin", now=13)
     assert done.succeeded_count == 1
     assert done.skipped_count == 1
+
+
+@pytest.mark.asyncio
+async def test_bulk_preview_batches_resume_after_cancellation_and_cleanup_is_bounded(
+    store: NativeLibraryStore,
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for suffix in ("1", "2", "3"):
+        await _seed_album(store, suffix)
+    reviews = LibraryReviewService(store)
+    selection = BulkReviewSelection(
+        normalized_filter={"state": "needs_review"},
+        catalog_revision=await store.get_catalog_revision(),
+    )
+    original_stage = store.stage_bulk_review_preview_batch
+    calls = 0
+
+    async def interrupt_after_one(preview_token: str) -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise asyncio.CancelledError
+        return await original_stage(preview_token, batch_size=1)
+
+    monkeypatch.setattr(store, "stage_bulk_review_preview_batch", interrupt_after_one)
+    with pytest.raises(asyncio.CancelledError):
+        await reviews.preview_bulk(
+            BulkReviewPreviewRequest(action="exclude", selection=selection), now=10
+        )
+    with sqlite3.connect(db_path) as connection:
+        preview_token, state, subject_count = connection.execute(
+            "SELECT preview_token, state, subject_count "
+            "FROM library_bulk_review_previews"
+        ).fetchone()
+    assert state == "staging"
+    assert subject_count == 1
+
+    with pytest.raises(StaleRevisionError, match="changed or expired"):
+        await reviews.apply_bulk(
+            BulkReviewApplyRequest(
+                preview_token=preview_token,
+                idempotency_key="incomplete-preview",
+                action="exclude",
+                selection=selection,
+            ),
+            "admin",
+            now=11,
+        )
+
+    restarted = NativeLibraryStore(db_path, threading.Lock())
+    while True:
+        staged = await restarted.stage_bulk_review_preview_batch(
+            preview_token, batch_size=1
+        )
+        if staged["complete"]:
+            break
+    assert staged["summary"]["eligible_count"] == 3
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_bulk_review_previews SET expires_at = 0 "
+            "WHERE preview_token = ?",
+            (preview_token,),
+        )
+    first_cleanup = await restarted.cleanup_bulk_review_preview_batch(
+        now=20, batch_size=1
+    )
+    assert first_cleanup == {"deleted_subjects": 1, "deleted_previews": 0}
+    with sqlite3.connect(db_path) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_bulk_review_preview_subjects "
+                "WHERE preview_token = ?",
+                (preview_token,),
+            ).fetchone()[0]
+            == 2
+        )
+    while True:
+        cleanup = await restarted.cleanup_bulk_review_preview_batch(
+            now=20, batch_size=1
+        )
+        if cleanup["deleted_previews"]:
+            break
+    with sqlite3.connect(db_path) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_bulk_review_previews "
+                "WHERE preview_token = ?",
+                (preview_token,),
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_bulk_preview_reads_evidence_setwise_and_operation_staging_resumes(
+    store: NativeLibraryStore,
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for suffix in ("1", "2", "3"):
+        await _seed_album(store, suffix)
+        attempt = IdentificationAttempt(
+            id=f"attempt-{suffix}",
+            local_album_id=f"album-{suffix}",
+            matcher_version="feedback-fixes-v1",
+            state="ambiguous",
+            terminal_reason_code="AMBIGUOUS",
+            started_at=2,
+            completed_at=2,
+        )
+        await store.replace_review_attempt(
+            f"review-{suffix}",
+            expected_review_revision=1,
+            attempt=attempt,
+            evidence=[
+                IdentificationEvidenceRecord(
+                    id=f"evidence-{suffix}",
+                    attempt_id=attempt.id,
+                    candidate_key="rg-shared:release-shared",
+                    evidence=CandidateEvidence(
+                        release_group_mbid="rg-shared",
+                        release_mbid="release-shared",
+                        matcher_version="feedback-fixes-v1",
+                        reason_code="SUPPORTED",
+                    ),
+                    created_at=2,
+                )
+            ],
+            updated_at=2,
+        )
+    statements: list[str] = []
+    original_connect = store._connect
+
+    def traced_connect() -> sqlite3.Connection:
+        connection = original_connect()
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(store, "_connect", traced_connect)
+    reviews = LibraryReviewService(store)
+    selection = BulkReviewSelection(
+        normalized_filter={"state": "needs_review"},
+        catalog_revision=await store.get_catalog_revision(),
+    )
+    preview = await reviews.preview_bulk(
+        BulkReviewPreviewRequest(action="exclude", selection=selection), now=10
+    )
+    evidence_reads = [
+        statement
+        for statement in statements
+        if statement.startswith("SELECT attempt_id, candidate_key, evidence_json")
+    ]
+    assert len(evidence_reads) == 1
+    assert preview.eligible_count == 3
+
+    operation = await reviews.apply_bulk(
+        BulkReviewApplyRequest(
+            preview_token=preview.preview_token,
+            idempotency_key="staged-restart",
+            action="exclude",
+            selection=selection,
+        ),
+        "admin",
+        now=11,
+    )
+    worker = LibraryOperationService(store)
+    claimed = await worker.claim("worker", now=12)
+    assert claimed is not None
+    first = await store.stage_bulk_review_operation_batch(
+        operation.id, "worker", now=12, batch_size=1
+    )
+    assert first == {"complete": False, "staged_count": 1}
+    current = await store.get_operation_job(operation.id)
+    assert current is not None
+    await worker.control(operation.id, "pause", int(current["row_revision"]), now=13)
+    paused = await store.checkpoint_operation_control(operation.id, "worker", now=13)
+    assert paused is not None and paused["state"] == "paused"
+    resumed = await worker.control(
+        operation.id, "resume", int(paused["row_revision"]), now=14
+    )
+    assert resumed.state == "queued"
+
+    restarted = NativeLibraryStore(db_path, threading.Lock())
+    reclaimed = await LibraryOperationService(restarted).claim("restarted", now=15)
+    assert reclaimed is not None
+    second = await restarted.stage_bulk_review_operation_batch(
+        operation.id, "restarted", now=15, batch_size=1
+    )
+    assert second == {"complete": False, "staged_count": 1}
+    final = await restarted.stage_bulk_review_operation_batch(
+        operation.id, "restarted", now=15, batch_size=1
+    )
+    assert final == {"complete": True, "staged_count": 1}
+    with sqlite3.connect(db_path) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_operation_work WHERE job_id = ?",
+                (operation.id,),
+            ).fetchone()[0]
+            == 3
+        )
+        assert (
+            connection.execute(
+                "SELECT staging_cursor FROM library_bulk_review_snapshots WHERE job_id = ?",
+                (operation.id,),
+            ).fetchone()[0]
+            == 2
+        )
 
 
 @pytest.mark.asyncio
@@ -1358,6 +1602,78 @@ async def test_operation_supervisor_dispatches_explicit_work_before_older_bulk_w
     assert result is not None and result.id == explicit["id"]
     assert result.state == "ready"
     assert bulk_row is not None and bulk_row["state"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_operation_supervisor_keeps_explicit_provider_work_behind_scan_gate(
+    store: NativeLibraryStore,
+) -> None:
+    await _seed_album(store, "1")
+    reviews = LibraryReviewService(store)
+    selection = BulkReviewSelection(
+        review_ids=["review-1"],
+        expected_revisions={"review-1": 1},
+        catalog_revision=await store.get_catalog_revision(),
+    )
+    preview = await reviews.preview_bulk(
+        BulkReviewPreviewRequest(action="exclude", selection=selection), now=1
+    )
+    bulk = await reviews.apply_bulk(
+        BulkReviewApplyRequest(
+            preview_token=preview.preview_token,
+            idempotency_key="scan-gated-bulk",
+            action="exclude",
+            selection=selection,
+        ),
+        "admin",
+        now=1,
+    )
+    await _seed_album(store, "2")
+    explicit = await ReidentificationService(store).create_or_coalesce(
+        "album-2", "admin", idempotency_key="scan-gated-explicit", now=2
+    )
+    provider = _CountingIdentificationProvider()
+    gate = BackgroundWorkloadGate()
+    gate.set_scan_active(True)
+    explicit_worker = ExplicitReidentificationWorker(
+        store,
+        AlbumCandidateService(provider),
+        AlbumEvidenceEngine(),
+        workload_gate=gate,
+    )
+    supervisor = LibraryOperationSupervisor(
+        store,
+        LibraryOperationService(store),
+        IdentityRepairService(store),
+        explicit_worker,
+        gate,
+    )
+
+    bulk_result = await supervisor.run_once("worker", now=3)
+    explicit_row = await store.get_operation_job(explicit["id"])
+    assert bulk_result is not None and bulk_result.id == bulk.id
+    assert bulk_result.state == "succeeded"
+    assert explicit_row is not None and explicit_row["state"] == "queued"
+    assert provider.calls == 0
+
+    gate.set_scan_active(False)
+    claimed = await store.claim_operation_job(
+        "race-worker",
+        now=3.5,
+        lease_seconds=60,
+        kind="explicit_reidentification",
+    )
+    assert claimed is not None
+    gate.set_scan_active(True)
+    deferred = await explicit_worker.run_claimed(claimed, "race-worker", now=3.5)
+    assert deferred["state"] == "queued"
+    assert provider.calls == 0
+
+    gate.set_scan_active(False)
+    explicit_result = await supervisor.run_once("worker", now=4)
+    assert explicit_result is not None and explicit_result.id == explicit["id"]
+    assert explicit_result.state == "ready"
+    assert provider.calls > 0
 
 
 @pytest.mark.asyncio

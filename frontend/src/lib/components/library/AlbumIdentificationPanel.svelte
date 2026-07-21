@@ -54,12 +54,17 @@
 	}
 
 	async function begin(): Promise<void> {
-		const job = await start.mutateAsync({
-			albumId: album.id,
-			expectedAlbumRevision: album.row_revision,
-			expectedInputRevision: album.input_revision,
-			oneOffLocalMetadata: album.identification_status === 'local_metadata'
-		});
+		let job: OperationResponse;
+		try {
+			job = await start.mutateAsync({
+				albumId: album.id,
+				expectedAlbumRevision: album.row_revision,
+				expectedInputRevision: album.input_revision,
+				oneOffLocalMetadata: album.identification_status === 'local_metadata'
+			});
+		} catch {
+			return;
+		}
 		jobId = job.id;
 		try {
 			sessionStorage.setItem(storageKey, job.id);
@@ -106,7 +111,7 @@
 		event: MouseEvent & { currentTarget: HTMLButtonElement }
 	): void {
 		if (candidate.automatic_safe) {
-			void applyCandidate(candidate, false);
+			void applyCandidate(candidate, false).catch(() => undefined);
 			return;
 		}
 		confirmationOpener = event.currentTarget;
@@ -117,7 +122,11 @@
 
 	async function confirmCandidate(): Promise<void> {
 		if (!confirmationCandidate) return;
-		await applyCandidate(confirmationCandidate, true);
+		try {
+			await applyCandidate(confirmationCandidate, true);
+		} catch {
+			return;
+		}
 		confirmationDialog.close();
 		confirmationCandidate = null;
 	}
@@ -193,14 +202,18 @@
 						<button
 							class="btn btn-ghost btn-sm"
 							onclick={() =>
-								void pause.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })}
+								void pause
+									.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })
+									.catch(() => undefined)}
 							aria-label="Pause identification"><CirclePause class="h-4 w-4" /> Pause</button
 						>
 					{:else if job.state === 'paused'}
 						<button
 							class="btn btn-ghost btn-sm"
 							onclick={() =>
-								void resume.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })}
+								void resume
+									.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })
+									.catch(() => undefined)}
 							aria-label="Resume identification"><CirclePlay class="h-4 w-4" /> Resume</button
 						>
 					{/if}
@@ -208,7 +221,9 @@
 						<button
 							class="btn btn-ghost btn-sm text-error"
 							onclick={() =>
-								void stop.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })}
+								void stop
+									.mutateAsync({ jobId: job.id, expectedRevision: job.row_revision })
+									.catch(() => undefined)}
 							aria-label="Stop identification"><OctagonX class="h-4 w-4" /> Stop</button
 						>
 					{/if}

@@ -120,6 +120,7 @@ vi.mock('$lib/queries/library/LibraryReviewMutations.svelte', () => ({
 	}),
 	applyBulkLibraryReview: () => ({
 		mutateAsync: h.bulkApply,
+		reset: vi.fn(),
 		data: undefined,
 		isPending: false,
 		isError: false
@@ -211,6 +212,11 @@ beforeEach(() => {
 	h.detail = { data: undefined };
 	h.operation = { data: undefined };
 	h.reviews = { data: { pages: [{ filtered_total: 12 }] } };
+	h.pauseRun.mockResolvedValue({});
+	h.resumeRun.mockResolvedValue({});
+	h.stopRun.mockResolvedValue({});
+	h.pauseIdentification.mockResolvedValue({});
+	h.requestRun.mockResolvedValue({});
 });
 
 describe('LibraryOperationsPanel', () => {

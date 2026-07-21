@@ -1,7 +1,8 @@
 import { redirect } from '@sveltejs/kit';
-import { authStore } from '$lib/stores/authStore.svelte';
+import type { PageLoad } from './$types';
 
-export const load = () => {
-	if (!authStore.isAdmin) throw redirect(302, '/library');
+export const load: PageLoad = async ({ parent }) => {
+	const { user } = await parent();
+	if (user?.role !== 'admin') throw redirect(302, '/library');
 	return {};
 };
