@@ -103,14 +103,20 @@ def _place(downloads: Path, rel: str) -> None:
 
 
 def _manifest(
-    *files: ExpectedFile, task_id="t1", rg="rg-1", is_track=False, expected_tracks=()
+    *files: ExpectedFile,
+    task_id="t1",
+    rg="rg-1",
+    is_track=False,
+    expected_tracks=(),
+    artist_name="Radiohead",
+    artist_mbid="a74b1b7f-71a5-4011-9441-d0b5e4122711",
 ) -> DownloadManifest:
     return DownloadManifest(
         task_id=task_id,
         source_username="peer",
         release_group_mbid=rg,
-        artist_name="Radiohead",
-        artist_mbid="a74b1b7f-71a5-4011-9441-d0b5e4122711",
+        artist_name=artist_name,
+        artist_mbid=artist_mbid,
         album_title="OK Computer",
         naming_template=_TEMPLATE,
         target_files=list(files),
@@ -120,7 +126,14 @@ def _manifest(
     )
 
 
-def _make_processor(tmp_path: Path, *, downloads=None, fingerprinter=None, verify=True):
+def _make_processor(
+    tmp_path: Path,
+    *,
+    downloads=None,
+    fingerprinter=None,
+    verify=True,
+    resolve_rg_artist=None,
+):
     downloads = downloads or (tmp_path / "downloads")
     downloads.mkdir(parents=True, exist_ok=True)
     library = tmp_path / "library"
@@ -138,6 +151,7 @@ def _make_processor(tmp_path: Path, *, downloads=None, fingerprinter=None, verif
         slskd_downloads_path=downloads,
         fingerprinter=fingerprinter,
         verify_downloads=verify,
+        resolve_rg_artist=resolve_rg_artist,
     )
     return fp, manager, client, library, downloads
 
@@ -163,6 +177,139 @@ async def test_process_downloaded_imports_and_moves(tmp_path: Path):
     assert await manager.has_album("rg-1") is True
     # DEC-1: FileProcessor never touches slskd transfers
     client.cancel.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Album-artist credit resolution (2026-07-19 incident: empty identification
+# credits filed 197 single-artist albums under /Various Artists/)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_empty_manifest_credit_resolves_rg_artist_for_tag_and_path(tmp_path: Path):
+    """An EMPTY album-artist credit must be resolved from the release group's own
+    MB credit - the RG is known (its MBID is stamped on the same file), so the
+    file must never be tagged/filed under an empty or substitute identity."""
+    resolver = AsyncMock(return_value=("oasis-mbid", "Oasis"))
+    fp, _m, _c, library, downloads = _make_processor(tmp_path, resolve_rg_artist=resolver)
+    _place(downloads, "X/01 Airbag.flac")
+    manifest = _manifest(
+        ExpectedFile(filename="X/01 Airbag.flac", size=1),
+        artist_name="",
+        artist_mbid=None,
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert result.failed == []
+    moved = Path(result.succeeded[0])
+    assert moved.relative_to(library).parts[0] == "Oasis"  # not Various Artists
+    tag, _ = AudioTagger().read_tags(moved)
+    assert tag.album_artist == "Oasis"
+    assert tag.musicbrainz_album_artist_id == "oasis-mbid"
+    resolver.assert_awaited_once_with("rg-1")
+
+
+@pytest.mark.asyncio
+async def test_credit_resolved_once_per_run_keeps_album_in_one_folder(tmp_path: Path):
+    """The credit is resolved ONCE per import run - resolving per file could split
+    one album across two {albumartist} folders if a single MB call blipped."""
+    resolver = AsyncMock(return_value=("oasis-mbid", "Oasis"))
+    fp, _m, _c, library, downloads = _make_processor(tmp_path, resolve_rg_artist=resolver)
+    _place(downloads, "X/01 Airbag.flac")
+    _place(downloads, "X/02 Airbag.flac")
+    manifest = _manifest(
+        ExpectedFile(filename="X/01 Airbag.flac", size=1),
+        ExpectedFile(filename="X/02 Airbag.flac", size=1),
+        artist_name="",
+        artist_mbid=None,
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 2
+    folders = {Path(p).relative_to(library).parts[0] for p in result.succeeded}
+    assert folders == {"Oasis"}
+    resolver.assert_awaited_once_with("rg-1")
+
+
+@pytest.mark.asyncio
+async def test_various_artists_manifest_credit_repaired_from_rg_credit(tmp_path: Path):
+    """A 'Various Artists' credit on a release group actually credited to a single
+    artist (a VA-poisoned request/library row) is repaired from the RG credit."""
+    resolver = AsyncMock(return_value=("oasis-mbid", "Oasis"))
+    fp, _m, _c, library, downloads = _make_processor(tmp_path, resolve_rg_artist=resolver)
+    _place(downloads, "X/01 Airbag.flac")
+    manifest = _manifest(
+        ExpectedFile(filename="X/01 Airbag.flac", size=1),
+        artist_name="Various Artists",
+        artist_mbid=None,
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    moved = Path(result.succeeded[0])
+    assert moved.relative_to(library).parts[0] == "Oasis"
+    tag, _ = AudioTagger().read_tags(moved)
+    assert tag.album_artist == "Oasis"
+
+
+@pytest.mark.asyncio
+async def test_genuine_various_artists_release_stays_various(tmp_path: Path):
+    """A release group ACTUALLY credited to Various Artists keeps the VA credit."""
+    va_mbid = "89ad4ac3-39f7-470e-963a-56509c546377"
+    resolver = AsyncMock(return_value=(va_mbid, "Various Artists"))
+    fp, _m, _c, library, downloads = _make_processor(tmp_path, resolve_rg_artist=resolver)
+    _place(downloads, "X/01 Airbag.flac")
+    manifest = _manifest(
+        ExpectedFile(filename="X/01 Airbag.flac", size=1),
+        artist_name="Various Artists",
+        artist_mbid=va_mbid,
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    moved = Path(result.succeeded[0])
+    assert moved.relative_to(library).parts[0] == "Various Artists"
+    tag, _ = AudioTagger().read_tags(moved)
+    assert tag.album_artist == "Various Artists"
+
+
+@pytest.mark.asyncio
+async def test_real_manifest_credit_is_authoritative_no_resolution(tmp_path: Path):
+    """A manifest naming a real artist is used as-is - no MB round-trip."""
+    resolver = AsyncMock(return_value=("other-mbid", "Someone Else"))
+    fp, _m, _c, library, downloads = _make_processor(tmp_path, resolve_rg_artist=resolver)
+    _place(downloads, "Radiohead - OK Computer/01 Airbag.flac")
+    manifest = _manifest(
+        ExpectedFile(filename="Radiohead - OK Computer/01 Airbag.flac", size=1)
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    moved = Path(result.succeeded[0])
+    assert moved.relative_to(library).parts[0] == "Radiohead"
+    resolver.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_empty_credit_without_resolver_falls_back_to_file_artist(tmp_path: Path):
+    """No resolver wired (minimal builds): an empty credit must still never invent
+    'Various Artists' - the path falls back to the file's own artist tag."""
+    fp, _m, _c, library, downloads = _make_processor(tmp_path)
+    _place(downloads, "X/01 Airbag.flac")
+    manifest = _manifest(
+        ExpectedFile(filename="X/01 Airbag.flac", size=1),
+        artist_name="",
+        artist_mbid=None,
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    moved = Path(result.succeeded[0])
+    # fixture artist is Radiohead; the {albumartist} token falls back to {artist}
+    assert moved.relative_to(library).parts[0] == "Radiohead"
+    assert "Various Artists" not in str(moved)
 
 
 @pytest.mark.asyncio

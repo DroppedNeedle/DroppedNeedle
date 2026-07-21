@@ -63,6 +63,12 @@ WRONG_TRACK = "wrong_track"
 # failing over to another peer hits the same wall - never blacklist the source.
 SOURCE_FILE_MISSING = "downloaded file not found on the downloads mount"
 
+# Manifest credits that claim Various Artists: re-resolved (like an empty credit)
+# against the release group's own MB credit before tagging/pathing, so VA is
+# reserved for release groups actually credited to VA. Treating an empty credit as
+# VA would misfile single-artist albums under /Various Artists/.
+_VA_CREDIT_NAMES = frozenset({"various artists", "various", "va"})
+
 
 class VerifyStatus:
     PASS = "pass"
@@ -461,6 +467,7 @@ class FileProcessor:
         download_store: "DownloadStore | None" = None,
         held_dir: Path | None = None,
         recycle_bin: Path | None = None,
+        resolve_rg_artist=None,  # async (rg_mbid) -> (artist_mbid|None, name|None)
     ) -> None:
         self._tagger = tagger
         self._naming = naming_engine
@@ -480,6 +487,9 @@ class FileProcessor:
         # disables replace-on-import entirely - an upgrade must never destroy the
         # only copy of the old bytes.
         self._recycle_bin = recycle_bin
+        # Repairs an empty/"Various Artists" manifest credit from the release
+        # group's own MB credit (see _album_artist_credit). None -> used as-is.
+        self._resolve_rg_artist = resolve_rg_artist
 
     def verify_downloaded_file(
         self,
@@ -536,9 +546,16 @@ class FileProcessor:
         targets = manifest.target_files
         if only_filenames is not None:
             targets = [f for f in targets if f.filename in only_filenames]
+        # One credit per import run - per-file resolution could split an album
+        # across two {albumartist} folders when a single MB call blips mid-import.
+        album_artist, album_artist_mbid = (
+            await self._album_artist_credit(manifest) if targets else (None, None)
+        )
         for expected in targets:
             try:
-                target = await self._process_one(expected, manifest)
+                target = await self._process_one(
+                    expected, manifest, album_artist, album_artist_mbid
+                )
                 succeeded.append(str(target))
             except AlreadyImported as already:
                 # prior run already imported this file: count its library path a
@@ -639,9 +656,15 @@ class FileProcessor:
 
         succeeded: list[str] = []
         failed: list[FileFailure] = []
+        # one credit per import run (see process_downloaded)
+        album_artist, album_artist_mbid = (
+            await self._album_artist_credit(manifest) if matches else (None, None)
+        )
         for candidate, track in matches:
             try:
-                target = await self._place_matched_file(manifest, candidate, track)
+                target = await self._place_matched_file(
+                    manifest, candidate, track, album_artist, album_artist_mbid
+                )
                 succeeded.append(str(target))
             except AlreadyImported as already:
                 succeeded.append(str(already.path))
@@ -662,14 +685,55 @@ class FileProcessor:
                 logger.warning("post-import reconcile failed for task %s", manifest.task_id)
         return ProcessResult(succeeded=succeeded, failed=failed)
 
+    async def _album_artist_credit(
+        self, manifest: DownloadManifest
+    ) -> tuple[str | None, str | None]:
+        """The (name, MBID) stamped into ALBUMARTIST and the ``{albumartist}`` path
+        segment: the manifest credit when it names a real artist, else the release
+        group's own MB credit (a genuine VA release resolves back to VA - see
+        ``_VA_CREDIT_NAMES``). Fail-open to the manifest credit when unresolvable.
+        Resolved ONCE per import run, never per file - a per-file blip would split
+        one album's files across two top-level folders."""
+        name = (manifest.artist_name or "").strip()
+        mbid = manifest.artist_mbid or None
+        if name and name.lower() not in _VA_CREDIT_NAMES:
+            return name, mbid
+        resolved_mbid = resolved_name = None
+        if self._resolve_rg_artist is not None and manifest.release_group_mbid:
+            try:
+                resolved_mbid, resolved_name = await self._resolve_rg_artist(
+                    manifest.release_group_mbid
+                )
+            except Exception:  # noqa: BLE001 - resolution is best-effort, never blocks import
+                resolved_mbid = resolved_name = None
+        if resolved_name:
+            if resolved_name != name:
+                logger.info(
+                    "process.album_artist_resolved",
+                    extra={
+                        "task_id": manifest.task_id,
+                        "manifest_credit": name or "(empty)",
+                        "resolved_credit": resolved_name,
+                    },
+                )
+            return resolved_name, (resolved_mbid or mbid)
+        return (name or None), mbid
+
     async def _place_matched_file(
-        self, manifest: DownloadManifest, candidate: "_FolderCandidate", track: "ExpectedTrack"
+        self,
+        manifest: DownloadManifest,
+        candidate: "_FolderCandidate",
+        track: "ExpectedTrack",
+        album_artist: str | None,
+        album_artist_mbid: str | None,
     ) -> Path:
         """Tag (from the matched MB track) -> position-dedup -> verify -> move -> insert.
         Duration already gated the match, so re-checking it here would be a tautology -
         AcoustID is the optional recording-identity backstop."""
         source, tag, info = candidate.path, candidate.tag, candidate.info
-        target_tag = self._build_folder_target_tag(manifest, track, tag)
+        target_tag = self._build_folder_target_tag(
+            manifest, track, tag, album_artist, album_artist_mbid
+        )
         target_path = self._library_paths[0] / self._naming.format_path(
             manifest.naming_template, target_tag, info.file_format
         )
@@ -999,15 +1063,20 @@ class FileProcessor:
 
     @staticmethod
     def _build_folder_target_tag(
-        manifest: DownloadManifest, track: "ExpectedTrack", file_tag: AudioTag
+        manifest: DownloadManifest,
+        track: "ExpectedTrack",
+        file_tag: AudioTag,
+        album_artist: str | None,
+        album_artist_mbid: str | None,
     ) -> AudioTag:
         """Target tag for a folder-matched file: identity comes from the matched MB
-        track (the file's own tags may be empty), album identity from the manifest."""
+        track (the file's own tags may be empty), album identity from the manifest,
+        the album-artist credit from ``_album_artist_credit``."""
         return AudioTag(
             title=track.title or file_tag.title or "",
-            artist=file_tag.artist or manifest.artist_name or "",
+            artist=file_tag.artist or album_artist or "",
             album=manifest.album_title,
-            album_artist=manifest.artist_name,
+            album_artist=album_artist,
             track_number=track.track_number,
             disc_number=track.disc_number or 1,
             year=manifest.year,
@@ -1016,13 +1085,17 @@ class FileProcessor:
             musicbrainz_release_id=manifest.release_mbid,
             musicbrainz_recording_id=track.recording_mbid or file_tag.musicbrainz_recording_id,
             musicbrainz_artist_id=file_tag.musicbrainz_artist_id,
-            musicbrainz_album_artist_id=manifest.artist_mbid,
+            musicbrainz_album_artist_id=album_artist_mbid,
             acoustid_id=file_tag.acoustid_id,
             compilation=file_tag.compilation,
         )
 
     async def _process_one(
-        self, expected: ExpectedFile, manifest: DownloadManifest
+        self,
+        expected: ExpectedFile,
+        manifest: DownloadManifest,
+        album_artist: str | None,
+        album_artist_mbid: str | None,
     ) -> Path:
         """Verify -> tag -> move -> insert one file. Raises ``VerificationFailed``
         (per-file) or ``AlreadyImported`` (crash-idempotency)."""
@@ -1089,7 +1162,7 @@ class FileProcessor:
                 f"Cannot read tags: {exc}", reason="corrupt", filename=expected.filename
             ) from exc
 
-        target_tag = self._build_target_tag(manifest, tag)
+        target_tag = self._build_target_tag(manifest, tag, album_artist, album_artist_mbid)
         target_path = self._library_paths[0] / self._naming.format_path(
             manifest.naming_template, target_tag, info.file_format
         )
@@ -1394,14 +1467,20 @@ class FileProcessor:
             directory = directory.parent
 
     @staticmethod
-    def _build_target_tag(manifest: DownloadManifest, file_tag: AudioTag) -> AudioTag:
+    def _build_target_tag(
+        manifest: DownloadManifest,
+        file_tag: AudioTag,
+        album_artist: str | None,
+        album_artist_mbid: str | None,
+    ) -> AudioTag:
         """Merge the file's existing descriptive tags with the manifest's album
-        identity (the authoritative MBIDs come from the request, not the audio)."""
+        identity (authoritative MBIDs come from the request or MB resolution, never
+        the audio); the album-artist credit comes from ``_album_artist_credit``."""
         return AudioTag(
             title=file_tag.title,
             artist=file_tag.artist,
             album=manifest.album_title,
-            album_artist=manifest.artist_name,
+            album_artist=album_artist,
             track_number=file_tag.track_number,
             disc_number=file_tag.disc_number or 1,
             year=manifest.year,
@@ -1410,7 +1489,7 @@ class FileProcessor:
             musicbrainz_release_id=manifest.release_mbid,
             musicbrainz_recording_id=file_tag.musicbrainz_recording_id,
             musicbrainz_artist_id=file_tag.musicbrainz_artist_id,
-            musicbrainz_album_artist_id=manifest.artist_mbid,
+            musicbrainz_album_artist_id=album_artist_mbid,
             acoustid_id=file_tag.acoustid_id,
             compilation=file_tag.compilation,
         )
