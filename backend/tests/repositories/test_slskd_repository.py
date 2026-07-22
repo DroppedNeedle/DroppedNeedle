@@ -349,6 +349,157 @@ async def test_get_status_correlates_by_filename(mock_repo):
     assert status.status == "completed"
 
 
+def _transfer(filename, state, *, requested_at=None, size=0, done=0, username="peer"):
+    return SlskdTransfer(
+        id=f"{filename}-{requested_at or 'x'}",
+        username=username,
+        filename=filename,
+        state=state,
+        requested_at=requested_at,
+        size=size,
+        bytes_transferred=done,
+    )
+
+
+def _repo_with_transfers(transfers) -> SlskdRepository:
+    client = AsyncMock()
+    client.get_downloads = AsyncMock(return_value=transfers)
+    return SlskdRepository(
+        client=client, url="http://slskd", api_key="k", downloads_mount=Path("/dl")
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_status_dedupes_retry_attempts_per_file():
+    """slskd keeps one transfer record per ATTEMPT: a file retried after a timeout has
+    two records. Status must count FILES (latest attempt wins), or files_completed
+    outruns files_total and the task lies about completion."""
+    repo = _repo_with_transfers(
+        [
+            _transfer(
+                "a/01.flac", "Completed, TimedOut", requested_at="2026-07-18T01:00:00Z"
+            ),
+            _transfer(
+                "a/01.flac", "Completed, Succeeded", requested_at="2026-07-18T02:00:00Z"
+            ),
+            _transfer(
+                "a/02.flac", "Completed, Succeeded", requested_at="2026-07-18T01:00:00Z"
+            ),
+        ]
+    )
+    status = await repo.get_status(_h("peer", ["a/01.flac", "a/02.flac"]))
+    assert status.files_total == 2
+    assert status.files_completed == 2  # never 3
+    assert status.files_failed == 0  # the old timed-out attempt is superseded
+    assert status.status == "completed"
+    assert sorted(status.succeeded_filenames) == ["a/01.flac", "a/02.flac"]
+    assert status.matched_transfers == 2  # per FILE, not per record
+
+
+@pytest.mark.asyncio
+async def test_get_status_stale_success_does_not_shadow_final_timeout():
+    """A file whose LATEST attempt timed out is FAILED, even when an older record for
+    it reads Succeeded - the stale record shadowing the real outcome is exactly how a
+    partially-failed album closed as 'completed' with tracks silently missing."""
+    repo = _repo_with_transfers(
+        [
+            _transfer(
+                "a/01.flac", "Completed, Succeeded", requested_at="2026-07-18T01:00:00Z"
+            ),
+            _transfer(
+                "a/01.flac", "Completed, TimedOut", requested_at="2026-07-18T02:00:00Z"
+            ),
+            _transfer(
+                "a/02.flac", "Completed, Succeeded", requested_at="2026-07-18T01:00:00Z"
+            ),
+        ]
+    )
+    status = await repo.get_status(_h("peer", ["a/01.flac", "a/02.flac"]))
+    assert status.files_completed == 1
+    assert status.files_failed == 1
+    assert status.status == "partial"  # NOT 'completed'
+    assert status.succeeded_filenames == ["a/02.flac"]
+
+
+@pytest.mark.asyncio
+async def test_get_status_orders_attempts_by_requested_at_not_list_order():
+    # the newest attempt listed FIRST must still win over an older failed one
+    repo = _repo_with_transfers(
+        [
+            _transfer(
+                "a/01.flac", "Completed, Succeeded", requested_at="2026-07-18T02:00:00Z"
+            ),
+            _transfer(
+                "a/01.flac", "Completed, TimedOut", requested_at="2026-07-18T01:00:00Z"
+            ),
+        ]
+    )
+    status = await repo.get_status(_h("peer", ["a/01.flac"]))
+    assert status.status == "completed"
+    assert status.files_completed == 1
+
+
+@pytest.mark.asyncio
+async def test_get_status_dedup_mixed_timestamps_trusts_record_order():
+    # only ONE record carries requestedAt: timestamps can't order the pair, so the
+    # later record (slskd appends new attempts) must win - a lone stamp on the old
+    # Succeeded record must not shadow the untimestamped final TimedOut
+    repo = _repo_with_transfers(
+        [
+            _transfer(
+                "a/01.flac", "Completed, Succeeded", requested_at="2026-07-18T01:00:00Z"
+            ),
+            _transfer("a/01.flac", "Completed, TimedOut"),
+        ]
+    )
+    status = await repo.get_status(_h("peer", ["a/01.flac"]))
+    assert status.files_completed == 0
+    assert status.files_failed == 1
+    assert status.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_get_status_dedup_falls_back_to_record_order_without_timestamps():
+    # no requestedAt on either record: slskd appends new attempts, so the later
+    # record is the later attempt
+    repo = _repo_with_transfers(
+        [
+            _transfer("a/01.flac", "Completed, TimedOut"),
+            _transfer("a/01.flac", "Completed, Succeeded"),
+        ]
+    )
+    status = await repo.get_status(_h("peer", ["a/01.flac"]))
+    assert status.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_get_status_dedup_uses_latest_attempt_bytes():
+    # bytes/size tallies must come from the winning record only, not sum attempts
+    repo = _repo_with_transfers(
+        [
+            _transfer(
+                "a/01.flac",
+                "Completed, TimedOut",
+                requested_at="2026-07-18T01:00:00Z",
+                size=100,
+                done=40,
+            ),
+            _transfer(
+                "a/01.flac",
+                "InProgress",
+                requested_at="2026-07-18T02:00:00Z",
+                size=100,
+                done=10,
+            ),
+        ]
+    )
+    status = await repo.get_status(_h("peer", ["a/01.flac"]))
+    assert status.bytes_total == 100
+    assert status.bytes_downloaded == 10
+    assert status.has_active_transfer is True  # the retry is live, not terminal
+    assert status.files_failed == 0
+
+
 @pytest.mark.asyncio
 async def test_cancel_removes_matching_transfers(mock_repo):
     ref = await mock_repo.enqueue(
@@ -499,6 +650,68 @@ async def test_get_file_path_whole_mount_fallback_disambiguates_by_size(tmp_path
         _h("peer1"), "@@p\\X\\AlbumB\\01 - Track.flac", size=10
     )
     assert path == right.resolve()
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_never_returns_a_file_from_incomplete_staging(tmp_path):
+    # slskd's incomplete staging dir often lives INSIDE the downloads mount. A file
+    # found only there (e.g. the truncated leftover of a "Completed, TimedOut"
+    # transfer) is by definition not a finished download - it must never resolve,
+    # even when its name and byte size match exactly.
+    staged = tmp_path / "incomplete" / "01 - Track.flac"
+    staged.parent.mkdir()
+    staged.write_bytes(b"abcdefghij")  # size 10 - matches exactly
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    assert (
+        await repo.get_file_path(_h("peer1"), "@@p\\A\\01 - Track.flac", size=10)
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_never_returns_a_file_from_failed_imports(tmp_path):
+    # same for the failed-import quarantine dir some deployments keep on the mount:
+    # a quarantined copy is not a finished download to import again
+    bad = tmp_path / "failed_imports" / "Album" / "01 - Track.flac"
+    bad.parent.mkdir(parents=True)
+    bad.write_bytes(b"abcdefghij")
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    assert (
+        await repo.get_file_path(_h("peer1"), "@@p\\A\\01 - Track.flac", size=10)
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_prefers_finished_file_over_incomplete_twin(tmp_path):
+    # the finished download must still be found when a truncated same-named twin
+    # sits under incomplete/
+    trunc = tmp_path / "incomplete" / "Album" / "01 - Track.flac"
+    trunc.parent.mkdir(parents=True)
+    trunc.write_bytes(b"abc")  # truncated
+    real = tmp_path / "Artist" / "Album (2020)" / "01 - Track.flac"
+    real.parent.mkdir(parents=True)
+    real.write_bytes(b"abcdefghij")  # the full 10 bytes
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    path = await repo.get_file_path(_h("peer1"), "@@p\\X\\Y\\01 - Track.flac", size=10)
+    assert path == real.resolve()
+
+
+def test_walk_find_excluded_dirs_do_not_consume_the_entry_budget(tmp_path):
+    # thousands of dead files under incomplete/ and failed_imports/ must not eat the
+    # walk cap and defeat the legitimate whole-mount fallback
+    for name in ("incomplete", "failed_imports"):
+        d = tmp_path / name
+        d.mkdir()
+        for i in range(50):
+            (d / f"junk-{i}.flac").write_bytes(b"x")
+    real = tmp_path / "Artist" / "01 - Track.flac"
+    real.parent.mkdir()
+    real.write_bytes(b"x")
+    hit = SlskdRepository._walk_find(
+        tmp_path, tmp_path, lambda e: e.name == "01 - Track.flac", max_entries=10
+    )
+    assert hit == real.resolve()
 
 
 def _completed(filename, username="peer"):

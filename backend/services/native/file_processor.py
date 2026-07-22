@@ -523,9 +523,9 @@ class FileProcessor:
         reachable).
 
         ``only_filenames`` restricts the import to a subset of the manifest - the
-        orchestrator passes the files whose slskd transfer actually succeeded, so a
-        stalled task imports what arrived without the never-arrived files being
-        recorded as (quarantinable) verification failures."""
+        orchestrator passes the files whose latest slskd transfer succeeded, so a
+        file that never arrived can't be recorded as a (quarantinable) verification
+        failure or logged as missing from the mount."""
         if self._naming is None or self._library is None or not self._library_paths \
                 or self._client is None:
             # in production all four are injected by the DI provider

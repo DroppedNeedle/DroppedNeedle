@@ -109,6 +109,10 @@ class _StubClient:
         return DownloadTaskStatus(
             task_id="", status=self._status, files_total=n, files_completed=n,
             bytes_total=0, bytes_downloaded=0, progress_percent=100.0,
+            # the orchestrator imports only these (mirrors the real repository)
+            succeeded_filenames=(
+                list(handle.filenames) if self._status == "completed" else []
+            ),
         )
 
     async def cancel(self, handle: TaskHandle) -> bool:

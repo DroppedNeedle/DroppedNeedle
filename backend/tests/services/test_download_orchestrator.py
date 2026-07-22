@@ -135,9 +135,15 @@ class _FakeLibrary:
     def __init__(self, rows=None):
         self.rows = list(rows or [])
         self.present_tracks: set[str] = set()
+        # filename -> library row, for the crash-resume "already imported" reconcile
+        # (_files_never_imported); empty = nothing previously imported by this task
+        self.imported_by_filename: dict[str, dict] = {}
 
     async def get_file_rows_for_album(self, release_group_mbid):
         return list(self.rows)
+
+    async def get_imported_file(self, download_task_id, filename):
+        return self.imported_by_filename.get(filename)
 
     async def has_track(self, recording_mbid):
         return recording_mbid in self.present_tracks or bool(self.rows)
@@ -402,7 +408,11 @@ async def test_process_task_autopicks_and_completes(tmp_path: Path):
 async def test_process_task_uses_later_auto_candidate_when_first_needs_review(
     tmp_path: Path,
 ):
-    client = _StubClient()
+    # the canned status must name the picked candidate's file, or the completeness
+    # veto (rightly) treats the enqueued file as never-imported
+    client = _StubClient(
+        _status("completed", files_completed=1, succeeded=["safe-auto/01.flac"])
+    )
     store, orch, fp, _lib = _build(
         tmp_path,
         client=client,
@@ -777,6 +787,169 @@ async def test_stall_harvests_succeeded_subset_without_quarantining_missing(
     assert final.status == "partial"  # kept the 1 track that arrived
     assert len(lib.rows) == 1
     assert await store.load_quarantine_set() == set()  # missing track NOT quarantined
+
+
+# ---------------------------------------------------------------------------
+# Succeeded-only import + completeness veto (silent-track-loss fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_terminal_outcome_imports_only_succeeded_transfers(tmp_path: Path):
+    """Even on a TERMINAL outcome, only files whose latest transfer succeeded reach
+    the verify/import phase. A timed-out transfer left no finished file on disk, so
+    importing it can only log 'file not found' noise and mis-blame the mount."""
+    client = _StubClient(
+        _status(
+            "partial",  # terminal: 1 succeeded, 1 timed out
+            files_total=2,
+            files_completed=1,
+            succeeded=["peer/01.flac"],
+        )
+    )
+    store, orch, fp, lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[_candidate(0.9, files=2)],
+        max_failover=1,
+    )
+    _coupled_fp(fp, lib)
+    task = await _new_task(store, track_count=2)
+
+    await orch.process_task(task.id)
+
+    # the import phase was handed ONLY the succeeded file, so the timed-out one
+    # produced no verify/import attempt (and thus no SOURCE_FILE_MISSING noise)
+    only_seen = [
+        call.kwargs.get("only_filenames") for call in fp.process_downloaded.await_args_list
+    ]
+    assert only_seen == [{"peer/01.flac"}]
+    final = await store.get_task(task.id)
+    assert final.status == "partial"  # never 'completed' with a track missing
+    assert len(lib.rows) == 1
+    # the message must not mis-blame the downloads mount for a peer-side timeout
+    assert final.error_message is None or "slskd downloads" not in final.error_message
+
+
+@pytest.mark.asyncio
+async def test_stale_library_coverage_cannot_close_completed_over_missing_file(
+    tmp_path: Path,
+):
+    """The client CLAIMS 'completed' but one file's transfer never succeeded, while
+    stale library rows (an old copy the download was meant to replace) satisfy the
+    completeness check. The task must settle 'partial' - which re-enters the
+    auto-retry ladder - never 'completed' with the track silently lost."""
+    client = _StubClient(
+        _status(
+            "completed",  # the (buggy/stale) claim
+            files_total=2,
+            files_completed=2,
+            succeeded=["peer/01.flac"],  # ...but only one file actually succeeded
+        )
+    )
+    store, orch, fp, lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[_candidate(0.9, files=2)],
+        max_failover=1,
+        # two stale rows already satisfy the count-based completeness check
+        imported_rows=[{"file_path": "/lib/old1"}, {"file_path": "/lib/old2"}],
+    )
+    _coupled_fp(fp, lib)
+    task = await _new_task(store, track_count=2)
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "partial"  # vetoed: peer/02.flac never imported
+    assert len(lib.rows) == 3  # the succeeded file still landed
+
+
+@pytest.mark.asyncio
+async def test_crash_resume_reconciles_prior_import_and_still_completes(tmp_path: Path):
+    """The veto must not demote a genuinely-finished task: after a crash between
+    import and finalize (transfers already cleaned from slskd), the resumed poll sees
+    no succeeded transfers - but the library holds the file this task imported, so
+    the reconcile clears it and the task closes 'completed'."""
+    real = tmp_path / "imported.flac"
+    real.write_bytes(b"x")
+    client = _StubClient(_status("queued", matched=0))  # records gone after cleanup
+    store, orch, fp, lib = _build(
+        tmp_path,
+        client=client,
+        queued_minutes=0.0,
+        imported_rows=[{"file_path": str(real)}],
+    )
+    _coupled_fp(fp, lib)
+    lib.imported_by_filename["peer/01.flac"] = {"file_path": str(real)}
+    task = await _new_task(store, status="downloading", source_username="peer")
+    _write_manifest(orch, task.id, ["peer/01.flac"])
+
+    await orch._resume_single_task(task.id)
+
+    assert (await store.get_task(task.id)).status == "completed"
+
+
+class _FakeAlbumService:
+    def __init__(self, tracks):
+        self._tracks = tracks
+
+    async def get_album_tracks_info(self, mbid, priority=None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(tracks=self._tracks)
+
+
+@pytest.mark.asyncio
+async def test_partial_settle_names_the_missing_tracks(tmp_path: Path):
+    """A partial album must say WHICH tracks are missing, so the loss is visible."""
+    from types import SimpleNamespace
+
+    tracks = [
+        SimpleNamespace(
+            position=1, disc_number=1, title="One", recording_id="rec-1", length=None
+        ),
+        SimpleNamespace(
+            position=2, disc_number=1, title="Two", recording_id="rec-2", length=None
+        ),
+    ]
+    client = _StubClient(
+        _status(
+            "partial",
+            files_total=2,
+            files_completed=1,
+            succeeded=["peer/01.flac"],
+        )
+    )
+    store, orch, fp, lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[_candidate(0.9, files=2)],
+        max_failover=1,
+        album_service=_FakeAlbumService(tracks),
+    )
+
+    async def _proc(manifest, only_filenames=None):
+        targets = manifest.target_files
+        if only_filenames is not None:
+            targets = [f for f in targets if f.filename in only_filenames]
+        succeeded = []
+        for f in targets:
+            path = f"/lib/{f.filename}"
+            succeeded.append(path)
+            lib.rows.append(
+                {"id": "row-1", "file_path": path, "recording_mbid": "rec-1"}
+            )
+        return ProcessResult(succeeded=succeeded, failed=[])
+
+    fp.process_downloaded = AsyncMock(side_effect=_proc)
+    task = await _new_task(store, track_count=2)
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "partial"
+    assert final.error_message == "Missing 1 track: Two"
 
 
 # ---------------------------------------------------------------------------
@@ -2233,7 +2406,11 @@ async def test_coverage_complete_via_recording_ids(tmp_path: Path):
         },
     ]
     client = _StubClient(
-        _status("completed", files_completed=2, succeeded=["p/1", "p/2"])
+        _status(
+            "completed",
+            files_completed=2,
+            succeeded=["peer/01.flac", "peer/02.flac"],
+        )
     )
     store, orch, fp, lib = _build(
         tmp_path,
@@ -2281,7 +2458,9 @@ async def test_coverage_positional_squatter_does_not_shadow_shifted_correct_file
             "duration_seconds": 155.0,
         },
     ]
-    client = _StubClient(_status("completed", files_completed=1, succeeded=["p/1"]))
+    client = _StubClient(
+        _status("completed", files_completed=1, succeeded=["peer/01.flac"])
+    )
     store, orch, fp, lib = _build(
         tmp_path,
         client=client,
@@ -2314,7 +2493,9 @@ async def test_coverage_null_length_untagged_row_covers_failopen(tmp_path: Path)
             "duration_seconds": None,
         }
     ]
-    client = _StubClient(_status("completed", files_completed=1, succeeded=["p/1"]))
+    client = _StubClient(
+        _status("completed", files_completed=1, succeeded=["peer/01.flac"])
+    )
     store, orch, fp, lib = _build(
         tmp_path,
         client=client,

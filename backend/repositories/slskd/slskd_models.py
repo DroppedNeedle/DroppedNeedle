@@ -74,6 +74,9 @@ class SlskdTransfer(msgspec.Struct, rename="camel", kw_only=True):
     direction: str = ""
     place_in_queue: int | None = None
     exception: str | None = None
+    # slskd keeps one transfer record per ATTEMPT; this orders a retried file's
+    # records so status is judged on the latest attempt only.
+    requested_at: str | None = None
 
 
 class SlskdDirectories(msgspec.Struct, kw_only=True):

@@ -46,7 +46,7 @@ from services.native.acquisition.strategy import (
     UsenetStrategy,
 )
 from services.native.album_preflight_scorer import AlbumPreflightScorer
-from services.native.coverage import match_rows_to_tracks
+from services.native.coverage import match_rows_to_tracks, uncovered_tracks
 from services.native.quality_tiers import (
     candidate_tier,
     in_range,
@@ -136,6 +136,12 @@ class _Cancelled(Exception):
     """Internal signal: the task was cancelled out-of-band (by cancel_task) while a
     poll loop was running. Caught by process_task / _resume_single_task, which return
     without overwriting the already-set 'cancelled' status."""
+
+
+def _basename(filename: str) -> str:
+    """Last path segment (slskd filenames use backslashes); log basenames not full peer
+    paths to keep log lines free of identifying directory structure."""
+    return filename.replace("\\", "/").rsplit("/", 1)[-1]
 
 
 def _user_error_message(exc: Exception) -> str:
@@ -712,16 +718,17 @@ class DownloadOrchestrator:
                     "status",
                     {"status": DownloadStatus.PROCESSING},
                 )
-                # On an interrupted (stalled/queued/deadline) outcome, import ONLY
-                # the transfers that actually succeeded - files that never arrived
-                # are not processed, so they can't be quarantined as verify failures
-                # (which would wrongly blacklist a slow-but-good peer). On a terminal
-                # outcome every transfer settled, so import the full manifest and let
-                # a genuinely failed source be quarantined as before.
-                if outcome in (_OUT_COMPLETED, _OUT_TERMINAL):
-                    only = None
-                else:
+                # A per-file source imports ONLY files whose latest transfer attempt
+                # succeeded, on every outcome: a terminal-but-failed transfer left no
+                # finished file, so importing it can only log SOURCE_FILE_MISSING and
+                # mis-blame the mount - the completeness veto below re-enters it into
+                # failover/retry instead. Folder sources (Usenet) ignore the filter.
+                strategy = self._strategy(task.source)
+                terminal = outcome in (_OUT_COMPLETED, _OUT_TERMINAL)
+                if strategy.per_file_imports or not terminal:
                     only = set(status.succeeded_filenames)
+                else:
+                    only = None  # folder import: the whole unpacked dir
                 result, enumerated = await self._import_files(
                     task, only_filenames=only, completed=outcome == _OUT_COMPLETED
                 )
@@ -747,7 +754,6 @@ class DownloadOrchestrator:
                 # unreachable download path / disk error as a warning, never a release
                 # failure. Stop without failing over (another peer can't fix a local problem)
                 # and let the backoff'd auto-retry try once the environment recovers.
-                strategy = self._strategy(task.source)
                 sab_local_fault = (
                     strategy.has_local_disk_faults
                     and outcome == _OUT_TERMINAL
@@ -757,6 +763,27 @@ class DownloadOrchestrator:
                 is_complete = await self._download_is_complete(
                     task, imported_any, result
                 )
+                # Never close 'completed' over never-imported expected files: stale
+                # library rows (an old copy an upgrade meant to replace) can satisfy
+                # coverage while the download delivered less than it claims, silently
+                # losing tracks. Vetoed attempts settle 'partial'/'failed', which
+                # re-enter the auto-retry ladder.
+                if is_complete:
+                    never_imported = await self._files_never_imported(
+                        task, only, result
+                    )
+                    if never_imported:
+                        logger.info(
+                            "download.completed_veto_never_imported",
+                            extra={
+                                "task_id": task.id,
+                                "count": len(never_imported),
+                                "files": sorted(_basename(f) for f in never_imported)[
+                                    :10
+                                ],
+                            },
+                        )
+                        is_complete = False
                 # A release that genuinely finished (e.g. SABnzbd Completed/Failed) but did NOT
                 # deliver what was requested is blocklisted by source identity BEFORE failover so
                 # a re-search/retry finds a COMPLETE release instead of re-grabbing this one
@@ -767,7 +794,7 @@ class DownloadOrchestrator:
                 # no-op - its per-file quarantine already ran at import).
                 if (
                     not is_complete
-                    and outcome in (_OUT_COMPLETED, _OUT_TERMINAL)
+                    and terminal
                     and not local_fault
                     and not attempt_import_fault
                 ):
@@ -863,11 +890,8 @@ class DownloadOrchestrator:
         # fresh enqueue -> fail fast if the peer never materialises a transfer
         outcome, status = await self._poll_until_done(task, expect_materialization=True)
         await self._store.update_status(task.id, DownloadStatus.PROCESSING)
-        only = (
-            None
-            if outcome in (_OUT_COMPLETED, _OUT_TERMINAL)
-            else set(status.succeeded_filenames)
-        )
+        # succeeded files only, same rule (and reasons) as the failover loop
+        only = set(status.succeeded_filenames)
         result, _enumerated = await self._import_files(
             task, only_filenames=only, completed=outcome == _OUT_COMPLETED
         )
@@ -1094,6 +1118,74 @@ class DownloadOrchestrator:
         # source before settling, rather than declaring done on the first track.
         return bool(result and result.succeeded and not result.failed)
 
+    async def _files_never_imported(  # noqa: ANN001
+        self, task, only: "set[str] | None", result
+    ) -> set[str]:
+        """Expected files this attempt did not land: excluded up front (latest
+        transfer never succeeded) plus attempted-and-failed. Files a prior run of
+        this task already imported (a crash between import and finalize) reconcile
+        from the library, mirroring ``_process_one``'s ``AlreadyImported`` check;
+        when the library can't confirm, the file stays counted."""
+        missing = {f.filename for f in result.failed if f.filename}
+        if only is not None and self._strategy(task.source).per_file_imports:
+            try:
+                expected = {
+                    f.filename for f in self._read_manifest(task.id).target_files
+                }
+            except OrchestrationError:
+                expected = set()
+            missing |= expected - only
+        confirmed_missing: set[str] = set()
+        for filename in missing:
+            try:
+                row = await self._library.get_imported_file(
+                    download_task_id=task.id, filename=filename
+                )
+            except Exception:  # noqa: BLE001 - reconcile is best-effort
+                logger.warning(
+                    "download.reconcile_error task_id=%s file=%s",
+                    task.id,
+                    _basename(filename),
+                    exc_info=True,
+                )
+                row = None
+            if row is not None and await asyncio.to_thread(
+                Path(row["file_path"]).exists
+            ):
+                continue
+            confirmed_missing.add(filename)
+        return confirmed_missing
+
+    async def _missing_tracks_message(self, task) -> str | None:  # noqa: ANN001
+        """The 'partial' settle message naming the uncovered tracks - same matcher
+        as the completeness gate, so message and status can never disagree. ``None``
+        when the tracklist is unavailable or nothing is missing (fail-open)."""
+        if self._album_service is None or not task.release_group_mbid:
+            return None
+        try:
+            info = await self._album_service.get_album_tracks_info(
+                task.release_group_mbid, priority=RequestPriority.BACKGROUND_SYNC
+            )
+            rows = await self._library.get_file_rows_for_album(task.release_group_mbid)
+        except Exception:  # noqa: BLE001 - the message is a bonus, never a blocker
+            logger.warning(
+                "download.missing_tracks_message_error task_id=%s",
+                task.id,
+                exc_info=True,
+            )
+            return None
+        tracks = list(info.tracks or [])
+        if not tracks:
+            return None
+        missing = uncovered_tracks(rows, tracks)
+        if not missing:
+            return None
+        names = [t.title or f"track {t.position}" for t in missing[:5]]
+        more = len(missing) - len(names)
+        suffix = f" (+{more} more)" if more > 0 else ""
+        plural = "s" if len(missing) != 1 else ""
+        return f"Missing {len(missing)} track{plural}: {', '.join(names)}{suffix}"
+
     async def _settle_incomplete(  # noqa: ANN001
         self,
         task,
@@ -1121,7 +1213,11 @@ class DownloadOrchestrator:
             await self._finalize(task, DownloadStatus.FAILED, error_message=fail_msg)
             return
         if await self._imported_track_count(task) > 0:
-            await self._finalize(task, DownloadStatus.PARTIAL)
+            await self._finalize(
+                task,
+                DownloadStatus.PARTIAL,
+                error_message=await self._missing_tracks_message(task),
+            )
         else:
             await self._finalize(task, DownloadStatus.FAILED, error_message=fail_msg)
 
@@ -1541,10 +1637,18 @@ class DownloadOrchestrator:
 
             await self._cancel_transfers(task, manifest)
 
-            if await self._download_is_complete(task, bool(result.succeeded), result):
+            # same completeness veto as the failover loop: files that failed this
+            # reimport must not be papered over by stale library coverage
+            if not result.failed and await self._download_is_complete(
+                task, bool(result.succeeded), result
+            ):
                 await self._finalize(task, DownloadStatus.COMPLETED)
             elif result.succeeded:
-                await self._finalize(task, DownloadStatus.PARTIAL)
+                await self._finalize(
+                    task,
+                    DownloadStatus.PARTIAL,
+                    error_message=await self._missing_tracks_message(task),
+                )
             else:
                 if any(f.reason == SOURCE_FILE_MISSING for f in result.failed):
                     fail_msg = _FILES_NOT_FOUND_MSG

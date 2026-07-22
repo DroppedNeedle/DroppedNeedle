@@ -84,19 +84,19 @@ class DownloadTaskStatus(AppStruct):
     bytes_downloaded: int = 0
     progress_percent: float = 0.0
     error: str | None = None
-    # Filenames whose transfer has succeeded so far. Lets the orchestrator import
-    # the already-finished subset of a stalled task without touching files that
-    # never arrived (which would otherwise be quarantined as verify failures).
+    # Filenames whose LATEST transfer attempt succeeded (retries deduped). The
+    # orchestrator imports ONLY these - a never-finished file must not reach the
+    # verify/import phase, where it could only be quarantined or logged as missing.
     succeeded_filenames: list[str] = []
     # True when at least one non-terminal transfer is actively connecting or
     # moving bytes (vs. sitting in the peer's remote upload queue). The stall
     # watchdog uses this to pick the active-stall timeout vs the queued timeout.
     has_active_transfer: bool = False
-    # Number of slskd transfer records matched to this task. 0 means the enqueue
-    # produced nothing (peer offline / silently rejected) - distinct from a real
-    # transfer sitting queued in the peer's upload queue, which has a record. Lets
-    # the orchestrator fail a no-show enqueue over fast instead of waiting out the
-    # full queued timeout for a transfer that never existed.
+    # Number of FILES with a matched transfer record (retries deduped, like every
+    # tally here). 0 means the enqueue produced nothing (peer offline / silently
+    # rejected) - distinct from a real transfer queued at the peer, which has a
+    # record. Lets the orchestrator fail a no-show enqueue over fast instead of
+    # waiting out the full queued timeout for a transfer that never existed.
     matched_transfers: int = 0
 
 

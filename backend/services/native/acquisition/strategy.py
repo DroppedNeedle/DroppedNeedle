@@ -73,6 +73,9 @@ class SourceStrategy(Protocol):
     # Whether this source can report a LOCAL disk/write fault on a terminal outcome (SABnzbd
     # does; slskd's only local fault is the downloads mount, handled via attempt_mount).
     has_local_disk_faults: bool
+    # Per known FILE (slskd, honours ``only_filenames``) vs per unpacked FOLDER
+    # (Usenet - filenames unknown up front, so the filter is ignored).
+    per_file_imports: bool
 
     @property
     def client(self):  # noqa: ANN201
@@ -128,6 +131,7 @@ class SoulseekStrategy:
     name = "soulseek"
     applies_queued_timeout = True
     has_local_disk_faults = False  # slskd's only local fault is the downloads mount
+    per_file_imports = True  # imports the exact enqueued filenames, one by one
 
     def __init__(  # noqa: ANN001
         self, *, indexer, scorer, track_matcher, client, store, file_processor,
@@ -356,6 +360,7 @@ class UsenetStrategy:
     # accrue the queued-peer clock (the 6h deadline is the only backstop for a paused job).
     applies_queued_timeout = False
     has_local_disk_faults = True  # SABnzbd reports disk/write/permission errors
+    per_file_imports = False  # folder import; filenames unknown until unpack (D18)
 
     def __init__(  # noqa: ANN001
         self, *, indexer, scorer, client, store, file_processor, import_settle_seconds,
