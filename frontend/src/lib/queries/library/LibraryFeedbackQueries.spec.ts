@@ -36,10 +36,19 @@ import {
 	getLibraryRepairEstimateQuery,
 	getLibraryRepairFindingsQuery
 } from './LibraryRepairQueries.svelte';
+import {
+	getLibraryIdentityPreparationEstimateQuery,
+	getLibraryIdentityPreparationFindingsQuery,
+	getLibraryIdentityPreparationsQuery
+} from './LibraryIdentityPreparationQueries.svelte';
 import { requestLibraryRun } from './LibraryOperationMutations.svelte';
 import { applyArtistMerge } from './LibraryCatalogMutations.svelte';
 import { actOnLibraryReview } from './LibraryReviewMutations.svelte';
 import { applyLibraryRepair } from './LibraryRepairMutations.svelte';
+import {
+	applyLibraryIdentityPreparation,
+	createLibraryIdentityPreparation
+} from './LibraryIdentityPreparationMutations.svelte';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 
 const mockGet = vi.mocked(api.global.get);
@@ -165,5 +174,76 @@ describe('Feedback Fixes library query contracts', () => {
 		await repair.onSuccess();
 
 		expect(clearSearch).toHaveBeenCalledTimes(3);
+	});
+
+	it('segments identity preparation by administrator and forwards scope, pagination, and signals', async () => {
+		const first = getLibraryIdentityPreparationsQuery(
+			() => 'admin-a',
+			() => true
+		) as unknown as {
+			queryKey: readonly unknown[];
+			queryFn: (context: { pageParam: string; signal: AbortSignal }) => Promise<unknown>;
+		};
+		const second = getLibraryIdentityPreparationsQuery(
+			() => 'admin-b',
+			() => true
+		) as unknown as { queryKey: readonly unknown[] };
+		expect(first.queryKey).not.toEqual(second.queryKey);
+		expect(first.queryKey).toContain('admin-a');
+		const signal = new AbortController().signal;
+		await first.queryFn({ pageParam: '10:job', signal });
+		expect(mockGet).toHaveBeenCalledWith(
+			'/api/v1/library/management/identity-preparations?limit=5&cursor=10%3Ajob',
+			{ signal }
+		);
+
+		const estimate = getLibraryIdentityPreparationEstimateQuery(
+			() => 'admin-a',
+			() => ['root-b', 'root-a'],
+			() => true
+		) as unknown;
+		await queryFn(estimate)({ signal });
+		expect(mockGet).toHaveBeenCalledWith(
+			'/api/v1/library/management/identity-preparations/estimate?root_id=root-b&root_id=root-a',
+			{ signal }
+		);
+
+		const findings = getLibraryIdentityPreparationFindingsQuery(
+			() => 'admin-a',
+			() => 'job-1',
+			() => 'mapping_ready'
+		) as unknown as {
+			queryKey: readonly unknown[];
+			queryFn: (context: { pageParam: string; signal: AbortSignal }) => Promise<unknown>;
+		};
+		expect(findings.queryKey).toContain('mapping_ready');
+		await findings.queryFn({ pageParam: 'finding-2', signal });
+		expect(mockGet).toHaveBeenCalledWith(
+			'/api/v1/library/management/identity-preparations/job-1/findings?limit=100&cursor=finding-2&finding_category=mapping_ready',
+			{ signal }
+		);
+	});
+
+	it('uses explicit preparation and catalog-only apply mutations', async () => {
+		const create = createLibraryIdentityPreparation(() => 'admin-a') as unknown as {
+			mutationFn: (rootIds: string[]) => Promise<unknown>;
+		};
+		await create.mutationFn(['root-1']);
+		expect(mockPost).toHaveBeenCalledWith(
+			'/api/v1/library/management/identity-preparations',
+			expect.objectContaining({ root_ids: ['root-1'] })
+		);
+
+		const apply = applyLibraryIdentityPreparation(() => 'admin-a') as unknown as {
+			mutationFn: (input: { jobId: string; expectedRevision: number }) => Promise<unknown>;
+			onSuccess: () => Promise<void>;
+		};
+		await apply.mutationFn({ jobId: 'job/1', expectedRevision: 7 });
+		expect(mockPost).toHaveBeenCalledWith(
+			'/api/v1/library/management/identity-preparations/job%2F1/apply',
+			{ expected_row_revision: 7, confirmation: true }
+		);
+		await apply.onSuccess();
+		expect(clearSearch).toHaveBeenCalledOnce();
 	});
 });

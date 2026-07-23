@@ -175,6 +175,71 @@ def _plan_item(job_id: str, ordinal: int) -> LibraryManagementPlanItem:
 
 
 @pytest.mark.asyncio
+async def test_planning_progress_does_not_invalidate_operation_controls(
+    store: NativeLibraryStore,
+) -> None:
+    job_id = "management-progress"
+    await store.create_library_management_job(
+        OperationJob(
+            id=job_id,
+            kind="library_management",
+            input_catalog_revision=0,
+            created_at=10,
+        ),
+        _job_snapshot(job_id),
+    )
+    claimed = await store.claim_operation_job(
+        "worker", now=10, lease_seconds=60, kind="library_management"
+    )
+    assert claimed is not None
+    control_revision = int(claimed["row_revision"])
+
+    assert await store.heartbeat_operation_job(
+        job_id, "worker", now=11, lease_seconds=60
+    )
+    await store.append_library_management_plan_items(
+        job_id,
+        [
+            _plan_item(job_id, 0),
+            msgspec.structs.replace(
+                _plan_item(job_id, 1),
+                bundle_ordinal=1,
+            ),
+        ],
+        expected_snapshot_revision=1,
+    )
+
+    operation = await store.get_operation_job(job_id)
+    snapshot = await store.get_library_management_job_snapshot(job_id)
+    assert operation is not None
+    assert snapshot is not None
+    assert operation["row_revision"] == control_revision
+    assert operation["event_revision"] == int(claimed["event_revision"]) + 1
+    assert json.loads(snapshot.summary_json) == {
+        "bundle_count": 2,
+        "item_count": 2,
+    }
+
+    requested = await store.request_operation_control(
+        job_id,
+        control="pause",
+        expected_row_revision=control_revision,
+        now=12,
+    )
+    assert requested["control_request"] == "pause"
+    paused = await store.checkpoint_operation_control(job_id, "worker", now=13)
+    assert paused is not None and paused["state"] == "paused"
+    stopped = await store.request_operation_control(
+        job_id,
+        control="stop",
+        expected_row_revision=int(paused["row_revision"]),
+        now=14,
+    )
+    assert stopped["state"] == "stopped"
+    assert stopped["terminal_code"] == "STOPPED"
+
+
+@pytest.mark.asyncio
 async def test_management_history_filters_source_or_destination_root(
     store: NativeLibraryStore,
 ) -> None:
@@ -282,6 +347,74 @@ async def test_ready_management_preview_becomes_exact_idempotent_apply(
     assert saved.apply_idempotency_key == "apply-once"
     assert eligible_work is not None and eligible_work["state"] == "pending"
     assert blocked_work is None
+
+
+@pytest.mark.asyncio
+async def test_ready_management_preview_can_be_discarded_once_without_deleting_audit(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    job_id = "management-discard"
+    token_hash = hashlib.sha256(b"preview-token").hexdigest()
+    await store.create_library_management_job(
+        OperationJob(
+            id=job_id,
+            kind="library_management",
+            input_catalog_revision=0,
+            created_at=10,
+        ),
+        msgspec.structs.replace(
+            _job_snapshot(job_id),
+            preview_token_hash=token_hash,
+            preview_expires_at=100,
+        ),
+    )
+    await store.append_library_management_plan_items(
+        job_id,
+        [_plan_item(job_id, 0)],
+        expected_snapshot_revision=1,
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_management_job_snapshots SET phase='ready' WHERE job_id=?",
+            (job_id,),
+        )
+        connection.execute(
+            "UPDATE library_operation_jobs SET state='ready' WHERE id=?", (job_id,)
+        )
+
+    with pytest.raises(StaleRevisionError, match="changed before discard"):
+        await store.discard_library_management_preview(
+            job_id, expected_job_revision=999, now=19
+        )
+
+    discarded = await store.discard_library_management_preview(
+        job_id, expected_job_revision=1, now=20
+    )
+    repeated = await store.discard_library_management_preview(
+        job_id, expected_job_revision=999, now=21
+    )
+    snapshot = await store.get_library_management_job_snapshot(job_id)
+    plan_item = await store.get_library_management_plan_item(job_id, 0)
+
+    assert discarded["state"] == "cancelled"
+    assert discarded["terminal_code"] == "PREVIEW_DISCARDED"
+    assert discarded["terminal_at"] == 20
+    assert discarded["row_revision"] == 2
+    assert discarded["event_revision"] == 2
+    assert repeated["row_revision"] == discarded["row_revision"]
+    assert snapshot is not None and snapshot.phase == "ready"
+    assert snapshot.updated_at == 20
+    assert snapshot.row_revision == 3
+    assert plan_item is not None
+
+    with pytest.raises(StaleRevisionError, match="changed before apply"):
+        await store.begin_library_management_apply(
+            job_id,
+            preview_token_hash=token_hash,
+            expected_job_revision=2,
+            idempotency_key="discarded-apply",
+            now=22,
+        )
 
 
 @pytest.mark.asyncio

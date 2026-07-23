@@ -3,7 +3,7 @@
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import LibraryDashboard from '$lib/components/library/LibraryDashboard.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { Headphones, SlidersHorizontal, Waypoints, X } from 'lucide-svelte';
+	import { Headphones, LockKeyhole, SlidersHorizontal, Waypoints, X } from 'lucide-svelte';
 
 	const CONNECT_APPS_HREF = '/profile#connect-apps';
 	const BANNER_KEY = 'droppedneedle_connect_apps_banner_dismissed';
@@ -24,10 +24,6 @@
 		if (typeof localStorage !== 'undefined') {
 			localStorage.setItem(BANNER_KEY, '1');
 		}
-	}
-
-	function scrollToControls() {
-		document.getElementById('operations')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 </script>
 
@@ -52,13 +48,23 @@
 				<span>Connect Apps</span>
 			</a>
 			{#if authStore.isAdmin}
-				<button
-					onclick={scrollToControls}
+				<a
+					href="/library/management"
 					class="group btn btn-sm gap-2 rounded-full border border-base-content/15 bg-base-100/50 text-base-content backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-base-100/80 sm:btn-md"
 				>
 					<SlidersHorizontal
 						class="h-4 w-4 transition-transform duration-200 group-hover:rotate-12"
 					/>
+					<span>Controls</span>
+				</a>
+			{:else}
+				<button
+					type="button"
+					disabled
+					title="Administrator access required"
+					class="btn btn-sm cursor-not-allowed gap-2 rounded-full border border-base-content/10 bg-base-200/35 text-base-content/35 shadow-none sm:btn-md"
+				>
+					<LockKeyhole class="h-4 w-4" aria-hidden="true" />
 					<span>Controls</span>
 				</button>
 			{/if}

@@ -63,7 +63,9 @@
 		ArrowUpCircle,
 		LogOut,
 		ShieldCheck,
-		Heart
+		Heart,
+		LibraryBig,
+		Cog
 	} from 'lucide-svelte';
 	import type { Snippet } from 'svelte';
 	import QueryProvider from '$lib/queries/QueryProvider.svelte';
@@ -307,6 +309,10 @@
 		return currentPath === path || currentPath.startsWith(`${path}/`);
 	}
 
+	function isLibraryNavActive(): boolean {
+		return isNavActive('/library') && !isNavActive('/library/management');
+	}
+
 	const integrations = fromStore(integrationStore);
 	const downloadClientConfigured = $derived(
 		integrations.current.download_client || !integrations.current.loaded
@@ -422,6 +428,8 @@
 								<a
 									href="/library"
 									class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+									class:menu-active={isLibraryNavActive()}
+									aria-current={isLibraryNavActive() ? 'page' : undefined}
 									data-tip="Library"
 								>
 									<div class="relative">
@@ -493,7 +501,7 @@
 
 							<SidebarServices />
 
-							{#if downloadClientConfigured || authStore.isAdmin}
+							{#if downloadClientConfigured}
 								<div class="divider my-0"></div>
 							{/if}
 
@@ -511,6 +519,33 @@
 							{/if}
 
 							{#if authStore.isAdmin}
+								<div class="divider my-0"></div>
+								<li class="menu-title is-drawer-close:hidden px-3 pb-1 pt-2">
+									<span
+										class="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-base-content/40"
+										>Admin</span
+									>
+								</li>
+								<li>
+									<a
+										href="/library/management"
+										class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+										class:menu-active={isNavActive('/library/management')}
+										aria-current={isNavActive('/library/management') ? 'page' : undefined}
+										aria-label="Library Management"
+										data-tip="Library Management"
+									>
+										<div class="relative h-6 w-6">
+											<LibraryBig class="h-6 w-6" />
+											<span
+												class="absolute -bottom-1.5 -right-1.5 grid h-4 w-4 place-items-center rounded-full bg-base-200 text-library-manage"
+											>
+												<Cog class="h-3 w-3" />
+											</span>
+										</div>
+										<span class="is-drawer-close:hidden">Library Management</span>
+									</a>
+								</li>
 								<li>
 									<a
 										href="/requests?tab=approvals"

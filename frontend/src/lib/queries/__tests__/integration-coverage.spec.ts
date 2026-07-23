@@ -277,6 +277,11 @@ const COVERAGE: Array<[string, string, string]> = [
 		'/api/v1/library/management/previews/J1/apply'
 	],
 	[
+		'discard library management preview',
+		API.libraryManagement.discardPreview('J1'),
+		'/api/v1/library/management/previews/J1/discard'
+	],
+	[
 		'library management operation history',
 		API.libraryManagement.operations(),
 		'/api/v1/library/management/operations'
@@ -415,6 +420,36 @@ const COVERAGE: Array<[string, string, string]> = [
 		'stop identity repair',
 		API.library.stopIdentityRepair('J1'),
 		'/api/v1/library/identity-repairs/J1/stop'
+	],
+	[
+		'identity preparations',
+		API.library.identityPreparations(),
+		'/api/v1/library/management/identity-preparations'
+	],
+	[
+		'identity preparation estimate',
+		API.library.identityPreparationEstimate([]),
+		'/api/v1/library/management/identity-preparations/estimate'
+	],
+	[
+		'identity preparation',
+		API.library.identityPreparation('J1'),
+		'/api/v1/library/management/identity-preparations/J1'
+	],
+	[
+		'identity preparation findings',
+		API.library.identityPreparationFindings('J1'),
+		'/api/v1/library/management/identity-preparations/J1/findings'
+	],
+	[
+		'apply identity preparation',
+		API.library.applyIdentityPreparation('J1'),
+		'/api/v1/library/management/identity-preparations/J1/apply'
+	],
+	[
+		'discard identity preparation',
+		API.library.discardIdentityPreparation('J1'),
+		'/api/v1/library/management/identity-preparations/J1/discard'
 	],
 	[
 		'scan diagnostics',

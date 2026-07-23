@@ -22,7 +22,12 @@ const summary = {
 	counts_by_reason: { ZERO_SUPPORT: 3 },
 	album_counts_by_root: { 'root-1': 12 },
 	provider_deferred_count: 1,
-	failed_evidence_count: 1
+	failed_evidence_count: 1,
+	purpose: 'existing_matches',
+	ready_album_count: 0,
+	mapping_candidate_count: 0,
+	exact_release_required_count: 0,
+	needs_review_count: 1
 };
 
 function repair(overrides: Partial<OperationResponse> = {}): OperationResponse {

@@ -505,6 +505,10 @@ export interface LibraryManagementApplyRequest {
 	confirmation?: boolean;
 }
 
+export interface LibraryManagementDiscardRequest {
+	expected_operation_row_revision: number;
+}
+
 export interface LibraryManagementUndoPreviewRequest {
 	expected_operation_row_revision: number;
 	idempotency_key: string;

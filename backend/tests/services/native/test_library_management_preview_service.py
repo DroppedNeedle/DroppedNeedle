@@ -17,6 +17,7 @@ from api.v1.schemas.library_management_preview import (
     LibraryManagementActivationConfirmRequest,
     LibraryManagementActivationProof,
     LibraryManagementApplyRequest,
+    LibraryManagementDiscardRequest,
     LibraryManagementPreviewCreateRequest,
     LibraryManagementSelectionRequest,
     LibraryManagementTagEditFieldRequest,
@@ -634,6 +635,31 @@ async def test_apply_rejects_missing_confirmation_and_wrong_token(
             ),
         )
     store.begin_library_management_apply.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_discard_cancels_exact_ready_preview_and_returns_its_audit_detail(
+    tmp_path: Path,
+) -> None:
+    service, store, _preferences, _snapshot = _service_fixture(tmp_path)
+    store.get_operation_job.return_value = {
+        **_operation(state="cancelled"),
+        "row_revision": 3,
+        "event_revision": 2,
+        "terminal_code": "PREVIEW_DISCARDED",
+    }
+
+    detail = await service.discard(
+        "job-1",
+        LibraryManagementDiscardRequest(expected_operation_row_revision=2),
+    )
+
+    store.discard_library_management_preview.assert_awaited_once_with(
+        "job-1", expected_job_revision=2, now=100.0
+    )
+    assert detail.state == "cancelled"
+    assert detail.terminal_code == "PREVIEW_DISCARDED"
+    assert detail.ready_for_confirmation is False
 
 
 @pytest.mark.asyncio

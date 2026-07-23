@@ -213,7 +213,8 @@ describe('AlbumIdentificationPanel', () => {
 				candidate_track_title: 'Matching Song',
 				candidate_disc_number: 1,
 				candidate_track_position: 1,
-				recording_mbid: 'recording-supported'
+				recording_mbid: 'recording-supported',
+				release_track_mbid: null
 			},
 			{
 				local_track_id: 'track-unknown',
@@ -222,7 +223,8 @@ describe('AlbumIdentificationPanel', () => {
 				candidate_track_title: null,
 				candidate_disc_number: null,
 				candidate_track_position: null,
-				recording_mbid: null
+				recording_mbid: null,
+				release_track_mbid: null
 			},
 			{
 				local_track_id: 'track-1',
@@ -231,7 +233,8 @@ describe('AlbumIdentificationPanel', () => {
 				candidate_track_title: 'Different Song',
 				candidate_disc_number: 1,
 				candidate_track_position: 1,
-				recording_mbid: 'recording-1'
+				recording_mbid: 'recording-1',
+				release_track_mbid: null
 			}
 		];
 		unsafe.reidentification_candidates[0].evidence.unmatched_expected_tracks = ['Missing Song'];

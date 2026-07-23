@@ -116,6 +116,7 @@ def route_services(
     preview.apply.return_value = OperationResponse(
         id="job-1", kind="library_management", state="queued"
     )
+    preview.discard.return_value = _preview_detail()
     preview.confirm_activation.return_value = profile.get_settings()
     return profile, preview
 
@@ -442,6 +443,23 @@ def test_apply_history_and_result_routes_are_admin_bounded(
     preview.results.assert_awaited_once_with("job-1", after_ordinal=4, limit=25)
 
 
+def test_discard_preview_route_forwards_exact_operation_revision(
+    app: FastAPI,
+    route_services: tuple[LibraryManagementProfileService, AsyncMock],
+) -> None:
+    _, preview = route_services
+    override_admin_auth(app)
+
+    response = build_test_client(app).post(
+        "/library/management/previews/job-1/discard",
+        json={"expected_operation_row_revision": 7},
+    )
+
+    assert response.status_code == 200
+    request = preview.discard.await_args.args[1]
+    assert request.expected_operation_row_revision == 7
+
+
 def test_undo_preview_route_forwards_source_revision_and_actor(app: FastAPI) -> None:
     override_admin_auth(app)
     response = build_test_client(app).post(
@@ -618,6 +636,7 @@ def test_management_route_inventory_is_complete() -> None:
         ("GET", "/library/management/tracks/{track_id}/tag-editor"),
         ("POST", "/library/management/tag-edit-previews"),
         ("GET", "/library/management/previews/{job_id}"),
+        ("POST", "/library/management/previews/{job_id}/discard"),
         ("GET", "/library/management/previews/{job_id}/items"),
         (
             "GET",

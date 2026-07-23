@@ -1770,6 +1770,9 @@ async def test_operation_materialization_claim_heartbeat_recovery_and_work_compl
     assert await store.heartbeat_operation_job(
         "operation-1", "worker", now=2, lease_seconds=10
     )
+    after_heartbeat = await store.get_operation_job("operation-1")
+    assert after_heartbeat is not None
+    assert after_heartbeat["row_revision"] == claim["row_revision"]
     assert await store.recover_expired_operation_leases(now=5) == 0
     work = await store.claim_operation_work("operation-1", "worker", now=3)
     assert work is not None
@@ -1783,7 +1786,7 @@ async def test_operation_materialization_claim_heartbeat_recovery_and_work_compl
         failure_code=None,
         completed_at=4,
     )
-    assert (work_revision, job_revision, stream_revision) == (3, 4, 2)
+    assert (work_revision, job_revision, stream_revision) == (3, 3, 2)
     assert (
         _scalar(
             db_path,

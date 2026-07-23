@@ -33,6 +33,7 @@ import {
 	createLibraryManagementDuplicateResolutionMutation,
 	createLibraryManagementTagEditPreviewMutation,
 	deleteLibraryManagementProfileMutation,
+	discardLibraryManagementPreviewMutation,
 	updateLibraryManagementSettingsMutation
 } from './LibraryManagementMutations.svelte';
 
@@ -127,6 +128,25 @@ describe('Library Management mutations', () => {
 		expect(api.global.post).toHaveBeenCalledWith(
 			'/api/v1/library/management/tag-edit-previews',
 			request
+		);
+	});
+
+	it('discards only the exact current ready preview revision', async () => {
+		discardLibraryManagementPreviewMutation();
+		const mutation = currentMutation<{
+			jobId: string;
+			request: { expected_operation_row_revision: number };
+		}>();
+		const input = {
+			jobId: 'preview/1',
+			request: { expected_operation_row_revision: 7 }
+		};
+
+		await mutation.mutationFn(input);
+
+		expect(api.global.post).toHaveBeenCalledWith(
+			'/api/v1/library/management/previews/preview%2F1/discard',
+			input.request
 		);
 	});
 });

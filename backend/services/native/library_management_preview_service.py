@@ -26,6 +26,7 @@ from api.v1.schemas.library_management_preview import (
     LibraryManagementActivationProof,
     LibraryManagementActivationPreviewRequest,
     LibraryManagementApplyRequest,
+    LibraryManagementDiscardRequest,
     LibraryManagementOperationHistoryItemResponse,
     LibraryManagementOperationHistoryResponse,
     LibraryManagementPlanItemPageResponse,
@@ -475,6 +476,16 @@ class LibraryManagementPreviewService:
             now=self._clock(),
         )
         return LibraryOperationService._response(row)
+
+    async def discard(
+        self, job_id: str, request: LibraryManagementDiscardRequest
+    ) -> LibraryManagementPreviewDetailResponse:
+        await self._store.discard_library_management_preview(
+            job_id,
+            expected_job_revision=request.expected_operation_row_revision,
+            now=self._clock(),
+        )
+        return await self.detail(job_id)
 
     async def history(
         self,

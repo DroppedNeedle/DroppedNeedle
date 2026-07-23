@@ -116,6 +116,10 @@ class LibraryManagementApplyRequest(AppStruct):
     confirmation: bool = False
 
 
+class LibraryManagementDiscardRequest(AppStruct):
+    expected_operation_row_revision: int
+
+
 class LibraryManagementUndoPreviewRequest(AppStruct):
     expected_operation_row_revision: int
     idempotency_key: str

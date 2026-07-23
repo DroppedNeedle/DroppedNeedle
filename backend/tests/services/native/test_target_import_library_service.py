@@ -46,7 +46,12 @@ def _resolver(root: Path, *, root_id: str = "root-1") -> LibraryPolicyResolver:
     )
 
 
-def _tag(*, title: str = "Track One", track_number: int = 1) -> AudioTag:
+def _tag(
+    *,
+    title: str = "Track One",
+    track_number: int = 1,
+    release_track_id: str | None = None,
+) -> AudioTag:
     return AudioTag(
         title=title,
         artist="Local Artist",
@@ -56,6 +61,7 @@ def _tag(*, title: str = "Track One", track_number: int = 1) -> AudioTag:
         disc_number=1,
         year=2026,
         genre="Test Genre",
+        musicbrainz_release_track_id=release_track_id,
     )
 
 
@@ -96,7 +102,7 @@ async def test_import_is_idempotent_and_writes_only_target_catalog(target) -> No
 
     first = await service.upsert_file(
         audio,
-        _tag(),
+        _tag(release_track_id="release-track-1"),
         _info(audio.stat().st_size),
         release_group_mbid="release-group-1",
         release_mbid="release-1",
@@ -107,7 +113,7 @@ async def test_import_is_idempotent_and_writes_only_target_catalog(target) -> No
     )
     second = await service.upsert_file(
         audio,
-        _tag(),
+        _tag(release_track_id="release-track-1"),
         _info(audio.stat().st_size),
         release_group_mbid="release-group-1",
         release_mbid="release-1",
@@ -118,6 +124,9 @@ async def test_import_is_idempotent_and_writes_only_target_catalog(target) -> No
     )
 
     assert first == second
+    local_track = await store.get_local_track(first)
+    assert local_track is not None
+    assert local_track["embedded_release_track_mbid"] == "release-track-1"
     imported = await service.get_imported_file("task-1", "01 Track One.flac")
     assert imported is not None
     assert imported["id"] == first

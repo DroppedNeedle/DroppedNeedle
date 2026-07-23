@@ -2346,6 +2346,7 @@ def legacy_audio_projection(
         musicbrainz_release_group_id=scalar("musicbrainz_release_group_id"),
         musicbrainz_release_id=scalar("musicbrainz_release_id"),
         musicbrainz_recording_id=scalar("musicbrainz_recording_id"),
+        musicbrainz_release_track_id=scalar("musicbrainz_release_track_id"),
         musicbrainz_artist_id=artist_ids[0] if artist_ids else None,
         musicbrainz_album_artist_id=(album_artist_ids[0] if album_artist_ids else None),
         acoustid_id=scalar("acoustid_id"),

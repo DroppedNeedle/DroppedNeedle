@@ -36,6 +36,12 @@
 		onclose: () => void;
 	}
 
+	interface SelectedScopeItem {
+		id: string;
+		title: string;
+		subtitle: string;
+	}
+
 	let { mode = 'manage', roots, settings, policyRevision, onclose }: Props = $props();
 	let dialog: HTMLDialogElement;
 	let heading: HTMLHeadingElement;
@@ -43,6 +49,7 @@
 	let selectionKind = $state<ManagementSelectionKind>('roots');
 	const initialRootIds = (): string[] => roots.map((root) => root.id);
 	let selectedIds = $state<string[]>(initialRootIds());
+	let selectedItems = $state<SelectedScopeItem[]>([]);
 	let searchTerm = $state('');
 	let filterSearch = $state('');
 	let filterGenre = $state('');
@@ -75,6 +82,11 @@
 		selectionKind === 'tracks' && (renameEnabled || moveEnabled || sidecarsEnabled)
 	);
 	const pending = $derived(createPreview.isPending || createRestore.isPending);
+	const filterHasCriteria = $derived(
+		Boolean(
+			filterSearch.trim() || filterGenre.trim() || filterFromYear !== null || filterToYear !== null
+		)
+	);
 
 	$effect(() => {
 		if (!profile || profile.id === seededProfileId) return;
@@ -97,6 +109,7 @@
 		selectionKind = kind;
 		searchTerm = '';
 		selectedIds = kind === 'roots' ? roots.map((root) => root.id) : [];
+		selectedItems = [];
 	}
 
 	function toggleId(id: string): void {
@@ -105,7 +118,39 @@
 			: [...selectedIds, id];
 	}
 
-	function resultItems(): Array<{ id: string; title: string; subtitle: string }> {
+	function toggleResult(item: SelectedScopeItem): void {
+		if (selectedIds.includes(item.id)) {
+			removeSelected(item.id);
+			return;
+		}
+		selectedIds = [...selectedIds, item.id];
+		selectedItems = [...selectedItems, item];
+	}
+
+	function removeSelected(id: string): void {
+		selectedIds = selectedIds.filter((value) => value !== id);
+		selectedItems = selectedItems.filter((value) => value.id !== id);
+	}
+
+	function clearSelection(): void {
+		selectedIds = [];
+		selectedItems = [];
+	}
+
+	function currentScopeItems(): SelectedScopeItem[] {
+		if (selectionKind === 'roots') {
+			return roots
+				.filter((root) => selectedIds.includes(root.id))
+				.map((root) => ({
+					id: root.id,
+					title: root.label,
+					subtitle: `${root.policy.replaceAll('_', ' ')} scanning policy`
+				}));
+		}
+		return selectedItems;
+	}
+
+	function resultItems(): SelectedScopeItem[] {
 		if (!searchQuery.data) return [];
 		if (selectionKind === 'artists') {
 			return searchQuery.data.artists.map((artist) => ({
@@ -212,7 +257,9 @@
 	}
 
 	function scopeLabel(): string {
-		if (selectionKind === 'filter') return 'Current catalog filter';
+		if (selectionKind === 'filter') {
+			return filterHasCriteria ? 'Current catalog filter' : 'Entire library catalog';
+		}
 		if (selectionKind === 'roots' && selectedIds.length === roots.length)
 			return 'All library roots';
 		return `${selectedIds.length} selected ${selectionKind}`;
@@ -244,7 +291,7 @@
 		if (pending) event.preventDefault();
 	}}
 >
-	<div class="modal-box management-runner max-w-3xl p-0">
+	<div class="modal-box management-runner max-w-5xl p-0">
 		<header class="management-profile-editor__header">
 			<div>
 				<p class="management-kicker"><FolderCog class="h-3.5 w-3.5" /> Manual write planning</p>
@@ -280,7 +327,7 @@
 			{/each}
 		</div>
 
-		<div class="max-h-[65vh] min-h-80 overflow-y-auto p-5 sm:p-6">
+		<div class="max-h-[68dvh] min-h-80 overflow-y-auto p-5 sm:p-6">
 			{#if step === 1}
 				<section class="space-y-4">
 					<div>
@@ -299,6 +346,56 @@
 							>
 						{/each}
 					</div>
+					{#if selectionKind === 'filter'}
+						<div class="management-selected-scope" data-wide-scope={!filterHasCriteria}>
+							<div>
+								<strong
+									>{filterHasCriteria ? 'Filtered catalog scope' : 'Entire library catalog'}</strong
+								>
+								<small
+									>{filterHasCriteria
+										? 'The filters below are combined for this preview.'
+										: 'No filters are set, so every cataloged file is in scope.'}</small
+								>
+							</div>
+						</div>
+					{:else}
+						<div
+							class="management-selected-scope"
+							role="region"
+							aria-label="Selected management scope"
+						>
+							<div class="management-selected-scope__header">
+								<div>
+									<strong>Current selection</strong>
+									<small
+										>{currentScopeItems().length.toLocaleString()}
+										{currentScopeItems().length === 1 ? 'item' : 'items'} in scope</small
+									>
+								</div>
+								{#if currentScopeItems().length > 0}<button
+										class="btn btn-ghost btn-xs"
+										onclick={clearSelection}>Clear all</button
+									>{/if}
+							</div>
+							{#if currentScopeItems().length === 0}
+								<p class="text-sm text-base-content/45">Nothing is selected yet.</p>
+							{:else}
+								<div class="management-selected-scope__items">
+									{#each currentScopeItems() as item (item.id)}
+										<div class="management-selected-scope__item">
+											<span><strong>{item.title}</strong><small>{item.subtitle}</small></span>
+											<button
+												class="btn btn-ghost btn-xs btn-square"
+												aria-label={`Remove ${item.title} from scope`}
+												onclick={() => removeSelected(item.id)}><X class="h-3.5 w-3.5" /></button
+											>
+										</div>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					{/if}
 					{#if selectionKind === 'roots'}
 						<div class="grid gap-2 sm:grid-cols-2">
 							{#each roots as root (root.id)}<label class="management-selection-card"
@@ -374,7 +471,7 @@
 											type="checkbox"
 											class="checkbox checkbox-sm"
 											checked={selectedIds.includes(item.id)}
-											onchange={() => toggleId(item.id)}
+											onchange={() => toggleResult(item)}
 										/><span><strong>{item.title}</strong><small>{item.subtitle}</small></span
 										></label
 									>{/each}
@@ -392,7 +489,12 @@
 							The profile is pinned into the preview. Editing it later makes this preview stale.
 						</p>
 					</div>
-					<div class="grid gap-2">
+					<div
+						class="management-runner-profile-list"
+						role="radiogroup"
+						aria-label="Available management profiles"
+						tabindex="0"
+					>
 						{#each settings.profiles as option (option.id)}<label class="management-selection-card"
 								><input
 									type="radio"

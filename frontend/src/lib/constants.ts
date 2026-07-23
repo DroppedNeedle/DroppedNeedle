@@ -344,6 +344,38 @@ export const API = {
 		pauseIdentityRepair: (jobId: string) => `/api/v1/library/identity-repairs/${jobId}/pause`,
 		resumeIdentityRepair: (jobId: string) => `/api/v1/library/identity-repairs/${jobId}/resume`,
 		stopIdentityRepair: (jobId: string) => `/api/v1/library/identity-repairs/${jobId}/stop`,
+		identityPreparations: (limit?: number, cursor?: string) => {
+			const query = new URLSearchParams();
+			if (limit !== undefined) query.set('limit', String(limit));
+			if (cursor) query.set('cursor', cursor);
+			const path = '/api/v1/library/management/identity-preparations';
+			return query.size ? `${path}?${query.toString()}` : path;
+		},
+		identityPreparationEstimate: (rootIds: string[]) => {
+			const query = new URLSearchParams();
+			for (const rootId of rootIds) query.append('root_id', rootId);
+			const path = '/api/v1/library/management/identity-preparations/estimate';
+			return query.size ? `${path}?${query.toString()}` : path;
+		},
+		identityPreparation: (jobId: string) =>
+			`/api/v1/library/management/identity-preparations/${encodeURIComponent(jobId)}`,
+		identityPreparationFindings: (
+			jobId: string,
+			limit?: number,
+			cursor?: string,
+			findingCategory?: string
+		) => {
+			const query = new URLSearchParams();
+			if (limit !== undefined) query.set('limit', String(limit));
+			if (cursor) query.set('cursor', cursor);
+			if (findingCategory) query.set('finding_category', findingCategory);
+			const path = `/api/v1/library/management/identity-preparations/${encodeURIComponent(jobId)}/findings`;
+			return query.size ? `${path}?${query.toString()}` : path;
+		},
+		applyIdentityPreparation: (jobId: string) =>
+			`/api/v1/library/management/identity-preparations/${encodeURIComponent(jobId)}/apply`,
+		discardIdentityPreparation: (jobId: string) =>
+			`/api/v1/library/management/identity-preparations/${encodeURIComponent(jobId)}/discard`,
 		scanDiagnostics: (runId: string) => `/api/v1/library/scan-runs/${runId}/diagnostics`,
 		unmatched: () => '/api/v1/library/scan/unmatched',
 		resolveUnmatched: (id: number) => `/api/v1/library/scan/unmatched/${id}/resolve`,
@@ -386,6 +418,8 @@ export const API = {
 		preview: (jobId: string) => `/api/v1/library/management/previews/${encodeURIComponent(jobId)}`,
 		applyPreview: (jobId: string) =>
 			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/apply`,
+		discardPreview: (jobId: string) =>
+			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/discard`,
 		operations: (
 			params: {
 				limit?: number;

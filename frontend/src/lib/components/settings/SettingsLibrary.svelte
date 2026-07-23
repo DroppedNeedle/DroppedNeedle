@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AlertTriangle, CheckCircle2, ScanSearch } from 'lucide-svelte';
+	import { AlertTriangle, ArrowRight, CheckCircle2, FolderCog, ScanSearch } from 'lucide-svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import {
 		previewLibraryPolicyApply,
@@ -15,7 +15,6 @@
 	import LibraryRootPolicyEditor from '$lib/components/library/LibraryRootPolicyEditor.svelte';
 	import LibraryNamingPreview from '$lib/components/library/LibraryNamingPreview.svelte';
 	import LibraryScanScheduleControl from '$lib/components/library/LibraryScanScheduleControl.svelte';
-	import SettingsLibraryManagement from '$lib/components/settings/SettingsLibraryManagement.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type {
@@ -360,7 +359,20 @@
 		</section>
 
 		{#if authStore.isAdmin}
-			<SettingsLibraryManagement {roots} policyRevision={currentSettings?.policy_revision ?? ''} />
+			<section class="management-settings-portal">
+				<div class="management-write-mark"><FolderCog class="h-6 w-6" /></div>
+				<div class="min-w-0 flex-1">
+					<p class="management-kicker">Administrator workspace</p>
+					<h3 class="font-display text-lg font-semibold">Library Management</h3>
+					<p class="mt-1 text-sm text-base-content/60">
+						Profiles, automatic write access, dry runs, recovery and operation history now live
+						together in the Library Management control room.
+					</p>
+				</div>
+				<a href="/library/management#management-settings" class="btn management-btn btn-sm"
+					>Open Library Management <ArrowRight class="h-4 w-4" /></a
+				>
+			</section>
 		{/if}
 	{/if}
 </div>

@@ -191,6 +191,7 @@ function renderLayout() {
 describe('+layout.svelte sidebar', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		authStore.clear();
 		Object.assign(integrationState, {
 			download_client: false,
 			library: true,
@@ -241,6 +242,25 @@ describe('+layout.svelte sidebar', () => {
 		const link = page.getByText('Playlists');
 		const anchor = link.element().closest('a');
 		expect(anchor!.getAttribute('data-tip')).toBe('Playlists');
+	});
+
+	it('shows the Library Management destination in a labelled admin section', async () => {
+		authStore.setUser(testUser('admin'));
+		renderLayout();
+		await expect.element(page.getByText('Admin', { exact: true })).toBeInTheDocument();
+		const link = page.getByText('Library Management').element().closest('a');
+		expect(link).not.toBeNull();
+		expect(link!.getAttribute('href')).toBe('/library/management');
+		expect(link!.getAttribute('aria-label')).toBe('Library Management');
+	});
+
+	it('does not expose the admin navigation section to non-administrators', async () => {
+		authStore.setUser(testUser('user'));
+		renderLayout();
+		await expect.element(page.getByText('Admin', { exact: true })).not.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('link', { name: 'Library Management' }))
+			.not.toBeInTheDocument();
 	});
 });
 

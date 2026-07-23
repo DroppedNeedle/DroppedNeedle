@@ -59,4 +59,21 @@ describe('library route page', () => {
 			.element(page.getByRole('link', { name: 'Connect Apps' }))
 			.toHaveAttribute('href', '/profile#connect-apps');
 	});
+
+	it('links Controls to Library Management for administrators', async () => {
+		authStore.setUser(user('admin'));
+		render(LibraryPage);
+		await expect
+			.element(page.getByRole('link', { name: 'Controls' }))
+			.toHaveAttribute('href', '/library/management');
+	});
+
+	it('keeps Controls visible but locked for non-administrators', async () => {
+		authStore.setUser(user('user'));
+		render(LibraryPage);
+		const controls = page.getByRole('button', { name: 'Controls' });
+		await expect.element(controls).toBeDisabled();
+		await expect.element(controls).toHaveAttribute('title', 'Administrator access required');
+		await expect.element(page.getByRole('link', { name: 'Controls' })).not.toBeInTheDocument();
+	});
 });

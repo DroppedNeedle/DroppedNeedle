@@ -193,6 +193,7 @@
 
 .library-scanning-control-header {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: flex-start;
 	gap: 0.9rem;
 	padding: 1.25rem;
@@ -209,6 +210,93 @@
 	color: color-mix(in oklab, var(--color-base-content) 58%, transparent);
 	font-size: 0.75rem;
 	font-weight: 650;
+}
+
+.library-management-jump-nav {
+	position: sticky;
+	top: 4.75rem;
+	z-index: 20;
+	display: flex;
+	gap: 0.35rem;
+	width: max-content;
+	max-width: 100%;
+	margin-inline: auto;
+	padding: 0.4rem;
+	overflow-x: auto;
+	overscroll-behavior-inline: contain;
+	border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+	border-radius: 9999px;
+	background: color-mix(in oklab, var(--color-base-100) 90%, transparent);
+	box-shadow: 0 0.75rem 2rem color-mix(in oklab, var(--color-base-content) 8%, transparent);
+	backdrop-filter: blur(1rem);
+	scrollbar-width: none;
+}
+
+.library-management-jump-nav::-webkit-scrollbar {
+	display: none;
+}
+
+.library-management-jump-nav > a {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	min-height: 2.15rem;
+	padding-inline: 0.75rem;
+	border-radius: 9999px;
+	color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
+	font-size: 0.75rem;
+	font-weight: 700;
+	white-space: nowrap;
+	transition:
+		background-color 150ms ease,
+		color 150ms ease;
+}
+
+.library-management-jump-nav > a:hover,
+.library-management-jump-nav > a:focus-visible {
+	background: color-mix(in oklab, var(--color-base-content) 7%, transparent);
+	color: var(--color-base-content);
+}
+
+.library-management-jump-nav > a[data-tone='scan'] {
+	color: var(--color-library-index);
+}
+
+.library-management-jump-nav > a[data-tone='manage'] {
+	color: var(--color-library-manage);
+}
+
+.management-settings-portal {
+	display: flex;
+	align-items: center;
+	gap: 1rem;
+	padding: 1.25rem;
+	border: 1px solid color-mix(in oklab, var(--color-library-manage) 28%, transparent);
+	border-radius: var(--radius-box);
+	background:
+		linear-gradient(
+			135deg,
+			color-mix(in oklab, var(--color-library-manage) 8%, var(--color-base-100)),
+			var(--color-base-100)
+		),
+		var(--color-base-100);
+}
+
+@media (max-width: 639px) {
+	.library-management-jump-nav {
+		width: 100%;
+		margin-inline: 0;
+		border-radius: var(--radius-box);
+	}
+
+	.management-settings-portal {
+		align-items: flex-start;
+		flex-wrap: wrap;
+	}
+
+	.management-settings-portal > .btn {
+		width: 100%;
+	}
 }
 
 .management-settings-shell {
@@ -847,6 +935,84 @@ details[open] > summary .management-editor-chevron {
 	color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
 }
 
+.management-selected-scope {
+	display: grid;
+	gap: 0.65rem;
+	padding: 0.85rem;
+	border: 1px solid color-mix(in oklab, var(--color-library-manage) 24%, transparent);
+	border-radius: 0.9rem;
+	background: color-mix(in oklab, var(--color-library-manage) 6%, var(--color-base-100));
+}
+
+.management-selected-scope[data-wide-scope='true'] {
+	border-color: color-mix(in oklab, var(--color-warning) 38%, transparent);
+	background: color-mix(in oklab, var(--color-warning) 7%, var(--color-base-100));
+}
+
+.management-selected-scope__header,
+.management-selected-scope__item {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 0.75rem;
+}
+
+.management-selected-scope small,
+.management-selected-scope__item span {
+	display: block;
+}
+
+.management-selected-scope small {
+	margin-top: 0.1rem;
+	color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
+}
+
+.management-selected-scope__items {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 0.4rem;
+	max-height: 10rem;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	padding-right: 0.25rem;
+	scrollbar-gutter: stable;
+}
+
+.management-selected-scope__item {
+	min-width: 0;
+	padding: 0.55rem 0.65rem;
+	border: 1px solid color-mix(in oklab, var(--color-base-content) 9%, transparent);
+	border-radius: 0.7rem;
+	background: var(--color-base-100);
+}
+
+.management-selected-scope__item span {
+	min-width: 0;
+}
+
+.management-selected-scope__item strong,
+.management-selected-scope__item small {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.management-runner-profile-list {
+	display: grid;
+	gap: 0.5rem;
+	max-height: min(24rem, 48dvh);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	padding: 0.15rem 0.35rem 0.15rem 0.15rem;
+	scrollbar-gutter: stable;
+}
+
+.management-runner-profile-list:focus-visible {
+	border-radius: 0.25rem;
+	outline: 2px solid var(--color-library-manage);
+	outline-offset: 0.2rem;
+}
+
 .management-review-grid {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -988,6 +1154,10 @@ details[open] > summary .management-editor-chevron {
 
 	.management-review-grid,
 	.management-diff-row {
+		grid-template-columns: 1fr;
+	}
+
+	.management-selected-scope__items {
 		grid-template-columns: 1fr;
 	}
 

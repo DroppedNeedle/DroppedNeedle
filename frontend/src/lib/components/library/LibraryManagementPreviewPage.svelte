@@ -2,8 +2,8 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {
-		ArrowLeft,
 		ArrowRight,
+		BookOpenCheck,
 		CheckCircle2,
 		ChevronRight,
 		Clock3,
@@ -16,6 +16,8 @@
 		X
 	} from 'lucide-svelte';
 
+	import BackButton from '$lib/components/BackButton.svelte';
+	import LibraryManagementDiscardPreview from './LibraryManagementDiscardPreview.svelte';
 	import { API } from '$lib/constants';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { getLibrarySearchQuery } from '$lib/queries/library/LibraryQueries.svelte';
@@ -217,6 +219,10 @@
 				? 'Optional enrichment deferred'
 				: 'Required metadata pinned'
 	);
+	const identityBlockerCount = $derived(
+		(preview?.summary.reasons.TRACK_NOT_MAPPED ?? 0) +
+			(preview?.summary.reasons.RELEASE_NOT_SELECTED ?? 0)
+	);
 	const collisionRequestReady = $derived(
 		Boolean(
 			collisionSelection?.collision.requestKind &&
@@ -243,6 +249,16 @@
 
 	function displayPath(root: string | null, relative: string | null): string {
 		return `${rootLabel(root)} · ${relative ?? 'No path'}`;
+	}
+
+	function managementReasonLabel(value: string): string {
+		return (
+			{
+				TRACK_NOT_MAPPED: 'Exact edition selected; track map missing',
+				RELEASE_NOT_SELECTED: 'Exact MusicBrainz edition not chosen',
+				FILE_UNREADABLE: 'File metadata could not be read'
+			}[value] ?? titleManagementValue(value)
+		);
 	}
 
 	function desiredField(item: LibraryManagementPlanItem, name: string): string | null {
@@ -406,9 +422,7 @@
 
 <div class="management-preview-shell px-4 py-8 sm:px-6 lg:px-8">
 	<main class="mx-auto max-w-7xl space-y-5">
-		<a href="/library#operations" class="btn btn-ghost btn-sm -ml-2"
-			><ArrowLeft class="h-4 w-4" /> Library control room</a
-		>
+		<BackButton fallback="/library/management#management-controls" />
 
 		{#if previewQuery.isLoading || settingsQuery.isLoading || policyQuery.isLoading}
 			<div class="space-y-4">
@@ -437,7 +451,10 @@
 					<span
 						class="badge badge-lg {preview.ready_for_confirmation
 							? 'badge-success'
-							: 'badge-outline'}">{titleManagementValue(preview.phase)}</span
+							: 'badge-outline'}"
+						>{preview.terminal_code === 'PREVIEW_DISCARDED'
+							? 'Discarded'
+							: titleManagementValue(preview.phase)}</span
 					>
 				</div>
 				<div class="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -503,8 +520,9 @@
 			{:else if ['queued', 'running', 'paused'].includes(preview.state)}
 				<div class="alert alert-info">
 					<span class="loading loading-spinner loading-sm"></span><span
-						>Planning is still read-only. {preview.completed_count.toLocaleString()} of {preview.expected_work_count.toLocaleString()}
-						items inspected.</span
+						>Planning is still read-only. {preview.summary.item_count > 0
+							? `${preview.summary.item_count.toLocaleString()} files are planned so far; the total is discovered as DroppedNeedle works.`
+							: 'DroppedNeedle is discovering the files in this scope.'}</span
 					>
 				</div>
 			{:else if preview.state !== 'ready'}
@@ -515,6 +533,23 @@
 							? titleManagementValue(preview.terminal_code)
 							: titleManagementValue(preview.state)}. No further write can start from this page.</span
 					>
+				</div>
+			{/if}
+
+			{#if preview.state === 'ready' && identityBlockerCount > 0}
+				<div class="alert alert-warning items-start">
+					<BookOpenCheck class="mt-0.5 h-5 w-5" />
+					<div class="min-w-0 flex-1">
+						<strong>{identityBlockerCount.toLocaleString()} files need identity preparation.</strong
+						>
+						<p class="mt-1 text-sm">
+							Selecting a root chooses files; it does not choose each album's exact MusicBrainz
+							edition. Prepare identities first, then generate a fresh management preview.
+						</p>
+						<a class="btn btn-outline btn-sm mt-3" href="/library/management#identity-readiness"
+							>Open identity readiness <ArrowRight class="h-4 w-4" /></a
+						>
+					</div>
 				</div>
 			{/if}
 
@@ -544,7 +579,7 @@
 							bind:value={reasonCode}
 							><option value="">All reasons</option
 							>{#each Object.keys(preview.summary.reasons) as reason (reason)}<option value={reason}
-									>{titleManagementValue(reason)}</option
+									>{managementReasonLabel(reason)}</option
 								>{/each}</select
 						></label
 					>
@@ -715,7 +750,7 @@
 									<h3 class="mt-2 truncate font-semibold">{itemTitle(item)}</h3>
 									<p class="truncate text-sm text-base-content/55">{itemSubtitle(item)}</p>
 									{#if item.reason_code}<p class="mt-1 text-xs font-semibold text-error">
-											{titleManagementValue(item.reason_code)}
+											{managementReasonLabel(item.reason_code)}
 										</p>{/if}
 								</div>
 								<div class="text-right text-xs text-base-content/50">
@@ -898,38 +933,56 @@
 					>{/if}
 			{/if}
 
-			{#if activationPreview}<div class="management-apply-bar">
-					<div class="flex items-start gap-2">
-						<ShieldAlert class="mt-0.5 h-5 w-5 text-library-manage" />
-						<div>
-							<strong>Activation dry run</strong>
-							<p class="text-xs text-base-content/55">
-								This page is read-only. Return to the Library settings dialog to use this dry run
-								when enabling Library Management.
-							</p>
+			{#if preview.state === 'ready'}
+				{#if activationPreview}<div class="management-apply-bar">
+						<div class="flex items-start gap-2">
+							<ShieldAlert class="mt-0.5 h-5 w-5 text-library-manage" />
+							<div>
+								<strong>Activation dry run</strong>
+								<p class="text-xs text-base-content/55">
+									This page is read-only. Return to the Library settings dialog to use this dry run
+									when enabling Library Management.
+								</p>
+							</div>
 						</div>
-					</div>
-					<a href="/settings?tab=library" class="btn btn-ghost btn-sm">Library settings</a>
-				</div>{:else}<div class="management-apply-bar">
-					<div class="flex items-start gap-2">
-						<ShieldAlert class="mt-0.5 h-5 w-5 text-library-manage" />
-						<div>
-							<strong>{applyAction.barTitle}</strong>
-							<p class="text-xs text-base-content/55">{applyAction.barDetail}</p>
-							{#if !previewToken && preview.ready_for_confirmation}<p
-									class="mt-1 text-xs text-warning"
-								>
-									The private apply token is not in this browser session. Generate a fresh preview
-									to apply.
-								</p>{/if}
+						<div class="flex flex-wrap items-center gap-1">
+							<LibraryManagementDiscardPreview
+								{jobId}
+								expectedRevision={preview.operation_row_revision}
+								profileName={preview.profile_name}
+								ondiscard={() => goto('/library/management#management-controls')}
+							/>
+							<a href="/settings?tab=library" class="btn btn-ghost btn-sm">Library settings</a>
 						</div>
-					</div>
-					<button
-						class="btn management-btn"
-						disabled={!canApply}
-						onclick={(event) => openApply(event.currentTarget)}>{applyAction.button}</button
-					>
-				</div>{/if}
+					</div>{:else}<div class="management-apply-bar">
+						<div class="flex items-start gap-2">
+							<ShieldAlert class="mt-0.5 h-5 w-5 text-library-manage" />
+							<div>
+								<strong>{applyAction.barTitle}</strong>
+								<p class="text-xs text-base-content/55">{applyAction.barDetail}</p>
+								{#if !previewToken && preview.ready_for_confirmation}<p
+										class="mt-1 text-xs text-warning"
+									>
+										The private apply token is not in this browser session. Generate a fresh preview
+										to apply.
+									</p>{/if}
+							</div>
+						</div>
+						<div class="flex flex-wrap items-center gap-1">
+							<LibraryManagementDiscardPreview
+								{jobId}
+								expectedRevision={preview.operation_row_revision}
+								profileName={preview.profile_name}
+								ondiscard={() => goto('/library/management#management-controls')}
+							/>
+							<button
+								class="btn management-btn"
+								disabled={!canApply}
+								onclick={(event) => openApply(event.currentTarget)}>{applyAction.button}</button
+							>
+						</div>
+					</div>{/if}
+			{/if}
 		{/if}
 	</main>
 </div>

@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
 	preview: {} as Record<string, unknown>,
 	items: {} as Record<string, unknown>,
 	apply: vi.fn(),
+	discard: vi.fn(),
 	resolve: vi.fn(),
 	goto: vi.fn()
 }));
@@ -43,6 +44,7 @@ vi.mock('$lib/queries/library-management/LibraryManagementQueries.svelte', () =>
 }));
 vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
 	applyLibraryManagementPreviewMutation: () => ({ mutateAsync: h.apply, isPending: false }),
+	discardLibraryManagementPreviewMutation: () => ({ mutateAsync: h.discard, isPending: false }),
 	createLibraryManagementDuplicateResolutionMutation: () => ({
 		mutateAsync: h.resolve,
 		isPending: false
@@ -163,9 +165,58 @@ beforeEach(() => {
 		fetchNextPage: vi.fn()
 	};
 	h.apply.mockResolvedValue({ id: 'preview-1' });
+	h.discard.mockResolvedValue(
+		detail({
+			state: 'cancelled',
+			ready_for_confirmation: false,
+			terminal_code: 'PREVIEW_DISCARDED'
+		})
+	);
 });
 
 describe('LibraryManagementPreviewPage', () => {
+	it('explains identity blockers and links back to identity readiness', async () => {
+		h.preview = {
+			data: detail({
+				summary: {
+					...(detail().summary as Record<string, unknown>),
+					reasons: { TRACK_NOT_MAPPED: 12, RELEASE_NOT_SELECTED: 4 }
+				}
+			}),
+			isLoading: false,
+			isError: false
+		};
+		h.items = {
+			...h.items,
+			data: {
+				pages: [
+					{
+						items: [
+							{
+								...collisionItem,
+								reason_code: 'TRACK_NOT_MAPPED',
+								collisions: []
+							}
+						],
+						has_more: false,
+						next_after_ordinal: null
+					}
+				]
+			}
+		};
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect.element(page.getByText('16 files need identity preparation.')).toBeVisible();
+		await expect.element(page.getByText(/Selecting a root chooses files/)).toBeVisible();
+		await expect
+			.element(page.getByRole('article').getByText('Exact edition selected; track map missing'))
+			.toBeVisible();
+		await expect
+			.element(page.getByRole('link', { name: 'Open identity readiness' }))
+			.toHaveAttribute('href', '/library/management#identity-readiness');
+		await expect.element(page.getByText('TRACK NOT MAPPED')).not.toBeInTheDocument();
+	});
+
 	it('shows exact diffs and requires the private token plus typed apply confirmation', async () => {
 		h.items = {
 			...h.items,
@@ -275,6 +326,53 @@ describe('LibraryManagementPreviewPage', () => {
 			.toBeDisabled();
 	});
 
+	it('confirms discard, forgets the apply token, and returns to the control room', async () => {
+		sessionStorage.setItem(
+			'droppedneedle:library-management:preview-token:preview-1',
+			'private-token'
+		);
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await page.getByRole('button', { name: 'Discard preview...' }).click();
+		await expect
+			.element(page.getByRole('heading', { name: 'Discard this preview?' }))
+			.toHaveFocus();
+		await page.getByRole('button', { name: 'Discard preview', exact: true }).click();
+
+		expect(h.discard).toHaveBeenCalledWith({
+			jobId: 'preview-1',
+			request: { expected_operation_row_revision: 7 }
+		});
+		expect(
+			sessionStorage.getItem('droppedneedle:library-management:preview-token:preview-1')
+		).toBeNull();
+		expect(h.goto).toHaveBeenCalledWith('/library/management#management-controls');
+	});
+
+	it('renders a discarded audit plan without any write action', async () => {
+		h.preview = {
+			data: detail({
+				state: 'cancelled',
+				ready_for_confirmation: false,
+				terminal_code: 'PREVIEW_DISCARDED'
+			}),
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect.element(page.getByText('Discarded', { exact: true })).toBeVisible();
+		await expect
+			.element(page.getByText('This preview is no longer awaiting confirmation.'))
+			.toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: /Write tags and organize/ }))
+			.not.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('button', { name: /Discard preview/ }))
+			.not.toBeInTheDocument();
+	});
+
 	it('shows terminal planning failure instead of an endless planning state', async () => {
 		h.preview = {
 			data: detail({
@@ -294,7 +392,30 @@ describe('LibraryManagementPreviewPage', () => {
 		await expect.element(page.getByText(/Planning is still read-only/)).not.toBeInTheDocument();
 		await expect
 			.element(page.getByRole('button', { name: /Write tags and organize/ }))
-			.toBeDisabled();
+			.not.toBeInTheDocument();
+	});
+
+	it('reports incremental read-only planning without claiming a zero-sized total', async () => {
+		h.preview = {
+			data: detail({
+				state: 'running',
+				phase: 'planning',
+				ready_for_confirmation: false,
+				expected_work_count: 0,
+				completed_count: 0,
+				summary: {
+					...(detail().summary as Record<string, unknown>),
+					item_count: 1000,
+					bundle_count: 109
+				}
+			}),
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect.element(page.getByText(/1,000 files are planned so far/)).toBeVisible();
+		await expect.element(page.getByText(/0 of 0 items inspected/)).not.toBeInTheDocument();
 	});
 
 	it.each([

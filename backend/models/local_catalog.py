@@ -97,6 +97,7 @@ class LocalTrack(AppStruct):
     embedded_release_group_mbid: str | None = None
     embedded_release_mbid: str | None = None
     embedded_recording_mbid: str | None = None
+    embedded_release_track_mbid: str | None = None
     embedded_artist_mbid: str | None = None
     embedded_album_artist_mbid: str | None = None
     tag_revision: str | None = None

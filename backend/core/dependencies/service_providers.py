@@ -518,6 +518,7 @@ def get_target_identity_repair_service() -> "IdentityRepairService":
         get_native_library_store(),
         get_musicbrainz_identification_repository(),
         AlbumEvidenceEngine(),
+        get_musicbrainz_repository(),
     )
 
 

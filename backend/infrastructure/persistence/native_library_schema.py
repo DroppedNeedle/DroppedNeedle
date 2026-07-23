@@ -285,6 +285,7 @@ CREATE TABLE IF NOT EXISTS local_tracks (
     embedded_release_group_mbid TEXT,
     embedded_release_mbid TEXT,
     embedded_recording_mbid TEXT,
+    embedded_release_track_mbid TEXT,
     embedded_artist_mbid TEXT,
     embedded_album_artist_mbid TEXT,
     duration_seconds REAL,

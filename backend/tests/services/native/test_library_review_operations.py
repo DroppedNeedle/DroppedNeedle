@@ -14,6 +14,7 @@ from api.v1.schemas.library_operations import (
     BulkReviewPreviewRequest,
     BulkReviewSelection,
     CandidateAcceptanceRequest,
+    IdentityPreparationCreateRequest,
     MembershipApplyRequest,
     MembershipPreviewRequest,
     RepairCreateRequest,
@@ -27,6 +28,7 @@ from api.v1.schemas.library_policies import (
 from core.exceptions import (
     ConflictError,
     ExternalServiceError,
+    ResourceNotFoundError,
     StaleRevisionError,
     ValidationError,
 )
@@ -56,6 +58,15 @@ from models.local_catalog import (
     LocalArtistExternalIdentity,
     LocalTrack,
     LocalTrackExternalIdentity,
+)
+from repositories.musicbrainz_management_models import (
+    MbManagementArtist,
+    MbManagementArtistCredit,
+    MbManagementMedium,
+    MbManagementRecording,
+    MbManagementRelease,
+    MbManagementReleaseGroup,
+    MbManagementTrack,
 )
 from services.native.album_candidate_service import AlbumCandidateService
 from services.native.album_evidence_engine import AlbumEvidenceEngine
@@ -133,6 +144,51 @@ class _UnavailableRepairProvider(_IdentificationProvider):
         self, release_group_mbid, target_track_count, priority
     ):
         raise ExternalServiceError("private provider failure")
+
+
+class _CanonicalReleaseProvider:
+    def __init__(self, *, conflict: bool = False, unavailable: bool = False) -> None:
+        self.conflict = conflict
+        self.unavailable = unavailable
+        self.calls: list[str] = []
+
+    async def get_canonical_release(
+        self,
+        release_mbid,
+        *,
+        includes,
+        preferred_locales=(),
+        artist_standardization="credited",
+        priority,
+        bypass_cache=False,
+    ):
+        self.calls.append(release_mbid)
+        if self.unavailable:
+            raise ExternalServiceError("private canonical provider failure")
+        artist = MbManagementArtist(id="artist-1", name="Artist 1")
+        return MbManagementRelease(
+            id="different-release" if self.conflict else release_mbid,
+            title="Album 1",
+            artist_credit=[MbManagementArtistCredit(name="Artist 1", artist=artist)],
+            media=[
+                MbManagementMedium(
+                    position=1,
+                    track_count=1,
+                    tracks=[
+                        MbManagementTrack(
+                            id="release-track-1",
+                            title="Track 1",
+                            position=1,
+                            recording=MbManagementRecording(
+                                id="recording-track-1-1",
+                                title="Track 1",
+                            ),
+                        )
+                    ],
+                )
+            ],
+            release_group=MbManagementReleaseGroup(id="rg-1", title="Album 1"),
+        )
 
 
 class _FlakyIdentificationProvider(_IdentificationProvider):
@@ -2834,6 +2890,237 @@ async def test_repair_reuses_revision_keyed_fingerprint_as_shared_evidence(
     assert finding.apply_eligible is False
     assert evidence is not None
     assert evidence.evidence.track_evidence[0].classification == "contradictory"
+
+
+@pytest.mark.asyncio
+async def test_management_identity_preparation_maps_only_the_accepted_exact_release(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await _seed_album(store, "1", identity_source="legacy_import")
+    provider = _CanonicalReleaseProvider()
+    preparation = IdentityRepairService(store, canonical_provider=provider)
+
+    estimate = await preparation.estimate_management_preparation(["root", "root"])
+    assert estimate.album_count == 1
+    assert estimate.ready_album_count == 0
+    assert estimate.mapping_required_count == 1
+    assert estimate.exact_release_required_count == 0
+    assert estimate.selected_root_count == 1
+
+    created = await preparation.create_management_preparation(
+        IdentityPreparationCreateRequest(
+            idempotency_key="management-readiness-1", root_ids=["root"]
+        ),
+        "admin",
+        now=3,
+    )
+    assert (await preparation.history(purpose="existing_matches")).items == []
+    assert [
+        item.id
+        for item in (await preparation.history(purpose="management_readiness")).items
+    ] == [created.id]
+    claimed = await store.claim_operation_job(
+        "worker", now=4, lease_seconds=60, kind="repair"
+    )
+    assert claimed is not None
+    ready = await preparation.run_claimed_audit(claimed, "worker", now=5)
+    assert provider.calls == ["release-1"]
+    assert ready.state == "ready"
+    assert ready.repair_summary is not None
+    assert ready.repair_summary.purpose == "management_readiness"
+    assert ready.repair_summary.mapping_candidate_count == 1
+    assert ready.repair_summary.estimated_apply_changes == 1
+    finding = (
+        await preparation.findings(created.id, finding_category="mapping_ready")
+    ).items[0]
+    assert finding.reason_code == "EXACT_RELEASE_MAPPING_SUPPORTED"
+    assert finding.apply_eligible is True
+    with pytest.raises(ResourceNotFoundError):
+        await preparation.begin_apply(
+            created.id,
+            expected_row_revision=ready.row_revision,
+            confirmation=True,
+            now=6,
+        )
+
+    before = await store.get_album_identification_context("album-1")
+    assert before is not None
+    before_track_revision = int(before["tracks"][0]["row_revision"])
+    queued = await preparation.begin_management_preparation_apply(
+        created.id,
+        expected_row_revision=ready.row_revision,
+        confirmation=True,
+        now=6,
+    )
+    assert queued.state == "queued"
+    claimed_apply = await store.claim_operation_job(
+        "worker", now=7, lease_seconds=60, kind="repair"
+    )
+    assert claimed_apply is not None
+    done = await preparation.run_claimed_apply(claimed_apply, "worker", "admin", now=8)
+    assert done.state == "succeeded"
+    context = await store.get_album_identification_context("album-1")
+    assert context is not None
+    track = context["tracks"][0]
+    assert track["recording_mbid"] == "recording-track-1-1"
+    assert track["identity_release_mbid"] == "release-1"
+    assert track["release_track_mbid"] == "release-track-1"
+    assert track["medium_position"] == 1
+    assert track["release_track_position"] == 1
+    assert int(track["row_revision"]) == before_track_revision
+    with sqlite3.connect(db_path) as connection:
+        action = connection.execute(
+            "SELECT action_kind, reason_code FROM library_catalog_actions "
+            "WHERE operation_job_id = ?",
+            (created.id,),
+        ).fetchone()
+    assert action == (
+        "accept_management_track_mappings",
+        "EXACT_RELEASE_MAPPINGS_ACCEPTED",
+    )
+
+
+@pytest.mark.asyncio
+async def test_management_identity_preparation_blocks_missing_conflicting_and_stale_inputs(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await _seed_album(store, "1")
+    missing_provider = _CanonicalReleaseProvider()
+    missing = IdentityRepairService(store, canonical_provider=missing_provider)
+    created = await missing.create_management_preparation(
+        IdentityPreparationCreateRequest(idempotency_key="missing-exact"),
+        "admin",
+        now=3,
+    )
+    claimed = await store.claim_operation_job(
+        "worker", now=4, lease_seconds=60, kind="repair"
+    )
+    assert claimed is not None
+    ready = await missing.run_claimed_audit(claimed, "worker", now=5)
+    finding = (
+        await missing.findings(created.id, finding_category="exact_release_required")
+    ).items[0]
+    assert ready.repair_summary is not None
+    assert ready.repair_summary.exact_release_required_count == 1
+    assert finding.reason_code == "EXACT_EDITION_NOT_ACCEPTED"
+    assert missing_provider.calls == []
+    discarded = await missing.discard_management_preparation(
+        created.id, expected_row_revision=ready.row_revision, now=5.5
+    )
+    assert discarded.state == "cancelled"
+    assert discarded.terminal_code == "IDENTITY_PREPARATION_DISCARDED"
+    repeated = await missing.discard_management_preparation(
+        created.id, expected_row_revision=ready.row_revision, now=5.75
+    )
+    assert repeated.state == "cancelled"
+    assert (
+        await missing.findings(created.id, finding_category="exact_release_required")
+    ).items
+
+    await _seed_album(store, "2", identity_source="legacy_import")
+    conflict = IdentityRepairService(
+        store, canonical_provider=_CanonicalReleaseProvider(conflict=True)
+    )
+    conflict_job = await conflict.create_management_preparation(
+        IdentityPreparationCreateRequest(
+            idempotency_key="conflicting-exact", root_ids=["root"]
+        ),
+        "admin",
+        now=6,
+    )
+    claimed = await store.claim_operation_job(
+        "worker", now=7, lease_seconds=60, kind="repair"
+    )
+    assert claimed is not None
+    await conflict.run_claimed_audit(claimed, "worker", now=8)
+    by_album = {
+        item.local_album_id: item
+        for item in (
+            await conflict.findings(conflict_job.id, finding_category="needs_review")
+        ).items
+    }
+    assert by_album["album-2"].reason_code == "SELECTED_RELEASE_CONFLICT"
+    assert by_album["album-2"].apply_eligible is False
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE local_albums SET row_revision = row_revision + 1 WHERE id = 'album-1'"
+        )
+        connection.commit()
+    assert ready.repair_summary.estimated_apply_changes == 0
+
+
+@pytest.mark.asyncio
+async def test_management_identity_preparation_defers_provider_failures(
+    store: NativeLibraryStore,
+) -> None:
+    await _seed_album(store, "1", identity_source="legacy_import")
+    preparation = IdentityRepairService(
+        store, canonical_provider=_CanonicalReleaseProvider(unavailable=True)
+    )
+    created = await preparation.create_management_preparation(
+        IdentityPreparationCreateRequest(idempotency_key="provider-deferred"),
+        "admin",
+        now=3,
+    )
+    claimed = await store.claim_operation_job(
+        "worker", now=4, lease_seconds=60, kind="repair"
+    )
+    assert claimed is not None
+    ready = await preparation.run_claimed_audit(claimed, "worker", now=5)
+    finding = (
+        await preparation.findings(created.id, finding_category="unverifiable")
+    ).items[0]
+    assert ready.repair_summary is not None
+    assert ready.repair_summary.provider_deferred_count == 1
+    assert finding.reason_code == "PROVIDER_DEFERRED"
+    assert finding.apply_eligible is False
+
+
+@pytest.mark.asyncio
+async def test_management_identity_preparation_skips_a_changed_album_at_apply(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await _seed_album(store, "1", identity_source="legacy_import")
+    preparation = IdentityRepairService(
+        store, canonical_provider=_CanonicalReleaseProvider()
+    )
+    created = await preparation.create_management_preparation(
+        IdentityPreparationCreateRequest(idempotency_key="stale-before-apply"),
+        "admin",
+        now=3,
+    )
+    claimed = await store.claim_operation_job(
+        "worker", now=4, lease_seconds=60, kind="repair"
+    )
+    assert claimed is not None
+    ready = await preparation.run_claimed_audit(claimed, "worker", now=5)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE local_albums SET row_revision = row_revision + 1 WHERE id = 'album-1'"
+        )
+        connection.commit()
+    await preparation.begin_management_preparation_apply(
+        created.id,
+        expected_row_revision=ready.row_revision,
+        confirmation=True,
+        now=6,
+    )
+    claimed_apply = await store.claim_operation_job(
+        "worker", now=7, lease_seconds=60, kind="repair"
+    )
+    assert claimed_apply is not None
+    done = await preparation.run_claimed_apply(claimed_apply, "worker", "admin", now=8)
+    assert done.succeeded_count == 0
+    assert done.skipped_count == 1
+    context = await store.get_album_identification_context("album-1")
+    assert context is not None
+    assert context["tracks"][0]["release_track_mbid"] is None
+    finding = (
+        await preparation.findings(created.id, finding_category="unverifiable")
+    ).items[0]
+    assert finding.state == "stale"
+    assert finding.apply_result == "STALE_SUBJECT"
 
 
 @pytest.mark.asyncio

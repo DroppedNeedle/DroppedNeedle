@@ -374,6 +374,7 @@ class LibraryIndexer:
             embedded_release_group_mbid=tag.musicbrainz_release_group_id,
             embedded_release_mbid=tag.musicbrainz_release_id,
             embedded_recording_mbid=tag.musicbrainz_recording_id,
+            embedded_release_track_mbid=tag.musicbrainz_release_track_id,
             embedded_artist_mbid=tag.musicbrainz_artist_id,
             embedded_album_artist_mbid=tag.musicbrainz_album_artist_id,
             duration_seconds=info.duration_seconds,

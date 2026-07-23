@@ -15,6 +15,8 @@ from api.v1.schemas.library_operations import (
     BulkReviewPreviewResponse,
     CandidateAcceptanceRequest,
     CatalogCorrectionResponse,
+    IdentityPreparationCreateRequest,
+    IdentityPreparationEstimateResponse,
     MembershipApplyRequest,
     MembershipPreviewRequest,
     MembershipPreviewResponse,
@@ -448,11 +450,11 @@ async def create_repair(
 @router.get("/identity-repairs", response_model=OperationListResponse)
 async def list_repairs(
     _: CurrentAdminDep,
-    service: LibraryOperationServiceDep,
+    service: IdentityRepairServiceDep,
     limit: int = Query(50, ge=1, le=50),
     cursor: str | None = None,
 ) -> OperationListResponse:
-    return await service.history(kind="repair", limit=limit, cursor=cursor)
+    return await service.history(purpose="existing_matches", limit=limit, cursor=cursor)
 
 
 @router.get("/identity-repairs/estimate", response_model=RepairEstimateResponse)
@@ -466,9 +468,9 @@ async def estimate_repair(
 
 @router.get("/identity-repairs/{job_id}", response_model=OperationResponse)
 async def get_repair(
-    _: CurrentAdminDep, job_id: str, service: LibraryOperationServiceDep
+    _: CurrentAdminDep, job_id: str, service: IdentityRepairServiceDep
 ) -> OperationResponse:
-    return await service.get(job_id)
+    return await service.get_for_purpose(job_id, "existing_matches")
 
 
 @router.get(
@@ -533,6 +535,107 @@ async def stop_repair(
     body: OperationControlRequest = MsgSpecBody(OperationControlRequest),
 ) -> OperationResponse:
     return await _control_operation(admin, job_id, "stop", service, body)
+
+
+@router.post("/management/identity-preparations", response_model=OperationResponse)
+async def create_management_identity_preparation(
+    admin: CurrentAdminDep,
+    service: IdentityRepairServiceDep,
+    body: IdentityPreparationCreateRequest = MsgSpecBody(
+        IdentityPreparationCreateRequest
+    ),
+) -> OperationResponse:
+    return await service.create_management_preparation(body, admin.id)
+
+
+@router.get("/management/identity-preparations", response_model=OperationListResponse)
+async def list_management_identity_preparations(
+    _: CurrentAdminDep,
+    service: IdentityRepairServiceDep,
+    limit: int = Query(20, ge=1, le=50),
+    cursor: str | None = None,
+) -> OperationListResponse:
+    return await service.history(
+        purpose="management_readiness", limit=limit, cursor=cursor
+    )
+
+
+@router.get(
+    "/management/identity-preparations/estimate",
+    response_model=IdentityPreparationEstimateResponse,
+)
+async def estimate_management_identity_preparation(
+    _: CurrentAdminDep,
+    service: IdentityRepairServiceDep,
+    root_id: list[str] = Query(default_factory=list),
+) -> IdentityPreparationEstimateResponse:
+    return await service.estimate_management_preparation(root_id)
+
+
+@router.get(
+    "/management/identity-preparations/{job_id}",
+    response_model=OperationResponse,
+)
+async def get_management_identity_preparation(
+    _: CurrentAdminDep,
+    job_id: str,
+    service: IdentityRepairServiceDep,
+) -> OperationResponse:
+    return await service.get_for_purpose(job_id, "management_readiness")
+
+
+@router.get(
+    "/management/identity-preparations/{job_id}/findings",
+    response_model=RepairFindingListResponse,
+)
+async def management_identity_preparation_findings(
+    _: CurrentAdminDep,
+    job_id: str,
+    service: IdentityRepairServiceDep,
+    limit: int = Query(100, ge=1, le=200),
+    cursor: str | None = None,
+    finding_category: str | None = None,
+) -> RepairFindingListResponse:
+    await service.get_for_purpose(job_id, "management_readiness")
+    return await service.findings(
+        job_id,
+        limit=limit,
+        cursor=cursor,
+        finding_category=finding_category,
+    )
+
+
+@router.post(
+    "/management/identity-preparations/{job_id}/apply",
+    response_model=OperationResponse,
+)
+async def apply_management_identity_preparation(
+    _: CurrentAdminDep,
+    job_id: str,
+    service: IdentityRepairServiceDep,
+    body: RepairApplyRequest = MsgSpecBody(RepairApplyRequest),
+) -> OperationResponse:
+    return await service.begin_management_preparation_apply(
+        job_id,
+        expected_row_revision=body.expected_row_revision,
+        confirmation=body.confirmation,
+    )
+
+
+@router.post(
+    "/management/identity-preparations/{job_id}/discard",
+    response_model=OperationResponse,
+)
+async def discard_management_identity_preparation(
+    _: CurrentAdminDep,
+    job_id: str,
+    service: IdentityRepairServiceDep,
+    body: OperationControlRequest = MsgSpecBody(OperationControlRequest),
+) -> OperationResponse:
+    return await service.discard_management_preparation(
+        job_id,
+        expected_row_revision=body.expected_row_revision,
+    )
 
 
 @router.get("/scan-runs/{run_id}/diagnostics")

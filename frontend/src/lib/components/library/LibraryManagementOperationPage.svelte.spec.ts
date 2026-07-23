@@ -99,6 +99,29 @@ beforeEach(() => {
 });
 
 describe('LibraryManagementOperationPage', () => {
+	it('shows truthful indeterminate progress while a preview total is still being discovered', async () => {
+		h.operation = {
+			data: operation({
+				phase: 'planning',
+				mode: 'preview',
+				summary: { item_count: 1000 },
+				expected_work_count: 0,
+				completed_count: 0
+			}),
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+
+		await expect.element(page.getByText('1,000 files planned so far')).toBeVisible();
+		await expect.element(page.getByText('0 / 0')).not.toBeInTheDocument();
+		await expect
+			.element(
+				page.getByRole('progressbar', { name: 'Planning preview; 1,000 files planned so far' })
+			)
+			.not.toHaveAttribute('value');
+	});
+
 	it('uses the current row revision for pause and states that Stop is not rollback', async () => {
 		render(LibraryManagementOperationPage, { jobId: 'job-1' });
 		await page.getByRole('button', { name: 'Pause' }).click();

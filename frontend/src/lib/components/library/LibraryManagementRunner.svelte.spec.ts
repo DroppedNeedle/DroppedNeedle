@@ -12,18 +12,41 @@ const h = vi.hoisted(() => ({
 
 vi.mock('$app/navigation', () => ({ goto: h.goto }));
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
-	getLibrarySearchQuery: () => ({
-		data: {
-			artists: [],
-			albums: [],
-			tracks: [
-				{
-					id: 'track-1',
-					title: 'The Track',
-					artist_name: 'The Artist',
-					album_title: 'The Album'
-				}
-			]
+	getLibrarySearchQuery: (getSearch: () => string) => ({
+		get data() {
+			const search = getSearch().toLowerCase();
+			return {
+				artists: [],
+				albums: search.includes('juturna')
+					? [
+							{
+								id: 'album-1',
+								title: 'Juturna',
+								artist_name: 'Circa Survive',
+								track_count: 11
+							}
+						]
+					: search.includes('descensus')
+						? [
+								{
+									id: 'album-2',
+									title: 'Descensus',
+									artist_name: 'Circa Survive',
+									track_count: 11
+								}
+							]
+						: [],
+				tracks: search.includes('track')
+					? [
+							{
+								id: 'track-1',
+								title: 'The Track',
+								artist_name: 'The Artist',
+								album_title: 'The Album'
+							}
+						]
+					: []
+			};
 		},
 		isLoading: false,
 		isError: false
@@ -82,6 +105,60 @@ beforeEach(() => {
 });
 
 describe('LibraryManagementRunner', () => {
+	it('keeps selected albums visible across searches and removable from the scope tray', async () => {
+		render(LibraryManagementRunner, {
+			roots,
+			settings,
+			policyRevision: 'policy-1',
+			onclose: vi.fn()
+		});
+
+		await page.getByRole('tab', { name: 'Albums' }).click();
+		const scope = page.getByRole('region', { name: 'Selected management scope' });
+		const search = page.getByRole('textbox', { name: 'Search library albums' });
+		await search.fill('Juturna');
+		await page.getByRole('checkbox', { name: /Juturna/ }).click();
+		await expect.element(scope.getByText('Juturna')).toBeVisible();
+
+		await search.fill('Descensus');
+		await expect.element(page.getByRole('checkbox', { name: /Juturna/ })).not.toBeInTheDocument();
+		await expect.element(scope.getByText('Juturna')).toBeVisible();
+		await page.getByRole('checkbox', { name: /Descensus/ }).click();
+		await expect.element(scope.getByText('Juturna')).toBeVisible();
+		await expect.element(scope.getByText('Descensus')).toBeVisible();
+		await expect.element(scope.getByText('2 items in scope')).toBeVisible();
+
+		await scope.getByRole('button', { name: 'Remove Juturna from scope' }).click();
+		await expect.element(scope.getByText('Juturna')).not.toBeInTheDocument();
+		await expect.element(scope.getByText('1 item in scope')).toBeVisible();
+	});
+
+	it('makes whole-library defaults explicit and gives long profile lists a bounded region', async () => {
+		const manyProfiles = {
+			...settings,
+			profiles: Array.from({ length: 12 }, (_, index) => ({
+				...settings.profiles[0],
+				id: `profile-${index + 1}`,
+				name: `Profile ${index + 1}`
+			}))
+		} as LibraryManagementSettingsResponse;
+		render(LibraryManagementRunner, {
+			roots,
+			settings: manyProfiles,
+			policyRevision: 'policy-1',
+			onclose: vi.fn()
+		});
+
+		const scope = page.getByRole('region', { name: 'Selected management scope' });
+		await expect.element(scope.getByText('Archive')).toBeVisible();
+		await expect.element(scope.getByText('1 item in scope')).toBeVisible();
+		await page.getByRole('button', { name: /Continue/ }).click();
+		await expect
+			.element(page.getByRole('radiogroup', { name: 'Available management profiles' }))
+			.toHaveAttribute('tabindex', '0');
+		await expect.element(page.getByRole('radio', { name: /Profile 12/ })).toBeInTheDocument();
+	});
+
 	it('discloses track-to-album expansion and creates only a durable preview', async () => {
 		render(LibraryManagementRunner, {
 			roots,

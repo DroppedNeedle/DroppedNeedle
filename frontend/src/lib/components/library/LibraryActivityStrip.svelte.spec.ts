@@ -144,7 +144,7 @@ describe('LibraryActivityStrip', () => {
 	it('routes the one strip link by role and has no nested controls', async () => {
 		renderStrip([item('scan')], { adminOverride: true });
 		const link = page.getByRole('link');
-		await expect.element(link).toHaveAttribute('href', '/library#operations');
+		await expect.element(link).toHaveAttribute('href', '/library/management#operations');
 		await userEvent.tab();
 		await expect.element(link).toHaveFocus();
 		await expect.element(link.getByRole('button')).not.toBeInTheDocument();

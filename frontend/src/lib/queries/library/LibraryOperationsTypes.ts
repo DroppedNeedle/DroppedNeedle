@@ -168,6 +168,7 @@ export interface TrackEvidence {
 	candidate_disc_number: number | null;
 	candidate_track_position: number | null;
 	recording_mbid: string | null;
+	release_track_mbid: string | null;
 }
 
 export interface CandidateEvidence {
@@ -319,12 +320,26 @@ export interface RepairReportSummary {
 	album_counts_by_root: Record<string, number>;
 	provider_deferred_count: number;
 	failed_evidence_count: number;
+	purpose: string;
+	ready_album_count: number;
+	mapping_candidate_count: number;
+	exact_release_required_count: number;
+	needs_review_count: number;
 }
 
 export interface RepairEstimateResponse {
 	identity_count: number;
 	selected_root_count: number;
 	queued_repair_count: number;
+}
+
+export interface IdentityPreparationEstimateResponse {
+	album_count: number;
+	ready_album_count: number;
+	mapping_required_count: number;
+	exact_release_required_count: number;
+	selected_root_count: number;
+	queued_preparation_count: number;
 }
 
 export interface OperationResponse {

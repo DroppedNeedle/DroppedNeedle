@@ -13,6 +13,7 @@ from infrastructure.audio.metadata_engine import (
     AudioMetadataEngine,
     _ADAPTERS,
     _MappedAdapter,
+    legacy_audio_projection,
 )
 from infrastructure.audio.protocols import AudioReadAdapterProtocol
 from infrastructure.audio.tagger import AudioTagger
@@ -43,6 +44,10 @@ def test_explicit_adapters_read_rich_independent_fixtures(audio_format: str) -> 
     )
     assert document.metadata.value_for("musicbrainz_recording_id") != (
         document.metadata.value_for("musicbrainz_release_track_id")
+    )
+    legacy_tag, _ = legacy_audio_projection(document)
+    assert legacy_tag.musicbrainz_release_track_id == (
+        "10000000-0000-4000-8000-000000000004"
     )
     assert any("custom_keep" in value.key.casefold() for value in document.raw_tags)
     assert len(document.artwork) == 1

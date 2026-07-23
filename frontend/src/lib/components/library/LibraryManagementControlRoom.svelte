@@ -14,6 +14,8 @@
 	} from 'lucide-svelte';
 
 	import LibraryManagementRunner from './LibraryManagementRunner.svelte';
+	import LibraryManagementDiscardPreview from './LibraryManagementDiscardPreview.svelte';
+	import LibraryManagementIdentityReadiness from './LibraryManagementIdentityReadiness.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { createLibraryManagementEvents } from '$lib/queries/library-management/LibraryManagementEvents';
@@ -86,8 +88,8 @@
 		return value.replaceAll('_', ' ').replace(/^\w/, (letter) => letter.toUpperCase());
 	}
 
-	function operationHref(jobId: string, state: string): string {
-		return state === 'ready'
+	function operationHref(jobId: string, state: string, terminalCode: string | null): string {
+		return state === 'ready' || terminalCode === 'PREVIEW_DISCARDED'
 			? `/library/management/previews/${encodeURIComponent(jobId)}`
 			: `/library/management/operations/${encodeURIComponent(jobId)}`;
 	}
@@ -109,7 +111,7 @@
 				Writes tags and organizes files. Scanning and identification above remain read-only.
 			</p>
 		</div>
-		<a href="/settings?tab=library" class="btn btn-ghost btn-sm"
+		<a href="#management-settings" class="btn btn-ghost btn-sm"
 			><Settings2 class="h-4 w-4" /> Settings</a
 		>
 	</header>
@@ -150,6 +152,8 @@
 				</div>
 			</div>
 
+			<LibraryManagementIdentityReadiness roots={policyQuery.data.library_roots} />
+
 			{#if active}
 				<article class="management-active-card">
 					<div class="flex min-w-0 flex-1 items-start gap-3">
@@ -186,8 +190,11 @@
 										.catch(() => undefined)}><CirclePause class="h-4 w-4" /> Pause</button
 							>{/if}<a
 							class="btn btn-ghost btn-sm"
-							href={operationHref(active.operation.id, active.operation.state)}
-							>Open details <ArrowRight class="h-4 w-4" /></a
+							href={operationHref(
+								active.operation.id,
+								active.operation.state,
+								active.operation.terminal_code
+							)}>Open details <ArrowRight class="h-4 w-4" /></a
 						>
 					</div>
 				</article>
@@ -217,17 +224,30 @@
 						</div>
 						<span class="text-xs text-base-content/45">Read-only until Apply</span>
 					</div>
-					{#each readyPreviews as item (item.operation.id)}<a
-							href={operationHref(item.operation.id, item.operation.state)}
-							class="management-history-row"
-							><Sparkles class="h-4 w-4 text-library-manage" /><span class="min-w-0 flex-1"
-								><strong>{item.profile_name}</strong><small
-									>{title(item.mode)} · {date(item.operation.updated_at)}</small
-								></span
-							><span class="badge badge-outline badge-sm">Review</span><ArrowRight
-								class="h-4 w-4"
-							/></a
-						>{/each}
+					{#each readyPreviews as item (item.operation.id)}<div class="flex items-stretch gap-1">
+							<a
+								href={operationHref(
+									item.operation.id,
+									item.operation.state,
+									item.operation.terminal_code
+								)}
+								class="management-history-row min-w-0 flex-1"
+								><Sparkles class="h-4 w-4 shrink-0 text-library-manage" /><span
+									class="min-w-0 flex-1"
+									><strong>{item.profile_name}</strong><small
+										>{title(item.mode)} · {date(item.operation.updated_at)}</small
+									></span
+								><span class="badge badge-outline badge-sm">Review</span><ArrowRight
+									class="h-4 w-4 shrink-0"
+								/></a
+							>
+							<LibraryManagementDiscardPreview
+								jobId={item.operation.id}
+								expectedRevision={item.operation.row_revision}
+								profileName={item.profile_name}
+								compact
+							/>
+						</div>{/each}
 				</section>
 			{/if}
 
@@ -240,7 +260,11 @@
 					<a class="link text-xs" href="/library/management/history">All history</a>
 				</div>
 				{#if recent.length}{#each recent as item (item.operation.id)}<a
-							href={operationHref(item.operation.id, item.operation.state)}
+							href={operationHref(
+								item.operation.id,
+								item.operation.state,
+								item.operation.terminal_code
+							)}
 							class="management-history-row"
 							><History class="h-4 w-4 text-base-content/45" /><span class="min-w-0 flex-1"
 								><strong>{item.profile_name}</strong><small

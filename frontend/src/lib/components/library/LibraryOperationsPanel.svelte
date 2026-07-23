@@ -9,6 +9,7 @@
 		RefreshCw,
 		ScanLine,
 		ScanSearch,
+		Settings2,
 		ShieldAlert,
 		ShieldCheck
 	} from 'lucide-svelte';
@@ -195,7 +196,11 @@
 		</div>
 	</div>
 
-	<section class="library-scanning-control-room" aria-labelledby="library-scanning-control-title">
+	<section
+		id="scanning-controls"
+		class="library-scanning-control-room scroll-mt-36"
+		aria-labelledby="library-scanning-control-title"
+	>
 		<header class="library-scanning-control-header">
 			<div class="library-scanning-mark"><ScanSearch class="h-6 w-6" /></div>
 			<div class="min-w-0 flex-1">
@@ -210,13 +215,18 @@
 					music files.
 				</p>
 			</div>
-			<p class="library-scanning-schedule">
-				{#if scheduleQuery.data?.scan_frequency === 'daily'}Next scan: {scheduleQuery.data
-						.daily_scan_time}
-					{scheduleQuery.data.server_timezone ??
-						''}{:else if scheduleQuery.data?.scan_frequency === 'manual'}Automatic scanning off{:else}Schedule:
-					{scheduleQuery.data?.scan_frequency?.replace('_', ' ') ?? 'loading'}{/if}
-			</p>
+			<div class="flex flex-wrap items-center justify-end gap-1">
+				<p class="library-scanning-schedule">
+					{#if scheduleQuery.data?.scan_frequency === 'daily'}Next scan: {scheduleQuery.data
+							.daily_scan_time}
+						{scheduleQuery.data.server_timezone ??
+							''}{:else if scheduleQuery.data?.scan_frequency === 'manual'}Automatic scanning off{:else}Schedule:
+						{scheduleQuery.data?.scan_frequency?.replace('_', ' ') ?? 'loading'}{/if}
+				</p>
+				<a href="/settings?tab=library" class="btn btn-ghost btn-sm">
+					<Settings2 class="h-4 w-4" /> Settings
+				</a>
+			</div>
 		</header>
 
 		<div class="space-y-5 p-5 sm:p-6">
@@ -545,7 +555,9 @@
 		</div>
 	</section>
 
-	<LibraryManagementControlRoom />
+	<div id="management-controls" class="scroll-mt-36">
+		<LibraryManagementControlRoom />
+	</div>
 </section>
 
 <LibraryWorkDialog

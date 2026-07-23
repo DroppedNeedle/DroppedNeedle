@@ -191,6 +191,11 @@ class RepairReportSummary(AppStruct):
     album_counts_by_root: dict[str, int] = msgspec.field(default_factory=dict)
     provider_deferred_count: int = 0
     failed_evidence_count: int = 0
+    purpose: str = "existing_matches"
+    ready_album_count: int = 0
+    mapping_candidate_count: int = 0
+    exact_release_required_count: int = 0
+    needs_review_count: int = 0
 
 
 class OperationResponse(AppStruct):
@@ -307,6 +312,20 @@ class RepairEstimateResponse(AppStruct):
     identity_count: int
     selected_root_count: int
     queued_repair_count: int
+
+
+class IdentityPreparationCreateRequest(AppStruct):
+    idempotency_key: str
+    root_ids: list[str] = msgspec.field(default_factory=list)
+
+
+class IdentityPreparationEstimateResponse(AppStruct):
+    album_count: int
+    ready_album_count: int
+    mapping_required_count: int
+    exact_release_required_count: int
+    selected_root_count: int
+    queued_preparation_count: int
 
 
 class RepairApplyRequest(AppStruct):

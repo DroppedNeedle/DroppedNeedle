@@ -43,8 +43,7 @@ const h = vi.hoisted(() => ({
 	applyPreview: vi.fn(),
 	requestRun: vi.fn(),
 	toast: vi.fn(),
-	isAdmin: true,
-	managementRender: vi.fn()
+	isAdmin: true
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -113,14 +112,6 @@ vi.mock('$lib/queries/downloads/DownloadClientsQueries.svelte', () => ({
 	getDownloadPolicyQuery: () => ({ data: { max_library_size_gb: 0 } }),
 	saveDownloadPolicy: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
-vi.mock('$lib/components/settings/SettingsLibraryManagement.svelte', () => {
-	const Comp = function () {
-		h.managementRender();
-	};
-	Comp.prototype = {};
-	return { default: Comp };
-});
-
 import SettingsLibrary from './SettingsLibrary.svelte';
 
 beforeEach(() => {
@@ -157,7 +148,17 @@ describe('SettingsLibrary target policy UI', () => {
 		h.isAdmin = false;
 		render(SettingsLibrary);
 		await expect.element(page.getByText('Scanning & identification')).toBeVisible();
-		expect(h.managementRender).not.toHaveBeenCalled();
+		await expect
+			.element(page.getByRole('link', { name: /Open Library Management/ }))
+			.not.toBeInTheDocument();
+	});
+
+	it('sends administrators to the dedicated Library Management configuration', async () => {
+		render(SettingsLibrary);
+		await expect
+			.element(page.getByRole('link', { name: /Open Library Management/ }))
+			.toHaveAttribute('href', '/library/management#management-settings');
+		await expect.element(page.getByText('Administrator workspace')).toBeVisible();
 	});
 
 	it('shows root inheritance policy, counts, path, and unavailable state', async () => {

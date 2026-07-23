@@ -41,6 +41,7 @@ class AudioTag(AppStruct):
     musicbrainz_release_group_id: str | None = None
     musicbrainz_release_id: str | None = None
     musicbrainz_recording_id: str | None = None
+    musicbrainz_release_track_id: str | None = None
     musicbrainz_artist_id: str | None = None
     musicbrainz_album_artist_id: str | None = None
     acoustid_id: str | None = None

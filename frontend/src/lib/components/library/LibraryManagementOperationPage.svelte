@@ -3,7 +3,6 @@
 	import { onMount } from 'svelte';
 	import {
 		AlertTriangle,
-		ArrowLeft,
 		CheckCircle2,
 		CirclePause,
 		CirclePlay,
@@ -16,6 +15,7 @@
 		ShieldAlert
 	} from 'lucide-svelte';
 
+	import BackButton from '$lib/components/BackButton.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { createLibraryManagementEvents } from '$lib/queries/library-management/LibraryManagementEvents';
 	import {
@@ -65,6 +65,14 @@
 	const operation = $derived(operationQuery.data ?? null);
 	const externalRefreshes = $derived(operation?.external_refreshes ?? []);
 	const results = $derived(resultsQuery.data?.pages.flatMap((page) => page.items) ?? []);
+	const planningPreview = $derived(
+		Boolean(
+			operation &&
+			operation.phase === 'planning' &&
+			['queued', 'running', 'paused'].includes(operation.state)
+		)
+	);
+	const plannedItems = $derived(operation?.summary.item_count ?? 0);
 	const activePhaseLabel = $derived.by(() => {
 		if (!operation) return 'Loading';
 		const states = new Set(results.flatMap((item) => item.journal_states));
@@ -223,9 +231,7 @@
 
 <div class="management-preview-shell px-4 py-8 sm:px-6 lg:px-8">
 	<main class="mx-auto max-w-6xl space-y-5">
-		<a href="/library#operations" class="btn btn-ghost btn-sm -ml-2"
-			><ArrowLeft class="h-4 w-4" /> Library control room</a
-		>
+		<BackButton fallback="/library/management#management-controls" />
 
 		{#if operationQuery.isLoading}
 			<div class="space-y-4">
@@ -265,17 +271,29 @@
 					<span class="sr-only" role="status" aria-live="polite"
 						>Operation phase: {activePhaseLabel}</span
 					>
-					<div class="mb-2 flex justify-between text-xs">
-						<span>{activePhaseLabel}</span><span
-							>{operation.completed_count.toLocaleString()} / {operation.expected_work_count.toLocaleString()}</span
-						>
+					<div class="mb-2 flex justify-between gap-3 text-xs">
+						<span>{activePhaseLabel}</span><span>
+							{planningPreview
+								? plannedItems > 0
+									? `${plannedItems.toLocaleString()} files planned so far`
+									: 'Discovering files'
+								: `${operation.completed_count.toLocaleString()} / ${operation.expected_work_count.toLocaleString()}`}
+						</span>
 					</div>
-					<progress
-						class="progress progress-warning w-full"
-						value={progress}
-						max="100"
-						aria-label={`${progress}% complete`}
-					></progress>
+					{#if planningPreview}
+						<progress
+							class="progress progress-warning w-full"
+							max="100"
+							aria-label={`Planning preview; ${plannedItems.toLocaleString()} files planned so far`}
+						></progress>
+					{:else}
+						<progress
+							class="progress progress-warning w-full"
+							value={progress}
+							max="100"
+							aria-label={`${progress}% complete`}
+						></progress>
+					{/if}
 				</div>
 				<div class="mt-4 grid gap-2 sm:grid-cols-4">
 					<div class="management-summary-card">
@@ -471,7 +489,7 @@
 					{#if operation.baseline_available_count > 0}<p class="mt-2 text-xs text-base-content/55">
 							{baselineStatus}
 						</p>{/if}
-					<a href="/library#operations" class="btn btn-ghost btn-sm mt-3"
+					<a href="/library/management#management-controls" class="btn btn-ghost btn-sm mt-3"
 						>Open baseline restore...</a
 					>
 				</div>

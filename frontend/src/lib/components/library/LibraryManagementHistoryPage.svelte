@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { ArrowLeft, ArrowRight, FolderCog, History, ShieldAlert } from 'lucide-svelte';
+	import { ArrowRight, FolderCog, History, ShieldAlert } from 'lucide-svelte';
 
+	import BackButton from '$lib/components/BackButton.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { createLibraryManagementEvents } from '$lib/queries/library-management/LibraryManagementEvents';
@@ -54,8 +55,8 @@
 		return Number.isFinite(timestamp) ? timestamp / 1000 : undefined;
 	}
 
-	function operationHref(jobId: string, value: string): string {
-		return value === 'ready'
+	function operationHref(jobId: string, value: string, terminalCode: string | null): string {
+		return value === 'ready' || terminalCode === 'PREVIEW_DISCARDED'
 			? `/library/management/previews/${encodeURIComponent(jobId)}`
 			: `/library/management/operations/${encodeURIComponent(jobId)}`;
 	}
@@ -83,9 +84,7 @@
 
 <div class="management-preview-shell px-4 py-8 sm:px-6 lg:px-8">
 	<main class="mx-auto max-w-6xl space-y-5">
-		<a href="/library#operations" class="btn btn-ghost btn-sm -ml-2"
-			><ArrowLeft class="h-4 w-4" /> Library control room</a
-		>
+		<BackButton fallback="/library/management#management-controls" />
 
 		<header class="management-control-room p-5 sm:p-7">
 			<div class="flex items-start gap-4">
@@ -212,7 +211,11 @@
 				{#each historyItems as item (item.operation.id)}
 					<a
 						class="management-history-row"
-						href={operationHref(item.operation.id, item.operation.state)}
+						href={operationHref(
+							item.operation.id,
+							item.operation.state,
+							item.operation.terminal_code
+						)}
 						><History class="h-4 w-4 text-library-manage" /><span class="min-w-0 flex-1"
 							><span class="flex flex-wrap items-center gap-2"
 								><strong>{item.profile_name}</strong><span class="badge badge-outline badge-sm"

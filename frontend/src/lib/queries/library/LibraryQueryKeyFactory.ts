@@ -41,6 +41,37 @@ export const LibraryQueryKeyFactory = {
 			findingCategory,
 			cursor ?? 'first'
 		] as const,
+	identityPreparationsPrefix: (userId: string | undefined) =>
+		[
+			...LibraryQueryKeyFactory.operationsPrefix(),
+			'identity-preparations',
+			userId ?? 'anonymous'
+		] as const,
+	identityPreparations: (userId: string | undefined, cursor: string | undefined) =>
+		[
+			...LibraryQueryKeyFactory.identityPreparationsPrefix(userId),
+			'history',
+			cursor ?? 'first'
+		] as const,
+	identityPreparationEstimate: (userId: string | undefined, rootIds: string[]) =>
+		[
+			...LibraryQueryKeyFactory.identityPreparationsPrefix(userId),
+			'estimate',
+			[...rootIds].sort()
+		] as const,
+	identityPreparationFindings: (
+		userId: string | undefined,
+		jobId: string,
+		findingCategory: string,
+		cursor: string | undefined
+	) =>
+		[
+			...LibraryQueryKeyFactory.identityPreparationsPrefix(userId),
+			'findings',
+			jobId,
+			findingCategory,
+			cursor ?? 'first'
+		] as const,
 	albums: (page: number, sort: AlbumSort, q: string, format: string) =>
 		[...LibraryQueryKeyFactory.all, 'albums', { page, sort, q, format }] as const,
 	artists: (sortBy: ArtistSort, sortOrder: string, q: string) =>

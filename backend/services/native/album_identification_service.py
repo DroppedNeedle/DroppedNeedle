@@ -87,6 +87,7 @@ def _embedded_decision(
             row["embedded_release_group_mbid"],
             row["embedded_release_mbid"],
             row["embedded_recording_mbid"],
+            row["embedded_release_track_mbid"],
             row["embedded_artist_mbid"],
             row["embedded_album_artist_mbid"],
         )
@@ -105,11 +106,17 @@ def _embedded_decision(
         if row["embedded_album_artist_mbid"]
     }
     recordings = [track.recording_mbid for track in tracks if track.recording_mbid]
+    release_tracks = [
+        str(row["embedded_release_track_mbid"])
+        for row in raw_tracks
+        if row["embedded_release_track_mbid"]
+    ]
     if (
         len(groups) > 1
         or len(releases) > 1
         or len(artist_ids) > 1
         or len(recordings) != len(set(recordings))
+        or len(release_tracks) != len(set(release_tracks))
     ):
         return IdentificationDecision(
             outcome="contradictory",
@@ -134,13 +141,23 @@ def _embedded_decision(
                 local_track_id=track.local_track_id,
                 classification=("supported" if track.recording_mbid else "unknown"),
                 evidence_kinds=(
-                    ["embedded_recording_mbid"]
+                    [
+                        "embedded_recording_mbid",
+                        *(
+                            ["embedded_release_track_mbid"]
+                            if row["embedded_release_track_mbid"]
+                            else []
+                        ),
+                    ]
                     if track.recording_mbid
                     else ["embedded_album_identity_only"]
                 ),
                 recording_mbid=track.recording_mbid,
+                release_track_mbid=row["embedded_release_track_mbid"],
+                candidate_disc_number=track.disc_number,
+                candidate_track_position=track.track_number,
             )
-            for track in tracks
+            for track, row in zip(tracks, raw_tracks, strict=True)
         ],
         score=1.0,
         margin=1.0,

@@ -1,17 +1,8 @@
 <script lang="ts">
-	import {
-		Music,
-		Clock,
-		AlertTriangle,
-		ArrowRight,
-		ArrowUp,
-		HardDrive,
-		Layers
-	} from 'lucide-svelte';
+	import { Music, Clock, ArrowUp, HardDrive, Layers } from 'lucide-svelte';
 	import { onMount } from 'svelte';
 	import { fromStore } from 'svelte/store';
 	import { getLibraryStatsQuery } from '$lib/queries/library/LibraryQueries.svelte';
-	import LibraryOperationsPanel from './LibraryOperationsPanel.svelte';
 	import LibrarySearch from './LibrarySearch.svelte';
 	import LocalFilesBand from './LocalFilesBand.svelte';
 	import LibraryHubTiles from './LibraryHubTiles.svelte';
@@ -38,8 +29,6 @@
 					.join(' / ')
 			: ''
 	);
-	const showAttention = $derived(authStore.isAdmin && (stats?.review_count ?? 0) > 0);
-
 	function scrollToTop() {
 		window.scrollTo({ top: 0, behavior: 'smooth' });
 	}
@@ -62,9 +51,8 @@
 		<EmptyState
 			icon={Music}
 			title="Your library is empty"
-			description="Add a library path in Settings and start a scan to get started."
+			description="Add a library path in Settings, then open Controls to start a scan."
 		/>
-		<LibraryOperationsPanel />
 	{:else}
 		<EmptyState
 			icon={Clock}
@@ -100,25 +88,11 @@
 				<Layers class="h-4 w-4 shrink-0 text-base-content/40" />
 				<span class="truncate font-semibold text-base-content/80">{formatSummary || '-'}</span>
 			</div>
-			{#if showAttention}
-				<a
-					href="/library/review"
-					class="ml-auto flex items-center gap-1.5 rounded-full border border-warning/40 bg-warning/10 px-3 py-1 text-xs font-semibold text-warning transition-colors hover:bg-warning/20"
-				>
-					<AlertTriangle class="h-3.5 w-3.5" />
-					{stats.review_count} need review
-					<ArrowRight class="h-3.5 w-3.5" />
-				</a>
-			{/if}
 		</div>
 	</div>
 
 	{#if localEnabled}
 		<LocalFilesBand />
-	{/if}
-
-	{#if authStore.isAdmin}
-		<LibraryOperationsPanel />
 	{/if}
 
 	<div class="flex justify-center pt-4">

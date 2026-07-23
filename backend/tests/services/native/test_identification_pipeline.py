@@ -58,6 +58,7 @@ EMBEDDED_GROUP = "11111111-1111-4111-8111-111111111111"
 EMBEDDED_GROUP_OTHER = "22222222-2222-4222-8222-222222222222"
 EMBEDDED_RELEASE = "33333333-3333-4333-8333-333333333333"
 EMBEDDED_RECORDING = "44444444-4444-4444-8444-444444444444"
+EMBEDDED_RELEASE_TRACK = "77777777-7777-4777-8777-777777777777"
 EMBEDDED_RECORDING_OTHER = "55555555-5555-4555-8555-555555555555"
 EMBEDDED_ARTIST = "66666666-6666-4666-8666-666666666666"
 
@@ -178,6 +179,7 @@ async def _seed_album(
     embedded_group: str | None = None,
     embedded_release: str | None = None,
     embedded_recording: str | None = None,
+    embedded_release_track: str | None = None,
     policy: str = "automatic",
     second_embedded_group: str | None = None,
     second_embedded_recording: str | None = None,
@@ -225,6 +227,7 @@ async def _seed_album(
         embedded_release_group_mbid=embedded_group,
         embedded_release_mbid=embedded_release,
         embedded_recording_mbid=embedded_recording,
+        embedded_release_track_mbid=embedded_release_track,
         embedded_album_artist_mbid=EMBEDDED_ARTIST if embedded_group else None,
     )
     tracks = [track]
@@ -340,6 +343,7 @@ async def test_local_metadata_embedded_identity_uses_zero_provider_calls_and_att
         embedded_group=EMBEDDED_GROUP,
         embedded_release=EMBEDDED_RELEASE,
         embedded_recording=EMBEDDED_RECORDING,
+        embedded_release_track=EMBEDDED_RELEASE_TRACK,
         policy="local_metadata",
     )
     job = await _claimed_job(store, kind="post_processing")
@@ -360,10 +364,19 @@ async def test_local_metadata_embedded_identity_uses_zero_provider_calls_and_att
             "SELECT release_group_mbid, decision_source FROM local_album_external_identities"
         ).fetchone()
         track_identity = connection.execute(
-            "SELECT recording_mbid, decision_source FROM local_track_external_identities"
+            "SELECT recording_mbid, release_mbid, release_track_mbid, "
+            "medium_position, release_track_position, decision_source "
+            "FROM local_track_external_identities"
         ).fetchone()
     assert album_identity == (EMBEDDED_GROUP, "embedded")
-    assert track_identity == (EMBEDDED_RECORDING, "embedded")
+    assert track_identity == (
+        EMBEDDED_RECORDING,
+        EMBEDDED_RELEASE,
+        EMBEDDED_RELEASE_TRACK,
+        1,
+        1,
+        "embedded",
+    )
     invalidated = invalidator.await_args.args[0]
     assert {
         "library",
@@ -431,6 +444,40 @@ async def test_conflicting_embedded_ids_create_review_without_search(
             ).fetchone()[0]
             == "CONFLICTING_EMBEDDED_IDS"
         )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_embedded_release_tracks_never_attach(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await _seed_album(
+        store,
+        embedded_group=EMBEDDED_GROUP,
+        embedded_release=EMBEDDED_RELEASE,
+        embedded_recording=EMBEDDED_RECORDING,
+        embedded_release_track=EMBEDDED_RELEASE_TRACK,
+        second_embedded_group=EMBEDDED_GROUP,
+        policy="local_metadata",
+    )
+    job = await _claimed_job(store, kind="post_processing")
+    provider = FakeProvider()
+    outcome = await _service(
+        store,
+        provider,
+        FakeFingerprinter(FingerprintResult(status="disabled"), enabled=False),
+    ).run_claimed_job(job, "worker", now=3)
+
+    assert outcome == "contradictory"
+    assert provider.calls == []
+    with sqlite3.connect(db_path) as connection:
+        identity_count = connection.execute(
+            "SELECT COUNT(*) FROM local_track_external_identities"
+        ).fetchone()[0]
+        reason = connection.execute(
+            "SELECT reason_code FROM library_identification_reviews"
+        ).fetchone()[0]
+    assert identity_count == 0
+    assert reason == "CONFLICTING_EMBEDDED_IDS"
 
 
 @pytest.mark.asyncio

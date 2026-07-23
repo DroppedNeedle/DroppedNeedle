@@ -1873,6 +1873,7 @@ class LibraryManagementPlanner:
         if not identity.release_group_mbid or not identity.release_mbid:
             return RELEASE_NOT_SELECTED
         by_id = {value.local_track_id: value for value in identity.tracks}
+        release_track_ids: set[str] = set()
         for source in inspected:
             track = by_id.get(source.subject.local_track_id)
             if (
@@ -1883,6 +1884,9 @@ class LibraryManagementPlanner:
                 or track.release_mbid != identity.release_mbid
             ):
                 return TRACK_NOT_MAPPED
+            if track.release_track_mbid in release_track_ids:
+                return TRACK_NOT_MAPPED
+            release_track_ids.add(track.release_track_mbid)
         return None
 
     @staticmethod

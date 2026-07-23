@@ -21,6 +21,7 @@ from api.v1.schemas.library_management_preview import (
     LibraryManagementBaselinePurgeImpactResponse,
     LibraryManagementBaselinePurgeRequest,
     LibraryManagementBaselinePurgeResponse,
+    LibraryManagementDiscardRequest,
     LibraryManagementDuplicateResolutionPreviewRequest,
     LibraryManagementOperationHistoryResponse,
     LibraryManagementPlanItemPageResponse,
@@ -436,6 +437,20 @@ async def get_library_management_preview(
     service: LibraryManagementPreviewServiceDep,
 ) -> LibraryManagementPreviewDetailResponse:
     return await service.detail(job_id)
+
+
+@router.post(
+    "/library/management/previews/{job_id}/discard",
+    response_model=LibraryManagementPreviewDetailResponse,
+)
+async def discard_library_management_preview(
+    job_id: str,
+    service: LibraryManagementPreviewServiceDep,
+    request: LibraryManagementDiscardRequest = MsgSpecBody(
+        LibraryManagementDiscardRequest
+    ),
+) -> LibraryManagementPreviewDetailResponse:
+    return await service.discard(job_id, request)
 
 
 @router.post(

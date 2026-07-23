@@ -16,8 +16,10 @@ import type {
 	LibraryManagementBaselineRestorePreviewRequest,
 	LibraryManagementChangeImpact,
 	LibraryManagementDuplicateResolutionPreviewRequest,
+	LibraryManagementDiscardRequest,
 	LibraryManagementPreviewCreateRequest,
 	LibraryManagementPreviewCreatedResponse,
+	LibraryManagementPreviewDetailResponse,
 	LibraryManagementProfileCopyRequest,
 	LibraryManagementProfileCreateRequest,
 	LibraryManagementProfileDeleteRequest,
@@ -151,6 +153,17 @@ export const applyLibraryManagementPreviewMutation = () =>
 			),
 		onSuccess: showQueued('Library Management work queued'),
 		onError: showActionError('Could not apply this management preview')
+	}));
+
+export const discardLibraryManagementPreviewMutation = () =>
+	createMutation(() => ({
+		mutationFn: (input: { jobId: string; request: LibraryManagementDiscardRequest }) =>
+			api.global.post<LibraryManagementPreviewDetailResponse>(
+				API.libraryManagement.discardPreview(input.jobId),
+				input.request
+			),
+		onSuccess: showQueued('Library Management preview discarded'),
+		onError: showActionError('Could not discard this management preview')
 	}));
 
 export const createLibraryManagementUndoPreviewMutation = () =>

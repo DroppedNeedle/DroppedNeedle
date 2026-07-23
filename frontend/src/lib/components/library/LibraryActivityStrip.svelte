@@ -36,7 +36,7 @@
 	const activity = $derived(activityOverride ?? activityQuery.data);
 	const scan = $derived(activity?.items.find((item) => item.kind === 'scan'));
 	const identification = $derived(activity?.items.find((item) => item.kind === 'identification'));
-	const destination = $derived(isAdmin ? '/library#operations' : '/library');
+	const destination = $derived(isAdmin ? '/library/management#operations' : '/library');
 	const identificationActive = $derived(
 		Boolean(identification && identification.waiting_count > 0)
 	);
