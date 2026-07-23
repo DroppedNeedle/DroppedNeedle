@@ -15,6 +15,7 @@ from pathlib import Path
 
 from models.common import ServiceStatus
 from repositories.protocols.download_client import (
+    DownloadMaterialization,
     DownloadTaskStatus,
     EnqueueRequest,
     MountDiagnosis,
@@ -53,7 +54,21 @@ class FakeDownloadClient:
             progress_percent=100.0,
         )
 
-    async def cancel(self, handle: TaskHandle) -> bool:
+    async def abort(self, handle: TaskHandle) -> bool:
+        self._enqueued.pop(handle.username, None)
+        return True
+
+    async def inspect_materialization(
+        self, handle: TaskHandle
+    ) -> DownloadMaterialization:
+        return DownloadMaterialization(
+            state="completed",
+            mount_root="/fake/downloads",
+            file_paths=[str(value) for value in await self.list_completed_files(handle)],
+            mount_healthy=True,
+        )
+
+    async def discard_client_artifacts(self, handle: TaskHandle) -> bool:
         self._enqueued.pop(handle.username, None)
         return True
 

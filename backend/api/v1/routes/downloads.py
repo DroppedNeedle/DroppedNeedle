@@ -63,6 +63,7 @@ def _to_response(  # noqa: ANN001 - DownloadTask
     next_retry_at: float | None = None,
     retry_max: int = 0,
     retry_ladder_minutes: list[int] | None = None,
+    acquisition_cleanup_state: str = "not_tracked",
 ) -> DownloadTaskResponse:
     return DownloadTaskResponse(
         id=task.id,
@@ -96,6 +97,7 @@ def _to_response(  # noqa: ANN001 - DownloadTask
         next_retry_at=next_retry_at,
         retry_max=retry_max,
         retry_ladder_minutes=retry_ladder_minutes or [],
+        acquisition_cleanup_state=acquisition_cleanup_state,
     )
 
 
@@ -121,6 +123,7 @@ async def list_downloads(
     # Tasks waiting on a held-track review are paused, not scheduled - don't show a
     # countdown that will never fire.
     held_ids = await service.held_task_ids(current_user.id, current_user.role)
+    cleanup_states = await service.cleanup_states([task.id for task in tasks])
     return DownloadListResponse(
         items=[
             _to_response(
@@ -128,6 +131,7 @@ async def list_downloads(
                 next_retry_at=None if t.id in held_ids else service.next_retry_at(t),
                 retry_max=retry_max,
                 retry_ladder_minutes=retry_ladder,
+                acquisition_cleanup_state=cleanup_states.get(t.id, "not_tracked"),
             )
             for t in tasks
         ],
@@ -394,9 +398,11 @@ async def get_download(
     task_id: str, current_user: CurrentUserDep, service=Depends(get_download_service)
 ):
     task = await service.get_task(task_id, current_user.id, current_user.role)
+    cleanup_states = await service.cleanup_states([task.id])
     return _to_response(
         task,
         next_retry_at=service.next_retry_at(task),
         retry_max=service.auto_retry_max,
         retry_ladder_minutes=service.retry_ladder_minutes(),
+        acquisition_cleanup_state=cleanup_states.get(task.id, "not_tracked"),
     )

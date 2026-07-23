@@ -83,6 +83,9 @@ class DownloadManifest(AppStruct):
     # The owning task's origin ('user' | 'retry' | 'upgrade'). Replace-on-import fires
     # only for 'upgrade' (D18); legacy manifests decode as 'user' (add-only, unchanged).
     origin: str = "user"
+    # Candidate-attempt journal identity. Old manifests decode with ``None`` and are
+    # linked conservatively by their exact client job during startup reconciliation.
+    attempt_id: str | None = None
 
     def __post_init__(self) -> None:
         # In-flight back-fill: a legacy manifest decodes with handle=None and

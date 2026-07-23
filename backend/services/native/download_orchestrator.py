@@ -17,6 +17,7 @@ import asyncio
 import logging
 import shutil
 import time
+from contextlib import suppress
 from pathlib import Path
 
 from core.exceptions import (
@@ -46,6 +47,7 @@ from services.native.acquisition.strategy import (
     UsenetStrategy,
 )
 from services.native.album_preflight_scorer import AlbumPreflightScorer
+from services.native.acquisition_cleanup_service import AcquisitionCleanupService
 from services.native.coverage import match_rows_to_tracks
 from services.native.quality_tiers import (
     candidate_tier,
@@ -58,6 +60,7 @@ from services.native.file_processor import (
     IMPORT_FAILED,
     SOURCE_FILE_MISSING,
     FileProcessor,
+    ProcessResult,
 )
 from services.native.library_manager import LibraryManager
 from services.native.track_matcher import TrackMatcher
@@ -197,6 +200,7 @@ class DownloadOrchestrator:
         # track-repull). None = not wired (tests) -> re-gate skipped.
         get_download_policy=None,  # Callable[[], DownloadPolicySettings] | None
         wanted_store=None,  # WantedStore | None
+        cleanup_service: AcquisitionCleanupService | None = None,
     ) -> None:
         self._client = client
         self._naming_template = naming_template
@@ -239,8 +243,10 @@ class DownloadOrchestrator:
         self._on_import = on_import_callback
         self._get_download_policy = get_download_policy
         self._wanted_store = wanted_store
+        self._cleanup = cleanup_service
         self._usenet_scorer = usenet_scorer  # for the Usenet re-gate tier (Phase 2)
         self._active_tasks: dict[str, asyncio.Task] = {}
+        self._operation_locks: dict[str, asyncio.Lock] = {}
 
         # Source strategies (step 4): all per-source behaviour (search, enqueue, import,
         # client, identity, blocklist-on-failure, poll/cancel/fault policy) lives here so the
@@ -296,6 +302,9 @@ class DownloadOrchestrator:
         TaskRegistry.get_instance().register(f"download-{task_id}", task)
         return task
 
+    def _operation_lock(self, task_id: str) -> asyncio.Lock:
+        return self._operation_locks.setdefault(task_id, asyncio.Lock())
+
     async def _run_orchestrator_safely(self, task_id: str) -> None:
         """Wrap ``process_task`` so an unhandled exception updates the task to
         ``failed`` (sanitized message, AUD-11) instead of vanishing into a
@@ -306,9 +315,7 @@ class DownloadOrchestrator:
             logger.exception("Unhandled exception in orchestrator task %s", task_id)
             try:
                 user_msg = _user_error_message(exc)
-                await self._store.update_status(
-                    task_id, DownloadStatus.FAILED, error_message=user_msg
-                )
+                await self._fail_task_preserving_attempt(task_id, user_msg)
                 logger.info(
                     "download.failed",
                     extra={"task_id": task_id, "error_message": user_msg},
@@ -364,9 +371,7 @@ class DownloadOrchestrator:
             return  # cancel_task already set status='cancelled'; don't overwrite
         except OrchestrationError as exc:
             user_msg = _user_error_message(exc)
-            await self._store.update_status(
-                task_id, DownloadStatus.FAILED, error_message=user_msg
-            )
+            await self._fail_task_preserving_attempt(task_id, user_msg)
             logger.info(
                 "download.failed", extra={"task_id": task_id, "error_message": user_msg}
             )
@@ -376,6 +381,32 @@ class DownloadOrchestrator:
                 {"status": DownloadStatus.FAILED, "error": user_msg},
             )
             await self._sync_request_on_terminal(task, DownloadStatus.FAILED)
+
+    async def _fail_task_preserving_attempt(
+        self, task_id: str, error_message: str, *, completed_at: float | None = None
+    ) -> None:
+        """Atomically fail a task while preserving any unresolved source bytes."""
+
+        attempts = await self._store.list_download_attempts(task_id)
+        attempt = next(
+            (
+                value
+                for value in reversed(attempts)
+                if value.state in {"acquiring", "in_use"}
+            ),
+            None,
+        )
+        fields = {
+            "error_message": error_message,
+            "completed_at": completed_at or time.time(),
+        }
+        await self._store.finalize_task_and_attempt(
+            task_id,
+            DownloadStatus.FAILED,
+            task_fields=fields,
+            attempt_id=attempt.id if attempt else None,
+            disposition="preserve" if attempt else None,
+        )
 
     def _source_enabled(self, source: str) -> bool:
         if source == "soulseek":
@@ -679,6 +710,9 @@ class DownloadOrchestrator:
         source_missing = False
         import_failed = False
         while True:
+            attempt_result = ProcessResult(
+                succeeded=[], failed=[], workspace_disposition="discard"
+            )
             # resume's first iteration polls the transfers a restart left behind (no
             # enqueue), so the no-transfer fast-fail must not apply there - those
             # records may legitimately be gone (completed + cleaned).
@@ -727,6 +761,7 @@ class DownloadOrchestrator:
                 )
                 if result.succeeded:
                     imported_any = True
+                attempt_result = result
                 # Per-attempt fault flags (NOT the accumulated ones below) decide whether
                 # THIS candidate's shortfall is the release's fault or a local one.
                 attempt_mount = not result.succeeded and any(
@@ -778,22 +813,25 @@ class DownloadOrchestrator:
                         enumerated_any=enumerated > 0,
                     )
 
-                # A local/environment fault stops the task WITHOUT cleanup: cancel(del_files)
-                # would tell the client to delete data we simply couldn't read (the mount may
-                # recover), so bail BEFORE _cancel_transfers (review H1). Failing over can't
-                # fix a local problem either.
                 if local_fault:
+                    preserved_result = ProcessResult(
+                        succeeded=list(result.succeeded),
+                        failed=list(result.failed),
+                        publisher_bundle_ids=list(result.publisher_bundle_ids),
+                        workspace_disposition="preserve",
+                    )
                     await self._finalize(
                         task,
                         DownloadStatus.FAILED,
                         error_message=strategy.local_fault_message(attempt_mount),
+                        process_result=preserved_result,
                     )
                     return
 
-                await self._cancel_transfers(task)
-
                 if is_complete:
-                    await self._finalize(task, DownloadStatus.COMPLETED)
+                    await self._finalize(
+                        task, DownloadStatus.COMPLETED, process_result=result
+                    )
                     return
 
             # Incomplete (or this candidate's enqueue failed): fail over. Track the
@@ -811,6 +849,11 @@ class DownloadOrchestrator:
                 # the MB length is probably wrong (not the files), so re-pull the best
                 # source with the gate off rather than strand the user.
                 if task.download_type == "track" and wrong_track and not imported_any:
+                    await self._schedule_attempt_cleanup(
+                        task,
+                        disposition=attempt_result.workspace_disposition,
+                        publisher_bundle_ids=attempt_result.publisher_bundle_ids,
+                    )
                     await self._fallback_track_repull(task)
                     return
                 await self._settle_incomplete(
@@ -818,8 +861,14 @@ class DownloadOrchestrator:
                     imported_any,
                     source_missing=source_missing,
                     import_failed=import_failed,
+                    process_result=attempt_result,
                 )
                 return
+            await self._schedule_attempt_cleanup(
+                task,
+                disposition=attempt_result.workspace_disposition,
+                publisher_bundle_ids=attempt_result.publisher_bundle_ids,
+            )
             task = nxt
             await self._bus.publish(
                 f"download:{task.id}",
@@ -871,10 +920,10 @@ class DownloadOrchestrator:
         result, _enumerated = await self._import_files(
             task, only_filenames=only, completed=outcome == _OUT_COMPLETED
         )
-        await self._cancel_transfers(task)
         await self._finalize(
             task,
             DownloadStatus.COMPLETED if result.succeeded else DownloadStatus.FAILED,
+            process_result=result,
         )
 
     async def _import_files(
@@ -900,24 +949,67 @@ class DownloadOrchestrator:
             task, manifest, only_filenames=only_filenames, completed=completed
         )
 
-    async def _cancel_transfers(self, task, manifest_override=None) -> None:  # noqa: ANN001 - DownloadTask
-        """Clear this task's download records (post-import, per DEC-1) and stop any still
-        running. For Usenet this also deletes the unpacked data (del_files) - the post-
-        import cleanup that discards the album's other tracks on a per-track grab (D4).
-        Best-effort; imported audio has already been MOVED out.
-        ``manifest_override`` skips the on-disk read (used by reimport_task)."""
+    async def _schedule_attempt_cleanup(
+        self,
+        task,
+        manifest_override=None,
+        *,
+        disposition: str,
+        publisher_bundle_ids: list[str] | None = None,
+    ) -> str | None:  # noqa: ANN001 - DownloadTask
         manifest = (
             manifest_override
             if manifest_override is not None
             else self._read_manifest(task.id)
         )
-        strategy = self._strategy(task.source)
-        if not strategy.is_cancelable(task, manifest):
-            return
-        try:
-            await strategy.client.cancel(manifest.handle)
-        except Exception:  # noqa: BLE001 - cleanup must not fail the task
-            logger.warning("Failed to remove/stop transfers for task %s", task.id)
+        attempt = await self._attempt_for_manifest(task, manifest)
+        if attempt is None:
+            return None
+        scheduled = await self._store.schedule_download_attempt_cleanup(
+            attempt.id,
+            disposition=disposition,
+            publisher_bundle_ids=publisher_bundle_ids or [],
+        )
+        if disposition == "discard" and self._cleanup is not None:
+            try:
+                await self._cleanup.cleanup_now(
+                    scheduled.id, worker_id=f"download-{task.id}"
+                )
+            except Exception:  # noqa: BLE001 - worker retries persisted cleanup debt
+                logger.warning("Immediate cleanup failed for attempt %s", scheduled.id)
+        return scheduled.id
+
+    async def _attempt_for_manifest(self, task, manifest):  # noqa: ANN001, ANN201
+        attempt = None
+        if manifest.attempt_id:
+            attempt = await self._store.get_download_attempt(manifest.attempt_id)
+        if attempt is None and manifest.handle and manifest.handle.job_name:
+            attempt = await self._store.get_download_attempt_for_job(
+                task.source, manifest.handle.job_name
+            )
+        if attempt is None:
+            candidates = await self._store.list_download_attempts(task.id)
+            attempt = next(
+                (
+                    value
+                    for value in reversed(candidates)
+                    if value.state in {"acquiring", "in_use"}
+                ),
+                None,
+            )
+        if attempt is None and manifest.handle is not None:
+            attempt = await self._store.create_download_attempt(
+                task_id=task.id,
+                source=task.source,
+                candidate_index=task.candidate_index or 0,
+                job_name=manifest.handle.job_name,
+                handle=manifest.handle,
+            )
+            attempt = await self._store.update_download_attempt_handle(
+                attempt.id, manifest.handle
+            )
+            manifest.attempt_id = attempt.id
+        return attempt
 
     async def _advance_candidate(self, task, tried_usernames):  # noqa: ANN001, ANN201
         """Move the task to the next ranked candidate whose peer we haven't tried,
@@ -1101,6 +1193,7 @@ class DownloadOrchestrator:
         *,
         source_missing: bool = False,
         import_failed: bool = False,
+        process_result=None,
     ) -> None:
         """No candidates/attempts left and the download still isn't whole. A track
         either imported (already finalized 'completed') or it didn't ('failed'); an
@@ -1118,12 +1211,24 @@ class DownloadOrchestrator:
         else:
             fail_msg = self._no_source_message()
         if task.download_type == "track":
-            await self._finalize(task, DownloadStatus.FAILED, error_message=fail_msg)
+            await self._finalize(
+                task,
+                DownloadStatus.FAILED,
+                error_message=fail_msg,
+                process_result=process_result,
+            )
             return
         if await self._imported_track_count(task) > 0:
-            await self._finalize(task, DownloadStatus.PARTIAL)
+            await self._finalize(
+                task, DownloadStatus.PARTIAL, process_result=process_result
+            )
         else:
-            await self._finalize(task, DownloadStatus.FAILED, error_message=fail_msg)
+            await self._finalize(
+                task,
+                DownloadStatus.FAILED,
+                error_message=fail_msg,
+                process_result=process_result,
+            )
 
     async def settle_after_manual_import(self, task_id: str | None) -> None:
         """A held track was manually imported into the library ('import anyway'). Re-measure
@@ -1160,7 +1265,15 @@ class DownloadOrchestrator:
                 task.id, task.status, files_completed=present
             )
 
-    async def _finalize(self, task, status, *, error_message=None) -> None:  # noqa: ANN001
+    async def _finalize(
+        self,
+        task,
+        status,
+        *,
+        error_message=None,
+        process_result=None,
+        manifest_override=None,
+    ) -> None:  # noqa: ANN001
         if task.download_type == "track":
             present = 1 if status == DownloadStatus.COMPLETED else 0
             raw_expected = 1
@@ -1181,8 +1294,50 @@ class DownloadOrchestrator:
         }
         if error_message:
             fields["error_message"] = error_message
-        await self._store.update_status(task.id, status, **fields)
-        shutil.rmtree(self._staging / task.id, ignore_errors=True)
+        attempt_id = None
+        disposition = None
+        bundle_ids: list[str] = []
+        if process_result is not None:
+            try:
+                manifest = (
+                    manifest_override
+                    if manifest_override is not None
+                    else self._read_manifest(task.id)
+                )
+            except OrchestrationError:
+                manifest = None
+            if manifest is not None:
+                attempt = await self._attempt_for_manifest(task, manifest)
+            else:
+                attempt = await self._store.get_download_attempt_for_candidate(
+                    task.id, task.source, task.candidate_index or 0
+                )
+            if attempt is not None:
+                attempt_id = attempt.id
+                disposition = process_result.workspace_disposition
+                bundle_ids = list(process_result.publisher_bundle_ids)
+        await self._store.finalize_task_and_attempt(
+            task.id,
+            status,
+            task_fields=fields,
+            attempt_id=attempt_id,
+            disposition=disposition,
+            publisher_bundle_ids=bundle_ids,
+        )
+        if (
+            attempt_id is not None
+            and disposition == "discard"
+            and self._cleanup is not None
+        ):
+            try:
+                await self._cleanup.cleanup_now(
+                    attempt_id, worker_id=f"download-{task.id}"
+                )
+            except Exception:  # noqa: BLE001 - worker retries persisted cleanup debt
+                logger.warning("Immediate cleanup failed for attempt %s", attempt_id)
+        await asyncio.to_thread(
+            shutil.rmtree, self._staging / task.id, ignore_errors=True
+        )
         # keep the established log-event contract: completed/partial -> download.completed,
         # failed -> download.failed (consumed by log monitoring + tests)
         event = (
@@ -1310,10 +1465,9 @@ class DownloadOrchestrator:
             last = task.last_polled_at or task.started_at or task.created_at or 0.0
             if now - last < threshold:
                 continue
-            await self._store.update_status(
+            await self._fail_task_preserving_attempt(
                 task.id,
-                DownloadStatus.FAILED,
-                error_message="Download interrupted - no progress after a restart",
+                "Download interrupted - no progress after a restart",
                 completed_at=now,
             )
             await self._bus.publish(
@@ -1356,8 +1510,20 @@ class DownloadOrchestrator:
             return
         try:
             if not (self._staging / task_id / "manifest.json").exists():
-                # Never got as far as writing a manifest -> re-dispatch from scratch.
-                self.dispatch(task_id)
+                # Never got as far as writing a manifest -> start from scratch in this
+                # registered resume task so cancellation keeps the correct live handle.
+                await self.process_task(task_id)
+                return
+            manifest = self._read_manifest(task_id)
+            attempt = await self._attempt_for_manifest(task, manifest)
+            if (
+                attempt is not None
+                and task.candidate_index is not None
+                and attempt.candidate_index != task.candidate_index
+            ):
+                # The prior candidate was made cleanup-eligible, then the process died
+                # before the next enqueue replaced its manifest.
+                await self.process_task(task_id)
                 return
             # Poll the transfers slskd kept across the restart instead of force-
             # failing them. A still-'queued' transfer now resumes (the old "Transfer
@@ -1368,15 +1534,11 @@ class DownloadOrchestrator:
             return  # cancelled mid-resume; status already 'cancelled'
         except OrchestrationError as exc:
             logger.warning("Resume failed for task %s: %s", task_id, exc)
-            await self._store.update_status(
-                task_id, DownloadStatus.FAILED, error_message=_user_error_message(exc)
-            )
+            await self._fail_task_preserving_attempt(task_id, _user_error_message(exc))
             await self._sync_request_on_terminal(task, DownloadStatus.FAILED)
         except Exception as exc:  # noqa: BLE001 - resume failure -> mark failed
             logger.exception("Failed to resume task %s", task_id)
-            await self._store.update_status(
-                task_id, DownloadStatus.FAILED, error_message=_user_error_message(exc)
-            )
+            await self._fail_task_preserving_attempt(task_id, _user_error_message(exc))
             await self._sync_request_on_terminal(task, DownloadStatus.FAILED)
 
     async def cancel_task(self, task_id: str, user_id: str, user_role: str) -> None:
@@ -1386,32 +1548,62 @@ class DownloadOrchestrator:
         if user_role != "admin" and task.user_id != user_id:
             raise PermissionDeniedError("Cannot cancel another user's download")
 
-        manifest_path = self._staging / task_id / "manifest.json"
+        handle = self._active_tasks.get(task_id)
+        if handle is not None and not handle.done():
+            handle.cancel()
+            with suppress(asyncio.CancelledError):
+                await handle
+
+        async with self._operation_lock(task_id):
+            await self._cancel_task_locked(task)
+
+    async def _cancel_task_locked(self, task) -> None:  # noqa: ANN001
+        manifest_path = self._staging / task.id / "manifest.json"
         if manifest_path.exists():
             try:
                 manifest = self._manifest_codec.decode(manifest_path.read_bytes())
-                strategy = self._strategy(task.source)
-                if strategy.is_cancelable(task, manifest):
-                    await strategy.client.cancel(manifest.handle)
-            except Exception as exc:  # noqa: BLE001 - best-effort
-                logger.warning("Failed to cancel transfers for %s: %s", task_id, exc)
+                await self._attempt_for_manifest(task, manifest)
+            except Exception:  # noqa: BLE001 - journal recovery still handles known rows
+                logger.warning("Failed to journal cancellation for %s", task.id)
 
-        # Stop the live poll loop promptly if one is running in this process.
-        handle = self._active_tasks.pop(task_id, None)
-        if handle is not None and not handle.done():
-            handle.cancel()
-
-        await self._store.update_status(
-            task_id, DownloadStatus.CANCELLED, cancelled_at=time.time()
+        publisher_bundle_ids: list[str] = []
+        cleanup_disposition = "discard"
+        if self._cleanup is not None:
+            try:
+                publisher_bundle_ids = (
+                    await self._cleanup.publisher_bundle_ids_for_task(task.id)
+                )
+            except Exception:  # noqa: BLE001 - unknown barriers preserve source bytes
+                logger.exception("Could not resolve cancellation publication barriers")
+                cleanup_disposition = "preserve"
+        attempt_ids = await self._store.cancel_task_and_schedule_attempts(
+            task.id,
+            publisher_bundle_ids=publisher_bundle_ids,
+            cleanup_disposition=cleanup_disposition,
+            cancelled_at=time.time(),
+        )
+        if self._cleanup is not None and cleanup_disposition == "discard":
+            for attempt_id in attempt_ids:
+                try:
+                    await self._cleanup.cleanup_now(
+                        attempt_id, worker_id=f"cancel-{task.id}"
+                    )
+                except Exception:  # noqa: BLE001 - worker retries persisted debt
+                    logger.warning(
+                        "Immediate cancellation cleanup failed for attempt %s",
+                        attempt_id,
+                    )
+        await asyncio.to_thread(
+            shutil.rmtree, self._staging / task.id, ignore_errors=True
         )
         logger.info(
-            "download.cancelled", extra={"task_id": task_id, "user_id": task.user_id}
+            "download.cancelled", extra={"task_id": task.id, "user_id": task.user_id}
         )
         # Flip the linked request to 'cancelled' too, so a cancelled (or stopped-retrying)
         # download clears the album UI's "retry scheduled" line instead of sitting failed.
         await self._sync_request_on_terminal(task, DownloadStatus.CANCELLED)
         await self._bus.publish(
-            f"download:{task_id}", "complete", {"status": DownloadStatus.CANCELLED}
+            f"download:{task.id}", "complete", {"status": DownloadStatus.CANCELLED}
         )
 
     async def retry_task(self, task_id: str, user_id: str, user_role: str) -> str:
@@ -1449,6 +1641,10 @@ class DownloadOrchestrator:
         return await self._create_retry_task(task)
 
     async def reimport_task(self, task_id: str):  # noqa: ANN201
+        async with self._operation_lock(task_id):
+            return await self._reimport_task_locked(task_id)
+
+    async def _reimport_task_locked(self, task_id: str):  # noqa: ANN201
         """Re-run only the import half of the pipeline for a ``failed``/``partial``
         task whose download the user finished by hand in slskd (e.g. resumed a
         stalled/errored transfer in slskd's own UI after DroppedNeedle had already
@@ -1517,6 +1713,30 @@ class DownloadOrchestrator:
                 else []
             ),
         )
+        reimport_attempt = await self._store.get_download_attempt_for_candidate(
+            task.id, task.source, task.candidate_index
+        )
+        if reimport_attempt is None:
+            reimport_attempt = await self._store.create_download_attempt(
+                task_id=task.id,
+                source=task.source,
+                candidate_index=task.candidate_index,
+                job_name=manifest.handle.job_name if manifest.handle else "",
+                handle=manifest.handle,
+            )
+            reimport_attempt = await self._store.update_download_attempt_handle(
+                reimport_attempt.id, manifest.handle
+            )
+        else:
+            reimport_attempt = await self._store.acquire_download_attempt_for_reimport(
+                reimport_attempt.id
+            )
+            if reimport_attempt is None:
+                raise ValidationError(
+                    "The source files are being cleaned up or have already been removed"
+                )
+            manifest.handle = reimport_attempt.handle
+        manifest.attempt_id = reimport_attempt.id
 
         await self._store.update_status(task.id, DownloadStatus.PROCESSING)
         await self._bus.publish(
@@ -1526,9 +1746,6 @@ class DownloadOrchestrator:
         try:
             result, _ = await self._import_files(task, manifest, completed=True)
 
-            # A mount fault stops the task WITHOUT cleanup: cancel(del_files) would tell
-            # the client to delete data we couldn't read (the mount may recover), so bail
-            # BEFORE _cancel_transfers - the failover loop does the same (review H1).
             if not result.succeeded and any(
                 f.reason == DOWNLOADS_MOUNT_UNAVAILABLE for f in result.failed
             ):
@@ -1536,15 +1753,25 @@ class DownloadOrchestrator:
                     task,
                     DownloadStatus.FAILED,
                     error_message=DOWNLOADS_MOUNT_UNAVAILABLE,
+                    process_result=result,
+                    manifest_override=manifest,
                 )
                 return await self._store.get_task(task.id)
 
-            await self._cancel_transfers(task, manifest)
-
             if await self._download_is_complete(task, bool(result.succeeded), result):
-                await self._finalize(task, DownloadStatus.COMPLETED)
+                await self._finalize(
+                    task,
+                    DownloadStatus.COMPLETED,
+                    process_result=result,
+                    manifest_override=manifest,
+                )
             elif result.succeeded:
-                await self._finalize(task, DownloadStatus.PARTIAL)
+                await self._finalize(
+                    task,
+                    DownloadStatus.PARTIAL,
+                    process_result=result,
+                    manifest_override=manifest,
+                )
             else:
                 if any(f.reason == SOURCE_FILE_MISSING for f in result.failed):
                     fail_msg = _FILES_NOT_FOUND_MSG
@@ -1553,10 +1780,15 @@ class DownloadOrchestrator:
                 else:
                     fail_msg = _NO_SOURCE_MSG
                 await self._finalize(
-                    task, DownloadStatus.FAILED, error_message=fail_msg
+                    task,
+                    DownloadStatus.FAILED,
+                    error_message=fail_msg,
+                    process_result=result,
+                    manifest_override=manifest,
                 )
         except Exception:
             logger.exception("Unexpected error during reimport of task %s", task.id)
+            await self._schedule_attempt_cleanup(task, manifest, disposition="preserve")
             await self._finalize(
                 task,
                 DownloadStatus.FAILED,

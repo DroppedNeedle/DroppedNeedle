@@ -319,6 +319,42 @@ def start_download_resume_task(orchestrator: "DownloadOrchestrator") -> asyncio.
     return task
 
 
+async def run_acquisition_cleanup_periodically(
+    get_cleanup_service, interval: float = 30.0
+) -> None:
+    """Drain cleanup debt with freshly resolved clients."""
+
+    worker_id = "acquisition-cleanup-worker"
+    while True:
+        try:
+            service = get_cleanup_service()
+            await service.reconcile_legacy_mount()
+            await service.run_once(worker_id)
+        except asyncio.CancelledError:
+            break
+        except Exception:  # noqa: BLE001 - durable cleanup survives one failed sweep
+            logger.exception("Acquisition cleanup sweep failed")
+        try:
+            await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            break
+
+
+def start_acquisition_cleanup_task(get_cleanup_service) -> asyncio.Task:
+    task = asyncio.create_task(
+        run_acquisition_cleanup_periodically(get_cleanup_service)
+    )
+    TaskRegistry.get_instance().register("acquisition-cleanup", task)
+    task.add_done_callback(
+        lambda value: logger.error(
+            "Acquisition cleanup task error: %s", value.exception()
+        )
+        if not value.cancelled() and value.exception()
+        else None
+    )
+    return task
+
+
 async def warm_library_cache(
     library_service: LibraryService,
     album_service: "AlbumService",

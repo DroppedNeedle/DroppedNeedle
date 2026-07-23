@@ -352,8 +352,13 @@ async def lifespan(app: FastAPI):
         # a bad path is operator-fixable at /settings/library, never fatal
         logger.error("startup.config_invalid", extra={"error": str(exc)})
 
-    from core.dependencies import get_download_orchestrator, get_library_scanner
+    from core.dependencies import (
+        get_acquisition_cleanup_service,
+        get_download_orchestrator,
+        get_library_scanner,
+    )
     from core.tasks import (
+        start_acquisition_cleanup_task,
         start_download_auto_retry_task,
         start_download_resume_task,
         start_download_watchdog_task,
@@ -365,6 +370,11 @@ async def lifespan(app: FastAPI):
         [_Path(root.path) for root in _library_settings.library_roots],
     )
 
+    try:
+        await get_acquisition_cleanup_service().recover_startup()
+    except Exception:  # noqa: BLE001 - durable worker continues recovery after startup
+        logger.exception("Acquisition cleanup startup recovery failed")
+    start_acquisition_cleanup_task(get_acquisition_cleanup_service)
     start_download_resume_task(get_download_orchestrator())
 
     # drop-import housekeeping: jobs whose task died with the process are failed,

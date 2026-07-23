@@ -230,6 +230,7 @@ from .service_providers import (  # noqa: F401
     get_track_matcher,
     get_newznab_release_scorer,
     get_download_manifest_codec,
+    get_acquisition_cleanup_service,
     get_download_orchestrator,
     get_target_download_orchestrator,
     get_download_service,

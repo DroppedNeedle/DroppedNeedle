@@ -99,4 +99,60 @@ describe('ServiceHealthIndicator', () => {
 		expect(msg).toContain('auto-retrying');
 		expect(msg).not.toContain('fallback');
 	});
+
+	it('renders acquisition cleanup debt without exposing a path', async () => {
+		toast.show.mockClear();
+		queryState.data = {
+			degraded: [
+				{
+					service: 'acquisition_cleanup',
+					capability: 'source files',
+					severity: 'degraded',
+					message: 'Source cleanup needs attention for 2 downloads.',
+					fallback: null,
+					degraded_seconds: 0
+				}
+			]
+		};
+
+		render(ServiceHealthIndicator);
+		await page.getByRole('button', { name: /service status/i }).click();
+		await expect.element(page.getByText('Source cleanup', { exact: true })).toBeVisible();
+		await expect
+			.element(page.getByText('Source cleanup needs attention for 2 downloads.'))
+			.toBeVisible();
+		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
+		expect(toast.show.mock.calls[0][0].message).toContain('Checking again automatically.');
+	});
+
+	it('does not hide another degraded service behind cleanup debt', async () => {
+		toast.show.mockClear();
+		queryState.data = {
+			degraded: [
+				{
+					service: 'acquisition_cleanup',
+					capability: 'source files',
+					severity: 'degraded',
+					message: 'Source cleanup needs attention for 1 download.',
+					fallback: null,
+					degraded_seconds: 0
+				},
+				{
+					service: 'musicbrainz',
+					capability: 'metadata',
+					severity: 'degraded',
+					message: 'MusicBrainz is having issues.',
+					fallback: null,
+					degraded_seconds: 0
+				}
+			]
+		};
+
+		render(ServiceHealthIndicator);
+
+		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
+		const message = toast.show.mock.calls[0][0].message as string;
+		expect(message).toContain('Source cleanup');
+		expect(message).toContain('MusicBrainz');
+	});
 });

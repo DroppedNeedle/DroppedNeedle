@@ -84,10 +84,6 @@ class SourceStrategy(Protocol):
         title+size release identity)."""
         ...
 
-    def is_cancelable(self, task, manifest) -> bool:  # noqa: ANN001
-        """Whether this task has a stop-/cleanup-able handle."""
-        ...
-
     def local_fault_message(self, attempt_mount: bool) -> str:
         """The user-facing 'we hit a local/environment fault' message for this source."""
         ...
@@ -181,10 +177,6 @@ class SoulseekStrategy:
 
     def candidate_identity(self, candidate) -> str:  # noqa: ANN001
         return candidate.username
-
-    def is_cancelable(self, task, manifest) -> bool:  # noqa: ANN001
-        # slskd is correlated by source_username + the manifest filenames, so a cancel needs both.
-        return manifest.handle is not None and bool(task.source_username)
 
     def local_fault_message(self, attempt_mount: bool) -> str:  # noqa: ARG002
         # slskd's only local fault is an unreachable downloads mount (attempt_mount is True here).
@@ -311,14 +303,22 @@ class SoulseekStrategy:
 
         # Persist the manifest BEFORE enqueueing: it carries the correlation handle
         # (source + username + the enqueued filenames) so a restart can re-correlate.
+        initial_handle = TaskHandle(
+            source="soulseek",
+            username=candidate.username,
+            filenames=[f.filename for f in candidate.files],
+        )
+        attempt = await self._store.create_download_attempt(
+            task_id=task.id,
+            source="soulseek",
+            candidate_index=task.candidate_index or 0,
+            job_name="",
+            handle=initial_handle,
+        )
         manifest = DownloadManifest(
             task_id=task.id,
             source_username=candidate.username,
-            handle=TaskHandle(
-                source="soulseek",
-                username=candidate.username,
-                filenames=[f.filename for f in candidate.files],
-            ),
+            handle=initial_handle,
             origin=task.origin,
             release_group_mbid=task.release_group_mbid,
             release_mbid=task.release_mbid,
@@ -356,6 +356,7 @@ class SoulseekStrategy:
                 if task.track_title and len(candidate.files) == 1
                 else []
             ),
+            attempt_id=attempt.id,
         )
         self._staging.joinpath(task.id).mkdir(parents=True, exist_ok=True)
         (self._staging / task.id / "manifest.json").write_bytes(
@@ -363,7 +364,7 @@ class SoulseekStrategy:
         )
 
         try:
-            await self._client.enqueue(
+            handle = await self._client.enqueue(
                 EnqueueRequest(task_id=task.id, source="soulseek", files=files)
             )
         except Exception as exc:  # noqa: BLE001 - any client error -> task failed
@@ -371,6 +372,12 @@ class SoulseekStrategy:
             # downloaded). The safe runner / process_task persists the sanitized msg.
             logger.exception("Enqueue failed for task %s", task.id)
             raise OrchestrationError("enqueue failed") from exc
+
+        await self._store.update_download_attempt_handle(attempt.id, handle)
+        manifest.handle = handle
+        (self._staging / task.id / "manifest.json").write_bytes(
+            self._manifest_codec.encode(manifest)
+        )
 
         logger.info(
             "download.enqueued",
@@ -475,10 +482,6 @@ class UsenetStrategy:
                 candidate.usenet_release.title, candidate.usenet_release.size_bytes
             )
         return candidate.username
-
-    def is_cancelable(self, task, manifest) -> bool:  # noqa: ANN001, ARG002
-        # SABnzbd is correlated by the nzo_id/job_name in the handle alone.
-        return manifest.handle is not None
 
     def local_fault_message(self, attempt_mount: bool) -> str:
         return (
@@ -610,9 +613,17 @@ class UsenetStrategy:
             total_size_bytes=release.size_bytes,
             started_at=time.time(),
         )
+        initial_handle = TaskHandle(source="usenet", job_name=job_name)
+        attempt = await self._store.create_download_attempt(
+            task_id=task.id,
+            source="usenet",
+            candidate_index=task.candidate_index or 0,
+            job_name=job_name,
+            handle=initial_handle,
+        )
         manifest = DownloadManifest(
             task_id=task.id,
-            handle=TaskHandle(source="usenet", job_name=job_name),
+            handle=initial_handle,
             origin=task.origin,
             release_group_mbid=task.release_group_mbid,
             release_mbid=task.release_mbid,
@@ -624,6 +635,7 @@ class UsenetStrategy:
             naming_template=self._naming_template,
             target_files=[],
             expected_tracks=expected_tracks,
+            attempt_id=attempt.id,
         )
         self._staging.joinpath(task.id).mkdir(parents=True, exist_ok=True)
         manifest_path = self._staging / task.id / "manifest.json"
@@ -645,6 +657,8 @@ class UsenetStrategy:
             logger.exception("Usenet enqueue failed for task %s", task.id)
             raise OrchestrationError("enqueue failed") from exc
 
+        # SQLite first: the journal closes a crash before the manifest rewrite.
+        await self._store.update_download_attempt_handle(attempt.id, handle)
         # Re-persist the manifest with the nzo_id filled in (the post-enqueue batch id).
         manifest.handle = handle
         manifest_path.write_bytes(self._manifest_codec.encode(manifest))

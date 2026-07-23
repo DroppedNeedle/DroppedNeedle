@@ -15,7 +15,7 @@ import pytest
 
 from models.download import DownloadTask, ScoredCandidate
 from models.download_manifest import ManifestCodec
-from repositories.protocols.download_client import DownloadSearchResult
+from repositories.protocols.download_client import DownloadSearchResult, TaskHandle
 from services.native.acquisition.strategy import SoulseekStrategy
 
 _CANONICAL = 155.556  # "the arrival" (recording 180ceef5...), seconds
@@ -49,9 +49,17 @@ def _strategy(tmp_path: Path):
     scorer.rank = AsyncMock(return_value=[])
     track_matcher = MagicMock()
     track_matcher.rank = AsyncMock(return_value=[])
+    client = AsyncMock()
+    client.enqueue.return_value = TaskHandle(
+        source="soulseek",
+        username="Fabrizio83a",
+        filenames=["peer/02. Arrival in Ashford.flac"],
+    )
+    store = AsyncMock()
+    store.create_download_attempt.return_value = SimpleNamespace(id="attempt-1")
     strategy = SoulseekStrategy(
         indexer=indexer, scorer=scorer, track_matcher=track_matcher,
-        client=AsyncMock(), store=AsyncMock(), file_processor=MagicMock(),
+        client=client, store=store, file_processor=MagicMock(),
         staging=tmp_path, manifest_codec=ManifestCodec(),
         naming_template="{albumartist}/{album}/{title}.{ext}",
     )

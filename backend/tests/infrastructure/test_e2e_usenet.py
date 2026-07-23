@@ -22,12 +22,14 @@ from infrastructure.sse_publisher import SSEPublisher
 from models.common import ServiceStatus
 from models.download_manifest import ManifestCodec
 from repositories.protocols.download_client import (
+    DownloadMaterialization,
     DownloadTaskStatus,
     MountDiagnosis,
     TaskHandle,
 )
 from repositories.protocols.indexer import IndexerResult, UsenetRelease
 from services.native.album_preflight_scorer import AlbumPreflightScorer
+from services.native.acquisition_cleanup_service import AcquisitionCleanupService
 from services.native.download_orchestrator import DownloadOrchestrator
 from services.native.file_processor import FileProcessor
 from services.native.library_manager import LibraryManager
@@ -132,7 +134,8 @@ class _FakeSabnzbd:
             files_visible_after  # hide files for the first N calls
         )
         self._list_calls = 0
-        self.cancelled: list[TaskHandle] = []
+        self.discarded: list[TaskHandle] = []
+        self.aborted: list[TaskHandle] = []
 
     @property
     def client_name(self):
@@ -145,6 +148,10 @@ class _FakeSabnzbd:
         return ServiceStatus(status="ok")
 
     async def enqueue(self, request):
+        target = self._folder.parent / request.job_name
+        if self._folder != target and self._folder.exists():
+            self._folder.rename(target)
+            self._folder = target
         return TaskHandle(source="usenet", job_name=request.job_name, nzo_id="nzo-1")
 
     async def get_status(self, handle):
@@ -168,8 +175,28 @@ class _FakeSabnzbd:
             matched_transfers=1,
         )
 
-    async def cancel(self, handle):
-        self.cancelled.append(handle)
+    async def abort(self, handle):
+        self.aborted.append(handle)
+        return True
+
+    async def inspect_materialization(self, handle):
+        if self._status == "failed":
+            state = "failed"
+        elif self._status == "stuck":
+            state = "active"
+        else:
+            state = "completed"
+        return DownloadMaterialization(
+            state=state,
+            nzo_id=handle.nzo_id,
+            remote_storage=f"/data/Downloads/complete/{self._folder.name}",
+            mount_root=str(self._folder.parent),
+            workspace_path=str(self._folder),
+            mount_healthy=self._mount_healthy,
+        )
+
+    async def discard_client_artifacts(self, handle):
+        self.discarded.append(handle)
         return True
 
     async def list_completed_files(self, handle):
@@ -186,6 +213,14 @@ class _FakeSabnzbd:
 
     async def diagnose_downloads_mount(self):
         return MountDiagnosis(supported=False)
+
+
+class _CleanupLibrary:
+    async def get_library_management_import_bundle(self, bundle_id: str):
+        return SimpleNamespace(state="completed")
+
+    async def list_acquisition_import_bundles_for_download_task(self, task_id: str):
+        return []
 
 
 def _album_service(tracks):
@@ -260,6 +295,12 @@ def _build(
         mount_healthy=mount_healthy,
         files_visible_after=files_visible_after,
     )
+    cleanup = AcquisitionCleanupService(
+        store,
+        _CleanupLibrary(),
+        lambda source: sab,
+        lambda: completed_folder.parent,
+    )
     orch = DownloadOrchestrator(
         client=_EmptySlskdIndexer(),  # placeholder; download-side not used for usenet
         indexer=_EmptySlskdIndexer(),
@@ -284,6 +325,7 @@ def _build(
         album_service=_album_service(album_tracks),
         source_priority=["soulseek", "usenet"],
         usenet_import_settle_seconds=0.0,
+        cleanup_service=cleanup,
     )
     return store, manager, orch, sab, library
 
@@ -317,7 +359,8 @@ async def test_usenet_fallback_album_imports_via_folder_match(tmp_path: Path):
     assert final.download_client == "sabnzbd"
     flacs = list(library.rglob("*.flac"))
     assert len(flacs) == 2  # both tracks matched by duration + filename and imported
-    assert len(sab.cancelled) == 1  # post-import cleanup (del_files) ran
+    assert len(sab.discarded) == 1
+    assert not any(completed.parent.glob("droppedneedle-*"))
 
 
 @pytest.mark.asyncio
@@ -356,6 +399,7 @@ async def test_usenet_per_track_imports_exactly_one(tmp_path: Path):
     flacs = list(library.rglob("*.flac"))
     assert len(flacs) == 1  # exactly one track imported (the requested one)
     assert flacs[0].name.endswith("Paranoid Android.flac")
+    assert not any(completed.parent.glob("droppedneedle-*"))
 
 
 @pytest.mark.asyncio
@@ -633,7 +677,8 @@ async def test_usenet_sabnzbd_local_fault_stops_without_blocklist_or_delete(
     final = await store.get_task(task.id)
     assert final.status == "failed"
     assert await store.load_quarantine_set() == set()  # local fault -> not blocklisted
-    assert sab.cancelled == []  # data not deleted
+    assert sab.discarded == []
+    assert (await store.list_download_attempts(task.id))[-1].state == "preserved"
 
 
 @pytest.mark.asyncio
@@ -669,7 +714,8 @@ async def test_usenet_unreachable_mount_does_not_blocklist_or_delete(tmp_path: P
     assert final.status == "failed"
     assert "SABnzbd" in (final.error_message or "")  # names the right client, not slskd
     assert await store.load_quarantine_set() == set()  # good release NOT blocklisted
-    assert sab.cancelled == []  # H1: the data was NOT deleted (no cancel/del_files)
+    assert sab.discarded == []
+    assert (await store.list_download_attempts(task.id))[-1].state == "preserved"
 
 
 @pytest.mark.asyncio

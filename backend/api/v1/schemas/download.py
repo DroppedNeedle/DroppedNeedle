@@ -163,6 +163,7 @@ class DownloadTaskResponse(AppStruct):
     # The FULL auto-retry backoff schedule, in minutes, for the configured attempt cap
     # (e.g. [15, 30, 60, 120, 240, 480]). Empty when auto-retry is off / retry_max == 0.
     retry_ladder_minutes: list[int] = []
+    acquisition_cleanup_state: str = "not_tracked"
 
 
 class HeldImportResponse(AppStruct):

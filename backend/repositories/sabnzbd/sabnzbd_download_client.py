@@ -7,8 +7,8 @@ walks queue→history; **only the true ``Downloading`` state sets
 ``has_active_transfer``** (so Grabbing/Queued/Paused/post-processing don't trip the
 orchestrator's stall/queued watchdogs - ``05-…`` §Poll). list_completed_files remaps
 ``storage`` (SABnzbd namespace) onto the DroppedNeedle downloads mount and enumerates
-the audio files (the folder-based import source, D18). cancel deletes the job
-(queue or history) with ``del_files`` so the post-import data is cleaned.
+the audio files (the folder-based import source, D18). Completed materialization is
+inspected separately from abort/history removal so local cleanup remains durable.
 
 No ``from __future__ import annotations`` (the conformance test compares real
 signatures).
@@ -20,6 +20,7 @@ from pathlib import Path, PurePosixPath
 
 from models.common import ServiceStatus
 from repositories.protocols.download_client import (
+    DownloadMaterialization,
     DownloadTaskStatus,
     EnqueueRequest,
     MountDiagnosis,
@@ -99,28 +100,81 @@ class SabnzbdDownloadClient:
 
     async def get_status(self, handle: TaskHandle) -> DownloadTaskStatus:
         queue = await self._client.queue()
-        for slot in queue.slots:
-            if slot.status.lower() == "deleted":
-                continue
-            if self._matches(slot.nzo_id, slot.filename, handle):
-                return _queue_status(slot)
+        slot = self._unique_queue_slot(queue.slots, handle)
+        if slot is not None:
+            return _queue_status(slot)
         slot = await self._find_history_slot(handle)
         if slot is not None:
             return _history_status(slot)
         # Not in queue or history yet (just-added / between states) or gone.
         return DownloadTaskStatus(task_id="", status="queued", matched_transfers=0)
 
-    async def cancel(self, handle: TaskHandle) -> bool:
+    async def abort(self, handle: TaskHandle) -> bool:
         nzo_id = await self._resolve_nzo_id(handle)
         if not nzo_id:
-            return False
+            return True
         queue = await self._client.queue()
-        in_queue = any(self._matches(s.nzo_id, s.filename, handle) for s in queue.slots)
+        in_queue = any(s.nzo_id == nzo_id for s in queue.slots)
         if in_queue:
             return await self._client.delete_queue(nzo_id, del_files=True)
-        # History delete: archive=0 removes permanently + del_files clears the unpacked
-        # data we already imported. Tolerates a Failed job whose storage never landed.
-        return await self._client.delete_history(nzo_id, del_files=True, archive=False)
+        slot = await self._find_history_slot(handle)
+        if slot is None:
+            return True
+        if slot.status.lower() == "failed":
+            return await self._client.delete_history(
+                nzo_id, del_files=True, archive=False
+            )
+        # Completed output is not client-owned temporary data. The cleanup service must
+        # validate and remove its exact workspace before the history record is discarded.
+        return False
+
+    async def inspect_materialization(
+        self, handle: TaskHandle
+    ) -> DownloadMaterialization:
+        queue = await self._client.queue()
+        queue_slot = self._unique_queue_slot(queue.slots, handle)
+        if queue_slot is not None:
+            return DownloadMaterialization(
+                state="active",
+                nzo_id=queue_slot.nzo_id,
+                mount_root=str(self._mount),
+                mount_healthy=await self.downloads_mount_healthy(),
+            )
+        slot = await self._find_history_slot(handle)
+        mount_healthy = await self.downloads_mount_healthy()
+        if slot is None:
+            return DownloadMaterialization(
+                state="missing",
+                mount_root=str(self._mount),
+                mount_healthy=mount_healthy,
+            )
+        local = await self._exact_local_storage(slot.storage) if slot.storage else None
+        return DownloadMaterialization(
+            state=("failed" if slot.status.lower() == "failed" else "completed"),
+            nzo_id=slot.nzo_id,
+            remote_storage=slot.storage,
+            mount_root=str(self._mount),
+            workspace_path=str(local) if local is not None else "",
+            mount_healthy=mount_healthy,
+        )
+
+    async def discard_client_artifacts(self, handle: TaskHandle) -> bool:
+        slot = await self._find_history_slot(handle)
+        if slot is None:
+            queue = await self._client.queue()
+            if any(
+                self._matches(item.nzo_id, item.filename, handle)
+                for item in queue.slots
+            ):
+                return False
+            return True
+        # SABnzbd 5.0.4 and current releases apply history del_files only to a Failed
+        # job's incomplete path. Completed output was removed locally and MUST use 0.
+        return await self._client.delete_history(
+            slot.nzo_id,
+            del_files=slot.status.lower() == "failed",
+            archive=False,
+        )
 
     async def list_completed_files(self, handle: TaskHandle) -> list[Path]:
         slot = await self._find_history_slot(handle)
@@ -178,9 +232,21 @@ class SabnzbdDownloadClient:
 
     @staticmethod
     def _matches(slot_id: str, slot_name: str, handle: TaskHandle) -> bool:
-        if handle.nzo_id and slot_id == handle.nzo_id:
-            return True
+        if handle.nzo_id:
+            return slot_id == handle.nzo_id
         return bool(handle.job_name) and slot_name == handle.job_name
+
+    @classmethod
+    def _unique_queue_slot(cls, slots, handle: TaskHandle):  # noqa: ANN001, ANN206
+        matches = [
+            slot
+            for slot in slots
+            if slot.status.lower() != "deleted"
+            and cls._matches(slot.nzo_id, slot.filename, handle)
+        ]
+        if len(matches) > 1:
+            raise SabnzbdApiError("SABnzbd returned an ambiguous job identity")
+        return matches[0] if matches else None
 
     async def _resolve_nzo_id(self, handle: TaskHandle) -> str:
         if handle.nzo_id:
@@ -189,10 +255,8 @@ class SabnzbdDownloadClient:
         if slot is not None:
             return slot.nzo_id
         queue = await self._client.queue()
-        for slot in queue.slots:
-            if self._matches(slot.nzo_id, slot.filename, handle):
-                return slot.nzo_id
-        return ""
+        slot = self._unique_queue_slot(queue.slots, handle)
+        return slot.nzo_id if slot is not None else ""
 
     async def _find_history_slot(self, handle: TaskHandle) -> SabnzbdHistorySlot | None:
         # Filter to THIS job. nzo_id is SABnzbd's unique key, so when we have it query by it
@@ -205,10 +269,14 @@ class SabnzbdDownloadClient:
             nzo_ids=handle.nzo_id or None,
             search=None if handle.nzo_id else (handle.job_name or None),
         )
-        for slot in history.slots:
-            if self._matches(slot.nzo_id, slot.name, handle):
-                return slot
-        return None
+        matches = [
+            slot
+            for slot in history.slots
+            if self._matches(slot.nzo_id, slot.name, handle)
+        ]
+        if len(matches) > 1:
+            raise SabnzbdApiError("SABnzbd returned an ambiguous job identity")
+        return matches[0] if matches else None
 
     async def downloads_mount_healthy(self) -> bool:
         """Whether DroppedNeedle's downloads MOUNT itself is usable. False ONLY when the
@@ -258,6 +326,18 @@ class SabnzbdDownloadClient:
             except ValueError:
                 pass
         return self._mount / remote.name
+
+    async def _exact_local_storage(self, storage: str) -> Path | None:
+        """Map cleanup evidence only when SAB's complete root is known exactly."""
+
+        complete_dir = await self._complete_dir()
+        if not complete_dir:
+            return None
+        try:
+            relative = PurePosixPath(storage).relative_to(PurePosixPath(complete_dir))
+        except ValueError:
+            return None
+        return self._mount / Path(*relative.parts)
 
     def _enumerate_audio(self, folder: Path) -> list[Path]:
         """Audio files under the finished job folder (bounded DFS), confined to the

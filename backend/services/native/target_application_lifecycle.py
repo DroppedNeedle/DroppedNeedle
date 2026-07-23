@@ -186,6 +186,7 @@ async def start_target_operational_runtime(
     from core.dependencies import (
         get_audiodb_browse_queue,
         get_audiodb_image_service,
+        get_acquisition_cleanup_service,
         get_download_client_repository,
         get_target_events_watcher_service,
         get_jellyfin_repository,
@@ -216,6 +217,7 @@ async def start_target_operational_runtime(
     from core.dependencies.repo_providers import get_download_store
     from core.dependencies.service_providers import get_plugin_host
     from core.tasks import (
+        start_acquisition_cleanup_task,
         start_artist_discovery_cache_warming_task,
         start_audiodb_sweep_task,
         start_background_upgrade_scan_task,
@@ -240,6 +242,11 @@ async def start_target_operational_runtime(
     target = get_target_consumer_composition()
     library = target.repository
 
+    try:
+        await get_acquisition_cleanup_service().recover_startup()
+    except Exception:  # noqa: BLE001 - durable worker continues recovery after startup
+        logger.exception("Acquisition cleanup startup recovery failed")
+    start_acquisition_cleanup_task(get_acquisition_cleanup_service)
     start_download_resume_task(get_target_download_orchestrator())
     start_download_watchdog_task(get_target_download_orchestrator)
     start_download_auto_retry_task(get_target_download_orchestrator)

@@ -2411,6 +2411,25 @@ def get_download_manifest_codec() -> "ManifestCodec":
     return ManifestCodec()
 
 
+@singleton
+def get_acquisition_cleanup_service() -> "AcquisitionCleanupService":
+    from pathlib import Path
+
+    from services.native.acquisition_cleanup_service import AcquisitionCleanupService
+
+    from .cache_providers import get_native_library_store
+    from .repo_providers import get_download_client_for_source, get_download_store
+
+    return AcquisitionCleanupService(
+        get_download_store(),
+        get_native_library_store(),
+        get_download_client_for_source,
+        lambda: Path(
+            get_preferences_service().get_sabnzbd_connection_raw().downloads_mount
+        ),
+    )
+
+
 def _build_download_orchestrator(
     *, file_processor, library_manager, album_service, on_import_callback
 ) -> "DownloadOrchestrator":
@@ -2479,6 +2498,7 @@ def _build_download_orchestrator(
         # stored candidate against the CURRENT quality range even mid-flight (Phase 2).
         get_download_policy=lambda: get_preferences_service().get_download_policy(),
         wanted_store=get_wanted_store(),
+        cleanup_service=get_acquisition_cleanup_service(),
     )
 
 

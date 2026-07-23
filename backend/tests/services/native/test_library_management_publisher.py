@@ -339,6 +339,7 @@ async def test_import_bundle_publishes_once_and_commits_catalog_atomically(
     destination = root / request.destination_relative_path
     row = await store.get_target_track_by_path(str(destination))
     journals = await store.list_library_management_import_journals(first.bundle_id)
+    barriers = await store.list_acquisition_import_bundles_for_download_task("task-1")
     assert destination.is_file()
     assert incoming.exists() is False
     assert row is not None and row["download_task_id"] == "task-1"
@@ -346,6 +347,7 @@ async def test_import_bundle_publishes_once_and_commits_catalog_atomically(
     assert first.local_track_ids == repeated.local_track_ids
     assert repeated.repeated is True
     assert [value.state for value in journals] == ["completed"]
+    assert [value.id for value in barriers] == [first.bundle_id]
 
 
 @pytest.mark.asyncio

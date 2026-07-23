@@ -27,7 +27,9 @@ from infrastructure.persistence._database import (
 )
 from infrastructure.serialization import to_jsonable
 from models.download import DownloadTask, ScoredCandidate, SearchJob
+from models.download_attempt import DownloadAttempt, DownloadCleanupReconciliation
 from models.held_import import HeldImport
+from repositories.protocols.download_client import TaskHandle
 
 _ACTIVE_STATUSES = ("queued", "downloading", "processing")
 _RETRYABLE_STATUSES = ("failed", "partial")
@@ -101,6 +103,56 @@ CREATE INDEX IF NOT EXISTS idx_held_rg ON held_imports(release_group_mbid, statu
 CREATE INDEX IF NOT EXISTS idx_held_task ON held_imports(source_task_id, status);
 CREATE INDEX IF NOT EXISTS idx_held_dedup
     ON held_imports(release_group_mbid, disc_number, track_number, status);
+"""
+
+# No task foreign key: queue/history deletion must not erase cleanup debt.
+_DOWNLOAD_ATTEMPTS_DDL = """
+CREATE TABLE IF NOT EXISTS download_attempts (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    source TEXT NOT NULL CHECK(source IN ('soulseek','usenet')),
+    candidate_index INTEGER NOT NULL CHECK(candidate_index >= 0),
+    job_name TEXT NOT NULL DEFAULT '',
+    handle_json TEXT NOT NULL,
+    remote_storage TEXT,
+    mount_root TEXT,
+    workspace_path TEXT,
+    materialized_paths_json TEXT NOT NULL DEFAULT '[]',
+    publisher_bundle_ids_json TEXT NOT NULL DEFAULT '[]',
+    legacy_reconciled INTEGER NOT NULL DEFAULT 0 CHECK(legacy_reconciled IN (0,1)),
+    state TEXT NOT NULL CHECK(state IN (
+        'acquiring','in_use','cleanup_pending','workspace_removed','complete',
+        'preserved','needs_attention'
+    )),
+    disposition TEXT NOT NULL DEFAULT 'undecided'
+        CHECK(disposition IN ('undecided','discard','preserve')),
+    cleanup_failures INTEGER NOT NULL DEFAULT 0 CHECK(cleanup_failures >= 0),
+    next_retry_at REAL NOT NULL DEFAULT 0,
+    lease_owner TEXT,
+    lease_expires_at REAL,
+    error_code TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    completed_at REAL,
+    row_revision INTEGER NOT NULL DEFAULT 1
+        CHECK(row_revision BETWEEN 1 AND 9223372036854775807)
+);
+CREATE INDEX IF NOT EXISTS idx_download_attempts_task
+    ON download_attempts(task_id, candidate_index, created_at);
+CREATE INDEX IF NOT EXISTS idx_download_attempts_cleanup
+    ON download_attempts(state, next_retry_at, lease_expires_at);
+CREATE INDEX IF NOT EXISTS idx_download_attempts_job
+    ON download_attempts(source, job_name);
+
+CREATE TABLE IF NOT EXISTS download_cleanup_reconciliation (
+    mount_key TEXT PRIMARY KEY,
+    mount_root TEXT NOT NULL,
+    pending_directories_json TEXT NOT NULL,
+    current_directory TEXT,
+    last_entry TEXT,
+    completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1)),
+    updated_at REAL NOT NULL
+);
 """
 
 # ASCII unit separator joining the two halves of a soulseek identity; mirrors
@@ -188,6 +240,32 @@ _TASK_COLUMNS = (
     "cancelled_at",
     "updated_at",
 )
+
+_ATTEMPT_CAS_UPDATABLE = frozenset(
+    {
+        "disposition",
+        "remote_storage",
+        "mount_root",
+        "workspace_path",
+        "materialized_paths_json",
+        "publisher_bundle_ids_json",
+        "cleanup_failures",
+        "next_retry_at",
+        "lease_owner",
+        "lease_expires_at",
+        "error_code",
+        "completed_at",
+        "handle_json",
+    }
+)
+
+
+def _safe_alter(conn: sqlite3.Connection, sql: str) -> None:
+    try:
+        conn.execute(sql)
+    except sqlite3.OperationalError as error:
+        if "duplicate column" not in str(error).lower():
+            raise
 
 
 class DownloadStore(PersistenceBase):
@@ -308,6 +386,12 @@ class DownloadStore(PersistenceBase):
                 pass  # duplicate column - already present
             self._migrate_quarantine(conn)
             conn.executescript(_HELD_IMPORTS_DDL)
+            conn.executescript(_DOWNLOAD_ATTEMPTS_DDL)
+            _safe_alter(
+                conn,
+                "ALTER TABLE download_attempts ADD COLUMN legacy_reconciled "
+                "INTEGER NOT NULL DEFAULT 0 CHECK(legacy_reconciled IN (0,1))",
+            )
             for column, ddl in (
                 ("artist_mbid", "TEXT"),
                 ("origin", "TEXT NOT NULL DEFAULT 'user'"),
@@ -715,6 +799,580 @@ class DownloadStore(PersistenceBase):
             )
 
         await self._write(operation)
+
+    async def create_download_attempt(
+        self,
+        *,
+        task_id: str,
+        source: str,
+        candidate_index: int,
+        job_name: str,
+        handle: TaskHandle,
+        attempt_id: str | None = None,
+        now: float | None = None,
+    ) -> DownloadAttempt:
+        timestamp = time.time() if now is None else now
+        attempt = DownloadAttempt(
+            id=attempt_id or uuid.uuid4().hex,
+            task_id=task_id,
+            source=source,
+            candidate_index=candidate_index,
+            job_name=job_name,
+            handle=handle,
+            state="acquiring",
+            disposition="undecided",
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+
+        def operation(conn: sqlite3.Connection) -> DownloadAttempt:
+            conn.execute(
+                """INSERT INTO download_attempts
+                   (id,task_id,source,candidate_index,job_name,handle_json,state,
+                    disposition,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?, ?,?,?)""",
+                (
+                    attempt.id,
+                    attempt.task_id,
+                    attempt.source,
+                    attempt.candidate_index,
+                    attempt.job_name,
+                    _encode_json(to_jsonable(attempt.handle)),
+                    attempt.state,
+                    attempt.disposition,
+                    attempt.created_at,
+                    attempt.updated_at,
+                ),
+            )
+            return attempt
+
+        return await self._write(operation)
+
+    async def get_download_attempt(self, attempt_id: str) -> DownloadAttempt | None:
+        def operation(conn: sqlite3.Connection) -> DownloadAttempt | None:
+            row = conn.execute(
+                "SELECT * FROM download_attempts WHERE id=?", (attempt_id,)
+            ).fetchone()
+            return _row_to_attempt(row)
+
+        return await self._read(operation)
+
+    async def list_download_attempts(self, task_id: str) -> list[DownloadAttempt]:
+        def operation(conn: sqlite3.Connection) -> list[DownloadAttempt]:
+            rows = conn.execute(
+                "SELECT * FROM download_attempts WHERE task_id=? "
+                "ORDER BY candidate_index,created_at,id",
+                (task_id,),
+            ).fetchall()
+            return [
+                value for row in rows if (value := _row_to_attempt(row)) is not None
+            ]
+
+        return await self._read(operation)
+
+    async def get_download_attempt_for_job(
+        self, source: str, job_name: str
+    ) -> DownloadAttempt | None:
+        def operation(conn: sqlite3.Connection) -> DownloadAttempt | None:
+            row = conn.execute(
+                "SELECT * FROM download_attempts WHERE source=? AND job_name=? "
+                "ORDER BY created_at DESC,id DESC LIMIT 1",
+                (source, job_name),
+            ).fetchone()
+            return _row_to_attempt(row)
+
+        return await self._read(operation)
+
+    async def get_download_attempt_for_candidate(
+        self, task_id: str, source: str, candidate_index: int
+    ) -> DownloadAttempt | None:
+        def operation(conn: sqlite3.Connection) -> DownloadAttempt | None:
+            row = conn.execute(
+                "SELECT * FROM download_attempts "
+                "WHERE task_id=? AND source=? AND candidate_index=? "
+                "ORDER BY created_at DESC,id DESC LIMIT 1",
+                (task_id, source, candidate_index),
+            ).fetchone()
+            return _row_to_attempt(row)
+
+        return await self._read(operation)
+
+    async def update_download_attempt_handle(
+        self,
+        attempt_id: str,
+        handle: TaskHandle,
+        *,
+        now: float | None = None,
+    ) -> DownloadAttempt:
+        timestamp = time.time() if now is None else now
+
+        def operation(conn: sqlite3.Connection) -> DownloadAttempt:
+            row = conn.execute(
+                """UPDATE download_attempts
+                   SET handle_json=?,state='in_use',updated_at=?,row_revision=row_revision+1
+                   WHERE id=? AND state IN ('acquiring','in_use') RETURNING *""",
+                (_encode_json(to_jsonable(handle)), timestamp, attempt_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("download attempt is no longer acquiring")
+            value = _row_to_attempt(row)
+            if value is None:
+                raise ValueError("download attempt disappeared")
+            return value
+
+        return await self._write(operation)
+
+    async def transition_download_attempt(
+        self,
+        attempt_id: str,
+        *,
+        expected_row_revision: int,
+        new_state: str,
+        now: float | None = None,
+        **fields: Any,
+    ) -> DownloadAttempt | None:
+        """CAS one cleanup transition. ``None`` means another worker won the lease."""
+
+        timestamp = time.time() if now is None else now
+        sets = ["state=?", "updated_at=?", "row_revision=row_revision+1"]
+        params: list[Any] = [new_state, timestamp]
+        for key, value in fields.items():
+            if key not in _ATTEMPT_CAS_UPDATABLE:
+                raise ValueError(f"download_attempts column not updatable: {key}")
+            sets.append(f"{key}=?")
+            params.append(value)
+        params.extend((attempt_id, expected_row_revision))
+
+        def operation(conn: sqlite3.Connection) -> DownloadAttempt | None:
+            row = conn.execute(
+                f"UPDATE download_attempts SET {', '.join(sets)} "
+                "WHERE id=? AND row_revision=? RETURNING *",
+                tuple(params),
+            ).fetchone()
+            return _row_to_attempt(row)
+
+        return await self._write(operation)
+
+    async def schedule_download_attempt_cleanup(
+        self,
+        attempt_id: str,
+        *,
+        disposition: str,
+        publisher_bundle_ids: list[str] | None = None,
+        now: float | None = None,
+    ) -> DownloadAttempt:
+        timestamp = time.time() if now is None else now
+        state = "cleanup_pending" if disposition == "discard" else "preserved"
+        bundles = _encode_json(publisher_bundle_ids or [])
+
+        def operation(conn: sqlite3.Connection) -> DownloadAttempt:
+            row = conn.execute(
+                """UPDATE download_attempts
+                   SET state=?,disposition=?,publisher_bundle_ids_json=?,next_retry_at=?,
+                       lease_owner=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=?,
+                       row_revision=row_revision+1
+                   WHERE id=? AND state NOT IN ('complete','needs_attention') RETURNING *""",
+                (state, disposition, bundles, timestamp, timestamp, attempt_id),
+            ).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT * FROM download_attempts WHERE id=?", (attempt_id,)
+                ).fetchone()
+            value = _row_to_attempt(row)
+            if value is None:
+                raise ValueError("download attempt not found")
+            return value
+
+        return await self._write(operation)
+
+    async def finalize_task_and_attempt(
+        self,
+        task_id: str,
+        status: str,
+        *,
+        task_fields: dict[str, Any],
+        attempt_id: str | None,
+        disposition: str | None,
+        publisher_bundle_ids: list[str] | None = None,
+        now: float | None = None,
+    ) -> None:
+        """Persist the user-visible result and final cleanup obligation atomically."""
+
+        timestamp = time.time() if now is None else now
+        sets = ["status=?", "updated_at=?"]
+        params: list[Any] = [status, timestamp]
+        for key, value in task_fields.items():
+            if key not in _TASK_UPDATABLE:
+                raise ValueError(f"download_tasks column not updatable: {key}")
+            sets.append(f"{key}=?")
+            params.append(value)
+        params.append(task_id)
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                f"UPDATE download_tasks SET {', '.join(sets)} WHERE id=?",
+                tuple(params),
+            )
+            if attempt_id is None or disposition is None:
+                return
+            attempt_state = (
+                "cleanup_pending" if disposition == "discard" else "preserved"
+            )
+            conn.execute(
+                """UPDATE download_attempts
+                   SET state=?,disposition=?,publisher_bundle_ids_json=?,next_retry_at=?,
+                       lease_owner=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=?,
+                       row_revision=row_revision+1
+                   WHERE id=? AND state NOT IN ('complete','needs_attention')""",
+                (
+                    attempt_state,
+                    disposition,
+                    _encode_json(publisher_bundle_ids or []),
+                    timestamp,
+                    timestamp,
+                    attempt_id,
+                ),
+            )
+
+        await self._write(operation)
+
+    async def cancel_task_and_schedule_attempts(
+        self,
+        task_id: str,
+        *,
+        publisher_bundle_ids: list[str] | None = None,
+        cleanup_disposition: str = "discard",
+        cancelled_at: float | None = None,
+    ) -> list[str]:
+        if cleanup_disposition not in {"discard", "preserve"}:
+            raise ValueError("invalid cancellation cleanup disposition")
+        now = time.time() if cancelled_at is None else cancelled_at
+        attempt_state = (
+            "cleanup_pending" if cleanup_disposition == "discard" else "preserved"
+        )
+
+        def operation(conn: sqlite3.Connection) -> list[str]:
+            conn.execute(
+                "UPDATE download_tasks SET status='cancelled',cancelled_at=?,updated_at=? "
+                "WHERE id=?",
+                (now, now, task_id),
+            )
+            rows = conn.execute(
+                "SELECT id FROM download_attempts WHERE task_id=? "
+                "AND state NOT IN ('complete','needs_attention')",
+                (task_id,),
+            ).fetchall()
+            ids = [str(row["id"]) for row in rows]
+            if ids:
+                conn.execute(
+                    f"UPDATE download_attempts SET state=?,disposition=?,"
+                    f"publisher_bundle_ids_json=?,"
+                    f"next_retry_at=?,lease_owner=NULL,"
+                    f"lease_expires_at=NULL,error_code=NULL,updated_at=?,"
+                    f"row_revision=row_revision+1 WHERE id IN ({_in_placeholders(ids)})",
+                    (
+                        attempt_state,
+                        cleanup_disposition,
+                        _encode_json(publisher_bundle_ids or []),
+                        now,
+                        now,
+                        *ids,
+                    ),
+                )
+            return ids
+
+        return await self._write(operation)
+
+    async def claim_download_cleanup_attempts(
+        self,
+        worker_id: str,
+        *,
+        now: float | None = None,
+        limit: int = 25,
+        lease_seconds: float = 300.0,
+    ) -> list[DownloadAttempt]:
+        timestamp = time.time() if now is None else now
+
+        def operation(conn: sqlite3.Connection) -> list[DownloadAttempt]:
+            rows = conn.execute(
+                """SELECT id FROM download_attempts
+                   WHERE state IN ('cleanup_pending','workspace_removed','needs_attention')
+                     AND next_retry_at<=?
+                     AND (lease_expires_at IS NULL OR lease_expires_at<=?)
+                   ORDER BY next_retry_at,created_at,id LIMIT ?""",
+                (timestamp, timestamp, min(25, max(1, limit))),
+            ).fetchall()
+            ids = [str(row["id"]) for row in rows]
+            if not ids:
+                return []
+            conn.execute(
+                f"UPDATE download_attempts SET lease_owner=?,lease_expires_at=?,"
+                f"updated_at=?,row_revision=row_revision+1 "
+                f"WHERE id IN ({_in_placeholders(ids)})",
+                (worker_id, timestamp + lease_seconds, timestamp, *ids),
+            )
+            claimed = conn.execute(
+                f"SELECT * FROM download_attempts WHERE id IN ({_in_placeholders(ids)}) "
+                "ORDER BY next_retry_at,created_at,id",
+                tuple(ids),
+            ).fetchall()
+            return [
+                value for row in claimed if (value := _row_to_attempt(row)) is not None
+            ]
+
+        return await self._write(operation)
+
+    async def claim_download_cleanup_attempt(
+        self,
+        attempt_id: str,
+        worker_id: str,
+        *,
+        now: float | None = None,
+        lease_seconds: float = 300.0,
+    ) -> DownloadAttempt | None:
+        timestamp = time.time() if now is None else now
+
+        def operation(conn: sqlite3.Connection) -> DownloadAttempt | None:
+            row = conn.execute(
+                """UPDATE download_attempts
+                   SET lease_owner=?,lease_expires_at=?,updated_at=?,
+                       row_revision=row_revision+1
+                   WHERE id=? AND state IN (
+                       'cleanup_pending','workspace_removed','needs_attention'
+                   )
+                     AND next_retry_at<=?
+                     AND (lease_expires_at IS NULL OR lease_expires_at<=?)
+                   RETURNING *""",
+                (
+                    worker_id,
+                    timestamp + lease_seconds,
+                    timestamp,
+                    attempt_id,
+                    timestamp,
+                    timestamp,
+                ),
+            ).fetchone()
+            return _row_to_attempt(row)
+
+        return await self._write(operation)
+
+    async def acquire_download_attempt_for_reimport(
+        self, attempt_id: str, *, now: float | None = None
+    ) -> DownloadAttempt | None:
+        timestamp = time.time() if now is None else now
+
+        def operation(conn: sqlite3.Connection) -> DownloadAttempt | None:
+            row = conn.execute(
+                """UPDATE download_attempts
+                   SET state='in_use',disposition='undecided',next_retry_at=0,
+                       lease_owner=NULL,lease_expires_at=NULL,error_code=NULL,
+                       completed_at=NULL,updated_at=?,row_revision=row_revision+1
+                   WHERE id=?
+                     AND state IN ('cleanup_pending','preserved','needs_attention')
+                     AND (lease_expires_at IS NULL OR lease_expires_at<=?)
+                   RETURNING *""",
+                (timestamp, attempt_id, timestamp),
+            ).fetchone()
+            return _row_to_attempt(row)
+
+        return await self._write(operation)
+
+    async def record_download_cleanup_failure(
+        self,
+        attempt_id: str,
+        *,
+        expected_row_revision: int,
+        error_code: str,
+        now: float | None = None,
+    ) -> DownloadAttempt | None:
+        timestamp = time.time() if now is None else now
+        delays = (60.0, 300.0, 900.0, 3600.0)
+
+        def operation(conn: sqlite3.Connection) -> DownloadAttempt | None:
+            current = conn.execute(
+                "SELECT cleanup_failures FROM download_attempts "
+                "WHERE id=? AND row_revision=?",
+                (attempt_id, expected_row_revision),
+            ).fetchone()
+            if current is None:
+                return None
+            failures = int(current["cleanup_failures"]) + 1
+            delay = delays[min(failures - 1, len(delays) - 1)]
+            row = conn.execute(
+                """UPDATE download_attempts
+                   SET cleanup_failures=?,next_retry_at=?,lease_owner=NULL,
+                       lease_expires_at=NULL,error_code=?,updated_at=?,
+                       row_revision=row_revision+1
+                   WHERE id=? AND row_revision=? RETURNING *""",
+                (
+                    failures,
+                    timestamp + delay,
+                    error_code,
+                    timestamp,
+                    attempt_id,
+                    expected_row_revision,
+                ),
+            ).fetchone()
+            return _row_to_attempt(row)
+
+        return await self._write(operation)
+
+    async def cleanup_states_for_tasks(self, task_ids: list[str]) -> dict[str, str]:
+        if not task_ids:
+            return {}
+
+        def operation(conn: sqlite3.Connection) -> dict[str, str]:
+            rows = conn.execute(
+                f"""SELECT task_id,
+                    CASE
+                      WHEN MAX(state='needs_attention') THEN 'needs_attention'
+                      WHEN MAX(state='preserved') THEN 'preserved'
+                      WHEN MAX(state IN ('cleanup_pending','workspace_removed')) THEN 'pending'
+                      WHEN MAX(state IN ('acquiring','in_use')) THEN 'in_use'
+                      WHEN MAX(state='complete') THEN 'complete'
+                      ELSE 'not_tracked'
+                    END AS cleanup_state
+                   FROM download_attempts
+                   WHERE task_id IN ({_in_placeholders(task_ids)})
+                   GROUP BY task_id""",
+                tuple(task_ids),
+            ).fetchall()
+            return {str(row["task_id"]): str(row["cleanup_state"]) for row in rows}
+
+        return await self._read(operation)
+
+    async def cleanup_warning_count(self) -> int:
+        def operation(conn: sqlite3.Connection) -> int:
+            row = conn.execute(
+                """SELECT COUNT(DISTINCT task_id) AS count FROM download_attempts
+                   WHERE state='needs_attention'
+                      OR (state IN ('cleanup_pending','workspace_removed')
+                          AND cleanup_failures>=3)"""
+            ).fetchone()
+            return int(row["count"] if row is not None else 0)
+
+        return await self._read(operation)
+
+    async def prune_completed_download_attempts(
+        self, *, older_than: float, limit: int = 1000
+    ) -> int:
+        def operation(conn: sqlite3.Connection) -> int:
+            rows = conn.execute(
+                "SELECT id FROM download_attempts WHERE state='complete' "
+                "AND completed_at<? ORDER BY completed_at LIMIT ?",
+                (older_than, limit),
+            ).fetchall()
+            ids = [str(row["id"]) for row in rows]
+            if not ids:
+                return 0
+            conn.execute(
+                f"DELETE FROM download_attempts WHERE id IN ({_in_placeholders(ids)})",
+                tuple(ids),
+            )
+            return len(ids)
+
+        return await self._write(operation)
+
+    async def ensure_cleanup_reconciliation(
+        self, mount_key: str, mount_root: str, *, now: float | None = None
+    ) -> DownloadCleanupReconciliation:
+        timestamp = time.time() if now is None else now
+
+        def operation(conn: sqlite3.Connection) -> DownloadCleanupReconciliation:
+            conn.execute(
+                """INSERT OR IGNORE INTO download_cleanup_reconciliation
+                   (mount_key,mount_root,pending_directories_json,completed,updated_at)
+                   VALUES (?,?,'[\".\"]',0,?)""",
+                (mount_key, mount_root, timestamp),
+            )
+            row = conn.execute(
+                "SELECT * FROM download_cleanup_reconciliation WHERE mount_key=?",
+                (mount_key,),
+            ).fetchone()
+            value = _row_to_reconciliation(row)
+            if value is None:
+                raise ValueError("cleanup reconciliation disappeared")
+            return value
+
+        return await self._write(operation)
+
+    async def save_cleanup_reconciliation(
+        self,
+        value: DownloadCleanupReconciliation,
+        *,
+        now: float | None = None,
+    ) -> None:
+        timestamp = time.time() if now is None else now
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                """UPDATE download_cleanup_reconciliation
+                   SET pending_directories_json=?,current_directory=?,last_entry=?,
+                       completed=?,updated_at=? WHERE mount_key=?""",
+                (
+                    _encode_json(value.pending_directories),
+                    value.current_directory,
+                    value.last_entry,
+                    int(value.completed),
+                    timestamp,
+                    value.mount_key,
+                ),
+            )
+
+        await self._write(operation)
+
+    async def ensure_legacy_download_attempt(
+        self,
+        *,
+        attempt_id: str,
+        task_id: str,
+        candidate_index: int,
+        job_name: str,
+        mount_root: str,
+        workspace_path: str,
+        state: str,
+        disposition: str,
+        error_code: str | None,
+        publisher_bundle_ids: list[str] | None = None,
+        now: float | None = None,
+    ) -> DownloadAttempt:
+        timestamp = time.time() if now is None else now
+        handle = TaskHandle(source="usenet", job_name=job_name)
+
+        def operation(conn: sqlite3.Connection) -> DownloadAttempt:
+            conn.execute(
+                """INSERT OR IGNORE INTO download_attempts
+                   (id,task_id,source,candidate_index,job_name,handle_json,mount_root,
+                    workspace_path,publisher_bundle_ids_json,legacy_reconciled,state,
+                    disposition,error_code,
+                    next_retry_at,created_at,updated_at)
+                   VALUES (?,?, 'usenet',?,?,?,?,?,?,1,?,?,?,?,?,?)""",
+                (
+                    attempt_id,
+                    task_id,
+                    candidate_index,
+                    job_name,
+                    _encode_json(to_jsonable(handle)),
+                    mount_root,
+                    workspace_path,
+                    _encode_json(publisher_bundle_ids or []),
+                    state,
+                    disposition,
+                    error_code,
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM download_attempts WHERE id=?", (attempt_id,)
+            ).fetchone()
+            value = _row_to_attempt(row)
+            if value is None:
+                raise ValueError("legacy cleanup attempt disappeared")
+            return value
+
+        return await self._write(operation)
 
     async def record_quarantine(
         self,
@@ -1223,6 +1881,50 @@ def _row_to_task(row: sqlite3.Row | None) -> DownloadTask | None:
     if row is None:
         return None
     return msgspec.convert(dict(row), type=DownloadTask, strict=False)
+
+
+def _row_to_attempt(row: sqlite3.Row | None) -> DownloadAttempt | None:
+    if row is None:
+        return None
+    value = dict(row)
+    try:
+        handle = msgspec.convert(
+            _decode_json(str(value.pop("handle_json"))), type=TaskHandle, strict=False
+        )
+        materialized_paths = [
+            str(item)
+            for item in _decode_json(str(value.pop("materialized_paths_json")))
+        ]
+        publisher_bundle_ids = [
+            str(item)
+            for item in _decode_json(str(value.pop("publisher_bundle_ids_json")))
+        ]
+    except (TypeError, ValueError, msgspec.ValidationError):
+        return None
+    value["legacy_reconciled"] = bool(value["legacy_reconciled"])
+    return DownloadAttempt(
+        **value,
+        handle=handle,
+        materialized_paths=materialized_paths,
+        publisher_bundle_ids=publisher_bundle_ids,
+    )
+
+
+def _row_to_reconciliation(
+    row: sqlite3.Row | None,
+) -> DownloadCleanupReconciliation | None:
+    if row is None:
+        return None
+    value = dict(row)
+    try:
+        pending = [
+            str(item)
+            for item in _decode_json(str(value.pop("pending_directories_json")))
+        ]
+    except (TypeError, ValueError):
+        return None
+    value["completed"] = bool(value["completed"])
+    return DownloadCleanupReconciliation(**value, pending_directories=pending)
 
 
 # source -> the download client_type that owns it (fixed v1 map).

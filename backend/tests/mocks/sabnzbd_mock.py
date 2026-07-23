@@ -15,6 +15,9 @@ class SabnzbdMock:
         self.complete_dir = "/data/Downloads/complete"
         self.add_nzo_ids = ["nzo-test-1"]
         self.deleted: list[tuple[str, str]] = []  # (mode, value)
+        self.delete_requests: list[dict] = []
+        self.deleted_storage: list[str] = []
+        self.retained_completed_storage: list[str] = []
         self.history_requests: list[dict] = []  # captured non-delete history call params
 
     # --- builders ---------------------------------------------------------------
@@ -48,12 +51,29 @@ class SabnzbdMock:
         if mode == "queue":
             if p.get("name") == "delete":
                 self.deleted.append(("queue", p.get("value", "")))
+                self.delete_requests.append(dict(p))
                 return _json({"status": True})
             return _json({"queue": {"status": "Downloading" if self.queue_slots else "Idle",
                                     "paused": False, "slots": self.queue_slots}})
         if mode == "history":
             if p.get("name") == "delete":
-                self.deleted.append(("history", p.get("value", "")))
+                value = p.get("value", "")
+                self.deleted.append(("history", value))
+                self.delete_requests.append(dict(p))
+                slot = next(
+                    (item for item in self.history_slots if item["nzo_id"] == value),
+                    None,
+                )
+                if slot is not None and p.get("del_files") == "1":
+                    if slot["status"].lower() == "failed":
+                        self.deleted_storage.append(slot["storage"])
+                    else:
+                        # SABnzbd 5.0.4 retains completed output even when history
+                        # deletion receives del_files=1.
+                        self.retained_completed_storage.append(slot["storage"])
+                self.history_slots = [
+                    item for item in self.history_slots if item["nzo_id"] != value
+                ]
                 return _json({"status": True})
             self.history_requests.append(dict(p))
             slots = self.history_slots

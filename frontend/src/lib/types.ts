@@ -2266,6 +2266,13 @@ export interface DownloadTask {
 	// The full auto-retry backoff schedule in minutes for this task's max attempts, e.g.
 	// [15, 30, 60, 120, 240, 480]. Empty when auto-retry is off. Drives the Wanted ladder.
 	retry_ladder_minutes: number[];
+	acquisition_cleanup_state:
+		| 'not_tracked'
+		| 'in_use'
+		| 'pending'
+		| 'complete'
+		| 'preserved'
+		| 'needs_attention';
 }
 
 export interface DownloadListResponse {

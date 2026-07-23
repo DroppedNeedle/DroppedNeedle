@@ -52,6 +52,7 @@ function task(overrides: Partial<DownloadTask> = {}): DownloadTask {
 		next_retry_at: null,
 		retry_max: 6,
 		retry_ladder_minutes: [15, 30, 60, 120, 240, 480],
+		acquisition_cleanup_state: 'not_tracked',
 		...overrides
 	};
 }

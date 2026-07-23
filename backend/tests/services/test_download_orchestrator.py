@@ -392,7 +392,9 @@ async def test_process_task_autopicks_and_completes(tmp_path: Path):
     assert final.status == "completed"
     fp.process_downloaded.assert_awaited()
     client.enqueue.assert_awaited_once()
-    client.cancel.assert_awaited()  # post-import transfer cleanup
+    attempts = await store.list_download_attempts(task.id)
+    assert [attempt.state for attempt in attempts] == ["cleanup_pending"]
+    client.cancel.assert_not_awaited()
     assert not (tmp_path / "staging" / task.id).exists()  # staging cleaned
     job = await store.get_search_job(final.search_job_id)
     assert job.status == "matched"  # (AUD-8) auto-pick matched the job
@@ -965,6 +967,9 @@ async def test_track_wrong_duration_fails_over_to_right_source(tmp_path: Path):
     assert final.status == "completed"
     assert final.source_username == "rightpeer"
     assert await store.load_quarantine_set() == set()  # wrong track is not blacklisted
+    attempts = await store.list_download_attempts(task.id)
+    assert len(attempts) == 2
+    assert {attempt.state for attempt in attempts} == {"cleanup_pending"}
 
 
 @pytest.mark.asyncio
@@ -1214,6 +1219,49 @@ async def test_cancel_task_admin_can_cancel_others(tmp_path: Path):
     task = await _new_task(store)
     await orch.cancel_task(task.id, "admin-x", "admin")
     assert (await store.get_task(task.id)).status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_waits_for_pipeline_and_attaches_publication_barriers(
+    tmp_path: Path,
+):
+    store, orch, *_ = _build(tmp_path)
+    task = await _new_task(store, status="downloading")
+    attempt = await store.create_download_attempt(
+        task_id=task.id,
+        source="soulseek",
+        candidate_index=0,
+        job_name="",
+        handle=TaskHandle(
+            source="soulseek", username="peer", filenames=["peer/01.flac"]
+        ),
+    )
+    await store.update_download_attempt_handle(attempt.id, attempt.handle)
+    stopped = asyncio.Event()
+
+    async def running_pipeline():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    live = asyncio.create_task(running_pipeline())
+    await asyncio.sleep(0)
+    orch._active_tasks[task.id] = live
+    cleanup = AsyncMock()
+    cleanup.publisher_bundle_ids_for_task.return_value = ["bundle-1"]
+    orch._cleanup = cleanup
+
+    await orch.cancel_task(task.id, "user-a", "user")
+
+    assert stopped.is_set()
+    refreshed = await store.get_download_attempt(attempt.id)
+    assert refreshed.state == "cleanup_pending"
+    assert refreshed.publisher_bundle_ids == ["bundle-1"]
+    cleanup.publisher_bundle_ids_for_task.assert_awaited_once_with(task.id)
+    cleanup.cleanup_now.assert_awaited_once_with(
+        attempt.id, worker_id=f"cancel-{task.id}"
+    )
 
 
 @pytest.mark.asyncio
@@ -2112,10 +2160,7 @@ async def test_reimport_task_second_call_after_completion_rejected(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_reimport_task_mount_fault_does_not_cancel_transfers(tmp_path: Path):
-    """A mount fault must bail BEFORE _cancel_transfers - cancel(del_files) would tell
-    slskd to delete data the user is still manually fixing, and the mount may recover
-    (review H1). The failover loop does the same."""
+async def test_reimport_task_mount_fault_preserves_source_cleanup(tmp_path: Path):
     from services.native.file_processor import DOWNLOADS_MOUNT_UNAVAILABLE
 
     store, orch, fp, lib = _build(tmp_path)
@@ -2125,9 +2170,9 @@ async def test_reimport_task_mount_fault_does_not_cancel_transfers(tmp_path: Pat
             failed=[
                 FileFailure(filename="peer/01.flac", reason=DOWNLOADS_MOUNT_UNAVAILABLE)
             ],
+            workspace_disposition="preserve",
         )
     )
-    orch._cancel_transfers = AsyncMock()
     task = await _new_task(store, status="failed", track_count=1)
     await _link_candidate(store, task.id, _candidate(0.9, files=1))
 
@@ -2135,7 +2180,37 @@ async def test_reimport_task_mount_fault_does_not_cancel_transfers(tmp_path: Pat
 
     assert result.status == "failed"
     assert result.error_message == DOWNLOADS_MOUNT_UNAVAILABLE
-    orch._cancel_transfers.assert_not_awaited()
+    attempts = await store.list_download_attempts(task.id)
+    assert attempts[-1].state == "preserved"
+    assert attempts[-1].disposition == "preserve"
+
+
+@pytest.mark.asyncio
+async def test_reimport_rejects_attempt_leased_by_cleanup_worker(tmp_path: Path):
+    store, orch, fp, _ = _build(tmp_path)
+    task = await _new_task(store, status="failed", track_count=1)
+    await _link_candidate(store, task.id, _candidate(0.9, files=1))
+    attempt = await store.create_download_attempt(
+        task_id=task.id,
+        source="soulseek",
+        candidate_index=0,
+        job_name="",
+        handle=TaskHandle(
+            source="soulseek", username="peer", filenames=["peer/01.flac"]
+        ),
+    )
+    await store.schedule_download_attempt_cleanup(
+        attempt.id, disposition="discard"
+    )
+    assert (
+        await store.claim_download_cleanup_attempt(attempt.id, "cleanup-worker")
+        is not None
+    )
+
+    with pytest.raises(ValidationError, match="source files are being cleaned up"):
+        await orch.reimport_task(task.id)
+
+    fp.process_downloaded.assert_not_awaited()
 
 
 # -- P4: coverage-based completeness (2026-07-05 incident, last line of defense) --

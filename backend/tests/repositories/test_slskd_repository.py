@@ -350,11 +350,11 @@ async def test_get_status_correlates_by_filename(mock_repo):
 
 
 @pytest.mark.asyncio
-async def test_cancel_removes_matching_transfers(mock_repo):
+async def test_discard_client_artifacts_removes_matching_transfers(mock_repo):
     ref = await mock_repo.enqueue(
         _req([DownloadFileRef(username="alice", filename="dir/a.flac", size=100)])
     )
-    assert await mock_repo.cancel(ref) is True
+    assert await mock_repo.discard_client_artifacts(ref) is True
     status = await mock_repo.get_status(ref)
     assert status.files_completed == 0
 

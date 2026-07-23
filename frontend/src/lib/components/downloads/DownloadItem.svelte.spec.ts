@@ -71,6 +71,7 @@ function task(overrides: Partial<DownloadTask> = {}): DownloadTask {
 		next_retry_at: null,
 		retry_max: 6,
 		retry_ladder_minutes: [15, 30, 60, 120, 240, 480],
+		acquisition_cleanup_state: 'in_use',
 		...overrides
 	};
 }
@@ -113,6 +114,20 @@ describe('DownloadItem.svelte', () => {
 	it('shows a "View in Library" link when completed', async () => {
 		renderItem(task({ status: 'completed' }));
 		await expect.element(page.getByRole('link', { name: 'View in library' })).toBeVisible();
+	});
+
+	it.each([
+		['pending', 'Cleaning source files'],
+		['preserved', 'Source files kept'],
+		['needs_attention', 'Source cleanup needs attention']
+	] as const)('shows the %s cleanup treatment', async (cleanupState, label) => {
+		renderItem(task({ status: 'completed', acquisition_cleanup_state: cleanupState }));
+		await expect.element(page.getByText(label, { exact: true })).toBeVisible();
+	});
+
+	it('keeps ordinary completed cleanup visually quiet', async () => {
+		renderItem(task({ status: 'completed', acquisition_cleanup_state: 'complete' }));
+		await expect.element(page.getByText(/source files|source cleanup/i)).not.toBeInTheDocument();
 	});
 
 	it('offers a "Stop retrying" off-switch for a scheduled auto-retry', async () => {

@@ -21,6 +21,7 @@ from pathlib import Path
 
 from models.common import ServiceStatus
 from repositories.protocols.download_client import (
+    DownloadMaterialization,
     DownloadSearchResult,
     DownloadTaskStatus,
     EnqueueRequest,
@@ -154,7 +155,34 @@ class SlskdRepository:
         matched = [t for t in transfers if t.filename in wanted]
         return self._aggregate_status(handle, matched)
 
-    async def cancel(self, handle: TaskHandle) -> bool:
+    async def abort(self, handle: TaskHandle) -> bool:
+        return await self._remove_transfer_records(handle)
+
+    async def inspect_materialization(
+        self, handle: TaskHandle
+    ) -> DownloadMaterialization:
+        status = await self.get_status(handle)
+        paths = await self.list_completed_files(handle)
+        healthy = await asyncio.to_thread(self._downloads_mount_healthy)
+        if status.status in {"completed"}:
+            state = "completed"
+        elif status.status in {"partial", "failed"}:
+            state = "failed"
+        elif status.matched_transfers:
+            state = "active"
+        else:
+            state = "missing"
+        return DownloadMaterialization(
+            state=state,
+            mount_root=str(self._downloads_mount),
+            file_paths=[str(path) for path in paths],
+            mount_healthy=healthy,
+        )
+
+    async def discard_client_artifacts(self, handle: TaskHandle) -> bool:
+        return await self._remove_transfer_records(handle)
+
+    async def _remove_transfer_records(self, handle: TaskHandle) -> bool:
         transfers = await self._client.get_downloads(handle.username)
         wanted = set(handle.filenames)
         ok = True
@@ -165,6 +193,15 @@ class SlskdRepository:
                     and ok
                 )
         return ok
+
+    def _downloads_mount_healthy(self) -> bool:
+        try:
+            if not self._downloads_mount.is_dir():
+                return False
+            next(self._downloads_mount.iterdir(), None)
+            return True
+        except OSError:
+            return False
 
     async def list_completed_files(self, handle: TaskHandle) -> list[Path]:
         """slskd already knows its filenames (from the search/handle), so resolve

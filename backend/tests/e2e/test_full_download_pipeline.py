@@ -26,12 +26,14 @@ from models.common import ServiceStatus
 from models.download import DownloadSearchResult
 from models.download_manifest import ManifestCodec
 from repositories.protocols.download_client import (
+    DownloadMaterialization,
     DownloadTaskStatus,
     MountDiagnosis,
     TaskHandle,
 )
 from repositories.protocols.indexer import IndexerResult
 from services.native.album_preflight_scorer import AlbumPreflightScorer
+from services.native.acquisition_cleanup_service import AcquisitionCleanupService
 from services.native.download_orchestrator import DownloadOrchestrator
 from services.native.file_processor import FileProcessor
 from services.native.library_manager import LibraryManager
@@ -94,7 +96,7 @@ class _StubClient:
     def __init__(self, downloads_root: Path, status: str = "completed") -> None:
         self._root = downloads_root
         self._status = status
-        self.cancelled: list[TaskHandle] = []
+        self.discarded: list[TaskHandle] = []
 
     @property
     def client_name(self) -> str:
@@ -126,8 +128,24 @@ class _StubClient:
             progress_percent=100.0,
         )
 
-    async def cancel(self, handle: TaskHandle) -> bool:
-        self.cancelled.append(handle)
+    async def abort(self, handle: TaskHandle) -> bool:
+        return True
+
+    async def inspect_materialization(
+        self, handle: TaskHandle
+    ) -> DownloadMaterialization:
+        return DownloadMaterialization(
+            state="completed",
+            mount_root=str(self._root),
+            file_paths=[
+                str(self._root / value.replace("\\", "/").lstrip("/"))
+                for value in handle.filenames
+            ],
+            mount_healthy=True,
+        )
+
+    async def discard_client_artifacts(self, handle: TaskHandle) -> bool:
+        self.discarded.append(handle)
         return True
 
     async def list_completed_files(self, handle: TaskHandle) -> list[Path]:
@@ -140,6 +158,14 @@ class _StubClient:
 
     async def diagnose_downloads_mount(self) -> MountDiagnosis:
         return MountDiagnosis(supported=False)
+
+
+class _CleanupLibrary:
+    async def get_library_management_import_bundle(self, bundle_id: str):
+        return MagicMock(state="completed")
+
+    async def list_acquisition_import_bundles_for_download_task(self, task_id: str):
+        return []
 
 
 def _place_fixture(
@@ -190,6 +216,9 @@ def _build(tmp_path: Path, *, album=None, status="completed"):
         publish_import_bundle=make_test_import_publisher(manager, {"root-a": library}),
         policy_revision_getter=lambda: "test-policy",
     )
+    cleanup = AcquisitionCleanupService(
+        store, _CleanupLibrary(), lambda source: client, lambda: downloads
+    )
     orch = DownloadOrchestrator(
         client=client,
         indexer=indexer,
@@ -205,6 +234,7 @@ def _build(tmp_path: Path, *, album=None, status="completed"):
         poll_interval=0.0,
         auto_accept_threshold=0.5,
         manual_threshold=0.1,
+        cleanup_service=cleanup,
     )
     return store, manager, orch, client, library, staging
 
@@ -240,7 +270,7 @@ async def test_happy_path_imports_into_library(tmp_path: Path):
     assert await manager.has_album("rg-okc") is True
     assert len(list(library.rglob("*.flac"))) == 1
     assert await store.list_quarantine(1, 50) == []  # nothing quarantined on success
-    assert len(client.cancelled) == 1  # completed transfer records cleared
+    assert len(client.discarded) == 1
 
 
 @pytest.mark.asyncio

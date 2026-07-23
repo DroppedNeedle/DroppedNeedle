@@ -28,6 +28,7 @@ def _app(service) -> FastAPI:
     service.next_retry_at = lambda task: None
     service.auto_retry_max = 0
     service.retry_ladder_minutes = lambda: []
+    service.cleanup_states.return_value = {}
     app = FastAPI()
     app.include_router(downloads.router)
     app.dependency_overrides[get_download_service] = lambda: service
@@ -73,6 +74,23 @@ def test_list_downloads_returns_items_for_user():
     body = response.json()
     assert [item["id"] for item in body["items"]] == ["t1", "t2"]
     assert body["page"] == 1
+
+
+def test_list_downloads_batches_cleanup_state_without_exposing_paths():
+    service = AsyncMock()
+    service.list_tasks.return_value = [_task("t1"), _task("t2")]
+    app = _app(service)
+    service.cleanup_states.return_value = {"t1": "pending", "t2": "needs_attention"}
+
+    response = build_test_client(app).get("/downloads")
+
+    assert response.status_code == 200
+    assert [
+        item["acquisition_cleanup_state"] for item in response.json()["items"]
+    ] == ["pending", "needs_attention"]
+    service.cleanup_states.assert_awaited_once_with(["t1", "t2"])
+    assert "workspace" not in response.text
+    assert "/sab" not in response.text
     service.list_tasks.assert_awaited_once_with(
         "u1", "user", status=None, release_group_mbid=None, page=1, page_size=20
     )

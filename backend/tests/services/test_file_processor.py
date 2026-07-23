@@ -264,6 +264,9 @@ async def test_shared_publisher_receives_complete_slskd_album_bundle(tmp_path: P
 
     result = await fp.process_downloaded(manifest)
 
+    assert result.publisher_bundle_ids == ["bundle-1"]
+    assert result.workspace_disposition == "discard"
+
     bundle = publisher.await_args.args[0]
     assert len(bundle.files) == 2
     assert bundle.origin == "acquisition"
@@ -469,6 +472,7 @@ async def test_process_downloaded_publication_error_fails_the_whole_unit(
     assert await manager.has_album("rg-1") is False
     assert (downloads / "A/good.flac").exists()
     assert (downloads / "A/bad.flac").exists()
+    assert result.workspace_disposition == "preserve"
 
 
 @pytest.mark.asyncio
@@ -1294,6 +1298,7 @@ async def test_automatic_management_failure_holds_acquisition_source_for_retry(
     assert Path(held[0].held_path).is_file()
     assert source.is_file()
     assert await manager.has_album("rg-single") is False
+    assert result.workspace_disposition == "discard"
 
 
 @pytest.mark.asyncio

@@ -395,6 +395,20 @@ backend-test-download-routes: $(BACKEND_VENV_STAMP) ## Phase 6b/7: download-clie
 backend-test-orchestrator: $(BACKEND_VENV_STAMP) ## Phase 7: DownloadOrchestrator + FileProcessor.process_downloaded
 	$(PYTEST) tests/services/test_download_orchestrator.py tests/services/test_file_processor.py -v
 
+test-acquisition-cleanup: $(BACKEND_VENV_STAMP) ## Durable attempt cleanup: store, clients, filesystem safety, API and UI
+	$(PYTEST) tests/infrastructure/test_acquisition_cleanup_store.py \
+		tests/infrastructure/test_acquisition_cleanup_task.py \
+		tests/services/native/test_acquisition_cleanup_service.py \
+		tests/services/test_download_orchestrator.py \
+		tests/services/test_file_processor.py \
+		tests/infrastructure/test_e2e_usenet.py \
+		tests/repositories/test_download_client_protocol_contract.py \
+		tests/repositories/test_sabnzbd.py \
+		tests/routes/test_downloads_routes.py -v
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client \
+		src/lib/components/downloads/DownloadItem.svelte.spec.ts \
+		src/lib/components/ServiceHealthIndicator.svelte.spec.ts
+
 backend-test-usenet: $(BACKEND_VENV_STAMP) ## Usenet/SABnzbd: protocol split, Newznab, SABnzbd, folder-import, routing, migration gates
 	$(PYTEST) tests/repositories/test_download_client_protocol_contract.py \
 		tests/infrastructure/test_download_migration.py \

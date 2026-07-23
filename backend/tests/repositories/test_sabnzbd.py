@@ -1,6 +1,7 @@
-"""SabnzbdClient + SabnzbdDownloadClient: the queue->history state machine, the
-only-Downloading-is-active rule, addfile->nzo_id, Failed/password mapping, cancel,
-and the stringly-typed number coercion. Shapes mirror the owner's real 5.0.4."""
+"""SabnzbdClient + SabnzbdDownloadClient queue, history, and cleanup contracts.
+
+Shapes and completed-history deletion behavior mirror the owner's real 5.0.4.
+"""
 
 from pathlib import Path
 
@@ -164,12 +165,119 @@ async def test_crash_recovery_matches_by_job_name_when_nzo_unknown():
 
 
 @pytest.mark.asyncio
-async def test_cancel_deletes_history_with_del_files():
+async def test_known_nzo_id_never_falls_back_to_same_job_name():
+    mock = sabnzbd_mock.SabnzbdMock()
+    mock.queue_job(
+        nzo_id="nzo-other", name="droppedneedle-t1", status="Downloading"
+    )
+    mock.history_job(
+        nzo_id="nzo-1", name="droppedneedle-t1", status="Completed", storage="/x"
+    )
+
+    status = await _dc(mock).get_status(_handle())
+
+    assert status.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_name_only_fallback_rejects_ambiguous_history():
+    mock = sabnzbd_mock.SabnzbdMock()
+    mock.history_job(
+        nzo_id="nzo-1", name="droppedneedle-t1", status="Completed", storage="/x"
+    )
+    mock.history_job(
+        nzo_id="nzo-2", name="droppedneedle-t1", status="Completed", storage="/y"
+    )
+
+    with pytest.raises(SabnzbdApiError, match="ambiguous job identity"):
+        await _dc(mock).inspect_materialization(
+            TaskHandle(source="usenet", job_name="droppedneedle-t1")
+        )
+
+
+@pytest.mark.asyncio
+async def test_completed_history_discard_never_claims_to_delete_output():
     mock = sabnzbd_mock.SabnzbdMock()
     mock.history_job(nzo_id="nzo-1", name="droppedneedle-t1", status="Completed", storage="/x")
-    ok = await _dc(mock).cancel(_handle())
+    ok = await _dc(mock).discard_client_artifacts(_handle())
     assert ok is True
     assert ("history", "nzo-1") in mock.deleted
+    assert mock.delete_requests[-1]["del_files"] == "0"
+    assert mock.deleted_storage == []
+
+
+@pytest.mark.asyncio
+async def test_mock_records_sab_retaining_completed_output_for_del_files_one():
+    mock = sabnzbd_mock.SabnzbdMock()
+    mock.history_job(
+        nzo_id="nzo-1",
+        name="droppedneedle-t1",
+        status="Completed",
+        storage="/complete/droppedneedle-t1",
+    )
+
+    assert await _client(mock).delete_history("nzo-1", del_files=True) is True
+
+    assert mock.deleted_storage == []
+    assert mock.retained_completed_storage == ["/complete/droppedneedle-t1"]
+
+
+@pytest.mark.asyncio
+async def test_failed_history_discard_removes_incomplete_data():
+    mock = sabnzbd_mock.SabnzbdMock()
+    mock.history_job(nzo_id="nzo-1", name="droppedneedle-t1", status="Failed")
+    assert await _dc(mock).discard_client_artifacts(_handle()) is True
+    assert mock.delete_requests[-1]["del_files"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_active_abort_removes_client_owned_temporary_data():
+    mock = sabnzbd_mock.SabnzbdMock()
+    mock.queue_job(nzo_id="nzo-1", name="droppedneedle-t1", status="Downloading")
+    assert await _dc(mock).abort(_handle()) is True
+    assert mock.delete_requests[-1]["mode"] == "queue"
+    assert mock.delete_requests[-1]["del_files"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_materialization_requires_exact_complete_dir_mapping(tmp_path):
+    mock = sabnzbd_mock.SabnzbdMock()
+    mock.complete_dir = "/data/Downloads/complete"
+    job_name = "droppedneedle-t1"
+    mock.history_job(
+        nzo_id="nzo-1",
+        name=job_name,
+        status="Completed",
+        storage=f"/data/Downloads/complete/audio/{job_name}",
+    )
+    mount = tmp_path / "complete"
+    mount.mkdir()
+
+    materialization = await _dc(mock, mount=str(mount)).inspect_materialization(
+        _handle()
+    )
+
+    assert materialization.workspace_path == str(mount / "audio" / job_name)
+
+
+@pytest.mark.asyncio
+async def test_materialization_rejects_ambiguous_storage_mapping(tmp_path):
+    mock = sabnzbd_mock.SabnzbdMock()
+    mock.complete_dir = ""
+    mock.history_job(
+        nzo_id="nzo-1",
+        name="droppedneedle-t1",
+        status="Completed",
+        storage="/unknown/droppedneedle-t1",
+    )
+    mount = tmp_path / "complete"
+    mount.mkdir()
+
+    materialization = await _dc(mock, mount=str(mount)).inspect_materialization(
+        _handle()
+    )
+
+    assert materialization.workspace_path == ""
 
 
 @pytest.mark.asyncio

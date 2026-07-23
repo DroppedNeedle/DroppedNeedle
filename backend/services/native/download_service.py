@@ -975,6 +975,9 @@ class DownloadService:
             page_size=page_size,
         )
 
+    async def cleanup_states(self, task_ids: list[str]) -> dict[str, str]:
+        return await self._store.cleanup_states_for_tasks(task_ids)
+
     async def get_task_files(self, task_id: str, user_id: str, user_role: str):
         """The files of a task (from the linked candidate) + the task's aggregate
         counts. Returns ``(task, files)``. Per-transfer live detail beyond the

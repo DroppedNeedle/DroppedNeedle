@@ -15971,6 +15971,39 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def list_acquisition_import_bundles_for_download_task(
+        self, download_task_id: str
+    ) -> list[LibraryManagementImportBundleRecord]:
+        """Import-publication barriers associated with one acquisition task.
+
+        The task identity is part of each file request in the durable bundle JSON.
+        SQLite's JSON table function keeps this an exact lookup rather than a path- or
+        substring-based inference during legacy workspace reconciliation.
+        """
+
+        def operation(
+            connection: sqlite3.Connection,
+        ) -> list[LibraryManagementImportBundleRecord]:
+            rows = connection.execute(
+                """SELECT DISTINCT bundle.*
+                   FROM library_management_import_bundles bundle,
+                        json_each(bundle.request_json, '$.files') file
+                   WHERE bundle.origin='acquisition'
+                     AND json_extract(file.value, '$.download_task_id')=?
+                   ORDER BY bundle.created_at,bundle.id""",
+                (download_task_id,),
+            ).fetchall()
+            return [
+                msgspec.convert(
+                    dict(row),
+                    type=LibraryManagementImportBundleRecord,
+                    strict=False,
+                )
+                for row in rows
+            ]
+
+        return await self._read(operation)
+
     async def list_recoverable_library_management_import_bundles(
         self,
         *,

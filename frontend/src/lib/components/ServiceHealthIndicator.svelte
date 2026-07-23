@@ -14,6 +14,7 @@
 		if (s === 'musicbrainz') return 'MusicBrainz';
 		if (s === 'audiodb') return 'TheAudioDB';
 		if (s === 'wikidata') return 'Wikipedia';
+		if (s === 'acquisition_cleanup') return 'Source cleanup';
 		return s.charAt(0).toUpperCase() + s.slice(1);
 	}
 
@@ -32,7 +33,22 @@
 			.join('|');
 		if (key && key !== notifiedKey) {
 			notifiedKey = key;
+			const cleanup = degraded.find((d) => d.service === 'acquisition_cleanup');
+			if (cleanup && degraded.length === 1) {
+				toastStore.show({
+					message: `${cleanup.message} Checking again automatically.`,
+					type: 'info'
+				});
+				return;
+			}
 			const names = [...new Set(degraded.map((d) => serviceLabel(d.service)))].join(', ');
+			if (cleanup) {
+				toastStore.show({
+					message: `${names} are having problems. Retrying automatically.`,
+					type: 'info'
+				});
+				return;
+			}
 			// only claim "using a fallback" when every degraded service has one; most
 			// (MusicBrainz, Last.fm, Wikipedia) don't, and the blanket line would lie
 			const tail = degraded.every((d) => d.fallback)

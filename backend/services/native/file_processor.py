@@ -123,6 +123,16 @@ class ProcessResult(AppStruct):
 
     succeeded: list[str]
     failed: list[FileFailure]
+    publisher_bundle_ids: list[str] = []
+    # ``discard`` means every source byte is either durably published/held or was an
+    # intentional candidate rejection. ``preserve`` means a local/import fault left no
+    # proven successor and source cleanup must not run.
+    workspace_disposition: str = "discard"
+
+
+def _workspace_disposition(failures: list[FileFailure]) -> str:
+    local_faults = {DOWNLOADS_MOUNT_UNAVAILABLE, IMPORT_FAILED, SOURCE_FILE_MISSING}
+    return "preserve" if any(value.reason in local_faults for value in failures) else "discard"
 
 
 def _matches(expected: str | None, actual: str | None) -> bool:
@@ -585,7 +595,7 @@ class FileProcessor:
         planned: list[_PlannedImport],
         *,
         idempotency_key: str,
-    ) -> list[str]:
+    ) -> LibraryManagementImportResult:
         publisher = self._publish_import_bundle
         revision_getter = self._policy_revision_getter
         if publisher is None or revision_getter is None:
@@ -643,7 +653,7 @@ class FileProcessor:
         )
         for value in planned:
             self._prune_empty_source_dirs(value.source)
-        return list(result.paths)
+        return result
 
     def verify_downloaded_file(
         self,
@@ -703,6 +713,7 @@ class FileProcessor:
 
         succeeded: list[str] = []
         failed: list[FileFailure] = []
+        publisher_bundle_ids: list[str] = []
         planned: list[_PlannedImport] = []
         targets = manifest.target_files
         if only_filenames is not None:
@@ -736,18 +747,29 @@ class FileProcessor:
 
         if planned:
             try:
-                succeeded.extend(
-                    await self._publish_planned_imports(
-                        planned,
-                        idempotency_key=f"acquisition:{manifest.task_id}:files",
-                    )
+                published = await self._publish_planned_imports(
+                    planned,
+                    idempotency_key=f"acquisition:{manifest.task_id}:files",
                 )
+                succeeded.extend(published.paths)
+                publisher_bundle_ids.append(published.bundle_id)
             except AutomaticManagementHoldError as hold:
-                await self._hold_management_bundle(planned, manifest, hold)
-                failed.extend(
-                    FileFailure(filename=value.source.name, reason=MANAGEMENT_HELD)
-                    for value in planned
-                )
+                try:
+                    await self._hold_management_bundle(planned, manifest, hold)
+                except Exception:  # noqa: BLE001 - an undurable hold preserves source
+                    logger.exception(
+                        "Could not durably hold import bundle for task %s",
+                        manifest.task_id,
+                    )
+                    failed.extend(
+                        FileFailure(filename=value.source.name, reason=IMPORT_FAILED)
+                        for value in planned
+                    )
+                else:
+                    failed.extend(
+                        FileFailure(filename=value.source.name, reason=MANAGEMENT_HELD)
+                        for value in planned
+                    )
             except Exception:  # noqa: BLE001 - one bundle has one failure outcome
                 logger.exception(
                     "Shared import publication failed for task %s", manifest.task_id
@@ -776,7 +798,12 @@ class FileProcessor:
                 "failed": len(failed),
             },
         )
-        return ProcessResult(succeeded=succeeded, failed=failed)
+        return ProcessResult(
+            succeeded=succeeded,
+            failed=failed,
+            publisher_bundle_ids=publisher_bundle_ids,
+            workspace_disposition=_workspace_disposition(failed),
+        )
 
     async def process_downloaded_folder(
         self, manifest: DownloadManifest, files: list[Path]
@@ -844,6 +871,7 @@ class FileProcessor:
 
         succeeded: list[str] = []
         failed: list[FileFailure] = []
+        publisher_bundle_ids: list[str] = []
         planned: list[_PlannedImport] = []
         for candidate, track in matches:
             try:
@@ -872,18 +900,29 @@ class FileProcessor:
 
         if planned:
             try:
-                succeeded.extend(
-                    await self._publish_planned_imports(
-                        planned,
-                        idempotency_key=f"acquisition:{manifest.task_id}:folder",
-                    )
+                published = await self._publish_planned_imports(
+                    planned,
+                    idempotency_key=f"acquisition:{manifest.task_id}:folder",
                 )
+                succeeded.extend(published.paths)
+                publisher_bundle_ids.append(published.bundle_id)
             except AutomaticManagementHoldError as hold:
-                await self._hold_management_bundle(planned, manifest, hold)
-                failed.extend(
-                    FileFailure(filename=value.source.name, reason=MANAGEMENT_HELD)
-                    for value in planned
-                )
+                try:
+                    await self._hold_management_bundle(planned, manifest, hold)
+                except Exception:  # noqa: BLE001 - an undurable hold preserves source
+                    logger.exception(
+                        "Could not durably hold folder import for task %s",
+                        manifest.task_id,
+                    )
+                    failed.extend(
+                        FileFailure(filename=value.source.name, reason=IMPORT_FAILED)
+                        for value in planned
+                    )
+                else:
+                    failed.extend(
+                        FileFailure(filename=value.source.name, reason=MANAGEMENT_HELD)
+                        for value in planned
+                    )
             except Exception:  # noqa: BLE001 - one bundle has one failure outcome
                 logger.exception(
                     "Shared folder import publication failed for task %s",
@@ -902,7 +941,12 @@ class FileProcessor:
                 logger.warning(
                     "post-import reconcile failed for task %s", manifest.task_id
                 )
-        return ProcessResult(succeeded=succeeded, failed=failed)
+        return ProcessResult(
+            succeeded=succeeded,
+            failed=failed,
+            publisher_bundle_ids=publisher_bundle_ids,
+            workspace_disposition=_workspace_disposition(failed),
+        )
 
     async def _hold_management_bundle(
         self,
@@ -1233,7 +1277,7 @@ class FileProcessor:
             ).get(str(target_path))
             if replacement is None or self._recycle_bin is None:
                 return target_path
-        paths = await self._publish_planned_imports(
+        published = await self._publish_planned_imports(
             [
                 _PlannedImport(
                     source=source,
@@ -1255,7 +1299,7 @@ class FileProcessor:
             ],
             idempotency_key=f"acquisition:held:{held.id}",
         )
-        return Path(paths[0])
+        return Path(published.paths[0])
 
     @staticmethod
     def _build_folder_target_tag(

@@ -1,5 +1,14 @@
 <script lang="ts">
-	import { ExternalLink, FileDown, RotateCcw, TimerOff, X } from 'lucide-svelte';
+	import {
+		Archive,
+		Clock3,
+		ExternalLink,
+		FileDown,
+		RotateCcw,
+		TimerOff,
+		TriangleAlert,
+		X
+	} from 'lucide-svelte';
 
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import {
@@ -45,6 +54,7 @@
 	const isLive = $derived(isSearchingState || isDownloading || isProcessing);
 	const showBar = $derived(isDownloading || isProcessing);
 	const isCompleted = $derived(task.status === 'completed' || task.status === 'partial');
+	const cleanupState = $derived(task.acquisition_cleanup_state);
 
 	// only stream live progress while the transfer is moving
 	$effect(() => {
@@ -124,6 +134,19 @@
 				{/if}
 				{#if isOwnedByOther}
 					<span class="text-[11px] text-base-content/50">(another user's download)</span>
+				{/if}
+				{#if cleanupState === 'pending'}
+					<span class="inline-flex items-center gap-1 text-[11px] text-base-content/55">
+						<Clock3 class="size-3" /> Cleaning source files
+					</span>
+				{:else if cleanupState === 'preserved'}
+					<span class="inline-flex items-center gap-1 text-[11px] text-warning">
+						<Archive class="size-3" /> Source files kept
+					</span>
+				{:else if cleanupState === 'needs_attention'}
+					<span class="inline-flex items-center gap-1 text-[11px] text-error/80">
+						<TriangleAlert class="size-3" /> Source cleanup needs attention
+					</span>
 				{/if}
 			</div>
 			{#if showBar}
