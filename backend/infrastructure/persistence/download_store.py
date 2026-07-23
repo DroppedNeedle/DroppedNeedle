@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS download_attempts (
     mount_root TEXT,
     workspace_path TEXT,
     materialized_paths_json TEXT NOT NULL DEFAULT '[]',
+    materialized_fingerprints_json TEXT NOT NULL DEFAULT '{}',
     publisher_bundle_ids_json TEXT NOT NULL DEFAULT '[]',
     legacy_reconciled INTEGER NOT NULL DEFAULT 0 CHECK(legacy_reconciled IN (0,1)),
     state TEXT NOT NULL CHECK(state IN (
@@ -248,6 +249,7 @@ _ATTEMPT_CAS_UPDATABLE = frozenset(
         "mount_root",
         "workspace_path",
         "materialized_paths_json",
+        "materialized_fingerprints_json",
         "publisher_bundle_ids_json",
         "cleanup_failures",
         "next_retry_at",
@@ -391,6 +393,11 @@ class DownloadStore(PersistenceBase):
                 conn,
                 "ALTER TABLE download_attempts ADD COLUMN legacy_reconciled "
                 "INTEGER NOT NULL DEFAULT 0 CHECK(legacy_reconciled IN (0,1))",
+            )
+            _safe_alter(
+                conn,
+                "ALTER TABLE download_attempts ADD COLUMN materialized_fingerprints_json "
+                "TEXT NOT NULL DEFAULT '{}'",
             )
             for column, ddl in (
                 ("artist_mbid", "TEXT"),
@@ -1895,6 +1902,15 @@ def _row_to_attempt(row: sqlite3.Row | None) -> DownloadAttempt | None:
             str(item)
             for item in _decode_json(str(value.pop("materialized_paths_json")))
         ]
+        raw_fingerprints = _decode_json(
+            str(value.pop("materialized_fingerprints_json"))
+        )
+        if not isinstance(raw_fingerprints, dict):
+            return None
+        materialized_fingerprints = {
+            str(path): str(fingerprint) if fingerprint is not None else None
+            for path, fingerprint in raw_fingerprints.items()
+        }
         publisher_bundle_ids = [
             str(item)
             for item in _decode_json(str(value.pop("publisher_bundle_ids_json")))
@@ -1906,6 +1922,7 @@ def _row_to_attempt(row: sqlite3.Row | None) -> DownloadAttempt | None:
         **value,
         handle=handle,
         materialized_paths=materialized_paths,
+        materialized_fingerprints=materialized_fingerprints,
         publisher_bundle_ids=publisher_bundle_ids,
     )
 

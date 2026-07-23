@@ -4,6 +4,7 @@
 	import {
 		AlertTriangle,
 		ArrowLeft,
+		CheckCircle2,
 		CirclePause,
 		CirclePlay,
 		Clock3,
@@ -45,6 +46,7 @@
 	let undoHeading: HTMLHeadingElement;
 	let undoOpener: HTMLButtonElement | null = null;
 	let undoError = $state('');
+	let nowSeconds = $state(Date.now() / 1000);
 
 	const operationQuery = getLibraryManagementOperationQuery(
 		() => authStore.user?.id,
@@ -83,14 +85,84 @@
 		Boolean(
 			operation &&
 			['succeeded', 'stopped'].includes(operation.state) &&
-			operation.succeeded_count > 0
+			operation.undo_available_count > 0 &&
+			(operation.undo_expires_at === null || operation.undo_expires_at > nowSeconds)
 		)
 	);
+	const undoStatus = $derived.by(() => {
+		if (!operation) return '';
+		if (operation.undo_expires_at !== null && operation.undo_expires_at <= nowSeconds) {
+			const count = operation.undo_available_count + operation.undo_expired_count;
+			return `Undo snapshots have expired for ${count.toLocaleString()} ${count === 1 ? 'file' : 'files'}.`;
+		}
+		if (operation.undo_available_count > 0) {
+			const count = operation.undo_available_count;
+			const deadline = operation.undo_expires_at
+				? ` The final snapshot expires ${formatDate(operation.undo_expires_at)}.`
+				: '';
+			return `${count.toLocaleString()} ${count === 1 ? 'file has' : 'files have'} an Undo snapshot.${deadline}`;
+		}
+		if (operation.undo_expired_count > 0) {
+			return `Undo snapshots have expired for ${operation.undo_expired_count.toLocaleString()} ${operation.undo_expired_count === 1 ? 'file' : 'files'}.`;
+		}
+		return 'This operation has no completed file snapshots to undo.';
+	});
+	const baselineStatus = $derived.by(() => {
+		if (!operation || operation.baseline_available_count <= 0) return '';
+		const count = operation.baseline_available_count;
+		return `${count.toLocaleString()} ${count === 1 ? 'file has' : 'files have'} an available first-management baseline.`;
+	});
+	const terminalPresentation = $derived.by(() => {
+		if (!operation) return null;
+		if (operation.state === 'failed') {
+			return {
+				className: 'alert-error',
+				label: operation.terminal_code
+					? titleManagementValue(operation.terminal_code)
+					: 'Operation Failed',
+				detail:
+					'Inspect the per-file results below. Recovery never silently removes an uncertain file.'
+			};
+		}
+		if (!operation.terminal_code) return null;
+		if (operation.terminal_code === 'COMPLETED_WITH_ERRORS') {
+			return {
+				className: 'alert-warning',
+				label: titleManagementValue(operation.terminal_code),
+				detail: 'The operation finished, but some files failed. Inspect their results below.'
+			};
+		}
+		if (operation.terminal_code === 'COMPLETED_WITH_SKIPS') {
+			return {
+				className: 'alert-info',
+				label: titleManagementValue(operation.terminal_code),
+				detail: 'The operation finished with skipped files. Inspect their reasons below.'
+			};
+		}
+		if (operation.state === 'succeeded') {
+			return {
+				className: 'alert-success',
+				label: titleManagementValue(operation.terminal_code),
+				detail: 'All planned work finished.'
+			};
+		}
+		return {
+			className: 'alert-info',
+			label: titleManagementValue(operation.terminal_code),
+			detail: 'Inspect the per-file results below for the recorded outcome.'
+		};
+	});
 
 	onMount(() => {
 		const events = createLibraryManagementEvents();
 		events.start();
-		return events.stop;
+		const timer = window.setInterval(() => {
+			nowSeconds = Date.now() / 1000;
+		}, 30_000);
+		return () => {
+			window.clearInterval(timer);
+			events.stop();
+		};
 	});
 
 	async function control(action: 'pause' | 'resume'): Promise<void> {
@@ -190,6 +262,9 @@
 					>
 				</div>
 				<div class="mt-5">
+					<span class="sr-only" role="status" aria-live="polite"
+						>Operation phase: {activePhaseLabel}</span
+					>
 					<div class="mb-2 flex justify-between text-xs">
 						<span>{activePhaseLabel}</span><span
 							>{operation.completed_count.toLocaleString()} / {operation.expected_work_count.toLocaleString()}</span
@@ -250,10 +325,14 @@
 					</div>{/if}
 			</header>
 
-			{#if operation.terminal_code}<div class="alert alert-error">
-					<AlertTriangle class="h-5 w-5" /><span
-						><strong>{titleManagementValue(operation.terminal_code)}</strong><br />Inspect per-file
-						results below. Recovery never silently removes an uncertain file.</span
+			{#if terminalPresentation}<div
+					class={`alert ${terminalPresentation.className}`}
+					role={operation.state === 'failed' ? 'alert' : 'status'}
+				>
+					{#if operation.state === 'succeeded'}<CheckCircle2 class="h-5 w-5" />{:else}<AlertTriangle
+							class="h-5 w-5"
+						/>{/if}<span
+						><strong>{terminalPresentation.label}</strong><br />{terminalPresentation.detail}</span
 					>
 				</div>{/if}
 
@@ -366,6 +445,7 @@
 						Creates a separate preview from this operation's before-state snapshots. Files changed
 						again later are skipped.
 					</p>
+					<p class="mt-2 text-xs text-base-content/55">{undoStatus}</p>
 					<button
 						class="btn btn-outline btn-sm mt-3"
 						disabled={!undoAvailable}
@@ -375,8 +455,10 @@
 							undoDialog.showModal();
 							undoHeading.focus();
 						}}>Preview Undo...</button
-					>{#if !undoAvailable}<p class="mt-2 text-xs text-base-content/45">
-							Undo appears after a successful or stopped operation with completed changes.
+					>{#if operation.undo_available_count > 0 && !undoAvailable && (operation.undo_expires_at === null || operation.undo_expires_at > nowSeconds)}<p
+							class="mt-2 text-xs text-base-content/45"
+						>
+							Undo becomes available when this operation reaches a successful or stopped state.
 						</p>{/if}
 				</div>
 				<div class="management-operation-panel">
@@ -386,6 +468,9 @@
 						Restore files to how they were before DroppedNeedle first managed them. This is broader
 						than Undo and leaves restored files unmanaged.
 					</p>
+					{#if operation.baseline_available_count > 0}<p class="mt-2 text-xs text-base-content/55">
+							{baselineStatus}
+						</p>{/if}
 					<a href="/library#operations" class="btn btn-ghost btn-sm mt-3"
 						>Open baseline restore...</a
 					>
@@ -458,6 +543,7 @@
 			This does not immediately change files. A full preview will show restorable, changed, expired,
 			and blocked items before a separate Apply confirmation.
 		</p>
+		{#if operation}<p class="mt-2 text-xs text-base-content/55">{undoStatus}</p>{/if}
 		<div class="mt-3 alert alert-info text-sm">
 			<RotateCcw class="h-5 w-5" /><span
 				><strong>Undo is not baseline restore.</strong> It targets only this operation's completed changes.</span

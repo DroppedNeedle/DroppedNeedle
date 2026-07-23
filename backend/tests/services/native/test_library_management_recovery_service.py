@@ -280,6 +280,33 @@ async def test_recovery_finishes_move_after_publish_before_journal_transition(
 
 
 @pytest.mark.asyncio
+async def test_recovery_defers_repeated_cancellation_until_commit_is_durable() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def critical():
+        started.set()
+        await release.wait()
+        return "recovered"
+
+    critical_task = asyncio.create_task(critical())
+    task = asyncio.create_task(
+        LibraryManagementRecoveryService._finish_critical_task(critical_task)
+    )
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
+    release.set()
+
+    result, cancelled = await task
+
+    assert result == "recovered"
+    assert cancelled is True
+
+
+@pytest.mark.asyncio
 async def test_recovery_finishes_same_path_after_backup_before_journal_transition(
     tmp_path: Path,
 ) -> None:

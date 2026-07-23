@@ -92,7 +92,12 @@ class LibraryFilesystemCoordinator:
         try:
             await asyncio.shield(pending)
         except asyncio.CancelledError:
-            await asyncio.shield(pending)
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    continue
+            pending.result()
             release()
             raise
 

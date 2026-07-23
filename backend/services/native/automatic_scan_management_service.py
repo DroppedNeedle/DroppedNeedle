@@ -70,7 +70,11 @@ class AutomaticScanManagementService:
         )
         if resolved is None:
             return None
-        settings, _assignment, profile, policy = resolved
+        settings, assignment, profile, policy = resolved
+        if await self._restored_after_activation(
+            tracks, assignment.activation_confirmed_at
+        ):
+            return None
         track_ids = tuple(str(track["id"]) for track in tracks)
         identity = await self._store.get_accepted_library_management_identity(
             local_album_id,
@@ -137,6 +141,24 @@ class AutomaticScanManagementService:
             origin="scan_discovered",
         )
         return handle.job_id
+
+    async def _restored_after_activation(
+        self, tracks: list[dict], activation_confirmed_at: float | None
+    ) -> bool:
+        if activation_confirmed_at is None:
+            return True
+        for track in tracks:
+            state = await self._store.get_track_management_state(str(track["id"]))
+            if (
+                state is not None
+                and state.last_outcome == "restored"
+                and (
+                    state.last_managed_at is None
+                    or state.last_managed_at >= activation_confirmed_at
+                )
+            ):
+                return True
+        return False
 
     async def _matches_committed_management(
         self,

@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
 		string,
 		unknown
 	>,
+	presetDiff: { data: null, isLoading: false, isError: false } as Record<string, unknown>,
 	activation: { data: null, isLoading: false, refetch: vi.fn() } as Record<string, unknown>,
 	validate: vi.fn(),
 	impact: vi.fn(),
@@ -17,17 +18,24 @@ const h = vi.hoisted(() => ({
 	deleteProfile: vi.fn(),
 	createActivation: vi.fn(),
 	confirmActivation: vi.fn(),
+	createActivationPending: false,
+	confirmActivationPending: false,
 	purgeImpact: vi.fn(),
 	purge: vi.fn(),
-	purgeData: null as Record<string, unknown> | null
+	purgeData: null as Record<string, unknown> | null,
+	remember: vi.fn()
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
 	authStore: { isAdmin: true, user: { id: 'admin-1' } }
 }));
+vi.mock('$lib/queries/library-management/LibraryManagementPreviewTokens', () => ({
+	rememberLibraryManagementPreviewToken: (...args: unknown[]) => h.remember(...args)
+}));
 vi.mock('$lib/queries/library-management/LibraryManagementQueries.svelte', () => ({
 	getLibraryManagementSettingsQuery: () => h.settings,
-	getLibraryManagementActivationPreviewQuery: () => h.activation
+	getLibraryManagementActivationPreviewQuery: () => h.activation,
+	getLibraryManagementPresetDiffQuery: () => h.presetDiff
 }));
 vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
 	updateLibraryManagementSettingsMutation: () => ({ mutateAsync: h.update, isPending: false }),
@@ -43,11 +51,15 @@ vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () 
 	}),
 	createLibraryManagementActivationPreviewMutation: () => ({
 		mutateAsync: h.createActivation,
-		isPending: false
+		get isPending() {
+			return h.createActivationPending;
+		}
 	}),
 	confirmLibraryManagementActivationMutation: () => ({
 		mutateAsync: h.confirmActivation,
-		isPending: false
+		get isPending() {
+			return h.confirmActivationPending;
+		}
 	}),
 	previewLibraryManagementBaselinePurgeMutation: () => ({
 		mutateAsync: h.purgeImpact,
@@ -219,10 +231,33 @@ const roots = [
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	h.createActivationPending = false;
+	h.confirmActivationPending = false;
 	h.purgeData = null;
 	const settings = baseSettings();
+	const presetProfile = structuredClone(settings.profiles[0]);
+	presetProfile.metadata.fields[0].mode = 'replace';
+	presetProfile.organization.move_enabled = false;
+	h.presetDiff = {
+		data: {
+			profile_id: profileId,
+			preset_origin: 'picard_style_organizer',
+			preset_version: 1,
+			differs: true,
+			changed_groups: ['metadata', 'organization'],
+			preset_profile: presetProfile
+		},
+		isLoading: false,
+		isError: false
+	};
 	h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
-	h.activation = { data: null, isLoading: false, refetch: vi.fn() };
+	h.activation = {
+		data: null,
+		isLoading: false,
+		isError: false,
+		isFetching: false,
+		refetch: vi.fn()
+	};
 	const harmless = {
 		current_settings_revision: 'settings-1',
 		proposed_settings_revision: 'settings-2',
@@ -255,6 +290,15 @@ describe('SettingsLibraryManagement', () => {
 		await expect
 			.element(profileDialog.getByRole('heading', { name: 'Picard-style Organizer' }))
 			.toHaveFocus();
+		await expect.element(profileDialog.getByText('Customized from preset')).toBeVisible();
+		await expect
+			.element(profileDialog.getByText('Changed sections: metadata, file organization'))
+			.toBeVisible();
+		await profileDialog.getByText('Language reference').click();
+		await expect.element(profileDialog.getByText('Alpha/Management Track.flac')).toBeVisible();
+		await expect
+			.element(profileDialog.getByText(/Run a dry preview for real file results/))
+			.toBeVisible();
 		const metadataToggle = profileDialog.getByRole('checkbox', { name: /Manage metadata tags/ });
 		await metadataToggle.click();
 		await expect
@@ -285,6 +329,133 @@ describe('SettingsLibraryManagement', () => {
 		await replayGainToggle.click();
 		await expect.element(replayGainMode).toBeEnabled();
 		await expect.element(replayGainMode).toHaveValue('preserve');
+
+		await profileDialog.getByText('Preservation and format safety').click();
+		await expect
+			.element(profileDialog.getByText('DroppedNeedle catalog updates immediately'))
+			.toBeVisible();
+		await expect
+			.element(profileDialog.getByRole('checkbox', { name: /Refresh DroppedNeedle/ }))
+			.not.toBeInTheDocument();
+	});
+
+	it('adds a copied profile to the saved draft and opens it for editing', async () => {
+		const settings = baseSettings();
+		const sourceProfile = {
+			...settings.profiles[0],
+			id: '1c56cd00-4f7d-42ee-97df-2710110a31d2',
+			name: 'Car copy profile',
+			preset_origin: null,
+			preset_version: null,
+			revision: 'profile-custom'
+		};
+		settings.profiles.push(sourceProfile);
+		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
+		const copiedProfile = {
+			...sourceProfile,
+			id: '94bf55a3-b553-4cf5-b18c-671194f67783',
+			name: 'Archive profile',
+			preset_origin: null,
+			preset_version: null,
+			revision: 'profile-2'
+		};
+		h.copy.mockResolvedValue({ profile: copiedProfile, settings_revision: 'settings-2' });
+
+		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await page.getByRole('combobox', { name: 'Profile to copy' }).selectOptions(sourceProfile.id);
+		await page.getByRole('textbox', { name: 'New profile name' }).fill('Archive profile');
+		await page.getByRole('button', { name: 'Create copy' }).click();
+
+		expect(h.copy).toHaveBeenCalledWith({
+			profileId: sourceProfile.id,
+			request: { name: 'Archive profile', expected_settings_revision: 'settings-1' }
+		});
+		const profileDialog = page.getByRole('dialog', { name: 'Archive profile', exact: true });
+		await expect
+			.element(profileDialog.getByRole('heading', { name: 'Archive profile' }))
+			.toHaveFocus();
+		await expect.element(page.getByText('Custom').last()).toBeVisible();
+	});
+
+	it('keeps refetched copies unique and removes a successfully deleted profile', async () => {
+		const settings = baseSettings();
+		const profileIds = [
+			'1c56cd00-4f7d-42ee-97df-2710110a31d2',
+			'94bf55a3-b553-4cf5-b18c-671194f67783',
+			'32607bf8-19a4-44d0-9757-d93b26de4052',
+			'a945fc94-c072-4a0c-991d-e0cc4db5bd54'
+		];
+		const copies = profileIds.map((id, index) => ({
+			...structuredClone(settings.profiles[0]),
+			id,
+			name: `Profile ${index + 1}`,
+			preset_origin: null,
+			preset_version: null,
+			revision: `profile-${index + 2}`
+		}));
+		settings.profiles.push(...copies);
+		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
+		h.copy.mockResolvedValue({ profile: copies[3], settings_revision: 'settings-2' });
+		h.deleteProfile.mockResolvedValue({
+			...settings,
+			profiles: settings.profiles.filter((profile) => profile.id !== copies[3].id),
+			settings_revision: 'settings-3'
+		});
+
+		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		const profileRegion = page.getByRole('region', {
+			name: 'Saved Library Management profiles'
+		});
+		await expect.element(profileRegion).toHaveAttribute('tabindex', '0');
+		expect(profileRegion.getByRole('button', { name: /^Delete Profile/ }).all()).toHaveLength(4);
+
+		await page.getByRole('textbox', { name: 'New profile name' }).fill('Profile 4');
+		await page.getByRole('button', { name: 'Create copy' }).click();
+		expect(profileRegion.getByRole('button', { name: 'Delete Profile 4' }).all()).toHaveLength(1);
+
+		const profileDialog = page.getByRole('dialog', { name: 'Profile 4', exact: true });
+		await profileDialog.getByRole('button', { name: 'Cancel' }).click();
+		await profileRegion.getByRole('button', { name: 'Delete Profile 4' }).click();
+		await page.getByRole('button', { name: 'Delete profile', exact: true }).click();
+
+		expect(h.deleteProfile).toHaveBeenCalledWith({
+			profileId: copies[3].id,
+			request: { expected_settings_revision: 'settings-2' }
+		});
+		await expect
+			.element(profileRegion.getByRole('button', { name: 'Delete Profile 4' }))
+			.not.toBeInTheDocument();
+	});
+
+	it('resets one preset section in the draft and confirms before discarding changes', async () => {
+		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await page.getByRole('button', { name: 'Edit' }).click();
+		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
+		const resetButton = profileDialog.getByRole('button', { name: 'Reset Metadata' });
+		await resetButton.click();
+
+		const resetDialog = page.getByRole('dialog', { name: 'Reset Metadata?' });
+		await expect
+			.element(resetDialog.getByRole('heading', { name: 'Reset Metadata?' }))
+			.toHaveFocus();
+		await expect
+			.element(resetDialog.getByText(/Review the values, then save the profile/))
+			.toBeVisible();
+		await resetDialog.getByRole('button', { name: 'Reset section' }).click();
+		await expect
+			.element(profileDialog.getByRole('combobox', { name: 'Mode for title' }))
+			.toHaveValue('replace');
+		await expect.element(resetButton).not.toBeInTheDocument();
+
+		const cancelButton = profileDialog.getByRole('button', { name: 'Cancel' });
+		await cancelButton.click();
+		const discardDialog = page.getByRole('dialog', { name: 'Discard your changes?' });
+		await expect
+			.element(discardDialog.getByRole('heading', { name: 'Discard your changes?' }))
+			.toHaveFocus();
+		await discardDialog.getByRole('button', { name: 'Keep editing' }).click();
+		await expect.element(cancelButton).toHaveFocus();
+		await expect.element(profileDialog).toBeVisible();
 	});
 
 	it('requires a current dry run and exact phrase before first automatic activation', async () => {
@@ -326,6 +497,10 @@ describe('SettingsLibraryManagement', () => {
 			.toHaveFocus();
 		await page.getByRole('button', { name: 'Run dry run' }).click();
 		await expect.element(page.getByText('Eligible').first()).toBeVisible();
+		expect(h.remember).toHaveBeenCalledWith('preview-1', 'token-1');
+		await expect
+			.element(page.getByRole('link', { name: 'Review file-by-file dry run' }))
+			.toHaveAttribute('href', '/library/management/previews/preview-1');
 		await page.getByRole('button', { name: 'Use this dry run' }).click();
 
 		const enableButton = page.getByRole('button', { name: 'Enable Library Management' });
@@ -373,7 +548,99 @@ describe('SettingsLibraryManagement', () => {
 		await page.getByRole('button', { name: 'Run dry run' }).click();
 		await expect.element(page.getByText(/stale or expired/)).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Use this dry run' })).toBeDisabled();
+		await page.getByRole('button', { name: 'Run a fresh dry run' }).click();
+		await expect.element(page.getByRole('button', { name: 'Run dry run' })).toBeVisible();
 		expect(h.confirmActivation).not.toHaveBeenCalled();
+	});
+
+	it('labels a failed activation dry run as terminal and offers a fresh run', async () => {
+		h.impact.mockResolvedValue({
+			current_settings_revision: 'settings-1',
+			proposed_settings_revision: 'settings-2',
+			stale: false,
+			classification: 'destructive',
+			preview_required: true,
+			affected_root_ids: ['root-1'],
+			reasons: []
+		});
+		h.activation = {
+			data: {
+				job_id: 'preview-1',
+				state: 'failed',
+				ready_for_confirmation: false,
+				expired: false,
+				stale: false,
+				summary: { eligible_count: 0, warning_count: 0, blocked_count: 0, path_change_count: 0 }
+			},
+			isLoading: false,
+			isError: false,
+			isFetching: false,
+			refetch: vi.fn()
+		};
+
+		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await page.getByRole('checkbox', { name: /Configure Library Management/ }).click();
+		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
+		await page.getByRole('button', { name: 'Validate and save' }).click();
+		await page.getByRole('button', { name: 'Run dry run' }).click();
+
+		await expect.element(page.getByText(/failed during planning/)).toBeVisible();
+		await expect.element(page.getByText(/Planning is still running/)).not.toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: 'Run a fresh dry run' })).toBeVisible();
+	});
+
+	it('shows a retryable activation-query failure and does not promise page-level resume', async () => {
+		h.impact.mockResolvedValue({
+			current_settings_revision: 'settings-1',
+			proposed_settings_revision: 'settings-2',
+			stale: false,
+			classification: 'destructive',
+			preview_required: true,
+			affected_root_ids: ['root-1'],
+			reasons: []
+		});
+		const refetch = vi.fn();
+		h.activation = {
+			data: null,
+			isLoading: false,
+			isError: true,
+			isFetching: false,
+			refetch
+		};
+
+		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await page.getByRole('checkbox', { name: /Configure Library Management/ }).click();
+		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
+		await page.getByRole('button', { name: 'Validate and save' }).click();
+		await page.getByRole('button', { name: 'Run dry run' }).click();
+
+		await expect.element(page.getByText('Could not load this dry run.')).toBeVisible();
+		await expect.element(page.getByText(/leave this page and return/)).not.toBeInTheDocument();
+		await page.getByRole('button', { name: 'Retry status' }).click();
+		expect(refetch).toHaveBeenCalledOnce();
+	});
+
+	it('prevents activation dismissal while a destructive confirmation is pending', async () => {
+		h.impact.mockResolvedValue({
+			current_settings_revision: 'settings-1',
+			proposed_settings_revision: 'settings-2',
+			stale: false,
+			classification: 'destructive',
+			preview_required: true,
+			affected_root_ids: ['root-1'],
+			reasons: []
+		});
+		h.confirmActivationPending = true;
+
+		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await page.getByRole('checkbox', { name: /Configure Library Management/ }).click();
+		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
+		await page.getByRole('button', { name: 'Validate and save' }).click();
+
+		await expect.element(page.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+		await expect
+			.element(page.getByRole('button', { name: 'Cancel Library Management activation' }))
+			.toBeDisabled();
 	});
 
 	it('keeps irreversible baseline purge in advanced retention with impact and typed confirmation', async () => {

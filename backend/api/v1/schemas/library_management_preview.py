@@ -238,6 +238,10 @@ class LibraryManagementPreviewDetailResponse(AppStruct):
     failed_count: int = 0
     skipped_count: int = 0
     control_request: str = "none"
+    undo_available_count: int = 0
+    undo_expired_count: int = 0
+    undo_expires_at: float | None = None
+    baseline_available_count: int = 0
     external_refreshes: list[LibraryManagementExternalRefreshResponse] = msgspec.field(
         default_factory=list
     )

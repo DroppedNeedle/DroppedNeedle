@@ -3,11 +3,13 @@
 	import {
 		AudioWaveform,
 		Braces,
+		Check,
 		ChevronRight,
 		FolderCog,
 		Image,
 		ListFilter,
 		Plus,
+		RotateCcw,
 		ShieldCheck,
 		Tags,
 		Trash2,
@@ -16,12 +18,14 @@
 	} from 'lucide-svelte';
 
 	import LibraryManagementScriptEditor from './LibraryManagementScriptEditor.svelte';
+	import { getLibraryManagementPresetDiffQuery } from '$lib/queries/library-management/LibraryManagementQueries.svelte';
 	import type {
 		ArtworkImageType,
 		ArtworkProvider,
 		LibraryManagementProfile,
 		ManagementScriptSettings
 	} from '$lib/queries/library-management/types';
+	import { authStore } from '$lib/stores/authStore.svelte';
 
 	interface Props {
 		profile: LibraryManagementProfile;
@@ -39,16 +43,68 @@
 	let { profile, namingScripts, taggingScripts, saving = false, onclose, onsave }: Props = $props();
 	let dialog: HTMLDialogElement;
 	let heading: HTMLHeadingElement;
+	let resetDialog: HTMLDialogElement;
+	let resetHeading: HTMLHeadingElement;
+	let resetOpener: HTMLButtonElement | null = null;
+	let discardDialog: HTMLDialogElement;
+	let discardHeading: HTMLHeadingElement;
+	let closeOpener: HTMLButtonElement | null = null;
 	const initialProfile = (): LibraryManagementProfile => structuredClone($state.snapshot(profile));
 	const initialScripts = (): ManagementScriptSettings[] =>
 		structuredClone($state.snapshot(namingScripts));
 	const initialTaggingScripts = (): ManagementScriptSettings[] =>
 		structuredClone($state.snapshot(taggingScripts));
-	let draft = $state<LibraryManagementProfile>(initialProfile());
-	let scripts = $state<ManagementScriptSettings[]>(initialScripts());
-	let tagScripts = $state<ManagementScriptSettings[]>(initialTaggingScripts());
+	const originalProfile = initialProfile();
+	const originalScripts = initialScripts();
+	const originalTaggingScripts = initialTaggingScripts();
+	let draft = $state<LibraryManagementProfile>(structuredClone(originalProfile));
+	let scripts = $state<ManagementScriptSettings[]>(structuredClone(originalScripts));
+	let tagScripts = $state<ManagementScriptSettings[]>(structuredClone(originalTaggingScripts));
 	let fieldFilter = $state('');
 	let localError = $state('');
+	type PresetGroup =
+		| 'metadata'
+		| 'genres'
+		| 'artwork'
+		| 'organization'
+		| 'file_behavior'
+		| 'enrichment'
+		| 'notification';
+	let resetGroup = $state<PresetGroup | null>(null);
+	const presetGroups: PresetGroup[] = [
+		'metadata',
+		'genres',
+		'artwork',
+		'organization',
+		'file_behavior',
+		'enrichment',
+		'notification'
+	];
+	const presetGroupLabels: Record<PresetGroup, string> = {
+		metadata: 'Metadata',
+		genres: 'Genres',
+		artwork: 'Artwork',
+		organization: 'File organization',
+		file_behavior: 'File safety',
+		enrichment: 'Lyrics and ReplayGain',
+		notification: 'Notifications'
+	};
+	const presetDiffQuery = getLibraryManagementPresetDiffQuery(
+		() => authStore.user?.id,
+		() => (profile.preset_origin ? profile.id : null)
+	);
+	const changedPresetGroups = $derived.by(() => {
+		const preset = presetDiffQuery.data?.preset_profile;
+		if (!preset) return [];
+		return presetGroups.filter(
+			(group) => JSON.stringify(draft[group]) !== JSON.stringify(preset[group])
+		);
+	});
+	const dirty = $derived(
+		JSON.stringify(draft) !== JSON.stringify(originalProfile) ||
+			JSON.stringify(scripts) !== JSON.stringify(originalScripts) ||
+			JSON.stringify(tagScripts) !== JSON.stringify(originalTaggingScripts)
+	);
 	type RelationshipType = LibraryManagementProfile['metadata']['relationships']['types'][number];
 	type GenreSource = LibraryManagementProfile['genres']['sources'][number];
 
@@ -127,6 +183,68 @@
 		draft.genres.aliases = [...draft.genres.aliases, { source: '', target: '' }];
 	}
 
+	function requestReset(group: PresetGroup, opener: HTMLButtonElement): void {
+		resetGroup = group;
+		resetOpener = opener;
+		resetDialog.showModal();
+		resetHeading.focus();
+	}
+
+	function restoreResetFocus(): void {
+		resetOpener?.focus();
+		resetOpener = null;
+		resetGroup = null;
+	}
+
+	function resetSection(): void {
+		const preset = presetDiffQuery.data?.preset_profile;
+		if (!preset || !resetGroup) return;
+		switch (resetGroup) {
+			case 'metadata':
+				draft.metadata = structuredClone(preset.metadata);
+				break;
+			case 'genres':
+				draft.genres = structuredClone(preset.genres);
+				break;
+			case 'artwork':
+				draft.artwork = structuredClone(preset.artwork);
+				break;
+			case 'organization':
+				draft.organization = structuredClone(preset.organization);
+				break;
+			case 'file_behavior':
+				draft.file_behavior = structuredClone(preset.file_behavior);
+				break;
+			case 'enrichment':
+				draft.enrichment = structuredClone(preset.enrichment);
+				break;
+			case 'notification':
+				draft.notification = structuredClone(preset.notification);
+		}
+		resetDialog.close();
+	}
+
+	function requestClose(opener: HTMLButtonElement | null = null): void {
+		if (saving) return;
+		if (!dirty) {
+			dialog.close();
+			return;
+		}
+		closeOpener = opener;
+		discardDialog.showModal();
+		discardHeading.focus();
+	}
+
+	function restoreCloseFocus(): void {
+		closeOpener?.focus();
+		closeOpener = null;
+	}
+
+	function discardChanges(): void {
+		discardDialog.close();
+		dialog.close();
+	}
+
 	async function save(): Promise<void> {
 		localError = '';
 		if (!draft.name.trim()) {
@@ -141,7 +259,16 @@
 	}
 </script>
 
-<dialog bind:this={dialog} class="modal" aria-labelledby="management-profile-title" {onclose}>
+<dialog
+	bind:this={dialog}
+	class="modal"
+	aria-labelledby="management-profile-title"
+	{onclose}
+	oncancel={(event) => {
+		event.preventDefault();
+		requestClose();
+	}}
+>
 	<div class="modal-box management-profile-editor max-w-5xl p-0">
 		<header class="management-profile-editor__header">
 			<div class="min-w-0">
@@ -161,7 +288,8 @@
 			<button
 				class="btn btn-ghost btn-sm btn-square"
 				aria-label="Close profile editor"
-				onclick={() => dialog.close()}
+				disabled={saving}
+				onclick={(event) => requestClose(event.currentTarget)}
 			>
 				<X class="h-5 w-5" />
 			</button>
@@ -185,6 +313,37 @@
 					<span class="badge badge-outline">{draft.preset_origin ? 'Preset based' : 'Custom'}</span>
 					<span class="badge badge-ghost font-mono">rev {draft.revision.slice(0, 8)}</span>
 				</div>
+				{#if draft.preset_origin && presetDiffQuery.data}<div
+						class="lg:col-span-2 rounded-xl border border-base-content/10 bg-base-200/40 p-3 text-sm"
+					>
+						<strong
+							>{changedPresetGroups.length > 0
+								? 'Customized from preset'
+								: 'Matches saved preset'}</strong
+						>
+						<p class="mt-1 text-xs text-base-content/55">
+							{changedPresetGroups.length > 0
+								? `Changed sections: ${changedPresetGroups.map((group) => presetGroupLabels[group].toLowerCase()).join(', ')}`
+								: 'No profile sections differ from its recorded preset version.'}
+						</p>
+						{#if changedPresetGroups.length > 0 && presetDiffQuery.data.preset_profile}
+							<div class="mt-3 flex flex-wrap gap-2">
+								{#each changedPresetGroups as group (group)}
+									<button
+										class="btn btn-ghost btn-xs"
+										onclick={(event) => requestReset(group, event.currentTarget)}
+									>
+										<RotateCcw class="h-3.5 w-3.5" /> Reset {presetGroupLabels[group]}
+									</button>
+								{/each}
+							</div>
+						{/if}
+					</div>{:else if draft.preset_origin && presetDiffQuery.isError}<div
+						class="alert alert-error lg:col-span-2 py-2 text-xs"
+						role="alert"
+					>
+						Could not compare this profile with its preset. Saved values are unchanged.
+					</div>{/if}
 			</section>
 
 			<details class="management-editor-section" open>
@@ -1194,17 +1353,14 @@
 							></span
 						></label
 					>
-					<label class="management-master-toggle"
-						><input
-							type="checkbox"
-							class="toggle toggle-sm"
-							bind:checked={draft.notification.refresh_droppedneedle}
-						/><span
-							><strong>Refresh DroppedNeedle</strong><small
-								>Re-index committed files and paths.</small
+					<div class="management-master-toggle">
+						<Check class="h-4 w-4 shrink-0 text-success" />
+						<span
+							><strong>DroppedNeedle catalog updates immediately</strong><small
+								>Committed tags and paths are updated as part of every successful operation.</small
 							></span
-						></label
-					>
+						>
+					</div>
 					<label class="management-master-toggle"
 						><input
 							type="checkbox"
@@ -1227,8 +1383,10 @@
 				Saving validates the whole profile before any active root can adopt broader write access.
 			</p>
 			<div class="flex gap-2">
-				<button class="btn btn-ghost" onclick={() => dialog.close()} disabled={saving}
-					>Cancel</button
+				<button
+					class="btn btn-ghost"
+					onclick={(event) => requestClose(event.currentTarget)}
+					disabled={saving}>Cancel</button
 				>
 				<button class="btn management-btn" onclick={() => void save()} disabled={saving}>
 					{#if saving}<span class="loading loading-spinner loading-sm"></span>{/if}
@@ -1238,6 +1396,72 @@
 		</footer>
 	</div>
 	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close profile editor">close</button>
+		<button
+			aria-label="Close profile editor"
+			disabled={saving}
+			onclick={(event) => {
+				event.preventDefault();
+				requestClose();
+			}}>close</button
+		>
+	</form>
+</dialog>
+
+<dialog
+	bind:this={resetDialog}
+	class="modal"
+	aria-labelledby="management-profile-reset-title"
+	onclose={restoreResetFocus}
+>
+	<div class="modal-box max-w-md">
+		<p class="management-kicker"><RotateCcw class="h-3.5 w-3.5" /> Preset values</p>
+		<h2
+			bind:this={resetHeading}
+			id="management-profile-reset-title"
+			tabindex="-1"
+			class="font-display text-xl font-semibold"
+		>
+			Reset {resetGroup ? presetGroupLabels[resetGroup] : 'section'}?
+		</h2>
+		<p class="mt-3 text-sm text-base-content/65">
+			This replaces only this section in the editor. Review the values, then save the profile to
+			apply the reset. No files or root settings are changed here.
+		</p>
+		<div class="modal-action">
+			<button class="btn btn-ghost" onclick={() => resetDialog.close()}>Cancel</button>
+			<button class="btn management-btn" onclick={resetSection}>Reset section</button>
+		</div>
+	</div>
+	<form method="dialog" class="modal-backdrop">
+		<button aria-label="Cancel preset reset">close</button>
+	</form>
+</dialog>
+
+<dialog
+	bind:this={discardDialog}
+	class="modal"
+	aria-labelledby="management-profile-discard-title"
+	onclose={restoreCloseFocus}
+>
+	<div class="modal-box max-w-md">
+		<p class="management-kicker"><ShieldCheck class="h-3.5 w-3.5" /> Unsaved profile</p>
+		<h2
+			bind:this={discardHeading}
+			id="management-profile-discard-title"
+			tabindex="-1"
+			class="font-display text-xl font-semibold"
+		>
+			Discard your changes?
+		</h2>
+		<p class="mt-3 text-sm text-base-content/65">
+			The profile has unsaved changes. Closing now will discard them.
+		</p>
+		<div class="modal-action">
+			<button class="btn btn-ghost" onclick={() => discardDialog.close()}>Keep editing</button>
+			<button class="btn btn-error" onclick={discardChanges}>Discard changes</button>
+		</div>
+	</div>
+	<form method="dialog" class="modal-backdrop">
+		<button aria-label="Close discard confirmation">close</button>
 	</form>
 </dialog>

@@ -456,7 +456,9 @@ export const API = {
 			if (params.changeKind) query.set('change_kind', params.changeKind);
 			const path = `/api/v1/library/management/previews/${encodeURIComponent(jobId)}/items`;
 			return `${path}${query.size ? `?${query.toString()}` : ''}`;
-		}
+		},
+		previewArtwork: (jobId: string, ordinal: number, sha256: string) =>
+			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/items/${ordinal}/artwork/${encodeURIComponent(sha256)}`
 	},
 	search: {
 		artists: (query: string) => `/api/v1/search/artists?q=${encodeURIComponent(query)}`,

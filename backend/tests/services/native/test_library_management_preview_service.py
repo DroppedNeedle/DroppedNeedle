@@ -23,7 +23,7 @@ from api.v1.schemas.library_management_preview import (
     LibraryManagementTagEditPreviewRequest,
 )
 from core.config import Settings
-from core.exceptions import StaleRevisionError, ValidationError
+from core.exceptions import ResourceNotFoundError, StaleRevisionError, ValidationError
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from models.library_management import (
     LibraryManagementExternalRefreshDelivery,
@@ -168,6 +168,13 @@ def _service_fixture(
     store = AsyncMock(spec=NativeLibraryStore)
     store.get_library_management_job_snapshot.return_value = snapshot
     store.get_operation_job.return_value = _operation()
+    store.get_management_operation_recovery_availability.return_value = {
+        "snapshot_count": 2,
+        "undo_available_count": 2,
+        "undo_expired_count": 0,
+        "undo_expires_at": 300.0,
+        "baseline_available_count": 2,
+    }
     store.get_catalog_revision.return_value = 0
     store.list_library_management_plan_items.return_value = []
     store.list_library_management_external_refreshes.return_value = []
@@ -425,6 +432,13 @@ async def test_detail_reports_expiry_and_current_staleness(tmp_path: Path) -> No
     assert detail.stale_reasons == []
     assert detail.external_refreshes[0].target == "jellyfin"
     assert detail.external_refreshes[0].state == "succeeded"
+    assert detail.undo_available_count == 2
+    assert detail.undo_expired_count == 0
+    assert detail.undo_expires_at == 300.0
+    assert detail.baseline_available_count == 2
+    store.get_management_operation_recovery_availability.assert_awaited_with(
+        "job-1", now=100.0
+    )
     assert not hasattr(detail, "preview_token_hash")
 
     changed = preferences.get_library_management_settings_raw()
@@ -513,6 +527,53 @@ async def test_item_page_never_exposes_absolute_source_identity(tmp_path: Path) 
         has_representation_loss=None,
         change_kind=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_artwork_preview_serves_only_a_blob_referenced_by_the_item(
+    tmp_path: Path,
+) -> None:
+    service, store, _preferences, _snapshot = _service_fixture(tmp_path)
+    sha256 = hashlib.sha256(b"pinned-artwork").hexdigest()
+    store.get_library_management_plan_item.return_value = LibraryManagementPlanItem(
+        job_id="job-1",
+        ordinal=2,
+        bundle_ordinal=0,
+        expected_catalog_revision=0,
+        expected_policy_revision="policy",
+        expected_profile_revision="profile",
+        expected_root_id="root-1",
+        expected_relative_path="Album/track.flac",
+        expected_stat_revision="1:2",
+        expected_tag_revision="tag",
+        expected_file_fingerprint="fingerprint",
+        source_path_identity="source-identity",
+        desired_document_json='{"fields":[]}',
+        desired_document_hash=hashlib.sha256(b"{}").hexdigest(),
+        eligibility="eligible",
+        created_at=1.0,
+        artwork_choices_json=json.dumps(
+            [{"blob_sha256": sha256, "mime_type": "image/png"}]
+        ),
+    )
+    blobs = AsyncMock()
+    blobs.read_bytes.return_value = b"pinned-artwork"
+    service._blobs = blobs
+
+    content, mime_type = await service.artwork_preview("job-1", 2, sha256)
+
+    assert content == b"pinned-artwork"
+    assert mime_type == "image/png"
+    blobs.read_bytes.assert_awaited_once_with(sha256)
+
+    with pytest.raises(ResourceNotFoundError):
+        await service.artwork_preview("job-1", 2, "0" * 64)
+    store.get_library_management_plan_item.return_value.artwork_choices_json = (
+        json.dumps([{"blob_sha256": sha256, "mime_type": "image/svg+xml"}])
+    )
+    with pytest.raises(ResourceNotFoundError):
+        await service.artwork_preview("job-1", 2, sha256)
+    blobs.read_bytes.assert_awaited_once()
 
 
 @pytest.mark.asyncio

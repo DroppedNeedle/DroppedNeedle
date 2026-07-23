@@ -5,6 +5,7 @@ from typing import get_args
 
 from core.dependencies import auth_providers, cache_providers
 from core.dependencies.type_aliases import NativeLibraryStoreDep
+from infrastructure.library_management_blob_store import LibraryManagementBlobStore
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 
 
@@ -35,6 +36,27 @@ def test_native_store_provider_is_singleton_and_clearable(
 
     cache_providers.get_native_library_store.cache_clear()
     cache_providers.get_persistence_write_lock.cache_clear()
+
+
+def test_management_blob_store_uses_persistent_cache_volume(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cache_dir = tmp_path / "cache"
+    ledger = object()
+    monkeypatch.setattr(
+        cache_providers,
+        "get_settings",
+        lambda: SimpleNamespace(cache_dir=cache_dir),
+    )
+    monkeypatch.setattr(cache_providers, "get_native_library_store", lambda: ledger)
+    cache_providers.get_library_management_blob_store.cache_clear()
+
+    store = cache_providers.get_library_management_blob_store()
+
+    assert isinstance(store, LibraryManagementBlobStore)
+    assert store.root == (cache_dir / "library-management" / "blobs").resolve()
+
+    cache_providers.get_library_management_blob_store.cache_clear()
 
 
 def test_target_provider_is_only_referenced_by_isolated_target_composition() -> None:

@@ -66,6 +66,10 @@ function operation(overrides: Record<string, unknown> = {}): Record<string, unkn
 		failed_count: 0,
 		skipped_count: 0,
 		control_request: 'none',
+		undo_available_count: 0,
+		undo_expired_count: 0,
+		undo_expires_at: null,
+		baseline_available_count: 0,
 		external_refreshes: [],
 		...overrides
 	};
@@ -114,7 +118,10 @@ describe('LibraryManagementOperationPage', () => {
 				state: 'succeeded',
 				phase: 'complete',
 				completed_count: 10,
-				succeeded_count: 9
+				succeeded_count: 9,
+				undo_available_count: 9,
+				undo_expires_at: 1_900_000_000,
+				baseline_available_count: 9
 			}),
 			isLoading: false,
 			isError: false
@@ -125,11 +132,15 @@ describe('LibraryManagementOperationPage', () => {
 		await expect
 			.element(page.getByRole('heading', { name: 'First-management baseline' }))
 			.toBeVisible();
+		await expect
+			.element(page.getByText(/9 files have an available first-management baseline/))
+			.toBeVisible();
 		await page.getByRole('button', { name: 'Preview Undo...' }).click();
 		await expect
 			.element(page.getByRole('heading', { name: 'Generate an Undo preview?' }))
 			.toHaveFocus();
 		await expect.element(page.getByText('Undo is not baseline restore.')).toBeVisible();
+		await expect.element(page.getByText(/9 files have an Undo snapshot/).first()).toBeVisible();
 		await page.getByRole('button', { name: 'Generate Undo preview' }).click();
 
 		expect(h.undo).toHaveBeenCalledWith({
@@ -140,6 +151,36 @@ describe('LibraryManagementOperationPage', () => {
 			sessionStorage.getItem('droppedneedle:library-management:preview-token:undo-preview-1')
 		).toBe('undo-token');
 		expect(h.goto).toHaveBeenCalledWith('/library/management/previews/undo-preview-1');
+	});
+
+	it('disables Undo after durable snapshots expire while keeping baseline recovery visible', async () => {
+		h.operation = {
+			data: operation({
+				state: 'succeeded',
+				phase: 'complete',
+				completed_count: 2,
+				succeeded_count: 2,
+				undo_available_count: 0,
+				undo_expired_count: 2,
+				undo_expires_at: null,
+				baseline_available_count: 2
+			}),
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+
+		await expect.element(page.getByRole('button', { name: 'Preview Undo...' })).toBeDisabled();
+		await expect
+			.element(
+				page
+					.getByRole('main')
+					.getByText('Undo snapshots have expired for 2 files.', { exact: true })
+			)
+			.toBeVisible();
+		await expect
+			.element(page.getByText(/2 files have an available first-management baseline/))
+			.toBeVisible();
 	});
 
 	it('shows post-commit refresh failures without implying file rollback', async () => {
@@ -169,5 +210,59 @@ describe('LibraryManagementOperationPage', () => {
 			.toBeVisible();
 		await expect.element(page.getByText('1 of 4 attempts used')).toBeVisible();
 		await expect.element(page.getByText(/never\s+rolls those changes back/)).toBeVisible();
+	});
+
+	it('presents a clean completed terminal code as success rather than an error', async () => {
+		h.operation = {
+			data: operation({
+				state: 'succeeded',
+				phase: 'complete',
+				terminal_code: 'COMPLETED',
+				completed_count: 10,
+				succeeded_count: 10
+			}),
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+
+		await expect.element(page.getByText('COMPLETED', { exact: true })).toBeVisible();
+		await expect.element(page.getByText('All planned work finished.')).toBeVisible();
+		await expect
+			.element(page.getByText(/Recovery never silently removes an uncertain file/))
+			.not.toBeInTheDocument();
+	});
+
+	it('keeps a failed terminal code visibly actionable', async () => {
+		h.operation = {
+			data: operation({
+				state: 'failed',
+				phase: 'applying',
+				terminal_code: 'RECOVERY_FAILED',
+				failed_count: 1
+			}),
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+
+		await expect.element(page.getByText('Recovery Failed')).toBeVisible();
+		await expect
+			.element(page.getByText(/Recovery never silently removes an uncertain file/))
+			.toBeVisible();
+	});
+
+	it('keeps a failed legacy operation actionable without a terminal code', async () => {
+		h.operation = {
+			data: operation({ state: 'failed', terminal_code: null, failed_count: 1 }),
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+
+		await expect.element(page.getByText('Operation Failed')).toBeVisible();
+		await expect
+			.element(page.getByText(/Recovery never silently removes an uncertain file/))
+			.toBeVisible();
 	});
 });

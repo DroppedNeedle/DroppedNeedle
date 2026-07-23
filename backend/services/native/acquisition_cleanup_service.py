@@ -12,11 +12,14 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+import msgspec
+
 from infrastructure.persistence.download_store import DownloadStore
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from infrastructure.serialization import to_jsonable
 from infrastructure.service_health import service_health
 from models.download_attempt import DownloadAttempt, DownloadCleanupReconciliation
+from models.library_management import LibraryManagementImportBundle
 from repositories.protocols.download_client import (
     DownloadClientProtocol,
     DownloadMaterialization,
@@ -189,9 +192,7 @@ class AcquisitionCleanupService:
             await self._defer_attention(attempt)
             return
 
-        if await asyncio.to_thread(
-            _attention_source_absent, attempt, materialization
-        ):
+        if await asyncio.to_thread(_attention_source_absent, attempt, materialization):
             try:
                 discarded = await client.discard_client_artifacts(attempt.handle)
             except Exception:  # noqa: BLE001 - attention debt remains safely preserved
@@ -292,6 +293,7 @@ class AcquisitionCleanupService:
             mount_root=materialization.mount_root or None,
             workspace_path=materialization.workspace_path or None,
             materialized_paths=materialization.file_paths,
+            publisher_fingerprints=await self._publisher_source_fingerprints(attempt),
         )
 
         if materialization.state == "active":
@@ -334,6 +336,7 @@ class AcquisitionCleanupService:
         mount_root: str | None,
         workspace_path: str | None,
         materialized_paths: list[str],
+        publisher_fingerprints: dict[str, str],
     ) -> DownloadAttempt:
         for persisted, fresh in (
             (attempt.remote_storage, remote_storage),
@@ -343,9 +346,7 @@ class AcquisitionCleanupService:
             if persisted and fresh and _absolute(persisted) != _absolute(fresh):
                 raise _UnsafeCleanup("materialization_evidence_conflict")
         if attempt.materialized_paths and materialized_paths:
-            persisted_paths = {
-                _absolute(value) for value in attempt.materialized_paths
-            }
+            persisted_paths = {_absolute(value) for value in attempt.materialized_paths}
             fresh_paths = {_absolute(value) for value in materialized_paths}
             valid_paths = (
                 fresh_paths.issubset(persisted_paths)
@@ -354,6 +355,44 @@ class AcquisitionCleanupService:
             )
             if not valid_paths:
                 raise _UnsafeCleanup("materialization_evidence_conflict")
+        fingerprints = attempt.materialized_fingerprints
+        selected_paths = attempt.materialized_paths or materialized_paths
+        if attempt.source == "soulseek" and selected_paths:
+            if attempt.materialized_paths and not fingerprints:
+                if set(publisher_fingerprints) != {
+                    _absolute(value) for value in selected_paths
+                }:
+                    raise _UnsafeCleanup("materialization_fingerprint_missing")
+            if not fingerprints:
+                if not (attempt.mount_root or mount_root):
+                    raise _UnsafeCleanup("mount_evidence_missing")
+                selected_absolute = {_absolute(value) for value in selected_paths}
+                fingerprints = {
+                    path: fingerprint
+                    for path, fingerprint in publisher_fingerprints.items()
+                    if path in selected_absolute
+                }
+                unpinned = [
+                    value
+                    for value in selected_paths
+                    if _absolute(value) not in fingerprints
+                ]
+                if unpinned:
+                    fingerprints.update(
+                        await asyncio.to_thread(
+                            _fingerprint_materialized_paths,
+                            Path(attempt.mount_root or mount_root or ""),
+                            unpinned,
+                        )
+                    )
+            elif any(
+                fingerprints.get(path) != fingerprint
+                for path, fingerprint in publisher_fingerprints.items()
+                if path in fingerprints
+            ):
+                raise _UnsafeCleanup("materialization_fingerprint_conflict")
+            if set(fingerprints) != {_absolute(value) for value in selected_paths}:
+                raise _UnsafeCleanup("materialization_fingerprint_conflict")
         updated = await self._store.transition_download_attempt(
             attempt.id,
             expected_row_revision=attempt.row_revision,
@@ -363,13 +402,52 @@ class AcquisitionCleanupService:
             remote_storage=attempt.remote_storage or remote_storage,
             mount_root=attempt.mount_root or mount_root,
             workspace_path=attempt.workspace_path or workspace_path,
-            materialized_paths_json=_json(
-                attempt.materialized_paths or materialized_paths
-            ),
+            materialized_paths_json=_json(selected_paths),
+            materialized_fingerprints_json=_json(fingerprints),
         )
         if updated is None:
             raise _RetryableCleanup("attempt_revision_changed")
         return updated
+
+    async def _publisher_source_fingerprints(
+        self, attempt: DownloadAttempt
+    ) -> dict[str, str]:
+        if attempt.source != "soulseek":
+            return {}
+        fingerprints: dict[str, str] = {}
+        for bundle_id in attempt.publisher_bundle_ids:
+            record = await self._library_store.get_library_management_import_bundle(
+                bundle_id
+            )
+            if record is None:
+                raise _UnsafeCleanup("publisher_barrier_missing")
+            if (
+                hashlib.sha256(record.request_json.encode()).hexdigest()
+                != record.request_hash
+            ):
+                raise _UnsafeCleanup("publisher_request_changed")
+            try:
+                request = msgspec.json.decode(
+                    record.request_json.encode(), type=LibraryManagementImportBundle
+                )
+            except (msgspec.DecodeError, msgspec.ValidationError) as error:
+                raise _UnsafeCleanup("publisher_request_invalid") from error
+            journals = {
+                value.ordinal: value
+                for value in await self._library_store.list_library_management_import_journals(
+                    bundle_id
+                )
+            }
+            for item in request.files:
+                journal = journals.get(item.ordinal)
+                if journal is None:
+                    raise _UnsafeCleanup("publisher_journal_missing")
+                path = _absolute(item.input_path)
+                existing = fingerprints.get(path)
+                if existing is not None and existing != journal.source_fingerprint:
+                    raise _UnsafeCleanup("publisher_source_fingerprint_conflict")
+                fingerprints[path] = journal.source_fingerprint
+        return fingerprints
 
     async def _cleanup_usenet_workspace(
         self,
@@ -450,8 +528,14 @@ class AcquisitionCleanupService:
             raise _UnsafeCleanup("mount_evidence_missing")
         try:
             for source in attempt.materialized_paths:
+                absolute = _absolute(source)
+                if absolute not in attempt.materialized_fingerprints:
+                    raise _UnsafeCleanup("materialization_fingerprint_missing")
                 await asyncio.to_thread(
-                    _unlink_file_safely, Path(attempt.mount_root), Path(source)
+                    _unlink_file_safely,
+                    Path(attempt.mount_root),
+                    Path(source),
+                    attempt.materialized_fingerprints[absolute],
                 )
         except _UnsafeCleanup:
             raise
@@ -493,7 +577,9 @@ class AcquisitionCleanupService:
     ) -> int:
         mount = Path(self._sab_mount_getter())
         if not mount.is_absolute() or mount == Path(mount.anchor):
-            logger.warning("Skipped acquisition cleanup reconciliation for unsafe mount")
+            logger.warning(
+                "Skipped acquisition cleanup reconciliation for unsafe mount"
+            )
             return 0
         mount_key = hashlib.sha256(_absolute(str(mount)).encode()).hexdigest()
         progress = await self._store.ensure_cleanup_reconciliation(
@@ -736,7 +822,56 @@ def _open_parent(root: Path, parts: tuple[str, ...]) -> tuple[int, int, str]:
         raise
 
 
-def _unlink_file_safely(root: Path, target: Path) -> None:
+def _fingerprint_materialized_paths(
+    root: Path, targets: list[str]
+) -> dict[str, str | None]:
+    return {
+        _absolute(value): _fingerprint_file_safely(root, Path(value))
+        for value in targets
+    }
+
+
+def _fingerprint_file_safely(root: Path, target: Path) -> str | None:
+    root, parts = _confined_parts(root, target)
+    if not _mount_healthy(root):
+        raise OSError("mount unavailable")
+    try:
+        root_fd, parent_fd, name = _open_parent(root, parts)
+    except FileNotFoundError:
+        return
+    try:
+        try:
+            info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        if stat.S_ISLNK(info.st_mode):
+            raise _UnsafeCleanup("source_file_symlink")
+        if not stat.S_ISREG(info.st_mode):
+            raise _UnsafeCleanup("source_file_not_regular")
+        file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        try:
+            opened = os.fstat(file_fd)
+            if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                raise _UnsafeCleanup("source_file_changed")
+            digest = hashlib.sha256()
+            while chunk := os.read(file_fd, 1024 * 1024):
+                digest.update(chunk)
+            after = os.fstat(file_fd)
+            if (after.st_size, after.st_mtime_ns) != (
+                opened.st_size,
+                opened.st_mtime_ns,
+            ):
+                raise _UnsafeCleanup("source_file_changed")
+            return digest.hexdigest()
+        finally:
+            os.close(file_fd)
+    finally:
+        if parent_fd != root_fd:
+            os.close(parent_fd)
+        os.close(root_fd)
+
+
+def _unlink_file_safely(root: Path, target: Path, expected_sha256: str | None) -> None:
     root, parts = _confined_parts(root, target)
     if not _mount_healthy(root):
         raise OSError("mount unavailable")
@@ -749,11 +884,34 @@ def _unlink_file_safely(root: Path, target: Path) -> None:
             info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         except FileNotFoundError:
             return
+        if expected_sha256 is None:
+            raise _UnsafeCleanup("source_file_reappeared")
         if stat.S_ISLNK(info.st_mode):
             raise _UnsafeCleanup("source_file_symlink")
         if not stat.S_ISREG(info.st_mode):
             raise _UnsafeCleanup("source_file_not_regular")
-        os.unlink(name, dir_fd=parent_fd)
+        file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        try:
+            opened = os.fstat(file_fd)
+            if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                raise _UnsafeCleanup("source_file_changed")
+            digest = hashlib.sha256()
+            while chunk := os.read(file_fd, 1024 * 1024):
+                digest.update(chunk)
+            after = os.fstat(file_fd)
+            if (after.st_size, after.st_mtime_ns) != (
+                opened.st_size,
+                opened.st_mtime_ns,
+            ):
+                raise _UnsafeCleanup("source_file_changed")
+            if digest.hexdigest() != expected_sha256:
+                raise _UnsafeCleanup("source_file_fingerprint_changed")
+            current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+                raise _UnsafeCleanup("source_file_changed")
+            os.unlink(name, dir_fd=parent_fd)
+        finally:
+            os.close(file_fd)
     finally:
         if parent_fd != root_fd:
             os.close(parent_fd)

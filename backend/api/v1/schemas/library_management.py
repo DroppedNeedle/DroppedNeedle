@@ -509,6 +509,7 @@ class LibraryManagementPresetDiff(AppStruct):
     preset_version: int | None = None
     differs: bool = False
     changed_groups: list[str] = msgspec.field(default_factory=list)
+    preset_profile: LibraryManagementProfile | None = None
 
 
 def _stable_hash(value: object) -> str:

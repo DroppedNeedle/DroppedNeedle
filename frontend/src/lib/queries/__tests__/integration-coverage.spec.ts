@@ -267,6 +267,11 @@ const COVERAGE: Array<[string, string, string]> = [
 		'/api/v1/library/management/previews/J1/items'
 	],
 	[
+		'library management preview artwork',
+		API.libraryManagement.previewArtwork('J1', 2, 'abc123'),
+		'/api/v1/library/management/previews/J1/items/2/artwork/abc123'
+	],
+	[
 		'apply library management preview',
 		API.libraryManagement.applyPreview('J1'),
 		'/api/v1/library/management/previews/J1/apply'

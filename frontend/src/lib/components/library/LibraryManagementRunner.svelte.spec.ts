@@ -25,7 +25,8 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 				}
 			]
 		},
-		isLoading: false
+		isLoading: false,
+		isError: false
 	})
 }));
 vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
@@ -67,6 +68,13 @@ beforeEach(() => {
 	h.createPreview.mockResolvedValue({
 		job_id: 'preview-1',
 		preview_token: 'secret-token',
+		created_at: 1,
+		expires_at: 2,
+		existing: false
+	});
+	h.createRestore.mockResolvedValue({
+		job_id: 'restore-preview-1',
+		preview_token: 'restore-token',
 		created_at: 1,
 		expires_at: 2,
 		existing: false
@@ -129,5 +137,31 @@ describe('LibraryManagementRunner', () => {
 			.toBeVisible();
 		await page.getByRole('button', { name: /Continue/ }).click();
 		await expect.element(page.getByText(/separate from Undo/)).toBeVisible();
+	});
+
+	it('can generate a baseline restore independently of the current profile', async () => {
+		const settingsWithoutProfile = {
+			...settings,
+			default_profile_id: 'missing-profile',
+			profiles: []
+		} as unknown as LibraryManagementSettingsResponse;
+		render(LibraryManagementRunner, {
+			mode: 'baseline_restore',
+			roots,
+			settings: settingsWithoutProfile,
+			policyRevision: 'policy-1',
+			onclose: vi.fn()
+		});
+
+		await page.getByRole('button', { name: /Continue/ }).click();
+		await page.getByRole('button', { name: 'Generate preview' }).click();
+		expect(h.createRestore).toHaveBeenCalledWith(
+			expect.objectContaining({
+				selection: { kind: 'roots', ids: ['root-1'] },
+				expected_settings_revision: 'settings-1',
+				expected_policy_revision: 'policy-1'
+			})
+		);
+		expect(h.goto).toHaveBeenCalledWith('/library/management/previews/restore-preview-1');
 	});
 });

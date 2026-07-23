@@ -188,6 +188,20 @@
 						Only literal / characters create directories. Actual paths and collisions appear in a
 						dry run.
 					</p>
+					<div class="mt-3 grid gap-2 sm:grid-cols-2">
+						<div class="rounded-lg border border-base-content/10 bg-base-100 p-2">
+							<strong>Single artist</strong>
+							<code class="mt-1 block break-all">{'{albumartist}/{title}.{ext}'}</code>
+							<p class="mt-1">Alpha/Management Track.flac</p>
+						</div>
+						<div class="rounded-lg border border-base-content/10 bg-base-100 p-2">
+							<strong>Multi-disc album</strong>
+							<code class="mt-1 block break-all"
+								>{'{albumartist}/{album} ({year})/{pad(disc, 2)}-{pad(track, 2)} {title}.{lower(extension)}'}</code
+							>
+							<p class="mt-1">Alpha/Management Album (2024)/01-02 Management Track.flac</p>
+						</div>
+					</div>
 				{:else}
 					<p class="mt-2">
 						Statements: set, append, delete, if, else, end. Custom fields use custom.NAME.
@@ -196,7 +210,25 @@
 						Scripts run in the attached order. Exact field-level effects are attributed in the
 						management preview.
 					</p>
+					<div class="mt-3 grid gap-2 sm:grid-cols-2">
+						<div class="rounded-lg border border-base-content/10 bg-base-100 p-2">
+							<strong>Before</strong>
+							<p class="mt-1">Title: the great escape</p>
+							<p>Genre: Rock</p>
+						</div>
+						<div class="rounded-lg border border-base-content/10 bg-base-100 p-2">
+							<strong>Script and result</strong>
+							<code class="mt-1 block">set title = title(title)</code>
+							<code class="block">append genre = "Alternative Rock"</code>
+							<p class="mt-1">Title: The Great Escape</p>
+							<p>Genre: Rock, Alternative Rock</p>
+						</div>
+					</div>
 				{/if}
+				<p class="mt-3 rounded-lg border border-warning/20 bg-warning/5 p-2">
+					Run a dry preview for real file results, path-length and normalization warnings, and
+					collision checks. The browser never guesses what a script will do.
+				</p>
 			</details>
 			{#if selectedScript.preset_origin === 'legacy_naming_template'}
 				<p class="mt-3 rounded-lg border border-info/20 bg-info/5 p-2 text-xs text-base-content/60">

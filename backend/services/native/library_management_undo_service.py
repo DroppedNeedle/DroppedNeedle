@@ -476,6 +476,18 @@ class LibraryManagementUndoService:
             current_hash = await asyncio.to_thread(self._hash_file, current)
             if current_hash != entry.get("after_blob_sha256"):
                 raise StaleRevisionError("An undo ancillary file changed.")
+            if not bool(entry.get("before_exists", False)):
+                values.append(
+                    {
+                        "kind": str(entry.get("kind")),
+                        "delete_output": {
+                            "root_id": str(entry["after_root_id"]),
+                            "relative_path": str(entry["after_relative_path"]),
+                            "sha256": current_hash,
+                        },
+                    }
+                )
+                continue
             if entry.get("kind") == "sidecar":
                 before_root = roots.get(str(entry.get("before_root_id")))
                 if before_root is None:

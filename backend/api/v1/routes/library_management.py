@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 
 from api.v1.schemas.library_management import (
     LibraryManagementChangeImpact,
@@ -495,4 +495,25 @@ async def list_library_management_preview_items(
         has_preserved_value=has_preserved_value,
         has_representation_loss=has_representation_loss,
         change_kind=change_kind,
+    )
+
+
+@router.get(
+    "/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}",
+    response_class=Response,
+)
+async def get_library_management_preview_artwork(
+    job_id: str,
+    ordinal: int,
+    sha256: str,
+    service: LibraryManagementPreviewServiceDep,
+) -> Response:
+    content, mime_type = await service.artwork_preview(job_id, ordinal, sha256)
+    return Response(
+        content=content,
+        media_type=mime_type,
+        headers={
+            "Cache-Control": "private, max-age=86400, immutable",
+            "X-Content-Type-Options": "nosniff",
+        },
     )

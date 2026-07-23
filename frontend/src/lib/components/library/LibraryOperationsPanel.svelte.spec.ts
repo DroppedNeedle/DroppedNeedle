@@ -251,14 +251,19 @@ describe('LibraryOperationsPanel', () => {
 			}
 		};
 		render(LibraryOperationsPanel);
+		await expect
+			.element(page.getByRole('region', { name: 'Library Scanning & Identification' }))
+			.toBeVisible();
 		await expect.element(page.getByRole('heading', { name: 'Local files' })).toBeVisible();
-		await expect.element(page.getByRole('heading', { name: 'Identification' })).toBeVisible();
+		await expect
+			.element(page.getByRole('heading', { name: 'Identification', exact: true }))
+			.toBeVisible();
 		await expect.element(page.getByText('40 of 100')).toBeVisible();
 		await expect.element(page.getByText('25 of 100')).toBeVisible();
 		await page.getByText('Root progress and phase details').click();
 		await expect.element(page.getByText('Main library · automatic')).toBeVisible();
 		await expect.element(page.getByText('12', { exact: true })).toBeVisible();
-		await expect.element(page.getByText(/Scanning and identification read files/)).toBeVisible();
+		await expect.element(page.getByText(/It never writes tags, renames, or moves/)).toBeVisible();
 	});
 
 	it('shows identification as idle while foreground repair keeps the panel expanded', async () => {

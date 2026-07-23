@@ -377,6 +377,7 @@ class LibraryManagementProfileService:
             preset_version=profile.preset_version,
             differs=bool(changed),
             changed_groups=changed,
+            preset_profile=preset,
         )
 
     def preview_impact(

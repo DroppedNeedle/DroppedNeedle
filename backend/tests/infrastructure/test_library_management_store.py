@@ -1383,6 +1383,40 @@ async def test_management_bundle_catalog_commit_is_atomic_and_idempotent(
 
 
 @pytest.mark.asyncio
+async def test_operation_recovery_availability_uses_durable_snapshot_expiry(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    mutation = await _seed_published_management_bundle(
+        store, db_path, job_id="management-recovery-availability"
+    )
+    await store.commit_library_management_bundle(
+        "management-recovery-availability", 0, "worker-1", [mutation], now=25
+    )
+
+    available = await store.get_management_operation_recovery_availability(
+        "management-recovery-availability", now=29
+    )
+    expired = await store.get_management_operation_recovery_availability(
+        "management-recovery-availability", now=30
+    )
+
+    assert available == {
+        "snapshot_count": 1,
+        "undo_available_count": 1,
+        "undo_expired_count": 0,
+        "undo_expires_at": 30.0,
+        "baseline_available_count": 1,
+    }
+    assert expired == {
+        "snapshot_count": 1,
+        "undo_available_count": 0,
+        "undo_expired_count": 1,
+        "undo_expires_at": None,
+        "baseline_available_count": 1,
+    }
+
+
+@pytest.mark.asyncio
 async def test_manual_tag_override_commits_with_catalog_and_journal(
     store: NativeLibraryStore, db_path: Path
 ) -> None:

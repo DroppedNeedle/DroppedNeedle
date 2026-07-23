@@ -251,7 +251,9 @@
 					</h3>
 					<div class="management-tag-modes mt-2">
 						<button
+							type="button"
 							class:active={mode === 'save_override'}
+							aria-pressed={mode === 'save_override'}
 							onclick={() => chooseMode('save_override')}
 						>
 							<Check class="h-4 w-4" />
@@ -261,7 +263,12 @@
 								></span
 							>
 						</button>
-						<button class:active={mode === 'write_once'} onclick={() => chooseMode('write_once')}>
+						<button
+							type="button"
+							class:active={mode === 'write_once'}
+							aria-pressed={mode === 'write_once'}
+							onclick={() => chooseMode('write_once')}
+						>
 							<ListPlus class="h-4 w-4" />
 							<span
 								><strong>Write once</strong><small
@@ -270,7 +277,9 @@
 							>
 						</button>
 						<button
+							type="button"
 							class:active={mode === 'reset_canonical'}
+							aria-pressed={mode === 'reset_canonical'}
 							onclick={() => chooseMode('reset_canonical')}
 						>
 							<RotateCcw class="h-4 w-4" />

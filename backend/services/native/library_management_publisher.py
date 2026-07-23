@@ -136,6 +136,18 @@ class LibraryManagementPublisher:
         self._on_commit = on_commit
         self._clock = clock
 
+    @staticmethod
+    async def _finish_critical_task[ResultT](
+        task: asyncio.Task[ResultT],
+    ) -> tuple[ResultT, bool]:
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        return task.result(), cancelled
+
     async def publish_import_bundle(
         self,
         bundle: LibraryManagementImportBundle,
@@ -209,9 +221,10 @@ class LibraryManagementPublisher:
                     await self._prepare_import_file(bundle_id, request, roots, current)
                 )
         except BaseException:
-            await asyncio.shield(
+            rollback_task = asyncio.create_task(
                 self._rollback_import_preparation(record, bundle, roots, prepared)
             )
+            await self._finish_critical_task(rollback_task)
             raise
 
         root_ids = (
@@ -227,23 +240,32 @@ class LibraryManagementPublisher:
                 for artifact in value.request.artifacts
             }
         )
+        critical_cancelled = False
         try:
             async with self._filesystem.write_many(root_ids):
-                self._root_paths(bundle.policy_revision)
-                for value in prepared:
-                    await self._recover_import_publish_boundary(value)
-                await asyncio.to_thread(self._recheck_import_bundle, prepared)
-                for value in prepared:
-                    await self._publish_import_file(value)
-                await asyncio.to_thread(self._fsync_import_directories, prepared)
-                published = tuple(
-                    [await self._published_import_file(value) for value in prepared]
-                )
-                local_track_ids = await catalog_commit(bundle_id, published)
-                if len(local_track_ids) != len(prepared):
-                    raise ValidationError(
-                        "The import catalog commit returned an incomplete result."
+
+                async def critical() -> tuple[str, ...]:
+                    self._root_paths(bundle.policy_revision)
+                    for value in prepared:
+                        await self._recover_import_publish_boundary(value)
+                    await asyncio.to_thread(self._recheck_import_bundle, prepared)
+                    for value in prepared:
+                        await self._publish_import_file(value)
+                    await asyncio.to_thread(self._fsync_import_directories, prepared)
+                    published = tuple(
+                        [await self._published_import_file(value) for value in prepared]
                     )
+                    committed = await catalog_commit(bundle_id, published)
+                    if len(committed) != len(prepared):
+                        raise ValidationError(
+                            "The import catalog commit returned an incomplete result."
+                        )
+                    return committed
+
+                critical_task = asyncio.create_task(critical())
+                local_track_ids, critical_cancelled = await self._finish_critical_task(
+                    critical_task
+                )
         except BaseException:
             refreshed = await self._store.get_library_management_import_bundle(
                 bundle_id
@@ -255,7 +277,10 @@ class LibraryManagementPublisher:
             }:
                 record = refreshed
             else:
-                await asyncio.shield(self._rollback_import_bundle(record, prepared))
+                rollback_task = asyncio.create_task(
+                    self._rollback_import_bundle(record, prepared)
+                )
+                await self._finish_critical_task(rollback_task)
                 raise
         else:
             record = await self._store.get_library_management_import_bundle(bundle_id)
@@ -269,6 +294,8 @@ class LibraryManagementPublisher:
                 await self._on_commit(set(result.local_track_ids), set())
             except Exception:  # noqa: BLE001 - post-commit invalidation is retryable
                 logger.warning("Import publication invalidation failed")
+        if critical_cancelled:
+            raise asyncio.CancelledError
         return result
 
     async def recover_import_bundle(
@@ -604,8 +631,27 @@ class LibraryManagementPublisher:
                 bundle_id, request, roots, stage=True
             )
             if request.pinned_profile is not None:
+                before_stat = source_stat
+                before_snapshot = plan.snapshot
+                if replacement is not None:
+                    before_stat = await asyncio.to_thread(replacement.stat)
+                    if (
+                        await asyncio.to_thread(self._hash_file, replacement)
+                        != current.replacement_fingerprint
+                    ):
+                        raise StaleRevisionError(
+                            "An import replacement changed before snapshotting."
+                        )
+                    before_snapshot = await asyncio.to_thread(
+                        self._audio.snapshot, replacement
+                    )
+                before_format = before_snapshot.probe.detected_format
+                if before_format is None:
+                    raise ValidationError(
+                        "An automatic import before-state has no admitted format."
+                    )
                 snapshot_blob = await self._blobs.add_bytes(
-                    msgspec.json.encode(plan.snapshot),
+                    msgspec.json.encode(before_snapshot),
                     kind="tag_snapshot",
                     created_at=self._clock(),
                 )
@@ -631,20 +677,20 @@ class LibraryManagementPublisher:
                     request.ordinal,
                     expected_row_revision=current.row_revision,
                     baseline_blob_sha256=snapshot_blob.sha256,
-                    baseline_format=plan.audio_format,
-                    baseline_adapter_version=plan.snapshot.adapter_version,
-                    baseline_stat_revision=revision_from_stat(source_stat),
+                    baseline_format=before_format,
+                    baseline_adapter_version=before_snapshot.adapter_version,
+                    baseline_stat_revision=revision_from_stat(before_stat),
                     baseline_tag_revision=hashlib.sha256(
-                        msgspec.json.encode(plan.snapshot)
+                        msgspec.json.encode(before_snapshot)
                     ).hexdigest(),
                     baseline_image_snapshot_json=json.dumps(
-                        msgspec.to_builtins(plan.snapshot.artwork),
+                        msgspec.to_builtins(before_snapshot.artwork),
                         separators=(",", ":"),
                         sort_keys=True,
                     ),
                     baseline_ancillary_snapshot_json=ancillary_snapshot_json,
-                    baseline_file_mtime_ns=plan.snapshot.file_attributes.mtime_ns,
-                    baseline_file_mode=plan.snapshot.file_attributes.permission_bits,
+                    baseline_file_mtime_ns=before_snapshot.file_attributes.mtime_ns,
+                    baseline_file_mode=before_snapshot.file_attributes.permission_bits,
                     updated_at=self._clock(),
                 )
                 prepared.journal = current
@@ -725,30 +771,45 @@ class LibraryManagementPublisher:
                     }
                 )
             else:
-                blob = await self._blobs.add_file(
-                    artifact.source,
-                    kind="sidecar_manifest",
-                    created_at=self._clock(),
-                )
-                relative_source = artifact.source.relative_to(
-                    Path(request.input_path).parent
-                ).as_posix()
-                values.append(
-                    {
-                        "kind": "sidecar",
-                        "before_exists": True,
-                        "before_root_id": request.destination_root_id,
-                        "before_relative_path": (
-                            baseline_parent / PurePosixPath(relative_source)
-                        ).as_posix(),
-                        "after_root_id": destination_root_id,
-                        "after_relative_path": artifact.destination.relative_to(
-                            destination_root
-                        ).as_posix(),
-                        "blob_sha256": blob.sha256,
-                        "after_blob_sha256": artifact.fingerprint,
-                    }
-                )
+                if request.replacement_local_track_id is not None:
+                    values.append(
+                        {
+                            "kind": "sidecar",
+                            "before_exists": False,
+                            "after_exists": True,
+                            "after_root_id": destination_root_id,
+                            "after_relative_path": artifact.destination.relative_to(
+                                destination_root
+                            ).as_posix(),
+                            "after_blob_sha256": artifact.fingerprint,
+                        }
+                    )
+                    continue
+                else:
+                    blob = await self._blobs.add_file(
+                        artifact.source,
+                        kind="sidecar_manifest",
+                        created_at=self._clock(),
+                    )
+                    relative_source = artifact.source.relative_to(
+                        Path(request.input_path).parent
+                    ).as_posix()
+                    values.append(
+                        {
+                            "kind": "sidecar",
+                            "before_exists": True,
+                            "before_root_id": request.destination_root_id,
+                            "before_relative_path": (
+                                baseline_parent / PurePosixPath(relative_source)
+                            ).as_posix(),
+                            "after_root_id": destination_root_id,
+                            "after_relative_path": artifact.destination.relative_to(
+                                destination_root
+                            ).as_posix(),
+                            "blob_sha256": blob.sha256,
+                            "after_blob_sha256": artifact.fingerprint,
+                        }
+                    )
             await self._store.add_management_blob_reference(
                 LibraryManagementBlobReference(
                     blob_sha256=blob.sha256,
@@ -1445,6 +1506,7 @@ class LibraryManagementPublisher:
                 )
                 if root_id is not None
             }
+            critical_cancelled = False
             async with self._filesystem.write_many(affected_roots):
                 critical = asyncio.create_task(
                     self._publish_critical_section(
@@ -1457,14 +1519,18 @@ class LibraryManagementPublisher:
                         roots,
                     )
                 )
-                try:
-                    result, mutations = await asyncio.shield(critical)
-                except asyncio.CancelledError:
-                    await critical
-                    raise
+                (
+                    (result, mutations),
+                    critical_cancelled,
+                ) = await self._finish_critical_task(critical)
         except BaseException:
-            await asyncio.shield(self._rollback(prepared))
-            await asyncio.to_thread(self._remove_unpublished_temporaries, prepared)
+
+            async def rollback() -> None:
+                await self._rollback(prepared)
+                await asyncio.to_thread(self._remove_unpublished_temporaries, prepared)
+
+            rollback_task = asyncio.create_task(rollback())
+            await self._finish_critical_task(rollback_task)
             raise
 
         if self._on_commit is not None:
@@ -1475,6 +1541,8 @@ class LibraryManagementPublisher:
                 )
             except Exception:  # noqa: BLE001 - post-commit invalidation is retryable
                 logger.warning("Library management post-commit invalidation failed")
+        if critical_cancelled:
+            raise asyncio.CancelledError
         return result
 
     async def _publish_critical_section(
@@ -1526,7 +1594,8 @@ class LibraryManagementPublisher:
                 )
             return result, mutations
         except BaseException:
-            await asyncio.shield(self._rollback(prepared))
+            rollback_task = asyncio.create_task(self._rollback(prepared))
+            await self._finish_critical_task(rollback_task)
             raise
 
     def _root_paths(
@@ -1827,8 +1896,13 @@ class LibraryManagementPublisher:
                 prepared.insert(0, auxiliary)
             return prepared
         except BaseException:
-            await asyncio.shield(self._rollback(prepared))
-            await asyncio.to_thread(self._remove_unpublished_temporaries, prepared)
+
+            async def rollback() -> None:
+                await self._rollback(prepared)
+                await asyncio.to_thread(self._remove_unpublished_temporaries, prepared)
+
+            rollback_task = asyncio.create_task(rollback())
+            await self._finish_critical_task(rollback_task)
             raise
 
     async def _capture_ancillary_snapshot(

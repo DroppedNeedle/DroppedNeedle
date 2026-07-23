@@ -313,7 +313,10 @@ def test_assignment_requires_a_known_available_root(tmp_path: Path) -> None:
 def test_picard_preset_diff_names_changed_groups(tmp_path: Path) -> None:
     prefs = _preferences(tmp_path)
     service = _service(prefs)
-    assert service.preset_diff(PICARD_ORGANIZER_PROFILE_ID).differs is False
+    original = service.preset_diff(PICARD_ORGANIZER_PROFILE_ID)
+    assert original.differs is False
+    assert original.preset_profile is not None
+    assert original.preset_profile.id == PICARD_ORGANIZER_PROFILE_ID
     current = service.get_settings()
     proposed = prefs.get_library_management_settings_raw()
     profile = next(
@@ -328,6 +331,8 @@ def test_picard_preset_diff_names_changed_groups(tmp_path: Path) -> None:
     diff = service.preset_diff(PICARD_ORGANIZER_PROFILE_ID)
     assert diff.differs is True
     assert diff.changed_groups == ["genres"]
+    assert diff.preset_profile is not None
+    assert diff.preset_profile.genres.maximum_count != 9
 
 
 @pytest.mark.parametrize("location", ["inside", "parent", "same"])

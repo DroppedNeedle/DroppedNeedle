@@ -149,7 +149,10 @@ describe('TagEditor.svelte', () => {
 		await expect.element(page.getByText('Staged metadata edit')).toBeVisible();
 		await expect
 			.element(page.getByRole('button', { name: /Save as local override/ }))
-			.toHaveClass(/active/);
+			.toHaveAttribute('aria-pressed', 'true');
+		await expect
+			.element(page.getByRole('button', { name: /Write once/ }))
+			.toHaveAttribute('aria-pressed', 'false');
 
 		await page.getByRole('textbox', { name: /Artist/ }).fill('Radiohead\nThom Yorke');
 		await page.getByRole('textbox', { name: /Genre/ }).fill('Rock\nArt Rock');
@@ -173,6 +176,9 @@ describe('TagEditor.svelte', () => {
 	it('makes write-once semantics explicit', async () => {
 		renderEditor();
 		await page.getByRole('button', { name: /Write once/ }).click();
+		await expect
+			.element(page.getByRole('button', { name: /Write once/ }))
+			.toHaveAttribute('aria-pressed', 'true');
 		await page.getByRole('textbox', { name: /Title/ }).fill('Airbag (Live)');
 		await page.getByRole('button', { name: 'Preview 1 change' }).click();
 

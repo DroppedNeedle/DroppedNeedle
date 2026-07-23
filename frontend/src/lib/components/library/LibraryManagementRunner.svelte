@@ -182,7 +182,8 @@
 	}
 
 	async function generate(): Promise<void> {
-		if (!selectionValid || !profile) return;
+		const currentProfile = profile;
+		if (!selectionValid || (mode === 'manage' && !currentProfile)) return;
 		localError = '';
 		try {
 			const handle =
@@ -195,7 +196,7 @@
 						})
 					: await createPreview.mutateAsync({
 							selection: selection(),
-							profile_id: profile.id,
+							profile_id: currentProfile?.id ?? '',
 							expected_settings_revision: settings.settings_revision,
 							expected_policy_revision: policyRevision,
 							idempotency_key: createUuid(),
@@ -358,7 +359,16 @@
 							</p>{:else if searchQuery.isLoading}<div class="space-y-2">
 								<div class="skeleton h-14"></div>
 								<div class="skeleton h-14"></div>
-							</div>{:else}<div class="grid gap-2">
+							</div>{:else if searchQuery.isError}<div
+								class="alert alert-error text-sm"
+								role="alert"
+							>
+								Could not search the library. Check the connection and try again.
+							</div>{:else if resultItems().length === 0}<p
+								class="rounded-xl border border-dashed border-base-content/15 p-4 text-sm text-base-content/50"
+							>
+								No matching {selectionKind} found.
+							</p>{:else}<div class="grid gap-2">
 								{#each resultItems() as item (item.id)}<label class="management-selection-card"
 										><input
 											type="checkbox"

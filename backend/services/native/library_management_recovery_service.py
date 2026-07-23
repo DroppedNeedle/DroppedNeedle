@@ -91,6 +91,18 @@ class LibraryManagementRecoveryService:
         self._filesystem = filesystem
         self._clock = clock
 
+    @staticmethod
+    async def _finish_critical_task(
+        task: asyncio.Task[RecoveryDisposition],
+    ) -> tuple[RecoveryDisposition, bool]:
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        return task.result(), cancelled
+
     async def recover_startup(
         self, *, limit: int = RECOVERY_BATCH_SIZE
     ) -> LibraryManagementRecoveryRun:
@@ -433,11 +445,10 @@ class LibraryManagementRecoveryService:
                 )
 
         task = asyncio.create_task(critical())
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            await task
-            raise
+        result, cancelled = await self._finish_critical_task(task)
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
 
     async def _recover_committed_bundle(
         self,
@@ -483,11 +494,10 @@ class LibraryManagementRecoveryService:
                 )
 
         task = asyncio.create_task(critical())
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            await task
-            raise
+        result, cancelled = await self._finish_critical_task(task)
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
 
     async def _publish_remaining(
         self, paths: list[_JournalPaths]
@@ -920,11 +930,10 @@ class LibraryManagementRecoveryService:
                 )
 
         task = asyncio.create_task(critical())
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            await task
-            raise
+        result, cancelled = await self._finish_critical_task(task)
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
 
     def _preflight_compensation(self, paths: list[_JournalPaths]) -> None:
         for value in paths:

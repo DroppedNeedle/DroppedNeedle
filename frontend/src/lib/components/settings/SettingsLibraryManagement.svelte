@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import {
 		ArchiveRestore,
 		Check,
@@ -18,6 +18,7 @@
 
 	import LibraryManagementProfileEditor from './LibraryManagementProfileEditor.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import { rememberLibraryManagementPreviewToken } from '$lib/queries/library-management/LibraryManagementPreviewTokens';
 	import { createUuid } from '$lib/utils/uuid';
 	import type { LibraryRootSettings } from '$lib/queries/library/LibraryOperationsTypes';
 	import {
@@ -69,8 +70,10 @@
 	let persistedSettings = $state<LibraryManagementSettings | null>(null);
 	let sourceRevision = $state('');
 	let selectedProfileId = $state<string | null>(null);
+	let copySourceProfileId = $state('');
 	let newProfileName = $state('Picard-style Organizer copy');
 	let saveError = $state('');
+	let managementHeading: HTMLHeadingElement;
 	let activationDialog: HTMLDialogElement;
 	let activationHeading: HTMLHeadingElement;
 	let activationOpener: HTMLButtonElement | null = null;
@@ -81,12 +84,17 @@
 	let activationToken = $state('');
 	let activationProofs = $state<LibraryManagementActivationProof[]>([]);
 	let activationPhrase = $state('');
+	let activationError = $state('');
 	let deleteDialog: HTMLDialogElement;
 	let deleteHeading: HTMLHeadingElement;
+	let deleteOpener: HTMLButtonElement | null = null;
 	let deleteTarget = $state<LibraryManagementProfile | null>(null);
+	let deleteError = $state('');
 	let purgeDialog: HTMLDialogElement;
 	let purgeHeading: HTMLHeadingElement;
+	let purgeOpener: HTMLButtonElement | null = null;
 	let purgePhrase = $state('');
+	let purgeError = $state('');
 	type BooleanOverrideKey =
 		| 'metadata_enabled'
 		| 'genres_enabled'
@@ -114,10 +122,15 @@
 
 	$effect(() => {
 		const response = settingsQuery.data;
-		if (response && response.settings_revision !== sourceRevision) {
+		const currentRevision = untrack(() => sourceRevision);
+		if (response && response.settings_revision !== currentRevision) {
 			draft = settingsPayload(response);
 			persistedSettings = settingsPayload(response);
 			sourceRevision = response.settings_revision;
+			const currentCopySource = untrack(() => copySourceProfileId);
+			if (!response.profiles.some((profile) => profile.id === currentCopySource)) {
+				copySourceProfileId = response.default_profile_id;
+			}
 		}
 	});
 
@@ -145,6 +158,7 @@
 			!activationQuery.data.stale
 		)
 	);
+	const activationPending = $derived(createActivation.isPending || confirmActivation.isPending);
 
 	function settingsPayload(response: LibraryManagementSettingsResponse): LibraryManagementSettings {
 		const value = structuredClone(response);
@@ -249,8 +263,20 @@
 		if (!draft) return 0;
 		return roots.filter((root) => {
 			const assignment = draft?.root_assignments.find((value) => value.root_id === root.id);
-			return (assignment?.profile_id ?? draft?.default_profile_id) === profileId;
+			return Boolean(
+				assignment && (assignment.profile_id ?? draft?.default_profile_id) === profileId
+			);
 		}).length;
+	}
+
+	function assignedRootLabels(profileId: string): string[] {
+		if (!draft) return [];
+		return roots.flatMap((root) => {
+			const assignment = draft?.root_assignments.find((value) => value.root_id === root.id);
+			return assignment && (assignment.profile_id ?? draft?.default_profile_id) === profileId
+				? [root.label]
+				: [];
+		});
 	}
 
 	function profileAspects(profile: LibraryManagementProfile): string[] {
@@ -262,6 +288,16 @@
 		if (profile.organization.rename_enabled) aspects.push('rename');
 		if (profile.organization.move_enabled) aspects.push('move');
 		return aspects;
+	}
+
+	function upsertProfile(
+		current: LibraryManagementProfile[],
+		profile: LibraryManagementProfile
+	): LibraryManagementProfile[] {
+		const saved = structuredClone(profile);
+		return current.some((value) => value.id === saved.id)
+			? current.map((value) => (value.id === saved.id ? saved : value))
+			: [...current, saved];
 	}
 
 	function activationProfileFor(rootId: string): LibraryManagementProfile | null {
@@ -304,6 +340,7 @@
 				activationToken = '';
 				activationProofs = [];
 				activationPhrase = '';
+				activationError = '';
 				activationOpener = opener;
 				activationDialog.showModal();
 				activationHeading.focus();
@@ -339,30 +376,39 @@
 		selectedProfileId = null;
 	}
 
-	async function createFromPreset(): Promise<void> {
-		if (!draft || !newProfileName.trim()) return;
+	async function createProfileCopy(): Promise<void> {
+		if (!draft || !copySourceProfileId || !newProfileName.trim()) return;
 		saveError = '';
 		try {
 			const result = await copyProfile.mutateAsync({
-				profileId: draft.default_profile_id,
+				profileId: copySourceProfileId,
 				request: { name: newProfileName.trim(), expected_settings_revision: sourceRevision }
 			});
+			draft = { ...draft, profiles: upsertProfile(draft.profiles, result.profile) };
+			if (persistedSettings) {
+				persistedSettings = {
+					...persistedSettings,
+					profiles: upsertProfile(persistedSettings.profiles, result.profile)
+				};
+			}
 			sourceRevision = result.settings_revision;
-			await settingsQuery.refetch();
 			selectedProfileId = result.profile.id;
 		} catch (error) {
 			saveError = error instanceof Error ? error.message : 'Could not create the profile.';
 		}
 	}
 
-	function requestDelete(profile: LibraryManagementProfile): void {
+	function requestDelete(profile: LibraryManagementProfile, opener: HTMLButtonElement): void {
 		deleteTarget = profile;
+		deleteError = '';
+		deleteOpener = opener;
 		deleteDialog.showModal();
 		deleteHeading.focus();
 	}
 
 	async function confirmDelete(): Promise<void> {
 		if (!deleteTarget) return;
+		const deletedProfileId = deleteTarget.id;
 		try {
 			const saved = await deleteProfile.mutateAsync({
 				profileId: deleteTarget.id,
@@ -371,15 +417,19 @@
 			draft = settingsPayload(saved);
 			persistedSettings = settingsPayload(saved);
 			sourceRevision = saved.settings_revision;
+			if (copySourceProfileId === deletedProfileId) {
+				copySourceProfileId = saved.default_profile_id;
+			}
 			deleteDialog.close();
 			deleteTarget = null;
 		} catch (error) {
-			saveError = error instanceof Error ? error.message : 'Could not delete the profile.';
+			deleteError = error instanceof Error ? error.message : 'Could not delete the profile.';
 		}
 	}
 
 	async function runActivationPreview(): Promise<void> {
 		if (!activationDraft || !currentActivationRootId) return;
+		activationError = '';
 		try {
 			const handle = await createActivation.mutateAsync({
 				root_id: currentActivationRootId,
@@ -390,8 +440,10 @@
 			});
 			activationJobId = handle.job_id;
 			activationToken = handle.preview_token;
-		} catch {
-			return;
+			rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
+		} catch (error) {
+			activationError =
+				error instanceof Error ? error.message : 'Could not start the activation dry run.';
 		}
 	}
 
@@ -410,6 +462,13 @@
 		activationToken = '';
 	}
 
+	function discardActivationPreview(): void {
+		if (activationPending) return;
+		activationJobId = null;
+		activationToken = '';
+		activationError = '';
+	}
+
 	async function enableManagement(): Promise<void> {
 		if (
 			!activationDraft ||
@@ -417,6 +476,7 @@
 			activationPhrase !== 'Enable Library Management'
 		)
 			return;
+		activationError = '';
 		try {
 			const saved = await confirmActivation.mutateAsync({
 				settings: activationDraft,
@@ -428,13 +488,32 @@
 			persistedSettings = settingsPayload(saved);
 			sourceRevision = saved.settings_revision;
 			activationDialog.close();
-		} catch {
-			return;
+		} catch (error) {
+			activationError =
+				error instanceof Error ? error.message : 'Could not enable Library Management.';
 		}
 	}
 
-	async function openPurge(): Promise<void> {
+	function restoreActivationFocus(): void {
+		if (activationOpener?.isConnected) {
+			activationOpener.focus();
+			return;
+		}
+		managementHeading.focus();
+	}
+
+	function restoreDeleteFocus(): void {
+		if (deleteOpener?.isConnected) {
+			deleteOpener.focus();
+			return;
+		}
+		managementHeading.focus();
+	}
+
+	async function openPurge(opener: HTMLButtonElement): Promise<void> {
 		purgePhrase = '';
+		purgeError = '';
+		purgeOpener = opener;
 		try {
 			await purgeImpact.mutateAsync();
 			purgeDialog.showModal();
@@ -455,8 +534,8 @@
 				idempotency_key: createUuid()
 			});
 			purgeDialog.close();
-		} catch {
-			return;
+		} catch (error) {
+			purgeError = error instanceof Error ? error.message : 'Could not purge the baselines.';
 		}
 	}
 
@@ -475,7 +554,12 @@
 		<div class="management-write-mark"><FolderCog class="h-6 w-6" /></div>
 		<div class="min-w-0 flex-1">
 			<p class="management-kicker"><ShieldAlert class="h-3.5 w-3.5" /> Optional write access</p>
-			<h2 id="library-management-title" class="font-display text-xl font-semibold">
+			<h2
+				bind:this={managementHeading}
+				id="library-management-title"
+				tabindex="-1"
+				class="font-display text-xl font-semibold"
+			>
 				Library Management
 			</h2>
 			<p class="mt-1 text-sm text-base-content/65">
@@ -522,7 +606,13 @@
 					</label>
 				</div>
 
-				<div class="management-profile-grid">
+				<!-- svelte-ignore a11y_no_noninteractive_tabindex (bounded scroll region must be keyboard-focusable) -->
+				<div
+					class="management-profile-grid"
+					role="region"
+					aria-label="Saved Library Management profiles"
+					tabindex="0"
+				>
 					{#each profiles as profile (profile.id)}
 						<article
 							class="management-profile-card"
@@ -555,10 +645,15 @@
 							<div
 								class="mt-4 flex items-center justify-between border-t border-base-content/10 pt-3"
 							>
-								<span class="text-xs text-base-content/45"
+								<span
+									class="text-xs text-base-content/45"
+									title={assignedRootLabels(profile.id).length
+										? `Assigned to: ${assignedRootLabels(profile.id).join(', ')}`
+										: undefined}
 									>{assignedRootCount(profile.id)} assigned root{assignedRootCount(profile.id) === 1
 										? ''
-										: 's'}</span
+										: 's'}{#if assignedRootLabels(profile.id).length}
+										· {assignedRootLabels(profile.id).join(', ')}{/if}</span
 								>
 								<div class="flex gap-1">
 									<button
@@ -569,8 +664,11 @@
 									<button
 										class="btn btn-ghost btn-xs btn-square text-error"
 										aria-label={`Delete ${profile.name}`}
-										disabled={assignedRootCount(profile.id) > 0 || profiles.length === 1}
-										onclick={() => requestDelete(profile)}><Trash2 class="h-3.5 w-3.5" /></button
+										disabled={assignedRootCount(profile.id) > 0 ||
+											profile.id === draft.default_profile_id ||
+											profiles.length === 1}
+										onclick={(event) => requestDelete(profile, event.currentTarget)}
+										><Trash2 class="h-3.5 w-3.5" /></button
 									>
 								</div>
 							</div>
@@ -580,11 +678,20 @@
 
 				<div class="management-create-row">
 					<div>
-						<strong class="text-sm">Create from the current default</strong>
+						<strong class="text-sm">Copy an existing profile</strong>
 						<p class="text-xs text-base-content/50">
-							Copies every saved value without enabling automation.
+							Copies every saved value without changing root assignments or enabling automation.
 						</p>
 					</div>
+					<select
+						class="select select-bordered select-sm min-w-52 bg-base-100"
+						bind:value={copySourceProfileId}
+						aria-label="Profile to copy"
+					>
+						{#each profiles as profile (profile.id)}<option value={profile.id}
+								>{profile.name}{profile.preset_origin ? ' · preset based' : ' · custom'}</option
+							>{/each}
+					</select>
 					<input
 						class="input input-bordered input-sm min-w-52 bg-base-100"
 						bind:value={newProfileName}
@@ -592,8 +699,8 @@
 					/>
 					<button
 						class="btn btn-outline btn-sm"
-						disabled={copyProfile.isPending || !newProfileName.trim()}
-						onclick={() => void createFromPreset()}><Copy class="h-4 w-4" /> Create copy</button
+						disabled={copyProfile.isPending || !copySourceProfileId || !newProfileName.trim()}
+						onclick={() => void createProfileCopy()}><Copy class="h-4 w-4" /> Create copy</button
 					>
 				</div>
 			</section>
@@ -900,7 +1007,7 @@
 							<button
 								class="btn btn-error btn-outline btn-sm"
 								disabled={purgeImpact.isPending}
-								onclick={() => void openPurge()}
+								onclick={(event) => void openPurge(event.currentTarget)}
 								><ArchiveRestore class="h-4 w-4" /> Purge baselines...</button
 							>
 						</div>
@@ -946,7 +1053,10 @@
 	bind:this={activationDialog}
 	class="modal"
 	aria-labelledby="management-activation-title"
-	onclose={() => activationOpener?.focus()}
+	onclose={restoreActivationFocus}
+	oncancel={(event) => {
+		if (activationPending) event.preventDefault();
+	}}
 >
 	<div class="modal-box max-w-2xl management-activation-dialog">
 		<p class="management-kicker"><ShieldAlert class="h-3.5 w-3.5" /> Write-access gate</p>
@@ -1010,6 +1120,23 @@
 					>
 				{:else if activationQuery.isLoading}
 					<div class="mt-4 skeleton h-20 rounded-xl"></div>
+				{:else if activationQuery.isError}
+					<div class="alert alert-error mt-4 items-start text-sm" role="alert">
+						<ShieldAlert class="mt-0.5 h-5 w-5" /><span
+							><strong>Could not load this dry run.</strong><br />Retry the status request or run a
+							fresh dry run before enabling anything.</span
+						>
+					</div>
+					<button
+						class="btn btn-outline btn-sm mt-3"
+						disabled={activationQuery.isFetching}
+						onclick={() => void activationQuery.refetch()}>Retry status</button
+					>
+					<button
+						class="btn btn-ghost btn-sm mt-3"
+						disabled={activationPending}
+						onclick={discardActivationPreview}>Start a fresh dry run</button
+					>
 				{:else if activationQuery.data}
 					<div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
 						<div class="management-mini-stat">
@@ -1045,16 +1172,35 @@
 							>
 						</div>
 					</div>
+					<a
+						href={`/library/management/previews/${encodeURIComponent(activationJobId)}`}
+						target="_blank"
+						rel="noopener noreferrer"
+						class="btn btn-ghost btn-sm mt-3">Review file-by-file dry run</a
+					>
 					{#if activationQuery.data.stale || activationQuery.data.expired}<div
 							class="alert alert-error mt-3 text-sm"
 						>
 							This dry run is stale or expired. Run it again before enabling anything.
-						</div>{:else if !activationReady}<div
+						</div>
+						<button class="btn btn-outline btn-sm mt-3" onclick={discardActivationPreview}
+							>Run a fresh dry run</button
+						>
+					{:else if activationQuery.data.state === 'failed'}<div
+							class="alert alert-error mt-3 text-sm"
+							role="alert"
+						>
+							This dry run failed during planning. No files were changed.
+						</div>
+						<button class="btn btn-outline btn-sm mt-3" onclick={discardActivationPreview}
+							>Run a fresh dry run</button
+						>
+					{:else if !activationReady}<div
 							class="mt-3 flex items-center justify-between gap-3 text-sm text-base-content/55"
 						>
-							<span>Planning is still running. You may leave this page and return.</span><button
-								class="btn btn-ghost btn-xs"
-								onclick={() => void activationQuery.refetch()}>Refresh status</button
+							<span>Planning is still running. Keep this dialog open and refresh its status.</span
+							><button class="btn btn-ghost btn-xs" onclick={() => void activationQuery.refetch()}
+								>Refresh status</button
 							>
 						</div>{/if}
 					<button
@@ -1082,14 +1228,17 @@
 				>
 			</section>
 		{/if}
+		{#if activationError}<div class="alert alert-error mt-4 text-sm" role="alert">
+				{activationError}
+			</div>{/if}
 		<div class="modal-action">
 			<button
 				class="btn btn-ghost"
 				onclick={() => activationDialog.close()}
-				disabled={confirmActivation.isPending}>Cancel</button
+				disabled={activationPending}>Cancel</button
 			>{#if !currentActivationRoot}<button
 					class="btn management-btn"
-					disabled={activationPhrase !== 'Enable Library Management' || confirmActivation.isPending}
+					disabled={activationPhrase !== 'Enable Library Management' || activationPending}
 					onclick={() => void enableManagement()}
 					>{#if confirmActivation.isPending}<span class="loading loading-spinner loading-sm"
 						></span>{/if} Enable Library Management</button
@@ -1097,11 +1246,21 @@
 		</div>
 	</div>
 	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Cancel Library Management activation">close</button>
+		<button aria-label="Cancel Library Management activation" disabled={activationPending}
+			>close</button
+		>
 	</form>
 </dialog>
 
-<dialog bind:this={deleteDialog} class="modal" aria-labelledby="delete-management-profile-title">
+<dialog
+	bind:this={deleteDialog}
+	class="modal"
+	aria-labelledby="delete-management-profile-title"
+	onclose={restoreDeleteFocus}
+	oncancel={(event) => {
+		if (deleteProfile.isPending) event.preventDefault();
+	}}
+>
 	<div class="modal-box max-w-md">
 		<h2
 			bind:this={deleteHeading}
@@ -1115,8 +1274,15 @@
 			This removes only the profile. Assigned profiles cannot be deleted, and no music file is
 			touched.
 		</p>
+		{#if deleteError}<div class="alert alert-error mt-3 text-sm" role="alert">
+				{deleteError}
+			</div>{/if}
 		<div class="modal-action">
-			<button class="btn btn-ghost" onclick={() => deleteDialog.close()}>Cancel</button><button
+			<button
+				class="btn btn-ghost"
+				disabled={deleteProfile.isPending}
+				onclick={() => deleteDialog.close()}>Cancel</button
+			><button
 				class="btn btn-error"
 				disabled={deleteProfile.isPending}
 				onclick={() => void confirmDelete()}
@@ -1126,7 +1292,7 @@
 		</div>
 	</div>
 	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Cancel profile deletion">close</button>
+		<button aria-label="Cancel profile deletion" disabled={deleteProfile.isPending}>close</button>
 	</form>
 </dialog>
 
@@ -1134,6 +1300,7 @@
 	bind:this={purgeDialog}
 	class="modal"
 	aria-labelledby="purge-management-baselines-title"
+	onclose={() => purgeOpener?.focus()}
 	oncancel={(event) => {
 		if (purgeBaselines.isPending) event.preventDefault();
 	}}
@@ -1166,6 +1333,9 @@
 						autocomplete="off"
 					/></label
 				>
+			</div>{/if}
+		{#if purgeError}<div class="alert alert-error mt-3 text-sm" role="alert">
+				{purgeError}
 			</div>{/if}
 		<div class="modal-action">
 			<button

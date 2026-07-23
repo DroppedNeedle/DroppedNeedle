@@ -16,6 +16,7 @@
 		X
 	} from 'lucide-svelte';
 
+	import { API } from '$lib/constants';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { getLibrarySearchQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -63,6 +64,17 @@
 		item: LibraryManagementPlanItem;
 		collision: ManagementCollision;
 	}
+
+	interface ApplyActionCopy {
+		barTitle: string;
+		barDetail: string;
+		button: string;
+		kicker: string;
+		title: string;
+		detail: string;
+		confirmButton: string;
+	}
+	const artworkPreviewMimeTypes = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/webp']);
 
 	let { jobId }: Props = $props();
 	let eligibility = $state<ManagementEligibility | ''>('');
@@ -125,10 +137,72 @@
 	const preview = $derived(previewQuery.data ?? null);
 	const items = $derived(itemsQuery.data?.pages.flatMap((page) => page.items) ?? []);
 	const roots = $derived(policyQuery.data?.library_roots ?? []);
-	const applyPhrase = 'APPLY LIBRARY MANAGEMENT';
+	const applyPhrase = $derived(
+		preview?.mode === 'undo'
+			? 'UNDO OPERATION'
+			: preview?.mode === 'baseline_restore'
+				? 'RESTORE FIRST-MANAGEMENT STATE'
+				: preview?.mode === 'duplicate_resolution'
+					? 'APPLY COLLISION RESOLUTION'
+					: 'APPLY LIBRARY MANAGEMENT'
+	);
+	const applyCount = $derived(
+		(preview?.summary.eligible_count ?? 0) + (preview?.summary.warning_count ?? 0)
+	);
+	const applyFileLabel = $derived(`${applyCount} ${applyCount === 1 ? 'file' : 'files'}`);
+	const applyAction = $derived.by<ApplyActionCopy>(() => {
+		switch (preview?.mode) {
+			case 'undo':
+				return {
+					barTitle: 'Undo changes only after confirmation',
+					barDetail: 'Files changed again later, blocked rows, and expired snapshots are excluded.',
+					button: `Undo this operation for ${applyFileLabel}`,
+					kicker: 'Undo confirmation',
+					title: 'Undo this operation from this exact preview?',
+					detail: `DroppedNeedle will restore this operation's before-state for ${applyFileLabel}. Later edits are preserved and this does not restore the broader first-management baseline.`,
+					confirmButton: 'Undo operation'
+				};
+			case 'baseline_restore':
+				return {
+					barTitle: 'Baseline restore changes files only after confirmation',
+					barDetail:
+						'Restored files leave Library Management and can be managed again only through a new preview.',
+					button: `Restore first-management state for ${applyFileLabel}`,
+					kicker: 'First-management baseline confirmation',
+					title: 'Restore these first-management baselines?',
+					detail: `DroppedNeedle will restore ${applyFileLabel} to their earliest saved state from before it first managed them. This is broader than Undo and leaves those files unmanaged.`,
+					confirmButton: 'Restore first-management state'
+				};
+			case 'duplicate_resolution':
+				return {
+					barTitle: 'Collision resolution changes files only after confirmation',
+					barDetail:
+						'Only the explicitly selected resolution is included; no duplicate is deleted automatically.',
+					button: `Apply collision resolution for ${applyFileLabel}`,
+					kicker: 'Collision-resolution confirmation',
+					title: 'Apply this exact collision resolution?',
+					detail: `DroppedNeedle will carry out the explicitly previewed collision resolution for ${applyFileLabel}. No destination is overwritten and no duplicate is deleted automatically.`,
+					confirmButton: 'Apply collision resolution'
+				};
+			default:
+				return {
+					barTitle: 'Applying is the first write action',
+					barDetail: 'Blocked, stale, and no-change rows are excluded.',
+					button: `Write tags and organize ${applyFileLabel}`,
+					kicker: 'Write confirmation',
+					title: 'Apply this exact preview?',
+					detail: `DroppedNeedle will write tags and organize ${preview?.summary.eligible_count ?? 0} eligible files plus ${preview?.summary.warning_count ?? 0} files with warnings. No destination is overwritten automatically.`,
+					confirmButton: 'Apply exact preview'
+				};
+		}
+	});
+	const activationPreview = $derived(
+		Boolean(preview && preview.proposed_settings_revision !== null)
+	);
 	const canApply = $derived(
 		Boolean(
 			preview?.ready_for_confirmation &&
+			!activationPreview &&
 			!preview.stale &&
 			!preview.expired &&
 			preview.summary.eligible_count + preview.summary.warning_count > 0 &&
@@ -203,6 +277,31 @@
 
 	function formatDate(value: number | null): string {
 		return value ? new Date(value * 1000).toLocaleString() : 'No expiry';
+	}
+
+	function artworkText(choice: Record<string, unknown>, key: string): string | null {
+		const value = choice[key];
+		return typeof value === 'string' && value.trim() ? value : null;
+	}
+
+	function artworkDimensions(choice: Record<string, unknown>): string | null {
+		const width = choice.width;
+		const height = choice.height;
+		return typeof width === 'number' && typeof height === 'number'
+			? `${width.toLocaleString()} × ${height.toLocaleString()} px`
+			: null;
+	}
+
+	function artworkPreviewUrl(
+		item: LibraryManagementPlanItem,
+		choice: Record<string, unknown>
+	): string | null {
+		const sha256 = artworkText(choice, 'blob_sha256');
+		const mimeType = artworkText(choice, 'mime_type');
+		if (!sha256?.match(/^[0-9a-f]{64}$/) || !mimeType || !artworkPreviewMimeTypes.has(mimeType)) {
+			return null;
+		}
+		return API.libraryManagement.previewArtwork(jobId, item.ordinal, sha256);
 	}
 
 	function chooseArtist(id: string, label: string): void {
@@ -393,11 +492,28 @@
 							: preview.stale_reasons.map(titleManagementValue).join(' · ')}</span
 					>
 				</div>
-			{:else if preview.state !== 'ready'}
+			{:else if preview.state === 'failed'}
+				<div class="alert alert-error items-start" role="alert">
+					<ShieldAlert class="mt-0.5 h-5 w-5" /><span
+						><strong>Preview planning failed.</strong><br />{preview.terminal_code
+							? titleManagementValue(preview.terminal_code)
+							: 'Generate a fresh preview and try again.'} No files were changed.</span
+					>
+				</div>
+			{:else if ['queued', 'running', 'paused'].includes(preview.state)}
 				<div class="alert alert-info">
 					<span class="loading loading-spinner loading-sm"></span><span
 						>Planning is still read-only. {preview.completed_count.toLocaleString()} of {preview.expected_work_count.toLocaleString()}
 						items inspected.</span
+					>
+				</div>
+			{:else if preview.state !== 'ready'}
+				<div class="alert alert-info items-start">
+					<ShieldAlert class="mt-0.5 h-5 w-5" /><span
+						><strong>This preview is no longer awaiting confirmation.</strong><br
+						/>{preview.terminal_code
+							? titleManagementValue(preview.terminal_code)
+							: titleManagementValue(preview.state)}. No further write can start from this page.</span
 					>
 				</div>
 			{/if}
@@ -492,19 +608,33 @@
 											}}>Album: {albumLabel} ×</button
 										>{/if}
 								</div>{/if}
-							{#if catalogSearch.trim().length >= 2 && catalogSearchQuery.data}<div
-									class="grid max-h-44 gap-1 overflow-y-auto rounded-xl border border-base-content/10 bg-base-100 p-2"
-								>
-									{#each catalogSearchQuery.data.artists as artist (artist.id)}<button
-											class="btn btn-ghost btn-sm justify-start"
-											onclick={() => chooseArtist(artist.id, artist.name)}
-											>Artist · {artist.name}</button
-										>{/each}{#each catalogSearchQuery.data.albums as album (album.id)}<button
-											class="btn btn-ghost btn-sm justify-start"
-											onclick={() => chooseAlbum(album.id, `${album.artist_name} · ${album.title}`)}
-											>Album · {album.artist_name} · {album.title}</button
-										>{/each}
-								</div>{/if}
+							{#if catalogSearch.trim().length >= 2}
+								{#if catalogSearchQuery.isLoading}<div
+										class="skeleton h-16 rounded-xl"
+									></div>{:else if catalogSearchQuery.isError}<div
+										class="alert alert-error py-2 text-xs"
+										role="alert"
+									>
+										Could not search artists and albums.
+									</div>{:else if catalogSearchQuery.data && catalogSearchQuery.data.artists.length + catalogSearchQuery.data.albums.length === 0}<p
+										class="rounded-xl border border-dashed border-base-content/15 p-3 text-xs text-base-content/50"
+									>
+										No matching artists or albums.
+									</p>{:else if catalogSearchQuery.data}<div
+										class="grid max-h-44 gap-1 overflow-y-auto rounded-xl border border-base-content/10 bg-base-100 p-2"
+									>
+										{#each catalogSearchQuery.data.artists as artist (artist.id)}<button
+												class="btn btn-ghost btn-sm justify-start"
+												onclick={() => chooseArtist(artist.id, artist.name)}
+												>Artist · {artist.name}</button
+											>{/each}{#each catalogSearchQuery.data.albums as album (album.id)}<button
+												class="btn btn-ghost btn-sm justify-start"
+												onclick={() =>
+													chooseAlbum(album.id, `${album.artist_name} · ${album.title}`)}
+												>Album · {album.artist_name} · {album.title}</button
+											>{/each}
+									</div>{/if}
+							{/if}
 						</div>
 						<div class="grid gap-2 sm:grid-cols-2">
 							<label class="grid gap-1 text-xs sm:col-span-2"
@@ -681,12 +811,46 @@
 										</section>{/if}
 									{#if item.artwork_choices.length}<section>
 											<h4 class="text-xs font-bold uppercase text-base-content/50">Artwork</h4>
-											<p class="text-sm">
-												{item.artwork_choices.length} pinned artwork output{item.artwork_choices
-													.length === 1
-													? ''
-													: 's'}; source and sizing decisions are preserved in this preview.
-											</p>
+											<div class="mt-2 grid gap-2 sm:grid-cols-2">
+												{#each item.artwork_choices as choice, index (index)}<article
+														class="flex gap-3 rounded-lg border border-base-content/10 bg-base-100/70 p-2 text-xs"
+													>
+														{#if artworkPreviewUrl(item, choice)}
+															<img
+																src={artworkPreviewUrl(item, choice)}
+																alt={`${titleManagementValue(artworkText(choice, 'image_type') ?? 'Artwork')} preview`}
+																class="h-20 w-20 shrink-0 rounded-md bg-base-200 object-cover"
+																loading="lazy"
+																decoding="async"
+															/>
+														{/if}
+														<div class="min-w-0">
+															<strong
+																>{titleManagementValue(
+																	artworkText(choice, 'output_kind') ?? 'artwork'
+																)}{artworkText(choice, 'image_type')
+																	? ` · ${titleManagementValue(artworkText(choice, 'image_type') ?? '')}`
+																	: ''}</strong
+															>
+															<p class="mt-1 text-base-content/55">
+																{[
+																	artworkText(choice, 'source')
+																		? titleManagementValue(artworkText(choice, 'source') ?? '')
+																		: null,
+																	artworkDimensions(choice),
+																	artworkText(choice, 'format')?.toUpperCase(),
+																	artworkText(choice, 'mime_type')
+																]
+																	.filter(Boolean)
+																	.join(' · ') || 'Pinned output details unavailable'}
+															</p>
+															{#if artworkText(choice, 'destination_relative_path')}<code
+																	class="mt-1 block break-all text-base-content/45"
+																	>{artworkText(choice, 'destination_relative_path')}</code
+																>{/if}
+														</div>
+													</article>{/each}
+											</div>
 										</section>{/if}
 									{#if collisions.length}
 										<section class="space-y-2">
@@ -734,29 +898,38 @@
 					>{/if}
 			{/if}
 
-			<div class="management-apply-bar">
-				<div class="flex items-start gap-2">
-					<ShieldAlert class="mt-0.5 h-5 w-5 text-library-manage" />
-					<div>
-						<strong>Applying is the first write action</strong>
-						<p class="text-xs text-base-content/55">
-							Blocked, stale, and no-change rows are excluded.
-						</p>
-						{#if !previewToken && preview.ready_for_confirmation}<p
-								class="mt-1 text-xs text-warning"
-							>
-								The private apply token is not in this browser session. Generate a fresh preview to
-								apply.
-							</p>{/if}
+			{#if activationPreview}<div class="management-apply-bar">
+					<div class="flex items-start gap-2">
+						<ShieldAlert class="mt-0.5 h-5 w-5 text-library-manage" />
+						<div>
+							<strong>Activation dry run</strong>
+							<p class="text-xs text-base-content/55">
+								This page is read-only. Return to the Library settings dialog to use this dry run
+								when enabling Library Management.
+							</p>
+						</div>
 					</div>
-				</div>
-				<button
-					class="btn management-btn"
-					disabled={!canApply}
-					onclick={(event) => openApply(event.currentTarget)}
-					>Write tags and organize {preview.summary.eligible_count + preview.summary.warning_count} files</button
-				>
-			</div>
+					<a href="/settings?tab=library" class="btn btn-ghost btn-sm">Library settings</a>
+				</div>{:else}<div class="management-apply-bar">
+					<div class="flex items-start gap-2">
+						<ShieldAlert class="mt-0.5 h-5 w-5 text-library-manage" />
+						<div>
+							<strong>{applyAction.barTitle}</strong>
+							<p class="text-xs text-base-content/55">{applyAction.barDetail}</p>
+							{#if !previewToken && preview.ready_for_confirmation}<p
+									class="mt-1 text-xs text-warning"
+								>
+									The private apply token is not in this browser session. Generate a fresh preview
+									to apply.
+								</p>{/if}
+						</div>
+					</div>
+					<button
+						class="btn management-btn"
+						disabled={!canApply}
+						onclick={(event) => openApply(event.currentTarget)}>{applyAction.button}</button
+					>
+				</div>{/if}
 		{/if}
 	</main>
 </div>
@@ -774,21 +947,18 @@
 		<div class="flex items-start gap-3">
 			<div class="management-write-mark"><ShieldAlert class="h-5 w-5" /></div>
 			<div>
-				<p class="management-kicker">Write confirmation</p>
+				<p class="management-kicker">{applyAction.kicker}</p>
 				<h2
 					bind:this={applyHeading}
 					id="apply-management-title"
 					tabindex="-1"
 					class="font-display text-xl font-semibold"
 				>
-					Apply this exact preview?
+					{applyAction.title}
 				</h2>
 			</div>
 		</div>
-		<p class="mt-4 text-sm text-base-content/65">
-			DroppedNeedle will write tags and organize {preview?.summary.eligible_count ?? 0} eligible files
-			plus {preview?.summary.warning_count ?? 0} files with warnings. No destination is overwritten automatically.
-		</p>
+		<p class="mt-4 text-sm text-base-content/65">{applyAction.detail}</p>
 		<label class="mt-4 grid gap-1 text-sm"
 			><span>Type <strong>{applyPhrase}</strong></span><input
 				class="input input-bordered bg-base-100 font-mono"
@@ -807,7 +977,8 @@
 				disabled={!canApply || confirmation !== applyPhrase || applyPreview.isPending}
 				onclick={() => void apply()}
 				>{#if applyPreview.isPending}<span class="loading loading-spinner loading-sm"
-					></span>{/if}<CheckCircle2 class="h-4 w-4" /> Apply exact preview</button
+					></span>{/if}<CheckCircle2 class="h-4 w-4" />
+				{applyAction.confirmButton}</button
 			>
 		</div>
 	</div>

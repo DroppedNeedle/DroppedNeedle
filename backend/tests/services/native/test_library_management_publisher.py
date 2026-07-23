@@ -18,6 +18,8 @@ from api.v1.schemas.library_management import (
 )
 from api.v1.schemas.library_policies import LibraryRootSettings
 from api.v1.schemas.library_management_preview import (
+    LibraryManagementBaselineRestorePreviewRequest,
+    LibraryManagementSelectionRequest,
     LibraryManagementUndoPreviewRequest,
 )
 from core.exceptions import (
@@ -32,6 +34,9 @@ from infrastructure.audio.metadata_engine import (
 from infrastructure.library_management_blob_store import LibraryManagementBlobStore
 from services.native.audio_write_planning_service import AudioWritePlanningService
 from services.native.library_filesystem_coordinator import LibraryFilesystemCoordinator
+from services.native.library_management_baseline_service import (
+    LibraryManagementBaselineService,
+)
 from services.native.library_management_publisher import LibraryManagementPublisher
 from services.native.library_management_undo_service import LibraryManagementUndoService
 from services.native.library_policy_resolver import LibraryPolicyResolver
@@ -598,6 +603,299 @@ async def test_automatic_import_commits_identity_baseline_undo_and_history(
     assert (root / "Incoming/album.cue").read_text() == "FILE original.flac WAVE"
     assert not (root / "Managed Artist/Managed Album/cover.jpg").exists()
     assert not (root / "Managed Artist/Managed Album/album.cue").exists()
+
+
+@pytest.mark.asyncio
+async def test_automatic_managed_upgrade_preserves_baseline_and_undo_state(
+    tmp_path: Path,
+) -> None:
+    root, original_path, preferences, store, _settings, policy_revision = _configured(
+        tmp_path
+    )
+    audio = AudioMetadataEngine()
+    filesystem = LibraryFilesystemCoordinator()
+    blobs = LibraryManagementBlobStore(tmp_path / "managed-upgrade-blobs", store)
+    publisher = LibraryManagementPublisher(
+        store,
+        preferences,
+        audio,
+        AudioWritePlanningService(audio),
+        blobs,
+        filesystem,
+        clock=lambda: 110.0,
+    )
+    service = TargetImportLibraryService(
+        store,
+        lambda: LibraryPolicyResolver(preferences.get_typed_library_settings_raw()),
+        AsyncMock(),
+        filesystem_coordinator=filesystem,
+        management_publisher=publisher,
+    )
+    original_snapshot = audio.snapshot(original_path)
+    management = preferences.get_library_management_settings_raw()
+    profile = next(
+        value
+        for value in management.profiles
+        if value.id == PICARD_ORGANIZER_PROFILE_ID
+    )
+    pinned = _planner(tmp_path, store, preferences).pin_profile(management, profile)
+    metadata_snapshot = await store.put_management_metadata_snapshot(
+        LibraryManagementMetadataSnapshot(
+            id="managed-upgrade-metadata",
+            provider="musicbrainz",
+            entity_kind="release",
+            entity_id="managed-upgrade-release",
+            input_hash="a" * 64,
+            canonical_payload_json="{}",
+            payload_sha256=hashlib.sha256(b"{}").hexdigest(),
+            fetched_at=100.0,
+        )
+    )
+    recycle_bin = tmp_path / "upgrade-recycle"
+
+    def automatic_request(
+        incoming: Path,
+        *,
+        title: str,
+        projection_hash: str,
+        artifacts: tuple[LibraryManagementImportArtifact, ...] = (),
+    ) -> LibraryManagementImportFile:
+        return msgspec.structs.replace(
+            _import_file(
+                audio,
+                incoming,
+                ordinal=0,
+                relative_path="source.flac",
+            ),
+            authoritative_mapping=True,
+            recording_mbid="recording-1",
+            release_track_mbid="release-track-1",
+            medium_position=1,
+            release_track_position=1,
+            baseline_relative_path="source.flac",
+            desired_document=DesiredAudioDocument(
+                fields=(DesiredAudioField(name="title", action="set", value=title),)
+            ),
+            pinned_profile=pinned,
+            metadata_snapshot_id=metadata_snapshot.id,
+            projection_hash=projection_hash,
+            settings_revision=settings_revision(management),
+            undo_retention_days=management.undo_retention_days,
+            replacement_local_track_id="track-1",
+            replacement_root_id="root-1",
+            replacement_relative_path="source.flac",
+            recycle_bin_path=str(recycle_bin),
+            artifacts=artifacts,
+        )
+
+    incoming_a = tmp_path / "managed-a.flac"
+    shutil.copy2(original_path, incoming_a)
+    result_a = await service.publish_import_bundle(
+        LibraryManagementImportBundle(
+            idempotency_key="acquisition:managed-upgrade:a",
+            origin="acquisition",
+            policy_revision=policy_revision,
+            files=(
+                automatic_request(
+                    incoming_a,
+                    title="Managed A",
+                    projection_hash="a" * 64,
+                ),
+            ),
+        )
+    )
+    assert result_a.local_track_ids == ("track-1",)
+    baseline_a = await store.get_management_baseline("track-1")
+    state_a = await store.get_track_management_state("track-1")
+    managed_a_snapshot = audio.snapshot(original_path)
+    assert baseline_a is not None and state_a is not None
+
+    incoming_b = tmp_path / "managed-b.flac"
+    shutil.copy2(original_path, incoming_b)
+    incoming_sidecar = tmp_path / "upgrade.cue"
+    incoming_sidecar.write_text("FILE managed-b.flac WAVE", encoding="utf-8")
+    sidecar_hash = hashlib.sha256(incoming_sidecar.read_bytes()).hexdigest()
+    result_b = await service.publish_import_bundle(
+        LibraryManagementImportBundle(
+            idempotency_key="acquisition:managed-upgrade:b",
+            origin="acquisition",
+            policy_revision=policy_revision,
+            files=(
+                automatic_request(
+                    incoming_b,
+                    title="Managed B",
+                    projection_hash="b" * 64,
+                    artifacts=(
+                        LibraryManagementImportArtifact(
+                            kind="sidecar",
+                            destination_root_id="root-1",
+                            destination_relative_path="upgrade.cue",
+                            source_path=str(incoming_sidecar),
+                            source_fingerprint=sidecar_hash,
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+
+    baseline_b = await store.get_management_baseline("track-1")
+    state_b = await store.get_track_management_state("track-1")
+    assert result_b.local_track_ids == ("track-1",)
+    assert baseline_b == baseline_a
+    assert state_b is not None and state_b.last_operation_job_id is not None
+    assert state_b.applied_projection_hash == "b" * 64
+    before_b = await store.get_management_operation_snapshot(
+        state_b.last_operation_job_id, 0, "track-1"
+    )
+    assert before_b is not None
+    before_b_bytes = await blobs.read_bytes(before_b.semantic_snapshot_blob_sha256)
+    before_b_snapshot = msgspec.json.decode(
+        before_b_bytes, type=type(managed_a_snapshot)
+    )
+    assert before_b_snapshot.metadata == managed_a_snapshot.metadata
+    before_b_state = json.loads(before_b.before_management_state_json)
+    assert before_b_state["last_operation_job_id"] == state_a.last_operation_job_id
+    assert before_b_state["applied_projection_hash"] == "a" * 64
+    assert json.loads(before_b.ancillary_snapshot_json)[0]["before_exists"] is False
+    assert (root / "upgrade.cue").is_file()
+    assert not incoming_sidecar.exists()
+
+    source_b = await store.get_operation_job(state_b.last_operation_job_id)
+    assert source_b is not None
+    undo = LibraryManagementUndoService(
+        store,
+        preferences,
+        audio,
+        blobs,
+        filesystem,
+        clock=lambda: 120.0,
+    )
+    undo_preview = await undo.create_preview(
+        state_b.last_operation_job_id,
+        LibraryManagementUndoPreviewRequest(
+            expected_operation_row_revision=int(source_b["row_revision"]),
+            idempotency_key="undo-managed-upgrade-preview",
+        ),
+        "admin",
+    )
+    claimed_undo_preview = await store.claim_operation_job(
+        "undo-managed-upgrade-preview-worker",
+        now=121.0,
+        lease_seconds=60.0,
+        kind="library_management",
+    )
+    assert claimed_undo_preview is not None
+    await undo.run_claimed_preview(
+        claimed_undo_preview, "undo-managed-upgrade-preview-worker"
+    )
+    undo_ready = await store.get_operation_job(undo_preview.job_id)
+    assert undo_ready is not None
+    await store.begin_library_management_apply(
+        undo_preview.job_id,
+        preview_token_hash=hashlib.sha256(
+            undo_preview.preview_token.encode()
+        ).hexdigest(),
+        expected_job_revision=int(undo_ready["row_revision"]),
+        idempotency_key="undo-managed-upgrade-apply",
+        now=122.0,
+    )
+    claimed_undo_apply = await store.claim_operation_job(
+        "undo-managed-upgrade-apply-worker",
+        now=123.0,
+        lease_seconds=60.0,
+        kind="library_management",
+    )
+    assert claimed_undo_apply is not None
+    undo_work = await store.claim_operation_work(
+        undo_preview.job_id, "undo-managed-upgrade-apply-worker", now=124.0
+    )
+    assert undo_work is not None
+    await publisher.publish_bundle(
+        undo_preview.job_id,
+        int(undo_work["ordinal"]),
+        "undo-managed-upgrade-apply-worker",
+    )
+
+    restored_a_state = await store.get_track_management_state("track-1")
+    assert audio.snapshot(original_path).metadata == managed_a_snapshot.metadata
+    assert restored_a_state is not None
+    assert restored_a_state.applied_projection_hash == "a" * 64
+    assert restored_a_state.last_operation_job_id == state_a.last_operation_job_id
+    assert not (root / "upgrade.cue").exists()
+    assert await store.get_management_baseline("track-1") == baseline_a
+
+    baseline_service = LibraryManagementBaselineService(
+        store,
+        preferences,
+        audio,
+        blobs,
+        filesystem,
+        undo,
+        clock=lambda: 130.0,
+    )
+    current_management = preferences.get_library_management_settings()
+    restore_preview = await baseline_service.create_restore_preview(
+        LibraryManagementBaselineRestorePreviewRequest(
+            selection=LibraryManagementSelectionRequest(kind="tracks", ids=["track-1"]),
+            expected_settings_revision=current_management.settings_revision,
+            expected_policy_revision=policy_revision,
+            idempotency_key="managed-upgrade-baseline-preview",
+        ),
+        "admin",
+    )
+    claimed_restore_preview = await store.claim_operation_job(
+        "managed-upgrade-baseline-preview-worker",
+        now=131.0,
+        lease_seconds=60.0,
+        kind="library_management",
+    )
+    assert claimed_restore_preview is not None
+    await baseline_service.run_claimed_preview(
+        claimed_restore_preview, "managed-upgrade-baseline-preview-worker"
+    )
+    restore_ready = await store.get_operation_job(restore_preview.job_id)
+    assert restore_ready is not None
+    await store.begin_library_management_apply(
+        restore_preview.job_id,
+        preview_token_hash=hashlib.sha256(
+            restore_preview.preview_token.encode()
+        ).hexdigest(),
+        expected_job_revision=int(restore_ready["row_revision"]),
+        idempotency_key="managed-upgrade-baseline-apply",
+        now=132.0,
+    )
+    claimed_restore_apply = await store.claim_operation_job(
+        "managed-upgrade-baseline-apply-worker",
+        now=133.0,
+        lease_seconds=60.0,
+        kind="library_management",
+    )
+    assert claimed_restore_apply is not None
+    restore_work = await store.claim_operation_work(
+        restore_preview.job_id, "managed-upgrade-baseline-apply-worker", now=134.0
+    )
+    assert restore_work is not None
+    await publisher.publish_bundle(
+        restore_preview.job_id,
+        int(restore_work["ordinal"]),
+        "managed-upgrade-baseline-apply-worker",
+    )
+
+    final_state = await store.get_track_management_state("track-1")
+    final_baseline = await store.get_management_baseline("track-1")
+    assert audio.snapshot(original_path).metadata == original_snapshot.metadata
+    assert final_state is not None and final_state.last_outcome == "restored"
+    assert final_baseline is not None and final_baseline.restore_status == "restored"
+    assert (
+        msgspec.structs.replace(
+            final_baseline,
+            restore_status=baseline_a.restore_status,
+            last_verified_at=baseline_a.last_verified_at,
+            row_revision=baseline_a.row_revision,
+        )
+        == baseline_a
+    )
 
 
 @pytest.mark.asyncio
@@ -1412,7 +1710,7 @@ async def test_publisher_marks_cleanup_pending_without_rolling_back_catalog(
 
 
 @pytest.mark.asyncio
-async def test_publisher_defers_cancellation_until_critical_publish_is_durable(
+async def test_publisher_defers_repeated_cancellation_until_publish_is_durable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root, source, store, _audio, publisher, job_id = await _ready_apply_operation(
@@ -1431,6 +1729,9 @@ async def test_publisher_defers_cancellation_until_critical_publish_is_durable(
     task = asyncio.create_task(publisher.publish_bundle(job_id, 0, "apply-worker"))
     await published.wait()
     task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
     release.set()
 
     with pytest.raises(asyncio.CancelledError):
@@ -1440,4 +1741,65 @@ async def test_publisher_defers_cancellation_until_critical_publish_is_durable(
     journals = await store.list_file_mutation_journals_for_bundle(job_id, 0)
     assert source.exists() is False
     assert row is not None and (root / str(row["relative_path"])).is_file()
+    assert [journal.state for journal in journals] == ["completed"]
+
+
+@pytest.mark.asyncio
+async def test_import_publisher_defers_repeated_cancellation_through_catalog_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, catalog_source, store, audio, _publisher, service, policy_revision = (
+        _import_publication_fixture(tmp_path)
+    )
+    incoming = tmp_path / "cancelled-import.flac"
+    shutil.copy2(catalog_source, incoming)
+    request = _import_file(
+        audio,
+        incoming,
+        ordinal=0,
+        relative_path="Import Artist/Import Album/01 Cancelled.flac",
+    )
+    bundle = LibraryManagementImportBundle(
+        idempotency_key="acquisition:repeated-cancellation:minimal",
+        origin="acquisition",
+        policy_revision=policy_revision,
+        files=(request,),
+    )
+    commit_started = asyncio.Event()
+    release_commit = asyncio.Event()
+    original_commit = store.commit_library_management_import_bundle
+
+    async def pause_commit(*args, **kwargs):
+        commit_started.set()
+        await release_commit.wait()
+        return await original_commit(*args, **kwargs)
+
+    monkeypatch.setattr(store, "commit_library_management_import_bundle", pause_commit)
+    task = asyncio.create_task(service.publish_import_bundle(bundle))
+    await commit_started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
+    release_commit.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    destination = root / request.destination_relative_path
+    row = await store.get_target_track_by_path(str(destination))
+    with sqlite3.connect(store.db_path) as connection:
+        bundle_id = str(
+            connection.execute(
+                "SELECT id FROM library_management_import_bundles "
+                "WHERE idempotency_key=?",
+                (bundle.idempotency_key,),
+            ).fetchone()[0]
+        )
+    record = await store.get_library_management_import_bundle(bundle_id)
+    journals = await store.list_library_management_import_journals(bundle_id)
+    assert incoming.exists() is False
+    assert destination.is_file()
+    assert row is not None
+    assert record is not None and record.state == "completed"
     assert [journal.state for journal in journals] == ["completed"]

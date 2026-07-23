@@ -602,7 +602,10 @@ def get_library_management_preview_service() -> "LibraryManagementPreviewService
         LibraryManagementPreviewService,
     )
 
-    from .cache_providers import get_native_library_store
+    from .cache_providers import (
+        get_library_management_blob_store,
+        get_native_library_store,
+    )
 
     return LibraryManagementPreviewService(
         get_native_library_store(),
@@ -610,6 +613,7 @@ def get_library_management_preview_service() -> "LibraryManagementPreviewService
         get_library_management_profile_service(),
         get_library_management_planner(),
         get_audio_metadata_engine(),
+        get_library_management_blob_store(),
     )
 
 

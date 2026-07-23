@@ -132,6 +132,51 @@ async def test_scan_trigger_waits_for_every_release_track_mapping(
 
 
 @pytest.mark.asyncio
+async def test_baseline_restore_suppresses_scan_until_fresh_activation(
+    tmp_path: Path,
+) -> None:
+    _root, _source, preferences, store, _settings, policy_revision = _configured(
+        tmp_path
+    )
+    _record_applied_policy(tmp_path / "library.db", policy_revision)
+    _activate_scan(preferences, policy_revision)
+    with sqlite3.connect(tmp_path / "library.db") as connection:
+        connection.execute(
+            "INSERT INTO library_track_management_state "
+            "(local_track_id,last_managed_at,last_outcome,row_revision) "
+            "VALUES ('track-1',110.0,'restored',1)"
+        )
+    service = AutomaticScanManagementService(
+        store,
+        LibraryManagementProfileService(preferences),
+        _planner(tmp_path, store, preferences),
+    )
+    context = await store.get_album_identification_context("album-1")
+    assert context is not None
+    input_policy_revision = album_input_revisions(context["tracks"])[2]
+
+    assert (
+        await service.schedule_identified_album("album-1", input_policy_revision)
+        is None
+    )
+
+    current = preferences.get_library_management_settings()
+    settings = preferences.get_library_management_settings_raw()
+    settings.root_assignments[0].activation_confirmed_at = 120.0
+    settings.root_assignments[
+        0
+    ].activation_settings_revision = current.settings_revision
+    preferences.save_library_management_settings_if_current(
+        settings, expected_settings_revision=current.settings_revision
+    )
+
+    assert (
+        await service.schedule_identified_album("album-1", input_policy_revision)
+        is not None
+    )
+
+
+@pytest.mark.asyncio
 async def test_scan_preview_seals_directly_into_durable_automatic_apply(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

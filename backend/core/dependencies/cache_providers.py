@@ -112,7 +112,7 @@ def get_native_library_store() -> NativeLibraryStore:
 def get_library_management_blob_store() -> LibraryManagementBlobStore:
     settings = get_settings()
     return LibraryManagementBlobStore(
-        settings.root_app_dir / "library-management" / "blobs",
+        settings.cache_dir / "library-management" / "blobs",
         get_native_library_store(),
     )
 

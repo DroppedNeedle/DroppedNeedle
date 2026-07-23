@@ -23,6 +23,7 @@ class DownloadAttempt(AppStruct):
     mount_root: str | None = None
     workspace_path: str | None = None
     materialized_paths: list[str] = []
+    materialized_fingerprints: dict[str, str | None] = {}
     publisher_bundle_ids: list[str] = []
     legacy_reconciled: bool = False
     cleanup_failures: int = 0

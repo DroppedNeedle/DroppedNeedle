@@ -5,10 +5,16 @@ import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
+import msgspec
 import pytest
 
 from infrastructure.persistence.download_store import DownloadStore
 from infrastructure.service_health import service_health
+from models.audio import AudioInfo, AudioTag
+from models.library_management import (
+    LibraryManagementImportBundle,
+    LibraryManagementImportFile,
+)
 from repositories.protocols.download_client import (
     DownloadMaterialization,
     TaskHandle,
@@ -20,11 +26,18 @@ from services.native import acquisition_cleanup_service as cleanup_module
 class _LibraryStore:
     def __init__(self) -> None:
         self.bundles: dict[str, str] = {}
+        self.records: dict[str, SimpleNamespace] = {}
+        self.journals: dict[str, list[SimpleNamespace]] = {}
         self.task_bundles: dict[str, list[SimpleNamespace]] = {}
 
     async def get_library_management_import_bundle(self, bundle_id: str):
+        if bundle_id in self.records:
+            return self.records[bundle_id]
         state = self.bundles.get(bundle_id)
         return SimpleNamespace(state=state) if state else None
+
+    async def list_library_management_import_journals(self, bundle_id: str):
+        return self.journals.get(bundle_id, [])
 
     async def list_acquisition_import_bundles_for_download_task(self, task_id: str):
         return self.task_bundles.get(task_id, [])
@@ -424,10 +437,10 @@ async def test_slskd_retry_accepts_remaining_subset_after_partial_unlink(
     )
     original_unlink = cleanup_module._unlink_file_safely
 
-    def fail_on_second(mount: Path, source: Path) -> None:
+    def fail_on_second(mount: Path, source: Path, expected_sha256: str | None) -> None:
         if source == second:
             raise OSError("temporary failure")
-        original_unlink(mount, source)
+        original_unlink(mount, source, expected_sha256)
 
     monkeypatch.setattr(cleanup_module, "_unlink_file_safely", fail_on_second)
     await service.cleanup_now(attempt.id, worker_id="partial")
@@ -443,6 +456,138 @@ async def test_slskd_retry_accepts_remaining_subset_after_partial_unlink(
 
     assert not second.exists()
     assert (await store.get_download_attempt(attempt.id)).state == "complete"
+
+
+@pytest.mark.asyncio
+async def test_slskd_retry_preserves_replacement_at_reused_source_path(
+    tmp_path: Path,
+):
+    now = [10.0]
+    root = tmp_path / "slskd"
+    root.mkdir()
+    source = root / "requested.flac"
+    source.write_bytes(b"original transfer")
+    store = _store(tmp_path)
+    attempt = await _attempt(store, root, source="soulseek", paths=[source])
+    client = _Client(
+        DownloadMaterialization(
+            state="completed",
+            mount_root=str(root),
+            file_paths=[str(source)],
+            mount_healthy=True,
+        )
+    )
+    client.discard_error = True
+    service = AcquisitionCleanupService(
+        store,
+        _LibraryStore(),
+        lambda source: client,
+        lambda: root,
+        clock=lambda: now[0],
+    )
+
+    await service.cleanup_now(attempt.id, worker_id="first")
+    pending = await store.get_download_attempt(attempt.id)
+    assert pending.state == "cleanup_pending"
+    assert pending.materialized_fingerprints == {
+        str(source.resolve()): hashlib.sha256(b"original transfer").hexdigest()
+    }
+    assert not source.exists()
+
+    source.write_bytes(b"unrelated replacement")
+    client.discard_error = False
+    now[0] = pending.next_retry_at
+    await service.cleanup_now(attempt.id, worker_id="retry")
+
+    attention = await store.get_download_attempt(attempt.id)
+    assert attention.state == "needs_attention"
+    assert attention.error_code == "source_file_fingerprint_changed"
+    assert source.read_bytes() == b"unrelated replacement"
+    assert client.discarded == 1
+
+
+@pytest.mark.asyncio
+async def test_slskd_first_cleanup_uses_publisher_fingerprint_for_reused_path(
+    tmp_path: Path,
+):
+    root = tmp_path / "slskd"
+    root.mkdir()
+    source = root / "requested.flac"
+    source.write_bytes(b"unrelated replacement")
+    original_fingerprint = hashlib.sha256(b"published source").hexdigest()
+    bundle = LibraryManagementImportBundle(
+        idempotency_key="cleanup-source-evidence",
+        origin="acquisition",
+        policy_revision="policy-1",
+        files=(
+            LibraryManagementImportFile(
+                ordinal=0,
+                input_path=str(source),
+                destination_root_id="root-1",
+                destination_relative_path="Artist/Album/01 Track.flac",
+                tag=AudioTag(
+                    title="Track",
+                    artist="Artist",
+                    album="Album",
+                    track_number=1,
+                ),
+                info=AudioInfo(
+                    duration_seconds=180.0,
+                    bitrate=900,
+                    sample_rate=44_100,
+                    channels=2,
+                    file_format="flac",
+                    file_size_bytes=len(b"published source"),
+                    bit_depth=16,
+                ),
+                release_group_mbid=None,
+                release_mbid=None,
+                recording_mbid=None,
+                confidence=1.0,
+                source="download",
+            ),
+        ),
+    )
+    request_json = msgspec.json.encode(bundle).decode()
+    library = _LibraryStore()
+    library.records["bundle"] = SimpleNamespace(
+        state="completed",
+        request_json=request_json,
+        request_hash=hashlib.sha256(request_json.encode()).hexdigest(),
+    )
+    library.journals["bundle"] = [
+        SimpleNamespace(ordinal=0, source_fingerprint=original_fingerprint)
+    ]
+    store = _store(tmp_path)
+    attempt = await _attempt(
+        store,
+        root,
+        source="soulseek",
+        paths=[source],
+        bundle_ids=["bundle"],
+    )
+    client = _Client(
+        DownloadMaterialization(
+            state="completed",
+            mount_root=str(root),
+            file_paths=[str(source)],
+            mount_healthy=True,
+        )
+    )
+    service = AcquisitionCleanupService(
+        store, library, lambda source: client, lambda: root
+    )
+
+    await service.cleanup_now(attempt.id, worker_id="first")
+
+    attention = await store.get_download_attempt(attempt.id)
+    assert attention.state == "needs_attention"
+    assert attention.error_code == "source_file_fingerprint_changed"
+    assert attention.materialized_fingerprints == {
+        str(source.resolve()): original_fingerprint
+    }
+    assert source.read_bytes() == b"unrelated replacement"
+    assert client.discarded == 0
 
 
 @pytest.mark.asyncio

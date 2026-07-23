@@ -8,14 +8,17 @@ FileProcessor and DownloadOrchestrator. A real-slskd container variant is includ
 skips unless ``testcontainers`` and a Docker daemon are available.
 """
 
+import hashlib
 import os
 import shutil
 import sqlite3
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import msgspec
 import pytest
 
 from infrastructure.audio.tagger import AudioTagger
@@ -161,8 +164,32 @@ class _StubClient:
 
 
 class _CleanupLibrary:
+    def __init__(self) -> None:
+        self.record = None
+        self.journals: list[SimpleNamespace] = []
+
+    def capture_bundle(self, bundle) -> None:  # noqa: ANN001
+        request_json = msgspec.json.encode(bundle).decode()
+        self.record = SimpleNamespace(
+            state="completed",
+            request_json=request_json,
+            request_hash=hashlib.sha256(request_json.encode()).hexdigest(),
+        )
+        self.journals = [
+            SimpleNamespace(
+                ordinal=request.ordinal,
+                source_fingerprint=hashlib.sha256(
+                    Path(request.input_path).read_bytes()
+                ).hexdigest(),
+            )
+            for request in bundle.files
+        ]
+
     async def get_library_management_import_bundle(self, bundle_id: str):
-        return MagicMock(state="completed")
+        return self.record
+
+    async def list_library_management_import_journals(self, bundle_id: str):
+        return self.journals
 
     async def list_acquisition_import_bundles_for_download_task(self, task_id: str):
         return []
@@ -203,6 +230,13 @@ def _build(tmp_path: Path, *, album=None, status="completed"):
     manager = LibraryManager(library_db)
     client = _StubClient(downloads, status=status)
     indexer = _StubIndexer(album or [])
+    cleanup_library = _CleanupLibrary()
+    test_publisher = make_test_import_publisher(manager, {"root-a": library})
+
+    async def publish(bundle):  # noqa: ANN001, ANN202
+        cleanup_library.capture_bundle(bundle)
+        return await test_publisher(bundle)
+
     fp = FileProcessor(
         AudioTagger(),
         naming_engine=NamingTemplateEngine(),
@@ -213,11 +247,11 @@ def _build(tmp_path: Path, *, album=None, status="completed"):
         fingerprinter=None,
         verify_downloads=False,
         library_root_ids=["root-a"],
-        publish_import_bundle=make_test_import_publisher(manager, {"root-a": library}),
+        publish_import_bundle=publish,
         policy_revision_getter=lambda: "test-policy",
     )
     cleanup = AcquisitionCleanupService(
-        store, _CleanupLibrary(), lambda source: client, lambda: downloads
+        store, cleanup_library, lambda source: client, lambda: downloads
     )
     orch = DownloadOrchestrator(
         client=client,

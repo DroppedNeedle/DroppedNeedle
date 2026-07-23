@@ -167,6 +167,35 @@ beforeEach(() => {
 
 describe('LibraryManagementPreviewPage', () => {
 	it('shows exact diffs and requires the private token plus typed apply confirmation', async () => {
+		h.items = {
+			...h.items,
+			data: {
+				pages: [
+					{
+						items: [
+							{
+								...collisionItem,
+								artwork_choices: [
+									{
+										output_kind: 'external_art',
+										image_type: 'front',
+										blob_sha256: 'a'.repeat(64),
+										source: 'cover_art_archive_release',
+										format: 'jpeg',
+										mime_type: 'image/jpeg',
+										width: 1200,
+										height: 1200,
+										destination_relative_path: 'Artist/Album/cover.jpg'
+									}
+								]
+							}
+						],
+						has_more: false,
+						next_after_ordinal: null
+					}
+				]
+			}
+		};
 		sessionStorage.setItem(
 			'droppedneedle:library-management:preview-token:preview-1',
 			'private-token'
@@ -178,8 +207,19 @@ describe('LibraryManagementPreviewPage', () => {
 		await page.getByText('Inspect exact diff').click();
 		await expect.element(page.getByText('Old title')).toBeVisible();
 		await expect.element(page.getByText('Track', { exact: true }).first()).toBeVisible();
+		await expect.element(page.getByText('External Art · Front')).toBeVisible();
+		await expect
+			.element(page.getByRole('img', { name: 'Front preview' }))
+			.toHaveAttribute(
+				'src',
+				`/api/v1/library/management/previews/preview-1/items/0/artwork/${'a'.repeat(64)}`
+			);
+		await expect
+			.element(page.getByText(/Cover Art Archive Release · 1,200 × 1,200 px/))
+			.toBeVisible();
+		await expect.element(page.getByText('Artist/Album/cover.jpg')).toBeVisible();
 
-		await page.getByRole('button', { name: /Write tags and organize 1 files/ }).click();
+		await page.getByRole('button', { name: /Write tags and organize 1 file/ }).click();
 		await expect
 			.element(page.getByRole('heading', { name: 'Apply this exact preview?' }))
 			.toHaveFocus();
@@ -233,5 +273,93 @@ describe('LibraryManagementPreviewPage', () => {
 		await expect
 			.element(page.getByRole('button', { name: /Write tags and organize/ }))
 			.toBeDisabled();
+	});
+
+	it('shows terminal planning failure instead of an endless planning state', async () => {
+		h.preview = {
+			data: detail({
+				state: 'failed',
+				phase: 'planning',
+				ready_for_confirmation: false,
+				terminal_code: 'PLANNING_FAILED',
+				failed_count: 1
+			}),
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect.element(page.getByText('Preview planning failed.')).toBeVisible();
+		await expect.element(page.getByText('Planning Failed')).toBeVisible();
+		await expect.element(page.getByText(/Planning is still read-only/)).not.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('button', { name: /Write tags and organize/ }))
+			.toBeDisabled();
+	});
+
+	it.each([
+		{
+			mode: 'undo',
+			button: 'Undo this operation for 1 file',
+			title: 'Undo this operation from this exact preview?',
+			confirm: 'Undo operation',
+			phrase: 'UNDO OPERATION',
+			detail: /does not restore the broader first-management baseline/
+		},
+		{
+			mode: 'baseline_restore',
+			button: 'Restore first-management state for 1 file',
+			title: 'Restore these first-management baselines?',
+			confirm: 'Restore first-management state',
+			phrase: 'RESTORE FIRST-MANAGEMENT STATE',
+			detail: /broader than Undo and leaves those files unmanaged/
+		},
+		{
+			mode: 'duplicate_resolution',
+			button: 'Apply collision resolution for 1 file',
+			title: 'Apply this exact collision resolution?',
+			confirm: 'Apply collision resolution',
+			phrase: 'APPLY COLLISION RESOLUTION',
+			detail: /No destination is overwritten and no duplicate is deleted automatically/
+		}
+	])('uses consequence-specific confirmation copy for $mode', async (example) => {
+		h.preview = { data: detail({ mode: example.mode }), isLoading: false, isError: false };
+		sessionStorage.setItem(
+			'droppedneedle:library-management:preview-token:preview-1',
+			'private-token'
+		);
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await page.getByRole('button', { name: example.button }).click();
+		await expect.element(page.getByRole('heading', { name: example.title })).toHaveFocus();
+		await expect.element(page.getByText(example.detail)).toBeVisible();
+		await expect
+			.element(page.getByRole('textbox', { name: `Type ${example.phrase}` }))
+			.toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: example.confirm, exact: true }))
+			.toBeDisabled();
+	});
+
+	it('keeps activation previews read-only while exposing every file-level result', async () => {
+		h.preview = {
+			data: detail({ proposed_settings_revision: 'settings-2' }),
+			isLoading: false,
+			isError: false
+		};
+		sessionStorage.setItem(
+			'droppedneedle:library-management:preview-token:preview-1',
+			'private-token'
+		);
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect.element(page.getByText('Activation dry run')).toBeVisible();
+		await expect.element(page.getByText(/This page is read-only/)).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: /Write tags and organize/ }))
+			.not.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('link', { name: 'Library settings' }))
+			.toHaveAttribute('href', '/settings?tab=library');
 	});
 });

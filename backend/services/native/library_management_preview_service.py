@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 from pathlib import Path, PurePosixPath
+import re
 import stat
 import time
 
@@ -47,6 +48,7 @@ from core.exceptions import (
     StaleRevisionError,
     ValidationError,
 )
+from infrastructure.library_management_blob_store import LibraryManagementBlobStore
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from infrastructure.audio.metadata_engine import AudioMetadataEngine
 from models.library_management import FILE_CHANGED, POLICY_CHANGED, PROFILE_CHANGED
@@ -84,6 +86,11 @@ def _stable_json(value: object) -> str:
     )
 
 
+_ARTWORK_PREVIEW_MIME_TYPES = frozenset(
+    {"image/gif", "image/jpeg", "image/png", "image/webp"}
+)
+
+
 class LibraryManagementPreviewService:
     def __init__(
         self,
@@ -92,6 +99,7 @@ class LibraryManagementPreviewService:
         profiles: LibraryManagementProfileService,
         planner: LibraryManagementPlanner,
         audio: AudioMetadataEngine | None = None,
+        blobs: LibraryManagementBlobStore | None = None,
         *,
         clock: Callable[[], float] = time.time,
     ) -> None:
@@ -100,6 +108,7 @@ class LibraryManagementPreviewService:
         self._profiles = profiles
         self._planner = planner
         self._audio = audio or AudioMetadataEngine()
+        self._blobs = blobs
         self._clock = clock
 
     async def create_manual(
@@ -371,6 +380,9 @@ class LibraryManagementPreviewService:
             await self._store.list_library_management_external_refreshes(job_id)
         )
         now = self._clock()
+        recovery = await self._store.get_management_operation_recovery_availability(
+            job_id, now=now
+        )
         expired = (
             snapshot.preview_expires_at is None or snapshot.preview_expires_at <= now
         )
@@ -412,6 +424,14 @@ class LibraryManagementPreviewService:
             failed_count=int(operation.get("failed_count", 0)),
             skipped_count=int(operation.get("skipped_count", 0)),
             control_request=str(operation.get("control_request", "none")),
+            undo_available_count=int(recovery["undo_available_count"] or 0),
+            undo_expired_count=int(recovery["undo_expired_count"] or 0),
+            undo_expires_at=(
+                float(recovery["undo_expires_at"])
+                if recovery["undo_expires_at"] is not None
+                else None
+            ),
+            baseline_available_count=int(recovery["baseline_available_count"] or 0),
             external_refreshes=[
                 LibraryManagementExternalRefreshResponse(
                     target=value.target,
@@ -628,6 +648,35 @@ class LibraryManagementPreviewService:
             next_after_ordinal=(visible[-1].ordinal if has_more and visible else None),
             has_more=has_more,
         )
+
+    async def artwork_preview(
+        self, job_id: str, ordinal: int, sha256: str
+    ) -> tuple[bytes, str]:
+        if re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
+            raise ResourceNotFoundError("Library Management artwork not found.")
+        item = await self._store.get_library_management_plan_item(job_id, ordinal)
+        if item is None:
+            raise ResourceNotFoundError("Library Management artwork not found.")
+        try:
+            choices = json.loads(item.artwork_choices_json)
+        except json.JSONDecodeError as error:
+            raise ValidationError(
+                "The stored Library Management artwork preview is invalid."
+            ) from error
+        choice = next(
+            (
+                value
+                for value in choices
+                if isinstance(value, dict) and value.get("blob_sha256") == sha256
+            ),
+            None,
+        )
+        if choice is None or self._blobs is None:
+            raise ResourceNotFoundError("Library Management artwork not found.")
+        mime_type = choice.get("mime_type")
+        if mime_type not in _ARTWORK_PREVIEW_MIME_TYPES:
+            raise ResourceNotFoundError("Library Management artwork not found.")
+        return await self._blobs.read_bytes(sha256), mime_type
 
     async def confirm_activation(
         self,

@@ -178,6 +178,39 @@
 	color: var(--color-library-index);
 }
 
+.library-scanning-control-room {
+	overflow: hidden;
+	border: 1px solid color-mix(in oklab, var(--color-library-index) 32%, transparent);
+	border-radius: var(--radius-box);
+	background:
+		linear-gradient(
+			145deg,
+			color-mix(in oklab, var(--color-library-index) 8%, var(--color-base-100)),
+			var(--color-base-100) 24rem
+		),
+		var(--color-base-100);
+}
+
+.library-scanning-control-header {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.9rem;
+	padding: 1.25rem;
+	border-bottom: 1px solid color-mix(in oklab, var(--color-library-index) 18%, transparent);
+}
+
+.library-scanning-schedule {
+	min-height: 1.75rem;
+	flex: none;
+	padding: 0.35rem 0.7rem;
+	border: 1px solid color-mix(in oklab, var(--color-library-index) 20%, transparent);
+	border-radius: 9999px;
+	background: color-mix(in oklab, var(--color-library-index) 7%, var(--color-base-100));
+	color: color-mix(in oklab, var(--color-base-content) 58%, transparent);
+	font-size: 0.75rem;
+	font-weight: 650;
+}
+
 .management-settings-shell {
 	overflow: hidden;
 	border: 1px solid color-mix(in oklab, var(--color-library-manage) 28%, transparent);
@@ -237,6 +270,17 @@
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
 	gap: 0.75rem;
+	max-height: min(28rem, 65vh);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	padding: 0.15rem 0.35rem 0.15rem 0.15rem;
+	scrollbar-gutter: stable;
+}
+
+.management-profile-grid:focus-visible {
+	border-radius: 0.25rem;
+	outline: 2px solid var(--color-library-manage);
+	outline-offset: 0.25rem;
 }
 
 .management-profile-card,
@@ -914,6 +958,7 @@ details[open] > summary .management-editor-chevron {
 
 @media (max-width: 639px) {
 	.management-settings-header,
+	.library-scanning-control-header,
 	.management-create-row,
 	.management-save-bar,
 	.management-profile-editor__footer,
@@ -922,6 +967,10 @@ details[open] > summary .management-editor-chevron {
 	.management-apply-bar {
 		align-items: stretch;
 		flex-direction: column;
+	}
+
+	.library-scanning-schedule {
+		align-self: flex-start;
 	}
 
 	.management-settings-header .management-status-badge {

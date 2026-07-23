@@ -275,6 +275,7 @@ export interface LibraryManagementPresetDiff {
 	preset_version: number | null;
 	differs: boolean;
 	changed_groups: string[];
+	preset_profile: LibraryManagementProfile | null;
 }
 
 export interface LibraryManagementCatalogFilter {
@@ -389,6 +390,10 @@ export interface LibraryManagementPreviewDetailResponse {
 	failed_count: number;
 	skipped_count: number;
 	control_request: string;
+	undo_available_count: number;
+	undo_expired_count: number;
+	undo_expires_at: number | null;
+	baseline_available_count: number;
 	external_refreshes: LibraryManagementExternalRefreshDelivery[];
 }
 

@@ -64,6 +64,7 @@
 			(recoveryQuery.data?.cleanup_pending_count ?? 0) +
 			history.filter((item) => item.operation.state === 'failed').length
 	);
+	const recoveryUnavailable = $derived(recoveryQuery.isError);
 
 	onMount(() => {
 		const events = createLibraryManagementEvents();
@@ -113,7 +114,7 @@
 		>
 	</header>
 
-	{#if settingsQuery.isLoading || policyQuery.isLoading || operationsQuery.isLoading}
+	{#if settingsQuery.isLoading || policyQuery.isLoading || operationsQuery.isLoading || recoveryQuery.isLoading}
 		<div class="space-y-3 p-5">
 			<div class="skeleton h-28 rounded-xl"></div>
 			<div class="skeleton h-44 rounded-xl"></div>
@@ -135,9 +136,16 @@
 						>Nothing writes until an administrator opens and applies one.</small
 					>
 				</div>
-				<div class="management-control-stat" data-attention={attentionCount > 0}>
-					<span>Needs attention</span><strong>{attentionCount}</strong><small
-						>{recoveryQuery.data?.nonterminal_journal_count ?? 0} nonterminal recovery journals.</small
+				<div
+					class="management-control-stat"
+					data-attention={attentionCount > 0 || recoveryUnavailable}
+				>
+					<span>Needs attention</span><strong
+						>{recoveryUnavailable ? 'Status unavailable' : attentionCount}</strong
+					><small
+						>{recoveryUnavailable
+							? 'Recovery diagnostics could not be loaded.'
+							: `${recoveryQuery.data?.nonterminal_journal_count ?? 0} nonterminal recovery journals.`}</small
 					>
 				</div>
 			</div>
@@ -188,11 +196,13 @@
 			<div class="flex flex-wrap gap-2">
 				<button
 					class="btn management-btn"
+					disabled={recoveryUnavailable}
 					onclick={(event) => openRunner('manage', event.currentTarget)}
 					><Sparkles class="h-4 w-4" /> Preview library management...</button
 				>
 				<button
 					class="btn btn-outline"
+					disabled={recoveryUnavailable}
 					onclick={(event) => openRunner('baseline_restore', event.currentTarget)}
 					><RotateCcw class="h-4 w-4" /> Restore first-management state...</button
 				>
@@ -255,6 +265,11 @@
 						><strong>Recovery needs attention</strong><br />{recoveryQuery.data
 							.needs_attention_count} bundles need review; {recoveryQuery.data
 							.cleanup_pending_count} have safe cleanup pending. No uncertain file is deleted automatically.</span
+					>
+				</div>{:else if recoveryUnavailable}<div class="alert alert-error items-start" role="alert">
+					<AlertTriangle class="mt-0.5 h-5 w-5" /><span
+						><strong>Recovery status is unavailable</strong><br />Do not start new file writes until
+						diagnostics load successfully. Refresh this page or check the server logs.</span
 					>
 				</div>{/if}
 		</div>

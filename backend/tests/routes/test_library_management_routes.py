@@ -110,6 +110,7 @@ def route_services(
     )
     preview.detail.return_value = _preview_detail()
     preview.items.return_value = LibraryManagementPlanItemPageResponse(items=[])
+    preview.artwork_preview.return_value = (b"pinned-artwork", "image/png")
     preview.results.return_value = LibraryManagementResultPageResponse(items=[])
     preview.history.return_value = LibraryManagementOperationHistoryResponse(items=[])
     preview.apply.return_value = OperationResponse(
@@ -351,6 +352,25 @@ def test_activation_status_rejects_manual_preview(
     )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_preview_artwork_route_is_private_and_content_typed(
+    app: FastAPI,
+    route_services: tuple[LibraryManagementProfileService, AsyncMock],
+) -> None:
+    _profile, preview = route_services
+    override_admin_auth(app)
+
+    response = build_test_client(app).get(
+        "/library/management/previews/job-1/items/2/artwork/" + "a" * 64
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"pinned-artwork"
+    assert response.headers["content-type"] == "image/png"
+    assert response.headers["cache-control"] == "private, max-age=86400, immutable"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    preview.artwork_preview.assert_awaited_once_with("job-1", 2, "a" * 64)
 
 
 def test_recovery_diagnostics_are_bounded_admin_state(app: FastAPI) -> None:
@@ -599,6 +619,10 @@ def test_management_route_inventory_is_complete() -> None:
         ("POST", "/library/management/tag-edit-previews"),
         ("GET", "/library/management/previews/{job_id}"),
         ("GET", "/library/management/previews/{job_id}/items"),
+        (
+            "GET",
+            "/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}",
+        ),
         ("POST", "/library/management/previews/{job_id}/apply"),
         ("GET", "/library/management/operations"),
         ("GET", "/library/management/operations/{job_id}"),

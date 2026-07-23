@@ -15734,6 +15734,44 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def get_management_operation_recovery_availability(
+        self, job_id: str, *, now: float
+    ) -> dict[str, int | float | None]:
+        def operation(
+            connection: sqlite3.Connection,
+        ) -> dict[str, int | float | None]:
+            row = connection.execute(
+                "SELECT COUNT(*) snapshot_count,"
+                "COALESCE(SUM(CASE WHEN snapshot.expires_at>? THEN 1 ELSE 0 END),0) "
+                "undo_available_count,"
+                "COALESCE(SUM(CASE WHEN snapshot.expires_at<=? THEN 1 ELSE 0 END),0) "
+                "undo_expired_count,"
+                "MAX(CASE WHEN snapshot.expires_at>? THEN snapshot.expires_at END) "
+                "undo_expires_at,"
+                "COUNT(DISTINCT CASE WHEN baseline.restore_status='available' "
+                "THEN baseline.local_track_id END) baseline_available_count "
+                "FROM library_management_operation_snapshots snapshot "
+                "JOIN library_operation_work work ON work.job_id=snapshot.job_id "
+                "AND work.ordinal=snapshot.work_ordinal "
+                "LEFT JOIN library_management_baselines baseline "
+                "ON baseline.local_track_id=snapshot.local_track_id "
+                "WHERE snapshot.job_id=? AND work.state='succeeded'",
+                (now, now, now, job_id),
+            ).fetchone()
+            return {
+                "snapshot_count": int(row["snapshot_count"]),
+                "undo_available_count": int(row["undo_available_count"]),
+                "undo_expired_count": int(row["undo_expired_count"]),
+                "undo_expires_at": (
+                    float(row["undo_expires_at"])
+                    if row["undo_expires_at"] is not None
+                    else None
+                ),
+                "baseline_available_count": int(row["baseline_available_count"]),
+            }
+
+        return await self._read(operation)
+
     async def get_management_audio_journal(
         self, job_id: str, local_track_id: str
     ) -> LibraryFileMutationJournal | None:
@@ -16766,7 +16804,22 @@ class NativeLibraryStore(PersistenceBase):
             )
             desired_json = msgspec.json.encode(request.desired_document).decode()
             desired_hash = hashlib.sha256(desired_json.encode()).hexdigest()
+            before_root_id = (
+                str(request.replacement_root_id)
+                if request.replacement_root_id is not None
+                else request.destination_root_id
+            )
             baseline_relative = str(request.baseline_relative_path)
+            before_relative = (
+                str(request.replacement_relative_path)
+                if request.replacement_relative_path is not None
+                else baseline_relative
+            )
+            before_fingerprint = (
+                str(journal["replacement_fingerprint"])
+                if journal["replacement_fingerprint"] is not None
+                else str(journal["source_fingerprint"])
+            )
             plan_item = LibraryManagementPlanItem(
                 job_id=job_id,
                 ordinal=ordinal,
@@ -16781,13 +16834,13 @@ class NativeLibraryStore(PersistenceBase):
                 expected_catalog_revision=catalog_revision,
                 expected_policy_revision=policy_revision,
                 expected_profile_revision=pinned.profile.revision,
-                expected_root_id=request.destination_root_id,
-                expected_relative_path=baseline_relative,
+                expected_root_id=before_root_id,
+                expected_relative_path=before_relative,
                 expected_stat_revision=str(journal["baseline_stat_revision"]),
                 expected_tag_revision=str(journal["baseline_tag_revision"]),
-                expected_file_fingerprint=str(journal["source_fingerprint"]),
+                expected_file_fingerprint=before_fingerprint,
                 source_path_identity=hashlib.sha256(
-                    f"{request.destination_root_id}\x00{baseline_relative}".encode()
+                    f"{before_root_id}\x00{before_relative}".encode()
                 ).hexdigest(),
                 destination_root_id=request.destination_root_id,
                 destination_relative_path=request.destination_relative_path,
@@ -16815,8 +16868,8 @@ class NativeLibraryStore(PersistenceBase):
                             request.desired_document
                             and request.desired_document.artwork is not None
                         ),
-                        "path_changed": baseline_relative
-                        != request.destination_relative_path,
+                        "path_changed": before_root_id != request.destination_root_id
+                        or before_relative != request.destination_relative_path,
                         "sidecars_changed": any(
                             artifact.kind == "sidecar" for artifact in request.artifacts
                         ),
@@ -16838,76 +16891,99 @@ class NativeLibraryStore(PersistenceBase):
                 created_at=now,
             )
             self._insert_management_plan_item_tx(connection, plan_item)
-            baseline_id = str(uuid.uuid5(_IMPORT_BASELINE_NAMESPACE, track_id))
+            existing_baseline_row = connection.execute(
+                "SELECT * FROM library_management_baselines WHERE local_track_id=?",
+                (track_id,),
+            ).fetchone()
+            existing_state_row = connection.execute(
+                "SELECT * FROM library_track_management_state WHERE local_track_id=?",
+                (track_id,),
+            ).fetchone()
+            existing_state_json = (
+                json.dumps(
+                    dict(existing_state_row), separators=(",", ":"), sort_keys=True
+                )
+                if existing_state_row is not None
+                else "{}"
+            )
+            baseline_id = (
+                str(existing_baseline_row["id"])
+                if existing_baseline_row is not None
+                else str(uuid.uuid5(_IMPORT_BASELINE_NAMESPACE, track_id))
+            )
             snapshot_id = f"import:{bundle_id}:{ordinal}"
-            baseline = LibraryManagementBaseline(
-                id=baseline_id,
-                local_track_id=track_id,
-                original_root_id=request.destination_root_id,
-                original_relative_path=baseline_relative,
-                format=str(journal["baseline_format"]),
-                adapter_version=str(journal["baseline_adapter_version"]),
-                semantic_snapshot_blob_sha256=str(journal["baseline_blob_sha256"]),
-                stat_revision=str(journal["baseline_stat_revision"]),
-                tag_revision=str(journal["baseline_tag_revision"]),
-                image_snapshot_json=str(journal["baseline_image_snapshot_json"]),
-                ancillary_snapshot_json=str(
-                    journal["baseline_ancillary_snapshot_json"]
-                ),
-                file_mtime_ns=journal["baseline_file_mtime_ns"],
-                file_mode=journal["baseline_file_mode"],
-                identity_revision=identity_revision,
-                created_at=now,
-            )
-            connection.execute(
-                "INSERT INTO library_management_baselines "
-                "(id,local_track_id,original_root_id,original_relative_path,format,"
-                "adapter_version,semantic_snapshot_blob_sha256,image_snapshot_json,"
-                "ancillary_snapshot_json,file_mtime_ns,file_mode,stat_revision,"
-                "tag_revision,identity_revision,created_at,restore_status,row_revision) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'available',1)",
-                (
-                    baseline.id,
-                    baseline.local_track_id,
-                    baseline.original_root_id,
-                    baseline.original_relative_path,
-                    baseline.format,
-                    baseline.adapter_version,
-                    baseline.semantic_snapshot_blob_sha256,
-                    baseline.image_snapshot_json,
-                    baseline.ancillary_snapshot_json,
-                    baseline.file_mtime_ns,
-                    baseline.file_mode,
-                    baseline.stat_revision,
-                    baseline.tag_revision,
-                    baseline.identity_revision,
-                    baseline.created_at,
-                ),
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO library_management_blob_references "
-                "(blob_sha256,reference_kind,reference_id,created_at) "
-                "VALUES (?,'baseline',?,?)",
-                (baseline.semantic_snapshot_blob_sha256, baseline.id, now),
-            )
-            self._add_baseline_ancillary_references(connection, baseline)
+            if existing_baseline_row is None:
+                baseline = LibraryManagementBaseline(
+                    id=baseline_id,
+                    local_track_id=track_id,
+                    original_root_id=before_root_id,
+                    original_relative_path=before_relative,
+                    format=str(journal["baseline_format"]),
+                    adapter_version=str(journal["baseline_adapter_version"]),
+                    semantic_snapshot_blob_sha256=str(journal["baseline_blob_sha256"]),
+                    stat_revision=str(journal["baseline_stat_revision"]),
+                    tag_revision=str(journal["baseline_tag_revision"]),
+                    image_snapshot_json=str(journal["baseline_image_snapshot_json"]),
+                    ancillary_snapshot_json=str(
+                        journal["baseline_ancillary_snapshot_json"]
+                    ),
+                    file_mtime_ns=journal["baseline_file_mtime_ns"],
+                    file_mode=journal["baseline_file_mode"],
+                    identity_revision=identity_revision,
+                    created_at=now,
+                )
+                connection.execute(
+                    "INSERT INTO library_management_baselines "
+                    "(id,local_track_id,original_root_id,original_relative_path,format,"
+                    "adapter_version,semantic_snapshot_blob_sha256,image_snapshot_json,"
+                    "ancillary_snapshot_json,file_mtime_ns,file_mode,stat_revision,"
+                    "tag_revision,identity_revision,created_at,restore_status,row_revision) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'available',1)",
+                    (
+                        baseline.id,
+                        baseline.local_track_id,
+                        baseline.original_root_id,
+                        baseline.original_relative_path,
+                        baseline.format,
+                        baseline.adapter_version,
+                        baseline.semantic_snapshot_blob_sha256,
+                        baseline.image_snapshot_json,
+                        baseline.ancillary_snapshot_json,
+                        baseline.file_mtime_ns,
+                        baseline.file_mode,
+                        baseline.stat_revision,
+                        baseline.tag_revision,
+                        baseline.identity_revision,
+                        baseline.created_at,
+                    ),
+                )
+                connection.execute(
+                    "INSERT OR IGNORE INTO library_management_blob_references "
+                    "(blob_sha256,reference_kind,reference_id,created_at) "
+                    "VALUES (?,'baseline',?,?)",
+                    (baseline.semantic_snapshot_blob_sha256, baseline.id, now),
+                )
+                self._add_baseline_ancillary_references(connection, baseline)
             operation_snapshot = LibraryManagementOperationSnapshot(
                 id=snapshot_id,
                 job_id=job_id,
                 work_ordinal=0,
                 local_track_id=track_id,
-                before_root_id=request.destination_root_id,
-                before_relative_path=baseline_relative,
+                before_root_id=before_root_id,
+                before_relative_path=before_relative,
                 after_root_id=request.destination_root_id,
                 after_relative_path=request.destination_relative_path,
-                format=baseline.format,
-                adapter_version=baseline.adapter_version,
-                semantic_snapshot_blob_sha256=baseline.semantic_snapshot_blob_sha256,
-                image_snapshot_json=baseline.image_snapshot_json,
-                ancillary_snapshot_json=baseline.ancillary_snapshot_json,
-                source_fingerprint=str(journal["source_fingerprint"]),
-                file_mtime_ns=baseline.file_mtime_ns,
-                file_mode=baseline.file_mode,
+                format=str(journal["baseline_format"]),
+                adapter_version=str(journal["baseline_adapter_version"]),
+                semantic_snapshot_blob_sha256=str(journal["baseline_blob_sha256"]),
+                image_snapshot_json=str(journal["baseline_image_snapshot_json"]),
+                ancillary_snapshot_json=str(
+                    journal["baseline_ancillary_snapshot_json"]
+                ),
+                before_management_state_json=existing_state_json,
+                source_fingerprint=before_fingerprint,
+                file_mtime_ns=journal["baseline_file_mtime_ns"],
+                file_mode=journal["baseline_file_mode"],
                 created_at=now,
                 expires_at=now + int(request.undo_retention_days or 90) * 24 * 60 * 60,
             )
@@ -16918,7 +16994,7 @@ class NativeLibraryStore(PersistenceBase):
                 "adapter_version,semantic_snapshot_blob_sha256,image_snapshot_json,"
                 "ancillary_snapshot_json,before_management_state_json,file_mtime_ns,"
                 "file_mode,source_fingerprint,created_at,expires_at,row_revision) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'{}',?,?,?,?,?,1)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
                 (
                     operation_snapshot.id,
                     operation_snapshot.job_id,
@@ -16933,6 +17009,7 @@ class NativeLibraryStore(PersistenceBase):
                     operation_snapshot.semantic_snapshot_blob_sha256,
                     operation_snapshot.image_snapshot_json,
                     operation_snapshot.ancillary_snapshot_json,
+                    operation_snapshot.before_management_state_json,
                     operation_snapshot.file_mtime_ns,
                     operation_snapshot.file_mode,
                     operation_snapshot.source_fingerprint,
@@ -16960,7 +17037,20 @@ class NativeLibraryStore(PersistenceBase):
                 "applied_naming_script_revision,applied_override_revision,"
                 "last_operation_job_id,managed_root_id,managed_path_revision,"
                 "last_managed_at,last_outcome,last_reason_code,row_revision) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,'succeeded',NULL,1)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,'succeeded',NULL,1) "
+                "ON CONFLICT(local_track_id) DO UPDATE SET "
+                "baseline_id=excluded.baseline_id,"
+                "applied_profile_id=excluded.applied_profile_id,"
+                "applied_profile_revision=excluded.applied_profile_revision,"
+                "applied_projection_hash=excluded.applied_projection_hash,"
+                "applied_naming_script_revision=excluded.applied_naming_script_revision,"
+                "applied_override_revision=excluded.applied_override_revision,"
+                "last_operation_job_id=excluded.last_operation_job_id,"
+                "managed_root_id=excluded.managed_root_id,"
+                "managed_path_revision=excluded.managed_path_revision,"
+                "last_managed_at=excluded.last_managed_at,last_outcome='succeeded',"
+                "last_reason_code=NULL,"
+                "row_revision=library_track_management_state.row_revision+1",
                 (
                     track_id,
                     baseline_id,
@@ -16995,13 +17085,13 @@ class NativeLibraryStore(PersistenceBase):
                     ordinal,
                     track_id,
                     track_id,
-                    request.destination_root_id,
-                    baseline_relative,
-                    request.destination_root_id,
-                    request.destination_relative_path,
+                    before_root_id,
+                    before_relative,
                     request.destination_root_id,
                     request.destination_relative_path,
-                    journal["source_fingerprint"],
+                    request.destination_root_id,
+                    request.destination_relative_path,
+                    before_fingerprint,
                     journal["staged_fingerprint"],
                     baseline_id,
                     snapshot_id,
@@ -17027,9 +17117,9 @@ class NativeLibraryStore(PersistenceBase):
                     job_id,
                     json.dumps(
                         {
-                            "root_id": request.destination_root_id,
-                            "relative_path": baseline_relative,
-                            "source_fingerprint": journal["source_fingerprint"],
+                            "root_id": before_root_id,
+                            "relative_path": before_relative,
+                            "source_fingerprint": before_fingerprint,
                         },
                         separators=(",", ":"),
                         sort_keys=True,
