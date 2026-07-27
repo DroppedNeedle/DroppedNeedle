@@ -20,6 +20,13 @@ MATCHER_VERSION = "feedback-fixes-v1"
 PAIR_COST_CEILING = 0.40
 ALBUM_DISTANCE_CEILING = 0.35
 CANDIDATE_MARGIN_FLOOR = 0.05
+# A tolerated mismatch is one where the tracklists disagree about a title, not one
+# where the recording itself is provably different. A guest-artist suffix the release
+# does not carry, a romanised title, a bonus track present in one edition and not the
+# other: each of those contradicts exactly one track on an otherwise exact release.
+# Requiring unanimity there rejects the correct release group over a tagging detail,
+# so demand a strong majority instead and let the score carry the rest.
+SUPPORTED_RATIO_FLOOR = 0.80
 ORDINARY_ALBUM_MAX_FILES = 20
 ORDINARY_UNKNOWN_LIMIT = 1
 LARGE_UNKNOWN_LIMIT = 2
@@ -29,6 +36,9 @@ MAX_CANDIDATES = 10
 
 _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
 _UNSAFE_SECONDARY_TYPES = frozenset({"compilation", "live"})
+# Evidence that the local file and the candidate track are different recordings, as
+# opposed to the same recording described differently. These stay absolute vetoes.
+_HARD_CONFLICT_KINDS = frozenset({"recording_mbid_conflict", "duration_conflict"})
 
 
 def _fold(value: str) -> str:
@@ -227,6 +237,11 @@ class AlbumEvidenceEngine:
         contradictions = sum(
             item.classification == "contradictory" for item in track_evidence
         )
+        hard_contradictions = sum(
+            item.classification == "contradictory"
+            and bool(_HARD_CONFLICT_KINDS.intersection(item.evidence_kinds))
+            for item in track_evidence
+        )
         unknown = len(track_evidence) - comparable
         unknown_limit = (
             ORDINARY_UNKNOWN_LIMIT
@@ -245,11 +260,18 @@ class AlbumEvidenceEngine:
             if album_artist
             else 0.25,
         ]
-        mean_pair_cost = sum(pair_costs) / len(pair_costs) if pair_costs else 1.0
+        # Contradicted tracks count against the mean at full cost. Averaging only the
+        # tracks that matched would score a candidate covering 8 of 9 identically to
+        # one covering all 9, and the tie would be broken arbitrarily.
+        cost_samples = len(pair_costs) + contradictions
+        mean_pair_cost = (
+            (sum(pair_costs) + contradictions) / cost_samples if cost_samples else 1.0
+        )
         distance = 0.65 * mean_pair_cost + 0.20 * album_costs[0] + 0.15 * album_costs[1]
+        supported_ratio = supported / comparable if comparable else 0.0
         reason = "SUPPORTED"
         if (
-            contradictions
+            hard_contradictions
             or title_class == "contradictory"
             or artist_class == "contradictory"
         ):
@@ -260,8 +282,10 @@ class AlbumEvidenceEngine:
             reason = "UNKNOWN_EXTRAS_EXCEED_LIMIT"
         elif unsafe_type:
             reason = "UNSAFE_RELEASE_TYPE"
-        elif comparable == 0 or supported != comparable:
+        elif comparable == 0:
             reason = "INSUFFICIENT_METADATA"
+        elif supported_ratio < SUPPORTED_RATIO_FLOOR:
+            reason = "CONFLICTING_TRACK_EVIDENCE"
         elif distance > ALBUM_DISTANCE_CEILING:
             reason = "INSUFFICIENT_METADATA"
 
