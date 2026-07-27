@@ -15,6 +15,7 @@ from services.native.album_evidence_engine import (
     LARGE_UNKNOWN_LIMIT,
     MATCHER_VERSION,
     ORDINARY_UNKNOWN_LIMIT,
+    SUPPORTED_RATIO_FLOOR,
     AlbumEvidenceEngine,
 )
 from services.native.local_album_grouper import (
@@ -312,6 +313,148 @@ def test_studio_protection_and_genuine_compilation_acceptance() -> None:
         secondary=["compilation"],
     )
     assert AlbumEvidenceEngine().decide(compilation, [genuine]).outcome == "identified"
+
+
+def _guest_suffix_album() -> tuple[list[GroupingTrack], AlbumCandidate]:
+    """Nine tracks matching a release exactly, except one local title carries a guest
+    credit the release does not use - the Thriller / "The Girl Is Mine (with Paul
+    McCartney)" shape."""
+    titles = [
+        "Wanna Be Startin' Somethin'",
+        "Baby Be Mine",
+        "The Girl Is Mine",
+        "Thriller",
+        "Beat It",
+        "Billie Jean",
+        "Human Nature",
+        "P.Y.T. (Pretty Young Thing)",
+        "The Lady in My Life",
+    ]
+    local = [
+        _track(
+            f"local-{index}",
+            title if index != 3 else "The Girl Is Mine (with Paul McCartney)",
+            number=index,
+        )
+        for index, title in enumerate(titles, start=1)
+    ]
+    candidate = _candidate(
+        "rg",
+        [
+            _candidate_track(title, index)
+            for index, title in enumerate(titles, start=1)
+        ],
+    )
+    return local, candidate
+
+
+def test_one_contradicted_title_does_not_veto_an_otherwise_exact_release() -> None:
+    local, candidate = _guest_suffix_album()
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    evidence = decision.candidates[0]
+    classes = [item.classification for item in evidence.track_evidence]
+
+    assert classes.count("supported") == 8
+    assert classes.count("contradictory") == 1
+    assert evidence.album_title_classification == "supported"
+    assert evidence.album_artist_classification == "supported"
+    assert decision.outcome == "identified"
+    assert decision.reason_code == "SUPPORTED"
+
+
+def test_a_contradicted_track_still_costs_the_candidate_score() -> None:
+    """The tolerated mismatch must not score identically to a clean match, or the
+    wrong edition can win the ordering in decide()."""
+    local, candidate = _guest_suffix_album()
+    engine = AlbumEvidenceEngine()
+    tolerated = engine.evaluate_candidate(local, candidate)
+
+    clean_local = list(local)
+    clean_local[2] = _track("local-3", "The Girl Is Mine", number=3)
+    clean = engine.evaluate_candidate(clean_local, candidate)
+
+    assert clean.reason_code == "SUPPORTED"
+    assert tolerated.reason_code == "SUPPORTED"
+    assert clean.score > tolerated.score
+
+
+@pytest.mark.parametrize(
+    ("track_count", "contradicted", "expected"),
+    [
+        (10, 2, "identified"),  # 0.80, exactly at the floor
+        (10, 3, "contradictory"),  # 0.70, below it
+        (5, 1, "identified"),  # 0.80 on a short EP
+        (2, 1, "contradictory"),  # a single mismatch out of two proves nothing
+    ],
+)
+def test_supported_ratio_floor_bounds_what_a_mismatch_may_cost(
+    track_count: int, contradicted: int, expected: str
+) -> None:
+    local = [
+        _track(
+            f"local-{index}",
+            f"Track {index}" if index > contradicted else f"Unrelated {index}",
+            number=index,
+        )
+        for index in range(1, track_count + 1)
+    ]
+    candidate = _candidate(
+        "rg",
+        [_candidate_track(f"Track {index}", index) for index in range(1, track_count + 1)],
+    )
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    supported = sum(
+        item.classification == "supported"
+        for item in decision.candidates[0].track_evidence
+    )
+    assert (supported / track_count >= SUPPORTED_RATIO_FLOOR) is (
+        expected == "identified"
+    )
+    assert decision.outcome == expected
+
+
+def test_a_conflicting_recording_mbid_remains_an_absolute_veto() -> None:
+    """A different recording is a different recording, however well the rest lines
+    up - the ratio floor must not launder that away."""
+    local = [
+        _track(f"local-{index}", f"Track {index}", number=index, recording=f"rec-{index}")
+        for index in range(1, 11)
+    ]
+    candidate = _candidate(
+        "rg",
+        [
+            _candidate_track(
+                f"Track {index}",
+                index,
+                recording=f"rec-{index}" if index != 1 else "rec-elsewhere",
+            )
+            for index in range(1, 11)
+        ],
+    )
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    blocked = decision.candidates[0].track_evidence[0]
+
+    assert blocked.classification == "contradictory"
+    assert "recording_mbid_conflict" in blocked.evidence_kinds
+    assert decision.outcome == "contradictory"
+    assert decision.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
+
+def test_a_wrong_album_title_remains_an_absolute_veto() -> None:
+    local = [
+        _track(f"local-{index}", f"Track {index}", number=index, album="Greatest Hits")
+        for index in range(1, 11)
+    ]
+    candidate = _candidate(
+        "rg",
+        [_candidate_track(f"Track {index}", index) for index in range(1, 11)],
+        title="Something Else Entirely",
+    )
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+
+    assert decision.candidates[0].album_title_classification == "contradictory"
+    assert decision.outcome == "contradictory"
+    assert decision.reason_code == "CONFLICTING_TRACK_EVIDENCE"
 
 
 def test_unicode_punctuation_and_duration_grace_are_supported() -> None:
