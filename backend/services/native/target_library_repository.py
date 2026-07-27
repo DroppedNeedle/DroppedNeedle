@@ -144,9 +144,16 @@ class TargetLibraryRepository:
         warmed.
         """
         cursor = after_mbid.casefold()
+        # Casefolded to match LibraryDB, which selects the already-lowercased
+        # library_artists.mbid_lower column (populated via _normalize -> str.lower).
+        # Callers page on the returned value as the next cursor, so ordering and the
+        # cursor comparison have to agree on case.
         mbids = sorted(
             value.casefold() for value in await self.get_artist_mbids() if value
         )
+        # max(1, limit) mirrors LibraryDB.get_artist_mbid_page. A limit <= 0 must not
+        # yield an empty page: the warmer treats an empty page as "no artists left" and
+        # would stop paging for the rest of the cycle.
         return [mbid for mbid in mbids if mbid > cursor][: max(1, limit)]
 
     async def existing_album_mbids(self, identifiers: list[str]) -> set[str]:
