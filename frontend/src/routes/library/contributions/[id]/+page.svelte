@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import {
 		AlertTriangle,
@@ -217,7 +218,7 @@
 		<div class="mb-6 flex flex-wrap items-center justify-between gap-3">
 			<button
 				class="btn btn-ghost btn-sm gap-2"
-				onclick={() => goto(`/album/${contribution.local_album_id}`)}
+				onclick={() => goto(resolve(`/album/${contribution.local_album_id}`))}
 			>
 				<ArrowLeft class="h-4 w-4" /> Back to album
 			</button>

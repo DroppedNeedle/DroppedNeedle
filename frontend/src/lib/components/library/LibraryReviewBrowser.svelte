@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
@@ -43,6 +44,12 @@
 		)
 	);
 
+	function reviewHref(params: SvelteURLSearchParams): string {
+		return params.size
+			? resolve(`/library/review?${params.toString()}`)
+			: resolve('/library/review');
+	}
+
 	function updateUrl(next: Filters): void {
 		const params = new SvelteURLSearchParams();
 		if (next.cursor) params.set('cursor', next.cursor);
@@ -52,7 +59,7 @@
 		if (next.policy) params.set('policy', next.policy);
 		if (next.search) params.set('q', next.search);
 		if (next.sort && next.sort !== 'newest') params.set('sort', next.sort);
-		void goto(`/library/review${params.size ? `?${params.toString()}` : ''}`, {
+		void goto(reviewHref(params), {
 			noScroll: true,
 			keepFocus: true
 		});
@@ -63,13 +70,13 @@
 	function openReview(id: string): void {
 		const params = new SvelteURLSearchParams(page.url.searchParams);
 		params.set('review', id);
-		void goto(`/library/review?${params.toString()}`, { noScroll: true, keepFocus: true });
+		void goto(reviewHref(params), { noScroll: true, keepFocus: true });
 	}
 
 	function closeReview(): void {
 		const params = new SvelteURLSearchParams(page.url.searchParams);
 		params.delete('review');
-		void goto(`/library/review${params.size ? `?${params.toString()}` : ''}`, {
+		void goto(reviewHref(params), {
 			noScroll: true,
 			keepFocus: true,
 			replaceState: true

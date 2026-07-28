@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { CirclePause, CirclePlay, OctagonX, ShieldCheck, Wrench } from 'lucide-svelte';
 	import {
 		getLibraryRepairEstimateQuery,
@@ -211,8 +212,9 @@
 					{#if repair.state === 'succeeded' && repair.repair_summary?.estimated_apply_changes}
 						<a
 							class="text-sm link link-primary sm:col-span-2 sm:justify-self-end"
-							href="/library/review?state=needs_review&reason=LEGACY_IDENTITY_FAILED_SAFETY_RULES"
-							>Review detached albums</a
+							href={resolve(
+								'/library/review?state=needs_review&reason=LEGACY_IDENTITY_FAILED_SAFETY_RULES'
+							)}>Review detached albums</a
 						>
 					{/if}
 				</div>
