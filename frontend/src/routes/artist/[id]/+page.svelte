@@ -15,7 +15,8 @@
 
 	let { data }: Props = $props();
 	const discographyView = $derived(data.discographyView === true);
-	const localQuery = getLibraryArtistDetailQuery(() => data.artistId);
+	// empty id disables the query: the local lookup is unused in discography view
+	const localQuery = getLibraryArtistDetailQuery(() => (discographyView ? '' : data.artistId));
 	const localArtist = $derived(localQuery.data);
 	const canonicalLocalId = $derived(localArtist?.id ?? null);
 	const shouldRedirect = $derived(
