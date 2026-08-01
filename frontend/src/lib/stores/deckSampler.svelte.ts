@@ -19,7 +19,7 @@ import { playbackToast } from '$lib/stores/playbackToast.svelte';
 import type { AlbumPreviewResponse, PreviewTrackItem, TrackPreviewResponse } from '$lib/types';
 
 const FOCUS_ID = 'deck-sampler';
-const CROSSFADE_S = 2;
+const CROSSFADE_S = 0.5;
 const TICK_MS = 100;
 // gesture-unlock source: browsers only allow play() from a user gesture, and
 // crossfades start clips from a timer. Playing this once per element during the
