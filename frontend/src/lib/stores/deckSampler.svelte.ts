@@ -21,6 +21,11 @@ import type { AlbumPreviewResponse, PreviewTrackItem, TrackPreviewResponse } fro
 const FOCUS_ID = 'deck-sampler';
 const CROSSFADE_S = 2;
 const TICK_MS = 100;
+// gesture-unlock source: browsers only allow play() from a user gesture, and
+// crossfades start clips from a timer. Playing this once per element during the
+// starting click marks the element gesture-activated so later src swaps play.
+const SILENT_CLIP =
+	'data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YRAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const VOLUME_KEY = 'droppedneedle_sampler_volume';
 // clips per album when playing a multi-entry station (keeps a lean-back station
 // moving); a single-album sample plays everything the backend returns
@@ -66,6 +71,41 @@ function createDeckSampler() {
 	let audioB: HTMLAudioElement | null = null;
 	let activeEl: HTMLAudioElement | null = null;
 	let useA = true;
+	// persistent pair reused across clips and stations: recreating elements per
+	// clip loses gesture activation and the browser rejects timer-driven play()
+	let poolA: HTMLAudioElement | null = null;
+	let poolB: HTMLAudioElement | null = null;
+
+	function unlockPool() {
+		if (!poolA) {
+			poolA = new Audio();
+			poolA.preload = 'auto';
+		}
+		if (!poolB) {
+			poolB = new Audio();
+			poolB.preload = 'auto';
+		}
+		for (const el of [poolA, poolB]) {
+			try {
+				el.muted = true;
+				el.src = SILENT_CLIP;
+				const p = el.play();
+				if (p)
+					p.then(
+						() => {
+							// a real clip may have replaced the unlock clip already
+							if (el.src.startsWith('data:')) el.pause();
+							el.muted = false;
+						},
+						() => {
+							el.muted = false;
+						}
+					);
+			} catch {
+				el.muted = false;
+			}
+		}
+	}
 	let ticker: ReturnType<typeof setInterval> | null = null;
 	let session = 0;
 
@@ -106,8 +146,10 @@ function createDeckSampler() {
 	}
 
 	function nextEl(): HTMLAudioElement {
-		const el = new Audio();
-		el.preload = 'auto';
+		if (!poolA || !poolB) unlockPool();
+		const el = useA ? poolB! : poolA!;
+		el.pause();
+		el.muted = false;
 		if (useA) {
 			audioB = el;
 		} else {
@@ -163,7 +205,16 @@ function createDeckSampler() {
 		activeEl = el;
 		try {
 			await el.play();
-		} catch {
+		} catch (err) {
+			if ((err as DOMException)?.name === 'NotAllowedError') {
+				// autoplay blocked: hold paused and ask for a tap instead of
+				// silently chain-skipping the rest of the station
+				if (mySession === session) {
+					status = 'paused';
+					playbackToast.show('Tap the preview play button to keep sampling', 'warning');
+				}
+				return;
+			}
 			// unplayable preview (expired URL, codec): skip forward
 			if (mySession === session) void advance(mySession);
 			return;
@@ -284,26 +335,29 @@ function createDeckSampler() {
 		}
 	}
 
-	/** End the run; on a single-item preview, tell the user it was unavailable
-	 * (the widget hides on 'error', so a toast is the only feedback). */
+	/** End the run; the widget hides on stop, so a toast is the only feedback -
+	 * always say why the preview ended rather than vanishing silently. */
 	function failOrEnd(entry: SampleEntry) {
 		const wasSingle = station.length === 1;
 		stopAll();
-		if (wasSingle) {
-			status = 'error';
-			playbackToast.show(
-				entry.kind === 'album'
+		status = 'error';
+		playbackToast.show(
+			wasSingle
+				? entry.kind === 'album'
 					? `No preview available for ${entry.title}`
-					: `No preview available for that track`,
-				'warning'
-			);
-		}
+					: `No preview available for that track`
+				: 'Preview station ended: no more playable clips',
+			'warning'
+		);
 	}
 
 	function beginStation(title: string, entries: SampleEntry[]): void {
 		stopInternal();
 		if (entries.length === 0) return;
 		const mySession = ++session;
+		// still inside the starting click: unlock both pool elements while we
+		// have the user gesture, so timer-driven crossfades are allowed later
+		unlockPool();
 		audioFocus.claim(FOCUS_ID, stopAll);
 		status = 'loading';
 		station = entries;
