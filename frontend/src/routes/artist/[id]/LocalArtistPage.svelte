@@ -86,12 +86,19 @@
 					{artist.track_count === 1 ? 'track' : 'tracks'}
 				</p>
 				{#if artist.musicbrainz_artist_id}
-					<a
-						class="btn btn-ghost btn-sm mt-3 gap-2"
-						href={`https://musicbrainz.org/artist/${artist.musicbrainz_artist_id}`}
-						target="_blank"
-						rel="noreferrer">Open in MusicBrainz <ExternalLink class="h-3.5 w-3.5" /></a
-					>
+					<div class="mt-3 flex flex-wrap gap-2">
+						<a
+							class="btn btn-outline btn-sm gap-2"
+							href={`/artist/${artist.musicbrainz_artist_id}?view=discography`}
+							><Disc3 class="h-4 w-4" /> Full discography</a
+						>
+						<a
+							class="btn btn-ghost btn-sm gap-2"
+							href={`https://musicbrainz.org/artist/${artist.musicbrainz_artist_id}`}
+							target="_blank"
+							rel="noreferrer">Open in MusicBrainz <ExternalLink class="h-3.5 w-3.5" /></a
+						>
+					</div>
 				{/if}
 				{#if authStore.isTrusted && artist.artist_identity_state === 'local_only' && contributionAlbums.length}
 					<a class="btn btn-outline btn-sm mt-3 gap-2" href="#musicbrainz-albums">
