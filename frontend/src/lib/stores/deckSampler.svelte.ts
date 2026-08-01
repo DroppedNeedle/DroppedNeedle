@@ -76,7 +76,7 @@ function createDeckSampler() {
 	let poolA: HTMLAudioElement | null = null;
 	let poolB: HTMLAudioElement | null = null;
 
-	function unlockPool() {
+	function ensurePool() {
 		if (!poolA) {
 			poolA = new Audio();
 			poolA.preload = 'auto';
@@ -85,7 +85,13 @@ function createDeckSampler() {
 			poolB = new Audio();
 			poolB.preload = 'auto';
 		}
-		for (const el of [poolA, poolB]) {
+	}
+
+	/** Only effective inside a user gesture (beginStation's click); elsewhere the
+	 * silent play() would itself be blocked. */
+	function unlockPool() {
+		ensurePool();
+		for (const el of [poolA!, poolB!]) {
 			try {
 				el.muted = true;
 				el.src = SILENT_CLIP;
@@ -146,7 +152,9 @@ function createDeckSampler() {
 	}
 
 	function nextEl(): HTMLAudioElement {
-		if (!poolA || !poolB) unlockPool();
+		// null-safety only: creating elements is fine outside a gesture, unlocking
+		// isn't - beginStation already unlocked the pool during the starting click
+		ensurePool();
 		const el = useA ? poolB! : poolA!;
 		el.pause();
 		el.muted = false;
