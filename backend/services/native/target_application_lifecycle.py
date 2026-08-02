@@ -190,6 +190,7 @@ async def start_target_operational_runtime(
         get_target_events_watcher_service,
         get_jellyfin_repository,
         get_jellyfin_library_service,
+        get_library_db,
         get_mbid_store,
         get_target_navidrome_library_service,
         get_now_playing_service,
@@ -303,14 +304,14 @@ async def start_target_operational_runtime(
     )
     start_artist_discovery_cache_warming_task(
         get_target_artist_discovery_service,
-        library,
+        get_library_db(),
         interval=advanced.artist_discovery_warm_interval,
         delay=advanced.artist_discovery_warm_delay,
         workload_gate=get_background_workload_gate(),
     )
     start_audiodb_sweep_task(
         get_audiodb_image_service(),
-        library,
+        get_library_db(),
         preferences,
         precache_service=None,
         workload_gate=get_background_workload_gate(),

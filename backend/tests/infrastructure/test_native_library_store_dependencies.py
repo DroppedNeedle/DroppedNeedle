@@ -56,3 +56,36 @@ def test_target_provider_is_only_referenced_by_isolated_target_composition() -> 
     assert "target_application_lifecycle" in (root / "target_application.py").read_text(
         encoding="utf-8"
     )
+
+
+def test_target_lifecycle_wires_librarydb_into_background_warmers() -> None:
+    """Regression: the target runtime passed its TargetLibraryRepository to the
+    AudioDB sweep and artist-discovery warmer, which page the LibraryDB cache
+    (get_enrichment_candidates / get_artist_mbid_page) and crashed every cycle.
+    """
+    import ast
+
+    root = Path(__file__).parents[2]
+    source = (root / "services/native/target_application_lifecycle.py").read_text(
+        encoding="utf-8"
+    )
+    warmers = {
+        "start_audiodb_sweep_task": 1,
+        "start_artist_discovery_cache_warming_task": 1,
+    }
+    seen: dict[str, ast.expr] = {}
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in warmers
+        ):
+            seen[node.func.id] = node.args[warmers[node.func.id]]
+
+    assert set(seen) == set(warmers)
+    for name, library_arg in seen.items():
+        assert (
+            isinstance(library_arg, ast.Call)
+            and isinstance(library_arg.func, ast.Name)
+            and library_arg.func.id == "get_library_db"
+        ), f"{name} must receive the LibraryDB, not the target repository"
