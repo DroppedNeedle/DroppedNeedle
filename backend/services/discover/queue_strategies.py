@@ -422,6 +422,7 @@ async def get_trending_filler(
                     is_wildcard=True,
                     in_library=False,
                 ))
+                exclude.add(rg_mbid.lower())
     except Exception as e:  # noqa: BLE001
         logger.debug(f"Failed to get wildcard albums: {e}")
         wildcards = []

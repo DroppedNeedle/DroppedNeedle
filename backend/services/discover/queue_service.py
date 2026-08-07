@@ -764,6 +764,7 @@ class DiscoverQueueService:
                             in_library=False,
                         )
                     )
+                    exclude.add(rg_mbid.lower())
         except Exception as e:  # noqa: BLE001
             logger.debug(f"Failed to get trending for anonymous queue: {e}")
 

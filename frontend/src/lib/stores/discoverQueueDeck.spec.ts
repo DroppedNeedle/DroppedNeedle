@@ -109,6 +109,31 @@ describe('discoverQueueDeck state machine', () => {
 		);
 	});
 
+	it('drops a duplicate release group from a fetched queue', async () => {
+		statusMock.fetchStatus.mockResolvedValue({ status: 'ready' });
+		apiMock.global.get.mockResolvedValue({
+			items: [makeItem('rg-1'), makeItem('rg-1'), makeItem('rg-2')],
+			queue_id: 'q-dupe'
+		});
+
+		await discoverQueueDeck.init();
+
+		expect(discoverQueueDeck.queue.map((i) => i.release_group_mbid)).toEqual(['rg-1', 'rg-2']);
+	});
+
+	it('drops a duplicate release group from a cached queue and clamps the index', async () => {
+		cacheMock.getQueueCachedData.mockReturnValue({
+			data: { items: [makeItem('rg-1'), makeItem('rg-1')], currentIndex: 1, queueId: 'q1' },
+			timestamp: Date.now()
+		});
+		apiMock.global.post.mockResolvedValue({ in_library: [] });
+
+		await discoverQueueDeck.init();
+
+		expect(discoverQueueDeck.queue.map((i) => i.release_group_mbid)).toEqual(['rg-1']);
+		expect(discoverQueueDeck.currentIndex).toBe(0);
+	});
+
 	it('validation drops items that entered the library', async () => {
 		cacheMock.getQueueCachedData.mockReturnValue({
 			data: { items: [makeItem('rg-1'), makeItem('rg-2')], currentIndex: 0, queueId: 'q1' },

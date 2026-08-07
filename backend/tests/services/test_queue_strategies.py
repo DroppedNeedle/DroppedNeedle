@@ -445,6 +445,26 @@ class TestGetTrendingFiller:
         assert "ok-1" in rg_ids
 
     @pytest.mark.asyncio
+    async def test_dedup_repeated_release_group(self) -> None:
+        dupe = ListenBrainzReleaseGroup(
+            release_group_name="Repeated", artist_name="Artist",
+            listen_count=500, release_group_mbid="dupe-1",
+            artist_mbids=["a-1"],
+        )
+        lb_repo = AsyncMock()
+        lb_repo.get_sitewide_top_release_groups.return_value = [dupe, dupe]
+        mb_repo = AsyncMock()
+        mbid_svc = _make_mbid_svc()
+
+        result = await get_trending_filler(
+            5, set(), set(), None, "listenbrainz",
+            lb_repo=lb_repo, mb_repo=mb_repo, mbid_svc=mbid_svc,
+        )
+
+        keys = [it.release_group_mbid for it in result]
+        assert keys == ["dupe-1"]
+
+    @pytest.mark.asyncio
     async def test_returns_empty_when_count_zero(self) -> None:
         lb_repo = AsyncMock()
         mb_repo = AsyncMock()
