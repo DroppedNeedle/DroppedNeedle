@@ -226,7 +226,10 @@
 								</button>
 							</label>
 							<div class="mt-1 flex justify-end">
-								<a href="/recover-password" class="link link-primary text-xs font-medium">
+								<a
+									href={resolve('/recover-password')}
+									class="link link-primary text-xs font-medium"
+								>
 									Forgot password?
 								</a>
 							</div>

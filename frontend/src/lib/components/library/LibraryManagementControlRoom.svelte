@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
@@ -161,7 +162,7 @@
 					onclick={(event) => openRunner('baseline_restore', event.currentTarget)}
 					><RotateCcw class="h-4 w-4" /> Restore original state...</button
 				>
-				<a href="/library/management?tab=automation" class="btn btn-ghost btn-sm"
+				<a href={resolve('/library/management?tab=automation')} class="btn btn-ghost btn-sm"
 					><Settings2 class="h-4 w-4" /> Automation</a
 				>
 			</div>
@@ -299,7 +300,7 @@
 						<p class="management-step">Audit trail</p>
 						<h3 id="recent-management-work" class="font-semibold">Recent management work</h3>
 					</div>
-					<a class="link text-xs" href="/library/management/history">All history</a>
+					<a class="link text-xs" href={resolve('/library/management/history')}>All history</a>
 				</div>
 				{#if recent.length}{#each recent as item (item.operation.id)}<a
 							href={operationHref(

@@ -50,7 +50,7 @@
 			</a>
 			{#if authStore.isAdmin}
 				<a
-					href="/library/management"
+					href={resolve('/library/management')}
 					class="group btn btn-sm gap-2 rounded-full border border-base-content/15 bg-base-100/50 text-base-content backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-base-100/80 sm:btn-md"
 				>
 					<SlidersHorizontal

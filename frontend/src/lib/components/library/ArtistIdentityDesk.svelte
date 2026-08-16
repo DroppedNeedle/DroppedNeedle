@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import {
@@ -147,6 +148,12 @@
 		return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
 	}
 
+	function identityDeskHref(params: SvelteURLSearchParams): string {
+		return params.size
+			? resolve(`/library/management/artists?${params.toString()}`)
+			: resolve('/library/management/artists');
+	}
+
 	function updateUrl(options: { clearGroup?: boolean; useDraftFilters?: boolean } = {}): void {
 		const params = new SvelteURLSearchParams();
 		const nextFilterState = options.useDraftFilters ? filterState : appliedFilterState;
@@ -154,7 +161,7 @@
 		if (nextFilterState) params.set('state', nextFilterState);
 		if (nextSearch) params.set('q', nextSearch);
 		if (!options.clearGroup && selectedGroupId) params.set('group', selectedGroupId);
-		void goto(`/library/management/artists${params.size ? `?${params.toString()}` : ''}`, {
+		void goto(identityDeskHref(params), {
 			noScroll: true,
 			keepFocus: true,
 			replaceState: true
@@ -266,7 +273,7 @@
 				artists.
 			</p>
 		</div>
-		<a href="/library/management?tab=scanning" class="btn btn-ghost btn-sm">
+		<a href={resolve('/library/management?tab=scanning')} class="btn btn-ghost btn-sm">
 			Back to Scan &amp; identify
 		</a>
 	</header>

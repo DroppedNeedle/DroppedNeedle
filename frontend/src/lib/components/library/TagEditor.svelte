@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { Check, ChevronDown, ListPlus, RotateCcw, ShieldAlert, Tags, X } from 'lucide-svelte';
 
@@ -173,7 +174,7 @@
 			});
 			rememberLibraryManagementPreviewToken(result.job_id, result.preview_token);
 			open = false;
-			await goto(`/library/management/previews/${encodeURIComponent(result.job_id)}`);
+			await goto(resolve(`/library/management/previews/${encodeURIComponent(result.job_id)}`));
 		} catch (error) {
 			localError = error instanceof Error ? error.message : 'Could not create the tag preview.';
 		}

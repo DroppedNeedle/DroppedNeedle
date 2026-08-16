@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import {
 		ArrowLeft,
 		ArrowUpRight,
@@ -129,7 +130,7 @@
 	>
 		{#snippet title()}Library Management{/snippet}
 		{#snippet actions()}
-			<a href="/library" class="btn btn-ghost btn-sm gap-2 rounded-full sm:btn-md">
+			<a href={resolve('/library')} class="btn btn-ghost btn-sm gap-2 rounded-full sm:btn-md">
 				<ArrowLeft class="h-4 w-4" />
 				<span class="hidden sm:inline">Back to Library</span>
 				<span class="sm:hidden">Library</span>
@@ -189,7 +190,7 @@
 				<Settings2 class="h-4 w-4" />
 				Automation
 			</button>
-			<a role="tab" class={segmentIdle} href="/library/management/history">
+			<a role="tab" class={segmentIdle} href={resolve('/library/management/history')}>
 				<History class="h-4 w-4" />
 				Organization history
 				<ArrowUpRight class="h-3.5 w-3.5 opacity-60" />
