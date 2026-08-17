@@ -41,6 +41,14 @@ function emptyEnrichment(): DiscoverQueueEnrichment {
 	};
 }
 
+// a repeat would throw each_key_duplicate in the deck and take /discover down
+function dedupeByMbid(items: DiscoverQueueItemFull[]): DiscoverQueueItemFull[] {
+	return items.filter(
+		(item, i) =>
+			items.findIndex((other) => other.release_group_mbid === item.release_group_mbid) === i
+	);
+}
+
 function createDiscoverQueueDeck() {
 	let phase = $state<DeckPhase>('idle');
 	let queue = $state<DiscoverQueueItemFull[]>([]);
@@ -109,7 +117,7 @@ function createDiscoverQueueDeck() {
 			const data = await api.global.get<DiscoverQueueResponse>(API.discoverQueue(), {
 				signal: abortController?.signal
 			});
-			queue = data.items.map((item) => ({ ...item }));
+			queue = dedupeByMbid(data.items.map((item) => ({ ...item })));
 			queueId = data.queue_id;
 			currentIndex = 0;
 			inFlightEnrich.clear();
@@ -231,8 +239,8 @@ function createDiscoverQueueDeck() {
 
 			const cached = getQueueCachedData(userId());
 			if (cached && cached.data.items.length > 0) {
-				queue = cached.data.items;
-				currentIndex = Math.min(cached.data.currentIndex, cached.data.items.length - 1);
+				queue = dedupeByMbid(cached.data.items);
+				currentIndex = Math.min(cached.data.currentIndex, queue.length - 1);
 				queueId = cached.data.queueId;
 				phase = 'ready';
 				await validateCachedQueue();
