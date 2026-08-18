@@ -28,6 +28,7 @@ from rapidfuzz import fuzz
 from core.exceptions import AutomaticManagementHoldError, ConfigurationError
 from infrastructure.msgspec_fastapi import AppStruct
 from models.audio import AudioInfo, AudioTag
+from infrastructure.audio.fingerprinter import split_artist_credit
 from models.download_manifest import DownloadManifest, ExpectedFile, ExpectedTrack
 from models.held_import import HeldImport
 from models.library_management import (
@@ -415,6 +416,36 @@ def _tag_conflict_reason(tag, info, manifest, expected_track) -> str | None:  # 
     return None
 
 
+# Keywords that mark a bracketed title group as a remix/credit annotation.
+# "feat"/"ft"/"featuring" cover explicit guest credits ("Song (feat. Artist)").
+_REMIX_CREDIT_WORDS = frozenset(
+    {"remix", "mix", "edit", "bootleg", "rework", "vip", "flip", "dub",
+     "feat", "ft", "featuring"}
+)
+_TITLE_BRACKET_GROUP = re.compile(r"[(\[]([^)\]]*)[)\]]")
+
+
+def _title_credits_artist(artist: str, *titles: str | None) -> bool:
+    """True when a bracketed group in any title names ``artist`` as whole words
+    alongside a remix/credit keyword - "Song (Artist remix)", "Song (feat.
+    Artist)". AcoustID credits remixes to the ORIGINAL artist, so such a credit
+    is positive evidence the audio is the requested remix, not a wrong-artist
+    recording. A bare substring is deliberately NOT enough: expected artist
+    "Air" must not match the title "Airbag"."""
+    name = re.escape(artist.strip().lower())
+    if not name:
+        return False
+    whole_word = re.compile(rf"(?<!\w){name}(?!\w)")
+    for title in titles:
+        if not title:
+            continue
+        for group in _TITLE_BRACKET_GROUP.findall(title.lower()):
+            group_words = set(re.findall(r"[a-z0-9]+", group))
+            if group_words & _REMIX_CREDIT_WORDS and whole_word.search(group):
+                return True
+    return False
+
+
 def _fingerprint_disagrees(fp, expected_track, expected_artist: str | None) -> bool:
     """True only when AcoustID CONFIDENTLY (status=pass) identified the audio as a clearly
     different SONG, or a clearly different ARTIST, than expected. Release-group/edition is
@@ -440,8 +471,26 @@ def _fingerprint_disagrees(fp, expected_track, expected_artist: str | None) -> b
     # Wrong artist - but skip for various-artists compilations, where the album artist
     # legitimately differs from a track's performing artist.
     if fp_artist and expected_artist and "various" not in expected_artist.lower():
-        if fuzz.token_set_ratio(fp_artist, expected_artist) < 55:
-            return True
+        # A collab credit ("Artist A; Artist B") is NOT a wrong artist when the
+        # requested artist is any credited member - compare every credit token on
+        # both sides plus the full strings (token_set_ratio alone scores "Artist A"
+        # vs "Artist A; Artist B" under the gate: the separator glues tokens).
+        # This wires split_artist_credit into the verify path, per its plan note.
+        fp_credits = split_artist_credit(fp_artist) + [fp_artist]
+        expected_credits = split_artist_credit(expected_artist) + [expected_artist]
+        best = max(
+            fuzz.token_set_ratio(fp_credit, expected_credit)
+            for fp_credit in fp_credits
+            for expected_credit in expected_credits
+        )
+        if best < 55:
+            # Remix: AcoustID credits the ORIGINAL artist - "Song (Artist B
+            # remix)" carries the credit of "Song"'s artist. Only an explicit
+            # bracketed remix/credit naming the requested artist counts as
+            # evidence (see _title_credits_artist) - a bare substring would let
+            # common-word artist names waive confident wrong-artist results.
+            if not _title_credits_artist(expected_artist, expected_title, fp_title):
+                return True
     return False
 
 

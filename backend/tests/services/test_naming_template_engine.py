@@ -51,9 +51,27 @@ def test_track_without_format_spec_is_unpadded(engine):
     assert result == Path("7")
 
 
-def test_year_empty_when_none(engine):
+def test_year_empty_when_none_leaves_no_bracket_litter(engine):
+    # An empty variable must not leave its template decoration behind:
+    # "{album} ({year})" with no year renders "OK Computer", not "OK Computer ()".
     result = engine.format_path("{album} ({year})", _tag(year=None), "flac")
-    assert result == Path("OK Computer ()")
+    assert result == Path("OK Computer")
+
+
+def test_default_template_without_year_has_no_empty_parens(engine):
+    result = engine.format_path(engine.DEFAULT, _tag(year=None), "flac")
+    assert result == Path("Radiohead/OK Computer/0101 Airbag.flac")
+
+
+def test_empty_square_bracket_group_collapsed(engine):
+    result = engine.format_path("{album} [{year}]/{title}.{ext}", _tag(year=None), "flac")
+    assert result == Path("OK Computer/Airbag.flac")
+
+
+def test_year_present_keeps_its_brackets(engine):
+    # Only EMPTY groups are collapsed - a populated year renders as before.
+    result = engine.format_path("{album} ({year})", _tag(year=1997), "flac")
+    assert result == Path("OK Computer (1997)")
 
 
 def test_unknown_variable_renders_empty(engine):
