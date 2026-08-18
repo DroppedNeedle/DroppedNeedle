@@ -13,13 +13,19 @@ vi.mock('$lib/stores/audioFocus.svelte', () => ({ audioFocus: focus }));
 // to simulate a clip reaching its end, then let the ticker advance.
 class FakeAudio {
 	static created: FakeAudio[] = [];
+	/** elements that started a real clip (excludes the gesture-unlock blip);
+	 * the sampler reuses a persistent pool, so track starts, not constructions */
+	static started: FakeAudio[] = [];
 	src = '';
 	preload = '';
+	muted = false;
 	volume = 1;
 	currentTime = 0;
 	duration = 30;
 	ended = false;
-	play = vi.fn(async () => {});
+	play = vi.fn(async () => {
+		if (!this.src.startsWith('data:')) FakeAudio.started.push(this);
+	});
 	pause = vi.fn(() => {});
 	constructor() {
 		FakeAudio.created.push(this);
@@ -49,6 +55,7 @@ function albumPreview(n: number, provider = 'deezer') {
 beforeEach(() => {
 	vi.clearAllMocks();
 	FakeAudio.created = [];
+	FakeAudio.started = [];
 	(globalThis as unknown as { Audio: typeof FakeAudio }).Audio = FakeAudio;
 });
 
@@ -73,11 +80,11 @@ describe('deckSampler single album', () => {
 		expect(deckSampler.trackIndex).toBe(0);
 
 		// clip 1 ends -> advance to clip 2
-		FakeAudio.created.at(-1)!.finish();
+		FakeAudio.started.at(-1)!.finish();
 		await vi.waitFor(() => expect(deckSampler.trackIndex).toBe(1));
 
 		// clip 2 ends -> station of one is exhausted -> idle
-		FakeAudio.created.at(-1)!.finish();
+		FakeAudio.started.at(-1)!.finish();
 		await waitForStatus('idle');
 		expect(focus.release).toHaveBeenCalled();
 	});
@@ -102,9 +109,9 @@ describe('deckSampler station', () => {
 		expect(deckSampler.stationPosition).toEqual({ index: 0, total: 2 });
 
 		// exhaust the first album's 2 clips -> should load the second entry
-		FakeAudio.created.at(-1)!.finish();
+		FakeAudio.started.at(-1)!.finish();
 		await vi.waitFor(() => expect(deckSampler.trackIndex).toBe(1));
-		FakeAudio.created.at(-1)!.finish();
+		FakeAudio.started.at(-1)!.finish();
 		await vi.waitFor(() => expect(deckSampler.stationPosition.index).toBe(1));
 		expect(deckSampler.currentEntry?.title).toBe('Album 2');
 	});
@@ -132,8 +139,8 @@ describe('deckSampler station', () => {
 
 		expect(deckSampler.stationPosition.index).toBe(2);
 		expect(deckSampler.currentEntry?.title).toBe('Album 3');
-		// exactly one element was ever started -> no double audio
-		expect(FakeAudio.created.length).toBe(1);
+		// exactly one clip was ever started -> no double audio
+		expect(FakeAudio.started.length).toBe(1);
 	});
 
 	it('next() skips to the following entry immediately', async () => {
@@ -156,7 +163,7 @@ describe('deckSampler transport', () => {
 		apiGet.mockResolvedValue(albumPreview(2));
 		deckSampler.start('rg-1', 'Artist', 'Album');
 		await waitForStatus('playing');
-		const el = FakeAudio.created.at(-1)!;
+		const el = FakeAudio.started.at(-1)!;
 
 		deckSampler.pause();
 		expect(deckSampler.status).toBe('paused');
@@ -172,7 +179,7 @@ describe('deckSampler transport', () => {
 		apiGet.mockResolvedValue(albumPreview(1));
 		deckSampler.start('rg-1', 'Artist', 'Album');
 		await waitForStatus('playing');
-		const el = FakeAudio.created.at(-1)!;
+		const el = FakeAudio.started.at(-1)!;
 
 		deckSampler.setVolume(0.4);
 		expect(deckSampler.volume).toBe(0.4);
