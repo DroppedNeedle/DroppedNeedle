@@ -4,6 +4,7 @@ and (username, filenames) status/cancel correlation."""
 
 import asyncio
 import threading
+import unicodedata
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -515,6 +516,39 @@ async def test_get_file_path_deep_nested_non_username_folder(tmp_path):
         _h("peer1"), "@@p\\Music\\Abbey Road (1969)\\01 - Come Together.flac", size=10
     )
     assert path == f.resolve()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("remote_form", "disk_form"),
+    [
+        ("NFC", "NFD"),
+        ("NFD", "NFC"),
+    ],
+)
+async def test_get_file_path_recursively_matches_unicode_normalisation(
+    tmp_path, remote_form, disk_form
+):
+    # Docker bind mounts do not normalise names. slskd can therefore report NFC while
+    # the host directory contains NFD (or the reverse), even though both render as the
+    # same accented filename. The real file is nested below a non-username directory
+    # so this exercises the whole-mount recursive fallback from the incident report.
+    visible_name = "05 - Héroes Del Sábado.flac"
+    remote_name = unicodedata.normalize(remote_form, visible_name)
+    disk_name = unicodedata.normalize(disk_form, visible_name)
+    assert remote_name != disk_name
+
+    folder = tmp_path / "completed" / "Artist" / "Album"
+    folder.mkdir(parents=True)
+    file_path = folder / disk_name
+    file_path.write_bytes(b"abcdefghij")
+
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    path = await repo.get_file_path(
+        _h("peer1"), f"@@peer\\Music\\Album\\{remote_name}", size=10
+    )
+
+    assert path == file_path.resolve()
 
 
 @pytest.mark.asyncio

@@ -662,6 +662,36 @@ async def test_missing_on_mount_fails_with_mount_message_not_quarantine(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_tag_mismatch_fails_with_metadata_message_not_mount_message(
+    tmp_path: Path,
+):
+    """A located file rejected by its own tags is a content mismatch, not a path or
+    mount failure. Preserve that distinction after failover candidates are exhausted."""
+    client = _StubClient(
+        _status("completed", files_completed=1, succeeded=["peer/01.flac"])
+    )
+    store, orch, _fp, _lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[_candidate(0.9)],
+        fp_result=ProcessResult(
+            succeeded=[],
+            failed=[FileFailure(filename="peer/01.flac", reason="tag_mismatch")],
+        ),
+        imported_rows=[],
+    )
+    task = await _new_task(store)
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "failed"
+    assert "embedded tags" in final.error_message
+    assert "downloads folder" not in final.error_message
+    assert "No working source" not in final.error_message
+
+
+@pytest.mark.asyncio
 async def test_import_failure_fails_with_library_message_not_soulseek(tmp_path: Path):
     """slskd delivered the files and we found them, but writing them into the library
     failed (IMPORT_FAILED - perms/disk/a rejected cross-mount copy). A local fault: the
