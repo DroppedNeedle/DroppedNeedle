@@ -17,6 +17,7 @@ stay structurally identical to the protocol for the conformance contract test.
 import asyncio
 import logging
 import re
+import unicodedata
 from pathlib import Path
 
 from models.common import ServiceStatus
@@ -36,6 +37,16 @@ logger = logging.getLogger(__name__)
 
 _DISC_DIR = re.compile(r"\b(?:Disc|CD)\s*\d+\b", re.IGNORECASE)
 _LOSSLESS_EXT = {"flac", "alac", "wav", "ape", "wv"}
+
+
+def _normalised_filename(value: str) -> str:
+    """Canonical filename form used only for comparisons.
+
+    Linux filesystems preserve the code points supplied by each container, so the
+    same visible name may be NFC in slskd's API and NFD on the shared mount (or vice
+    versa).  Normalising the comparison keeps the real on-disk ``Path`` intact.
+    """
+    return unicodedata.normalize("NFC", value)
 
 
 class SlskdRepository:
@@ -250,6 +261,7 @@ class SlskdRepository:
             return None
         mount = self._downloads_mount.resolve()
         basename = parts[-1]
+        normalised_basename = _normalised_filename(basename)
 
         def _within_mount(candidate: Path) -> Path | None:
             resolved = candidate.resolve()
@@ -260,29 +272,46 @@ class SlskdRepository:
                 return None
             return resolved
 
+        def _name_matches(entry: Path) -> bool:
+            return _normalised_filename(entry.name) == normalised_basename
+
+        def _find_in_directory(directory: Path) -> Path | None:
+            """Find ``basename`` directly below a directory, including NFC/NFD aliases."""
+            direct = _within_mount(directory / basename)
+            if direct is not None and direct.is_file():
+                return direct
+            try:
+                for entry in directory.iterdir():
+                    if not entry.is_file() or not _name_matches(entry):
+                        continue
+                    return _within_mount(entry)
+            except OSError:
+                return None
+            return None
+
         # 1. slskd's common layout: {mount}/{leaf remote folder}/{filename}.
         if len(parts) >= 2:
-            leaf = _within_mount(mount / parts[-2] / basename)
-            if leaf is not None and leaf.exists():
+            leaf = _find_in_directory(mount / parts[-2])
+            if leaf is not None:
                 return leaf
         # 2. Flat layout: {mount}/{filename}.
-        flat = _within_mount(mount / basename)
-        if flat is not None and flat.exists():
+        flat = _find_in_directory(mount)
+        if flat is not None:
             return flat
         # 3. Peers that file by username: walk {mount}/{username}/ at any depth
         # (covers {username}/{file} and {username}/{album}/{file}). Scoped to the
         # peer so a same-named track from a different user can't be picked up.
         user_root = _within_mount(mount / username) if username else None
         if user_root is not None and user_root.is_dir():
-            hit = self._walk_find(user_root, mount, lambda e: e.name == basename)
+            hit = self._walk_find(user_root, mount, _name_matches)
             if hit is not None:
                 return hit
         # 4. slskd may have sanitised the folder name - scan one level down for it.
         try:
             for child in sorted(mount.iterdir()):
                 if child.is_dir():
-                    cand = _within_mount(child / basename)
-                    if cand is not None and cand.exists():
+                    cand = _find_in_directory(child)
+                    if cand is not None:
                         return cand
         except OSError as exc:
             logger.warning("Could not scan downloads mount %s: %s", mount, exc)
@@ -308,7 +337,7 @@ class SlskdRepository:
         # a different same-named track - an unscoped size-ONLY walk would cross peers
         # (step 5 stays peer-scoped on purpose). Reached only after every step missed.
         def _name_size_match(entry: Path) -> bool:
-            if entry.name != basename:
+            if not _name_matches(entry):
                 return False
             if not size:
                 return True

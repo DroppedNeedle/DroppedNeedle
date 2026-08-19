@@ -134,6 +134,7 @@ _FILES_NOT_FOUND_MSG = (
     "Files downloaded, but couldn't be found in the slskd downloads folder - check "
     "the slskd downloads path points to where slskd saves completed files"
 )
+_TAG_MISMATCH_MSG = "Files downloaded and found, but their embedded tags did not match the requested music"
 # slskd delivered the files and we found them, but writing them into the library failed
 # (perms, disk full, a cross-mount copy the filesystem rejected). Local fault, not the
 # peer's - blaming Soulseek sends users chasing the wrong problem.
@@ -787,6 +788,7 @@ class DownloadOrchestrator:
         wrong_track = False
         source_missing = False
         import_failed = False
+        tag_mismatch = False
         while True:
             attempt_result = ProcessResult(
                 succeeded=[], failed=[], workspace_disposition="discard"
@@ -921,6 +923,8 @@ class DownloadOrchestrator:
                     source_missing = True
                 if any(f.reason == IMPORT_FAILED for f in result.failed):
                     import_failed = True
+                if any(f.reason == "tag_mismatch" for f in result.failed):
+                    tag_mismatch = True
                 if result.management_hold_reason_code is not None:
                     # The peer delivered a verified acquisition unit and the app now
                     # owns durable held copies. A different peer cannot fix a local
@@ -1021,6 +1025,7 @@ class DownloadOrchestrator:
                     imported_any,
                     source_missing=source_missing,
                     import_failed=import_failed,
+                    tag_mismatch=tag_mismatch,
                     process_result=attempt_result,
                 )
                 return
@@ -1535,21 +1540,24 @@ class DownloadOrchestrator:
         *,
         source_missing: bool = False,
         import_failed: bool = False,
+        tag_mismatch: bool = False,
         process_result=None,
     ) -> None:
         """No candidates/attempts left and the download still isn't whole. A track
         either imported (already finalized 'completed') or it didn't ('failed'); an
         album keeps whatever landed as 'partial', or 'failed' if nothing did.
 
-        ``source_missing``/``import_failed`` flip the failure message off the default
-        'no source on Soulseek': slskd delivered the files but we either couldn't find
-        them on the mount (config) or couldn't write them into the library (perms/disk).
-        Both are local faults - blaming Soulseek sent users chasing the wrong problem
-        (AUD: 'watched it finish in slskd, then it said no source')."""
+        ``source_missing``/``import_failed``/``tag_mismatch`` flip the failure message
+        off the default 'no source on Soulseek': slskd delivered the files but we either
+        couldn't find them on the mount (config), couldn't write them into the library
+        (perms/disk), or found files whose own tags identify different music. Blaming
+        Soulseek for these concrete outcomes sends users chasing the wrong problem."""
         if source_missing:
             fail_msg = _FILES_NOT_FOUND_MSG
         elif import_failed:
             fail_msg = _IMPORT_FAILED_MSG
+        elif tag_mismatch:
+            fail_msg = _TAG_MISMATCH_MSG
         else:
             fail_msg = self._no_source_message()
         if task.download_type == "track":
