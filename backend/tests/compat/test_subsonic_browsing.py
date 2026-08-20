@@ -196,6 +196,44 @@ async def test_album_list_by_year_direction_and_genre(compat_env):
     assert {album["name"] for album in rock} == {"Older Rock"}
 
 
+async def test_album_list_by_year_zero_means_unbounded(compat_env):
+    # Feishin (and other Subsonic clients) send fromYear/toYear=0 as their
+    # convention for "no bound on this side" - a real year is never 0, so a
+    # bare zero must not be rejected the way an out-of-range value would be.
+    await _add_album(
+        compat_env,
+        rg="00000000-0000-0000-0000-000000000012",
+        title="Old Enough",
+        year=1990,
+        genre="Rock",
+    )
+    await _add_album(
+        compat_env,
+        rg="00000000-0000-0000-0000-000000000013",
+        title="Recent Enough",
+        year=2010,
+        genre="Rock",
+    )
+    open_upper = _get(
+        compat_env,
+        "getAlbumList2",
+        type="byYear",
+        fromYear="1980",
+        toYear="0",
+        size="20",
+    )["albumList2"]["album"]
+    assert {album["name"] for album in open_upper} >= {"Old Enough", "Recent Enough"}
+    open_lower = _get(
+        compat_env,
+        "getAlbumList2",
+        type="byYear",
+        fromYear="0",
+        toYear="2020",
+        size="20",
+    )["albumList2"]["album"]
+    assert {album["name"] for album in open_lower} >= {"Old Enough", "Recent Enough"}
+
+
 async def test_album_list_highest_and_unknown_fail_explicitly(compat_env):
     highest = _get(compat_env, "getAlbumList2", type="highest")
     assert highest["status"] == "failed"
