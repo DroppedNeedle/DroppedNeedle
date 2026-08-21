@@ -478,12 +478,20 @@ async def _album_list(c: Ctx):
     to_year = None
     genre = None
     if typ == "byYear":
-        first = c.pint("fromYear", minimum=1, maximum=9999)
-        last = c.pint("toYear", minimum=1, maximum=9999)
+        first = c.pint("fromYear", minimum=0, maximum=9999)
+        last = c.pint("toYear", minimum=0, maximum=9999)
         if first is None or last is None:
             raise SubsonicError(10, "fromYear and toYear are required for byYear")
-        from_year, to_year = min(first, last), max(first, last)
-        sort = "year_asc" if first <= last else "year_desc"
+        # Subsonic client convention: 0 means "no bound" on that side (real
+        # years are never 0), not a literal year value.
+        first = first or None
+        last = last or None
+        if first is not None and last is not None:
+            from_year, to_year = min(first, last), max(first, last)
+            sort = "year_asc" if first <= last else "year_desc"
+        else:
+            from_year, to_year = first, last
+            sort = "year_desc" if last is not None else "year_asc"
     elif c.p("fromYear") is not None or c.p("toYear") is not None:
         raise SubsonicError(10, "fromYear and toYear require type=byYear")
     if typ == "byGenre":
