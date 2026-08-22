@@ -215,8 +215,8 @@
 							<p class="text-sm">
 								File organization is paused. Existing catalog data and playback keep working. Enable
 								the library in
-								<a class="link link-primary" href="/settings?tab=library">Settings</a> to run organization
-								again.
+								<a class="link link-primary" href={resolve('/settings?tab=library')}>Settings</a> to run
+								organization again.
 							</p>
 						</div>
 					</div>
@@ -244,8 +244,8 @@
 							<strong>The local library is disabled</strong>
 							<p class="text-sm">
 								Automatic organization is paused. Enable the library in
-								<a class="link link-primary" href="/settings?tab=library">Settings</a> to manage profiles
-								and automation again.
+								<a class="link link-primary" href={resolve('/settings?tab=library')}>Settings</a> to manage
+								profiles and automation again.
 							</p>
 						</div>
 					</div>

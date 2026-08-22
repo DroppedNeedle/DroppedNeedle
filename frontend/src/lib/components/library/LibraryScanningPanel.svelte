@@ -176,7 +176,8 @@
 					<p class="text-sm">
 						Scanning and identification are paused. Existing catalog data and playback keep working.
 						Enable the library in
-						<a class="link link-primary" href="/settings?tab=library">Settings</a> to start new work.
+						<a class="link link-primary" href={resolve('/settings?tab=library')}>Settings</a> to start
+						new work.
 					</p>
 				</div>
 			</div>
