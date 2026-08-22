@@ -1,4 +1,5 @@
 import { API } from '$lib/constants';
+import { getApiUrl } from '$lib/api/api-utils';
 import { toastStore } from '$lib/stores/toast';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
@@ -230,7 +231,7 @@ export function createFollowingEvents() {
 		mixSeen = loadSeen(MIX_SEEN_KEY);
 		wantedSeen = loadSeen(WANTED_SEEN_KEY);
 		requestImportedSeen = loadSeen(REQUEST_IMPORTED_SEEN_KEY);
-		source = new EventSource(API.following.events());
+		source = new EventSource(getApiUrl(API.following.events()));
 		source.addEventListener('auto_download_enqueued', handleEnqueued);
 		source.addEventListener('playlist_imported', handlePlaylistImported);
 		source.addEventListener('personal_mix_refreshed', handlePersonalMixRefreshed);

@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     port: int = Field(default=8688)
     debug: bool = Field(default=False)
     log_level: str = Field(default="INFO")
+
+    base_path: str = Field(
+        default="",
+        description="Subpath the app is served under behind a reverse proxy (e.g. '/droppedneedle'). Empty (default) serves at the domain root. The proxy must forward the subpath stripped of this prefix. Must match the BASE_PATH the frontend was built/rewritten with.",
+    )
     
     cache_ttl_default: int = Field(default=60)
     cache_ttl_artist: int = Field(default=3600)
@@ -109,6 +114,14 @@ class Settings(BaseSettings):
     audiodb_premium: bool = Field(default=False, description="Set to true if using a premium AudioDB API key")
     instance_id: str = Field(default="", description="Auto-generated per-instance UUID for User-Agent differentiation")
     
+    @field_validator("base_path")
+    @classmethod
+    def validate_base_path(cls, v: str) -> str:
+        stripped = v.strip().rstrip("/")
+        if not stripped:
+            return ""
+        return stripped if stripped.startswith("/") else f"/{stripped}"
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: str) -> str:

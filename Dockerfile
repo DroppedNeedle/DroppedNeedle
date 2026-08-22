@@ -14,7 +14,9 @@ COPY frontend/pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
 COPY frontend/ .
-RUN pnpm run build
+# SvelteKit bakes paths.base at build time; the entrypoint rewrites this placeholder
+# to the runtime BASE_PATH so one image serves any subpath.
+RUN BASE_PATH=/__DN_BASE_PATH__ pnpm run build
 
 FROM python:3.13.5-slim AS python-deps
 

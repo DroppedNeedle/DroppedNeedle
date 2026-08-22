@@ -311,7 +311,7 @@ async def spotify_auth_url(
         raise HTTPException(status_code=400, detail="Spotify is not configured by the administrator")
     state = secrets.token_urlsafe(32)
     await auth_store.store_spotify_state(state, current_user.id)
-    redirect_uri = str(request.base_url).rstrip("/") + "/api/v1/me/connections/spotify/auth/callback"
+    redirect_uri = str(request.url_for("spotify_auth_callback"))
     auth_url = "https://accounts.spotify.com/authorize?" + urlencode({
         "client_id": settings.client_id,
         "response_type": "code",
@@ -332,15 +332,16 @@ async def spotify_auth_callback(
     state: str | None = None,
     error: str | None = None,
 ) -> fastapi_responses.RedirectResponse:
+    profile = request.url_for("serve_spa_routes", full_path="profile")
     if error or not code or not state:
-        return fastapi_responses.RedirectResponse("/profile?spotify=error")
+        return fastapi_responses.RedirectResponse(profile.include_query_params(spotify="error"))
 
     user_id = await auth_store.consume_spotify_state(state)
     if not user_id:
-        return fastapi_responses.RedirectResponse("/profile?spotify=error&reason=state")
+        return fastapi_responses.RedirectResponse(profile.include_query_params(spotify="error", reason="state"))
 
     settings = preferences_service.get_spotify_settings_raw()
-    redirect_uri = str(request.base_url).rstrip("/") + "/api/v1/me/connections/spotify/auth/callback"
+    redirect_uri = str(request.url_for("spotify_auth_callback"))
     basic = base64.b64encode(f"{settings.client_id}:{settings.client_secret}".encode()).decode()
 
     try:
@@ -352,7 +353,7 @@ async def spotify_auth_callback(
             )
             if token_resp.status_code != 200:
                 logger.warning(f"Spotify token exchange failed: status={token_resp.status_code}")
-                return fastapi_responses.RedirectResponse("/profile?spotify=error&reason=token")
+                return fastapi_responses.RedirectResponse(profile.include_query_params(spotify="error", reason="token"))
             token_data = token_resp.json()
 
             me_resp = await client.get(
@@ -361,7 +362,7 @@ async def spotify_auth_callback(
             )
     except Exception:  # noqa: BLE001
         logger.exception("Spotify OAuth callback failed")
-        return fastapi_responses.RedirectResponse("/profile?spotify=error&reason=network")
+        return fastapi_responses.RedirectResponse(profile.include_query_params(spotify="error", reason="network"))
 
     spotify_user = me_resp.json() if me_resp.status_code == 200 else {}
     expires_at = (
@@ -375,7 +376,7 @@ async def spotify_auth_callback(
         "username": spotify_user.get("display_name") or spotify_user.get("id") or "Spotify",
         "spotify_user_id": spotify_user.get("id", ""),
     })
-    return fastapi_responses.RedirectResponse("/profile?spotify=connected")
+    return fastapi_responses.RedirectResponse(profile.include_query_params(spotify="connected"))
 
 
 @router.put("/connections/navidrome", response_model=ConnectionStatus)

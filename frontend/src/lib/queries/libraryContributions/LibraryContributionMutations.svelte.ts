@@ -1,3 +1,4 @@
+import { resolve } from '$app/paths';
 import { createMutation } from '@tanstack/svelte-query';
 import { goto } from '$app/navigation';
 import { api } from '$lib/api/client';
@@ -43,7 +44,7 @@ export const createLibraryContributionMutation = () =>
 		onSuccess: async (contribution) => {
 			await saveContribution(contribution);
 			toastStore.show({ message: 'Contribution draft ready', type: 'success' });
-			await goto(`/library/contributions/${contribution.id}`);
+			await goto(resolve(`/library/contributions/${contribution.id}`));
 		},
 		onError: () => toastStore.show({ message: "Couldn't start the contribution", type: 'error' })
 	}));
@@ -89,7 +90,7 @@ const revisionMutation = (
 			});
 			toastStore.show({ message: successMessage, type: 'success' });
 			if (action === 'rebuild') {
-				await goto(`/library/contributions/${contribution.id}`, { replaceState: true });
+				await goto(resolve(`/library/contributions/${contribution.id}`), { replaceState: true });
 			}
 		},
 		onError: async (_error, input) => refreshAfterMutationError(input.contributionId, errorMessage)

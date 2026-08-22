@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../../auth.css';
+	import { base, resolve } from '$app/paths';
 	import { ApiError } from '$lib/api/client';
 	import { createPasswordRecoveryResetMutation } from '$lib/queries/auth/AuthMutations.svelte';
 	import {
@@ -87,7 +88,7 @@
 <div class="recovery-wrap grain min-h-screen flex items-center justify-center p-4 py-10">
 	<div class="w-full max-w-lg">
 		<div class="recovery-brand">
-			<img src="/logo_icon.png" alt="" aria-hidden="true" class="recovery-mark" />
+			<img src="{base}/logo_icon.png" alt="" aria-hidden="true" class="recovery-mark" />
 			<h1 class="recovery-wordmark">DroppedNeedle</h1>
 			<div class="recovery-rule" aria-hidden="true"></div>
 			<p class="recovery-kicker">Account recovery</p>
@@ -110,7 +111,9 @@
 						Connect Apps passwords were not changed. Review them after signing in if you suspect
 						that someone accessed your account.
 					</p>
-					<a href="/login" class="btn btn-primary mt-7 w-full sm:w-auto">Return to sign in</a>
+					<a href={resolve('/login')} class="btn btn-primary mt-7 w-full sm:w-auto"
+						>Return to sign in</a
+					>
 				</div>
 			{:else}
 				<div class="border-b border-base-300 p-6 sm:p-7">
@@ -263,7 +266,7 @@
 		{/if}
 
 		<a
-			href="/login"
+			href={resolve('/login')}
 			class="mx-auto mt-5 flex w-fit items-center gap-2 text-sm text-base-content/50 hover:text-primary"
 		>
 			<ArrowLeft class="h-4 w-4" aria-hidden="true" /> Back to sign in

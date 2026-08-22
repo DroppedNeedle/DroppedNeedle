@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import {
 		ArrowLeft,
 		ArrowUpRight,
@@ -129,7 +130,7 @@
 	>
 		{#snippet title()}Library Management{/snippet}
 		{#snippet actions()}
-			<a href="/library" class="btn btn-ghost btn-sm gap-2 rounded-full sm:btn-md">
+			<a href={resolve('/library')} class="btn btn-ghost btn-sm gap-2 rounded-full sm:btn-md">
 				<ArrowLeft class="h-4 w-4" />
 				<span class="hidden sm:inline">Back to Library</span>
 				<span class="sm:hidden">Library</span>
@@ -189,7 +190,7 @@
 				<Settings2 class="h-4 w-4" />
 				Automation
 			</button>
-			<a role="tab" class={segmentIdle} href="/library/management/history">
+			<a role="tab" class={segmentIdle} href={resolve('/library/management/history')}>
 				<History class="h-4 w-4" />
 				Organization history
 				<ArrowUpRight class="h-3.5 w-3.5 opacity-60" />
@@ -214,8 +215,8 @@
 							<p class="text-sm">
 								File organization is paused. Existing catalog data and playback keep working. Enable
 								the library in
-								<a class="link link-primary" href="/settings?tab=library">Settings</a> to run organization
-								again.
+								<a class="link link-primary" href={resolve('/settings?tab=library')}>Settings</a> to run
+								organization again.
 							</p>
 						</div>
 					</div>
@@ -243,8 +244,8 @@
 							<strong>The local library is disabled</strong>
 							<p class="text-sm">
 								Automatic organization is paused. Enable the library in
-								<a class="link link-primary" href="/settings?tab=library">Settings</a> to manage profiles
-								and automation again.
+								<a class="link link-primary" href={resolve('/settings?tab=library')}>Settings</a> to manage
+								profiles and automation again.
 							</p>
 						</div>
 					</div>

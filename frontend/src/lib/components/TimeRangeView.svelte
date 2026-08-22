@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { run } from 'svelte/legacy';
 
 	import { onDestroy, onMount } from 'svelte';
@@ -268,7 +269,11 @@
 
 <div class="container mx-auto p-4 md:p-6 lg:p-8">
 	<div class="mb-6 flex items-center gap-4">
-		<button class="btn btn-circle btn-ghost" onclick={() => goto('/')} aria-label="Back to home">
+		<button
+			class="btn btn-circle btn-ghost"
+			onclick={() => goto(resolve('/'))}
+			aria-label="Back to home"
+		>
 			<ChevronLeft class="h-6 w-6" />
 		</button>
 		<div>

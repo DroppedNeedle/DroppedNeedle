@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { deckFocus } from '$lib/stores/deckFocus.svelte';
 	import { eqStore } from '$lib/stores/eq.svelte';
@@ -148,16 +149,18 @@
 						<p class="text-sm font-semibold truncate">{playerStore.nowPlaying.trackName}</p>
 						<p class="text-xs opacity-60 truncate">
 							{#if isAlbumLinkable(playerStore.nowPlaying.albumId)}
-								<a href="/album/{playerStore.nowPlaying.albumId}" class="hover:underline"
-									>{playerStore.nowPlaying.albumName}</a
+								<a
+									href={resolve(`/album/${playerStore.nowPlaying.albumId}`)}
+									class="hover:underline">{playerStore.nowPlaying.albumName}</a
 								>
 							{:else}
 								{playerStore.nowPlaying.albumName}
 							{/if}
 							-
 							{#if playerStore.nowPlaying.artistId}
-								<a href="/artist/{playerStore.nowPlaying.artistId}" class="hover:underline"
-									>{playerStore.nowPlaying.artistName}</a
+								<a
+									href={resolve(`/artist/${playerStore.nowPlaying.artistId}`)}
+									class="hover:underline">{playerStore.nowPlaying.artistName}</a
 								>
 							{:else}
 								{playerStore.nowPlaying.artistName}
@@ -166,8 +169,9 @@
 					{:else}
 						<p class="text-sm font-semibold truncate">
 							{#if isAlbumLinkable(playerStore.nowPlaying.albumId)}
-								<a href="/album/{playerStore.nowPlaying.albumId}" class="hover:underline"
-									>{playerStore.nowPlaying.albumName}</a
+								<a
+									href={resolve(`/album/${playerStore.nowPlaying.albumId}`)}
+									class="hover:underline">{playerStore.nowPlaying.albumName}</a
 								>
 							{:else}
 								{playerStore.nowPlaying.albumName}
@@ -175,8 +179,9 @@
 						</p>
 						<p class="text-xs opacity-60 truncate">
 							{#if playerStore.nowPlaying.artistId}
-								<a href="/artist/{playerStore.nowPlaying.artistId}" class="hover:underline"
-									>{playerStore.nowPlaying.artistName}</a
+								<a
+									href={resolve(`/artist/${playerStore.nowPlaying.artistId}`)}
+									class="hover:underline">{playerStore.nowPlaying.artistName}</a
 								>
 							{:else}
 								{playerStore.nowPlaying.artistName}

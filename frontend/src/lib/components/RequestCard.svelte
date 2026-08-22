@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import AlbumImage from './AlbumImage.svelte';
 	import DeleteAlbumModal from './DeleteAlbumModal.svelte';
@@ -282,7 +283,7 @@
 
 			{#if !isActive && watchState}
 				<a
-					href="/requests?tab=wanted"
+					href={resolve('/requests?tab=wanted')}
 					class="badge badge-sm badge-outline gap-1 border-info/30 text-info/80 hover:bg-info/10"
 					title={watchState === 'retrying'
 						? 'Auto-retrying - see the Wanted tab'

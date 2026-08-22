@@ -1,8 +1,9 @@
 <script lang="ts">
+	import { stripBase } from '$lib/utils/basePath';
 	import '../../app.css';
 	import { browser } from '$app/environment';
 	import { goto, beforeNavigate, afterNavigate } from '$app/navigation';
-	import { resolve } from '$app/paths';
+	import { base, resolve } from '$app/paths';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { logout } from '$lib/utils/logout';
 	import { migratePageSourceKeys } from '$lib/stores/musicSource';
@@ -118,7 +119,7 @@
 
 	afterNavigate(() => {
 		if (browser) {
-			currentPath = window.location.pathname;
+			currentPath = stripBase(window.location.pathname);
 		}
 		navigationProgress.finish();
 	});
@@ -153,7 +154,7 @@
 		};
 
 		if (browser) {
-			currentPath = window.location.pathname;
+			currentPath = stripBase(window.location.pathname);
 		}
 		document.addEventListener('keydown', handleGlobalKeydown);
 	});
@@ -326,13 +327,13 @@
 
 	function handleSearch() {
 		if (query.trim()) {
-			goto(`/search?q=${encodeURIComponent(query)}`);
+			goto(resolve(`/search?q=${encodeURIComponent(query)}`));
 		}
 	}
 
 	function handleModalSearch() {
 		if (modalQuery.trim()) {
-			goto(`/search?q=${encodeURIComponent(modalQuery)}`);
+			goto(resolve(`/search?q=${encodeURIComponent(modalQuery)}`));
 			const modal = document.getElementById('search_modal') as HTMLDialogElement;
 			if (modal) modal.close();
 			modalQuery = '';
@@ -381,9 +382,9 @@
 			class="droppedneedle-topbar navbar bg-base-100/95 backdrop-blur shadow-sm sticky top-0 z-50"
 		>
 			<div class="navbar-start w-auto">
-				<a href="/" class="btn btn-ghost px-2 max-xs:hidden sm:px-4" aria-label="Home">
-					<img src="/logo_wide.png" alt="DroppedNeedle" class="h-8 hidden sm:block" />
-					<img src="/logo_icon.png" alt="DroppedNeedle" class="h-8 block sm:hidden" />
+				<a href={resolve('/')} class="btn btn-ghost px-2 max-xs:hidden sm:px-4" aria-label="Home">
+					<img src="{base}/logo_wide.png" alt="DroppedNeedle" class="h-8 hidden sm:block" />
+					<img src="{base}/logo_icon.png" alt="DroppedNeedle" class="h-8 block sm:hidden" />
 				</a>
 			</div>
 			<div class="navbar-center min-w-0 grow justify-center px-1 sm:px-4">
@@ -398,7 +399,7 @@
 			</div>
 			<div class="navbar-end w-auto pr-1 sm:pr-2">
 				<ServiceHealthIndicator />
-				<a href="/profile" class="btn btn-ghost btn-circle btn-md" aria-label="Profile">
+				<a href={resolve('/profile')} class="btn btn-ghost btn-circle btn-md" aria-label="Profile">
 					{#if authStore.user?.avatar_url}
 						<img
 							src={authStore.user.avatar_url}
@@ -444,7 +445,11 @@
 				<div class="divider my-0"></div>
 
 				<li>
-					<a href="/" class="is-drawer-close:tooltip is-drawer-close:tooltip-right" data-tip="Home">
+					<a
+						href={resolve('/')}
+						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+						data-tip="Home"
+					>
 						<House class="h-6 w-6" />
 						<span class="is-drawer-close:hidden">Home</span>
 					</a>
@@ -452,7 +457,7 @@
 
 				<li>
 					<a
-						href="/discover"
+						href={resolve('/discover')}
 						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 						data-tip="Discover"
 					>
@@ -463,7 +468,7 @@
 
 				<li>
 					<a
-						href="/library"
+						href={resolve('/library')}
 						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 						class:menu-active={isLibraryNavActive()}
 						aria-current={isLibraryNavActive() ? 'page' : undefined}
@@ -484,7 +489,7 @@
 
 				<li>
 					<a
-						href="/downloads"
+						href={resolve('/downloads')}
 						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 						data-tip="Downloads"
 					>
@@ -498,7 +503,7 @@
 
 				<li>
 					<a
-						href="/following"
+						href={resolve('/following')}
 						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 						class:menu-active={isNavActive('/following')}
 						aria-current={isNavActive('/following') ? 'page' : undefined}
@@ -517,7 +522,7 @@
 				{#if downloadClientConfigured}
 					<li>
 						<a
-							href="/playlists"
+							href={resolve('/playlists')}
 							class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 							class:menu-active={isNavActive('/playlists')}
 							aria-current={isNavActive('/playlists') ? 'page' : undefined}
@@ -538,7 +543,7 @@
 				{#if downloadClientConfigured}
 					<li>
 						<a
-							href="/requests"
+							href={resolve('/requests')}
 							class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 							data-tip="Requests"
 						>
@@ -557,7 +562,7 @@
 					</li>
 					<li>
 						<a
-							href="/library/management"
+							href={resolve('/library/management')}
 							class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 							class:menu-active={isNavActive('/library/management')}
 							aria-current={isNavActive('/library/management') ? 'page' : undefined}
@@ -577,7 +582,7 @@
 					</li>
 					<li>
 						<a
-							href="/requests?tab=approvals"
+							href={resolve('/requests?tab=approvals')}
 							class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 							data-tip="Approvals"
 						>
@@ -597,7 +602,7 @@
 						data-tip={versionUpdateAvailable ? 'Settings - update available' : 'Settings'}
 					>
 						<a
-							href={versionUpdateAvailable ? '/settings?tab=about' : '/settings'}
+							href={versionUpdateAvailable ? resolve('/settings?tab=about') : resolve('/settings')}
 							class="btn btn-ghost btn-circle relative"
 							aria-label={versionUpdateAvailable ? 'Settings - update available' : 'Settings'}
 						>
@@ -636,7 +641,7 @@
 
 <nav class="droppedneedle-bottom-nav md:hidden" aria-label="Primary navigation">
 	<a
-		href="/"
+		href={resolve('/')}
 		class="droppedneedle-bottom-nav__item"
 		class:active={currentPath === '/'}
 		aria-current={currentPath === '/' ? 'page' : undefined}
@@ -645,7 +650,7 @@
 		<span>Home</span>
 	</a>
 	<a
-		href="/discover"
+		href={resolve('/discover')}
 		class="droppedneedle-bottom-nav__item"
 		class:active={isNavActive('/discover')}
 		aria-current={isNavActive('/discover') ? 'page' : undefined}
@@ -664,7 +669,7 @@
 		<span>Search</span>
 	</button>
 	<a
-		href="/library"
+		href={resolve('/library')}
 		class="droppedneedle-bottom-nav__item"
 		class:active={isNavActive('/library')}
 		aria-current={isNavActive('/library') ? 'page' : undefined}
@@ -676,7 +681,7 @@
 		{/if}
 	</a>
 	<a
-		href={versionUpdateAvailable ? '/settings?tab=about' : '/settings'}
+		href={versionUpdateAvailable ? resolve('/settings?tab=about') : resolve('/settings')}
 		class="droppedneedle-bottom-nav__item"
 		class:active={isNavActive('/settings')}
 		aria-current={isNavActive('/settings') ? 'page' : undefined}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import type {
 		HomeSection as HomeSectionType,
 		HomeArtist,
@@ -51,7 +52,7 @@
 	function handleAlbumSearch(album: HomeAlbum) {
 		const query = [album.artist_name, album.name].filter(Boolean).join(' ').trim();
 		if (query) {
-			goto(`/search/albums?q=${encodeURIComponent(query)}`);
+			goto(resolve(`/search/albums?q=${encodeURIComponent(query)}`));
 		}
 	}
 
@@ -61,7 +62,7 @@
 			.join(' ')
 			.trim();
 		if (query) {
-			goto(`/search/albums?q=${encodeURIComponent(query)}`);
+			goto(resolve(`/search/albums?q=${encodeURIComponent(query)}`));
 		}
 	}
 
@@ -129,7 +130,7 @@
 				</div>
 				<p class="text-base-content/70 text-sm">{section.fallback_message}</p>
 				{#if section.connect_service}
-					<a href="/settings" class="btn btn-primary btn-sm mt-2">
+					<a href={resolve('/settings')} class="btn btn-primary btn-sm mt-2">
 						Connect {section.connect_service === 'listenbrainz'
 							? 'ListenBrainz'
 							: section.connect_service === 'lastfm'

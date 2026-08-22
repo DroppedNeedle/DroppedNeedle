@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import AlbumImage from './AlbumImage.svelte';
 	import { RotateCcw } from 'lucide-svelte';
@@ -41,7 +42,7 @@
 
 	<div class="flex-1 min-w-0">
 		<a
-			href="/album/{item.release_group_mbid}"
+			href={resolve(`/album/${item.release_group_mbid}`)}
 			class="block font-semibold text-sm truncate hover:text-accent hover:underline"
 			title={item.album_title}
 		>
@@ -67,6 +68,8 @@
 	</div>
 
 	<div class="shrink-0">
-		<a href="/downloads" class="btn btn-ghost btn-sm text-base-content/50">Manage in Downloads</a>
+		<a href={resolve('/downloads')} class="btn btn-ghost btn-sm text-base-content/50"
+			>Manage in Downloads</a
+		>
 	</div>
 </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { tick } from 'svelte';
 	import { slide, fly } from 'svelte/transition';
 	import {
@@ -445,7 +446,7 @@
 					<div class="flex-1 min-w-0">
 						{#if track.album_id}
 							<a
-								href="/album/{track.album_id}"
+								href={resolve(`/album/${track.album_id}`)}
 								class="font-medium truncate text-sm block hover:underline {isCurrentlyPlaying
 									? 'text-accent'
 									: ''}">{track.track_name}</a
@@ -458,15 +459,18 @@
 						{/if}
 						<span class="text-xs text-base-content/60 truncate block">
 							{#if track.artist_id}
-								<a href="/artist/{track.artist_id}" class="hover:underline">{track.artist_name}</a>
+								<a href={resolve(`/artist/${track.artist_id}`)} class="hover:underline"
+									>{track.artist_name}</a
+								>
 							{:else}
 								{track.artist_name}
 							{/if}
 							{#if track.album_name}
 								<span class="text-base-content/30"> · </span>
 								{#if track.album_id}
-									<a href="/album/{track.album_id}" class="text-base-content/40 hover:underline"
-										>{track.album_name}</a
+									<a
+										href={resolve(`/album/${track.album_id}`)}
+										class="text-base-content/40 hover:underline">{track.album_name}</a
 									>
 								{:else}
 									<span class="text-base-content/40">{track.album_name}</span>

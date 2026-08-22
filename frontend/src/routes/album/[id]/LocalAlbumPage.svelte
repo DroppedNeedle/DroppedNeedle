@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import {
 		ChevronLeft,
@@ -80,7 +81,7 @@
 	function openContribution(): void {
 		if (!album) return;
 		if (album.contribution_id) {
-			void goto(`/library/contributions/${album.contribution_id}`);
+			void goto(resolve(`/library/contributions/${album.contribution_id}`));
 			return;
 		}
 		contributionMutation.mutate(album.id);
@@ -90,7 +91,7 @@
 <svelte:head><title>{album?.title ?? 'Album'} · Library</title></svelte:head>
 
 <main class="container mx-auto p-4 md:p-6 lg:p-8">
-	<button class="btn btn-ghost btn-sm mb-5 gap-2" onclick={() => goto('/library/albums')}>
+	<button class="btn btn-ghost btn-sm mb-5 gap-2" onclick={() => goto(resolve('/library/albums'))}>
 		<ChevronLeft class="h-4 w-4" /> Albums
 	</button>
 

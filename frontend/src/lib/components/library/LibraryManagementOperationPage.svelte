@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {
@@ -85,7 +86,7 @@
 	$effect(() => {
 		if (!redirectingReadyPreview && operation?.mode === 'preview' && operation.state === 'ready') {
 			redirectingReadyPreview = true;
-			void goto(`/library/management/previews/${encodeURIComponent(jobId)}`, {
+			void goto(resolve(`/library/management/previews/${encodeURIComponent(jobId)}`), {
 				replaceState: true
 			});
 		}
@@ -238,7 +239,7 @@
 			});
 			rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
 			undoDialog.close();
-			await goto(`/library/management/previews/${encodeURIComponent(handle.job_id)}`);
+			await goto(resolve(`/library/management/previews/${encodeURIComponent(handle.job_id)}`));
 		} catch (error) {
 			undoError = error instanceof Error ? error.message : 'Could not create the undo preview.';
 		}
@@ -478,7 +479,7 @@
 						<p class="management-step">Audit trail</p>
 						<h2 class="font-display text-xl font-semibold">Per-file results</h2>
 					</div>
-					<a href="/library/management/history" class="btn btn-ghost btn-sm"
+					<a href={resolve('/library/management/history')} class="btn btn-ghost btn-sm"
 						><History class="h-4 w-4" /> All history</a
 					>
 				</div>
@@ -540,8 +541,9 @@
 					{#if operation.baseline_available_count > 0}<p class="mt-2 text-xs text-base-content/55">
 							{baselineStatus}
 						</p>{/if}
-					<a href="/library/management?runner=baseline_restore" class="btn btn-ghost btn-sm mt-3"
-						>Open baseline restore...</a
+					<a
+						href={resolve('/library/management?runner=baseline_restore')}
+						class="btn btn-ghost btn-sm mt-3">Open baseline restore...</a
 					>
 				</div>
 			</section>

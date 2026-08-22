@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import {
 		AlertTriangle,
 		ArrowRight,
@@ -200,7 +201,8 @@
 				<p class="text-sm">
 					Scanning and file organization are paused. Existing catalog data and playback keep
 					working. Enable the library in
-					<a class="link link-primary" href="/settings?tab=library">Settings</a> to start new work.
+					<a class="link link-primary" href={resolve('/settings?tab=library')}>Settings</a> to start new
+					work.
 				</p>
 			</div>
 		</div>
@@ -320,7 +322,7 @@
 
 	<div class="stagger-fade-in grid grid-cols-2 gap-3 lg:grid-cols-4">
 		<a
-			href="/library/tracks"
+			href={resolve('/library/tracks')}
 			class="rounded-2xl border border-base-content/10 bg-base-200/40 p-4 transition-colors hover:border-base-content/20 hover:bg-base-200/60"
 		>
 			<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary"
@@ -335,7 +337,7 @@
 			>
 		</a>
 		<a
-			href="/library/management?tab=scanning#recent-runs"
+			href={resolve('/library/management?tab=scanning#recent-runs')}
 			class="rounded-2xl border border-base-content/10 bg-base-200/40 p-4 transition-colors hover:border-base-content/20 hover:bg-base-200/60"
 		>
 			<span
@@ -353,7 +355,7 @@
 			>
 		</a>
 		<a
-			href="/library/review"
+			href={resolve('/library/review')}
 			class="rounded-2xl border border-base-content/10 bg-base-200/40 p-4 transition-colors hover:border-base-content/20 hover:bg-base-200/60"
 		>
 			<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-accent/10 text-accent"
@@ -372,7 +374,7 @@
 		</a>
 		{#if attentionCount > 0}
 			<a
-				href="/library/management?tab=organize"
+				href={resolve('/library/management?tab=organize')}
 				class="rounded-2xl border border-warning/30 bg-base-200/40 p-4 transition-colors hover:border-warning/50 hover:bg-base-200/60"
 			>
 				<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-warning/15 text-warning"
@@ -388,7 +390,7 @@
 			</a>
 		{:else}
 			<a
-				href="/library/management?tab=organize"
+				href={resolve('/library/management?tab=organize')}
 				class="rounded-2xl border border-base-content/10 bg-base-200/40 p-4 transition-colors hover:border-base-content/20 hover:bg-base-200/60"
 			>
 				<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-warning/10 text-warning"
@@ -429,8 +431,9 @@
 				</button>
 				<div class="flex items-center justify-between gap-2 text-xs text-base-content/55">
 					<span>{scheduleText}</span>
-					<a class="link-hover font-semibold text-primary" href="/library/management?tab=scanning"
-						>More scan actions →</a
+					<a
+						class="link-hover font-semibold text-primary"
+						href={resolve('/library/management?tab=scanning')}>More scan actions →</a
 					>
 				</div>
 			</div>
@@ -448,12 +451,15 @@
 				Preview exactly what would change to tags, names, and paths before anything is written.
 			</p>
 			<div class="mt-auto flex flex-col gap-2">
-				<a class="btn management-btn" href="/library/management?tab=organize&runner=manage"
+				<a
+					class="btn management-btn"
+					href={resolve('/library/management?tab=organize&runner=manage')}
 					><Sparkles class="h-4 w-4" /> Preview organization...</a
 				>
 				<div class="flex items-center justify-end gap-2 text-xs text-base-content/55">
-					<a class="link-hover font-semibold text-warning" href="/library/management?tab=automation"
-						>Automation & profiles →</a
+					<a
+						class="link-hover font-semibold text-warning"
+						href={resolve('/library/management?tab=automation')}>Automation & profiles →</a
 					>
 				</div>
 			</div>
@@ -474,7 +480,9 @@
 					>{/if}
 			</p>
 			<div class="mt-auto flex flex-col gap-2">
-				<a class="btn btn-outline" href="/library/management?tab=organize#identity-readiness"
+				<a
+					class="btn btn-outline"
+					href={resolve('/library/management?tab=organize#identity-readiness')}
 					>Open identity readiness</a
 				>
 			</div>

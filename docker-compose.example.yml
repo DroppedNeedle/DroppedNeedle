@@ -18,6 +18,7 @@ services:
       - TZ=Etc/UTC           # e.g. America/New_York, Europe/London
       - SLSKD_DOWNLOADS_PATH=/data/slskd/complete  # path inside the common media mount below
       # - TRUSTED_PROXY_IPS=172.17.0.1  # your reverse proxy's IP; defaults to * (fine for single-host)
+      # - BASE_PATH=/droppedneedle  # serve under a reverse-proxy subpath; the proxy must forward it stripped. Omit to serve at the root.
     ports:
       - "8688:8688"          # host:container
     volumes:

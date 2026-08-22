@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Headphones, Play, Shuffle, Sparkles, ArrowRight } from 'lucide-svelte';
 	import { getLocalStatsQuery, getLocalRecentQuery } from '$lib/queries/local/LocalQueries.svelte';
 	import { createLibraryTrackLoader } from '$lib/utils/libraryTrackLoader.svelte';
@@ -130,7 +131,7 @@
 
 	<!-- stretched link under the content so empty area navigates, while playback buttons (pointer-events re-enabled) still act in place; avoids nested interactives -->
 	<a
-		href="/library/local"
+		href={resolve('/library/local')}
 		aria-label="Enter the Listening Room"
 		class="absolute inset-0 z-10 rounded-3xl focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none"
 		style="--tw-ring-color: rgb(var(--brand-localfiles));"

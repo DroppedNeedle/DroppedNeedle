@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import { Github } from 'lucide-svelte';
 	import { getVersionQuery } from '$lib/queries/VersionQuery.svelte';
 
@@ -18,7 +19,7 @@
 <footer class="ms-footer grain" aria-label="Site footer">
 	<div class="ms-footer__inner">
 		<div class="ms-footer__brand">
-			<img src="/logo_wide_white.png" alt="DroppedNeedle" class="ms-footer__logo" />
+			<img src="{base}/logo_wide_white.png" alt="DroppedNeedle" class="ms-footer__logo" />
 		</div>
 
 		<div class="ms-footer__rule" aria-hidden="true"></div>

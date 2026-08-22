@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {
@@ -295,7 +296,7 @@
 						});
 			rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
 			dialog.close();
-			await goto(`/library/management/previews/${encodeURIComponent(handle.job_id)}`);
+			await goto(resolve(`/library/management/previews/${encodeURIComponent(handle.job_id)}`));
 		} catch (error) {
 			localError = error instanceof Error ? error.message : 'Could not create the preview.';
 		}

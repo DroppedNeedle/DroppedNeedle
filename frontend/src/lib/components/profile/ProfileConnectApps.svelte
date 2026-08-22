@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base, resolve } from '$app/paths';
 	import { Copy, Plus, Trash2, TriangleAlert, Waypoints } from 'lucide-svelte';
 
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -39,8 +40,8 @@
 
 	const isAdmin = $derived(authStore.isAdmin);
 	const origin = $derived(typeof window !== 'undefined' ? window.location.origin : '');
-	const subsonicUrl = $derived(`${origin}/subsonic`);
-	const jellyfinUrl = $derived(`${origin}/jellyfin`);
+	const subsonicUrl = $derived(`${origin}${base}/subsonic`);
+	const jellyfinUrl = $derived(`${origin}${base}/jellyfin`);
 	const username = $derived(authStore.user?.username ?? '');
 
 	const subsonicOn = $derived(settingsQuery.data?.subsonic_enabled ?? false);
@@ -160,7 +161,8 @@
 					{#if isAdmin}
 						<p>
 							Streaming isn't turned on yet. You can still create an app-password below, then
-							<a href="/settings?tab=connect-apps" class="link link-accent">enable it in Settings</a
+							<a href={resolve('/settings?tab=connect-apps')} class="link link-accent"
+								>enable it in Settings</a
 							>.
 						</p>
 					{:else}

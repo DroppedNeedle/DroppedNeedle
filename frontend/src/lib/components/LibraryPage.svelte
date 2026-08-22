@@ -2,6 +2,7 @@
 	lang="ts"
 	generics="TAlbum extends JellyfinAlbumSummary | LocalAlbumSummary | NavidromeAlbumSummary | PlexAlbumSummary"
 >
+	import { resolve } from '$app/paths';
 	import type { Snippet } from 'svelte';
 	import type { LibraryController } from '$lib/utils/libraryController.svelte';
 	import type {
@@ -180,7 +181,7 @@
 			<div class="flex flex-col gap-1">
 				<span>{ctrl.fetchError}</span>
 				{#if ctrl.fetchErrorCode === 'CIRCUIT_BREAKER_OPEN' || /connection|DNS|not configured/i.test(ctrl.fetchError)}
-					<a href="/settings" class="link link-primary text-sm">Open settings</a>
+					<a href={resolve('/settings')} class="link link-primary text-sm">Open settings</a>
 				{/if}
 			</div>
 			<button class="btn btn-sm btn-ghost" onclick={() => ctrl.fetchAlbums(true)}>Retry</button>

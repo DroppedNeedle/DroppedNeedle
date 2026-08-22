@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { CircleCheck, CircleX, FolderTree, Rss, TriangleAlert } from 'lucide-svelte';
 
 	import {
@@ -130,7 +131,7 @@
 						<span class="font-semibold">No indexers configured.</span> SABnzbd downloads the NZBs your
 						indexers find - with none set up, Usenet search returns nothing and this client stays idle.
 					</p>
-					<a class="link link-warning font-medium" href="/settings?tab=indexers">
+					<a class="link link-warning font-medium" href={resolve('/settings?tab=indexers')}>
 						Add an indexer →
 					</a>
 				</div>

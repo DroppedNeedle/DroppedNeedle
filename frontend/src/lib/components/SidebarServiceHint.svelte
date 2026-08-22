@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Plus } from 'lucide-svelte';
 	import type { Snippet } from 'svelte';
 
@@ -13,7 +14,7 @@
 
 <li class="opacity-30 hover:opacity-70 transition-opacity duration-200">
 	<a
-		href="/settings?tab={settingsTab}"
+		href={resolve(`/settings?tab=${settingsTab}`)}
 		class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 		data-tip="Connect {label}"
 	>

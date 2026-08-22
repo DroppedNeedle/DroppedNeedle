@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { ChevronUp, ChevronDown, ExternalLink, Users, Headphones } from 'lucide-svelte';
 	import { formatListenCount } from '$lib/utils/formatting';
 	import { onMount } from 'svelte';
@@ -135,7 +136,7 @@
 			<div class="flex flex-wrap gap-2">
 				{#each tags.slice(0, 10) as tag (tag.name)}
 					<a
-						href="/genre?name={encodeURIComponent(tag.name)}"
+						href={resolve(`/genre?name=${encodeURIComponent(tag.name)}`)}
 						class="badge badge-outline badge-sm cursor-pointer hover:badge-primary transition-colors"
 					>
 						{tag.name}

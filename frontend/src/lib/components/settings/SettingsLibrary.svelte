@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { AlertTriangle, ArrowRight, CheckCircle2, FolderCog, ScanSearch } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/client';
 	import {
@@ -494,7 +495,7 @@
 						workspace under the Automation tab.
 					</p>
 				</div>
-				<a href="/library/management?tab=automation" class="btn management-btn btn-sm"
+				<a href={resolve('/library/management?tab=automation')} class="btn management-btn btn-sm"
 					>Open Organize files settings <ArrowRight class="h-4 w-4" /></a
 				>
 			</section>

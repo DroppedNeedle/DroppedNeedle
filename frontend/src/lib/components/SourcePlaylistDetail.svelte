@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { ApiError } from '$lib/api/client';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import { createSourcePlaylistImportMutation } from '$lib/queries/source-playlists/SourcePlaylistMutations.svelte';
@@ -83,7 +84,7 @@
 						: "Couldn't load this playlist."}
 			</span>
 			{#if relinkRequired}
-				<a class="btn btn-primary btn-sm" href="/profile#media-accounts">Reconnect</a>
+				<a class="btn btn-primary btn-sm" href={resolve('/profile#media-accounts')}>Reconnect</a>
 			{:else if notFound}
 				<a class="btn btn-primary btn-sm" href={backFallback}>Back to playlists</a>
 			{:else}
@@ -136,7 +137,7 @@
 				{#if importRelinkRequired}
 					<p class="text-sm text-error">
 						Reconnect the linked account to continue.
-						<a class="link font-medium" href="/profile#media-accounts">Reconnect</a>
+						<a class="link font-medium" href={resolve('/profile#media-accounts')}>Reconnect</a>
 					</p>
 				{/if}
 			</div>

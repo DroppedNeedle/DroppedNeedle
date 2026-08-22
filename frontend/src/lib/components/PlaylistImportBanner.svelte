@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import type { SourcePlaylistSummary } from '$lib/types';
 	import type { Snippet } from 'svelte';
 	import {
@@ -158,7 +159,7 @@
 						</a>
 					{/if}
 					{#if (!hasError && (accountMode === 'shared' || totalCount === 0)) || relinkRequired}
-						<a class="btn btn-ghost btn-sm gap-2" href="/profile#media-accounts">
+						<a class="btn btn-ghost btn-sm gap-2" href={resolve('/profile#media-accounts')}>
 							<Link2 class="h-4 w-4" />
 							{relinkRequired
 								? `Reconnect ${sourceLabel}`

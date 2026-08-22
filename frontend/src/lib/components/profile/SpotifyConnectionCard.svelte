@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Loader2 } from 'lucide-svelte';
 	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
@@ -98,8 +99,8 @@
 
 		{#if spotify}
 			<p class="px-1 text-xs text-base-content/50">
-				Connected. Go to your <a href="/playlists" class="link link-primary">Playlists</a> to import from
-				Spotify.
+				Connected. Go to your <a href={resolve('/playlists')} class="link link-primary">Playlists</a
+				> to import from Spotify.
 			</p>
 		{:else}
 			<p class="px-1 text-xs text-base-content/40">

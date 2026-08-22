@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../../auth.css';
+	import { base, resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { api, ApiError } from '$lib/api/client';
@@ -73,7 +74,7 @@
 
 	function storeSession(data: AuthSessionResponse) {
 		authStore.setUser(toAuthUser(data.user));
-		goto('/');
+		goto(resolve('/'));
 	}
 
 	async function handleLocalLogin() {
@@ -145,7 +146,7 @@
 <div class="login-wrap grain min-h-screen flex items-center justify-center p-4">
 	<div class="w-full max-w-md">
 		<div class="login-brand">
-			<img src="/logo_icon.png" alt="" aria-hidden="true" class="login-mark" />
+			<img src="{base}/logo_icon.png" alt="" aria-hidden="true" class="login-mark" />
 			<h1 class="login-wordmark">DroppedNeedle</h1>
 			<div class="login-rule" aria-hidden="true"></div>
 			<p class="login-sub">Sign in to continue</p>
@@ -225,7 +226,10 @@
 								</button>
 							</label>
 							<div class="mt-1 flex justify-end">
-								<a href="/recover-password" class="link link-primary text-xs font-medium">
+								<a
+									href={resolve('/recover-password')}
+									class="link link-primary text-xs font-medium"
+								>
 									Forgot password?
 								</a>
 							</div>

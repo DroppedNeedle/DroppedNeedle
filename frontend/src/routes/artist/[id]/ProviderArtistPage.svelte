@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { colors } from '$lib/colors';
 	import ArtistHeaderSkeleton from '$lib/components/ArtistHeaderSkeleton.svelte';
 	import AlbumGridSkeleton from '$lib/components/AlbumGridSkeleton.svelte';
@@ -284,7 +285,7 @@
 						<div class="flex flex-wrap gap-2 justify-center sm:justify-start -mt-2">
 							{#each [...new Set(artist.tags)].slice(0, 10) as tag (tag)}
 								<a
-									href="/genre?name={encodeURIComponent(tag)}"
+									href={resolve(`/genre?name=${encodeURIComponent(tag)}`)}
 									class="badge badge-lg cursor-pointer hover:opacity-80 transition-opacity"
 									style="background-color: {colors.primary}; color: {colors.secondary};">{tag}</a
 								>

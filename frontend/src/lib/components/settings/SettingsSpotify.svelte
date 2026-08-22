@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
+	import { base, resolve } from '$app/paths';
 	import type { SpotifySettings } from '$lib/types';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { Copy, ExternalLink } from 'lucide-svelte';
@@ -35,7 +36,7 @@
 			);
 			redirectUri = data.redirect_uri;
 		} catch {
-			redirectUri = `${window.location.origin}/api/v1/me/connections/spotify/auth/callback`;
+			redirectUri = `${window.location.origin}${base}/api/v1/me/connections/spotify/auth/callback`;
 		}
 	});
 	onDestroy(() => form.cleanup());
@@ -62,7 +63,7 @@
 		<div class="rounded-xl border border-info/20 bg-info/5 p-3 text-sm text-base-content/70">
 			These are the shared app credentials for one registered Spotify application. Each user links
 			<span class="font-medium">their own</span> Spotify account from their
-			<a href="/profile" class="link link-primary">profile</a> to import their personal playlists.
+			<a href={resolve('/profile')} class="link link-primary">profile</a> to import their personal playlists.
 		</div>
 
 		<div class="rounded-xl border border-warning/20 bg-warning/5 p-3 text-sm text-base-content/70">

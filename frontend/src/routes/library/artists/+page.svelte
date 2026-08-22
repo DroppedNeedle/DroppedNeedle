@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import ArtistCardSkeleton from '$lib/components/ArtistCardSkeleton.svelte';
@@ -100,7 +101,7 @@
 	<header class="mb-6 flex items-center gap-4">
 		<button
 			class="btn btn-ghost btn-circle"
-			onclick={() => goto('/library')}
+			onclick={() => goto(resolve('/library'))}
 			aria-label="Back to library"
 		>
 			<ChevronLeft class="h-6 w-6" />

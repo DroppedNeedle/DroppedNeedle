@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import { onMount } from 'svelte';
 	import { Disc3, Download } from 'lucide-svelte';
@@ -89,7 +90,7 @@
 		<div class="bg-base-200 rounded-lg p-4 text-center flex-1 flex items-center justify-center">
 			<div>
 				<p class="text-base-content/70 text-sm">Connect a music service to see popular albums</p>
-				<a href="/profile#scrobbling" class="btn btn-primary btn-xs mt-2">Configure</a>
+				<a href={resolve('/profile#scrobbling')} class="btn btn-primary btn-xs mt-2">Configure</a>
 			</div>
 		</div>
 	{:else if albums.length === 0}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import HomeSection from '$lib/components/HomeSection.svelte';
 	import DailyMixCard from '$lib/components/DailyMixCard.svelte';
 	import RadioCard from '$lib/components/RadioCard.svelte';
@@ -259,7 +260,7 @@
 					<DiscoverZoneNav {zones}>
 						{#snippet action()}
 							<a
-								href="/settings?tab=discover"
+								href={resolve('/settings?tab=discover')}
 								class="btn btn-ghost btn-xs gap-1.5 text-base-content/60 hover:text-primary"
 								title="Choose which sections appear here"
 							>
@@ -536,7 +537,7 @@
 									Connect a music service to get recommendations. The more you connect, the better
 									they get.
 								</p>
-								<a href="/settings" class="btn btn-primary">Connect Services</a>
+								<a href={resolve('/settings')} class="btn btn-primary">Connect Services</a>
 							</div>
 						{:else if !hasContent && degradedSources.length > 0}
 							<div class="flex flex-col items-center justify-center py-12 sm:py-16">
@@ -571,7 +572,7 @@
 								<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
 									Turn some discovery sections back on to fill this page.
 								</p>
-								<a href="/settings?tab=discover" class="btn btn-primary gap-2">
+								<a href={resolve('/settings?tab=discover')} class="btn btn-primary gap-2">
 									<SlidersHorizontal class="h-4 w-4" />
 									Customise Sections
 								</a>

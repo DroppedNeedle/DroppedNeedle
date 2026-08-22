@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { run } from 'svelte/legacy';
 
 	import { onDestroy, onMount } from 'svelte';
@@ -37,13 +38,13 @@
 
 	function navigateBack() {
 		if (data.query) {
-			goto(`/search?q=${encodeURIComponent(data.query)}`);
+			goto(resolve(`/search?q=${encodeURIComponent(data.query)}`));
 		}
 	}
 
 	function navigateToBucket(bucket: 'artists') {
 		if (data.query) {
-			goto(`/search/${bucket}?q=${encodeURIComponent(data.query)}`);
+			goto(resolve(`/search/${bucket}?q=${encodeURIComponent(data.query)}`));
 		}
 	}
 

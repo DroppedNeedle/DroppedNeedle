@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Headphones, ArrowRight, Sparkles, AlertTriangle } from 'lucide-svelte';
 	import type { ComponentType } from 'svelte';
 	import { fromStore } from 'svelte/store';
@@ -215,7 +216,7 @@
 		<div class="flex flex-col">
 			<DropImportZone className="flex-1 [&>button]:h-full" />
 			<a
-				href="/downloads?tab=import"
+				href={resolve('/downloads?tab=import')}
 				class="mt-2 self-end text-xs font-semibold text-primary hover:underline"
 			>
 				View import history

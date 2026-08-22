@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { Loader2, Music2, ArrowLeft, RefreshCw, CheckCircle2, Download } from 'lucide-svelte';
 	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
@@ -25,7 +26,7 @@
 				message: `"${playlist.name}" is importing in the background`,
 				type: 'success'
 			});
-			await goto(`/playlists/${result.playlist_id}`);
+			await goto(resolve(`/playlists/${result.playlist_id}`));
 		} catch {
 			toastStore.show({ message: `Failed to import "${playlist.name}"`, type: 'error' });
 		} finally {
@@ -81,7 +82,7 @@
 
 <div class="space-y-6 px-4 sm:px-6 lg:px-8">
 	<div class="flex items-center gap-3">
-		<a href="/playlists" class="btn btn-ghost btn-sm btn-circle">
+		<a href={resolve('/playlists')} class="btn btn-ghost btn-sm btn-circle">
 			<ArrowLeft class="h-4 w-4" />
 		</a>
 		<h1 class="flex min-w-0 flex-1 items-center gap-2 text-2xl font-bold sm:text-3xl">
@@ -121,7 +122,7 @@
 			</span>
 			<div class="flex gap-2">
 				{#if err instanceof Error && err.message.includes('400')}
-					<a href="/profile" class="btn btn-sm btn-ghost">Go to Profile</a>
+					<a href={resolve('/profile')} class="btn btn-sm btn-ghost">Go to Profile</a>
 				{:else}
 					<button class="btn btn-sm btn-ghost" onclick={() => void playlistsQuery.refetch()}>
 						Retry
@@ -158,7 +159,7 @@
 								class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 opacity-0 transition-opacity group-hover:opacity-100"
 							>
 								<a
-									href="/playlists/{playlist.imported_playlist_id}"
+									href={resolve(`/playlists/${playlist.imported_playlist_id}`)}
 									class="btn btn-sm btn-ghost rounded-full text-white"
 								>
 									View Playlist

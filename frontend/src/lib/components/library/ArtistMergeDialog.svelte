@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Fingerprint } from 'lucide-svelte';
 
 	import type { LibraryArtistSummary } from '$lib/types';
@@ -9,7 +10,9 @@
 
 	let { artist }: Props = $props();
 	const identityDeskUrl = $derived(
-		`/library/management/artists?artist=${encodeURIComponent(artist.id)}&q=${encodeURIComponent(artist.name)}`
+		resolve(
+			`/library/management/artists?artist=${encodeURIComponent(artist.id)}&q=${encodeURIComponent(artist.name)}`
+		)
 	);
 </script>
 

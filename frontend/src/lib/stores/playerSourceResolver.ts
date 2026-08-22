@@ -1,3 +1,4 @@
+import { getApiUrl } from '$lib/api/api-utils';
 import { API } from '$lib/constants';
 import type { NowPlaying, QueueItem, SourceType } from '$lib/player/types';
 
@@ -6,13 +7,13 @@ export function resolveSourceUrl(item: QueueItem): string | undefined {
 		case 'youtube':
 			return item.streamUrl;
 		case 'local':
-			return item.streamUrl ?? API.stream.local(item.trackSourceId);
+			return getApiUrl(item.streamUrl ?? API.stream.local(item.trackSourceId));
 		case 'navidrome':
-			return item.streamUrl ?? API.stream.navidrome(item.trackSourceId);
+			return getApiUrl(item.streamUrl ?? API.stream.navidrome(item.trackSourceId));
 		case 'jellyfin':
-			return API.stream.jellyfin(item.trackSourceId);
+			return getApiUrl(API.stream.jellyfin(item.trackSourceId));
 		case 'plex':
-			return item.streamUrl ?? API.stream.plex(item.trackSourceId);
+			return getApiUrl(item.streamUrl ?? API.stream.plex(item.trackSourceId));
 	}
 }
 

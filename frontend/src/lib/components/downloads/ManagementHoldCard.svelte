@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import {
 		ArchiveRestore,
 		ChevronDown,
@@ -241,7 +242,7 @@
 							/>
 							{retry.isPending ? 'Retrying organizer…' : 'Retry organizer'}
 						</button>
-						<a href="/library/management?tab=automation" class="btn btn-ghost btn-sm">
+						<a href={resolve('/library/management?tab=automation')} class="btn btn-ghost btn-sm">
 							<Settings2 class="size-4" aria-hidden="true" /> Review automation
 						</a>
 						<button

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Globe, Shuffle } from 'lucide-svelte';
 
 	interface Props {
@@ -58,7 +59,7 @@
 	<div class="flex flex-wrap gap-3">
 		{#each genres.slice(0, MAX_PILLS) as genre (genre.name)}
 			<a
-				href="/genre?name={encodeURIComponent(genre.name)}"
+				href={resolve(`/genre?name=${encodeURIComponent(genre.name)}`)}
 				class="genre-pill group relative inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r px-4 py-2 text-sm font-medium text-white shadow-lg ring-1 ring-inset ring-white/15 transition-all duration-300 motion-safe:hover:scale-105 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 sm:px-5 sm:py-2.5 {getGenreColor(
 					genre.name
 				)}"

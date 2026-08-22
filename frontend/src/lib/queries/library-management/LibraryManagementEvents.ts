@@ -1,3 +1,4 @@
+import { getApiUrl } from '$lib/api/api-utils';
 import { API } from '$lib/constants';
 
 import { invalidateLibraryManagementSurfaces } from './LibraryManagementInvalidation';
@@ -69,7 +70,7 @@ export function createLibraryManagementEvents() {
 
 	function start(): void {
 		stop();
-		source = new EventSource(API.library.operationsStream());
+		source = new EventSource(getApiUrl(API.library.operationsStream()));
 		source.addEventListener('open', refresh);
 		source.addEventListener('activity.changed', handleActivity);
 	}
