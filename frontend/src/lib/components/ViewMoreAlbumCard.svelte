@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { resolve } from '$app/paths';
+	import { base, resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { colors } from '$lib/colors';
@@ -29,7 +29,7 @@
 		<div class="absolute inset-0 overflow-hidden">
 			<img
 				data-testid="view-more-album-background"
-				src="/img/album_bg-250.webp"
+				src="{base}/img/album_bg-250.webp"
 				srcset="/img/album_bg-250.webp 250w, /img/album_bg-500.webp 500w"
 				sizes="200px"
 				width="500"

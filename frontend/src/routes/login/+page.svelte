@@ -1,6 +1,6 @@
 <script lang="ts">
 	import '../../auth.css';
-	import { resolve } from '$app/paths';
+	import { base, resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { api, ApiError } from '$lib/api/client';
@@ -146,7 +146,7 @@
 <div class="login-wrap grain min-h-screen flex items-center justify-center p-4">
 	<div class="w-full max-w-md">
 		<div class="login-brand">
-			<img src="/logo_icon.png" alt="" aria-hidden="true" class="login-mark" />
+			<img src="{base}/logo_icon.png" alt="" aria-hidden="true" class="login-mark" />
 			<h1 class="login-wordmark">DroppedNeedle</h1>
 			<div class="login-rule" aria-hidden="true"></div>
 			<p class="login-sub">Sign in to continue</p>

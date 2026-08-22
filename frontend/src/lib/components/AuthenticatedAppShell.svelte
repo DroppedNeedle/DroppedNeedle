@@ -1,8 +1,9 @@
 <script lang="ts">
+	import { stripBase } from '$lib/utils/basePath';
 	import '../../app.css';
 	import { browser } from '$app/environment';
 	import { goto, beforeNavigate, afterNavigate } from '$app/navigation';
-	import { resolve } from '$app/paths';
+	import { base, resolve } from '$app/paths';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { logout } from '$lib/utils/logout';
 	import { migratePageSourceKeys } from '$lib/stores/musicSource';
@@ -118,7 +119,7 @@
 
 	afterNavigate(() => {
 		if (browser) {
-			currentPath = window.location.pathname;
+			currentPath = stripBase(window.location.pathname);
 		}
 		navigationProgress.finish();
 	});
@@ -153,7 +154,7 @@
 		};
 
 		if (browser) {
-			currentPath = window.location.pathname;
+			currentPath = stripBase(window.location.pathname);
 		}
 		document.addEventListener('keydown', handleGlobalKeydown);
 	});
@@ -382,8 +383,8 @@
 		>
 			<div class="navbar-start w-auto">
 				<a href={resolve('/')} class="btn btn-ghost px-2 max-xs:hidden sm:px-4" aria-label="Home">
-					<img src="/logo_wide.png" alt="DroppedNeedle" class="h-8 hidden sm:block" />
-					<img src="/logo_icon.png" alt="DroppedNeedle" class="h-8 block sm:hidden" />
+					<img src="{base}/logo_wide.png" alt="DroppedNeedle" class="h-8 hidden sm:block" />
+					<img src="{base}/logo_icon.png" alt="DroppedNeedle" class="h-8 block sm:hidden" />
 				</a>
 			</div>
 			<div class="navbar-center min-w-0 grow justify-center px-1 sm:px-4">

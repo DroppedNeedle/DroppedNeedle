@@ -1,6 +1,6 @@
 <script lang="ts">
 	import '../../auth.css';
-	import { resolve } from '$app/paths';
+	import { base, resolve } from '$app/paths';
 	import { ApiError } from '$lib/api/client';
 	import { createPasswordRecoveryResetMutation } from '$lib/queries/auth/AuthMutations.svelte';
 	import {
@@ -88,7 +88,7 @@
 <div class="recovery-wrap grain min-h-screen flex items-center justify-center p-4 py-10">
 	<div class="w-full max-w-lg">
 		<div class="recovery-brand">
-			<img src="/logo_icon.png" alt="" aria-hidden="true" class="recovery-mark" />
+			<img src="{base}/logo_icon.png" alt="" aria-hidden="true" class="recovery-mark" />
 			<h1 class="recovery-wordmark">DroppedNeedle</h1>
 			<div class="recovery-rule" aria-hidden="true"></div>
 			<p class="recovery-kicker">Account recovery</p>

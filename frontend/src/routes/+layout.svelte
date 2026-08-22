@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { stripBase } from '$lib/utils/basePath';
 	import { page } from '$app/state';
 	import { AUTH_FREE_PATHS } from '$lib/constants';
 	import { loadAuthenticatedAppShell } from '$lib/components/lazyComponentLoaders';
@@ -12,7 +13,7 @@
 	let shellLoadFailed = $state(false);
 	let shellLoadAttempt = $state(0);
 	const needsAppShell = $derived(
-		!AUTH_FREE_PATHS.some((path) => page.url.pathname.startsWith(path))
+		!AUTH_FREE_PATHS.some((path) => stripBase(page.url.pathname).startsWith(path))
 	);
 
 	$effect(() => {
