@@ -230,6 +230,15 @@ def _path_collision_key(value: str) -> str:
     return unicodedata.normalize("NFC", value).casefold()
 
 
+def _has_effective_access(path: Path, mode: int) -> bool:
+    """Check access using the process identity and filesystem ACLs when supported."""
+    return os.access(
+        path,
+        mode,
+        effective_ids=os.access in os.supports_effective_ids,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _SourceInspection:
     subject: LibraryManagementSelectionSubject
@@ -1752,8 +1761,7 @@ class LibraryManagementPlanner:
             or file_stat.st_mtime_ns != subject.file_mtime_ns
         ):
             return _SourceInspection(subject, path, None, "", FILE_CHANGED)
-        parent_mode = path.parent.stat().st_mode
-        if not parent_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH):
+        if not _has_effective_access(path.parent, os.W_OK):
             return _SourceInspection(subject, path, None, "", ROOT_READ_ONLY)
         if not file_stat.st_mode & (stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH):
             return _SourceInspection(subject, path, None, "", FILE_UNREADABLE)
@@ -2124,7 +2132,7 @@ class LibraryManagementPlanner:
             return SYMLINK_UNSUPPORTED
         if not stat.S_ISDIR(metadata.st_mode):
             return ROOT_UNAVAILABLE
-        if not metadata.st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH):
+        if not _has_effective_access(root, os.W_OK):
             return ROOT_READ_ONLY
         return None
 
@@ -2150,7 +2158,7 @@ class LibraryManagementPlanner:
                 return SYMLINK_UNSUPPORTED
             if not stat.S_ISDIR(metadata.st_mode):
                 return PATH_COLLISION_DIFFERENT
-            if not metadata.st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH):
+            if not _has_effective_access(current, os.W_OK):
                 return ROOT_READ_ONLY
         return None
 
