@@ -2542,6 +2542,19 @@ async def test_migration_provenance_repeats_and_refuses_changed_sources(
             "idx_local_album_identity_rg",
         ),
         (
+            "SELECT identity.provider_artist_id "
+            "FROM local_artist_external_identities identity "
+            "WHERE EXISTS (SELECT 1 FROM local_album_artists credit "
+            "JOIN local_albums album ON album.id = credit.local_album_id "
+            "JOIN local_tracks track ON track.local_album_id = credit.local_album_id "
+            "WHERE credit.local_artist_id = identity.local_artist_id "
+            "AND album.retired_into_album_id IS NULL "
+            "AND track.availability = 'indexed') "
+            "ORDER BY identity.provider_artist_id",
+            "SEARCH credit USING COVERING INDEX "
+            "idx_local_album_artists_artist_album (local_artist_id=?)",
+        ),
+        (
             "SELECT * FROM local_tracks WHERE genre_folded = ? AND availability = ?",
             "idx_local_tracks_genre_artwork",
         ),
