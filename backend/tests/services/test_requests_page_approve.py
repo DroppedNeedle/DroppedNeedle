@@ -43,6 +43,9 @@ def _make(
     request_history.async_record_review = AsyncMock()
     request_history.async_update_download_task_id = AsyncMock()
     request_history.async_update_status = AsyncMock()
+    request_history.async_is_requester = AsyncMock(return_value=True)
+    request_history.async_requester_count = AsyncMock(return_value=1)
+    request_history.async_remove_requester = AsyncMock(return_value=True)
 
     download_service = MagicMock()
     download_service.request_album = AsyncMock(return_value=request_album_result)
@@ -138,6 +141,22 @@ async def test_cancel_request_cancels_linked_native_task():
 
 
 @pytest.mark.asyncio
+async def test_cancel_shared_request_removes_only_current_listener():
+    service, history, download_service = _make(
+        record_status="downloading", download_task_id="task-9"
+    )
+    history.async_requester_count.return_value = 2
+
+    resp = await service.cancel_request("mbid-1", user_id="u1", user_role="user")
+
+    assert resp.success is True
+    assert "another listener" in resp.message
+    history.async_remove_requester.assert_awaited_once_with("u1", "mbid-1")
+    download_service.cancel_task.assert_not_awaited()
+    history.async_update_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_retry_request_redispatches_native_and_links():
     service, history, download_service = _make(
         record_status="failed", download_task_id="old-task"
@@ -173,7 +192,9 @@ async def test_retry_exact_track_preserves_exact_track_semantics():
     assert resp.success is True
     download_service.request_album.assert_not_awaited()
     download_service.request_track.assert_awaited_once()
-    assert download_service.request_track.await_args.kwargs["recording_mbid"] == "mbid-1"
+    assert (
+        download_service.request_track.await_args.kwargs["recording_mbid"] == "mbid-1"
+    )
     history.async_update_download_task_id.assert_awaited_once_with(
         "mbid-1", "track-task-9"
     )

@@ -133,6 +133,9 @@ class RequestService:
         try:
             existing = await self._request_history.async_get_record(musicbrainz_id)
             if existing and existing.status in ("pending", "downloading"):
+                await self._request_history.async_add_requester(
+                    musicbrainz_id, user_id, requested_by_name
+                )
                 if monitor_artist and not existing.monitor_artist:
                     await self._request_history.async_update_monitoring_flags(
                         musicbrainz_id,
@@ -146,6 +149,9 @@ class RequestService:
                     status=existing.status,
                 )
             if existing and existing.status == "awaiting_approval":
+                await self._request_history.async_add_requester(
+                    musicbrainz_id, user_id, requested_by_name
+                )
                 return RequestAcceptedResponse(
                     success=True,
                     message="Request is awaiting admin approval",
@@ -284,6 +290,9 @@ class RequestService:
             "queued",
             "downloading",
         ):
+            await self._request_history.async_add_requester(
+                recording_mbid, user_id, requested_by_name
+            )
             return TrackRequestResponse(
                 status=(
                     "awaiting_approval"
@@ -393,6 +402,14 @@ class RequestService:
             new_items = [
                 item for item in items if item["musicbrainz_id"].lower() not in active
             ]
+            existing_items = [
+                item["musicbrainz_id"]
+                for item in items
+                if item["musicbrainz_id"].lower() in active
+            ]
+            await self._request_history.async_add_requesters(
+                existing_items, user_id, requested_by_name
+            )
             skipped = duplicate_count + len(items) - len(new_items)
 
             if not new_items:
@@ -401,6 +418,7 @@ class RequestService:
                     message="All albums already requested",
                     requested=0,
                     skipped=skipped,
+                    status="already_requested",
                 )
 
             # A batch of N counts as N asks (A4); over-quota rejects the WHOLE batch
@@ -427,6 +445,7 @@ class RequestService:
                     message="Batch request submitted, awaiting admin approval",
                     requested=len(new_items),
                     skipped=skipped,
+                    status="awaiting_approval",
                 )
 
             # auto-approve: dispatch each item through the native pipeline (mirrors
@@ -470,6 +489,7 @@ class RequestService:
                 requested=dispatched,
                 skipped=skipped,
                 overflow=0,
+                status="pending" if dispatched else "failed",
             )
         except (ExternalServiceError, ValidationError):
             raise
@@ -491,9 +511,21 @@ class RequestService:
         for mbid in musicbrainz_ids:
             try:
                 record = await self._request_history.async_get_record(mbid)
-                if not is_admin and (record is None or record.user_id != user_id):
-                    failed += 1
-                    continue
+                if not is_admin:
+                    if (
+                        record is None
+                        or not await self._request_history.async_is_requester(
+                            user_id or "", mbid
+                        )
+                    ):
+                        failed += 1
+                        continue
+                    if await self._request_history.async_requester_count(mbid) > 1:
+                        await self._request_history.async_remove_requester(
+                            user_id or "", mbid
+                        )
+                        cancelled += 1
+                        continue
                 # best-effort: a missing/non-cancellable task must not block marking
                 if record is not None and record.download_task_id:
                     try:

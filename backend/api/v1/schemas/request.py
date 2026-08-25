@@ -40,6 +40,9 @@ class BatchRequestResponse(AppStruct):
     requested: int = 0
     skipped: int = 0
     overflow: int = 0
+    # Native clients must render the decision made at this mutation boundary,
+    # not infer it from a role value that may have changed moments earlier.
+    status: str = "pending"
 
 
 class BatchCancelRequest(AppStruct):

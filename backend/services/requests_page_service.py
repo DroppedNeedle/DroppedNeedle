@@ -248,8 +248,22 @@ class RequestsPageService:
         record = await self._request_history.async_get_record(musicbrainz_id)
         if not record:
             return CancelRequestResponse(success=False, message="Request not found")
-        if user_role != "admin" and record.user_id != user_id:
-            raise PermissionDeniedError("Cannot cancel another user's request")
+        if user_role != "admin":
+            if not await self._request_history.async_is_requester(
+                user_id, musicbrainz_id
+            ):
+                raise PermissionDeniedError("Cannot cancel another user's request")
+            if await self._request_history.async_requester_count(musicbrainz_id) > 1:
+                await self._request_history.async_remove_requester(
+                    user_id, musicbrainz_id
+                )
+                return CancelRequestResponse(
+                    success=True,
+                    message=(
+                        "Removed from your requests. The shared server request "
+                        "continues for another listener."
+                    ),
+                )
 
         # awaiting_approval requests never dispatched, cancel directly
         if record.status == "awaiting_approval":
@@ -302,7 +316,9 @@ class RequestsPageService:
         record = await self._request_history.async_get_record(musicbrainz_id)
         if not record:
             return RetryRequestResponse(success=False, message="Request not found")
-        if user_role != "admin" and record.user_id != user_id:
+        if user_role != "admin" and not await self._request_history.async_is_requester(
+            user_id, musicbrainz_id
+        ):
             raise PermissionDeniedError("Cannot retry another user's request")
 
         if record.status not in _RETRYABLE_STATUSES:
@@ -323,6 +339,7 @@ class RequestsPageService:
                 record,
                 origin="retry",
                 fallback_user_id=user_id,
+                user_id_override=user_id if user_role != "admin" else None,
             )
         except ValidationError as e:
             # cap/quota rejection: restore the pre-retry status (don't strand it as
@@ -359,7 +376,9 @@ class RequestsPageService:
             return False
         # ownership checked before clearability so a non-owner gets 403, not a
         # misleading 200/False, on another user's row
-        if user_role != "admin" and record.user_id != user_id:
+        if user_role != "admin" and not await self._request_history.async_is_requester(
+            user_id, musicbrainz_id
+        ):
             raise PermissionDeniedError("Cannot clear another user's request")
         if record.status not in _CLEARABLE_STATUSES:
             return False
@@ -459,9 +478,10 @@ class RequestsPageService:
         *,
         origin: str,
         fallback_user_id: str = "",
+        user_id_override: str | None = None,
     ) -> str:
         """Dispatch an approved/retried request without widening exact tracks."""
-        user_id = record.user_id or fallback_user_id
+        user_id = user_id_override or record.user_id or fallback_user_id
         if record.request_kind == "track":
             if not record.track_title:
                 raise ValidationError("Exact-track request is missing its track title")

@@ -17,6 +17,11 @@ def _make_service() -> tuple[RequestService, MagicMock, MagicMock]:
     request_history.async_update_status = AsyncMock()
     request_history.async_update_download_task_id = AsyncMock()
     request_history.async_bulk_record_requests = AsyncMock()
+    request_history.async_add_requester = AsyncMock()
+    request_history.async_add_requesters = AsyncMock()
+    request_history.async_is_requester = AsyncMock(return_value=True)
+    request_history.async_requester_count = AsyncMock(return_value=1)
+    request_history.async_remove_requester = AsyncMock(return_value=True)
     request_history.async_get_active_mbids = AsyncMock(return_value=set())
     request_history.async_get_requested_mbids = AsyncMock(return_value=set())
     download_service.request_album = AsyncMock(return_value="task-1")
@@ -138,6 +143,27 @@ async def test_request_album_user_role_awaits_approval_without_dispatch():
     assert response.status == "awaiting_approval"
     download_service.request_album.assert_not_awaited()
     request_history.async_update_download_task_id.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_existing_request_is_attributed_to_each_listener_without_redispatch():
+    service, request_history, download_service = _make_service()
+    request_history.async_get_record.return_value = SimpleNamespace(
+        status="pending", monitor_artist=False
+    )
+
+    response = await service.request_album(
+        "rg-123",
+        user_id="listener-2",
+        user_role="user",
+        requested_by_name="Second listener",
+    )
+
+    assert response.status == "pending"
+    request_history.async_add_requester.assert_awaited_once_with(
+        "rg-123", "listener-2", "Second listener"
+    )
+    download_service.request_album.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -375,6 +401,7 @@ async def test_request_batch_does_not_overwrite_an_approval_pending_request():
 
     assert response.requested == 0
     assert response.skipped == 1
+    assert response.status == "already_requested"
     request_history.async_bulk_record_requests.assert_not_awaited()
     download_service.request_album.assert_not_awaited()
 
@@ -389,6 +416,7 @@ async def test_request_batch_user_role_awaits_approval_without_dispatch():
     resp = await service.request_batch(items, user_role="user", user_id="u1")
 
     assert "approval" in resp.message.lower()
+    assert resp.status == "awaiting_approval"
     download_service.request_album.assert_not_awaited()
 
 
@@ -434,6 +462,9 @@ async def test_cancel_batch_user_only_cancels_owned_requests():
     }
     request_history.async_get_record = AsyncMock(
         side_effect=lambda mbid: records.get(mbid)
+    )
+    request_history.async_is_requester = AsyncMock(
+        side_effect=lambda _user_id, mbid: mbid == "rg-mine"
     )
 
     response = await service.cancel_batch(["rg-mine", "rg-theirs"], user_id="alice")
@@ -516,6 +547,7 @@ async def test_request_batch_quota_counts_only_new_items():
 
     assert response.success is True
     assert quota.check_request_quota.await_args.args == ("u1", "user", 1)
+    request_history.async_add_requesters.assert_awaited_once_with(["RG-1"], "u1", None)
 
 
 @pytest.mark.asyncio
