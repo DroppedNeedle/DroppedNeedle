@@ -177,6 +177,26 @@ async def test_request_track_user_role_records_exact_metadata_and_awaits_approva
 
 
 @pytest.mark.asyncio
+async def test_request_track_unknown_role_fails_closed_to_owner_approval():
+    service, request_history, download_service = _make_service()
+
+    response = await service.request_track(
+        "recording-unknown-role",
+        user_id="future-role-1",
+        user_role="future-role",
+        artist_name="Radiohead",
+        track_title="Airbag",
+    )
+
+    assert response.status == "awaiting_approval"
+    download_service.request_track.assert_not_awaited()
+    assert (
+        request_history.async_record_request.await_args.kwargs["initial_status"]
+        == "awaiting_approval"
+    )
+
+
+@pytest.mark.asyncio
 async def test_request_track_trusted_dispatches_exact_recording_and_links_task():
     service, request_history, download_service = _make_service()
 

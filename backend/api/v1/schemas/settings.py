@@ -706,6 +706,10 @@ class ConnectAppsSettings(AppStruct):
 
     subsonic_enabled: bool = False
     jellyfin_enabled: bool = False
+    # Capability negotiation for clients that must distinguish the historical
+    # exact-track endpoint (which bypassed approval) from the approval-safe
+    # implementation. Older servers omit this field, so clients fail closed.
+    exact_track_approval_supported: bool = True
     transcoding_enabled: bool = True
     transcode_default_format: Literal["mp3", "opus"] = "mp3"
     transcode_max_bitrate_kbps: int = 320

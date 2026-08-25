@@ -50,6 +50,7 @@ async def test_get_settings_any_user(app_password_service, tmp_path):
     r = build_test_client(app).get("/connect-apps/settings")
     assert r.status_code == 200
     assert r.json()["subsonic_enabled"] is False
+    assert r.json()["exact_track_approval_supported"] is True
 
 
 async def test_get_settings_unauthenticated_401(app_password_service, tmp_path):

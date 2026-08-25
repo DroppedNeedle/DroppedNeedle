@@ -124,7 +124,10 @@ class RequestService:
             musicbrainz_id
         )
 
-        needs_approval = user_role == "user"
+        # Fail closed for any future or malformed role. Only the two roles the
+        # server explicitly grants acquisition authority may dispatch without
+        # owner review.
+        needs_approval = user_role not in ("trusted", "admin")
         initial_status = "awaiting_approval" if needs_approval else "pending"
 
         try:
@@ -273,7 +276,7 @@ class RequestService:
         acquisition without review. The previous route bypassed approval and
         made exact-track requests less safe than whole-album requests.
         """
-        needs_approval = user_role == "user"
+        needs_approval = user_role not in ("trusted", "admin")
         existing = await self._request_history.async_get_record(recording_mbid)
         if existing and existing.status in (
             "awaiting_approval",
@@ -382,7 +385,7 @@ class RequestService:
             seen_mbids.add(canonical_key)
             items.append(item)
 
-        needs_approval = user_role == "user"
+        needs_approval = user_role not in ("trusted", "admin")
         initial_status = "awaiting_approval" if needs_approval else "pending"
 
         try:
