@@ -36,6 +36,12 @@ class LoginRequest(AppStruct):
     password: str
 
 
+class DeviceSessionRequest(AppStruct):
+    """A caller-authorized, separately revocable session for one companion."""
+
+    device_name: str
+
+
 class PasswordRecoveryResetRequest(AppStruct):
     username: str
     recovery_code: str
@@ -56,6 +62,11 @@ class UserResponse(AppStruct):
     username: str | None = None
     username_display: str | None = None
     providers: list[str] = []
+
+
+class DeviceSessionResponse(AppStruct):
+    token: str
+    user: UserResponse
 
 
 class AuthResponse(AppStruct):

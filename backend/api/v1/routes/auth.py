@@ -10,6 +10,8 @@ from api.v1.schemas.auth import (
     AuthProvidersResponse,
     AuthResponse,
     CreateUserRequest,
+    DeviceSessionRequest,
+    DeviceSessionResponse,
     ImportCandidateListResponse,
     ImportUsersRequest,
     ImportUsersResponse,
@@ -208,6 +210,28 @@ async def list_sessions(
 ) -> SessionListResponse:
     tokens = await auth.list_sessions(current_user.id)
     return SessionListResponse(sessions = [session_to_response(token) for token in tokens])
+
+
+@router.post("/device-sessions", response_model=DeviceSessionResponse)
+async def create_device_session(
+    current_user: CurrentUserDep,
+    body: DeviceSessionRequest = MsgSpecBody(DeviceSessionRequest),
+    auth: AuthService = Depends(get_auth_service),
+) -> DeviceSessionResponse:
+    """Mint a separate session for a trusted companion such as Apple Watch.
+
+    The caller's bearer is never copied. The returned bearer is shown once,
+    belongs to the same user, and appears independently in Sessions.
+    """
+    try:
+        token = await auth.issue_device_session(current_user.id, body.device_name)
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    providers = await auth.get_provider_names_for_users([current_user.id])
+    return DeviceSessionResponse(
+        token=token,
+        user=user_to_response(current_user, providers.get(current_user.id)),
+    )
 
 
 @router.delete("/sessions/{session_id}", status_code = status.HTTP_204_NO_CONTENT)

@@ -136,6 +136,52 @@ def test_me_returns_username_fields(tmp_path):
     assert body["username_display"] == "Jane"
 
 
+def test_device_session_is_distinct_labeled_and_revocable(tmp_path):
+    app, service = _app(tmp_path)
+    user, _ = asyncio.run(
+        service.create_first_admin(
+            display_name="Jane",
+            username="jane",
+            password=PASSWORD,
+        )
+    )
+    app.dependency_overrides[_get_current_user] = lambda: user
+    client = build_test_client(app)
+
+    response = client.post(
+        "/auth/device-sessions",
+        json={"device_name": "Kyle Apple Watch Ultra"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["token"]
+    sessions = asyncio.run(service.list_sessions(user.id))
+    assert len(sessions) == 2
+    assert any(
+        session.user_agent == "Tonarr companion · Kyle Apple Watch Ultra"
+        for session in sessions
+    )
+
+    replacement = client.post(
+        "/auth/device-sessions",
+        json={"device_name": "Kyle Apple Watch Ultra"},
+    )
+    assert replacement.status_code == 200
+    assert replacement.json()["token"] != response.json()["token"]
+    assert len(asyncio.run(service.list_sessions(user.id))) == 2
+
+
+def test_device_session_rejects_empty_or_unbounded_label(tmp_path):
+    app, _ = _app(tmp_path)
+    app.dependency_overrides[_get_current_user] = lambda: UserRecord(
+        id="u-watch", display_name="Jane", role="user", created_at="t"
+    )
+    client = build_test_client(app)
+
+    assert client.post("/auth/device-sessions", json={"device_name": "  "}).status_code == 400
+    assert client.post("/auth/device-sessions", json={"device_name": "x" * 81}).status_code == 400
+
+
 def test_admin_create_user_with_username_and_duplicate_conflict(tmp_path):
     app, _ = _app(tmp_path)
     app.dependency_overrides[_get_current_admin] = mock_admin_user
