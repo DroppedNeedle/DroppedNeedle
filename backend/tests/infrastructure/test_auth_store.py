@@ -6,6 +6,7 @@ idempotency test (construct twice on the same path).
 """
 
 import hashlib
+import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -23,6 +24,38 @@ def test_migration_is_idempotent(tmp_path: Path):
     # guarded ALTERs); it must not raise.
     AuthStore(db_path, write_lock=lock)
     assert db_path.exists()
+
+
+def test_session_kind_migration_preserves_legacy_tokens_as_standard(tmp_path: Path):
+    db_path = tmp_path / "library.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """CREATE TABLE auth_tokens (
+                   id TEXT PRIMARY KEY,
+                   user_id TEXT NOT NULL,
+                   token_hash TEXT NOT NULL UNIQUE,
+                   issued_at TEXT NOT NULL,
+                   expires_at TEXT NOT NULL,
+                   last_seen_at TEXT NOT NULL,
+                   revoked INTEGER NOT NULL DEFAULT 0,
+                   user_agent TEXT
+               )"""
+        )
+        connection.execute(
+            """INSERT INTO auth_tokens
+                   (id, user_id, token_hash, issued_at, expires_at, last_seen_at,
+                    revoked, user_agent)
+               VALUES ('legacy-token', 'user-1', 'hash', 'now', 'later', 'now', 0,
+                       'Tonarr companion · Watch')"""
+        )
+
+    AuthStore(db_path)
+
+    with sqlite3.connect(db_path) as connection:
+        session_kind = connection.execute(
+            "SELECT session_kind FROM auth_tokens WHERE id = 'legacy-token'"
+        ).fetchone()[0]
+    assert session_kind == "standard"
 
 
 @pytest.mark.asyncio

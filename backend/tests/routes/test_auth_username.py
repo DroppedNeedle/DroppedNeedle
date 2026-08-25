@@ -4,6 +4,7 @@ exercised through the real auth router with a temp AuthStore."""
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 
 import pytest
 from fastapi import FastAPI
@@ -136,9 +137,9 @@ def test_me_returns_username_fields(tmp_path):
     assert body["username_display"] == "Jane"
 
 
-def test_device_session_is_distinct_labeled_and_revocable(tmp_path):
+def test_owned_device_session_delete_revokes_bearer(tmp_path):
     app, service = _app(tmp_path)
-    user, _ = asyncio.run(
+    user, account_token = asyncio.run(
         service.create_first_admin(
             display_name="Jane",
             username="jane",
@@ -157,18 +158,179 @@ def test_device_session_is_distinct_labeled_and_revocable(tmp_path):
     assert response.json()["token"]
     sessions = asyncio.run(service.list_sessions(user.id))
     assert len(sessions) == 2
-    assert any(
-        session.user_agent == "Tonarr companion · Kyle Apple Watch Ultra"
+    companion_session = next(
+        session
         for session in sessions
+        if session.user_agent == "Tonarr companion · Kyle Apple Watch Ultra"
+    )
+
+    revoked = client.delete(f"/auth/sessions/{companion_session.id}")
+
+    assert revoked.status_code == 204
+    assert asyncio.run(service.verify_token(response.json()["token"])) is None
+    assert asyncio.run(service.verify_token(account_token)) is not None
+
+
+def test_cross_user_cannot_revoke_device_session(tmp_path):
+    app, service = _app(tmp_path)
+    owner, _ = asyncio.run(
+        service.create_first_admin(
+            display_name="Jane",
+            username="jane",
+            password=PASSWORD,
+        )
+    )
+    other_user = asyncio.run(
+        service.admin_create_user(
+            display_name="Alex",
+            username="alex",
+            password=PASSWORD,
+        )
+    )
+    app.dependency_overrides[_get_current_user] = lambda: owner
+    client = build_test_client(app)
+    created = client.post(
+        "/auth/device-sessions",
+        json={"device_name": "Kyle Apple Watch Ultra"},
+    )
+    companion_session = next(
+        session
+        for session in asyncio.run(service.list_sessions(owner.id))
+        if session.user_agent == "Tonarr companion · Kyle Apple Watch Ultra"
+    )
+
+    app.dependency_overrides[_get_current_user] = lambda: other_user
+    denied = client.delete(f"/auth/sessions/{companion_session.id}")
+
+    assert denied.status_code == 403
+    assert asyncio.run(service.verify_token(created.json()["token"])) is not None
+
+
+def test_device_label_collision_does_not_revoke_ordinary_session(tmp_path):
+    app, service = _app(tmp_path)
+    client = build_test_client(app)
+    setup = client.post(
+        "/auth/setup",
+        headers={"User-Agent": b"Tonarr companion \xb7 Kyle Apple Watch Ultra"},
+        json={"display_name": "Jane", "username": "jane", "password": PASSWORD},
+    )
+    account_token = setup.json()["token"]
+    verified = asyncio.run(service.verify_token(account_token))
+    assert verified is not None
+    user, _ = verified
+    app.dependency_overrides[_get_current_user] = lambda: user
+
+    companion = client.post(
+        "/auth/device-sessions",
+        json={"device_name": "Kyle Apple Watch Ultra"},
+    )
+
+    assert companion.status_code == 200
+    assert asyncio.run(service.verify_token(account_token)) is not None
+    assert asyncio.run(service.verify_token(companion.json()["token"])) is not None
+    assert len(asyncio.run(service.list_sessions(user.id))) == 2
+
+
+def test_same_label_replacement_invalidates_old_bearer(tmp_path):
+    app, service = _app(tmp_path)
+    user, _ = asyncio.run(
+        service.create_first_admin(
+            display_name="Jane",
+            username="jane",
+            password=PASSWORD,
+        )
+    )
+    app.dependency_overrides[_get_current_user] = lambda: user
+    client = build_test_client(app)
+    original = client.post(
+        "/auth/device-sessions",
+        json={"device_name": "Kyle Apple Watch Ultra"},
     )
 
     replacement = client.post(
         "/auth/device-sessions",
         json={"device_name": "Kyle Apple Watch Ultra"},
     )
+
     assert replacement.status_code == 200
-    assert replacement.json()["token"] != response.json()["token"]
+    assert replacement.json()["token"] != original.json()["token"]
+    assert asyncio.run(service.verify_token(original.json()["token"])) is None
+    assert asyncio.run(service.verify_token(replacement.json()["token"])) is not None
     assert len(asyncio.run(service.list_sessions(user.id))) == 2
+
+
+def test_device_session_preflight_failure_preserves_old_bearer(tmp_path, monkeypatch):
+    app, service = _app(tmp_path)
+    user, _ = asyncio.run(
+        service.create_first_admin(
+            display_name="Jane",
+            username="jane",
+            password=PASSWORD,
+        )
+    )
+    app.dependency_overrides[_get_current_user] = lambda: user
+    client = build_test_client(app)
+    original = client.post(
+        "/auth/device-sessions",
+        json={"device_name": "Kyle Apple Watch Ultra"},
+    )
+
+    async def _provider_failure(_user_ids):
+        raise RuntimeError("forced provider lookup failure")
+
+    monkeypatch.setattr(service, "get_provider_names_for_users", _provider_failure)
+    invalid = client.post("/auth/device-sessions", json={"device_name": "  "})
+    failed = client.post(
+        "/auth/device-sessions",
+        json={"device_name": "Kyle Apple Watch Ultra"},
+    )
+
+    assert invalid.status_code == 400
+    assert failed.status_code == 500
+    assert asyncio.run(service.verify_token(original.json()["token"])) is not None
+    assert len(asyncio.run(service.list_sessions(user.id))) == 2
+
+
+def test_failed_same_label_replacement_preserves_old_bearer(tmp_path):
+    app, service = _app(tmp_path)
+    user, _ = asyncio.run(
+        service.create_first_admin(
+            display_name="Jane",
+            username="jane",
+            password=PASSWORD,
+        )
+    )
+    app.dependency_overrides[_get_current_user] = lambda: user
+    client = build_test_client(app)
+    original = client.post(
+        "/auth/device-sessions",
+        json={"device_name": "Kyle Apple Watch Ultra"},
+    )
+    assert original.status_code == 200
+    with sqlite3.connect(tmp_path / "library.db") as connection:
+        connection.execute(
+            """CREATE TRIGGER fail_device_session_replacement
+               BEFORE UPDATE OF revoked ON auth_tokens
+               WHEN OLD.user_agent = 'Tonarr companion · Kyle Apple Watch Ultra'
+                 AND NEW.revoked = 1
+               BEGIN
+                 SELECT RAISE(ABORT, 'forced replacement failure');
+               END"""
+        )
+
+    failed = client.post(
+        "/auth/device-sessions",
+        json={"device_name": "Kyle Apple Watch Ultra"},
+    )
+
+    assert failed.status_code == 500
+    assert asyncio.run(service.verify_token(original.json()["token"])) is not None
+    sessions = asyncio.run(service.list_sessions(user.id))
+    assert len(sessions) == 2
+    assert sum(
+        session.user_agent == "Tonarr companion · Kyle Apple Watch Ultra"
+        for session in sessions
+    ) == 1
 
 
 def test_device_session_rejects_empty_or_unbounded_label(tmp_path):

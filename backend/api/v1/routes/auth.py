@@ -224,10 +224,14 @@ async def create_device_session(
     belongs to the same user, and appears independently in Sessions.
     """
     try:
-        token = await auth.issue_device_session(current_user.id, body.device_name)
+        auth.validate_device_session_name(body.device_name)
     except AuthenticationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     providers = await auth.get_provider_names_for_users([current_user.id])
+    try:
+        token = await auth.issue_device_session(current_user.id, body.device_name)
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return DeviceSessionResponse(
         token=token,
         user=user_to_response(current_user, providers.get(current_user.id)),

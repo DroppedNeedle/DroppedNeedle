@@ -125,7 +125,8 @@ class AuthStore:
                     expires_at TEXT NOT NULL,
                     last_seen_at TEXT NOT NULL,
                     revoked INTEGER NOT NULL DEFAULT 0,
-                    user_agent TEXT
+                    user_agent TEXT,
+                    session_kind TEXT NOT NULL DEFAULT 'standard'
                 );
                 CREATE INDEX IF NOT EXISTS idx_auth_tokens_user
                     ON auth_tokens(user_id);
@@ -159,6 +160,15 @@ class AuthStore:
             # PKCE column ratchet: pre-PKCE databases lack it; additive, idempotent.
             try:
                 conn.execute("ALTER TABLE auth_oidc_states ADD COLUMN code_verifier TEXT")
+            except sqlite3.OperationalError:
+                pass  # duplicate column - already present
+            # Companion sessions must not be inferred from an untrusted HTTP User-Agent.
+            # Existing rows remain standard because their provenance is ambiguous.
+            try:
+                conn.execute(
+                    "ALTER TABLE auth_tokens ADD COLUMN session_kind "
+                    "TEXT NOT NULL DEFAULT 'standard'"
+                )
             except sqlite3.OperationalError:
                 pass  # duplicate column - already present
             # Username login (D3): additive, idempotent. `username` is the lowercased
@@ -638,6 +648,46 @@ class AuthStore:
             last_seen_at = now,
             revoked = False,
             user_agent = user_agent,
+        )
+
+    async def replace_companion_token(
+        self,
+        *,
+        id: str,
+        user_id: str,
+        token_hash: str,
+        user_agent: str,
+    ) -> TokenRecord:
+        """Issue one companion and revoke active same-label companions atomically."""
+        now = _now_iso()
+        expiry = _expiry_iso()
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                """INSERT INTO auth_tokens
+                   (id, user_id, token_hash, issued_at, expires_at, last_seen_at,
+                    revoked, user_agent, session_kind)
+                   VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'companion')""",
+                (id, user_id, token_hash, now, expiry, now, user_agent),
+            )
+            conn.execute(
+                """UPDATE auth_tokens SET revoked = 1
+                   WHERE user_id = ? AND user_agent = ? AND id != ?
+                     AND session_kind = 'companion'
+                     AND revoked = 0 AND expires_at > ?""",
+                (user_id, user_agent, id, now),
+            )
+
+        await self._write(operation)
+        return TokenRecord(
+            id=id,
+            user_id=user_id,
+            token_hash=token_hash,
+            issued_at=now,
+            expires_at=expiry,
+            last_seen_at=now,
+            revoked=False,
+            user_agent=user_agent,
         )
 
     async def verify_token(self, raw_token: str) -> TokenRecord | None:
