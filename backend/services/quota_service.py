@@ -4,9 +4,9 @@ Two distinct layers - deliberately NOT one choke point:
 
 - **Layer 1, request-count quota, at submit.** A plain user's ask is recorded in
   ``request_history`` long before any download task exists, so the count gate runs
-  where the ask is made: ``RequestService.request_album``/``request_batch`` and the
-  per-track request route (tracks bypass approval, so their ``download_tasks`` row
-  is the ask). Rolling window (D9); pending asks count.
+  where the ask is made: ``RequestService.request_album``/``request_batch``/
+  ``request_track``. Exact tracks share the same approval gate as albums. Rolling
+  window (D9); pending asks count.
 
 - **Layer 2, byte caps, at every download-task-creation site.** The global library
   cap (all roles) and the per-user storage quota apply when bytes will actually be

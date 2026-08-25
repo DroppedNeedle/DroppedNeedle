@@ -30,6 +30,10 @@ class ActiveRequestItem(AppStruct):
     download_client: str | None = None
     user_id: str | None = None
     requested_by_name: str | None = None
+    request_kind: str = "album"
+    track_title: str | None = None
+    duration_seconds: int | None = None
+    track_release_group_mbid: str | None = None
 
 
 class RequestHistoryItem(AppStruct):
@@ -49,6 +53,10 @@ class RequestHistoryItem(AppStruct):
     reviewed_at: datetime | None = None
     download_task_id: str | None = None
     can_reimport: bool = False
+    request_kind: str = "album"
+    track_title: str | None = None
+    duration_seconds: int | None = None
+    track_release_group_mbid: str | None = None
 
 
 class ActiveRequestsResponse(AppStruct):

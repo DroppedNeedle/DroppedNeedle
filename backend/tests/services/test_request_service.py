@@ -20,6 +20,7 @@ def _make_service() -> tuple[RequestService, MagicMock, MagicMock]:
     request_history.async_get_active_mbids = AsyncMock(return_value=set())
     request_history.async_get_requested_mbids = AsyncMock(return_value=set())
     download_service.request_album = AsyncMock(return_value="task-1")
+    download_service.request_track = AsyncMock(return_value="track-task-1")
     download_service.cancel_task = AsyncMock()
 
     get_ds = lambda: download_service  # noqa: E731
@@ -137,6 +138,64 @@ async def test_request_album_user_role_awaits_approval_without_dispatch():
     assert response.status == "awaiting_approval"
     download_service.request_album.assert_not_awaited()
     request_history.async_update_download_task_id.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_request_track_user_role_records_exact_metadata_and_awaits_approval():
+    service, request_history, download_service = _make_service()
+
+    response = await service.request_track(
+        "recording-1",
+        user_id="listener-1",
+        user_role="user",
+        requested_by_name="Listener",
+        artist_name="Radiohead",
+        track_title="Airbag",
+        album_title="OK Computer",
+        duration_seconds=287,
+        release_group_mbid="release-group-1",
+        artist_mbid="artist-1",
+        release_mbid="release-1",
+    )
+
+    assert response.status == "awaiting_approval"
+    download_service.request_track.assert_not_awaited()
+    request_history.async_record_request.assert_awaited_once_with(
+        musicbrainz_id="recording-1",
+        artist_name="Radiohead",
+        album_title="OK Computer",
+        artist_mbid="artist-1",
+        user_id="listener-1",
+        requested_by_name="Listener",
+        release_mbid="release-1",
+        initial_status="awaiting_approval",
+        request_kind="track",
+        track_title="Airbag",
+        duration_seconds=287,
+        track_release_group_mbid="release-group-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_request_track_trusted_dispatches_exact_recording_and_links_task():
+    service, request_history, download_service = _make_service()
+
+    response = await service.request_track(
+        "recording-1",
+        user_id="trusted-1",
+        user_role="trusted",
+        artist_name="Radiohead",
+        track_title="Airbag",
+        album_title="OK Computer",
+        release_group_mbid="release-group-1",
+    )
+
+    assert response.status == "queued"
+    assert response.task_id == "track-task-1"
+    download_service.request_track.assert_awaited_once()
+    request_history.async_update_download_task_id.assert_awaited_once_with(
+        "recording-1", "track-task-1"
+    )
 
 
 @pytest.mark.asyncio

@@ -42,6 +42,10 @@ class RequestHistoryRecord(msgspec.Struct):
     reviewed_by_id: str | None = None
     reviewed_by_name: str | None = None
     reviewed_at: str | None = None
+    request_kind: str = "album"
+    track_title: str | None = None
+    duration_seconds: int | None = None
+    track_release_group_mbid: str | None = None
 
 
 class RequestHistoryStore:
@@ -97,6 +101,10 @@ class RequestHistoryStore:
                 ("reviewed_at", "TEXT"),
                 ("download_task_id", "TEXT"),
                 ("release_mbid", "TEXT"),
+                ("request_kind", "TEXT NOT NULL DEFAULT 'album'"),
+                ("track_title", "TEXT"),
+                ("duration_seconds", "INTEGER"),
+                ("track_release_group_mbid", "TEXT"),
             ]:
                 try:
                     conn.execute(
@@ -176,6 +184,17 @@ class RequestHistoryStore:
             if "reviewed_by_name" in keys
             else None,
             reviewed_at=row["reviewed_at"] if "reviewed_at" in keys else None,
+            request_kind=(row["request_kind"] if "request_kind" in keys else "album")
+            or "album",
+            track_title=row["track_title"] if "track_title" in keys else None,
+            duration_seconds=(
+                row["duration_seconds"] if "duration_seconds" in keys else None
+            ),
+            track_release_group_mbid=(
+                row["track_release_group_mbid"]
+                if "track_release_group_mbid" in keys
+                else None
+            ),
         )
 
     async def async_record_request(
@@ -192,6 +211,10 @@ class RequestHistoryStore:
         requested_by_name: str | None = None,
         release_mbid: str | None = None,
         initial_status: str = "pending",
+        request_kind: str = "album",
+        track_title: str | None = None,
+        duration_seconds: int | None = None,
+        track_release_group_mbid: str | None = None,
     ) -> None:
         requested_at = datetime.now(timezone.utc).isoformat()
         normalized_mbid = musicbrainz_id.lower()
@@ -203,8 +226,9 @@ class RequestHistoryStore:
                     musicbrainz_id_lower, musicbrainz_id, artist_name, album_title,
                     artist_mbid, year, cover_url, requested_at, completed_at, status,
                     monitor_artist, auto_download_artist, user_id, requested_by_name,
-                    release_mbid
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+                    release_mbid, request_kind, track_title, duration_seconds,
+                    track_release_group_mbid
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(musicbrainz_id_lower) DO UPDATE SET
                     musicbrainz_id = excluded.musicbrainz_id,
                     artist_name = excluded.artist_name,
@@ -219,7 +243,11 @@ class RequestHistoryStore:
                     auto_download_artist = excluded.auto_download_artist,
                     user_id = COALESCE(excluded.user_id, request_history.user_id),
                     requested_by_name = COALESCE(excluded.requested_by_name, request_history.requested_by_name),
-                    release_mbid = excluded.release_mbid
+                    release_mbid = excluded.release_mbid,
+                    request_kind = excluded.request_kind,
+                    track_title = excluded.track_title,
+                    duration_seconds = excluded.duration_seconds,
+                    track_release_group_mbid = excluded.track_release_group_mbid
                 """,
                 (
                     normalized_mbid,
@@ -236,6 +264,10 @@ class RequestHistoryStore:
                     user_id,
                     requested_by_name,
                     release_mbid,
+                    request_kind,
+                    track_title,
+                    duration_seconds,
+                    track_release_group_mbid,
                 ),
             )
 
@@ -801,6 +833,25 @@ class RequestHistoryStore:
             )
 
         await self._write(operation)
+
+    async def async_get_record_by_download_task_id(
+        self, download_task_id: str
+    ) -> RequestHistoryRecord | None:
+        """Resolve the request that owns a native task.
+
+        Album requests historically used the release-group MBID as their key.
+        Exact-track requests use the recording MBID, so task ownership is the
+        only identifier that is correct for both request kinds.
+        """
+
+        def operation(conn: sqlite3.Connection) -> RequestHistoryRecord | None:
+            row = conn.execute(
+                "SELECT * FROM request_history WHERE download_task_id = ? LIMIT 1",
+                (download_task_id,),
+            ).fetchone()
+            return self._row_to_record(row)
+
+        return await self._read(operation)
 
     async def async_delete_record(self, musicbrainz_id: str) -> bool:
         normalized_mbid = musicbrainz_id.lower()

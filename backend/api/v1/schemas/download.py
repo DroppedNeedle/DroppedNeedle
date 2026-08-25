@@ -320,7 +320,7 @@ class TrackRequestBody(AppStruct):
 
 
 class TrackRequestResponse(AppStruct):
-    status: str  # "queued" | "already_in_library"
+    status: str  # "awaiting_approval" | "queued" | "already_in_library"
     task_id: str | None = None
 
 

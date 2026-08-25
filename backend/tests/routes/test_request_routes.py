@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 from fastapi import FastAPI
 
 from api.v1.routes import requests, tracks
-from core.dependencies import get_acquisition_dispatcher, get_request_service
+from core.dependencies import get_request_service
 from middleware import _get_current_user
 from services.native.download_service import ALREADY_IN_LIBRARY
 from services.request_service import RequestService
@@ -40,11 +40,11 @@ def _requests_app(service: RequestService, role: str) -> FastAPI:
     return app
 
 
-def _tracks_app(download_service: AsyncMock) -> FastAPI:
+def _tracks_app(service: RequestService, role: str) -> FastAPI:
     app = FastAPI()
     app.include_router(tracks.router)
-    app.dependency_overrides[get_acquisition_dispatcher] = lambda: download_service
-    app.dependency_overrides[_get_current_user] = lambda: mock_user(role="user", user_id="u1")
+    app.dependency_overrides[get_request_service] = lambda: service
+    app.dependency_overrides[_get_current_user] = lambda: mock_user(role=role, user_id="u1")
     return app
 
 
@@ -89,34 +89,54 @@ def test_request_new_unauthenticated_401():
     assert response.status_code == 401
 
 
-def test_track_request_returns_task_id():
+def test_track_request_user_role_awaits_approval_without_dispatch():
     ds = AsyncMock()
-    ds.request_track.return_value = "task-track-1"
-    response = build_test_client(_tracks_app(ds)).post(
+    service, history = _request_service(ds)
+    response = build_test_client(_tracks_app(service, "user")).post(
         "/tracks/rec-1/request", json={"artist_name": "Radiohead", "track_title": "Airbag"}
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "queued"
-    assert body["task_id"] == "task-track-1"
+    assert body["status"] == "awaiting_approval"
+    assert body["task_id"] is None
+    ds.request_track.assert_not_awaited()
+    assert history.async_record_request.await_args.kwargs["request_kind"] == "track"
+
+
+def test_track_request_trusted_returns_task_id():
+    ds = AsyncMock()
+    ds.request_track.return_value = "task-track-1"
+    service, history = _request_service(ds)
+    response = build_test_client(_tracks_app(service, "trusted")).post(
+        "/tracks/rec-1/request", json={"artist_name": "Radiohead", "track_title": "Airbag"}
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+    assert response.json()["task_id"] == "task-track-1"
     ds.request_track.assert_awaited_once()
+    history.async_update_download_task_id.assert_awaited_once_with(
+        "rec-1", "task-track-1"
+    )
 
 
 def test_track_request_already_in_library():
     ds = AsyncMock()
     ds.request_track.return_value = ALREADY_IN_LIBRARY
-    response = build_test_client(_tracks_app(ds)).post(
+    service, history = _request_service(ds)
+    response = build_test_client(_tracks_app(service, "admin")).post(
         "/tracks/rec-1/request", json={"artist_name": "Radiohead", "track_title": "Airbag"}
     )
     assert response.status_code == 200
     assert response.json()["status"] == "already_in_library"
+    history.async_update_status.assert_awaited_once()
 
 
 def test_track_request_unauthenticated_401():
     ds = AsyncMock()
     app = FastAPI()
     app.include_router(tracks.router)
-    app.dependency_overrides[get_acquisition_dispatcher] = lambda: ds
+    service, _history = _request_service(ds)
+    app.dependency_overrides[get_request_service] = lambda: service
     response = build_test_client(app).post(
         "/tracks/rec-1/request", json={"artist_name": "Radiohead", "track_title": "Airbag"}
     )

@@ -9,6 +9,7 @@ from api.v1.schemas.request import (
     BatchRequestResponse,
     RequestAcceptedResponse,
 )
+from api.v1.schemas.download import TrackRequestResponse
 from core.exceptions import ExternalServiceError, ValidationError
 from infrastructure.queue.priority_queue import RequestPriority
 from services.native.download_service import ALREADY_IN_LIBRARY
@@ -249,6 +250,105 @@ class RequestService:
             musicbrainz_id=musicbrainz_id,
             status="pending",
         )
+
+    async def request_track(
+        self,
+        recording_mbid: str,
+        *,
+        artist_name: str,
+        track_title: str,
+        album_title: str | None = None,
+        duration_seconds: int | None = None,
+        release_group_mbid: str | None = None,
+        artist_mbid: str | None = None,
+        release_mbid: str | None = None,
+        user_id: str,
+        user_role: str,
+        requested_by_name: str | None = None,
+    ) -> TrackRequestResponse:
+        """Record an exact-track ask before dispatching it.
+
+        This deliberately shares the album approval gate. A normal user can
+        request one recording, but only a trusted user or an owner can start
+        acquisition without review. The previous route bypassed approval and
+        made exact-track requests less safe than whole-album requests.
+        """
+        needs_approval = user_role == "user"
+        existing = await self._request_history.async_get_record(recording_mbid)
+        if existing and existing.status in (
+            "awaiting_approval",
+            "pending",
+            "queued",
+            "downloading",
+        ):
+            return TrackRequestResponse(
+                status=(
+                    "awaiting_approval"
+                    if existing.status == "awaiting_approval"
+                    else "queued"
+                ),
+                task_id=existing.download_task_id,
+            )
+
+        if self._quota is not None:
+            await self._quota.check_request_quota(user_id, user_role)
+            await self._quota.check_storage_admission(user_id, "user")
+
+        await self._request_history.async_record_request(
+            musicbrainz_id=recording_mbid,
+            artist_name=artist_name or "Unknown",
+            album_title=album_title or "Single track",
+            artist_mbid=artist_mbid,
+            user_id=user_id,
+            requested_by_name=requested_by_name,
+            release_mbid=release_mbid,
+            initial_status="awaiting_approval" if needs_approval else "pending",
+            request_kind="track",
+            track_title=track_title,
+            duration_seconds=duration_seconds,
+            track_release_group_mbid=release_group_mbid,
+        )
+
+        if needs_approval:
+            logger.info(
+                "Exact-track request queued for approval: %s by user %s",
+                recording_mbid,
+                user_id,
+            )
+            return TrackRequestResponse(status="awaiting_approval")
+
+        try:
+            task_id = await self._acquisition.request_track(
+                user_id=user_id,
+                recording_mbid=recording_mbid,
+                artist_name=artist_name,
+                track_title=track_title,
+                album_title=album_title,
+                duration_seconds=duration_seconds,
+                release_group_mbid=release_group_mbid,
+                artist_mbid=artist_mbid,
+                release_mbid=release_mbid,
+            )
+        except Exception:
+            await self._request_history.async_update_status(
+                recording_mbid,
+                "failed",
+                completed_at=datetime.now(timezone.utc).isoformat(),
+            )
+            raise
+
+        if task_id == ALREADY_IN_LIBRARY:
+            await self._request_history.async_update_status(
+                recording_mbid,
+                "imported",
+                completed_at=datetime.now(timezone.utc).isoformat(),
+            )
+            return TrackRequestResponse(status="already_in_library")
+
+        await self._request_history.async_update_download_task_id(
+            recording_mbid, task_id
+        )
+        return TrackRequestResponse(status="queued", task_id=task_id)
 
     async def request_batch(
         self,
