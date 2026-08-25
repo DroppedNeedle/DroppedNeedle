@@ -3067,6 +3067,84 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def target_enrichment_candidates(
+        self, *, after_mbid: str | None, limit: int
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """Return one keyset page of live MusicBrainz artist and album identities."""
+
+        cursor_type = ""
+        cursor_mbid = ""
+        legacy_cursor = after_mbid or ""
+        if after_mbid and ":" in after_mbid:
+            candidate_type, candidate_mbid = after_mbid.split(":", 1)
+            if candidate_type in {"artist", "album"}:
+                cursor_type = candidate_type
+                cursor_mbid = candidate_mbid.casefold()
+                legacy_cursor = ""
+
+        def operation(
+            connection: sqlite3.Connection,
+        ) -> list[tuple[str, str, dict[str, Any]]]:
+            union = (
+                "SELECT entity_type, mbid_lower, name, title, artist_name FROM ("
+                "SELECT 'album' AS entity_type, lower(identity.release_group_mbid) "
+                "AS mbid_lower, NULL AS name, album.title AS title, "
+                "album.album_artist_name AS artist_name "
+                "FROM local_album_external_identities identity "
+                "JOIN local_albums album ON album.id = identity.local_album_id "
+                "WHERE identity.provider = 'musicbrainz' "
+                "AND album.retired_into_album_id IS NULL "
+                "AND EXISTS (SELECT 1 FROM local_tracks track "
+                "WHERE track.local_album_id = album.id "
+                "AND track.availability = 'indexed') "
+                "UNION ALL "
+                "SELECT 'artist' AS entity_type, lower(identity.provider_artist_id) "
+                "AS mbid_lower, artist.display_name AS name, NULL AS title, "
+                "NULL AS artist_name "
+                "FROM local_artist_external_identities identity "
+                "JOIN local_artists artist ON artist.id = identity.local_artist_id "
+                "WHERE identity.provider = 'musicbrainz' "
+                "AND artist.retired_into_artist_id IS NULL "
+                "AND EXISTS (SELECT 1 FROM local_album_artists credit "
+                "JOIN local_albums album ON album.id = credit.local_album_id "
+                "JOIN local_tracks track ON track.local_album_id = album.id "
+                "WHERE credit.local_artist_id = artist.id "
+                "AND album.retired_into_album_id IS NULL "
+                "AND track.availability = 'indexed')) "
+            )
+            if legacy_cursor:
+                rows = connection.execute(
+                    union
+                    + "WHERE mbid_lower > ? ORDER BY mbid_lower, entity_type LIMIT ?",
+                    (legacy_cursor.casefold(), max(1, limit)),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    union
+                    + "WHERE entity_type > ? OR "
+                    "(entity_type = ? AND mbid_lower > ?) "
+                    "ORDER BY entity_type, mbid_lower LIMIT ?",
+                    (cursor_type, cursor_type, cursor_mbid, max(1, limit)),
+                ).fetchall()
+
+            candidates: list[tuple[str, str, dict[str, Any]]] = []
+            for row in rows:
+                entity_type = str(row["entity_type"])
+                payload = (
+                    {"name": str(row["name"])}
+                    if entity_type == "artist"
+                    else {
+                        "title": str(row["title"]),
+                        "artist_name": str(row["artist_name"]),
+                    }
+                )
+                candidates.append(
+                    (entity_type, str(row["mbid_lower"]), payload)
+                )
+            return candidates
+
+        return await self._read(operation)
+
     async def target_existing_provider_artist_ids(
         self, identifiers: list[str]
     ) -> set[str]:

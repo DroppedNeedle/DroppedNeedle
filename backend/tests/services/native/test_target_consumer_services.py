@@ -546,6 +546,34 @@ async def test_target_repository_resolves_active_provider_and_local_album_ids(
 
 
 @pytest.mark.asyncio
+async def test_target_repository_pages_live_enrichment_candidates(
+    target_services,
+) -> None:
+    store, _view, _favorites, _history, _root = target_services
+    repository = TargetLibraryRepository(store)
+
+    first = await repository.get_enrichment_candidates(after_mbid=None, limit=1)
+    first_cursor = f"{first[0][0]}:{first[0][1]}"
+    second = await repository.get_enrichment_candidates(
+        after_mbid=first_cursor,
+        limit=1,
+    )
+    complete = await repository.get_enrichment_candidates(after_mbid=None, limit=10)
+
+    assert first == [
+        (
+            "album",
+            RELEASE_GROUP_MBID,
+            {"title": "Identified", "artist_name": "Identified Artist"},
+        )
+    ]
+    assert second == [
+        ("artist", ARTIST_MBID, {"name": "Identified Artist"})
+    ]
+    assert complete == first + second
+
+
+@pytest.mark.asyncio
 async def test_album_service_selects_by_active_target_album_file_count(
     target_services,
 ) -> None:

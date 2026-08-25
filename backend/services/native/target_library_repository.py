@@ -146,6 +146,15 @@ class TargetLibraryRepository:
         )
         return [mbid for mbid in mbids if mbid > cursor][: max(1, limit)]
 
+    async def get_enrichment_candidates(
+        self, *, after_mbid: str | None, limit: int
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """Page live provider identities for background metadata enrichment."""
+        return await self._store.target_enrichment_candidates(
+            after_mbid=after_mbid,
+            limit=limit,
+        )
+
     async def existing_album_mbids(self, identifiers: list[str]) -> set[str]:
         normalized = {
             value.strip().casefold() for value in identifiers if value.strip()
