@@ -16,7 +16,7 @@ import pytest
 from models.download import DownloadTask, ScoredCandidate
 from models.download_manifest import ManifestCodec
 from repositories.protocols.download_client import DownloadSearchResult, TaskHandle
-from services.native.acquisition.strategy import SoulseekStrategy
+from services.native.acquisition.strategy import SoulseekStrategy, _clean_candidates
 
 _CANONICAL = 155.556  # "the arrival" (recording 180ceef5...), seconds
 
@@ -53,6 +53,26 @@ def _single_task(**overrides) -> DownloadTask:
     )
     kwargs.update(overrides)
     return DownloadTask(**kwargs)
+
+
+def test_clean_candidate_filter_rejects_explicit_markers_only_for_clean_tasks():
+    explicit = ScoredCandidate(
+        username="peer",
+        parent_directory="Artist - Album [Explicit]",
+        files=[_search_result(filename="Artist - Album [Explicit]/01.flac")],
+        tier="auto",
+    )
+    unmarked = ScoredCandidate(
+        username="peer",
+        parent_directory="Artist - Album",
+        files=[_search_result(filename="Artist - Album/01.flac")],
+        tier="auto",
+    )
+
+    assert _clean_candidates(
+        _single_task(content_variant="clean"), [explicit, unmarked]
+    ) == [unmarked]
+    assert _clean_candidates(_single_task(), [explicit, unmarked]) == [explicit, unmarked]
 
 
 def _strategy(tmp_path: Path):

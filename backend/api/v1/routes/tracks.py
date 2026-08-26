@@ -42,6 +42,7 @@ async def request_track(
         release_group_mbid=body.release_group_mbid,
         artist_mbid=body.artist_mbid,
         release_mbid=body.release_id,
+        content_variant=body.content_variant,
     )
     if task_id == ALREADY_IN_LIBRARY:
         return TrackRequestResponse(status="already_in_library")

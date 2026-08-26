@@ -1,6 +1,7 @@
 """Request/response DTOs for the download-client + search + quarantine routes (Phase 6)."""
 
 import msgspec
+from typing import Literal
 
 from infrastructure.msgspec_fastapi import AppStruct
 from models.common import ServiceStatus
@@ -131,6 +132,7 @@ class DownloadTaskResponse(AppStruct):
     # "soulseek" | "usenet" - drives the source badge + the "via album NZB" label
     # (derived as source=="usenet" && download_type=="track").
     source: str
+    content_variant: str
     release_group_mbid: str
     release_mbid: str | None
     release_track_mbid: str | None
@@ -317,6 +319,8 @@ class TrackRequestBody(AppStruct):
     # MB RELEASE mbid (an edition): a SOFT acquisition target (D14) threaded into
     # DownloadTask.release_mbid - same value, two names (release_id on the wire).
     release_id: str | None = None
+    # ``clean`` opts into the fail-closed exact-recording verification contract.
+    content_variant: Literal["original", "clean"] = "original"
 
 
 class TrackRequestResponse(AppStruct):

@@ -142,6 +142,9 @@ class DownloadTask(AppStruct):
     # or "upgrade" (a curator-triggered quality upgrade). Orthogonal to ``source``;
     # defaulted so old rows decode as user requests.
     origin: str = "user"
+    # Requested lyrical-content edition. ``clean`` is a safety contract, not a
+    # filename hint: import must fingerprint to the exact requested recording.
+    content_variant: str = "original"
     source_username: str | None = None
     source_directory: str | None = None
     search_query: str | None = None

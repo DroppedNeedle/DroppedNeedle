@@ -2169,6 +2169,8 @@ class DownloadOrchestrator:
         manifest = DownloadManifest(
             task_id=task.id,
             source_username=candidate.username,
+            origin=task.origin,
+            content_variant=task.content_variant,
             release_group_mbid=task.release_group_mbid,
             release_mbid=release_mbid,
             artist_mbid=task.artist_mbid,

@@ -187,6 +187,7 @@ def _manifest(
     is_track=False,
     expected_tracks=(),
     origin="user",
+    content_variant="original",
 ) -> DownloadManifest:
     return DownloadManifest(
         task_id=task_id,
@@ -202,6 +203,7 @@ def _manifest(
         is_track=is_track,
         expected_tracks=list(expected_tracks),
         origin=origin,
+        content_variant=content_variant,
     )
 
 
@@ -232,6 +234,110 @@ async def test_edition_conversion_requires_recording_fingerprint_proof(
 
     assert result.succeeded == []
     assert result.failed[0].reason == "fingerprint_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_clean_import_requires_recording_fingerprint_proof(tmp_path: Path) -> None:
+    fp, _manager, _client, _library, downloads = _make_processor(
+        tmp_path, verify=False, fingerprinter=None
+    )
+    _place(downloads, "A/track.flac")
+    manifest = _manifest(
+        ExpectedFile(filename="A/track.flac", size=1),
+        release_mbid="release-clean",
+        is_track=True,
+        expected_tracks=[
+            ExpectedTrack(
+                track_number=1,
+                title="Airbag",
+                recording_mbid="recording-clean",
+                release_track_mbid="release-track-clean",
+            )
+        ],
+        origin="clean_replacement",
+        content_variant="clean",
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert result.succeeded == []
+    assert result.failed[0].reason == "fingerprint_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_clean_import_rejects_unproven_recording(tmp_path: Path) -> None:
+    fingerprinter = MagicMock()
+    fingerprinter.fingerprint = AsyncMock(
+        return_value=FingerprintResult(
+            status="pass",
+            score=0.99,
+            artist="Radiohead",
+            title="Airbag",
+            recording_id="recording-explicit",
+        )
+    )
+    fp, _manager, _client, _library, downloads = _make_processor(
+        tmp_path, verify=False, fingerprinter=fingerprinter
+    )
+    _place(downloads, "A/track.flac")
+    manifest = _manifest(
+        ExpectedFile(filename="A/track.flac", size=1),
+        release_mbid="release-clean",
+        is_track=True,
+        expected_tracks=[
+            ExpectedTrack(
+                track_number=1,
+                title="Airbag",
+                recording_mbid="recording-clean",
+                release_track_mbid="release-track-clean",
+            )
+        ],
+        origin="clean_replacement",
+        content_variant="clean",
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert result.succeeded == []
+    assert result.failed[0].reason == "fingerprint_unverified"
+
+
+@pytest.mark.asyncio
+async def test_clean_import_accepts_only_exact_recording_proof(tmp_path: Path) -> None:
+    fingerprinter = MagicMock()
+    fingerprinter.fingerprint = AsyncMock(
+        return_value=FingerprintResult(
+            status="pass",
+            score=0.99,
+            artist="Radiohead",
+            title="Airbag",
+            recording_id="recording-clean",
+        )
+    )
+    fp, manager, _client, _library, downloads = _make_processor(
+        tmp_path, verify=False, fingerprinter=fingerprinter
+    )
+    _place(downloads, "A/track.flac")
+    manifest = _manifest(
+        ExpectedFile(filename="A/track.flac", size=1),
+        release_mbid="release-clean",
+        is_track=True,
+        expected_tracks=[
+            ExpectedTrack(
+                track_number=1,
+                title="Airbag",
+                recording_mbid="recording-clean",
+                release_track_mbid="release-track-clean",
+            )
+        ],
+        origin="clean_replacement",
+        content_variant="clean",
+    )
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1
+    assert await manager.has_album("rg-1") is True
 
 
 def _make_processor(

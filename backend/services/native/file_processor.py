@@ -1246,7 +1246,7 @@ class FileProcessor:
                 target_tag.track_number,
             )
             occupied_by_other = (
-                manifest.origin != "upgrade"
+                manifest.origin not in {"upgrade", "clean_replacement"}
                 and present is not None
                 and not row_covers_track(
                     present,
@@ -1274,38 +1274,42 @@ class FileProcessor:
                 replacement = present
 
         fp = None
-        conversion_verification = manifest.origin == "edition_conversion"
-        if conversion_verification and self._fingerprinter is None:
+        exact_recording_verification = (
+            manifest.origin == "edition_conversion"
+            or manifest.content_variant == "clean"
+        )
+        if exact_recording_verification and self._fingerprinter is None:
             raise VerificationFailed(
-                "Recording verification is unavailable for this edition conversion",
+                "Exact recording verification is unavailable for this request",
                 reason="fingerprint_unavailable",
                 filename=source.name,
             )
         if (
-            self._verify_downloads or conversion_verification
+            self._verify_downloads or exact_recording_verification
         ) and self._fingerprinter is not None:
             fp = await self._fingerprinter.fingerprint(source)
             if _fingerprint_disagrees(fp, track, manifest.artist_name):
-                await self._hold_for_review(
-                    source=source,
-                    manifest=manifest,
-                    reason="fingerprint_mismatch",
-                    evidence_title=getattr(fp, "title", None),
-                    evidence_artist=getattr(fp, "artist", None),
-                    evidence_score=getattr(fp, "score", None),
-                    track_number=track.track_number,
-                    disc_number=track.disc_number or 1,
-                    track_title=track.title,
-                    recording_mbid=track.recording_mbid,
-                    duration_seconds=info.duration_seconds,
-                    file_format=info.file_format,
-                )
+                if manifest.content_variant != "clean":
+                    await self._hold_for_review(
+                        source=source,
+                        manifest=manifest,
+                        reason="fingerprint_mismatch",
+                        evidence_title=getattr(fp, "title", None),
+                        evidence_artist=getattr(fp, "artist", None),
+                        evidence_score=getattr(fp, "score", None),
+                        track_number=track.track_number,
+                        disc_number=track.disc_number or 1,
+                        track_title=track.title,
+                        recording_mbid=track.recording_mbid,
+                        duration_seconds=info.duration_seconds,
+                        file_format=info.file_format,
+                    )
                 raise VerificationFailed(
                     "AcoustID identified a different recording",
                     reason="fingerprint_mismatch",
                     filename=source.name,
                 )
-            if conversion_verification and (
+            if exact_recording_verification and (
                 not track.recording_mbid
                 or getattr(fp, "status", None) != "pass"
                 or (getattr(fp, "recording_id", None) or "").casefold()
@@ -1364,6 +1368,14 @@ class FileProcessor:
         """The occupied slot's old file path when this upgrade import may replace it
         (strictly better + a recycle bin to preserve the old bytes), else ``None``
         (the caller keeps the existing file - today's dedup behaviour)."""
+        if origin == "clean_replacement":
+            if self._recycle_bin is None:
+                raise VerificationFailed(
+                    "Clean replacement requires a configured recycle bin",
+                    reason="replacement_unavailable",
+                    filename=Path(present["file_path"]).name,
+                )
+            return Path(present["file_path"])
         if origin != "upgrade" or self._recycle_bin is None:
             return None
         if _is_strict_upgrade(_row_tier(present), info):
@@ -1387,6 +1399,14 @@ class FileProcessor:
     async def _same_path_upgrade_applies(
         self, origin: str, target_path: Path, info: AudioInfo
     ) -> bool:
+        if origin == "clean_replacement":
+            if self._recycle_bin is None:
+                raise VerificationFailed(
+                    "Clean replacement requires a configured recycle bin",
+                    reason="replacement_unavailable",
+                    filename=target_path.name,
+                )
+            return True
         if origin != "upgrade" or self._recycle_bin is None:
             return False
         existing_tier = await self._existing_tier_at(target_path)
@@ -1839,7 +1859,7 @@ class FileProcessor:
                 target_tag.track_number,
             )
             occupied_by_other = (
-                manifest.origin != "upgrade"
+                manifest.origin not in {"upgrade", "clean_replacement"}
                 and expected_track is not None
                 and present is not None
                 and not row_covers_track(
@@ -1891,7 +1911,7 @@ class FileProcessor:
             # A relaxed re-pull (every candidate failed this gate - the MB length is
             # suspect) captures the closest match for HUMAN review instead of
             # importing it silently with the gate off (D9) or discarding it.
-            if manifest.hold_on_wrong_track:
+            if manifest.hold_on_wrong_track and manifest.content_variant != "clean":
                 await self._hold_for_review(
                     source=source,
                     manifest=manifest,
@@ -1923,24 +1943,25 @@ class FileProcessor:
         if self._verify_downloads and _tag_conflict_reason(
             tag, info, manifest, expected_track
         ):
-            await self._hold_for_review(
-                source=source,
-                manifest=manifest,
-                reason="tag_mismatch",
-                evidence_title=tag.title,
-                evidence_artist=tag.artist,
-                evidence_score=None,
-                track_number=tag.track_number,
-                disc_number=tag.disc_number or 1,
-                track_title=(expected_track.title if expected_track else tag.title),
-                recording_mbid=(
-                    expected_track.recording_mbid
-                    if expected_track
-                    else tag.musicbrainz_recording_id
-                ),
-                duration_seconds=info.duration_seconds,
-                file_format=info.file_format,
-            )
+            if manifest.content_variant != "clean":
+                await self._hold_for_review(
+                    source=source,
+                    manifest=manifest,
+                    reason="tag_mismatch",
+                    evidence_title=tag.title,
+                    evidence_artist=tag.artist,
+                    evidence_score=None,
+                    track_number=tag.track_number,
+                    disc_number=tag.disc_number or 1,
+                    track_title=(expected_track.title if expected_track else tag.title),
+                    recording_mbid=(
+                        expected_track.recording_mbid
+                        if expected_track
+                        else tag.musicbrainz_recording_id
+                    ),
+                    duration_seconds=info.duration_seconds,
+                    file_format=info.file_format,
+                )
             raise VerificationFailed(
                 "File tags name different content than requested",
                 reason="tag_mismatch",
@@ -1953,38 +1974,42 @@ class FileProcessor:
         # different ARTIST is rejected. NOT a release-group check - that false-rejects
         # valid reissue/compilation tracks whose AcoustID RG coverage is incomplete.
         fp = None
-        conversion_verification = manifest.origin == "edition_conversion"
-        if conversion_verification and self._fingerprinter is None:
+        exact_recording_verification = (
+            manifest.origin == "edition_conversion"
+            or manifest.content_variant == "clean"
+        )
+        if exact_recording_verification and self._fingerprinter is None:
             raise VerificationFailed(
-                "Recording verification is unavailable for this edition conversion",
+                "Exact recording verification is unavailable for this request",
                 reason="fingerprint_unavailable",
                 filename=expected.filename,
             )
         if (
-            self._verify_downloads or conversion_verification
+            self._verify_downloads or exact_recording_verification
         ) and self._fingerprinter is not None:
             fp = await self._fingerprinter.fingerprint(source)
             if _fingerprint_disagrees(fp, expected_track, manifest.artist_name):
-                await self._hold_for_review(
-                    source=source,
-                    manifest=manifest,
-                    reason="fingerprint_mismatch",
-                    evidence_title=getattr(fp, "title", None),
-                    evidence_artist=getattr(fp, "artist", None),
-                    evidence_score=getattr(fp, "score", None),
-                    track_number=tag.track_number,
-                    disc_number=tag.disc_number or 1,
-                    track_title=tag.title,
-                    recording_mbid=tag.musicbrainz_recording_id,
-                    duration_seconds=info.duration_seconds,
-                    file_format=info.file_format,
-                )
+                if manifest.content_variant != "clean":
+                    await self._hold_for_review(
+                        source=source,
+                        manifest=manifest,
+                        reason="fingerprint_mismatch",
+                        evidence_title=getattr(fp, "title", None),
+                        evidence_artist=getattr(fp, "artist", None),
+                        evidence_score=getattr(fp, "score", None),
+                        track_number=tag.track_number,
+                        disc_number=tag.disc_number or 1,
+                        track_title=tag.title,
+                        recording_mbid=tag.musicbrainz_recording_id,
+                        duration_seconds=info.duration_seconds,
+                        file_format=info.file_format,
+                    )
                 raise VerificationFailed(
                     "AcoustID identified a different recording",
                     reason="fingerprint_mismatch",
                     filename=expected.filename,
                 )
-            if conversion_verification and (
+            if exact_recording_verification and (
                 expected_track is None
                 or not expected_track.recording_mbid
                 or getattr(fp, "status", None) != "pass"

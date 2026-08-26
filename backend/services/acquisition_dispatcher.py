@@ -96,6 +96,7 @@ class AcquisitionDispatcher:
         release_mbid: str | None = None,
         release_track_mbid: str | None = None,
         track_count_priority: RequestPriority = RequestPriority.USER_INITIATED,
+        content_variant: str = "original",
     ) -> str:
         if self._ownership is not None:
             release_group_mbid = await self._ownership.provider_album_id(
@@ -134,6 +135,7 @@ class AcquisitionDispatcher:
             origin=origin,
             release_mbid=release_mbid,
             release_track_mbid=release_track_mbid,
+            content_variant=content_variant,
         )
 
     async def request_track(
@@ -151,6 +153,7 @@ class AcquisitionDispatcher:
         release_track_mbid: str | None = None,
         track_number: int | None = None,
         disc_number: int | None = None,
+        content_variant: str = "original",
     ) -> str:
         if self._ownership is not None:
             recording_mbid = await self._ownership.provider_track_id(recording_mbid)
@@ -161,6 +164,10 @@ class AcquisitionDispatcher:
             if artist_mbid is not None:
                 artist_mbid = await self._ownership.provider_artist_id(artist_mbid)
         if self._use_free_music():
+            if content_variant == "clean":
+                raise ProviderIdentityRequiredError(
+                    "Clean-only requests require DroppedNeedle's verified native acquisition backend."
+                )
             if origin != "edition_conversion":
                 return await self._get_free_music_service().request_track(
                     user_id=user_id,
@@ -194,4 +201,5 @@ class AcquisitionDispatcher:
             origin=origin,
             release_mbid=release_mbid,
             release_track_mbid=release_track_mbid,
+            content_variant=content_variant,
         )

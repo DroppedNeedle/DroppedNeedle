@@ -714,6 +714,9 @@ class ConnectAppsSettings(AppStruct):
     discover_mode: Literal["local-only", "lazy-mb", "use-scrobble-targets"] = (
         "local-only"
     )
+    # Protocol capability advertised to clients. Older servers omit the field,
+    # allowing clients to fail closed instead of silently requesting an explicit copy.
+    clean_content_requests_supported: bool = True
 
     def __post_init__(self) -> None:
         if (

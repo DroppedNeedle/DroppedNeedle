@@ -15,6 +15,7 @@ slices fold in identity + blocklist-on-failure and the failover-loop source bran
 
 import asyncio
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -44,6 +45,33 @@ _USENET_SETTLE_SECONDS = 20.0
 # A SABnzbd failure mentioning one of these is a password-protected NZB - a non-retryable
 # skip (blocklisted regardless of age, since propagation can't fix encryption).
 _PASSWORD_MARKERS = ("password", "passworded", "encrypt")
+
+_EXPLICIT_EDITION_MARKER = re.compile(
+    r"(?<![a-z0-9])(explicit|uncensored|unrated)(?![a-z0-9])",
+    re.IGNORECASE,
+)
+
+
+def _clean_candidates(task, candidates):  # noqa: ANN001, ANN201
+    """Drop candidates that explicitly advertise the wrong lyrical edition.
+
+    This improves source selection only. Every clean import is still fingerprinted
+    against the exact requested MusicBrainz recording before it can be published.
+    """
+    if task.content_variant != "clean":
+        return candidates
+    kept = []
+    for candidate in candidates:
+        if candidate.source == "usenet" and candidate.usenet_release is not None:
+            evidence = candidate.usenet_release.title
+        else:
+            evidence = " ".join(
+                [candidate.parent_directory]
+                + [entry.filename for entry in candidate.files]
+            )
+        if not _EXPLICIT_EDITION_MARKER.search(evidence):
+            kept.append(candidate)
+    return kept
 
 
 async def _upgrade_held_tier(library, task) -> "str | None":  # noqa: ANN001
@@ -290,13 +318,14 @@ class SoulseekStrategy:
                 timeout=timeout,
             )
             results = [r.soulseek for r in indexer_results if r.soulseek is not None]
-            return await self._track_matcher.rank(
+            ranked = await self._track_matcher.rank(
                 target,
                 results,
                 auto_accept_threshold=auto,
                 manual_threshold=manual,
                 held_tier=held_tier,
             )
+            return _clean_candidates(task, ranked)
         # A 1-track release (a single requested as an album) scores per-file via the
         # track matcher, not the folder scorer: folder coherence hands a lone
         # fuzzy-matched file a perfect count_ratio, and only the per-file path carries
@@ -321,13 +350,14 @@ class SoulseekStrategy:
                 timeout=timeout,
             )
             results = [r.soulseek for r in indexer_results if r.soulseek is not None]
-            return await self._track_matcher.rank(
+            ranked = await self._track_matcher.rank(
                 target,
                 results,
                 auto_accept_threshold=auto,
                 manual_threshold=manual,
                 held_tier=held_tier,
             )
+            return _clean_candidates(task, ranked)
         target = TargetAlbum(
             artist_name=task.artist_name,
             album_title=task.album_title,
@@ -343,13 +373,14 @@ class SoulseekStrategy:
             timeout=timeout,
         )
         results = [r.soulseek for r in indexer_results if r.soulseek is not None]
-        return await self._scorer.rank(
+        ranked = await self._scorer.rank(
             target,
             results,
             auto_accept_threshold=auto,
             manual_threshold=manual,
             held_tier=held_tier,
         )
+        return _clean_candidates(task, ranked)
 
     async def enqueue(
         self, task, candidate, *, strict_track_duration, hold_on_wrong_track=False
@@ -411,6 +442,7 @@ class SoulseekStrategy:
             source_username=candidate.username,
             handle=initial_handle,
             origin=task.origin,
+            content_variant=task.content_variant,
             release_group_mbid=task.release_group_mbid,
             release_mbid=release_mbid,
             artist_mbid=task.artist_mbid,
@@ -651,7 +683,7 @@ class UsenetStrategy:
             timeout=timeout,
         )
         releases = [r.usenet for r in indexer_results if r.usenet is not None]
-        return await self._scorer.rank(
+        ranked = await self._scorer.rank(
             target,
             releases,
             auto_accept_threshold=auto,
@@ -659,6 +691,7 @@ class UsenetStrategy:
             track_count=task.track_count,
             held_tier=held_tier,
         )
+        return _clean_candidates(task, ranked)
 
     async def enqueue(
         self, task, candidate, *, strict_track_duration, hold_on_wrong_track=False
@@ -705,6 +738,7 @@ class UsenetStrategy:
             task_id=task.id,
             handle=initial_handle,
             origin=task.origin,
+            content_variant=task.content_variant,
             release_group_mbid=task.release_group_mbid,
             release_mbid=release_mbid,
             artist_mbid=task.artist_mbid,

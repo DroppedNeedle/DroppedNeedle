@@ -721,6 +721,7 @@ class DownloadService:
         origin: str = "user",
         release_mbid: str | None = None,
         release_track_mbid: str | None = None,
+        content_variant: str = "original",
     ) -> str:
         """Create a download task and dispatch the orchestrator. Returns the new
         task id, the existing active task id (dedup), or the ``already_in_library``
@@ -877,6 +878,7 @@ class DownloadService:
             track_count=track_count,
             track_duration_seconds=track_duration_seconds,
             origin=origin,
+            content_variant=content_variant,
         )
         self._orchestrator.dispatch(task.id)
         return task.id
@@ -894,10 +896,23 @@ class DownloadService:
         origin: str = "user",
         release_mbid: str | None = None,
         release_track_mbid: str | None = None,
+        content_variant: str = "original",
     ) -> str:
         """Request a single track. Orphan tracks (album not in the library) resolve
         the release group via MusicBrainz, auto-create the album folder, and download
         the one track; the album appears partially present."""
+        if content_variant == "clean":
+            if not recording_mbid or not release_group_mbid or not release_mbid:
+                raise ValidationError(
+                    "A clean request requires an exact MusicBrainz recording, "
+                    "release group, and release edition"
+                )
+            # This is server-owned replacement semantics; clients cannot select an
+            # arbitrary origin string to obtain destructive behavior.
+            origin = "clean_replacement"
+        elif content_variant != "original":
+            raise ValidationError("Unsupported content variant")
+
         if self._ownership is not None:
             recording_mbid = await self._ownership.provider_track_id(recording_mbid)
             if release_group_mbid is not None:
@@ -961,6 +976,7 @@ class DownloadService:
             origin=origin,
             release_mbid=release_mbid,
             release_track_mbid=release_track_mbid,
+            content_variant=content_variant,
         )
 
     @property

@@ -848,6 +848,58 @@ async def test_request_track_persists_exact_release_track_mapping():
 
 
 @pytest.mark.asyncio
+async def test_clean_request_is_exact_and_persists_fail_closed_intent():
+    album_service = _single_album_service(
+        tracks=[
+            SimpleNamespace(
+                position=1,
+                disc_number=1,
+                title="Song",
+                recording_id="recording-clean",
+                release_track_id="release-track-clean",
+                length=180_000,
+            )
+        ]
+    )
+    service, store, *_ = _make_service(album_service=album_service)
+    service._library.has_track.return_value = False
+    store.get_active_task_for_track.return_value = None
+
+    await service.request_track(
+        "u1",
+        "recording-clean",
+        "Artist",
+        "Song",
+        release_group_mbid="group-clean",
+        release_mbid="release-clean",
+        content_variant="clean",
+    )
+
+    kwargs = store.create_task.await_args.kwargs
+    assert kwargs["origin"] == "clean_replacement"
+    assert kwargs["content_variant"] == "clean"
+    assert kwargs["release_mbid"] == "release-clean"
+    assert kwargs["release_track_mbid"] == "release-track-clean"
+
+
+@pytest.mark.asyncio
+async def test_clean_request_without_exact_release_is_rejected():
+    service, store, *_ = _make_service(album_service=_single_album_service())
+
+    with pytest.raises(ValidationError, match="exact MusicBrainz"):
+        await service.request_track(
+            "u1",
+            "recording-clean",
+            "Artist",
+            "Song",
+            release_group_mbid="group-clean",
+            content_variant="clean",
+        )
+
+    store.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_request_track_dedup_is_recording_keyed_not_album_keyed():
     # A second, different track of the same album must NOT be swallowed by the
     # album-keyed dedup: track tasks dedup on the recording.

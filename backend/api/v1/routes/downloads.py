@@ -75,6 +75,7 @@ def _to_response(  # noqa: ANN001 - DownloadTask
         user_id=task.user_id,
         download_type=task.download_type,
         source=task.source,
+        content_variant=task.content_variant,
         release_group_mbid=task.release_group_mbid,
         release_mbid=task.release_mbid,
         release_track_mbid=task.release_track_mbid,
