@@ -6,6 +6,7 @@
 		requestBatch,
 		type BatchAlbumItem
 	} from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 
 	let dialogEl: HTMLDialogElement | undefined = $state();
@@ -71,6 +72,7 @@
 		if (filteredReleases.length === 0) return;
 		const artistName = discographyDownloadStore.artistName;
 		const artistId = discographyDownloadStore.artistId;
+		const initiatingUserId = authStore.user?.id;
 		submitting = true;
 
 		const items: BatchAlbumItem[] = filteredReleases.map((r) => ({
@@ -88,8 +90,9 @@
 				autoDownloadArtist: autoDownload
 			})
 			.catch(() => null);
-
-		if (result?.success) {
+		// an in-flight batch that resolves after an account switch belongs to the prior
+		// session - the shell already cleared the stores, do not re-add the old job (#155)
+		if (result?.success && authStore.user?.id === initiatingUserId) {
 			batchDownloadStore.addJob(
 				artistName,
 				artistId,

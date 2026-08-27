@@ -4,6 +4,12 @@ import { render } from 'vitest-browser-svelte';
 import AlbumCard from './AlbumCard.svelte';
 import type { Album, EnrichmentSource } from '$lib/types';
 
+// Stub the album-request mutation factory so the card renders without a QueryClientProvider
+// (same approach as the TopPicksDeck spec).
+vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
+	requestAlbum: () => ({ mutateAsync: vi.fn(), isPending: false })
+}));
+
 const baseAlbum: Album = {
 	title: 'OK Computer',
 	artist: 'Radiohead',

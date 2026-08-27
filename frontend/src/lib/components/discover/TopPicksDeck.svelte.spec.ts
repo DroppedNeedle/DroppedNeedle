@@ -13,6 +13,11 @@ vi.mock('$lib/stores/integration', async () => {
 		integrationStore: readable({ download_client: true, youtube: true, youtube_api: true })
 	};
 });
+// Stub the album-request mutation factory so AlbumRequestButton renders without a
+// QueryClientProvider (same approach as the album page's rescanAlbum stub).
+vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
+	requestAlbum: () => ({ mutateAsync: vi.fn(), isPending: false })
+}));
 
 const section: TopPicksSection = {
 	title: 'Top Picks for You',

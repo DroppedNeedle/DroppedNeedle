@@ -144,7 +144,7 @@ vi.mock('$lib/utils/requestsApi', () => ({
 }));
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/queries/downloads/DownloadMutations.svelte')>()),
-	requestBatch: batchRequestMock
+	requestBatch: () => ({ mutateAsync: batchRequestMock })
 }));
 vi.mock('$lib/utils/navigationProgress', () => ({
 	createNavigationProgressController: vi.fn(() => ({
