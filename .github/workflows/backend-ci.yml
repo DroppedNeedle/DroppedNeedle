@@ -37,7 +37,7 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
 
       - name: Install Ruff
-        run: pip install ruff==0.6.9
+        run: pip install ruff==0.16.4
 
       - name: Run Ruff
         run: ruff check backend
