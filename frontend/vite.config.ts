@@ -26,7 +26,11 @@ export default defineConfig({
 						enabled: true,
 						headless: true,
 						provider: 'playwright',
-						instances: [{ browser: 'chromium' }]
+						instances: [{ browser: 'chromium' }],
+						// GH runners see the default bind as internet-exposed, which disables
+						// CDP/exec + failure screenshots; loopback avoids that, and the
+						// browser/vitest pair must match (@vitest/browser pins vitest exactly)
+						api: { host: '127.0.0.1' }
 					},
 					include: ['src/**/*.svelte.{test,spec}.{js,ts}'],
 					exclude: ['src/lib/server/**'],
