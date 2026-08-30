@@ -16,6 +16,12 @@ from api.v1.schemas.discover import (
     QueueGenerateResponse,
 )
 from infrastructure.serialization import clone_with_updates
+from repositories.musicbrainz_base import (
+    MbSourceContext,
+    capture_mb_source_context,
+    is_mb_source_current,
+    mb_source_commit_lock,
+)
 from services.discover_service import DiscoverService
 from services.preferences_service import PreferencesService
 from services.discover.snapshot_codec import decode_discover_queue
@@ -37,9 +43,18 @@ class QueueBuildStatus(str, Enum):
 
 
 class SourceQueueState:
-    __slots__ = ("status", "queue", "error", "built_at", "persisted_stale", "task")
+    __slots__ = (
+        "source_context",
+        "status",
+        "queue",
+        "error",
+        "built_at",
+        "persisted_stale",
+        "task",
+    )
 
-    def __init__(self) -> None:
+    def __init__(self, source_context: MbSourceContext | None = None) -> None:
+        self.source_context = source_context or capture_mb_source_context()
         self.status: QueueBuildStatus = QueueBuildStatus.IDLE
         self.queue: DiscoverQueueResponse | None = None
         self.error: str | None = None
@@ -74,22 +89,43 @@ class DiscoverQueueManager:
         self._states: dict[str, SourceQueueState] = {}
         self._lock = asyncio.Lock()
         self._loaded_users: set[str] = set()
-
+        self._loaded_sources: dict[str, MbSourceContext] = {}
     @staticmethod
     def _snapshot_key(user_id: str) -> str:
         return f"{_QUEUE_SNAPSHOT_PREFIX}{user_id}"
 
     async def ensure_loaded(self, user_id: str) -> None:
-        if self._snapshot_store is None or user_id in self._loaded_users:
+        if self._snapshot_store is None:
             return
+
+        source_context = capture_mb_source_context()
+        loaded_context = self._loaded_sources.get(user_id)
+        if (
+            user_id in self._loaded_users
+            and loaded_context == source_context
+            and is_mb_source_current(source_context)
+        ):
+            return
+
         async with self._lock:
-            if user_id in self._loaded_users:
+            source_context = capture_mb_source_context()
+            loaded_context = self._loaded_sources.get(user_id)
+            if (
+                user_id in self._loaded_users
+                and loaded_context == source_context
+                and is_mb_source_current(source_context)
+            ):
                 return
+
             self._loaded_users.add(user_id)
+            self._loaded_sources[user_id] = source_context
+            state = self._get_state(user_id, source_context)
             saved = await self._snapshot_store.get_with_stale(
                 self._snapshot_key(user_id)
             )
-            if saved is None:
+            if saved is None or not self._state_is_current(
+                user_id, state, source_context
+            ):
                 return
             payload, stale = saved
             try:
@@ -102,16 +138,34 @@ class DiscoverQueueManager:
             ):
                 logger.warning("Ignoring an invalid Discover queue snapshot")
                 return
-            state = self._get_state(user_id)
+            if not self._state_is_current(user_id, state, source_context):
+                return
             state.queue = queue
             state.built_at = built_at
             state.persisted_stale = stale
             state.status = QueueBuildStatus.READY
 
-    def _get_state(self, user_id: str) -> SourceQueueState:
-        if user_id not in self._states:
-            self._states[user_id] = SourceQueueState()
-        return self._states[user_id]
+    def _get_state(
+        self, user_id: str, source_context: MbSourceContext | None = None
+    ) -> SourceQueueState:
+        source_context = source_context or capture_mb_source_context()
+        state = self._states.get(user_id)
+        if state is None or state.source_context != source_context:
+            state = SourceQueueState(source_context)
+            self._states[user_id] = state
+        return state
+
+    def _state_is_current(
+        self,
+        user_id: str,
+        state: SourceQueueState,
+        source_context: MbSourceContext,
+    ) -> bool:
+        return (
+            self._states.get(user_id) is state
+            and state.source_context == source_context
+            and is_mb_source_current(source_context)
+        )
 
     def _get_ttl(self) -> int:
         adv = self._preferences.get_advanced_settings()
@@ -162,13 +216,13 @@ class DiscoverQueueManager:
         ):
             return state.queue
         return None
-
     async def start_build(
         self, user_id: str, *, force: bool = False
     ) -> QueueGenerateResponse:
         await self.ensure_loaded(user_id)
         async with self._lock:
-            state = self._get_state(user_id)
+            source_context = capture_mb_source_context()
+            state = self._get_state(user_id, source_context)
 
             if state.status == QueueBuildStatus.BUILDING:
                 return self._build_generate_response(
@@ -189,12 +243,15 @@ class DiscoverQueueManager:
 
             state.status = QueueBuildStatus.BUILDING
             state.error = None
-            state.task = asyncio.create_task(self._do_build(user_id))
+            state.task = asyncio.create_task(
+                self._do_build(user_id, state, source_context)
+            )
             from core.task_registry import TaskRegistry
 
             try:
                 TaskRegistry.get_instance().register(
-                    f"discover-build-{user_id}", state.task
+                    f"discover-build-{user_id}-g{source_context.generation}",
+                    state.task,
                 )
             except RuntimeError:
                 pass
@@ -241,49 +298,65 @@ class DiscoverQueueManager:
             item_data = msgspec.to_builtins(item)
             item_data["enrichment"] = enrichment
             return DiscoverQueueItemFull(**item_data)
-
         hydrated_items = await asyncio.gather(
             *(hydrate_item(item) for item in queue.items)
         )
         return clone_with_updates(queue, {"items": hydrated_items})
 
-    async def _do_build(self, user_id: str) -> None:
-        state = self._get_state(user_id)
+    async def _do_build(
+        self,
+        user_id: str,
+        state: SourceQueueState | None = None,
+        source_context: MbSourceContext | None = None,
+    ) -> None:
+        source_context = source_context or capture_mb_source_context()
+        state = state or self._get_state(user_id, source_context)
         try:
             queue = await self.build_hydrated_queue(user_id)
-            state.queue = queue
-            state.built_at = time.time()
-            state.persisted_stale = False
-            state.status = QueueBuildStatus.READY
-            if self._snapshot_store:
-                try:
-                    saved = PersistedQueue(queue=queue, built_at=state.built_at)
-                    await self._snapshot_store.save(
-                        self._snapshot_key(user_id),
-                        user_id,
-                        msgspec.json.encode(saved),
-                        state.built_at,
-                    )
-                except Exception as exc:  # noqa: BLE001 - queue remains usable in memory
-                    logger.warning("Could not persist Discover queue snapshot: %s", exc)
+            async with self._lock:
+                async with mb_source_commit_lock:
+                    if not self._state_is_current(user_id, state, source_context):
+                        return
+                    state.queue = queue
+                    state.built_at = time.time()
+                    state.persisted_stale = False
+                    state.status = QueueBuildStatus.READY
+                    if self._snapshot_store:
+                        try:
+                            saved = PersistedQueue(
+                                queue=queue, built_at=state.built_at
+                            )
+                            await self._snapshot_store.save(
+                                self._snapshot_key(user_id),
+                                user_id,
+                                msgspec.json.encode(saved),
+                                state.built_at,
+                            )
+                        except Exception as exc:  # noqa: BLE001 - queue remains usable in memory
+                            logger.warning(
+                                "Could not persist Discover queue snapshot: %s", exc
+                            )
             task = asyncio.create_task(self._prewarm_covers(queue))
             task.add_done_callback(_log_queue_task_error)
             from core.task_registry import TaskRegistry
 
             try:
                 TaskRegistry.get_instance().register(
-                    f"discover-cover-prewarm-{user_id}", task
+                    f"discover-cover-prewarm-{user_id}-g{source_context.generation}",
+                    task,
                 )
             except RuntimeError:
                 pass
         except asyncio.CancelledError:
-            if state.status == QueueBuildStatus.BUILDING:
-                state.status = QueueBuildStatus.IDLE
+            if self._state_is_current(user_id, state, source_context):
+                if state.status == QueueBuildStatus.BUILDING:
+                    state.status = QueueBuildStatus.IDLE
             raise
         except Exception as e:  # noqa: BLE001
             logger.error("Background queue build failed: %s", e)
-            state.status = QueueBuildStatus.ERROR
-            state.error = str(e)
+            if self._state_is_current(user_id, state, source_context):
+                state.status = QueueBuildStatus.ERROR
+                state.error = str(e)
 
     async def _prewarm_covers(self, queue: DiscoverQueueResponse) -> None:
         if not self._cover_repo or not queue.items:
@@ -318,25 +391,30 @@ class DiscoverQueueManager:
 
     async def consume_queue(self, user_id: str) -> DiscoverQueueResponse | None:
         await self.ensure_loaded(user_id)
-        state = self._get_state(user_id)
-        if state.status != QueueBuildStatus.READY or state.queue is None:
-            return None
-        if self._is_stale(state):
-            state.queue = None
-            state.status = QueueBuildStatus.IDLE
-            state.built_at = 0.0
-            state.persisted_stale = False
-            if self._snapshot_store:
-                await self._snapshot_store.delete(self._snapshot_key(user_id))
-            return None
-        queue = state.queue
-        state.queue = None
-        state.status = QueueBuildStatus.IDLE
-        state.built_at = 0.0
-        state.persisted_stale = False
-        if self._snapshot_store:
-            await self._snapshot_store.delete(self._snapshot_key(user_id))
-        return queue
+        async with self._lock:
+            state = self._get_state(user_id)
+            source_context = state.source_context
+            async with mb_source_commit_lock:
+                if not self._state_is_current(user_id, state, source_context):
+                    return None
+                if state.status != QueueBuildStatus.READY or state.queue is None:
+                    return None
+                if self._is_stale(state):
+                    state.queue = None
+                    state.status = QueueBuildStatus.IDLE
+                    state.built_at = 0.0
+                    state.persisted_stale = False
+                    if self._snapshot_store:
+                        await self._snapshot_store.delete(self._snapshot_key(user_id))
+                    return None
+                queue = state.queue
+                state.queue = None
+                state.status = QueueBuildStatus.IDLE
+                state.built_at = 0.0
+                state.persisted_stale = False
+                if self._snapshot_store:
+                    await self._snapshot_store.delete(self._snapshot_key(user_id))
+                return queue
 
     def invalidate(self, user_id: str | None = None) -> None:
         if user_id is None:
@@ -344,11 +422,14 @@ class DiscoverQueueManager:
             for key in list(self._states.keys()):
                 self.invalidate(key)
             return
-        state = self._get_state(user_id)
-        if state.task and not state.task.done():
-            state.task.cancel()
-        self._states[user_id] = SourceQueueState()
+
+        previous_state = self._states.get(user_id)
+        if previous_state and previous_state.task and not previous_state.task.done():
+            previous_state.task.cancel()
+        source_context = capture_mb_source_context()
+        self._states[user_id] = SourceQueueState(source_context)
         self._loaded_users.add(user_id)
+        self._loaded_sources[user_id] = source_context
 
 
 def _log_queue_task_error(task: "asyncio.Task[Any]") -> None:

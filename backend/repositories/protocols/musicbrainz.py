@@ -4,6 +4,7 @@ from infrastructure.queue.priority_queue import RequestPriority
 from models.search import SearchResult
 from models.artist import ArtistInfo
 from models.album import AlbumInfo
+from repositories.musicbrainz_base import MbSourceContext
 from models.library_contribution import (
     MusicBrainzDuplicateFacts,
     MusicBrainzUrlResolution,
@@ -50,8 +51,23 @@ class MusicBrainzRepositoryProtocol(Protocol):
     # default. NOTE: protocol modules must not use `from __future__ import
     # annotations` (signature-conformance tests compare real objects).
     async def get_artist_by_id(
-        self, mbid: str, priority: RequestPriority = RequestPriority.USER_INITIATED
+        self,
+        mbid: str,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
+        *,
+        include_releases: bool = True,
+        release_group_limit: int = 50,
     ) -> dict[str, Any] | None: ...
+
+    async def get_artist_release_groups_with_context(
+        self,
+        artist_mbid: str,
+        offset: int = 0,
+        limit: int = 50,
+        priority: RequestPriority = RequestPriority.BACKGROUND_SYNC,
+        *,
+        preserve_fetch_width: bool = False,
+    ) -> tuple[list[dict[str, Any]], int, MbSourceContext | None]: ...
 
     async def get_release_group(self, release_group_mbid: str) -> AlbumInfo | None: ...
 

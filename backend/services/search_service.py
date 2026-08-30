@@ -22,6 +22,7 @@ from services.preferences_service import PreferencesService
 from infrastructure.http.deduplication import deduplicate
 from infrastructure.degradation import try_get_degradation_context
 from infrastructure.integration_result import IntegrationResult
+from repositories.musicbrainz_base import get_mb_source_generation
 
 if TYPE_CHECKING:
     from services.audiodb_image_service import AudioDBImageService
@@ -53,6 +54,22 @@ class SearchService:
         cls._stale_bucket_cache.clear()
 
     @staticmethod
+    def _source_changed_response(
+        buckets: Optional[list[str]] = None,
+    ) -> SearchResponse:
+        names = (
+            ("artists", "albums")
+            if not buckets
+            else tuple(name for name in ("artists", "albums") if name in buckets)
+        )
+        return SearchResponse(
+            artists=[],
+            albums=[],
+            top_artist=None,
+            top_album=None,
+            bucket_status={name: "error" for name in names},
+        )
+    @staticmethod
     def _bucket_stale_cache_key(
         bucket: str,
         query: str,
@@ -64,7 +81,7 @@ class SearchService:
         primary = ",".join(sorted(included_primary_types))
         secondary = ",".join(sorted(included_secondary_types))
         return (
-            f"{bucket}:{query.strip().casefold()}:{limit}:{offset}:"
+            f"g{get_mb_source_generation()}:{bucket}:{query.strip().casefold()}:{limit}:{offset}:"
             f"{primary}|{secondary}"
         )
 
@@ -298,7 +315,10 @@ class SearchService:
         query,
         limit_artists=10,
         limit_albums=10,
-        buckets=None: f"search:{query}:{limit_artists}:{limit_albums}:{buckets}"
+        buckets=None: (
+            f"search:g{get_mb_source_generation()}:{query}:{limit_artists}:"
+            f"{limit_albums}:{buckets}"
+        )
     )
     async def search(
         self,
@@ -311,12 +331,13 @@ class SearchService:
         # so they MUST join the cache key - this closes the one proven
         # prefs-baked gap that forced wholesale sweeps on preference saves.
         prefs = self._preferences_service.get_preferences()
+        source_generation = get_mb_source_generation()
         primary_types = ",".join(sorted(t.strip().lower() for t in prefs.primary_types))
         secondary_types = ",".join(
             sorted(t.strip().lower() for t in prefs.secondary_types)
         )
         cache_key = (
-            f"{query.strip().lower()}:{limit_artists}:{limit_albums}:"
+            f"g{source_generation}:{query.strip().lower()}:{limit_artists}:{limit_albums}:"
             f"{','.join(sorted(buckets)) if buckets else ''}"
             f":{primary_types}|{secondary_types}"
         )
@@ -348,6 +369,8 @@ class SearchService:
         if self._ownership is None:
             tasks.append(self._library_repo.get_library_mbids(include_release_ids=True))
         gathered = await asyncio.gather(*tasks, return_exceptions=True)
+        if source_generation != get_mb_source_generation():
+            return self._source_changed_response(buckets)
         grouped_result, *library_results = gathered
         remote_status_override: SearchRemoteStatus | None = None
         failed_buckets: set[str] | None = None
@@ -381,9 +404,11 @@ class SearchService:
         library_mbids = library_mbids_raw or set()
 
         await self._apply_album_ownership(grouped.get("albums", []), library_mbids)
-
         all_results = grouped.get("artists", []) + grouped.get("albums", [])
+
         await self._apply_audiodb_search_overlay(all_results)
+        if source_generation != get_mb_source_generation():
+            return self._source_changed_response(buckets)
 
         top_artist = self._detect_top_result(grouped.get("artists", []), query)
         top_album = self._detect_top_result(grouped.get("albums", []), query)
@@ -415,7 +440,10 @@ class SearchService:
             top_album=top_album,
             bucket_status=bucket_status,
         )
-        if all(status == "ok" for status in bucket_status.values()):
+        if (
+            all(status == "ok" for status in bucket_status.values())
+            and source_generation == get_mb_source_generation()
+        ):
             self._search_cache[cache_key] = (now, response)
         if len(self._search_cache) > SEARCH_CACHE_MAX_SIZE:
             expired = [
@@ -444,7 +472,9 @@ class SearchService:
         bucket,
         query,
         limit=50,
-        offset=0: f"search_bucket:{bucket}:{query}:{limit}:{offset}"
+        offset=0: (
+            f"search_bucket:g{get_mb_source_generation()}:{bucket}:{query}:{limit}:{offset}"
+        )
     )
     async def search_bucket(
         self, bucket: str, query: str, limit: int = 50, offset: int = 0
@@ -452,6 +482,7 @@ class SearchService:
         prefs = self._preferences_service.get_preferences()
         included_secondary_types = set(t.lower() for t in prefs.secondary_types)
         included_primary_types = set(t.lower() for t in prefs.primary_types)
+        source_generation = get_mb_source_generation()
         stale_cache_key = self._bucket_stale_cache_key(
             bucket,
             query,
@@ -484,6 +515,8 @@ class SearchService:
             logger.warning(
                 "MusicBrainz %s search exceeded the response deadline", bucket
             )
+            if source_generation != get_mb_source_generation():
+                return [], None, "timeout"
             results = self._get_stale_bucket(stale_cache_key, time.monotonic())
             if results is None:
                 return [], None, "timeout"
@@ -493,11 +526,15 @@ class SearchService:
             logger.warning(
                 "MusicBrainz %s search failed: %s", bucket, type(error).__name__
             )
+            if source_generation != get_mb_source_generation():
+                return [], None, "error"
             results = self._get_stale_bucket(stale_cache_key, time.monotonic())
             if results is None:
                 return [], None, "error"
             status = "stale"
         else:
+            if source_generation != get_mb_source_generation():
+                return [], None, "error"
             status = self._remote_status(bool(results))
             if status == "ok" and results:
                 self._store_stale_bucket(
@@ -517,18 +554,23 @@ class SearchService:
             await self._apply_album_ownership(results, library_mbids)
 
         await self._apply_audiodb_search_overlay(results)
+        if source_generation != get_mb_source_generation():
+            return [], None, "error"
 
         top_result = self._detect_top_result(results, query) if offset == 0 else None
         return results, top_result, status
 
     @deduplicate(
-        lambda self, query, limit=5: f"suggest:{query.strip().lower()}:{limit}"
+        lambda self, query, limit=5: (
+            f"suggest:g{get_mb_source_generation()}:{query.strip().lower()}:{limit}"
+        )
     )
     async def suggest(self, query: str, limit: int = 5) -> SuggestResponse:
         query = query.strip()
         if len(query) < 2:
             return SuggestResponse()
 
+        source_generation = get_mb_source_generation()
         prefs = self._preferences_service.get_preferences()
         included_secondary_types = set(t.lower() for t in prefs.secondary_types)
         included_primary_types = set(t.lower() for t in prefs.primary_types)
@@ -545,6 +587,8 @@ class SearchService:
         except TimeoutError:
             self._record_musicbrainz_error("Suggestions exceeded the response deadline")
             logger.warning("MusicBrainz suggest exceeded the response deadline")
+            if source_generation != get_mb_source_generation():
+                return SuggestResponse(remote_status="error")
             return SuggestResponse(remote_status="timeout")
         except Exception as e:  # noqa: BLE001
             self._record_musicbrainz_error("Suggestions provider request failed")
@@ -555,6 +599,8 @@ class SearchService:
             )
             return SuggestResponse(remote_status="error")
 
+        if source_generation != get_mb_source_generation():
+            return SuggestResponse(remote_status="error")
         failed_buckets: set[str] | None = None
         if isinstance(grouped_result, tuple):
             grouped, failed_buckets = grouped_result
@@ -569,9 +615,13 @@ class SearchService:
             [library_mbids_raw] = await self._safe_gather(
                 self._library_repo.get_library_mbids(include_release_ids=True),
             )
+        if source_generation != get_mb_source_generation():
+            return SuggestResponse(remote_status="error")
         library_mbids = library_mbids_raw or set()
 
         await self._apply_album_ownership(grouped.get("albums", []), library_mbids)
+        if source_generation != get_mb_source_generation():
+            return SuggestResponse(remote_status="error")
 
         suggestions: list[SuggestResult] = []
         for item in grouped.get("artists", []) + grouped.get("albums", []):
@@ -596,4 +646,6 @@ class SearchService:
         remote_status = self._remote_status(bool(suggestions))
         if failed_buckets:
             remote_status = "partial" if suggestions else "error"
+        if source_generation != get_mb_source_generation():
+            return SuggestResponse(remote_status="error")
         return SuggestResponse(results=suggestions[:limit], remote_status=remote_status)

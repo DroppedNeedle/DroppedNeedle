@@ -125,3 +125,50 @@ async def test_resolver_skips_durable_write_from_stale_source():
 
     assert result == {"rel-stale": "rg-stale"}
     store.save_release_to_rg.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delayed_leader_and_follower_without_response_context_skip_stale_write():
+    store, _saved = _store()
+    mb = MagicMock()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def resolve(_mbid):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+        else:
+            await started.wait()
+        await release.wait()
+        return "rg-old"
+
+    mb.get_release_group_id_from_release = AsyncMock(side_effect=resolve)
+    svc = MbidResolutionService(mb, MagicMock(), MagicMock(), mb_canonical_store=store)
+    original_source = mb_base.get_mb_api_base()
+    mb_base.set_mb_api_base("https://old.example/ws/2")
+    try:
+        leader = asyncio.create_task(
+            svc.resolve_lastfm_release_group_mbids(["rel-shared"])
+        )
+        await started.wait()
+        follower = asyncio.create_task(
+            svc.resolve_lastfm_release_group_mbids(["rel-shared"])
+        )
+        for _ in range(100):
+            if calls == 2:
+                break
+            await asyncio.sleep(0)
+        mb_base.set_mb_api_base("https://new.example/ws/2")
+        release.set()
+        leader_result, follower_result = await asyncio.gather(leader, follower)
+    finally:
+        release.set()
+        mb_base.set_mb_api_base(original_source)
+
+    assert leader_result == {"rel-shared": "rg-old"}
+    assert follower_result == {"rel-shared": "rg-old"}
+    assert calls == 2
+    store.save_release_to_rg.assert_not_awaited()

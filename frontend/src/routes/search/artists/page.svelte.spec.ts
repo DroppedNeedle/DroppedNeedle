@@ -94,4 +94,29 @@ describe('dedicated artist search', () => {
 		await expect.element(page.getByText('Live Artist 23')).toBeInTheDocument();
 		await expect.element(page.getByText('Removed Cached Artist')).not.toBeInTheDocument();
 	});
+
+	it('trims whitespace before the dedicated provider request', async () => {
+		const requests: string[] = [];
+		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			requests.push(url);
+			if (!url.startsWith('/api/v1/search/artists?')) {
+				throw new Error(`Unexpected request: ${url}`);
+			}
+			return jsonResponse({
+				bucket: 'artists',
+				limit: 24,
+				offset: 0,
+				results: [artist('Muse', 'muse')],
+				top_result: null,
+				status: 'ok'
+			});
+		}) as typeof fetch;
+
+		render(ArtistSearchPage, { data: { query: '  Muse  ' } });
+
+		await expect.element(page.getByText('Muse')).toBeInTheDocument();
+		expect(requests[0]).toContain('q=Muse');
+		expect(requests[0]).not.toContain('%20');
+	});
 });

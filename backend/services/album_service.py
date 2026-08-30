@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 from repositories.musicbrainz_base import (
     MbSourceContext,
     capture_mb_source_context,
+    is_mb_source_current,
     mb_publish_if_current,
     normalize_mb_id,
 )
@@ -83,8 +84,27 @@ class AlbumService:
         self._release_pins = release_pin_store
         self._ownership = ownership_service
         self._native_library_store = native_library_store
-        self._album_in_flight: dict[str, asyncio.Future[AlbumInfo]] = {}
-        self._tracks_in_flight: dict[str, asyncio.Future[AlbumTracksInfo]] = {}
+        self._album_in_flight: dict[
+            tuple[str, int], asyncio.Future[AlbumInfo]
+        ] = {}
+        self._tracks_in_flight: dict[
+            tuple[str, int], asyncio.Future[AlbumTracksInfo]
+        ] = {}
+
+    @staticmethod
+    def _album_inflight_key(
+        release_group_id: str, source_context: MbSourceContext
+    ) -> tuple[str, int]:
+        return normalize_mb_id(release_group_id), source_context.generation
+
+    def _clear_album_inflight(self, release_group_id: str) -> None:
+        normalized_id = normalize_mb_id(release_group_id)
+        for key in tuple(self._album_in_flight):
+            if key[0] == normalized_id:
+                self._album_in_flight.pop(key, None)
+        for key in tuple(self._tracks_in_flight):
+            if key[0] == normalized_id:
+                self._tracks_in_flight.pop(key, None)
 
     async def _provider_album_id(self, identifier: str) -> str:
         if self._ownership is None:
@@ -273,8 +293,8 @@ class AlbumService:
         _album_source_context.set(capture_mb_source_context())
         release_group_id = await self._provider_album_id(release_group_id)
         release_group_id = normalize_mb_id(release_group_id)
+        cache_key = f"{ALBUM_INFO_PREFIX}{release_group_id}"
         try:
-            cache_key = f"{ALBUM_INFO_PREFIX}{release_group_id}"
             if await self._get_cached_album_info(release_group_id, cache_key):
                 return
             await self.get_album_info(
@@ -293,8 +313,7 @@ class AlbumService:
         await self._cache.delete(f"{ALBUM_TRACKS_INFO_PREFIX}{release_group_id}")
         await self._cache.delete(f"{LIBRARY_ALBUM_DETAILS_PREFIX}{release_group_id}")
         await self._disk_cache.delete_album(release_group_id)
-        self._album_in_flight.pop(release_group_id, None)
-        self._tracks_in_flight.pop(release_group_id, None)
+        self._clear_album_inflight(release_group_id)
 
         return await self.get_album_info(release_group_id)
 
@@ -304,8 +323,12 @@ class AlbumService:
         library_mbids: set[str] = None,
         priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> AlbumInfo:
-        _album_source_context.set(capture_mb_source_context())
+        source_context = capture_mb_source_context()
+        _album_source_context.set(source_context)
         release_group_id = await self._provider_album_id(release_group_id)
+        if not is_mb_source_current(source_context):
+            source_context = capture_mb_source_context()
+            _album_source_context.set(source_context)
         try:
             release_group_id = normalize_mb_id(
                 validate_mbid(release_group_id, "album")
@@ -313,9 +336,12 @@ class AlbumService:
         except ValueError as e:
             logger.error(f"Invalid album MBID: {e}")
             raise
+        inflight_key = self._album_inflight_key(release_group_id, source_context)
         try:
             cache_key = f"{ALBUM_INFO_PREFIX}{release_group_id}"
             cached = await self._get_cached_album_info(release_group_id, cache_key)
+            if not is_mb_source_current(source_context):
+                cached = None
             if cached:
                 current_in_library = await self._current_library_membership(
                     release_group_id
@@ -332,14 +358,20 @@ class AlbumService:
                     allow_fetch=False,
                     is_monitored=cached.in_library,
                 )
-                return cached
+                if is_mb_source_current(source_context):
+                    return cached
+                source_context = capture_mb_source_context()
+                _album_source_context.set(source_context)
+                inflight_key = self._album_inflight_key(
+                    release_group_id, source_context
+                )
 
-            if release_group_id in self._album_in_flight:
-                return await asyncio.shield(self._album_in_flight[release_group_id])
+            if inflight_key in self._album_in_flight:
+                return await asyncio.shield(self._album_in_flight[inflight_key])
 
             loop = asyncio.get_running_loop()
             future: asyncio.Future[AlbumInfo] = loop.create_future()
-            self._album_in_flight[release_group_id] = future
+            self._album_in_flight[inflight_key] = future
             try:
                 album_info = await self._do_get_album_info(
                     release_group_id, cache_key, library_mbids, priority
@@ -357,7 +389,8 @@ class AlbumService:
                     future.exception()
                 raise
             finally:
-                self._album_in_flight.pop(release_group_id, None)
+                if self._album_in_flight.get(inflight_key) is future:
+                    self._album_in_flight.pop(inflight_key, None)
         except ValueError:
             raise
         except Exception as e:  # noqa: BLE001
@@ -508,8 +541,12 @@ class AlbumService:
         )
 
     async def get_album_basic_info(self, release_group_id: str) -> AlbumBasicInfo:
-        _album_source_context.set(capture_mb_source_context())
+        source_context = capture_mb_source_context()
+        _album_source_context.set(source_context)
         release_group_id = await self._provider_album_id(release_group_id)
+        if not is_mb_source_current(source_context):
+            source_context = capture_mb_source_context()
+            _album_source_context.set(source_context)
         try:
             release_group_id = normalize_mb_id(
                 validate_mbid(release_group_id, "album")
@@ -534,7 +571,7 @@ class AlbumService:
             cached_album_info = await self._get_cached_album_info(
                 release_group_id, cache_key
             )
-            if cached_album_info:
+            if is_mb_source_current(source_context) and cached_album_info:
                 in_library = await self._current_library_membership(release_group_id)
                 album_thumb = cached_album_info.album_thumb_url
                 if not album_thumb:
@@ -624,8 +661,12 @@ class AlbumService:
         coverage check - pass BACKGROUND_SYNC so a cold-cache finalize never jumps the
         MusicBrainz queue ahead of a user's page load (honest-priority house rule).
         Normally warm: the request flow fetched this at task creation."""
-        _album_source_context.set(capture_mb_source_context())
+        source_context = capture_mb_source_context()
+        _album_source_context.set(source_context)
         release_group_id = await self._provider_album_id(release_group_id)
+        if not is_mb_source_current(source_context):
+            source_context = capture_mb_source_context()
+            _album_source_context.set(source_context)
         try:
             release_group_id = normalize_mb_id(
                 validate_mbid(release_group_id, "album")
@@ -634,18 +675,21 @@ class AlbumService:
             logger.error(f"Invalid album MBID: {e}")
             raise
 
+        inflight_key = self._album_inflight_key(release_group_id, source_context)
         try:
             tracks_cache_key = f"{ALBUM_TRACKS_INFO_PREFIX}{release_group_id}"
             cached_tracks = await self._cache.get(tracks_cache_key)
+            if not is_mb_source_current(source_context):
+                cached_tracks = None
             if cached_tracks is not None:
                 return cached_tracks
 
-            if release_group_id in self._tracks_in_flight:
-                return await asyncio.shield(self._tracks_in_flight[release_group_id])
+            if inflight_key in self._tracks_in_flight:
+                return await asyncio.shield(self._tracks_in_flight[inflight_key])
 
             loop = asyncio.get_running_loop()
             future: asyncio.Future[AlbumTracksInfo] = loop.create_future()
-            self._tracks_in_flight[release_group_id] = future
+            self._tracks_in_flight[inflight_key] = future
             try:
                 result, is_local = await self._build_album_tracks_info(
                     release_group_id, priority
@@ -658,7 +702,7 @@ class AlbumService:
                         else settings.cache_ttl_album_non_library
                     )
                     await mb_publish_if_current(
-                        _album_source_context.get(),
+                        source_context,
                         lambda: self._cache.set(
                             tracks_cache_key, result, ttl_seconds=ttl
                         ),
@@ -672,7 +716,7 @@ class AlbumService:
                     # like 404s, so without this guard a transient outage
                     # would pin "no tracks" for 10 minutes (F-MATCH-05).
                     await mb_publish_if_current(
-                        _album_source_context.get(),
+                        source_context,
                         lambda: self._cache.set(
                             tracks_cache_key, result, ttl_seconds=600
                         ),
@@ -690,7 +734,8 @@ class AlbumService:
                     future.exception()
                 raise
             finally:
-                self._tracks_in_flight.pop(release_group_id, None)
+                if self._tracks_in_flight.get(inflight_key) is future:
+                    self._tracks_in_flight.pop(inflight_key, None)
 
         except ValueError:
             raise
@@ -1219,8 +1264,7 @@ class AlbumService:
         await self._cache.delete(f"{ALBUM_TRACKS_INFO_PREFIX}{release_group_id}")
         await self._cache.delete(f"{LIBRARY_ALBUM_DETAILS_PREFIX}{release_group_id}")
         await self._disk_cache.delete_album(release_group_id)
-        self._album_in_flight.pop(release_group_id, None)
-        self._tracks_in_flight.pop(release_group_id, None)
+        self._clear_album_inflight(release_group_id)
 
     async def set_edition_pin(
         self, release_group_id: str, release_mbid: str, user_id: str | None

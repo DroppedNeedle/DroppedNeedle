@@ -11,14 +11,16 @@ from api.v1.schemas.discover import (
     DiscoverQueueEnrichment,
     DiscoverQueueItemLight,
     DiscoverQueueResponse,
+    QueueGenerateResponse,
 )
+from repositories import musicbrainz_base as mb_base
 from services.discover_queue_manager import DiscoverQueueManager, QueueBuildStatus
 from infrastructure.persistence.discovery_snapshot_store import DiscoverySnapshotStore
 
 _UID = "u1"
 
 
-def _make_queue(n: int = 3) -> DiscoverQueueResponse:
+def _make_queue(n: int = 3, queue_id: str = "test-queue-id") -> DiscoverQueueResponse:
     return DiscoverQueueResponse(
         items=[
             DiscoverQueueItemLight(
@@ -31,7 +33,7 @@ def _make_queue(n: int = 3) -> DiscoverQueueResponse:
             )
             for i in range(n)
         ],
-        queue_id="test-queue-id",
+        queue_id=queue_id,
     )
 
 
@@ -361,3 +363,137 @@ async def test_build_prewarm_failure_does_not_break_queue():
 
     assert mgr.get_status(_UID).status == "ready"
     assert mgr.get_queue(_UID) is not None
+
+
+@pytest.mark.asyncio
+async def test_source_switch_fences_old_build_and_snapshot():
+    original_source = mb_base.get_mb_api_base()
+    mb_base.set_mb_api_base("https://old.example/ws/2")
+    old_generation = mb_base.get_mb_source_generation()
+    old_started = asyncio.Event()
+    old_gate = asyncio.Event()
+
+    old_queue = _make_queue(1, queue_id="old-queue")
+    new_queue = _make_queue(1, queue_id="new-queue")
+
+    async def build_queue(*_args, **_kwargs):
+        if mb_base.get_mb_source_generation() == old_generation:
+            old_started.set()
+            await old_gate.wait()
+            return old_queue
+        return new_queue
+
+    discover = AsyncMock()
+    discover.build_queue.side_effect = build_queue
+    discover.enrich_queue_item = AsyncMock(return_value=DiscoverQueueEnrichment())
+    prefs = MagicMock()
+    adv = MagicMock()
+    adv.discover_queue_ttl = 86400
+    prefs.get_advanced_settings.return_value = adv
+    snapshot_store = AsyncMock()
+    snapshot_store.get_with_stale.return_value = None
+    snapshot_store.delete_source_dependent_snapshots = AsyncMock()
+    mgr = DiscoverQueueManager(discover, prefs, snapshot_store=snapshot_store)
+
+    try:
+        await mgr.start_build(_UID)
+        await old_started.wait()
+        old_state = mgr._states[_UID]
+        old_task = old_state.task
+
+        async with mb_base.mb_source_commit_lock:
+            await snapshot_store.delete_source_dependent_snapshots()
+            mb_base.set_mb_api_base("https://new.example/ws/2")
+        assert snapshot_store.delete_source_dependent_snapshots.await_count == 1
+
+        result = await mgr.start_build(_UID)
+        assert result.action == "started"
+        new_task = mgr._states[_UID].task
+        assert new_task is not old_task
+        await mgr.wait_for_build(_UID)
+
+        old_gate.set()
+        await old_task
+
+        built_queue = mgr.get_queue(_UID)
+        assert built_queue is not None
+        assert built_queue.queue_id == "new-queue"
+        assert snapshot_store.save.await_count == 1
+        assert snapshot_store.save.await_args.args[0] == "discover_queue:u1"
+        assert b"new-queue" in snapshot_store.save.await_args.args[2]
+        assert b"old-queue" not in snapshot_store.save.await_args.args[2]
+        assert snapshot_store.save.await_args.args[3] == mgr._states[_UID].built_at
+    finally:
+        old_gate.set()
+        mb_base.set_mb_api_base(original_source)
+
+
+@pytest.mark.asyncio
+async def test_consume_delete_cannot_remove_new_source_snapshot():
+    original_source = mb_base.get_mb_api_base()
+    mb_base.set_mb_api_base("https://old.example/ws/2")
+    old_generation = mb_base.get_mb_source_generation()
+    old_queue = _make_queue(1, queue_id="old-queue")
+    new_queue = _make_queue(1, queue_id="new-queue")
+    delete_started = asyncio.Event()
+    release_delete = asyncio.Event()
+    snapshots: dict[str, bytes] = {}
+
+    async def build_queue(*_args, **_kwargs):
+        return (
+            old_queue
+            if mb_base.get_mb_source_generation() == old_generation
+            else new_queue
+        )
+
+    async def save_snapshot(
+        key: str, _user_id: str, payload: bytes, _built_at: float
+    ) -> None:
+        snapshots[key] = payload
+
+    async def delete_snapshot(key: str) -> None:
+        delete_started.set()
+        await release_delete.wait()
+        snapshots.pop(key, None)
+
+    discover = AsyncMock()
+    discover.build_queue.side_effect = build_queue
+    discover.enrich_queue_item = AsyncMock(return_value=DiscoverQueueEnrichment())
+    prefs = MagicMock()
+    adv = MagicMock()
+    adv.discover_queue_ttl = 86400
+    prefs.get_advanced_settings.return_value = adv
+    snapshot_store = AsyncMock()
+    snapshot_store.get_with_stale.return_value = None
+    snapshot_store.save.side_effect = save_snapshot
+    snapshot_store.delete.side_effect = delete_snapshot
+    mgr = DiscoverQueueManager(discover, prefs, snapshot_store=snapshot_store)
+    consume_task: asyncio.Task[DiscoverQueueResponse | None] | None = None
+    new_start_task: asyncio.Task[QueueGenerateResponse] | None = None
+
+    try:
+        await mgr.start_build(_UID)
+        await mgr.wait_for_build(_UID)
+        consume_task = asyncio.create_task(mgr.consume_queue(_UID))
+        await delete_started.wait()
+
+        mb_base.set_mb_api_base("https://new.example/ws/2")
+        new_start_task = asyncio.create_task(mgr.start_build(_UID))
+        await asyncio.sleep(0)
+        assert not new_start_task.done()
+
+        release_delete.set()
+        consumed = await consume_task
+        assert consumed is not None
+        assert consumed.queue_id == "old-queue"
+        assert (await new_start_task).action == "started"
+        await mgr.wait_for_build(_UID)
+
+        assert b"new-queue" in snapshots["discover_queue:u1"]
+    finally:
+        release_delete.set()
+        if consume_task and not consume_task.done():
+            await consume_task
+        if new_start_task and not new_start_task.done():
+            await new_start_task
+        mb_base.set_mb_api_base(original_source)

@@ -2,13 +2,17 @@
 
 from types import SimpleNamespace
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from infrastructure.cache.cache_keys import (
     ALBUM_INFO_PREFIX,
+    ARTIST_DISCOVERY_PREFIX,
+    ARTIST_DISCOVERY_TOP_ALBUMS_PREFIX,
+    ARTIST_DISCOVERY_TOP_SONGS_PREFIX,
     ARTIST_INFO_PREFIX,
+    DISCOVER_QUEUE_ENRICH_PREFIX,
     DISCOVER_RESPONSE_PREFIX,
     GENRE_ARTIST_PREFIX,
     HOME_RESPONSE_PREFIX,
@@ -450,23 +454,33 @@ async def test_musicbrainz_settings_endpoint_change_resets_and_clears(
     service, cache = await _build_service(disk_cache)
     _seed_mb_live_state(_mb_settings("https://mb-a.example/ws/2", 2.0, 4))
     reset, clear = _spy_mb_side_effects(monkeypatch)
+    from services.search_service import SearchService
 
+    search_clear = MagicMock()
+    monkeypatch.setattr(SearchService, "clear_cached_results", search_clear)
     mb_keys = [f"{p}endpoint" for p in musicbrainz_prefixes()]
-    assert len(mb_keys) == 24
-    # QW10/C2 regression guard: ALBUM_INFO must be part of the bulk sweep.
+    assert len(mb_keys) == 27
+    # Source switches clear only MusicBrainz-backed discovery categories.
+    assert ARTIST_DISCOVERY_TOP_SONGS_PREFIX in musicbrainz_prefixes()
+    assert ARTIST_DISCOVERY_TOP_ALBUMS_PREFIX in musicbrainz_prefixes()
+    assert ARTIST_DISCOVERY_PREFIX not in musicbrainz_prefixes()
     assert ALBUM_INFO_PREFIX in musicbrainz_prefixes()
+    assert DISCOVER_QUEUE_ENRICH_PREFIX in musicbrainz_prefixes()
     album_info_key = f"{ALBUM_INFO_PREFIX}rg-endpoint"
-    await _populate(cache, mb_keys + [album_info_key])
+    similar_key = f"{ARTIST_DISCOVERY_PREFIX}similar:artist:10:listenbrainz"
+    await _populate(cache, mb_keys + [album_info_key, similar_key])
 
     await service.on_musicbrainz_settings_changed(
         _mb_settings("https://mb-b.example/ws/2", 2.0, 4)
     )
     assert await cache.get(album_info_key) is None
+    assert await cache.get(similar_key) == "v"
 
     from repositories.musicbrainz_base import get_mb_api_base
 
     reset.assert_called_once()
     clear.assert_called_once()
+    search_clear.assert_called_once()
     assert get_mb_api_base() == "https://mb-b.example/ws/2"
     for key in mb_keys:
         assert await cache.get(key) is None
@@ -622,7 +636,7 @@ async def test_musicbrainz_settings_clear_failure_leaves_live_state_for_retry(
 
     await service.on_musicbrainz_settings_changed(new_settings)
 
-    assert calls == 25
+    assert calls == 28
     assert get_mb_api_base() == new_settings.api_url
     assert mb_rate_limiter.rate == new_settings.rate_limit
     assert mb_rate_limiter.capacity == new_settings.concurrent_searches

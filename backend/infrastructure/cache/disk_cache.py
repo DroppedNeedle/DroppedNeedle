@@ -324,17 +324,35 @@ class DiskMetadataCache:
     async def get_album(self, musicbrainz_id: str) -> dict[str, Any] | None:
         return await self._get_entity("album", musicbrainz_id)
 
+    @staticmethod
+    def _artist_cache_identifier(
+        musicbrainz_id: str, profile: str = "full"
+    ) -> str:
+        if profile == "full":
+            return musicbrainz_id
+        if profile == "basic":
+            return f"{musicbrainz_id}:basic"
+        raise ValueError(f"Unsupported artist cache profile: {profile}")
+
     async def set_artist(
         self,
         musicbrainz_id: str,
         artist_info: Any,
         is_monitored: bool = False,
         ttl_seconds: int | None = None,
+        *,
+        profile: str = "full",
     ) -> None:
-        await self._set_entity("artist", musicbrainz_id, artist_info, is_monitored, ttl_seconds)
+        identifier = self._artist_cache_identifier(musicbrainz_id, profile)
+        await self._set_entity(
+            "artist", identifier, artist_info, is_monitored, ttl_seconds
+        )
 
-    async def get_artist(self, musicbrainz_id: str) -> dict[str, Any] | None:
-        return await self._get_entity("artist", musicbrainz_id)
+    async def get_artist(
+        self, musicbrainz_id: str, *, profile: str = "full"
+    ) -> dict[str, Any] | None:
+        identifier = self._artist_cache_identifier(musicbrainz_id, profile)
+        return await self._get_entity("artist", identifier)
 
     async def set_audiodb_artist(
         self,
@@ -365,10 +383,22 @@ class DiskMetadataCache:
         await asyncio.to_thread(self._delete_file_pair, recent_path)
         await asyncio.to_thread(self._delete_file_pair, persistent_path)
 
-    async def delete_artist(self, musicbrainz_id: str) -> None:
-        recent_path, persistent_path = self._entity_paths("artist", musicbrainz_id)
-        await asyncio.to_thread(self._delete_file_pair, recent_path)
-        await asyncio.to_thread(self._delete_file_pair, persistent_path)
+    async def delete_artist(
+        self, musicbrainz_id: str, *, profile: str | None = None
+    ) -> None:
+        profiles = ("full", "basic") if profile is None else (profile,)
+        identifiers = [
+            self._artist_cache_identifier(musicbrainz_id, current_profile)
+            for current_profile in profiles
+        ]
+
+        def operation() -> None:
+            for identifier in identifiers:
+                recent_path, persistent_path = self._entity_paths("artist", identifier)
+                self._delete_file_pair(recent_path)
+                self._delete_file_pair(persistent_path)
+
+        await asyncio.to_thread(operation)
 
     async def delete_entity(self, entity_type: str, identifier: str) -> None:
         recent_path, persistent_path = self._entity_paths(entity_type, identifier)

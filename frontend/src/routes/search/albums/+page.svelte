@@ -31,6 +31,8 @@
 
 	let { data }: Props = $props();
 
+	let normalizedQuery = $derived(data.query.trim());
+
 	let albums: Album[] = $state([]);
 	let topAlbum: Album | null = $state(null);
 	let loading = $state(false);
@@ -48,18 +50,18 @@
 	let statusNotice = $derived(getSearchStatusNotice(remoteStatus, 'albums', false));
 
 	function navigateBack() {
-		if (data.query) {
-			goto(withBasePath(`/search?q=${encodeURIComponent(data.query)}`));
+		if (normalizedQuery) {
+			goto(withBasePath(`/search?q=${encodeURIComponent(normalizedQuery)}`));
 		}
 	}
 
 	function navigateToBucket(bucket: 'artists') {
-		if (data.query) {
-			goto(withBasePath(`/search/${bucket}?q=${encodeURIComponent(data.query)}`));
+		if (normalizedQuery) {
+			goto(withBasePath(`/search/${bucket}?q=${encodeURIComponent(normalizedQuery)}`));
 		}
 	}
 	function retryRemoteSearch() {
-		if (loading || !data.query) return;
+		if (loading || !normalizedQuery) return;
 		replaceOnNextLoad = true;
 		offset = 0;
 		hasMore = true;
@@ -83,7 +85,7 @@
 	});
 
 	async function loadMore() {
-		if (loading || !hasMore || !data.query) return;
+		if (loading || !hasMore || !normalizedQuery) return;
 
 		loading = true;
 		const requestOffset = offset;
@@ -93,10 +95,9 @@
 			abortController.abort();
 		}
 		abortController = new AbortController();
-
 		try {
 			const responseData = await api.global.get<SearchBucketResponse<Album>>(
-				API.search.albums(data.query, limit, requestOffset),
+				API.search.albums(normalizedQuery, limit, requestOffset),
 				{ signal: abortController.signal }
 			);
 
@@ -151,7 +152,7 @@
 			observer = null;
 		}
 
-		const cache = searchStore.getCache(data.query, { allowStale: true });
+		const cache = searchStore.getCache(normalizedQuery, { allowStale: true });
 		if (cache && cache.albums.length > 0) {
 			albums = cache.albums;
 			topAlbum = cache.topAlbum ?? null;
@@ -173,10 +174,9 @@
 			void loadMore();
 		}
 	}
-
 	run(() => {
-		if (browser && data.query && data.query !== lastQuery) {
-			lastQuery = data.query;
+		if (browser && normalizedQuery && normalizedQuery !== lastQuery) {
+			lastQuery = normalizedQuery;
 			resetAndLoad();
 		}
 	});
@@ -244,9 +244,8 @@
 		</button>
 	</div>
 </div>
-
 <section class="px-8 py-4">
-	{#if data.query && statusNotice}
+	{#if normalizedQuery && statusNotice}
 		<div class="alert {statusNotice.className} mb-3" role="status">
 			<span>{statusNotice.message}</span>
 			<button class="btn btn-sm" onclick={retryRemoteSearch}>
@@ -254,7 +253,7 @@
 			</button>
 		</div>
 	{/if}
-	{#if !data.query}
+	{#if !normalizedQuery}
 		<p class="text-center mt-32 text-gray-400">Enter a search query to get started.</p>
 	{:else if loading && albums.length === 0}
 		<div class="bg-base-200 rounded-box p-4">

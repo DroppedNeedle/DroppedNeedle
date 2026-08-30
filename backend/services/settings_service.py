@@ -767,7 +767,14 @@ class SettingsService:
                 )
                 if discovery_snapshot_store is not None:
                     await discovery_snapshot_store.delete_source_dependent_snapshots()
+                # SearchService keeps process-local fresh and stale bucket
+                # entries outside the shared cache prefixes. Clear them before
+                # committing the new source so no old response is readable
+                # after a successful switch; generation-aware keys also fence
+                # calls that were already in flight.
+                from services.search_service import SearchService
 
+                SearchService.clear_cached_results()
             # Apply only after every source-switch clear succeeds, and keep the
             # live mutations synchronous while the source commit lock is held.
             set_mb_api_base(settings.api_url)

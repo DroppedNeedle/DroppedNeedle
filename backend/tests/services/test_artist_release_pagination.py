@@ -1,7 +1,9 @@
 """Service-level tests for filter-aware artist release pagination."""
 
+import asyncio
 import os
 import tempfile
+from types import SimpleNamespace
 from typing import Any
 
 os.environ.setdefault("ROOT_APP_DIR", tempfile.mkdtemp())
@@ -11,6 +13,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 from core.exceptions import ClientDisconnectedError
 from infrastructure.cache.cache_keys import mb_artist_release_groups_key
+from infrastructure.cache.memory_cache import InMemoryCache
+from infrastructure.queue.priority_queue import RequestPriority
+from repositories.musicbrainz_artist import MusicBrainzArtistMixin
+from repositories.musicbrainz_base import capture_mb_source_context
 from services.artist_service import ArtistService
 
 
@@ -71,6 +77,14 @@ def _make_service(
     else:
         mb_repo.get_artist_release_groups = AsyncMock(return_value=([], 0))
 
+    async def get_artist_release_groups_with_context(*args, **kwargs):
+        kwargs.pop("preserve_fetch_width", None)
+        groups, total = await mb_repo.get_artist_release_groups(*args, **kwargs)
+        return groups, total, capture_mb_source_context()
+
+    mb_repo.get_artist_release_groups_with_context = AsyncMock(
+        side_effect=get_artist_release_groups_with_context
+    )
     library_repo = MagicMock()
     library_repo.is_configured.return_value = False
     library_repo.get_library_mbids = AsyncMock(return_value=set())
@@ -88,7 +102,7 @@ def _make_service(
     disk_cache.get_artist = AsyncMock(return_value=None)
     disk_cache.set_artist = AsyncMock()
 
-    return ArtistService(
+    service = ArtistService(
         mb_repo=mb_repo,
         library_repo=library_repo,
         wikidata_repo=wikidata_repo,
@@ -96,10 +110,251 @@ def _make_service(
         memory_cache=memory_cache,
         disk_cache=disk_cache,
     )
+    service.test_mb_repo = mb_repo
+    return service
 
 
 def _collected_list(collected):
     return list(collected.values())
+
+
+async def _cancel_artist_warm_tasks() -> None:
+    from core.task_registry import TaskRegistry
+
+    registry = TaskRegistry.get_instance()
+    names = [
+        name
+        for name in registry.get_all()
+        if name.startswith(f"mb-rg-warm-{ARTIST_MBID.casefold()}:")
+    ]
+    for name in names:
+        await registry.cancel(name)
+
+
+@pytest.mark.asyncio
+async def test_warm_seed_reuses_page_zero_and_clears_after_cancellation():
+    await _cancel_artist_warm_tasks()
+    page = [
+        _make_release_group(f"rg-{i}", f"Album {i}", "Album")
+        for i in range(100)
+    ]
+    cache, store = _make_dict_cache()
+    svc = _make_service(memory_cache=cache)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[int] = []
+
+    async def fetch(_artist, offset, _limit, **_kwargs):
+        calls.append(offset)
+        if offset == 0:
+            return page, 200
+        started.set()
+        await release.wait()
+        return page, 200
+
+    svc.test_mb_repo.get_artist_release_groups = AsyncMock(side_effect=fetch)
+    try:
+        first = await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        assert first.warming is True
+        await started.wait()
+
+        second = await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        assert second.warming is True
+        assert calls == [0, 100]
+
+        await _cancel_artist_warm_tasks()
+        await asyncio.sleep(0)
+        assert not svc._release_group_warm_seeds
+        assert mb_artist_release_groups_key(ARTIST_MBID) not in store
+    finally:
+        release.set()
+        await _cancel_artist_warm_tasks()
+
+
+@pytest.mark.asyncio
+async def test_warm_seed_clears_after_failure_and_retries_page_zero():
+    await _cancel_artist_warm_tasks()
+    page = [
+        _make_release_group(f"rg-{i}", f"Album {i}", "Album")
+        for i in range(100)
+    ]
+    cache, _store = _make_dict_cache()
+    svc = _make_service(memory_cache=cache)
+    calls: list[int] = []
+
+    async def fail_warm(_artist, offset, _limit, **_kwargs):
+        calls.append(offset)
+        if offset == 0:
+            return page, 200
+        raise RuntimeError("warm failed")
+
+    svc.test_mb_repo.get_artist_release_groups = AsyncMock(side_effect=fail_warm)
+    try:
+        first = await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        assert first.warming is True
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not svc._release_group_warm_seeds
+
+        await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        assert calls.count(0) == 2
+    finally:
+        await _cancel_artist_warm_tasks()
+
+
+@pytest.mark.asyncio
+async def test_warm_seed_source_change_rejects_late_write(monkeypatch):
+    await _cancel_artist_warm_tasks()
+    from repositories import musicbrainz_base as mb_base
+
+    page = [
+        _make_release_group(f"rg-{i}", f"Album {i}", "Album")
+        for i in range(100)
+    ]
+    cache, store = _make_dict_cache()
+    svc = _make_service(memory_cache=cache)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fetch(_artist, offset, _limit, **_kwargs):
+        if offset == 0:
+            return page, 200
+        started.set()
+        await release.wait()
+        return page, 200
+
+    svc.test_mb_repo.get_artist_release_groups = AsyncMock(side_effect=fetch)
+    old_generation = mb_base.get_mb_source_generation()
+    try:
+        first = await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        assert first.warming is True
+        await started.wait()
+
+        monkeypatch.setattr(mb_base, "_mb_api_base", "https://new.example/ws/2")
+        monkeypatch.setattr(mb_base, "_mb_source_generation", old_generation + 1)
+        release.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert not svc._release_group_warm_seeds
+        assert mb_artist_release_groups_key(ARTIST_MBID) not in store
+    finally:
+        release.set()
+        await _cancel_artist_warm_tasks()
+
+
+
+@pytest.mark.asyncio
+async def test_delayed_release_page_drops_old_source_groups(monkeypatch):
+    await _cancel_artist_warm_tasks()
+    from repositories import musicbrainz_base as mb_base
+
+    cache, store = _make_dict_cache()
+    svc = _make_service(memory_cache=cache)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    old_group = _make_release_group("rg-old", "Old Source Album", "Album")
+
+    async def fetch(_artist, _offset, _limit, **_kwargs):
+        started.set()
+        await release.wait()
+        return [old_group], 1
+
+    svc.test_mb_repo.get_artist_release_groups = AsyncMock(side_effect=fetch)
+    old_generation = mb_base.get_mb_source_generation()
+    try:
+        task = asyncio.create_task(
+            svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        )
+        await started.wait()
+        monkeypatch.setattr(mb_base, "_mb_api_base", "https://new.example/ws/2")
+        monkeypatch.setattr(mb_base, "_mb_source_generation", old_generation + 1)
+        release.set()
+        result = await task
+
+        assert result.albums == []
+        assert result.singles == []
+        assert result.eps == []
+        assert "Old Source Album" not in str(result)
+        assert mb_artist_release_groups_key(ARTIST_MBID) not in store
+        assert not svc._release_group_warm_seeds
+    finally:
+        release.set()
+        await _cancel_artist_warm_tasks()
+
+
+@pytest.mark.asyncio
+async def test_full_artist_profile_seeds_warm_from_fetched_width(monkeypatch):
+    await _cancel_artist_warm_tasks()
+    import repositories.musicbrainz_artist as artist_module
+
+    repository = MusicBrainzArtistMixin.__new__(MusicBrainzArtistMixin)
+    repository._cache = InMemoryCache(max_entries=100)
+    repository._preferences_service = _make_prefs()
+    repository._warm_release_group_cache = AsyncMock()
+    library_repo = MagicMock()
+    library_repo.get_artist_mbids = AsyncMock(return_value=set())
+    library_repo.get_library_mbids = AsyncMock(return_value=set())
+    library_repo.get_requested_mbids = AsyncMock(return_value=set())
+    disk_cache = AsyncMock()
+    disk_cache.get_artist = AsyncMock(return_value=None)
+    disk_cache.set_artist = AsyncMock()
+    service = ArtistService(
+        mb_repo=repository,
+        library_repo=library_repo,
+        wikidata_repo=AsyncMock(),
+        preferences_service=_make_prefs(),
+        memory_cache=repository._cache,
+        disk_cache=disk_cache,
+    )
+    source_context = capture_mb_source_context()
+    initial_groups = [
+        _make_release_group(f"rg-{index}", f"Album {index}", "Album")
+        for index in range(100)
+    ]
+    continuation_groups = [
+        _make_release_group(f"rg-{index}", f"Album {index}", "Album")
+        for index in range(100, 200)
+    ]
+    offsets: list[int] = []
+    continuation_done = asyncio.Event()
+
+    async def provider(path, params=None, **_kwargs):
+        if path == "/artist/artist-id":
+            return {
+                "id": "artist-id",
+                "name": "Test Artist",
+                "release-group-count": 200,
+            }
+        offsets.append(int((params or {}).get("offset", 0)))
+        if offsets[-1] == 100:
+            continuation_done.set()
+            return SimpleNamespace(
+                release_groups=continuation_groups,
+                release_group_count=200,
+            )
+        return SimpleNamespace(
+            release_groups=initial_groups,
+            release_group_count=200,
+        )
+
+    monkeypatch.setattr(artist_module, "mb_api_get", provider)
+    monkeypatch.setattr(
+        artist_module,
+        "get_mb_response_context",
+        lambda: source_context,
+    )
+
+    result, _library, _albums, _requested = await service._fetch_artist_data(
+        "artist-id",
+        include_releases=True,
+        source_context=source_context,
+    )
+    await continuation_done.wait()
+    await _cancel_artist_warm_tasks()
+
+    assert len(result["release-group-list"]) == 50
+    assert offsets == [0, 100]
 
 
 class TestFilterAwarePagination:
@@ -380,9 +635,8 @@ class TestFilterAwarePagination:
         }
         # The spawned walker (registry name mb-rg-warm-*) is still pending;
         # cancel it so only our explicit completion write lands.
-        from core.task_registry import TaskRegistry
 
-        await TaskRegistry.get_instance().cancel(f"mb-rg-warm-{ARTIST_MBID.casefold()}")
+        await _cancel_artist_warm_tasks()
 
         # ...then complete the walk deterministically ourselves.
         await svc._warm_release_group_pages(

@@ -19,6 +19,7 @@
 	import { createSearchEnrichmentBatcher } from '$lib/utils/searchEnrichmentBatcher';
 	import { getSearchStatusNotice } from '$lib/utils/searchStatus';
 	import {
+		REMOTE_ARTIST_PAGE_SIZE,
 		getLocalAlbumSearchQuery,
 		getLocalArtistSearchQuery,
 		getRemoteAlbumSearchQuery,
@@ -46,9 +47,17 @@
 	const artistQuery = getRemoteArtistSearchQuery(() => normalizedQuery);
 	const albumQuery = getRemoteAlbumSearchQuery(() => normalizedQuery);
 
-	let baseArtists = $derived(
-		mergeSearchArtists(localArtistQuery.data?.items ?? [], artistQuery.data?.results ?? [])
+	let remoteArtists = $derived(
+		(() => {
+			const results = (artistQuery.data?.results ?? []).slice(0, REMOTE_ARTIST_PAGE_SIZE);
+			const top = artistQuery.data?.top_result;
+			if (top && !results.some((artist) => artist.musicbrainz_id === top.musicbrainz_id)) {
+				return [top, ...results.slice(0, REMOTE_ARTIST_PAGE_SIZE - 1)];
+			}
+			return results;
+		})()
 	);
+	let baseArtists = $derived(mergeSearchArtists(localArtistQuery.data?.items ?? [], remoteArtists));
 	let baseAlbums = $derived(
 		mergeSearchAlbums(localAlbumQuery.data?.items ?? [], albumQuery.data?.results ?? [])
 	);
@@ -98,8 +107,8 @@
 	);
 
 	function navigateToBucket(bucket: 'artists' | 'albums') {
-		if (data.query) {
-			goto(withBasePath(`/search/${bucket}?q=${encodeURIComponent(data.query)}`));
+		if (normalizedQuery) {
+			goto(withBasePath(`/search/${bucket}?q=${encodeURIComponent(normalizedQuery)}`));
 		}
 	}
 
@@ -245,7 +254,7 @@
 				<h2 class="text-xl font-bold">Albums</h2>
 				{#if displayedAlbums.length > 0}
 					<a
-						href={`/search/albums?q=${encodeURIComponent(data.query)}`}
+						href={`/search/albums?q=${encodeURIComponent(normalizedQuery)}`}
 						class="text-sm text-primary hover:underline"
 					>
 						View more <ArrowRight class="h-4 w-4 inline align-middle" />

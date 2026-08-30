@@ -13,6 +13,13 @@ from repositories.protocols import (
     MusicBrainzRepositoryProtocol,
     LastFmRepositoryProtocol,
 )
+from repositories.musicbrainz_base import (
+    MbSourceContext,
+    capture_mb_source_context,
+    is_mb_source_current,
+    mb_publish_if_current,
+    normalize_mb_id,
+)
 from services.discover.integration_helpers import IntegrationHelpers
 
 logger = logging.getLogger(__name__)
@@ -36,7 +43,9 @@ class QueueEnrichmentService:
         self._memory_cache = memory_cache
         self._wikidata_repo = wikidata_repo
         self._lfm_repo = lastfm_repo
-        self._enrich_in_flight: dict[str, asyncio.Future[DiscoverQueueEnrichment]] = {}
+        self._enrich_in_flight: dict[
+            tuple[str, int], asyncio.Future[DiscoverQueueEnrichment]
+        ] = {}
         # A2 part 3: LB popularity batch coalescer state (single-process).
         self._popularity_pending: dict[str, "asyncio.Future[int | None]"] = {}
         self._popularity_flush_handle: asyncio.TimerHandle | None = None
@@ -51,21 +60,33 @@ class QueueEnrichmentService:
         """A2 part 1: ``priority`` defaults to BACKGROUND_SYNC - queue
         hydration is background composition and must neither occupy user
         slots nor re-mark user activity (which self-starved its own legs)."""
+        source_context = capture_mb_source_context()
+        release_group_mbid = normalize_mb_id(release_group_mbid)
         cache_key = f"{DISCOVER_QUEUE_ENRICH_PREFIX}{release_group_mbid}"
         if self._memory_cache:
             cached = await self._memory_cache.get(cache_key)
-            if cached is not None and isinstance(cached, DiscoverQueueEnrichment):
+            if (
+                is_mb_source_current(source_context)
+                and cached is not None
+                and isinstance(cached, DiscoverQueueEnrichment)
+            ):
                 return cached
+            if not is_mb_source_current(source_context):
+                source_context = capture_mb_source_context()
 
-        if release_group_mbid in self._enrich_in_flight:
-            return await asyncio.shield(self._enrich_in_flight[release_group_mbid])
+        inflight_key = (release_group_mbid, source_context.generation)
+        if inflight_key in self._enrich_in_flight:
+            return await asyncio.shield(self._enrich_in_flight[inflight_key])
 
         loop = asyncio.get_running_loop()
         future: asyncio.Future[DiscoverQueueEnrichment] = loop.create_future()
-        self._enrich_in_flight[release_group_mbid] = future
+        self._enrich_in_flight[inflight_key] = future
         try:
             result = await self._do_enrich_queue_item(
-                release_group_mbid, cache_key, priority=priority
+                release_group_mbid,
+                cache_key,
+                priority=priority,
+                source_context=source_context,
             )
             if not future.done():
                 future.set_result(result)
@@ -75,7 +96,7 @@ class QueueEnrichmentService:
                 future.set_exception(exc)
             raise
         finally:
-            self._enrich_in_flight.pop(release_group_mbid, None)
+            self._enrich_in_flight.pop(inflight_key, None)
 
     async def _do_enrich_queue_item(
         self,
@@ -83,7 +104,9 @@ class QueueEnrichmentService:
         cache_key: str,
         *,
         priority: RequestPriority = RequestPriority.BACKGROUND_SYNC,
+        source_context: MbSourceContext | None = None,
     ) -> DiscoverQueueEnrichment:
+        source_context = source_context or capture_mb_source_context()
         enrichment = DiscoverQueueEnrichment()
 
         rg_data = await self._mb_repo.get_release_group_by_id(
@@ -307,7 +330,10 @@ class QueueEnrichmentService:
 
         if self._memory_cache:
             enrich_ttl = self._integration.get_queue_settings().enrich_ttl
-            await self._memory_cache.set(cache_key, enrichment, enrich_ttl)
+            await mb_publish_if_current(
+                source_context,
+                lambda: self._memory_cache.set(cache_key, enrichment, enrich_ttl),
+            )
 
         return enrichment
 

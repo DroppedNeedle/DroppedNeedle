@@ -1,6 +1,7 @@
 """Tests that the basic artist info path returns correctly and skips Wikidata enrichment."""
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -81,8 +82,51 @@ def _make_service(
         disk_cache=disk_cache,
     )
     svc.test_memory_cache = memory_cache
+    svc.test_mb_repo = mb_repo
     svc.test_disk_cache = disk_cache
     return svc, wikidata_repo
+
+
+@pytest.mark.asyncio
+async def test_target_release_group_flags_fall_back_to_embedded_artist_name():
+    service, _wikidata = _make_service()
+    ownership = MagicMock()
+    ownership.project_albums = AsyncMock(
+        return_value=[SimpleNamespace(owned=True)]
+    )
+    service._ownership = ownership
+    service._library_repo.get_requested_mbids = AsyncMock(return_value={"rg-1"})
+
+    owned, requested = await service._target_release_group_flags(
+        [
+            {
+                "id": "rg-1",
+                "title": "Album",
+                "artist-credit": [{"artist": {"name": "Embedded Artist"}}],
+            }
+        ],
+        artist_name="",
+    )
+
+    candidate = ownership.project_albums.await_args.args[0][0]
+    assert candidate.album_artist == "Embedded Artist"
+    assert owned == {"rg-1"}
+    assert requested == {"rg-1"}
+
+
+def _make_stateful_profile_service() -> tuple[ArtistService, AsyncMock]:
+    svc, _wikidata = _make_service()
+    entries: dict[str, ArtistInfo] = {}
+
+    async def get(key: str):
+        return entries.get(key)
+
+    async def set_entry(key: str, value: ArtistInfo, **_kwargs):
+        entries[key] = value
+
+    svc._cache.get = AsyncMock(side_effect=get)
+    svc._cache.set = AsyncMock(side_effect=set_entry)
+    return svc, svc.test_mb_repo
 
 
 class TestGetArtistInfoBasic:
@@ -96,6 +140,9 @@ class TestGetArtistInfoBasic:
         assert result.musicbrainz_id == ARTIST_MBID
         assert result.description is None
         assert result.image is None
+        svc.test_mb_repo.get_artist_by_id.assert_awaited_once_with(
+            ARTIST_MBID, include_releases=False
+        )
         wikidata_repo.get_wikidata_info.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -144,8 +191,6 @@ class TestBasicInfoDeferralEquivalence:
         result = await svc.get_artist_info_basic(ARTIST_MBID)
 
         # Memory cache holds the exact object returned, inline on return.
-        # (A3 adds a second, separate write: the seeded mb:artist_rgs page-1
-        # entry from the embedded detail payload.)
         artist_info_writes = [
             call
             for call in svc.test_memory_cache.set.await_args_list
@@ -159,7 +204,7 @@ class TestBasicInfoDeferralEquivalence:
             for call in svc.test_memory_cache.set.await_args_list
             if call.args[0].startswith("mb:artist_rgs:")
         ]
-        assert len(rgs_writes) == 1  # A3 seeding wrote the embedded page-1
+        assert not rgs_writes  # basic profile is detail-only; no warm side effect
 
         # Disk mirror is deferred but completes with the same payload.
         await asyncio.sleep(0)
@@ -168,6 +213,30 @@ class TestBasicInfoDeferralEquivalence:
         disk_args = svc.test_disk_cache.set_artist.await_args
         assert disk_args.args[0] == ARTIST_MBID
         assert msgspec.json.encode(disk_args.args[1]) == msgspec.json.encode(result)
+        assert disk_args.kwargs["profile"] == "basic"
+
+    @pytest.mark.asyncio
+    async def test_corrupt_basic_disk_entry_does_not_delete_full_profile(
+        self, tmp_path
+    ):
+        from infrastructure.cache.disk_cache import DiskMetadataCache
+
+        disk_cache = DiskMetadataCache(base_path=tmp_path)
+        full_payload = {
+            "name": "Full Artist",
+            "musicbrainz_id": ARTIST_MBID,
+        }
+        await disk_cache.set_artist(ARTIST_MBID, full_payload)
+        await disk_cache.set_artist(
+            ARTIST_MBID, {"name": "corrupt-basic"}, profile="basic"
+        )
+
+        svc, _wikidata = _make_service()
+        svc._disk_cache = disk_cache
+
+        assert await svc._get_cached_artist(ARTIST_MBID, profile="basic") is None
+        full_after = await disk_cache.get_artist(ARTIST_MBID)
+        assert full_after == full_payload
 
     @pytest.mark.asyncio
     async def test_deferred_disk_failure_does_not_break_response(self):

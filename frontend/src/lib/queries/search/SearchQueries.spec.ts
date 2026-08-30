@@ -4,26 +4,45 @@ vi.mock('@tanstack/svelte-query', () => ({
 	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory()),
 	queryOptions: vi.fn((opts: Record<string, unknown>) => opts)
 }));
+vi.mock('$lib/api/client', () => ({
+	api: { global: { get: vi.fn() } }
+}));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
 	authStore: { user: { id: 'user-1' } }
 }));
 
-import { CACHE_TTL } from '$lib/constants';
+import { CACHE_TTL, API } from '$lib/constants';
+import { api } from '$lib/api/client';
 import type { Album, Artist, LibraryAlbumSummary, LibraryArtistSummary } from '$lib/types';
 
 import { SearchQueryKeyFactory } from './SearchQueryKeyFactory';
 import {
 	getLocalAlbumSearchQueryOptions,
 	getLocalArtistSearchQueryOptions,
+	getRemoteArtistSearchQueryOptions,
 	mergeSearchAlbums,
 	mergeSearchArtists,
+	REMOTE_ARTIST_PAGE_SIZE,
 	successfulSearchStaleTime,
 	successfulSuggestStaleTime,
 	SEARCH_FAILURE_STALE_TIME_MS
 } from './SearchQueries.svelte';
 
 describe('Search queries', () => {
+	it('uses the bucket-width remote artist profile', async () => {
+		expect(REMOTE_ARTIST_PAGE_SIZE).toBe(24);
+
+		const remote = getRemoteArtistSearchQueryOptions(' Muse ');
+		const options = remote as unknown as {
+			queryKey: unknown;
+			queryFn: (context: { signal: AbortSignal }) => Promise<unknown>;
+		};
+		expect(options.queryKey).toEqual(SearchQueryKeyFactory.artists('user-1', 'muse', 24));
+		const signal = new AbortController().signal;
+		await options.queryFn({ signal });
+		expect(api.global.get).toHaveBeenCalledWith(API.search.artists('Muse', 24), { signal });
+	});
 	it('dimensions every persisted key by user id', () => {
 		expect(SearchQueryKeyFactory.artists('user-a', 'Muse', 6)).toEqual([
 			'search',

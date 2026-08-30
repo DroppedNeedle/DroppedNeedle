@@ -17,6 +17,11 @@ from repositories.protocols import (
     MusicBrainzRepositoryProtocol,
     LibraryRepositoryProtocol,
 )
+from infrastructure.cache.cache_keys import (
+    ARTIST_DISCOVERY_PREFIX,
+    ARTIST_DISCOVERY_TOP_ALBUMS_PREFIX,
+    ARTIST_DISCOVERY_TOP_SONGS_PREFIX,
+)
 from infrastructure.cache.memory_cache import CacheInterface
 from infrastructure.persistence import LibraryDB
 from infrastructure.queue.priority_queue import RequestPriority
@@ -27,6 +32,12 @@ from infrastructure.degradation import (
     clear_degradation_context,
     init_degradation_context,
     try_get_degradation_context,
+)
+from repositories.musicbrainz_base import (
+    MbSourceContext,
+    capture_mb_source_context,
+    is_mb_source_current,
+    mb_publish_if_current,
 )
 from repositories.listenbrainz_repository import lb_popularity_degraded
 
@@ -146,7 +157,7 @@ class ArtistDiscoveryService:
             tuple[str, str, int, str], asyncio.Future[SimilarArtistsResponse]
         ] = {}
         self._top_albums_in_flight: dict[
-            tuple[str, str, int, str], asyncio.Future[TopAlbumsResponse]
+            tuple[str, str, int, str, int], asyncio.Future[TopAlbumsResponse]
         ] = {}
         self._lastfm_repo = lastfm_repo
         self._preferences_service = preferences_service
@@ -250,7 +261,12 @@ class ArtistDiscoveryService:
         count: int,
         source: str,
     ) -> str:
-        return f"artist_discovery:{category}:{artist_mbid}:{count}:{source}"
+        prefix = {
+            "similar": f"{ARTIST_DISCOVERY_PREFIX}similar:",
+            "top_songs": ARTIST_DISCOVERY_TOP_SONGS_PREFIX,
+            "top_albums": ARTIST_DISCOVERY_TOP_ALBUMS_PREFIX,
+        }[category]
+        return f"{prefix}{artist_mbid}:{count}:{source}"
 
     async def get_similar_artists(
         self,
@@ -399,13 +415,16 @@ class ArtistDiscoveryService:
         source: Literal["listenbrainz", "lastfm"] | None = None,
         user_id: str | None = None,
     ) -> TopSongsResponse:
+        source_context = capture_mb_source_context()
         effective_source = self._resolve_source(source)
         cache_key = self._build_cache_key(
             "top_songs", artist_mbid, count, effective_source
         )
         cached = await self._cache.get(cache_key)
-        if cached is not None:
+        if is_mb_source_current(source_context) and cached is not None:
             return cached
+        if not is_mb_source_current(source_context):
+            source_context = capture_mb_source_context()
 
         lb_unavailable = False
         if effective_source == "lastfm":
@@ -494,7 +513,12 @@ class ArtistDiscoveryService:
             or lb_unavailable
         )
         if _degraded and not result.songs:
-            await self._cache.set(cache_key, result, ttl_seconds=CIRCUIT_OPEN_CACHE_TTL)
+            await mb_publish_if_current(
+                source_context,
+                lambda: self._cache.set(
+                    cache_key, result, ttl_seconds=CIRCUIT_OPEN_CACHE_TTL
+                ),
+            )
             return result
         in_library = await self._is_library_artist(artist_mbid)
         ttl = (
@@ -502,7 +526,10 @@ class ArtistDiscoveryService:
             if result.songs
             else self._get_empty_discovery_ttl()
         )
-        await self._cache.set(cache_key, result, ttl_seconds=ttl)
+        await mb_publish_if_current(
+            source_context,
+            lambda: self._cache.set(cache_key, result, ttl_seconds=ttl),
+        )
         return result
 
     async def get_top_albums(
@@ -512,20 +539,26 @@ class ArtistDiscoveryService:
         source: Literal["listenbrainz", "lastfm"] | None = None,
         user_id: str | None = None,
     ) -> TopAlbumsResponse:
+        source_context = capture_mb_source_context()
         effective_source = self._resolve_source(source)
         cache_key = self._build_cache_key(
             "top_albums", artist_mbid, count, effective_source
         )
         cached = await self._cache.get(cache_key)
-        if cached is not None:
+        if is_mb_source_current(source_context) and cached is not None:
             return cached
+        if not is_mb_source_current(source_context):
+            source_context = capture_mb_source_context()
 
-        # A2 part 4 (B5): same stampede map as /similar above.
-        stampede_key: tuple[str, str, int, str] = (
+        # A2 part 4 (B5): same stampede map as /similar above, with the
+        # MusicBrainz source generation preventing a post-switch follower from
+        # joining an old MB-backed fallback.
+        stampede_key: tuple[str, str, int, str, int] = (
             "top_albums",
             artist_mbid,
             count,
             effective_source,
+            source_context.generation,
         )
         current_task = asyncio.current_task()
         existing = self._top_albums_in_flight.get(stampede_key)
@@ -533,7 +566,12 @@ class ArtistDiscoveryService:
             future, owner = existing
             if owner is current_task:
                 return await self._load_top_albums(
-                    artist_mbid, count, effective_source, user_id, cache_key
+                    artist_mbid,
+                    count,
+                    effective_source,
+                    user_id,
+                    cache_key,
+                    source_context=source_context,
                 )
             return await asyncio.shield(future)
 
@@ -542,7 +580,12 @@ class ArtistDiscoveryService:
         self._top_albums_in_flight[stampede_key] = (future, current_task)
         try:
             result = await self._load_top_albums(
-                artist_mbid, count, effective_source, user_id, cache_key
+                artist_mbid,
+                count,
+                effective_source,
+                user_id,
+                cache_key,
+                source_context=source_context,
             )
             if not future.done():
                 future.set_result(result)
@@ -562,7 +605,10 @@ class ArtistDiscoveryService:
         effective_source: Literal["listenbrainz", "lastfm"],
         user_id: str | None,
         cache_key: str,
+        *,
+        source_context: MbSourceContext | None = None,
     ) -> TopAlbumsResponse:
+        source_context = source_context or capture_mb_source_context()
         lb_unavailable = False
         if effective_source == "lastfm":
             lastfm_repo = await self._resolve_lastfm(user_id)
@@ -679,7 +725,12 @@ class ArtistDiscoveryService:
             or lb_unavailable
         )
         if _degraded and not result.albums:
-            await self._cache.set(cache_key, result, ttl_seconds=CIRCUIT_OPEN_CACHE_TTL)
+            await mb_publish_if_current(
+                source_context,
+                lambda: self._cache.set(
+                    cache_key, result, ttl_seconds=CIRCUIT_OPEN_CACHE_TTL
+                ),
+            )
             return result
         in_library = await self._is_library_artist(artist_mbid)
         empty_ttl = (
@@ -688,7 +739,10 @@ class ArtistDiscoveryService:
             else self._get_empty_discovery_ttl()
         )
         ttl = self._get_discovery_ttl(in_library) if result.albums else empty_ttl
-        await self._cache.set(cache_key, result, ttl_seconds=ttl)
+        await mb_publish_if_current(
+            source_context,
+            lambda: self._cache.set(cache_key, result, ttl_seconds=ttl),
+        )
         return result
 
     async def _get_top_albums_from_recordings_fallback(

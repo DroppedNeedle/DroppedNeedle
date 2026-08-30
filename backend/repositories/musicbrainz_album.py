@@ -42,6 +42,7 @@ from repositories.musicbrainz_base import (
     mb_deduplicator,
     mb_publish_if_current,
     clear_mb_response_context,
+    capture_mb_source_context,
     dedupe_by_id,
     escape_lucene_phrase,
     get_mb_response_context,
@@ -1322,6 +1323,7 @@ class MusicBrainzAlbumMixin:
         title = " ".join(title.split())
         if not artist or not title:
             return []
+        source_context = capture_mb_source_context()
         cache_key = (
             f"{MB_RECORDING_SEARCH_PREFIX}{artist.lower()}|{title.lower()}:{limit}"
         )
@@ -1329,6 +1331,24 @@ class MusicBrainzAlbumMixin:
         if cached is not None:
             return cached
 
+        dedupe_key = (
+            f"{cache_key}:priority={int(priority)}:g{source_context.generation}"
+        )
+        return await mb_deduplicator.dedupe(
+            dedupe_key,
+            lambda: self._search_recordings_uncached(
+                artist, title, limit, priority, cache_key
+            ),
+        )
+
+    async def _search_recordings_uncached(
+        self,
+        artist: str,
+        title: str,
+        limit: int,
+        priority: RequestPriority,
+        cache_key: str,
+    ) -> list["RecordingMatch"]:
         try:
             result = await mb_api_get(
                 "/recording",
@@ -1376,14 +1396,13 @@ class MusicBrainzAlbumMixin:
                         release_group_mbid=current.release_group_mbid,
                     ):
                         groups_by_id[normalized_rg_id] = candidate
-                groups = list(groups_by_id.values())
                 matches.append(
                     RecordingMatch(
                         recording_mbid=rec_id,
                         title=rec.get("title", ""),
                         artist=extract_artist_name(rec),
                         score=get_score(rec),
-                        release_groups=groups,
+                        release_groups=list(groups_by_id.values()),
                     )
                 )
 
@@ -1430,13 +1449,15 @@ class MusicBrainzAlbumMixin:
         recording_mbid = normalize_mb_id(recording_mbid)
         if not recording_mbid:
             return None
+        source_context = capture_mb_source_context()
         cache_key = f"{MB_RECORDING_TO_RG_PREFIX}{recording_mbid}"
         cached = await self._cache.get(cache_key)
         if cached is not None:
             return cached if cached != "" else None
 
+        dedupe_key = f"{cache_key}:g{source_context.generation}"
         return await mb_deduplicator.dedupe(
-            cache_key,
+            dedupe_key,
             lambda: self._fetch_recording_release_group(recording_mbid, cache_key),
         )
 
@@ -1526,6 +1547,24 @@ class MusicBrainzAlbumMixin:
         cached = await self._cache.get(cache_key)
         if cached is not None:
             return cached
+        source_context = capture_mb_source_context()
+        dedupe_key = (
+            f"{cache_key}:priority={int(RequestPriority.BACKGROUND_SYNC)}"
+            f":g{source_context.generation}"
+        )
+        return await mb_deduplicator.dedupe(
+            dedupe_key,
+            lambda: self._get_recording_by_id_uncached(
+                recording_id, inc_str, cache_key
+            ),
+        )
+
+    async def _get_recording_by_id_uncached(
+        self,
+        recording_id: str,
+        inc_str: str,
+        cache_key: str,
+    ) -> dict | None:
         try:
             result = await mb_api_get(
                 f"/recording/{recording_id}",

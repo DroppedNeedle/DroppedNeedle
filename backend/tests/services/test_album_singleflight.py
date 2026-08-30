@@ -1,12 +1,12 @@
 import asyncio
 
+import msgspec
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from api.v1.schemas.album import AlbumInfo
+from api.v1.schemas.album import AlbumInfo, AlbumTracksInfo
 from core.exceptions import ResourceNotFoundError
 from services.album_service import AlbumService
-
 
 MBID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
@@ -32,6 +32,7 @@ def _make_service() -> AlbumService:
     disk_cache = MagicMock()
     disk_cache.get_album = AsyncMock(return_value=None)
     disk_cache.set_album = AsyncMock()
+    disk_cache.delete_album = AsyncMock()
     prefs = MagicMock()
     audiodb_img = MagicMock()
     audiodb_img.fetch_and_cache_album_images = AsyncMock(return_value=None)
@@ -86,7 +87,7 @@ class TestAlbumSingleflight:
         svc._do_get_album_info = quick_fetch
 
         await svc.get_album_info(MBID)
-        assert MBID not in svc._album_in_flight
+        assert svc._album_in_flight == {}
 
     @pytest.mark.asyncio
     async def test_singleflight_propagates_exception(self):
@@ -107,7 +108,7 @@ class TestAlbumSingleflight:
         )
 
         assert all(isinstance(r, ResourceNotFoundError) for r in results)
-        assert MBID not in svc._album_in_flight
+        assert svc._album_in_flight == {}
 
     @pytest.mark.asyncio
     async def test_cache_hit_bypasses_singleflight(self):
@@ -177,4 +178,180 @@ class TestAlbumSingleflight:
         gate.set()
         result = await leader_task
         assert isinstance(result, AlbumInfo)
-        assert MBID not in svc._album_in_flight
+        assert svc._album_in_flight == {}
+
+    @pytest.mark.asyncio
+    async def test_source_switch_separates_leaders_and_followers(self, monkeypatch):
+        import repositories.musicbrainz_base as mb_base
+
+        svc = _make_service()
+        old_gate = asyncio.Event()
+        new_gate = asyncio.Event()
+        old_started = asyncio.Event()
+        new_started = asyncio.Event()
+        calls: list[int] = []
+        original_source = mb_base.get_mb_api_base()
+        mb_base.set_mb_api_base("https://old.example/ws/2")
+        old_generation = mb_base.get_mb_source_generation()
+
+        async def fetch(*_args, **_kwargs):
+            generation = mb_base.get_mb_source_generation()
+            calls.append(generation)
+            if generation == old_generation:
+                old_started.set()
+                await old_gate.wait()
+                title = "Old source"
+            else:
+                new_started.set()
+                await new_gate.wait()
+                title = "New source"
+            return msgspec.structs.replace(_fake_album_info(), title=title)
+
+        svc._do_get_album_info = fetch
+        try:
+            old_leader = asyncio.create_task(svc.get_album_info(MBID))
+            await old_started.wait()
+            old_follower = asyncio.create_task(svc.get_album_info(MBID))
+            await asyncio.sleep(0)
+
+            mb_base.set_mb_api_base("https://new.example/ws/2")
+            new_generation = mb_base.get_mb_source_generation()
+            new_leader = asyncio.create_task(svc.get_album_info(MBID))
+            await new_started.wait()
+            new_follower = asyncio.create_task(svc.get_album_info(MBID))
+            await asyncio.sleep(0)
+
+            assert len(svc._album_in_flight) == 2
+            assert (MBID, old_generation) in svc._album_in_flight
+            assert (MBID, new_generation) in svc._album_in_flight
+
+            new_gate.set()
+            new_leader_result, new_follower_result = await asyncio.gather(
+                new_leader, new_follower
+            )
+            old_gate.set()
+            old_leader_result, old_follower_result = await asyncio.gather(
+                old_leader, old_follower
+            )
+        finally:
+            old_gate.set()
+            new_gate.set()
+            mb_base.set_mb_api_base(original_source)
+
+        assert calls == [old_generation, new_generation]
+        assert old_leader_result.title == "Old source"
+        assert old_follower_result.title == "Old source"
+        assert new_leader_result.title == "New source"
+        assert new_follower_result.title == "New source"
+        assert svc._album_in_flight == {}
+
+
+@pytest.mark.asyncio
+async def test_refresh_replacement_does_not_evict_album_singleflight():
+    import repositories.musicbrainz_base as mb_base
+
+    svc = _make_service()
+    old_gate = asyncio.Event()
+    replacement_gate = asyncio.Event()
+    old_started = asyncio.Event()
+    replacement_started = asyncio.Event()
+    calls = 0
+    original_source = mb_base.get_mb_api_base()
+    generation = mb_base.get_mb_source_generation()
+
+    async def fetch(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            old_started.set()
+            await old_gate.wait()
+            return msgspec.structs.replace(_fake_album_info(), title="Old")
+        replacement_started.set()
+        await replacement_gate.wait()
+        return msgspec.structs.replace(_fake_album_info(), title="Replacement")
+
+    svc._do_get_album_info = fetch
+    try:
+        old_leader = asyncio.create_task(svc.get_album_info(MBID))
+        await asyncio.wait_for(old_started.wait(), timeout=1)
+
+        refresh_task = asyncio.create_task(svc.refresh_album(MBID))
+        await asyncio.wait_for(replacement_started.wait(), timeout=1)
+        follower = asyncio.create_task(svc.get_album_info(MBID))
+        await asyncio.sleep(0)
+
+        assert (MBID, generation) in svc._album_in_flight
+        old_gate.set()
+        old_result = await old_leader
+        assert old_result.title == "Old"
+        assert (MBID, generation) in svc._album_in_flight
+
+        replacement_gate.set()
+        refreshed, followed = await asyncio.gather(refresh_task, follower)
+        assert refreshed.title == "Replacement"
+        assert followed.title == "Replacement"
+        assert calls == 2
+        assert svc._album_in_flight == {}
+    finally:
+        old_gate.set()
+        replacement_gate.set()
+        mb_base.set_mb_api_base(original_source)
+
+
+@pytest.mark.asyncio
+async def test_refresh_replacement_does_not_evict_tracks_singleflight():
+    import repositories.musicbrainz_base as mb_base
+
+    svc = _make_service()
+    old_gate = asyncio.Event()
+    replacement_gate = asyncio.Event()
+    old_started = asyncio.Event()
+    replacement_started = asyncio.Event()
+    calls = 0
+    original_source = mb_base.get_mb_api_base()
+    generation = mb_base.get_mb_source_generation()
+    old_tracks = AlbumTracksInfo(total_tracks=1)
+    replacement_tracks = AlbumTracksInfo(total_tracks=2)
+
+    async def build_tracks(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            old_started.set()
+            await old_gate.wait()
+            return old_tracks, False
+        replacement_started.set()
+        await replacement_gate.wait()
+        return replacement_tracks, False
+
+    svc._build_album_tracks_info = build_tracks
+    svc.get_album_info = AsyncMock(return_value=_fake_album_info())
+    try:
+        old_leader = asyncio.create_task(svc.get_album_tracks_info(MBID))
+        await asyncio.wait_for(old_started.wait(), timeout=1)
+
+        refresh_task = asyncio.create_task(svc.refresh_album(MBID))
+        await refresh_task
+        replacement_leader = asyncio.create_task(svc.get_album_tracks_info(MBID))
+        await asyncio.wait_for(replacement_started.wait(), timeout=1)
+        follower = asyncio.create_task(svc.get_album_tracks_info(MBID))
+        await asyncio.sleep(0)
+
+        assert (MBID, generation) in svc._tracks_in_flight
+        old_gate.set()
+        old_result = await old_leader
+        assert old_result.total_tracks == 1
+        assert (MBID, generation) in svc._tracks_in_flight
+
+        replacement_gate.set()
+        replacement_result, followed = await asyncio.gather(
+            replacement_leader, follower
+        )
+        assert replacement_result.total_tracks == 2
+        assert followed.total_tracks == 2
+        assert calls == 2
+        assert svc._tracks_in_flight == {}
+    finally:
+        old_gate.set()
+        replacement_gate.set()
+        mb_base.set_mb_api_base(original_source)

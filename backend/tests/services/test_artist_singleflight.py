@@ -83,7 +83,7 @@ class TestArtistSingleflight:
         svc._do_get_artist_info = quick_fetch
 
         await svc.get_artist_info(MBID)
-        assert MBID not in svc._artist_in_flight
+        assert not svc._artist_in_flight
 
     @pytest.mark.asyncio
     async def test_singleflight_propagates_exception(self):
@@ -104,7 +104,7 @@ class TestArtistSingleflight:
         )
 
         assert all(isinstance(r, ExternalServiceError) for r in results)
-        assert MBID not in svc._artist_in_flight
+        assert not svc._artist_in_flight
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("path", ["full", "basic"])
@@ -138,7 +138,7 @@ class TestArtistSingleflight:
             context.get("message") == "Future exception was never retrieved"
             for context in unhandled
         )
-        assert MBID not in in_flight
+        assert not in_flight
 
     @pytest.mark.asyncio
     async def test_cancelled_follower_does_not_cancel_leader(self):
@@ -164,7 +164,7 @@ class TestArtistSingleflight:
 
         release.set()
         assert await leader is fake
-        assert MBID not in svc._artist_in_flight
+        assert not svc._artist_in_flight
 
     @pytest.mark.asyncio
     async def test_cache_hit_bypasses_singleflight(self):

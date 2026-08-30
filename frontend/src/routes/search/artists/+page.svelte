@@ -24,6 +24,7 @@
 	import { getSearchStatusNotice } from '$lib/utils/searchStatus';
 	import { updatePaginatedSearchResults } from '$lib/utils/paginatedSearchResults';
 	import { RefreshCw } from 'lucide-svelte';
+	import { REMOTE_ARTIST_PAGE_SIZE } from '$lib/queries/search/SearchQueries.svelte';
 
 	interface Props {
 		data: { query: string };
@@ -31,12 +32,14 @@
 
 	let { data }: Props = $props();
 
+	let normalizedQuery = $derived(data.query.trim());
+
 	let artists: Artist[] = $state([]);
 	let topArtist: Artist | null = $state(null);
 	let loading = $state(false);
 	let hasMore = $state(true);
 	let offset = 0;
-	const limit = 24;
+	const limit = REMOTE_ARTIST_PAGE_SIZE;
 	let sentinel = $state<HTMLElement>();
 	let abortController: AbortController | null = null;
 	let observer: IntersectionObserver | null = null;
@@ -47,18 +50,18 @@
 	let statusNotice = $derived(getSearchStatusNotice(remoteStatus, 'artists', false));
 
 	function navigateBack() {
-		if (data.query) {
-			goto(withBasePath(`/search?q=${encodeURIComponent(data.query)}`));
+		if (normalizedQuery) {
+			goto(withBasePath(`/search?q=${encodeURIComponent(normalizedQuery)}`));
 		}
 	}
 
 	function navigateToBucket(bucket: 'albums') {
-		if (data.query) {
-			goto(withBasePath(`/search/${bucket}?q=${encodeURIComponent(data.query)}`));
+		if (normalizedQuery) {
+			goto(withBasePath(`/search/${bucket}?q=${encodeURIComponent(normalizedQuery)}`));
 		}
 	}
 	function retryRemoteSearch() {
-		if (loading || !data.query) return;
+		if (loading || !normalizedQuery) return;
 		replaceOnNextLoad = true;
 		offset = 0;
 		hasMore = true;
@@ -75,7 +78,7 @@
 	});
 
 	async function loadMore() {
-		if (loading || !hasMore || !data.query) return;
+		if (loading || !hasMore || !normalizedQuery) return;
 
 		loading = true;
 		const requestOffset = offset;
@@ -88,7 +91,7 @@
 
 		try {
 			const responseData = await api.global.get<SearchBucketResponse<Artist>>(
-				API.search.artists(data.query, limit, requestOffset),
+				API.search.artists(normalizedQuery, limit, requestOffset),
 				{ signal: abortController.signal }
 			);
 
@@ -143,7 +146,7 @@
 			observer = null;
 		}
 
-		const cache = searchStore.getCache(data.query, { allowStale: true });
+		const cache = searchStore.getCache(normalizedQuery, { allowStale: true });
 		if (cache && cache.artists.length > 0) {
 			artists = cache.artists;
 			topArtist = cache.topArtist ?? null;
@@ -167,8 +170,8 @@
 	}
 
 	run(() => {
-		if (browser && data.query && data.query !== lastQuery) {
-			lastQuery = data.query;
+		if (browser && normalizedQuery && normalizedQuery !== lastQuery) {
+			lastQuery = normalizedQuery;
 			resetAndLoad();
 		}
 	});
@@ -238,7 +241,7 @@
 </div>
 
 <section class="px-8 py-4">
-	{#if data.query && statusNotice}
+	{#if normalizedQuery && statusNotice}
 		<div class="alert {statusNotice.className} mb-3" role="status">
 			<span>{statusNotice.message}</span>
 			<button class="btn btn-sm" onclick={retryRemoteSearch}>
@@ -246,7 +249,7 @@
 			</button>
 		</div>
 	{/if}
-	{#if !data.query}
+	{#if !normalizedQuery}
 		<p class="text-center mt-32 text-gray-400">Enter a search query to get started.</p>
 	{:else if loading && artists.length === 0}
 		<div class="bg-base-200 rounded-box p-4">

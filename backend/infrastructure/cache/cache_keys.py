@@ -71,6 +71,8 @@ ALBUM_INFO_PREFIX = "album_info:"
 ALBUM_TRACKS_INFO_PREFIX = "album_tracks_info:"
 
 ARTIST_DISCOVERY_PREFIX = "artist_discovery:"
+ARTIST_DISCOVERY_TOP_SONGS_PREFIX = f"{ARTIST_DISCOVERY_PREFIX}top_songs:"
+ARTIST_DISCOVERY_TOP_ALBUMS_PREFIX = f"{ARTIST_DISCOVERY_PREFIX}top_albums:"
 DISCOVER_QUEUE_ENRICH_PREFIX = "discover_queue_enrich:"
 
 ARTIST_WIKIDATA_PREFIX = "artist_wikidata:"
@@ -174,7 +176,7 @@ def getit_artist_options_key(artist_mbid: str) -> str:
 
 
 def musicbrainz_prefixes() -> list[str]:
-    """All MusicBrainz cache key prefixes for bulk invalidation."""
+    """MusicBrainz source-dependent cache prefixes for bulk invalidation."""
     return [
         MB_ARTIST_SEARCH_PREFIX,
         MB_ARTIST_DETAIL_PREFIX,
@@ -202,6 +204,9 @@ def musicbrainz_prefixes() -> list[str]:
         DISCOVER_RESPONSE_PREFIX,
         ALBUM_INFO_PREFIX,
         ALBUM_TRACKS_INFO_PREFIX,
+        DISCOVER_QUEUE_ENRICH_PREFIX,
+        ARTIST_DISCOVERY_TOP_SONGS_PREFIX,
+        ARTIST_DISCOVERY_TOP_ALBUMS_PREFIX,
     ]
 
 
@@ -326,8 +331,9 @@ def mb_album_search_key(
     return f"{MB_ALBUM_SEARCH_PREFIX}{query}:{limit}:{offset}:{types_str}:{primary_str}"
 
 
-def mb_artist_detail_key(mbid: str) -> str:
-    return f"{MB_ARTIST_DETAIL_PREFIX}{_mbid_key(mbid)}"
+def mb_artist_detail_key(mbid: str, *, include_releases: bool = True) -> str:
+    suffix = "" if include_releases else ":basic"
+    return f"{MB_ARTIST_DETAIL_PREFIX}{_mbid_key(mbid)}{suffix}"
 
 
 def mb_artist_release_groups_key(artist_mbid: str) -> str:

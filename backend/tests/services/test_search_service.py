@@ -490,3 +490,135 @@ async def test_timed_out_combined_search_is_not_cached(monkeypatch):
     assert first.bucket_status == {"artists": "timeout", "albums": "timeout"}
     assert second.bucket_status == {"artists": "timeout", "albums": "timeout"}
     assert service._mb_repo.search_grouped.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_search_source_generation_blocks_late_fresh_cache_write(monkeypatch):
+    generation = 0
+    monkeypatch.setattr(
+        "services.search_service.get_mb_source_generation",
+        lambda: generation,
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    artist = _make_search_result("artist", "Muse", score=90)
+    service = _make_service()
+
+    async def delayed_search(*_args, **_kwargs):
+        started.set()
+        await release.wait()
+        return {"artists": [artist], "albums": []}
+
+    service._mb_repo.search_grouped = AsyncMock(side_effect=delayed_search)
+    pending = asyncio.create_task(service.search("Muse"))
+    await started.wait()
+    generation = 1
+    release.set()
+    result = await pending
+
+    assert result.artists == []
+    assert result.albums == []
+    assert result.top_artist is None
+    assert result.top_album is None
+    assert result.bucket_status == {"artists": "error", "albums": "error"}
+    assert SearchService._search_cache == {}
+
+
+@pytest.mark.asyncio
+async def test_search_source_generation_prevents_inflight_cross_source_coalescing(
+    monkeypatch,
+):
+    generation = 0
+    monkeypatch.setattr(
+        "services.search_service.get_mb_source_generation",
+        lambda: generation,
+    )
+    started = [asyncio.Event(), asyncio.Event()]
+    releases = [asyncio.Event(), asyncio.Event()]
+    calls = 0
+    artist = _make_search_result("artist", "Muse", score=90)
+    service = _make_service()
+
+    async def delayed_search(*_args, **_kwargs):
+        nonlocal calls
+        index = calls
+        calls += 1
+        started[index].set()
+        await releases[index].wait()
+        return {"artists": [artist], "albums": []}
+
+    service._mb_repo.search_grouped = AsyncMock(side_effect=delayed_search)
+    first = asyncio.create_task(service.search("Muse"))
+    await started[0].wait()
+    generation = 1
+    second = asyncio.create_task(service.search("Muse"))
+    await started[1].wait()
+    assert calls == 2
+
+    releases[0].set()
+    releases[1].set()
+    first_result, second_result = await asyncio.gather(first, second)
+    assert first_result.artists == []
+    assert first_result.top_artist is None
+    assert first_result.bucket_status == {"artists": "error", "albums": "error"}
+    assert second_result.artists == [artist]
+    assert any(key.startswith("g1:") for key in SearchService._search_cache)
+    assert not any(key.startswith("g0:") for key in SearchService._search_cache)
+
+
+@pytest.mark.asyncio
+async def test_search_bucket_source_generation_blocks_late_success_result(monkeypatch):
+    generation = 0
+    monkeypatch.setattr(
+        "services.search_service.get_mb_source_generation",
+        lambda: generation,
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    artist = _make_search_result("artist", "Muse", score=90)
+    service = _make_service()
+
+    async def delayed_search(*_args, **_kwargs):
+        started.set()
+        await release.wait()
+        return [artist]
+
+    service._mb_repo.search_artists = AsyncMock(side_effect=delayed_search)
+    pending = asyncio.create_task(service.search_bucket("artists", "Muse", limit=5))
+    await started.wait()
+    generation = 1
+    release.set()
+    results, top_result, status = await pending
+
+    assert results == []
+    assert top_result is None
+    assert status == "error"
+    assert SearchService._stale_bucket_cache == {}
+
+
+@pytest.mark.asyncio
+async def test_search_bucket_does_not_fallback_to_previous_source_stale_cache(
+    monkeypatch,
+):
+    generation = 0
+    monkeypatch.setattr(
+        "services.search_service.get_mb_source_generation",
+        lambda: generation,
+    )
+    artist = _make_search_result("artist", "Muse", score=90)
+    service = _make_service()
+    service._mb_repo.search_artists = AsyncMock(return_value=[artist])
+
+    results, _top, status = await service.search_bucket("artists", "Muse", limit=5)
+    assert results == [artist]
+    assert status == "ok"
+
+    generation = 1
+    service._mb_repo.search_artists = AsyncMock(
+        side_effect=RuntimeError("new source unavailable")
+    )
+    results, top, status = await service.search_bucket("artists", "Muse", limit=5)
+
+    assert results == []
+    assert top is None
+    assert status == "error"

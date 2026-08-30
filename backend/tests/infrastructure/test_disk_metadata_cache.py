@@ -388,3 +388,38 @@ async def test_restart_eviction_falls_back_to_durable_sidecars(tmp_path):
     assert freed > 0
     assert (tmp_path / "recent" / "albums" / f"{_cache_hash(touched_id)}.json").exists()
     assert not (tmp_path / "recent" / "albums" / f"{_cache_hash(stale_id)}.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_artist_profiles_persist_across_restart_and_musicbrainz_clear(tmp_path):
+    mbid = "eeeeeee8-5555-4386-b3a2-4b4a918eb31f"
+    full_payload = {
+        "musicbrainz_id": mbid,
+        "name": "Full Artist",
+        "release_groups": [{"id": "rg-full"}],
+    }
+    basic_payload = {
+        "musicbrainz_id": mbid,
+        "name": "Basic Artist",
+        "release_groups": [],
+    }
+
+    cache = DiskMetadataCache(base_path=tmp_path)
+    await cache.set_artist(mbid, full_payload, is_monitored=True)
+    await cache.set_artist(mbid, basic_payload, profile="basic")
+
+    assert (await cache.get_artist(mbid))["name"] == "Full Artist"
+    assert (await cache.get_artist(mbid, profile="basic"))["name"] == "Basic Artist"
+
+    restarted = DiskMetadataCache(base_path=tmp_path)
+    assert (await restarted.get_artist(mbid))["name"] == "Full Artist"
+    assert (
+        await restarted.get_artist(mbid, profile="basic")
+    )["name"] == "Basic Artist"
+
+    await restarted.delete_artist(mbid, profile="basic")
+    assert await restarted.get_artist(mbid, profile="basic") is None
+    assert (await restarted.get_artist(mbid))["name"] == "Full Artist"
+
+    await restarted.clear_musicbrainz()
+    assert await restarted.get_artist(mbid) is None

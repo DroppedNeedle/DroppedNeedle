@@ -1,5 +1,7 @@
-import pytest
+import asyncio
 from types import SimpleNamespace
+
+import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from api.v1.schemas.discovery import SimilarArtist
@@ -704,3 +706,124 @@ class TestPerUserResolution:
 
         assert result.source == "lastfm"
         assert result.configured is False
+
+
+@pytest.mark.asyncio
+async def test_top_songs_mb_fallback_fences_old_cache_write_and_new_read():
+    import repositories.musicbrainz_base as mb_base
+
+    svc, lb_repo, _lastfm_repo, _prefs = _make_service()
+    recording = ListenBrainzRecording(
+        track_name="Track",
+        artist_name="Artist",
+        listen_count=10,
+        release_name="Album",
+        release_mbid="release-id",
+        recording_mbid="recording-id",
+    )
+    lb_repo.get_artist_top_recordings = AsyncMock(return_value=[recording])
+    lb_repo.get_recording_release_groups_batch = AsyncMock(return_value={})
+    svc._mb_repo.get_recording_position_on_release = AsyncMock(return_value=None)
+    old_gate = asyncio.Event()
+    old_started = asyncio.Event()
+    new_started = asyncio.Event()
+    cache_entries: dict[str, object] = {}
+    svc._cache.get = AsyncMock(side_effect=lambda key: cache_entries.get(key))
+
+    async def cache_set(key, value, **_kwargs):
+        cache_entries[key] = value
+
+    svc._cache.set = AsyncMock(side_effect=cache_set)
+    original_source = mb_base.get_mb_api_base()
+    mb_base.set_mb_api_base("https://old.example/ws/2")
+    old_generation = mb_base.get_mb_source_generation()
+
+    async def resolve(_release_id):
+        generation = mb_base.get_mb_source_generation()
+        if generation == old_generation:
+            old_started.set()
+            await old_gate.wait()
+            return "rg-old"
+        new_started.set()
+        return "rg-new"
+
+    svc._mb_repo.get_release_group_id_from_release = resolve
+    try:
+        old_task = asyncio.create_task(svc.get_top_songs("artist-id", count=1))
+        await old_started.wait()
+        mb_base.set_mb_api_base("https://new.example/ws/2")
+        new_task = asyncio.create_task(svc.get_top_songs("artist-id", count=1))
+        await new_started.wait()
+        new_result = await new_task
+        old_gate.set()
+        old_result = await old_task
+    finally:
+        old_gate.set()
+        mb_base.set_mb_api_base(original_source)
+
+    cache_key = svc._build_cache_key("top_songs", "artist-id", 1, "listenbrainz")
+    assert old_result.songs[0].release_group_mbid == "rg-old"
+    assert new_result.songs[0].release_group_mbid == "rg-new"
+    assert cache_entries[cache_key] is new_result
+
+
+@pytest.mark.asyncio
+async def test_top_albums_mb_fallback_separates_generations_and_fences_cache():
+    import repositories.musicbrainz_base as mb_base
+
+    svc, lb_repo, _lastfm_repo, _prefs = _make_service()
+    recording = ListenBrainzRecording(
+        track_name="Track",
+        artist_name="Artist",
+        listen_count=10,
+        release_name="Album",
+        release_mbid="release-id",
+        recording_mbid="recording-id",
+    )
+    lb_repo.get_artist_top_release_groups = AsyncMock(return_value=[])
+    lb_repo.get_artist_top_recordings = AsyncMock(return_value=[recording])
+    lb_repo.get_recording_release_groups_batch = AsyncMock(return_value={})
+    svc._library_repo.get_library_mbids = AsyncMock(return_value=set())
+    svc._library_repo.get_requested_mbids = AsyncMock(return_value=set())
+    old_gate = asyncio.Event()
+    old_started = asyncio.Event()
+    new_started = asyncio.Event()
+    cache_entries: dict[str, object] = {}
+    svc._cache.get = AsyncMock(side_effect=lambda key: cache_entries.get(key))
+
+    async def cache_set(key, value, **_kwargs):
+        cache_entries[key] = value
+
+    svc._cache.set = AsyncMock(side_effect=cache_set)
+    original_source = mb_base.get_mb_api_base()
+    mb_base.set_mb_api_base("https://old.example/ws/2")
+    old_generation = mb_base.get_mb_source_generation()
+
+    async def resolve(_release_id):
+        generation = mb_base.get_mb_source_generation()
+        if generation == old_generation:
+            old_started.set()
+            await old_gate.wait()
+            return "rg-old"
+        new_started.set()
+        return "rg-new"
+
+    svc._mb_repo.get_release_group_id_from_release = resolve
+    try:
+        old_task = asyncio.create_task(svc.get_top_albums("artist-id", count=1))
+        await old_started.wait()
+        mb_base.set_mb_api_base("https://new.example/ws/2")
+        new_task = asyncio.create_task(svc.get_top_albums("artist-id", count=1))
+        await new_started.wait()
+        new_result = await new_task
+        old_gate.set()
+        old_result = await old_task
+    finally:
+        old_gate.set()
+        mb_base.set_mb_api_base(original_source)
+
+    cache_key = svc._build_cache_key("top_albums", "artist-id", 1, "listenbrainz")
+    assert old_result.albums[0].release_group_mbid == "rg-old"
+    assert new_result.albums[0].release_group_mbid == "rg-new"
+    assert cache_entries[cache_key] is new_result
+    assert svc._top_albums_in_flight == {}

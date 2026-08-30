@@ -141,6 +141,9 @@ def test_musicbrainz_prefixes_cover_all_registered_prefix_constants():
         cache_keys.DISCOVER_RESPONSE_PREFIX,
         cache_keys.ALBUM_INFO_PREFIX,
         cache_keys.ALBUM_TRACKS_INFO_PREFIX,
+        cache_keys.DISCOVER_QUEUE_ENRICH_PREFIX,
+        cache_keys.ARTIST_DISCOVERY_TOP_SONGS_PREFIX,
+        cache_keys.ARTIST_DISCOVERY_TOP_ALBUMS_PREFIX,
     }
     actual = set(cache_keys.musicbrainz_prefixes())
 

@@ -7,6 +7,7 @@ from api.v1.schemas.discover import DiscoverQueueItemLight
 from infrastructure.persistence import LibraryDB, MBIDStore
 from infrastructure.queue.priority_queue import RequestPriority
 from repositories.musicbrainz_base import (
+    capture_mb_source_context,
     clear_mb_response_context,
     get_mb_api_base,
     get_mb_response_context,
@@ -65,6 +66,7 @@ class MbidResolutionService:
         allow_passthrough: bool = True,
         resolver_cache: dict[str, str | None] | None = None,
     ) -> dict[str, str]:
+        operation_context = capture_mb_source_context()
         normalized: list[str] = []
         seen: set[str] = set()
         for mbid in album_mbids:
@@ -140,7 +142,7 @@ class MbidResolutionService:
             try:
                 clear_mb_response_context()
                 result = await self._mb_repo.get_release_group_id_from_release(mbid)
-                source_context = get_mb_response_context()
+                source_context = get_mb_response_context() or operation_context
             except Exception:  # noqa: BLE001
                 unresolved.append(mbid)
                 return
@@ -173,7 +175,7 @@ class MbidResolutionService:
                 includes=["artist-credits"],
                 priority=RequestPriority.BACKGROUND_SYNC,
             )
-            return result, get_mb_response_context()
+            return result, get_mb_response_context() or operation_context
 
         rg_checks = await asyncio.gather(
             *[_check_group(mbid) for mbid in unresolved],

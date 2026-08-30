@@ -302,6 +302,7 @@ def test_contribution_methods_conform_to_protocol() -> None:
         "search_release_groups",
         # A2: priority threading on the artist detail leg.
         "get_artist_by_id",
+        "get_artist_release_groups_with_context",
     ):
         assert inspect.signature(
             getattr(MusicBrainzRepositoryProtocol, name)
