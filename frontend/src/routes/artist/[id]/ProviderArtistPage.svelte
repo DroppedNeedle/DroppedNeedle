@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ApiError } from '$lib/api/client';
 	import { colors } from '$lib/colors';
 	import ArtistHeaderSkeleton from '$lib/components/ArtistHeaderSkeleton.svelte';
 	import AlbumGridSkeleton from '$lib/components/AlbumGridSkeleton.svelte';
@@ -14,7 +15,7 @@
 	import LibraryAlbumsCarousel from '$lib/components/LibraryAlbumsCarousel.svelte';
 	import ArtistAppearancesSection from '$lib/components/library/ArtistAppearancesSection.svelte';
 	import LocalArtistPage from './LocalArtistPage.svelte';
-	import { getLibraryArtistDetailQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import type { LibraryArtistSummary } from '$lib/types';
 	import PageSectionToc from '$lib/components/PageSectionToc.svelte';
 	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -46,9 +47,10 @@
 
 	interface Props {
 		data: { artistId: string; primarySource: MusicSource };
+		localArtist?: LibraryArtistSummary;
 	}
 
-	let { data }: Props = $props();
+	let { data, localArtist }: Props = $props();
 
 	// svelte-ignore state_referenced_locally
 	let activeSource = new PersistedState<MusicSource>(
@@ -75,6 +77,14 @@
 	const artistBasicQuery = getBasicArtistQuery(() => data.artistId);
 	const artistBasic = $derived(artistBasicQuery.data);
 	const loadingBasic = $derived(artistBasicQuery.isLoading);
+	const artistBasicApiError = $derived(
+		artistBasicQuery.error instanceof ApiError ? artistBasicQuery.error : null
+	);
+	const artistNotFound = $derived(artistBasicApiError?.status === 404);
+	const providerUnavailable = $derived.by(() => {
+		const status = artistBasicApiError?.status;
+		return status === 0 || status === 429 || (status !== undefined && status >= 500);
+	});
 
 	const artistExtendedQuery = getExtendedArtistQuery(() => data.artistId);
 	const artistExtended = $derived(artistExtendedQuery.data);
@@ -109,7 +119,8 @@
 	const loadingLastfm = $derived(lastFmEnrichmentQuery.isLoading);
 
 	let error: string | null = $derived.by(() => {
-		if (artistBasicQuery.error) {
+		if (artistNotFound) return 'Artist not found.';
+		if (artistBasicQuery.error && !providerUnavailable) {
 			return 'Failed to load artist information.';
 		}
 		if (artistExtendedQuery.error) {
@@ -117,12 +128,6 @@
 		}
 		return null;
 	});
-	// MusicBrainz-down fallback: the library artist endpoint is MB-free, so a
-	// locally known artist still renders (and plays) when the provider fetch
-	// fails. The service_status stamp on the degraded payload drives the
-	// global banner; this branch covers cold caches and restarts.
-	const localArtistDetailQuery = getLibraryArtistDetailQuery(() => data.artistId);
-	const degradedLocalArtist = $derived(localArtistDetailQuery.data ?? null);
 	const artist = $derived.by(() => {
 		if (!artistBasic) return null;
 		return {
@@ -244,7 +249,13 @@
 </script>
 
 <div class="w-full px-2 sm:px-4 lg:px-8 py-4 sm:py-8 max-w-7xl mx-auto">
-	{#if artistBasicQuery.error && degradedLocalArtist}
+	{#if artistNotFound}
+		<div class="flex items-center justify-center min-h-[50vh]">
+			<div class="alert alert-error">
+				<span>Artist not found.</span>
+			</div>
+		</div>
+	{:else if providerUnavailable && localArtist}
 		<div class="mb-4 flex justify-center">
 			<div class="alert alert-info text-sm">
 				<span
@@ -253,7 +264,16 @@
 				>
 			</div>
 		</div>
-		<LocalArtistPage artistId={degradedLocalArtist.id} />
+		<LocalArtistPage artistId={localArtist.id} />
+	{:else if providerUnavailable}
+		<div class="flex items-center justify-center min-h-[50vh]">
+			<div class="alert alert-error">
+				<span>MusicBrainz is temporarily unavailable.</span>
+				<button class="btn btn-sm btn-ghost" onclick={() => void artistBasicQuery.refetch()}>
+					Retry
+				</button>
+			</div>
+		</div>
 	{:else if error}
 		<div class="flex items-center justify-center min-h-[50vh]">
 			<div class="alert alert-error">

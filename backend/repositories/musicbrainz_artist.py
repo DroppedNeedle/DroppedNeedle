@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 import msgspec
@@ -59,6 +59,26 @@ FILTERED_ARTIST_NAMES = {
     "[unknown]",
     "/v/",
 }
+
+_ARTIST_NOT_FOUND_TTL_SECONDS = 600
+
+
+def _raise_artist_fetch_error(mbid: str, exc: BaseException) -> NoReturn:
+    """Preserve typed provider failures instead of reporting a miss."""
+    if isinstance(exc, asyncio.CancelledError):
+        raise exc
+    if not isinstance(exc, Exception):
+        raise exc
+
+    if not isinstance(exc, CircuitOpenError):
+        logger.error("Failed to fetch artist %s: %s", mbid, exc)
+    _record_mb_degradation("artist fetch failed")
+
+    if isinstance(exc, (CircuitOpenError, ExternalServiceError)):
+        raise exc
+    raise ExternalServiceError(
+        "MusicBrainz artist metadata is temporarily unavailable."
+    ) from exc
 
 
 class MusicBrainzArtistMixin:
@@ -223,53 +243,77 @@ class MusicBrainzArtistMixin:
         cache_key: str,
         priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> dict[str, Any] | None:
-        try:
-            limit = 50
+        limit = 50
 
-            artist_result, browse_result = await asyncio.gather(
-                mb_api_get(
-                    f"/artist/{mbid}",
-                    params={"inc": "tags+aliases+url-rels"},
-                    priority=priority,
-                ),
-                mb_api_get(
-                    "/release-group",
-                    params={"artist": mbid, "limit": limit, "offset": 0},
-                    priority=priority,
-                    decode_type=_ArtistReleaseGroupsPayload,
-                ),
-            )
+        # Keep both calls concurrent; detail 404 remains authoritative.
+        # Retrieve and propagate every other provider failure.
+        artist_result, browse_result = await asyncio.gather(
+            mb_api_get(
+                f"/artist/{mbid}",
+                params={"inc": "tags+aliases+url-rels"},
+                priority=priority,
+            ),
+            mb_api_get(
+                "/release-group",
+                params={"artist": mbid, "limit": limit, "offset": 0},
+                priority=priority,
+                decode_type=_ArtistReleaseGroupsPayload,
+            ),
+            return_exceptions=True,
+        )
 
-            if not artist_result:
-                return None
+        if isinstance(artist_result, asyncio.CancelledError):
+            raise artist_result
+        if isinstance(browse_result, asyncio.CancelledError):
+            raise browse_result
 
-            all_release_groups = browse_result.release_groups
-            total_count = int(browse_result.release_group_count)
-
-            if all_release_groups:
-                artist_result["release-group-list"] = all_release_groups
-
-            artist_result["release-group-count"] = total_count
-
-            await self._cache.set(cache_key, artist_result, ttl_seconds=21600)
-
-            from core.task_registry import TaskRegistry
-
-            registry = TaskRegistry.get_instance()
-            if not registry.is_running("mb-release-group-warmup"):
-                _rg_task = asyncio.create_task(
-                    self._warm_release_group_cache(all_release_groups[:6])
-                )
+        if isinstance(artist_result, BaseException):
+            _raise_artist_fetch_error(mbid, artist_result)
+        if not artist_result:
+            if isinstance(browse_result, BaseException):
+                # Retrieve/record the ancillary failure before honoring the 404.
                 try:
-                    registry.register("mb-release-group-warmup", _rg_task)
-                except RuntimeError:
+                    _raise_artist_fetch_error(mbid, browse_result)
+                except (CircuitOpenError, ExternalServiceError):
                     pass
-
-            return artist_result
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Failed to fetch artist {mbid}: {e}")
-            _record_mb_degradation(f"artist fetch failed: {e}")
+            try:
+                await self._cache.set(
+                    cache_key,
+                    {},
+                    ttl_seconds=_ARTIST_NOT_FOUND_TTL_SECONDS,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - cache failure cannot change an authoritative miss
+                logger.warning("Failed to cache missing artist %s", mbid)
             return None
+
+        if isinstance(browse_result, BaseException):
+            _raise_artist_fetch_error(mbid, browse_result)
+
+        all_release_groups = browse_result.release_groups
+        total_count = int(browse_result.release_group_count)
+
+        if all_release_groups:
+            artist_result["release-group-list"] = all_release_groups
+
+        artist_result["release-group-count"] = total_count
+
+        await self._cache.set(cache_key, artist_result, ttl_seconds=21600)
+
+        from core.task_registry import TaskRegistry
+
+        registry = TaskRegistry.get_instance()
+        if not registry.is_running("mb-release-group-warmup"):
+            _rg_task = asyncio.create_task(
+                self._warm_release_group_cache(all_release_groups[:6])
+            )
+            try:
+                registry.register("mb-release-group-warmup", _rg_task)
+            except RuntimeError:
+                pass
+
+        return artist_result
 
     async def _warm_release_group_cache(
         self, release_groups: list[dict[str, Any]]

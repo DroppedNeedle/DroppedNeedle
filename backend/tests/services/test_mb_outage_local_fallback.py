@@ -1,16 +1,16 @@
-"""MB-outage degraded paths: library-owned albums/artists render from local rows.
+"""Provider outages use local rows; true 404s stay not found.
 
-Covers the fallback added after the blocked-UA incident: when the MusicBrainz
-fetch raises ResourceNotFoundError (any MB failure collapses to None in the
-repo, which the service raises as not-found), a locally owned album or artist
-is served from NativeLibraryStore rows with service_status=None, instead of
-404ing. Non-library MBIDs keep raising.
+Typed MusicBrainz failures degrade locally for known rows and propagate for
+non-library IDs; provider 404s remain ResourceNotFoundError.
 """
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from core.exceptions import ExternalServiceError, ResourceNotFoundError
+
 
 from services.album_service import AlbumService
 from services.artist_service import ArtistService
@@ -74,11 +74,14 @@ def _album_service_with_store(ownership, tracks):
     return service
 
 
-def _artist_service_with_store(artist_rows):
+def _artist_service_with_store(artist_rows, *, provider_error: Exception | None = None):
     store = MagicMock()
     store.list_target_artists = AsyncMock(return_value=(artist_rows, 1))
     mb_repo = MagicMock()
-    mb_repo.get_artist_by_id = AsyncMock(return_value=None)
+    if provider_error is None:
+        mb_repo.get_artist_by_id = AsyncMock(return_value=None)
+    else:
+        mb_repo.get_artist_by_id = AsyncMock(side_effect=provider_error)
     memory_cache = MagicMock()
     memory_cache.get = AsyncMock(return_value=None)
     disk_cache = MagicMock()
@@ -148,7 +151,9 @@ async def test_artist_basic_info_falls_back_to_local_on_mb_failure():
             "album_count": 3,
         }
     ]
-    service = _artist_service_with_store(rows)
+    service = _artist_service_with_store(
+        rows, provider_error=ExternalServiceError("MusicBrainz unavailable")
+    )
     info = await service.get_artist_info_basic(ARTIST_ID)
     assert info.name == "Local Artist"
     assert info.musicbrainz_id == ARTIST_ID
@@ -168,18 +173,39 @@ async def test_artist_detail_falls_back_to_local_on_mb_failure():
             "album_count": 2,
         }
     ]
-    service = _artist_service_with_store(rows)
+    service = _artist_service_with_store(
+        rows, provider_error=ExternalServiceError("MusicBrainz unavailable")
+    )
     info = await service.get_artist_info(ARTIST_ID)
     assert info.name == "Local Artist"
     assert info.musicbrainz_id == ARTIST_ID
 
 
 @pytest.mark.asyncio
-async def test_artist_still_404s_when_not_locally_known():
+async def test_artist_not_found_remains_404_when_not_locally_known():
     service = _artist_service_with_store([])
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ResourceNotFoundError, match="^Artist not found$"):
         await service.get_artist_info_basic("00000000-0000-4000-8000-000000000001")
-    assert "Artist not found" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_artist_provider_outage_propagates_when_not_locally_known():
+    service = _artist_service_with_store(
+        [],
+        provider_error=ExternalServiceError("provider detail must stay server-side"),
+    )
+    with pytest.raises(ExternalServiceError):
+        await service.get_artist_info_basic(ARTIST_ID)
+
+
+@pytest.mark.asyncio
+async def test_artist_detail_provider_outage_propagates_when_not_locally_known():
+    service = _artist_service_with_store(
+        [],
+        provider_error=ExternalServiceError("provider detail must stay server-side"),
+    )
+    with pytest.raises(ExternalServiceError):
+        await service.get_artist_info(ARTIST_ID)
 
 
 @pytest.mark.asyncio

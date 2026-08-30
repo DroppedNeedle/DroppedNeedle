@@ -40,5 +40,5 @@
 {:else if localAlbum && !providerAlbumId}
 	<LocalAlbumPage albumId={localAlbum.id} />
 {:else}
-	<ProviderAlbumPage {data} />
+	<ProviderAlbumPage {data} {localAlbum} />
 {/if}

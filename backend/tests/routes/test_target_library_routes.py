@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 from api.v1.routes.library_target import router
 from api.v1.schemas.edition_conversion import (
@@ -27,7 +28,12 @@ from core.dependencies import (
 )
 from infrastructure.persistence.request_history import RequestHistoryStore
 from middleware import _get_current_admin, _get_current_curator
-from tests.helpers import build_test_client, override_admin_auth, override_user_auth
+from tests.helpers import (
+    add_production_exception_handlers,
+    build_test_client,
+    override_admin_auth,
+    override_user_auth,
+)
 
 
 @pytest.fixture
@@ -425,10 +431,71 @@ def test_target_artist_appearances_alias_redirect_preserves_page(app: FastAPI) -
     )
 
     assert response.status_code == 308
-    assert response.headers["location"].endswith(
+    assert response.headers["location"] == (
         "/library/artists/local-artist/appearances?limit=20&offset=40"
     )
     service.artist_appearances.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (
+            "/library/artists/provider-artist",
+            "/library/artists/local-artist",
+        ),
+        (
+            "/library/artists/provider-artist/albums",
+            "/library/artists/local-artist/albums",
+        ),
+        (
+            "/library/artists/provider-artist/appearances?limit=20&offset=40",
+            "/library/artists/local-artist/appearances?limit=20&offset=40",
+        ),
+        ("/library/albums/provider-album", "/library/albums/local-album"),
+        (
+            "/library/albums/provider-album/tracks",
+            "/library/albums/local-album/tracks",
+        ),
+        (
+            "/library/albums/provider-album/status",
+            "/library/albums/local-album/status",
+        ),
+    ],
+)
+def test_all_target_alias_redirects_are_root_relative(
+    app: FastAPI, path: str, expected: str
+) -> None:
+    override_user_auth(app, role="user")
+    service = app.dependency_overrides[get_target_native_library_service]()
+
+    async def canonical_id(kind: str, _identifier: str) -> str:
+        return "local-artist" if kind == "artist" else "local-album"
+
+    service.canonical_id.side_effect = canonical_id
+    response = build_test_client(app).get(path, follow_redirects=False)
+
+    assert response.status_code == 308
+    assert response.headers["location"] == expected
+    assert "://" not in response.headers["location"]
+
+
+def test_target_alias_redirect_preserves_root_path(app: FastAPI) -> None:
+    override_user_auth(app, role="user")
+    service = app.dependency_overrides[get_target_native_library_service]()
+    service.canonical_id.return_value = "local-artist"
+    add_production_exception_handlers(app)
+    client = TestClient(app, raise_server_exceptions=False, root_path="/music")
+
+    response = client.get(
+        "/library/artists/provider-artist/appearances?limit=20&offset=40",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 308
+    assert response.headers["location"] == (
+        "/music/library/artists/local-artist/appearances?limit=20&offset=40"
+    )
 
 
 def test_target_provider_ids_preserve_existing_library_store_contract(

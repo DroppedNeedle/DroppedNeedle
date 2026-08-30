@@ -8,7 +8,9 @@ and priority passthrough to mb_api_get.
 import asyncio
 import inspect
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 import repositories.musicbrainz_artist as artist_module
@@ -149,6 +151,90 @@ class TestFailureNotCached:
         assert await repo._cache.get(key) is None
 
         clear_degradation_context()
+
+
+class TestArtistDetailFailureSemantics:
+    @pytest.mark.asyncio
+    async def test_authoritative_404_is_negative_cached(
+        self, monkeypatch, fresh_deduplicator
+    ) -> None:
+        repo = _Repo()
+        repo._cache = AsyncMock()
+        repo._cache.get = AsyncMock(side_effect=[None, {}])
+        calls: list[str] = []
+
+        async def not_found_get(path, params=None, **kwargs):
+            calls.append(path)
+            if path.startswith("/artist/"):
+                return {}
+            return _payload([])
+
+        monkeypatch.setattr(artist_module, "mb_api_get", not_found_get)
+
+        assert await repo.get_artist_by_id(_ARTIST) is None
+        assert not await repo.get_artist_by_id(_ARTIST)
+
+        assert calls == [f"/artist/{_ARTIST}", "/release-group"]
+        key = artist_module.mb_artist_detail_key(_ARTIST)
+        repo._cache.set.assert_awaited_once_with(
+            key,
+            {},
+            ttl_seconds=600,
+        )
+
+    @pytest.mark.asyncio
+    async def test_transient_http_failure_is_typed_and_not_cached(
+        self, monkeypatch, fresh_deduplicator
+    ) -> None:
+        repo = _Repo()
+        ctx = init_degradation_context()
+        request = httpx.Request("GET", f"https://musicbrainz.org/artist/{_ARTIST}")
+        calls: list[str] = []
+
+        async def failing_get(path, params=None, **kwargs):
+            calls.append(path)
+            if path.startswith("/artist/"):
+                raise httpx.ConnectError("connection reset", request=request)
+            return _payload([])
+
+        monkeypatch.setattr(artist_module, "mb_api_get", failing_get)
+
+        try:
+            with pytest.raises(ExternalServiceError) as first:
+                await repo.get_artist_by_id(_ARTIST)
+            with pytest.raises(ExternalServiceError):
+                await repo.get_artist_by_id(_ARTIST)
+
+            assert isinstance(first.value.__cause__, httpx.HTTPError)
+            assert ctx.summary() == {"musicbrainz": "error"}
+            assert repo._cache.size() == 0
+            assert calls.count(f"/artist/{_ARTIST}") == 2
+        finally:
+            clear_degradation_context()
+
+    @pytest.mark.asyncio
+    async def test_detail_404_wins_over_ancillary_browse_failure(
+        self, monkeypatch, fresh_deduplicator
+    ) -> None:
+        repo = _Repo()
+        repo._cache = AsyncMock()
+        repo._cache.get = AsyncMock(return_value=None)
+        ctx = init_degradation_context()
+
+        async def detail_missing_browse_fails(path, params=None, **kwargs):
+            if path.startswith("/artist/"):
+                return {}
+            raise ExternalServiceError("browse unavailable")
+
+        monkeypatch.setattr(artist_module, "mb_api_get", detail_missing_browse_fails)
+
+        try:
+            assert await repo.get_artist_by_id(_ARTIST) is None
+            key = artist_module.mb_artist_detail_key(_ARTIST)
+            repo._cache.set.assert_awaited_once_with(key, {}, ttl_seconds=600)
+            assert ctx.summary() == {"musicbrainz": "error"}
+        finally:
+            clear_degradation_context()
 
 
 class TestEmptyNegativeCache:

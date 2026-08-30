@@ -11,7 +11,9 @@ from fastapi.testclient import TestClient
 
 from api.v1.routes.artists import router
 from core.dependencies import get_artist_service, get_artist_discovery_service, get_artist_enrichment_service
+from core.exceptions import ExternalServiceError, ResourceNotFoundError
 from models.artist import ArtistInfo, ReleaseItem
+from tests.helpers import add_production_exception_handlers
 
 
 VALID_MBID = "f4a31f0a-51dd-4fa7-986d-3095c40c5ed9"
@@ -34,7 +36,7 @@ def mock_artist_service():
     mock = AsyncMock()
     mock.get_artist_info_basic = AsyncMock(return_value=_minimal_artist_info())
     mock.get_artist_info = AsyncMock(side_effect=AssertionError(
-        "get_artist_info should NOT be called — route must use get_artist_info_basic"
+        "get_artist_info should NOT be called - route must use get_artist_info_basic"
     ))
     mock.get_artist_releases = AsyncMock()
     mock.get_artist_extended_info = AsyncMock()
@@ -58,7 +60,8 @@ def client(mock_artist_service, mock_discovery_service, mock_enrichment_service)
     app.dependency_overrides[get_artist_service] = lambda: mock_artist_service
     app.dependency_overrides[get_artist_discovery_service] = lambda: mock_discovery_service
     app.dependency_overrides[get_artist_enrichment_service] = lambda: mock_enrichment_service
-    return TestClient(app)
+    add_production_exception_handlers(app)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 class TestGetArtistBasicRoute:
@@ -93,3 +96,38 @@ class TestGetArtistBasicRoute:
         response = client.get(f"/api/v1/artists/{VALID_MBID}")
 
         assert response.status_code == 400
+
+    def test_get_artist_not_found_uses_safe_envelope(self, client, mock_artist_service):
+        mock_artist_service.get_artist_info_basic = AsyncMock(
+            side_effect=ResourceNotFoundError("Artist not found")
+        )
+
+        response = client.get(f"/api/v1/artists/{VALID_MBID}")
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "error": {
+                "code": "NOT_FOUND",
+                "message": "Artist not found",
+                "details": None,
+            }
+        }
+
+    def test_get_artist_provider_failure_uses_generic_envelope(
+        self, client, mock_artist_service
+    ):
+        mock_artist_service.get_artist_info_basic = AsyncMock(
+            side_effect=ExternalServiceError("upstream secret")
+        )
+
+        response = client.get(f"/api/v1/artists/{VALID_MBID}")
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "error": {
+                "code": "EXTERNAL_SERVICE_UNAVAILABLE",
+                "message": "External service unavailable",
+                "details": None,
+            }
+        }
+        assert "upstream secret" not in response.text

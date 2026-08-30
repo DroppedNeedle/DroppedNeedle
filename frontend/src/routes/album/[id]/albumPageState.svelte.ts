@@ -27,6 +27,7 @@ import type {
 import { libraryStore } from '$lib/stores/library';
 import { integrationStore } from '$lib/stores/integration';
 import { API } from '$lib/constants';
+import { ApiError } from '$lib/api/client';
 import { isAbortError } from '$lib/utils/errorHandling';
 import { extractServiceStatus } from '$lib/utils/serviceStatus';
 import {
@@ -94,6 +95,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	let album = $state<AlbumBasicInfo | null>(null);
 	let tracksInfo = $state<AlbumTracksInfo | null>(null);
 	let error = $state<string | null>(null);
+	let primaryError = $state<ApiError | null>(null);
 	let loadingBasic = $state(true);
 	let loadingTracks = $state(true);
 	let tracksError = $state(false);
@@ -291,6 +293,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		tracksInfo = null;
 		renderedTrackSections = [];
 		error = null;
+		primaryError = null;
 		loadingBasic = true;
 		loadingTracks = true;
 		tracksError = false;
@@ -367,15 +370,18 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	}
 
 	async function doFetchBasic(albumId: string, signal: AbortSignal) {
+		primaryError = null;
 		try {
 			const result = await fetchAlbumBasic(albumId, signal);
 			if (result) {
 				album = result;
+				error = null;
 				extractServiceStatus(album);
 				albumBasicCache.set(album, albumId);
 			}
 		} catch (e) {
 			if (isAbortError(e)) return;
+			if (e instanceof ApiError) primaryError = e;
 			if (!album) error = 'Error loading album';
 		} finally {
 			if (!signal.aborted) loadingBasic = false;
@@ -630,6 +636,8 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		albumTracksCache.remove(albumId);
 		albumSourceMatchCache.remove(sourceCacheKey(albumId));
 
+		error = null;
+		primaryError = null;
 		if (abortController) abortController.abort();
 		abortController = new AbortController();
 		const signal = abortController.signal;
@@ -838,6 +846,9 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		},
 		get error() {
 			return error;
+		},
+		get primaryError() {
+			return primaryError;
 		},
 		get loadingBasic() {
 			return loadingBasic;

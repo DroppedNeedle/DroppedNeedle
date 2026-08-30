@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, ANY
 
 from api.v1.schemas.artist import ArtistInfo
-from core.exceptions import ResourceNotFoundError
+from core.exceptions import ExternalServiceError
 from services.artist_service import ArtistService
 
 
@@ -92,7 +92,7 @@ class TestArtistSingleflight:
 
         async def failing_fetch(*args, **kwargs):
             await asyncio.sleep(0.05)
-            raise RuntimeError("upstream timeout")
+            raise ExternalServiceError("upstream timeout")
 
         svc._do_get_artist_info = failing_fetch
 
@@ -103,7 +103,67 @@ class TestArtistSingleflight:
             return_exceptions=True,
         )
 
-        assert all(isinstance(r, ResourceNotFoundError) for r in results)
+        assert all(isinstance(r, ExternalServiceError) for r in results)
+        assert MBID not in svc._artist_in_flight
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["full", "basic"])
+    async def test_leader_only_failure_retrieves_shared_future_exception(self, path):
+        svc = _make_service()
+
+        async def failing_fetch(*args, **kwargs):
+            raise ExternalServiceError("upstream timeout")
+
+        if path == "full":
+            svc._do_get_artist_info = failing_fetch
+            request = svc.get_artist_info(MBID)
+            in_flight = svc._artist_in_flight
+        else:
+            svc._build_artist_from_musicbrainz = failing_fetch
+            request = svc.get_artist_info_basic(MBID)
+            in_flight = svc._artist_basic_in_flight
+
+        loop = asyncio.get_running_loop()
+        unhandled: list[dict] = []
+        previous_handler = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+        try:
+            with pytest.raises(ExternalServiceError):
+                await request
+            await asyncio.sleep(0)
+        finally:
+            loop.set_exception_handler(previous_handler)
+
+        assert not any(
+            context.get("message") == "Future exception was never retrieved"
+            for context in unhandled
+        )
+        assert MBID not in in_flight
+
+    @pytest.mark.asyncio
+    async def test_cancelled_follower_does_not_cancel_leader(self):
+        svc = _make_service()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        fake = _fake_artist_info()
+
+        async def waiting_fetch(*args, **kwargs):
+            started.set()
+            await release.wait()
+            return fake
+
+        svc._do_get_artist_info = waiting_fetch
+        leader = asyncio.create_task(svc.get_artist_info(MBID))
+        await started.wait()
+        follower = asyncio.create_task(svc.get_artist_info(MBID))
+        await asyncio.sleep(0)
+
+        follower.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await follower
+
+        release.set()
+        assert await leader is fake
         assert MBID not in svc._artist_in_flight
 
     @pytest.mark.asyncio

@@ -35,7 +35,12 @@ from infrastructure.degradation import try_get_degradation_context
 from infrastructure.validators import validate_mbid
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.http.disconnect import DisconnectCallable, check_disconnected
-from core.exceptions import ClientDisconnectedError, ResourceNotFoundError
+from core.exceptions import (
+    ClientDisconnectedError,
+    ExternalServiceError,
+    ResourceNotFoundError,
+)
+from infrastructure.resilience.retry import CircuitOpenError
 from services.audiodb_image_service import AudioDBImageService
 from repositories.audiodb_models import AudioDBArtistImages
 from repositories.musicbrainz_base import extract_artist_name, mb_deduplicator
@@ -275,17 +280,27 @@ class ArtistService:
                 if not future.done():
                     future.set_result(artist_info)
                 return artist_info
+            except (ClientDisconnectedError, asyncio.CancelledError):
+                if not future.done():
+                    future.cancel()
+                raise
             except BaseException as exc:
                 if not future.done():
                     future.set_exception(exc)
+                    # Mark the leader's exception retrieved before re-raising.
+                    future.exception()
                 raise
             finally:
+                if not future.done():
+                    future.cancel()
                 self._artist_in_flight.pop(artist_id, None)
-        except ValueError:
+        except (CircuitOpenError, ExternalServiceError, ClientDisconnectedError):
+            raise
+        except (ValueError, ResourceNotFoundError):
             raise
         except Exception as e:  # noqa: BLE001
             logger.error(f"API call failed for artist {artist_id}: {e}")
-            raise ResourceNotFoundError(f"Failed to get artist info: {e}")
+            raise ResourceNotFoundError("Failed to get artist info") from e
 
     async def _do_get_artist_info(
         self,
@@ -297,10 +312,8 @@ class ArtistService:
             artist_info = await self._build_artist_from_musicbrainz(
                 artist_id, library_artist_mbids, library_album_mbids
             )
-        except ResourceNotFoundError:
-            # MB down: a locally known artist renders from its local rows.
-            # Runs inside the coalesced leader so followers settle to the
-            # degraded result too. Not cached.
+        except (CircuitOpenError, ExternalServiceError):
+            # Use local rows only while MusicBrainz is unavailable.
             local_info = await self._build_artist_info_from_local(artist_id)
             if local_info is not None:
                 logger.warning(
@@ -428,10 +441,8 @@ class ArtistService:
                 artist_info = await self._build_artist_from_musicbrainz(
                     artist_id, include_extended=False, include_releases=False
                 )
-            except ResourceNotFoundError:
-                # MB down: a locally known artist renders from its local
-                # rows. Runs inside the coalesced leader so followers settle
-                # to the degraded result too. Not cached.
+            except (CircuitOpenError, ExternalServiceError):
+                # Use local rows only while MusicBrainz is unavailable.
                 local_info = await self._build_artist_info_from_local(artist_id)
                 if local_info is not None:
                     logger.warning(
@@ -456,11 +467,19 @@ class ArtistService:
             if not future.done():
                 future.set_result(artist_info)
             return artist_info
+        except (ClientDisconnectedError, asyncio.CancelledError):
+            if not future.done():
+                future.cancel()
+            raise
         except BaseException as exc:
             if not future.done():
                 future.set_exception(exc)
+                # Mark the leader's exception retrieved before re-raising.
+                future.exception()
             raise
         finally:
+            if not future.done():
+                future.cancel()
             self._artist_basic_in_flight.pop(artist_id, None)
 
     async def _refresh_library_flags(self, artist_info: ArtistInfo) -> None:
@@ -1056,8 +1075,27 @@ class ArtistService:
                 return_exceptions=True,
             )
             if isinstance(mb_artist, BaseException):
-                logger.error(f"Error fetching artist data for {artist_id}: {mb_artist}")
-                raise ResourceNotFoundError(f"Failed to fetch artist: {mb_artist}")
+                if isinstance(
+                    mb_artist,
+                    (
+                        CircuitOpenError,
+                        ExternalServiceError,
+                        ResourceNotFoundError,
+                        ClientDisconnectedError,
+                        asyncio.CancelledError,
+                    ),
+                ):
+                    raise mb_artist
+                if isinstance(mb_artist, Exception):
+                    logger.error(
+                        "Error fetching artist data for %s",
+                        artist_id,
+                        exc_info=mb_artist,
+                    )
+                    raise ExternalServiceError(
+                        "MusicBrainz artist metadata is temporarily unavailable."
+                    ) from mb_artist
+                raise mb_artist
             library_failed = any(isinstance(r, BaseException) for r in library_results)
             if library_failed:
                 logger.warning(

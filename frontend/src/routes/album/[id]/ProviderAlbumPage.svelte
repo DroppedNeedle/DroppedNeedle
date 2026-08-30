@@ -6,6 +6,7 @@
 	import LastFmAlbumEnrichmentComponent from '$lib/components/LastFmAlbumEnrichment.svelte';
 	import DeleteAlbumModal from '$lib/components/DeleteAlbumModal.svelte';
 	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
+	import { ApiError } from '$lib/api/client';
 	import { createAlbumPageState } from './albumPageState.svelte';
 	import AlbumHeader from './AlbumHeader.svelte';
 	import UnmatchedFilesSection from './UnmatchedFilesSection.svelte';
@@ -16,27 +17,26 @@
 	import WhereToBuy from './WhereToBuy.svelte';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
-	import {
-		getLibraryAlbumCopiesQuery,
-		getLibraryAlbumDetailQuery
-	} from '$lib/queries/library/LibraryQueries.svelte';
+	import { getLibraryAlbumCopiesQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import LocalAlbumPage from './LocalAlbumPage.svelte';
+	import type { LibraryAlbumDetail } from '$lib/types';
 
 	interface Props {
 		data: { albumId: string };
+		localAlbum?: LibraryAlbumDetail;
 	}
 
-	let { data }: Props = $props();
+	let { data, localAlbum }: Props = $props();
 
 	const state = createAlbumPageState(() => data.albumId);
 	const localCopiesQuery = getLibraryAlbumCopiesQuery(() => data.albumId);
 	const localCopies = $derived(localCopiesQuery.data?.items ?? []);
-	// MusicBrainz-down fallback: the library detail endpoint is MB-free, so a
-	// locally owned album still renders (and plays) when the provider fetch
-	// fails. The service_status stamp on the degraded payload drives the
-	// global banner; this branch covers cold caches and restarts.
-	const localDetailQuery = getLibraryAlbumDetailQuery(() => data.albumId);
-	const degradedLocalAlbum = $derived(localDetailQuery.data ?? null);
+	const primaryError = $derived(state.primaryError);
+	const albumNotFound = $derived(primaryError instanceof ApiError && primaryError.status === 404);
+	const providerUnavailable = $derived.by(() => {
+		if (!(primaryError instanceof ApiError)) return false;
+		return primaryError.status === 0 || primaryError.status === 429 || primaryError.status >= 500;
+	});
 
 	$effect(() => {
 		const canonicalId = state.album?.musicbrainz_id;
@@ -51,7 +51,13 @@
 		<BackButton />
 	</div>
 
-	{#if state.error && degradedLocalAlbum}
+	{#if albumNotFound}
+		<div class="flex items-center justify-center min-h-[50vh]">
+			<div class="alert alert-error">
+				<span>Album not found.</span>
+			</div>
+		</div>
+	{:else if providerUnavailable && localAlbum}
 		<div class="mb-4 flex justify-center">
 			<div class="alert alert-info text-sm">
 				<span
@@ -60,11 +66,20 @@
 				>
 			</div>
 		</div>
-		<LocalAlbumPage albumId={degradedLocalAlbum.id} />
-	{:else if state.error}
+		<LocalAlbumPage albumId={localAlbum.id} />
+	{:else if providerUnavailable}
 		<div class="flex items-center justify-center min-h-[50vh]">
 			<div class="alert alert-error">
-				<span>{state.error}</span>
+				<span>MusicBrainz is temporarily unavailable.</span>
+				<button class="btn btn-sm btn-ghost" onclick={() => void state.refreshAll()}>
+					Retry
+				</button>
+			</div>
+		</div>
+	{:else if state.error || primaryError}
+		<div class="flex items-center justify-center min-h-[50vh]">
+			<div class="alert alert-error">
+				<span>{state.error ?? 'Error loading album'}</span>
 			</div>
 		</div>
 	{:else if state.loadingBasic || !state.album}

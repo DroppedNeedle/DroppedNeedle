@@ -10,6 +10,8 @@ import uuid
 
 import msgspec
 
+from core.exceptions import ExternalServiceError, ResourceNotFoundError
+from infrastructure.resilience.retry import CircuitOpenError
 from infrastructure.persistence.follow_store import (
     Approval,
     ApprovalBatch,
@@ -34,8 +36,11 @@ class FollowService:
         self._mb_repo = mb_repo
 
     async def _resolve_artist_name(self, artist_mbid: str) -> str:
-        # fall back to a placeholder rather than failing the follow if MB is down
-        artist = await self._mb_repo.get_artist_by_id(artist_mbid)
+        # Artist-name enrichment is optional; provider failures use a placeholder.
+        try:
+            artist = await self._mb_repo.get_artist_by_id(artist_mbid)
+        except (CircuitOpenError, ExternalServiceError, ResourceNotFoundError):
+            return _UNKNOWN_ARTIST
         if artist and artist.get("name"):
             return artist["name"]
         return _UNKNOWN_ARTIST
