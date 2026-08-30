@@ -5,6 +5,7 @@ on the shared 1/s MusicBrainz limiter; every other (user-facing) caller keeps th
 ``USER_INITIATED`` default. These assert the param is threaded to ``mb_api_get`` unchanged.
 """
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -205,4 +206,45 @@ async def test_recording_search_escapes_structured_artist_and_title_fields():
 
     assert mock_get.await_args.kwargs["params"]["query"] == (
         'recording:"Song\\: \\"Live\\"" AND artist:"Artist \\+ Co"'
+    )
+
+
+@pytest.mark.asyncio
+async def test_mixed_priority_release_group_callers_get_separate_leaders():
+    repo = _Repo()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    priorities = []
+
+    async def provider(*_args, **kwargs):
+        priorities.append(kwargs["priority"])
+        started.set()
+        await release.wait()
+        return _ReleaseGroupSearchPayload()
+
+    mock_get = AsyncMock(side_effect=provider)
+    with patch("repositories.musicbrainz_album.mb_api_get", mock_get):
+        background = asyncio.create_task(
+            repo.search_release_groups(
+                "Artist",
+                "query",
+                priority=RequestPriority.BACKGROUND_SYNC,
+            )
+        )
+        await started.wait()
+        foreground = asyncio.create_task(
+            repo.search_release_groups(
+                "Artist",
+                "query",
+                priority=RequestPriority.USER_INITIATED,
+            )
+        )
+        await asyncio.sleep(0)
+        assert not foreground.done()
+        release.set()
+        await asyncio.gather(background, foreground)
+
+    assert mock_get.await_count == 2
+    assert sorted(priorities) == sorted(
+        [RequestPriority.BACKGROUND_SYNC, RequestPriority.USER_INITIATED]
     )

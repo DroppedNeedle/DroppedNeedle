@@ -835,15 +835,35 @@ async def update_musicbrainz_settings(
     preferences_service: PreferencesService = Depends(get_preferences_service),
     settings_service: SettingsService = Depends(get_settings_service),
 ):
+    previous_settings = preferences_service.get_musicbrainz_connection()
+    persisted_new_settings = False
+
+    def rollback_persistence() -> None:
+        if not persisted_new_settings:
+            return
+        try:
+            preferences_service.save_musicbrainz_connection(previous_settings)
+        except Exception:  # noqa: BLE001 - preserve original apply failure
+            logger.warning(
+                "Failed to restore previous MusicBrainz settings after apply failure"
+            )
+
     try:
         preferences_service.save_musicbrainz_connection(settings)
+        persisted_new_settings = True
         await settings_service.on_musicbrainz_settings_changed(settings)
         return settings
-    except ConfigurationError as e:
-        logger.warning(f"Configuration error updating MusicBrainz settings: {e}")
-        raise HTTPException(
-            status_code=400, detail="MusicBrainz settings are incomplete or invalid"
-        )
+    except asyncio.CancelledError:
+        rollback_persistence()
+        raise
+    except Exception as exc:  # noqa: BLE001 - preserve original apply failure
+        rollback_persistence()
+        if isinstance(exc, ConfigurationError):
+            logger.warning("Configuration error updating MusicBrainz settings")
+            raise HTTPException(
+                status_code=400, detail="MusicBrainz settings are incomplete or invalid"
+            ) from exc
+        raise
 
 
 @router.post("/musicbrainz/verify", response_model=VerifyConnectionResponse)

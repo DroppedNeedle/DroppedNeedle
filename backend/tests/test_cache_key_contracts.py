@@ -89,9 +89,9 @@ from infrastructure.cache.cache_keys import (
     ],
 )
 def test_key_starts_with_prefix(generated_key: str, expected_prefix: str):
-    assert generated_key.startswith(
-        expected_prefix
-    ), f"Key {generated_key!r} does not start with prefix {expected_prefix!r}"
+    assert generated_key.startswith(expected_prefix), (
+        f"Key {generated_key!r} does not start with prefix {expected_prefix!r}"
+    )
 
 
 def test_release_edition_cache_key_keeps_artist_and_title_boundaries() -> None:
@@ -122,6 +122,31 @@ def test_invalidation_groups_return_list_of_strings(group_fn: str):
     result = fn()
     assert isinstance(result, list)
     assert len(result) > 0, f"{group_fn}() returned an empty list"
-    assert all(
-        isinstance(p, str) for p in result
-    ), f"{group_fn}() contains non-string entries"
+    assert all(isinstance(p, str) for p in result), (
+        f"{group_fn}() contains non-string entries"
+    )
+
+
+def test_musicbrainz_prefixes_cover_all_registered_prefix_constants():
+    from infrastructure.cache import cache_keys
+
+    registered = {
+        value
+        for name, value in vars(cache_keys).items()
+        if name.startswith("MB_") and name.endswith("_PREFIX")
+    }
+    composites = {
+        cache_keys.ARTIST_INFO_PREFIX,
+        cache_keys.HOME_RESPONSE_PREFIX,
+        cache_keys.DISCOVER_RESPONSE_PREFIX,
+        cache_keys.ALBUM_INFO_PREFIX,
+        cache_keys.ALBUM_TRACKS_INFO_PREFIX,
+    }
+    actual = set(cache_keys.musicbrainz_prefixes())
+
+    assert registered <= actual, (
+        f"Missing registered MusicBrainz prefixes: {registered - actual}"
+    )
+    assert composites <= actual, (
+        f"Missing composite MusicBrainz prefixes: {composites - actual}"
+    )

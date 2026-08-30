@@ -85,6 +85,7 @@ class DiscoverService:
         genre_artwork_service: "GenreArtworkService | None" = None,
         discovery_snapshot_store: "DiscoverySnapshotStore | None" = None,
         workload_gate: "BackgroundWorkloadGate | None" = None,
+        mb_canonical_store: Any = None,
     ):
         self._integration = IntegrationHelpers(preferences_service)
         self._client_factory = client_factory
@@ -97,6 +98,7 @@ class DiscoverService:
             listenbrainz_repo=listenbrainz_repo,
             library_db=library_db,
             mbid_store=mbid_store,
+            mb_canonical_store=mb_canonical_store,
         )
 
         self._enrichment = QueueEnrichmentService(

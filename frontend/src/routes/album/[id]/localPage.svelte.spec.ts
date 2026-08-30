@@ -18,7 +18,8 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 		},
 		isTrusted: false,
 		user: { id: 'user-1' }
-	}
+	},
+	LAST_USER_ID_KEY: 'test:last-user'
 }));
 vi.mock('$lib/stores/player.svelte', () => ({
 	playerStore: { playQueue: (...args: unknown[]) => h.playQueue(...args) }

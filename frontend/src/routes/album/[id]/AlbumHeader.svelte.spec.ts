@@ -126,7 +126,8 @@ vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
-	authStore: { isAdmin: true, isTrusted: true }
+	authStore: { isAdmin: true, isTrusted: true },
+	LAST_USER_ID_KEY: 'test:last-user'
 }));
 
 vi.mock('$lib/stores/toast', () => ({

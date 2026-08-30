@@ -37,6 +37,7 @@
 	const album = $derived(albumQuery.data);
 	const tracks = $derived(tracksQuery.data?.items ?? []);
 	const editionsQuery = getAlbumEditionsQuery(
+		() => authStore.user?.id,
 		() => album?.musicbrainz_release_group_id ?? '',
 		() => Boolean(album?.musicbrainz_release_group_id)
 	);

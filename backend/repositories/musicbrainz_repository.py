@@ -44,13 +44,16 @@ class MusicBrainzRepository(MusicBrainzArtistMixin, MusicBrainzAlbumMixin):
 
     def _apply_settings(self) -> None:
         from api.v1.schemas.settings import (
-            is_official_musicbrainz,
+            is_musicbrainz_rate_policy_public_host,
             _OFFICIAL_MB_RATE_LIMIT,
             _OFFICIAL_MB_CONCURRENT_SEARCHES,
         )
 
         settings = self._preferences_service.get_musicbrainz_connection()
-        if is_official_musicbrainz(settings.api_url):
+        rate_policy_public_host = is_musicbrainz_rate_policy_public_host(
+            settings.api_url
+        )
+        if rate_policy_public_host:
             settings.rate_limit = min(settings.rate_limit, _OFFICIAL_MB_RATE_LIMIT)
             settings.concurrent_searches = min(
                 settings.concurrent_searches, _OFFICIAL_MB_CONCURRENT_SEARCHES
@@ -64,8 +67,11 @@ class MusicBrainzRepository(MusicBrainzArtistMixin, MusicBrainzAlbumMixin):
         else:
             set_mb_rate_limiter_bypass(False)
             mb_rate_limiter.update_rate(settings.rate_limit)
-        if mb_rate_limiter.capacity != settings.concurrent_searches:
-            mb_rate_limiter.update_capacity(settings.concurrent_searches)
+        effective_capacity = (
+            1 if rate_policy_public_host else settings.concurrent_searches
+        )
+        if mb_rate_limiter.capacity != effective_capacity:
+            mb_rate_limiter.update_capacity(effective_capacity)
 
     async def search_grouped(
         self,

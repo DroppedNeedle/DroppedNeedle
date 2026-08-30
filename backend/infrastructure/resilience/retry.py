@@ -217,7 +217,7 @@ def _get_retry_after_seconds(exception: Exception) -> Optional[float]:
         retry_after_value = float(retry_after)
     except (TypeError, ValueError):
         return None
-    if retry_after_value <= 0:
+    if not math.isfinite(retry_after_value) or retry_after_value <= 0:
         return None
     return retry_after_value
 

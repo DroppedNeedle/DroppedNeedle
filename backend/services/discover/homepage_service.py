@@ -1,3 +1,5 @@
+from contextvars import ContextVar
+
 import asyncio
 import hashlib
 import logging
@@ -60,9 +62,18 @@ from repositories.listenbrainz_repository import lb_popularity_degraded
 from services.discover.top_picks import TopPickCandidate, score_candidates
 from services.discover.snapshot_codec import decode_discover_response
 from services.weekly_exploration_service import WeeklyExplorationService
+from repositories.musicbrainz_base import (
+    MbSourceContext,
+    capture_mb_source_context,
+    mb_publish_if_current,
+)
 from infrastructure.validators import is_valid_mbid
 
 logger = logging.getLogger(__name__)
+
+_discover_source_context: ContextVar[MbSourceContext | None] = ContextVar(
+    "discover_source_context", default=None
+)
 
 if TYPE_CHECKING:
     from services.native.background_workload_gate import BackgroundWorkloadGate
@@ -258,6 +269,25 @@ class DiscoverHomepageService:
         self._last_failed_task_keys: set[str] = set()
 
     @staticmethod
+    def _source_context() -> MbSourceContext:
+        context = _discover_source_context.get()
+        if context is None:
+            context = capture_mb_source_context()
+            _discover_source_context.set(context)
+        return context
+
+    async def _publish_memory_cache(
+        self, cache_key: str, value: Any, ttl: int
+    ) -> bool:
+        if not self._memory_cache:
+            return True
+        context = self._source_context()
+        return await mb_publish_if_current(
+            context,
+            lambda: self._memory_cache.set(cache_key, value, ttl),
+        )
+
+    @staticmethod
     def _daily_rng(*parts: str) -> random.Random:
         """Deterministic-per-day randomness: a refresh within the same day
         reproduces the same sections instead of reshuffling under the user."""
@@ -321,6 +351,7 @@ class DiscoverHomepageService:
         await self._workload_gate.run_warmer_unit(lambda: self.warm_cache(user_id))
 
     async def get_discover_data(self, user_id: str) -> DiscoverResponse:
+        _discover_source_context.set(capture_mb_source_context())
         _, _, _, _, lb_enabled, lfm_enabled, _ = await self._resolve_user_music(
             user_id, None
         )
@@ -338,7 +369,9 @@ class DiscoverHomepageService:
         if cached is None:
             cached = await self._load_snapshot(cache_key)
             if cached is not None and self._memory_cache:
-                await self._memory_cache.set(cache_key, cached, DISCOVER_CACHE_TTL)
+                await self._publish_memory_cache(
+                    cache_key, cached, DISCOVER_CACHE_TTL
+                )
         if cached is not None:
             # stale-while-revalidate: serve the cached copy immediately, but rebuild
             # in the background once it's older than the freshness window so the data
@@ -414,6 +447,7 @@ class DiscoverHomepageService:
         )
 
     async def get_discover_preview(self, user_id: str) -> DiscoverPreview | None:
+        _discover_source_context.set(capture_mb_source_context())
         _, _, _, _, lb_enabled, lfm_enabled, _ = await self._resolve_user_music(
             user_id, None
         )
@@ -424,7 +458,9 @@ class DiscoverHomepageService:
         if not isinstance(cached, DiscoverResponse):
             cached = await self._load_snapshot(cache_key)
             if cached is not None and self._memory_cache:
-                await self._memory_cache.set(cache_key, cached, DISCOVER_CACHE_TTL)
+                await self._publish_memory_cache(
+                    cache_key, cached, DISCOVER_CACHE_TTL
+                )
         if not cached or not isinstance(cached, DiscoverResponse):
             return None
         if not cached.because_you_listen_to:
@@ -445,6 +481,7 @@ class DiscoverHomepageService:
         (top_picks.personalizing) OR - while LB popularity is degraded - has no top_picks at
         all yet (the both-pools-empty degraded case caches top_picks=None), so the warmer
         keeps re-warming until real personalised picks land instead of giving up for 6h."""
+        _discover_source_context.set(capture_mb_source_context())
         _, _, _, _, lb_enabled, lfm_enabled, _ = await self._resolve_user_music(
             user_id, None
         )
@@ -455,7 +492,9 @@ class DiscoverHomepageService:
         if not isinstance(cached, DiscoverResponse):
             cached = await self._load_snapshot(cache_key)
             if cached is not None and self._memory_cache:
-                await self._memory_cache.set(cache_key, cached, DISCOVER_CACHE_TTL)
+                await self._publish_memory_cache(
+                    cache_key, cached, DISCOVER_CACHE_TTL
+                )
         if not cached or not isinstance(cached, DiscoverResponse):
             return (False, False)
         tp = cached.top_picks
@@ -533,6 +572,7 @@ class DiscoverHomepageService:
         self._trigger_warm(user_id)
 
     async def warm_cache(self, user_id: str) -> None:
+        _discover_source_context.set(capture_mb_source_context())
         if self._workload_gate is not None:
             await self._workload_gate.wait_until_available()
         _, _, _, _, lb_enabled, lfm_enabled, _ = await self._resolve_user_music(
@@ -563,21 +603,29 @@ class DiscoverHomepageService:
                 },
             )
             if self._has_meaningful_content(response):
-                if self._memory_cache:
-                    await self._memory_cache.set(
-                        cache_key, response, DISCOVER_CACHE_TTL
-                    )
-                if getattr(self, "_snapshot_store", None):
-                    try:
-                        await self._snapshot_store.save(
-                            cache_key,
-                            user_id,
-                            msgspec.json.encode(response),
-                            generated_at,
+                async def publish() -> None:
+                    if self._memory_cache:
+                        await self._memory_cache.set(
+                            cache_key, response, DISCOVER_CACHE_TTL
                         )
-                    except Exception as exc:  # noqa: BLE001 - memory copy stays usable
-                        logger.warning("Could not persist Discover snapshot: %s", exc)
-                self._spawn_cover_prewarm(user_id, response)
+                    if getattr(self, "_snapshot_store", None):
+                        try:
+                            await self._snapshot_store.save(
+                                cache_key,
+                                user_id,
+                                msgspec.json.encode(response),
+                                generated_at,
+                            )
+                        except Exception as exc:  # noqa: BLE001 - memory copy stays usable
+                            logger.warning(
+                                "Could not persist Discover snapshot: %s", exc
+                            )
+
+                published = await mb_publish_if_current(
+                    self._source_context(), publish
+                )
+                if published:
+                    self._spawn_cover_prewarm(user_id, response)
             else:
                 logger.warning(
                     "Discover build produced no meaningful content, keeping existing cache"
@@ -724,7 +772,9 @@ class DiscoverHomepageService:
             and self._has_meaningful_content(existing)
         ):
             return
-        await self._memory_cache.set(cache_key, response, STALE_REVALIDATE_SECONDS)
+        await self._publish_memory_cache(
+            cache_key, response, STALE_REVALIDATE_SECONDS
+        )
 
     def _spawn_cover_prewarm(self, user_id: str, response: DiscoverResponse) -> None:
         """Warm covers for the WHOLE Discover grid (albums + artists) so the page paints from
@@ -881,6 +931,7 @@ class DiscoverHomepageService:
             await self._workload_gate.wait_until_available()
 
     async def build_discover_data(self, user_id: str) -> DiscoverResponse:
+        _discover_source_context.set(capture_mb_source_context())
         (
             lb_client,
             lfm_client,
@@ -1708,7 +1759,9 @@ class DiscoverHomepageService:
         # caches empty lists too (negative cache) so a barren run isn't retried for 24h
         if self._memory_cache:
             cache_key = self._daily_mix_cache_key(user_id, source)
-            await self._memory_cache.set(cache_key, sections, DAILY_MIX_CACHE_TTL)
+            await self._publish_memory_cache(
+                cache_key, sections, DAILY_MIX_CACHE_TTL
+            )
 
     async def _add_lastfm_top_pick_candidates(
         self,
@@ -2091,10 +2144,8 @@ class DiscoverHomepageService:
     ) -> None:
         if self._memory_cache:
             cache_key = self._top_picks_cache_key(user_id, source)
-            await self._memory_cache.set(
-                cache_key,
-                {"section": result},
-                ttl,
+            await self._publish_memory_cache(
+                cache_key, {"section": result}, ttl
             )
 
     async def _build_listeners_like_you(

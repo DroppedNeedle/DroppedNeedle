@@ -521,6 +521,22 @@ class DiskMetadataCache:
 
         await asyncio.to_thread(operation)
 
+    async def clear_musicbrainz(self) -> None:
+        """Clear only MusicBrainz album/artist metadata tiers."""
+
+        def operation() -> None:
+            for directory in (
+                self._recent_albums_dir,
+                self._persistent_albums_dir,
+                self._recent_artists_dir,
+                self._persistent_artists_dir,
+            ):
+                if directory.exists():
+                    shutil.rmtree(directory)
+            self._ensure_dirs()
+
+        await asyncio.to_thread(operation)
+
     async def clear_audiodb(self) -> None:
         def operation() -> None:
             for d in (

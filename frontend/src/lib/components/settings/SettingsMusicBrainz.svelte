@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { API } from '$lib/constants';
+	import { invalidateMusicBrainzProviderQueries } from '$lib/queries/QueryClient';
+	import { clearMusicBrainzProviderCaches } from '$lib/utils/albumDetailCache';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { CircleAlert, ExternalLink, Server, ShieldCheck, Users } from 'lucide-svelte';
 	import { onDestroy } from 'svelte';
@@ -37,6 +39,47 @@
 		testResult: MusicBrainzTestResult | null;
 	};
 
+	function sourceIdentity(url: string): string {
+		const trimmed = url.trim();
+		try {
+			const parsed = new URL(trimmed);
+			const pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+			const credentials =
+				parsed.username || parsed.password ? `${parsed.username}:${parsed.password}@` : '';
+			return `${parsed.protocol}//${credentials}${parsed.host}${pathname}${parsed.search}`;
+		} catch {
+			return trimmed;
+		}
+	}
+
+	let loadedSourceIdentity: string | null = null;
+
+	async function handleSaved(data: MusicBrainzConnectionSettings): Promise<void> {
+		const nextSourceIdentity = sourceIdentity(data.api_url);
+		const sourceChanged =
+			loadedSourceIdentity !== null && loadedSourceIdentity !== nextSourceIdentity;
+		if (!sourceChanged) return;
+
+		let invalidationSucceeded = false;
+		try {
+			await invalidateMusicBrainzProviderQueries();
+			invalidationSucceeded = true;
+		} catch {
+			// The server PUT already succeeded; leave the identity unchanged so a later save retries.
+		}
+
+		let localCachesCleared = false;
+		try {
+			localCachesCleared = clearMusicBrainzProviderCaches();
+		} catch {
+			// Browser cache cleanup is best effort; do not expose the configured source URL.
+		}
+
+		if (invalidationSucceeded && localCachesCleared) {
+			loadedSourceIdentity = nextSourceIdentity;
+		}
+	}
+
 	const form = createSettingsForm<MusicBrainzConnectionSettings>({
 		loadEndpoint: API.settingsMusicbrainz(),
 		saveEndpoint: API.settingsMusicbrainz(),
@@ -45,11 +88,13 @@
 			api_url: OFFICIAL_ENDPOINT_URL,
 			rate_limit: 1.0,
 			concurrent_searches: 6
-		}
+		},
+		afterSave: handleSaved
 	}) as MusicBrainzSettingsForm;
 
 	export async function load() {
 		await form.load();
+		if (form.data) loadedSourceIdentity = sourceIdentity(form.data.api_url);
 	}
 
 	async function save() {
@@ -73,8 +118,12 @@
 
 	function isOfficialMusicBrainz(url: string): boolean {
 		try {
-			const hostname = new URL(url.trim()).hostname.toLowerCase();
-			return hostname === 'musicbrainz.org' || hostname === 'www.musicbrainz.org';
+			const parsed = new URL(url.trim());
+			const hostname = parsed.hostname.toLowerCase();
+			if (hostname !== 'musicbrainz.org' && hostname !== 'www.musicbrainz.org') return false;
+			if (parsed.protocol === 'http:') return parsed.port === '' || parsed.port === '80';
+			if (parsed.protocol === 'https:') return parsed.port === '' || parsed.port === '443';
+			return false;
 		} catch {
 			return false;
 		}
@@ -160,7 +209,7 @@
 	});
 
 	$effect(() => {
-		form.load();
+		void load();
 	});
 
 	onDestroy(() => form.cleanup());

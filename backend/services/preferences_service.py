@@ -86,6 +86,10 @@ class PreferencesService:
         self._config_path = settings.config_file_path
         self._config_cache: Optional[dict] = None
         self._cache_lock = threading.RLock()
+        # Section saves are synchronous, so use a dedicated non-reentrant
+        # cross-thread transaction lock rather than treating the cache RLock
+        # as an asyncio boundary.
+        self._section_save_lock = threading.Lock()
         # Owner decision #1/#2 (Acquisition plan): a FRESH config seeds the
         # Balanced preset before any normalization reads it. Existing
         # installs (config file present) never receive these values.
@@ -154,9 +158,10 @@ class PreferencesService:
             return default_factory() if default_factory else model()
 
     def _save_section(self, key: str, value: Any) -> None:
-        config = self._load_config().copy()
-        config[key] = to_jsonable(value)
-        self._save_config(config)
+        with self._section_save_lock:
+            config = self._load_config().copy()
+            config[key] = to_jsonable(value)
+            self._save_config(config)
 
     def _read_secret(self, path: tuple[str, ...], stored_value: str) -> str:
         if not stored_value:
@@ -373,9 +378,7 @@ class PreferencesService:
                     }
                 }
             )
-            logger.info(
-                "Seeded new-install acquisition defaults (Balanced preset)"
-            )
+            logger.info("Seeded new-install acquisition defaults (Balanced preset)")
         except Exception as exc:  # noqa: BLE001 - seeding must not block startup
             logger.error("Failed to seed acquisition defaults: %s", exc)
 

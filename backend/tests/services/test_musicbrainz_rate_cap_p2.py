@@ -12,7 +12,6 @@ import pytest
 
 from api.v1.schemas.settings import (
     MusicBrainzConnectionSettings,
-    _OFFICIAL_MB_CONCURRENT_SEARCHES,
     _OFFICIAL_MB_RATE_LIMIT,
 )
 import repositories.musicbrainz_base as mb_base
@@ -124,7 +123,7 @@ class TestLimiterSentinelBypass:
         self._make_repository(OFFICIAL, rate_limit=999.0, concurrent=64)
         assert mb_rate_limiter_bypassed() is False
         assert mb_rate_limiter.rate == _OFFICIAL_MB_RATE_LIMIT
-        assert mb_rate_limiter.capacity == _OFFICIAL_MB_CONCURRENT_SEARCHES
+        assert mb_rate_limiter.capacity == 1
 
 
 class TestOnSettingsChangedSentinel:
@@ -132,7 +131,9 @@ class TestOnSettingsChangedSentinel:
     def service(self):
         from services.settings_service import SettingsService
 
-        return SettingsService.__new__(SettingsService)
+        service = SettingsService.__new__(SettingsService)
+        service._disk_cache = None
+        return service
 
     @pytest.fixture(autouse=True)
     def restore_limiter_state(self):
@@ -170,7 +171,8 @@ class TestOnSettingsChangedSentinel:
         )
 
         assert mb_rate_limiter_bypassed() is True
-        # capacity still applies while the stored bucket rate sits inert
+        # The off-official Unlimited sentinel keeps its requested capacity;
+        # only official MusicBrainz is pinned to one.
         assert mb_rate_limiter.capacity == 64
         assert len(counter) > 0  # musicbrainz_prefixes() sweep fired
 

@@ -12,7 +12,7 @@ import type {
 	NavidromeAlbumMatch,
 	PlexAlbumMatch
 } from '$lib/types';
-import { createLocalStorageCache } from '$lib/utils/localStorageCache';
+import { clearLocalStorageNamespace, createLocalStorageCache } from '$lib/utils/localStorageCache';
 
 const MAX_ALBUM_DETAIL_CACHE_ENTRIES = 120;
 
@@ -68,3 +68,24 @@ export const albumSourceMatchCache = createLocalStorageCache<AlbumSourceMatchCac
 	CACHE_TTL.ALBUM_DETAIL_SOURCE_MATCH,
 	{ maxEntries: MAX_ALBUM_DETAIL_CACHE_ENTRIES }
 );
+
+// MusicBrainz source changes can make these provider-backed album payloads stale. Keep
+// Last.fm/YouTube/integration and mixed local-search namespaces untouched: they are
+// separate providers or can contain local/user data.
+const MUSICBRAINZ_PROVIDER_CACHE_NAMESPACES = [
+	CACHE_KEYS.ALBUM_BASIC_CACHE,
+	CACHE_KEYS.ALBUM_TRACKS_CACHE,
+	CACHE_KEYS.ALBUM_DISCOVERY_CACHE
+] as const;
+
+export function clearMusicBrainzProviderCaches(): boolean {
+	let allCleared = true;
+	for (const namespace of MUSICBRAINZ_PROVIDER_CACHE_NAMESPACES) {
+		try {
+			clearLocalStorageNamespace(namespace);
+		} catch {
+			allCleared = false;
+		}
+	}
+	return allCleared;
+}

@@ -118,6 +118,19 @@ class DiscoverySnapshotStore(PersistenceBase):
 
         await self._write(operation)
 
+    async def delete_source_dependent_snapshots(self) -> int:
+        """Delete Discover snapshots whose payload depends on MusicBrainz."""
+
+        def operation(conn: sqlite3.Connection) -> int:
+            cursor = conn.execute(
+                "DELETE FROM discovery_snapshots "
+                "WHERE snapshot_key LIKE 'discover_response:%' "
+                "OR snapshot_key LIKE 'discover_queue:%'"
+            )
+            return cursor.rowcount
+
+        return await self._write(operation)
+
     async def delete_user(self, user_id: str) -> None:
         def operation(conn: sqlite3.Connection) -> None:
             conn.execute(

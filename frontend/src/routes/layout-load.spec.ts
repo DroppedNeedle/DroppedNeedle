@@ -19,7 +19,8 @@ const state = vi.hoisted(() => ({
 	clear: vi.fn(),
 	markInitialized: vi.fn(),
 	ensureQueryData: vi.fn().mockResolvedValue({ primary_music_source: 'invalid' }),
-	resetQueryCache: vi.fn().mockResolvedValue(undefined),
+	resetQueryCache: vi.fn(),
+	sessionCleanup: vi.fn(),
 	musicSourceReset: vi.fn(),
 	musicSourceSet: vi.fn(),
 	scrobbleReset: vi.fn()
@@ -67,6 +68,9 @@ vi.mock('$lib/stores/musicSource', () => ({
 }));
 vi.mock('$lib/stores/scrobble.svelte', () => ({
 	scrobbleManager: { reset: state.scrobbleReset }
+}));
+vi.mock('$lib/utils/userSessionCleanup', () => ({
+	clearUserSessionState: state.sessionCleanup
 }));
 vi.mock('$lib/utils/userScopedCaches', () => ({ clearUserScopedLocalCaches: vi.fn() }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -127,6 +131,17 @@ describe('+layout load session bootstrap', () => {
 		state.ensureQueryData.mockReset();
 		state.ensureQueryData.mockResolvedValue({ primary_music_source: 'invalid' });
 		state.resetQueryCache.mockClear();
+		state.sessionCleanup.mockReset();
+		state.sessionCleanup.mockImplementation(async (options?: { clearAuth?: boolean }) => {
+			state.resetQueryCache();
+			state.musicSourceReset();
+			state.scrobbleReset();
+			storage.delete('test:last-user');
+			if (options?.clearAuth !== false) {
+				state.clear();
+				state.user = null;
+			}
+		});
 		state.musicSourceReset.mockClear();
 		state.musicSourceSet.mockClear();
 		state.scrobbleReset.mockClear();
@@ -152,14 +167,29 @@ describe('+layout load session bootstrap', () => {
 		expect(state.apiGet).toHaveBeenNthCalledWith(2, '/me', { timeoutMs: 10_000 });
 	});
 
-	it('clears the session only for an actual 401 response', async () => {
+	it('clears every session leg and redirects after persistent cleanup fails on 401', async () => {
+		storage.set('test:last-user', 'user-old');
 		state.user = user;
+		state.sessionCleanup.mockImplementationOnce(async () => {
+			state.resetQueryCache();
+			state.musicSourceReset();
+			state.scrobbleReset();
+			storage.delete('test:last-user');
+			state.clear();
+			state.user = null;
+			throw new Error('IndexedDB unavailable');
+		});
 		state.apiGet
 			.mockResolvedValueOnce({ required: false })
 			.mockRejectedValueOnce(new ApiError(401, 'Unauthorized'));
 
 		await expect(loadPage()).rejects.toMatchObject({ status: 302, location: '/login' });
+		expect(state.sessionCleanup).toHaveBeenCalledOnce();
+		expect(state.resetQueryCache).toHaveBeenCalledOnce();
+		expect(state.musicSourceReset).toHaveBeenCalledOnce();
+		expect(state.scrobbleReset).toHaveBeenCalledOnce();
 		expect(state.clear).toHaveBeenCalledOnce();
+		expect(storage.has('test:last-user')).toBe(false);
 		expect(state.markInitialized).toHaveBeenCalledOnce();
 		expect(state.user).toBeNull();
 	});
@@ -189,16 +219,29 @@ describe('+layout load session bootstrap', () => {
 		expect(state.apiGet).not.toHaveBeenCalled();
 	});
 
-	it('clears the old account before hydrating the new user source', async () => {
+	it('keeps the new account active when persistent cleanup fails during user switch', async () => {
 		storage.set('test:last-user', 'user-old');
 		state.user = user;
 		state.initialized = true;
+		state.sessionCleanup.mockImplementationOnce(async (options?: { clearAuth?: boolean }) => {
+			state.resetQueryCache();
+			state.musicSourceReset();
+			state.scrobbleReset();
+			storage.delete('test:last-user');
+			if (options?.clearAuth !== false) {
+				state.clear();
+				state.user = null;
+			}
+			throw new Error('IndexedDB unavailable');
+		});
 		state.ensureQueryData.mockResolvedValueOnce({ primary_music_source: 'lastfm' });
 
 		await expect(loadPage('/')).resolves.toEqual({ primarySource: 'lastfm', user });
+		expect(state.sessionCleanup).toHaveBeenCalledWith({ clearAuth: false });
 		expect(state.resetQueryCache).toHaveBeenCalledOnce();
 		expect(state.musicSourceReset).toHaveBeenCalledOnce();
 		expect(state.scrobbleReset).toHaveBeenCalledOnce();
+		expect(state.clear).not.toHaveBeenCalled();
 		expect(state.musicSourceSet).toHaveBeenCalledWith('lastfm');
 		expect(storage.get('test:last-user')).toBe('user-1');
 	});

@@ -164,10 +164,11 @@
 	// MB release the album page + acquisition follow (D16), and acquire it (D13).
 	// ST7 W2: the query warms as soon as the album identity is known - the old
 	// !loadingTracks term serialized a depth-3 chain for no data dependency
-	// (editions key off the RG mbid alone). The picker section below still waits
-	// on !loadingTracks so the visible behavior is unchanged.
+	// (editions key off the authenticated user and RG mbid). The picker section
+	// below still waits on !loadingTracks so the visible behavior is unchanged.
 	const editionsMbid = $derived(releaseGroupMbid || album.musicbrainz_id);
 	const editionsQuery = getAlbumEditionsQuery(
+		() => authStore.user?.id,
 		() => editionsMbid,
 		() => authStore.isTrusted && downloadClientConfigured && Boolean(editionsMbid)
 	);
@@ -225,10 +226,17 @@
 		(document.activeElement as HTMLElement | null)?.blur();
 		try {
 			if (releaseMbid === null) {
-				await clearPinMutation.mutateAsync({ mbid: editionsMbid });
+				await clearPinMutation.mutateAsync({
+					mbid: editionsMbid,
+					userId: authStore.user?.id
+				});
 				toastStore.show({ message: 'Edition back to automatic.', type: 'success' });
 			} else {
-				await pinMutation.mutateAsync({ mbid: editionsMbid, releaseMbid });
+				await pinMutation.mutateAsync({
+					mbid: editionsMbid,
+					releaseMbid,
+					userId: authStore.user?.id
+				});
 				toastStore.show({ message: 'Edition pinned.', type: 'success' });
 			}
 			onrefresh(); // the pin changes the served tracklist - refetch the page

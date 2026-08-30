@@ -5,6 +5,7 @@
 	import { fromStore } from 'svelte/store';
 	import { integrationStore } from '$lib/stores/integration';
 	import SettingsTabContent from '$lib/components/settings/SettingsTabContent.svelte';
+	import { isSettingsTabVisible } from '$lib/components/settings/settingsTabs';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getUpdateCheckQuery } from '$lib/queries/VersionQuery.svelte';
 	import {
@@ -98,7 +99,9 @@
 		{ id: 'sidebar', label: 'Sidebar', tier: 'personalize', icon: PanelLeft },
 		{ id: 'music-source', label: 'Music Source', tier: 'personalize', icon: BarChart3 },
 		{ id: 'cache', label: 'Cache', tier: 'system', icon: Database },
-		{ id: 'musicbrainz', label: 'MusicBrainz', tier: 'system', icon: Globe },
+		...(isSettingsTabVisible('musicbrainz', authStore.isAdmin)
+			? [{ id: 'musicbrainz', label: 'MusicBrainz', tier: 'system', icon: Globe }]
+			: []),
 		...(authStore.isAdmin
 			? [
 					{ id: 'users', label: 'Users', tier: 'system', icon: Users },

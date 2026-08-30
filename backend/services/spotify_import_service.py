@@ -15,7 +15,12 @@ from infrastructure.integration_result import IntegrationResult
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.validators import validate_spotify_cover_url
 from repositories.musicbrainz_album import _pick_best_release_group
-from repositories.musicbrainz_base import mb_api_get
+from repositories.musicbrainz_base import (
+    clear_mb_response_context,
+    get_mb_response_context,
+    mb_api_get,
+    mb_publish_if_current,
+)
 from repositories.async_playlist_repository import AsyncPlaylistRepository
 
 if TYPE_CHECKING:
@@ -324,21 +329,56 @@ class SpotifyImportService:
     async def _resolve_mbid(
         self, isrc: str | None, artist: str, album_name: str
     ) -> str | None:
+        clear_mb_response_context()
         if isrc:
+            canonical_store = getattr(self._mb_repo, "mb_canonical_store", None)
+            if canonical_store is not None:
+                try:
+                    existing = await canonical_store.get_recordings_by_isrc(isrc)
+                except Exception:  # noqa: BLE001 - durable miss falls through to wire
+                    existing = []
+                if not isinstance(existing, (list, tuple, set)):
+                    existing = []
+
+                # Only inspect the repository memory tier before paying for /isrc.
+                # A durable ISRC row is an index, not permission to issue another
+                # recording wire for every candidate.
+                cache_lookup = getattr(
+                    self._mb_repo, "get_cached_recording_to_release_group", None
+                )
+                if callable(cache_lookup):
+                    for rec_id in sorted(
+                        {str(value).casefold() for value in existing if value}
+                    ):
+                        try:
+                            mbid = await cache_lookup(rec_id)
+                        except Exception:  # noqa: BLE001 - try the next known row
+                            continue
+                        if mbid:
+                            return mbid
+
             try:
                 data = await mb_api_get(
                     f"/isrc/{isrc}",
                     priority=RequestPriority.BACKGROUND_SYNC,
                 )
+                response_context = get_mb_response_context()
                 recordings: list[dict] = data.get("recordings") or []
                 if isinstance(recordings, dict):
                     recordings = [recordings]
-                # ST2 P1: bank ISRC -> recording ids durably (write-through).
-                canonical_store = getattr(self._mb_repo, "mb_canonical_store", None)
+                # ST2 P1: bank ISRC -> recording ids durably (write-through)
+                # only for the source generation that answered.
                 if canonical_store is not None:
                     try:
-                        await canonical_store.save_isrc_recordings(
-                            [(isrc, rec["id"]) for rec in recordings if rec.get("id")]
+                        await mb_publish_if_current(
+                            response_context,
+                            lambda: canonical_store.save_isrc_recordings(
+                                [
+                                    (isrc, rec["id"])
+                                    for rec in recordings
+                                    if rec.get("id")
+                                ]
+                            ),
                         )
                     except Exception:  # noqa: BLE001
                         pass  # write-through must never break the import

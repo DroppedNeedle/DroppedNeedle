@@ -1,3 +1,4 @@
+import math
 import re
 from typing import Annotated, Any, Literal, Mapping
 
@@ -238,7 +239,9 @@ class DownloadPolicySettings(AppStruct):
     lossless_preference: str = "highest"  # cd|24_48|24_96|24_192|highest
     lossless_max_bit_depth: int | None = None
     lossless_max_sample_rate_hz: int | None = None
-    unknown_quality_behavior: str = "allow_as_fallback"  # reject|review|allow_as_fallback
+    unknown_quality_behavior: str = (
+        "allow_as_fallback"  # reject|review|allow_as_fallback
+    )
     source_selection_mode: str = "source_first"  # source_first|quality_first
 
     def __post_init__(self) -> None:
@@ -332,9 +335,7 @@ class DownloadPolicySettings(AppStruct):
         accepted = derive_default_order(self.quality_min, self.quality_max)
         order = list(self.quality_preference_order)
         order_ok = len(order) == len(accepted) and sorted(order) == sorted(accepted)
-        self.quality_preference_order = (
-            order if order_ok else list(accepted)
-        )
+        self.quality_preference_order = order if order_ok else list(accepted)
         _lossless_prefs = {"cd", "24_48", "24_96", "24_192", "highest"}
         if self.lossless_preference not in _lossless_prefs:
             self.lossless_preference = "highest"
@@ -350,7 +351,9 @@ class DownloadPolicySettings(AppStruct):
             "lossy_max_bitrate_kbps",
         ):
             value = getattr(self, name)
-            if value is not None and not (_QUALITY_KBPS_MIN <= value <= _QUALITY_KBPS_MAX):
+            if value is not None and not (
+                _QUALITY_KBPS_MIN <= value <= _QUALITY_KBPS_MAX
+            ):
                 setattr(self, name, None)
         if (
             self.lossy_min_bitrate_kbps is not None
@@ -366,6 +369,7 @@ class DownloadPolicySettings(AppStruct):
             value = getattr(self, name)
             if value is not None and not (low <= value <= high):
                 setattr(self, name, None)
+
 
 _QUALITY_KBPS_MIN = 16
 _QUALITY_KBPS_MAX = 2048
@@ -391,7 +395,9 @@ def validate_new_quality_fields(payload: Mapping[str, Any]) -> None:
     lossless_preference = payload.get("lossless_preference", "highest")
     if lossless_preference not in _lossless_prefs:
         raise ValueError(f"invalid lossless_preference: {lossless_preference!r}")
-    unknown_quality_behavior = payload.get("unknown_quality_behavior", "allow_as_fallback")
+    unknown_quality_behavior = payload.get(
+        "unknown_quality_behavior", "allow_as_fallback"
+    )
     if unknown_quality_behavior not in _unknown_rules:
         raise ValueError(
             f"invalid unknown_quality_behavior: {unknown_quality_behavior!r}"
@@ -411,11 +417,7 @@ def validate_new_quality_fields(payload: Mapping[str, Any]) -> None:
             )
     lossy_min = payload.get("lossy_min_bitrate_kbps")
     lossy_max = payload.get("lossy_max_bitrate_kbps")
-    if (
-        lossy_min is not None
-        and lossy_max is not None
-        and lossy_min > lossy_max
-    ):
+    if lossy_min is not None and lossy_max is not None and lossy_min > lossy_max:
         raise ValueError("lossy_min_bitrate_kbps exceeds lossy_max_bitrate_kbps")
     target = payload.get("preferred_lossy_bitrate_kbps")
     if target is not None:
@@ -432,6 +434,8 @@ def validate_new_quality_fields(payload: Mapping[str, Any]) -> None:
     rate = payload.get("lossless_max_sample_rate_hz")
     if rate is not None and not 8000 <= rate <= 768000:
         raise ValueError("lossless_max_sample_rate_hz must be 8000..768000 Hz")
+
+
 class WantedWatcherSettings(AppStruct):
     """The wanted watcher (Wanted plan §5.4): granular opt-out toggles, no secrets.
     Cadence stays code constants on purpose - fewer knobs."""
@@ -792,15 +796,10 @@ _MAX_MB_RATE_LIMIT = 500.0
 _MAX_MB_CONCURRENT_SEARCHES = 64
 
 
-def is_official_musicbrainz(url: str) -> bool:
-    from urllib.parse import urlparse
+def is_musicbrainz_rate_policy_public_host(url: str) -> bool:
+    from repositories.musicbrainz_base import is_mb_rate_policy_public_host
 
-    try:
-        parsed = urlparse(url.strip().rstrip("/"))
-        hostname = (parsed.hostname or "").lower()
-        return hostname in ("musicbrainz.org", "www.musicbrainz.org")
-    except (ValueError, AttributeError):
-        return False
+    return is_mb_rate_policy_public_host(url)
 
 
 class SecuritySettings(AppStruct):
@@ -830,7 +829,11 @@ class MusicBrainzConnectionSettings(AppStruct):
             self.api_url = "https://musicbrainz.org/ws/2"
         self.api_url = self.api_url.rstrip("/")
         self.clamped_to_official_limits = False
-        if is_official_musicbrainz(self.api_url):
+        if not math.isfinite(self.rate_limit):
+            raise msgspec.ValidationError("rate_limit must be finite")
+        if self.concurrent_searches < 1:
+            raise msgspec.ValidationError("concurrent_searches must be at least 1")
+        if is_musicbrainz_rate_policy_public_host(self.api_url):
             before = (self.rate_limit, self.concurrent_searches)
             self.rate_limit = min(self.rate_limit, _OFFICIAL_MB_RATE_LIMIT)
             self.concurrent_searches = min(

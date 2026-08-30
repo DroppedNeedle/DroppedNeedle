@@ -29,6 +29,7 @@ from .cache_providers import (
     get_genre_index,
     get_youtube_store,
     get_mbid_store,
+    get_mb_canonical_store,
     get_sync_state_store,
     get_discovery_snapshot_store,
     get_preferences_service,
@@ -2088,6 +2089,7 @@ def get_settings_service() -> "SettingsService":
         preferences_service,
         cache,
         discovery_snapshot_store=get_discovery_snapshot_store(),
+        disk_cache=get_disk_cache(),
     )
 
 
@@ -2101,6 +2103,7 @@ def get_target_settings_service() -> "SettingsService":
         navidrome_library_getter=get_target_navidrome_library_service,
         plex_library_getter=get_target_plex_library_service,
         discovery_snapshot_store=get_discovery_snapshot_store(),
+        disk_cache=get_disk_cache(),
     )
 
 
@@ -2177,6 +2180,7 @@ def _build_album_discovery_service(library_repo, library_db) -> "AlbumDiscoveryS
         listenbrainz_repo=listenbrainz_repo,
         library_db=library_db,
         mbid_store=get_mbid_store(),
+        mb_canonical_store=get_mb_canonical_store(),
     )
     return AlbumDiscoveryService(
         listenbrainz_repo=listenbrainz_repo,
@@ -2316,13 +2320,13 @@ def _build_discover_service(
     lastfm_repo = get_lastfm_repository()
     audiodb_image_service = get_audiodb_image_service()
     genre_index = genre_index or get_genre_index()
-
     radio_mbid_svc = MbidResolutionService(
         musicbrainz_repo=musicbrainz_repo,
         library_repo=library_repo,
         listenbrainz_repo=listenbrainz_repo,
         library_db=library_db,
         mbid_store=mbid_store,
+        mb_canonical_store=get_mb_canonical_store(),
     )
     radio_integration = IntegrationHelpers(preferences_service)
     radio_service = DiscoverRadioService(
@@ -2361,6 +2365,7 @@ def _build_discover_service(
         genre_artwork_service=genre_artwork_service,
         discovery_snapshot_store=get_discovery_snapshot_store(),
         workload_gate=get_background_workload_gate(),
+        mb_canonical_store=get_mb_canonical_store(),
     )
 
 

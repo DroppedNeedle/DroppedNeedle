@@ -1,3 +1,5 @@
+from contextvars import ContextVar
+
 import asyncio
 import copy
 import logging
@@ -41,9 +43,16 @@ from core.exceptions import (
     ResourceNotFoundError,
 )
 from infrastructure.resilience.retry import CircuitOpenError
+from repositories.musicbrainz_base import (
+    MbSourceContext,
+    capture_mb_source_context,
+    extract_artist_name,
+    mb_deduplicator,
+    mb_publish_if_current,
+    normalize_mb_id,
+)
 from services.audiodb_image_service import AudioDBImageService
 from repositories.audiodb_models import AudioDBArtistImages
-from repositories.musicbrainz_base import extract_artist_name, mb_deduplicator
 from core.task_registry import TaskRegistry
 
 if TYPE_CHECKING:
@@ -52,6 +61,10 @@ if TYPE_CHECKING:
     from services.native.library_ownership_service import LibraryOwnershipService
 
 logger = logging.getLogger(__name__)
+
+_artist_source_context: ContextVar[MbSourceContext | None] = ContextVar(
+    "artist_source_context", default=None
+)
 
 
 def _log_task_error(task: "asyncio.Task[None]") -> None:
@@ -249,8 +262,9 @@ class ArtistService:
         library_artist_mbids: set[str] = None,
         library_album_mbids: dict[str, Any] = None,
     ) -> ArtistInfo:
+        _artist_source_context.set(capture_mb_source_context())
         try:
-            artist_id = validate_mbid(artist_id, "artist")
+            artist_id = normalize_mb_id(validate_mbid(artist_id, "artist"))
         except ValueError as e:
             logger.error(f"Invalid artist MBID: {e}")
             raise
@@ -412,7 +426,8 @@ class ArtistService:
         return ArtistInfo(**info)
 
     async def get_artist_info_basic(self, artist_id: str) -> ArtistInfo:
-        artist_id = validate_mbid(artist_id, "artist")
+        _artist_source_context.set(capture_mb_source_context())
+        artist_id = normalize_mb_id(validate_mbid(artist_id, "artist"))
         cached = await self._get_cached_artist(artist_id)
         if cached:
             # B3.1: refresh (library flags on releases + artist-level flags)
@@ -552,6 +567,7 @@ class ArtistService:
             logger.warning(f"Failed to refresh library flags: {e}")
 
     async def _get_cached_artist(self, artist_id: str) -> Optional[ArtistInfo]:
+        artist_id = normalize_mb_id(artist_id)
         cache_key = f"{ARTIST_INFO_PREFIX}{artist_id}"
         cached_info = await self._cache.get(cache_key)
         if cached_info:
@@ -572,21 +588,33 @@ class ArtistService:
     async def _save_artist_to_cache(
         self, artist_id: str, artist_info: ArtistInfo
     ) -> None:
+        artist_id = normalize_mb_id(artist_id)
         cache_key = f"{ARTIST_INFO_PREFIX}{artist_id}"
         ttl = self._get_artist_ttl(artist_info.in_library)
+        context = _artist_source_context.get()
         # B3.1: memory write stays inline - coalesced followers and the next
-        # request read it. The disk mirror moves off the response path onto a
-        # fire-and-forget task; the exposure window is one event-loop tick and
-        # worst-case loss costs one disk re-fetch after restart.
-        await self._cache.set(cache_key, artist_info, ttl_seconds=ttl)
-        task = asyncio.create_task(
-            self._disk_cache.set_artist(
-                artist_id,
-                artist_info,
-                is_monitored=artist_info.in_library,
-                ttl_seconds=ttl if not artist_info.in_library else None,
-            )
+        # request read it. The disk mirror remains deferred, but both tiers
+        # carry the captured source context so a source switch cannot admit a
+        # delayed stale write.
+        published = await mb_publish_if_current(
+            context,
+            lambda: self._cache.set(cache_key, artist_info, ttl_seconds=ttl),
         )
+        if not published:
+            return
+
+        async def publish_disk() -> None:
+            await mb_publish_if_current(
+                context,
+                lambda: self._disk_cache.set_artist(
+                    artist_id,
+                    artist_info,
+                    is_monitored=artist_info.in_library,
+                    ttl_seconds=ttl if not artist_info.in_library else None,
+                ),
+            )
+
+        task = asyncio.create_task(publish_disk())
         task.add_done_callback(_log_deferred_disk_write_failure)
 
     def _get_artist_ttl(self, in_library: bool) -> int:
@@ -598,8 +626,9 @@ class ArtistService:
         )
 
     async def get_artist_extended_info(self, artist_id: str) -> ArtistExtendedInfo:
+        _artist_source_context.set(capture_mb_source_context())
         try:
-            artist_id = validate_mbid(artist_id, "artist")
+            artist_id = normalize_mb_id(validate_mbid(artist_id, "artist"))
             cache_key = f"{ARTIST_INFO_PREFIX}{artist_id}"
             cached_info = await self._cache.get(cache_key)
             if cached_info and cached_info.description is not None:
@@ -656,6 +685,8 @@ class ArtistService:
         *,
         is_disconnected: DisconnectCallable | None = None,
     ) -> ArtistReleases:
+        _artist_source_context.set(capture_mb_source_context())
+        artist_id = normalize_mb_id(artist_id)
         try:
             await check_disconnected(is_disconnected)
             album_mbids: set[str] = set()
@@ -887,6 +918,7 @@ class ArtistService:
         Raw MB dicts only; in_library/requested flags are recomputed per
         request from library state, so library changes never invalidate it.
         """
+        artist_id = normalize_mb_id(artist_id)
         cache_key = mb_artist_release_groups_key(artist_id)
         cached = await self._cache.get(cache_key)
         if cached is not None:
@@ -897,10 +929,13 @@ class ArtistService:
             lambda: self._fetch_first_release_group_page(artist_id, is_disconnected),
         )
         if total > 0 and len(page_items) >= total:
-            await self._cache.set(
-                cache_key,
-                page_items,
-                ttl_seconds=self._get_artist_ttl(in_library=False),
+            await mb_publish_if_current(
+                _artist_source_context.get(),
+                lambda: self._cache.set(
+                    cache_key,
+                    page_items,
+                    ttl_seconds=self._get_artist_ttl(in_library=False),
+                ),
             )
             return page_items, True
         if not page_items and not total:
@@ -979,6 +1014,7 @@ class ArtistService:
         (total > 0 and raw_offset >= total): CancelledError or any failure
         breaks out leaving the key untouched, exactly like today's failed
         walk - an outage can never pin a truncated catalog."""
+        artist_id = normalize_mb_id(artist_id)
         cache_key = mb_artist_release_groups_key(artist_id)
         pages_done = 1 if raw_offset else 0
 
@@ -1014,10 +1050,13 @@ class ArtistService:
 
         if total > 0 and raw_offset >= total:
             full_list = list(collected.values())
-            await self._cache.set(
-                cache_key,
-                full_list,
-                ttl_seconds=self._get_artist_ttl(in_library=False),
+            await mb_publish_if_current(
+                _artist_source_context.get(),
+                lambda: self._cache.set(
+                    cache_key,
+                    full_list,
+                    ttl_seconds=self._get_artist_ttl(in_library=False),
+                ),
             )
 
     async def _fetch_artist_data(
@@ -1157,6 +1196,7 @@ class ArtistService:
     async def _seed_release_group_warm_from_embedded(
         self, artist_id: str, embedded: list[dict[str, Any]], rg_count: int
     ) -> None:
+        artist_id = normalize_mb_id(artist_id)
         cache_key = mb_artist_release_groups_key(artist_id)
         if await self._cache.get(cache_key) is not None:
             return  # already fully cached by an earlier walk
@@ -1176,10 +1216,13 @@ class ArtistService:
             for group in seed_items:
                 gid = str(group["id"]).casefold()
                 deduped.setdefault(gid, group)
-            await self._cache.set(
-                cache_key,
-                list(deduped.values()),
-                ttl_seconds=self._get_artist_ttl(in_library=False),
+            await mb_publish_if_current(
+                _artist_source_context.get(),
+                lambda: self._cache.set(
+                    cache_key,
+                    list(deduped.values()),
+                    ttl_seconds=self._get_artist_ttl(in_library=False),
+                ),
             )
             return
 

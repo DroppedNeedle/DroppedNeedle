@@ -3,6 +3,7 @@ import { getApiUrl } from '$lib/api/api-utils';
 import { withBasePath } from '$lib/utils/basePath';
 import { browser } from '$app/environment';
 import { authStore } from '$lib/stores/authStore.svelte';
+import { clearUserSessionState } from '$lib/utils/userSessionCleanup';
 
 export class ApiError extends Error {
 	readonly status: number;
@@ -66,7 +67,7 @@ async function handleResponse<T = void>(res: Response): Promise<T> {
 	if (!res.ok) {
 		// Session expired mid-use: hard redirect so layout re-initialises cleanly
 		if (res.status === 401 && browser && authStore.isAuthenticated) {
-			authStore.clear();
+			await clearUserSessionState().catch(() => undefined);
 			window.location.href = withBasePath('/login');
 			throw new SessionExpiredError();
 		}

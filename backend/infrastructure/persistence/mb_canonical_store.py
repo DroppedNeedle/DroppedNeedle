@@ -4,19 +4,20 @@ A SQLite-backed store beneath the in-process memory cache holding three
 MusicBrainz-derived mapping families:
 
 - ``canonical_redirect`` - recording merge-redirect resolution (#6). The
-  identity lane reads it with ``official_source_only=True``; display lanes
-  tolerate any capture source.
+  identity lane reads it with ``trusted_identity_source_only=True``; display
+  lanes tolerate any capture source.
 - ``release_to_rg`` - the release→release-group map behind the six fan-out
   services (#11). ``rg_mbid = ''`` is an authoritative negative, mirroring
   the F-MATCH-05 sentinel discipline; transient failures write nothing.
 - ``recording_isrc`` - ISRC → recording mbid pairs from Spotify-import
   /isrc/ lookups (#22).
 
-Provenance: every row stamps ``source_host`` (the MB base URL that answered).
-Per internal-mb-surface.md §5a, persisted MB-derived mappings inherit MB proof
-status regardless of serving host - but the identity-lane gate additionally
-narrows to rows captured against the official endpoint, because a
-user-settable ``api_url`` is not provenance-stamped upstream.
+Provenance: every row stamps ``source_host`` with the privacy-safe source
+origin that answered. Per internal-mb-surface.md §5a, persisted MB-derived
+mappings inherit MB proof status regardless of serving host - but the
+identity-lane gate additionally narrows to rows captured against the official
+endpoint, because a user-settable ``api_url`` is not provenance-stamped
+upstream.
 
 The store survives ``musicbrainz_prefixes()`` sweeps by design (no prefix-list
 entry anywhere): its rows are durable derived state in the shared library DB,
@@ -32,6 +33,11 @@ from pathlib import Path
 from typing import Any
 
 from infrastructure.persistence._database import PersistenceBase
+from repositories.musicbrainz_base import (
+    MB_TRUSTED_IDENTITY_ORIGINS,
+    normalize_mb_id,
+    normalize_mb_source_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +100,31 @@ class MbCanonicalStore(PersistenceBase):
                 """
             )
             # Additive ratchets only - later columns join through _safe_alter.
+            self._ratchet_source_labels(conn)
             conn.commit()
         finally:
             conn.close()
+
+    @staticmethod
+    def _ratchet_source_labels(conn: sqlite3.Connection) -> None:
+        """Strip credentials and URL detail from existing provenance rows."""
+        for table, key_columns in (
+            ("canonical_redirect", ("entity_kind", "from_mbid_lower")),
+            ("release_to_rg", ("release_mbid_lower",)),
+        ):
+            selected_columns = ", ".join((*key_columns, "source_host"))
+            rows = conn.execute(
+                f"SELECT {selected_columns} FROM {table} WHERE source_host <> ''"
+            ).fetchall()
+            where_clause = " AND ".join(f"{column} = ?" for column in key_columns)
+            for row in rows:
+                current = str(row["source_host"])
+                normalized = normalize_mb_source_label(current)
+                if normalized != current:
+                    conn.execute(
+                        f"UPDATE {table} SET source_host = ? WHERE {where_clause}",
+                        (normalized, *(row[column] for column in key_columns)),
+                    )
 
     def _seed_from_mbid_resolution_map(self) -> None:
         """One-time idempotent migration: bank legacy discover-lane
@@ -138,7 +166,7 @@ class MbCanonicalStore(PersistenceBase):
     async def get_release_to_rg_batch(self, release_mbids: list[str]) -> dict[str, str]:
         """Map of lowercased release id -> rg id ('' = known-negative). Only
         ids present in the store appear in the result."""
-        normalized = sorted({str(m).casefold() for m in release_mbids if m})
+        normalized = sorted({normalize_mb_id(m) for m in release_mbids if m})
         if not normalized:
             return {}
 
@@ -158,11 +186,15 @@ class MbCanonicalStore(PersistenceBase):
     ) -> None:
         """Batch upsert. Empty-string values are authoritative negatives;
         callers must never pass failures here."""
-        rows = {
-            str(rid).casefold(): (str(rg) if rg else "")
-            for rid, rg in mapping.items()
-            if rid
-        }
+        source_label = normalize_mb_source_label(source_host)
+        rows: dict[str, str] = {}
+        for release_mbid, release_group_mbid in mapping.items():
+            normalized_release = normalize_mb_id(release_mbid)
+            if not normalized_release:
+                continue
+            rows[normalized_release] = (
+                normalize_mb_id(release_group_mbid) if release_group_mbid else ""
+            )
         if not rows:
             return
         now = time.time()
@@ -180,7 +212,7 @@ class MbCanonicalStore(PersistenceBase):
                     source_host = excluded.source_host,
                     saved_at = excluded.saved_at
                 """,
-                [(mbid, rg, source_host, now) for mbid, rg in sorted(rows.items())],
+                [(mbid, rg, source_label, now) for mbid, rg in sorted(rows.items())],
             )
             conn.commit()
 
@@ -191,9 +223,9 @@ class MbCanonicalStore(PersistenceBase):
         kind: str,
         from_mbids: list[str],
         *,
-        official_source_only: bool = False,
+        trusted_identity_source_only: bool = False,
     ) -> dict[str, str]:
-        normalized = sorted({str(m).casefold() for m in from_mbids if m})
+        normalized = sorted({normalize_mb_id(m) for m in from_mbids if m})
         if not normalized:
             return {}
 
@@ -205,9 +237,10 @@ class MbCanonicalStore(PersistenceBase):
                 "WHERE entity_kind = ? "
                 f"AND from_mbid_lower IN ({placeholders})"
             )
-            if official_source_only:
-                sql += " AND source_host = ?"
-                params.append(OFFICIAL_MB_API_BASE)
+            if trusted_identity_source_only:
+                source_placeholders = ",".join("?" for _ in MB_TRUSTED_IDENTITY_ORIGINS)
+                sql += f" AND source_host IN ({source_placeholders})"
+                params.extend(MB_TRUSTED_IDENTITY_ORIGINS)
             rows = conn.execute(sql, params).fetchall()
             return {
                 str(row["from_mbid_lower"]): str(row["to_mbid_lower"]) for row in rows
@@ -221,13 +254,14 @@ class MbCanonicalStore(PersistenceBase):
         """Upsert redirect rows in a single transaction. Each row needs
         ``entity_kind``, ``from_mbid``, ``to_mbid`` and optionally ``source``
         (default ``mb-recording-lookup``)."""
+        source_label = normalize_mb_source_label(source_host)
         clean = [
             (
                 str(row["entity_kind"]),
-                str(row["from_mbid"]).casefold(),
-                str(row["to_mbid"]).casefold(),
+                normalize_mb_id(row["from_mbid"]),
+                normalize_mb_id(row["to_mbid"]),
                 str(row.get("source") or _SOURCE_MB_RECORDING_LOOKUP),
-                str(source_host),
+                source_label,
                 time.time(),
             )
             for row in rows

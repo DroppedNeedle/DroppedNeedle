@@ -27,7 +27,7 @@ from infrastructure.cover_urls import release_group_cover_url
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.persistence.user_listening_prefs_store import PersonalMixApproval
 from repositories.listenbrainz_models import ListenBrainzArtist
-from services.discover.mbid_resolution_service import MbidResolutionService
+from api.v1.schemas.discover import DiscoverQueueItemLight
 from services.discover.queue_strategies import (
     build_similar_artist_pools,
     round_robin_dedup_select,
@@ -78,6 +78,39 @@ class _MixTrack(msgspec.Struct, frozen=True):
     library_file_id: str | None = None
     track_number: int | None = None
     disc_number: int = 1
+
+
+class _PersonalMixQueueAdapter:
+    @staticmethod
+    def normalize_mbid(mbid: str | None) -> str | None:
+        if not mbid:
+            return None
+        normalized = mbid.strip().lower()
+        return normalized or None
+
+    @staticmethod
+    def make_queue_item(
+        *,
+        release_group_mbid: str,
+        album_name: str,
+        artist_name: str,
+        artist_mbid: str,
+        reason: str,
+        is_wildcard: bool = False,
+    ) -> DiscoverQueueItemLight:
+        return DiscoverQueueItemLight(
+            release_group_mbid=release_group_mbid,
+            album_name=album_name,
+            artist_name=artist_name,
+            artist_mbid=artist_mbid,
+            cover_url=f"/api/v1/covers/release-group/{release_group_mbid}?size=500",
+            recommendation_reason=reason,
+            is_wildcard=is_wildcard,
+            in_library=False,
+        )
+
+
+_PERSONAL_MIX_QUEUE_ADAPTER = _PersonalMixQueueAdapter()
 
 
 class PersonalMixService:
@@ -369,11 +402,7 @@ class PersonalMixService:
         owned: set[str],
         needed: int,
     ) -> list[_MixTrack]:
-        mbid_svc = MbidResolutionService(
-            musicbrainz_repo=self._mb_repo,
-            library_repo=self._library_repo,
-            listenbrainz_repo=lb_repo,
-        )
+        mbid_svc = _PERSONAL_MIX_QUEUE_ADAPTER
         # the name rides along into the pool items' "Similar to <name>" reason
         seeds = [
             ListenBrainzArtist(artist_name=name, artist_mbids=[mbid], listen_count=0)

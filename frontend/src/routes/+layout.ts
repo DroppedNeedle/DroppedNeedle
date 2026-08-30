@@ -1,12 +1,11 @@
 import { browser } from '$app/environment';
 import { ApiError, api } from '$lib/api/client';
 import { API, AUTH_FREE_PATHS } from '$lib/constants';
-import { queryClient, resetQueryCacheForUserSwitch } from '$lib/queries/QueryClient';
+import { queryClient } from '$lib/queries/QueryClient';
 import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
 import { DEFAULT_SOURCE, isMusicSource, musicSourceStore } from '$lib/stores/musicSource';
-import { scrobbleManager } from '$lib/stores/scrobble.svelte';
 import { authStore, LAST_USER_ID_KEY } from '$lib/stores/authStore.svelte';
-import { clearUserScopedLocalCaches } from '$lib/utils/userScopedCaches';
+import { clearUserSessionState } from '$lib/utils/userSessionCleanup';
 import { withBasePath, withoutBasePath } from '$lib/utils/basePath';
 import { error, redirect } from '@sveltejs/kit';
 import type { LayoutLoad } from './$types';
@@ -56,14 +55,7 @@ export const load: LayoutLoad = async ({ url }) => {
 			});
 		} catch (cause) {
 			if (cause instanceof ApiError && cause.status === 401) {
-				if (browser && localStorage.getItem(LAST_USER_ID_KEY)) {
-					await resetQueryCacheForUserSwitch();
-					clearUserScopedLocalCaches();
-					musicSourceStore.reset();
-					scrobbleManager.reset();
-					localStorage.removeItem(LAST_USER_ID_KEY);
-				}
-				authStore.clear();
+				await clearUserSessionState().catch(() => undefined);
 			} else {
 				throw error(503, BUSY_MESSAGE);
 			}
@@ -82,10 +74,7 @@ export const load: LayoutLoad = async ({ url }) => {
 	if (browser && authStore.user) {
 		const lastId = localStorage.getItem(LAST_USER_ID_KEY);
 		if (lastId && lastId !== authStore.user.id) {
-			await resetQueryCacheForUserSwitch();
-			clearUserScopedLocalCaches();
-			musicSourceStore.reset();
-			scrobbleManager.reset();
+			await clearUserSessionState({ clearAuth: false }).catch(() => undefined);
 		}
 		localStorage.setItem(LAST_USER_ID_KEY, authStore.user.id);
 	}

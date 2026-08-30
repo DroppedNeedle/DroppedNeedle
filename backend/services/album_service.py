@@ -1,3 +1,5 @@
+from contextvars import ContextVar
+
 import logging
 import asyncio
 import math
@@ -40,7 +42,17 @@ if TYPE_CHECKING:
     from services.audiodb_browse_queue import AudioDBBrowseQueue
     from services.native.library_ownership_service import LibraryOwnershipService
 
+from repositories.musicbrainz_base import (
+    MbSourceContext,
+    capture_mb_source_context,
+    mb_publish_if_current,
+    normalize_mb_id,
+)
 logger = logging.getLogger(__name__)
+
+_album_source_context: ContextVar[MbSourceContext | None] = ContextVar(
+    "album_source_context", default=None
+)
 
 
 class AlbumService:
@@ -91,9 +103,13 @@ class AlbumService:
         the containing release group. Keep the incoming release as edition context
         instead of placing it in a release-group field.
         """
-        provider_id = validate_mbid(await self._provider_album_id(identifier), "album")
+        provider_id = normalize_mb_id(
+            validate_mbid(await self._provider_album_id(identifier), "album")
+        )
         release_group = await self._fetch_release_group(provider_id, priority=priority)
-        canonical_id = str(release_group.get("id") or provider_id)
+        canonical_id = normalize_mb_id(
+            str(release_group.get("id") or provider_id)
+        )
         release_mbid = (
             provider_id if canonical_id.casefold() != provider_id.casefold() else None
         )
@@ -194,6 +210,7 @@ class AlbumService:
         return album_info
 
     async def is_album_cached(self, release_group_id: str) -> bool:
+        release_group_id = normalize_mb_id(release_group_id)
         cache_key = f"{ALBUM_INFO_PREFIX}{release_group_id}"
         return await self._cache.get(cache_key) is not None
 
@@ -217,10 +234,11 @@ class AlbumService:
                 if album_info.in_library
                 else advanced_settings.cache_ttl_album_non_library
             )
-            await self._cache.set(cache_key, album_info, ttl_seconds=ttl)
+            await mb_publish_if_current(
+                _album_source_context.get(),
+                lambda: self._cache.set(cache_key, album_info, ttl_seconds=ttl),
+            )
             return album_info
-
-        return None
 
     async def _save_album_to_cache(
         self, release_group_id: str, album_info: AlbumInfo
@@ -232,13 +250,17 @@ class AlbumService:
             if album_info.in_library
             else advanced_settings.cache_ttl_album_non_library
         )
-        await self._cache.set(cache_key, album_info, ttl_seconds=ttl)
-        await self._disk_cache.set_album(
-            release_group_id,
-            album_info,
-            is_monitored=album_info.in_library,
-            ttl_seconds=ttl if not album_info.in_library else None,
-        )
+
+        async def publish() -> None:
+            await self._cache.set(cache_key, album_info, ttl_seconds=ttl)
+            await self._disk_cache.set_album(
+                release_group_id,
+                album_info,
+                is_monitored=album_info.in_library,
+                ttl_seconds=ttl if not album_info.in_library else None,
+            )
+
+        await mb_publish_if_current(_album_source_context.get(), publish)
 
     async def _current_library_membership(self, album_id: str) -> bool:
         """Membership is mutable library state, never authoritative cache metadata."""
@@ -248,7 +270,9 @@ class AlbumService:
         )
 
     async def warm_full_album_cache(self, release_group_id: str) -> None:
+        _album_source_context.set(capture_mb_source_context())
         release_group_id = await self._provider_album_id(release_group_id)
+        release_group_id = normalize_mb_id(release_group_id)
         try:
             cache_key = f"{ALBUM_INFO_PREFIX}{release_group_id}"
             if await self._get_cached_album_info(release_group_id, cache_key):
@@ -261,7 +285,9 @@ class AlbumService:
 
     async def refresh_album(self, release_group_id: str) -> AlbumInfo:
         release_group_id = await self._provider_album_id(release_group_id)
-        release_group_id = validate_mbid(release_group_id, "album")
+        release_group_id = normalize_mb_id(
+            validate_mbid(release_group_id, "album")
+        )
 
         await self._cache.delete(f"{ALBUM_INFO_PREFIX}{release_group_id}")
         await self._cache.delete(f"{ALBUM_TRACKS_INFO_PREFIX}{release_group_id}")
@@ -278,9 +304,12 @@ class AlbumService:
         library_mbids: set[str] = None,
         priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> AlbumInfo:
+        _album_source_context.set(capture_mb_source_context())
         release_group_id = await self._provider_album_id(release_group_id)
         try:
-            release_group_id = validate_mbid(release_group_id, "album")
+            release_group_id = normalize_mb_id(
+                validate_mbid(release_group_id, "album")
+            )
         except ValueError as e:
             logger.error(f"Invalid album MBID: {e}")
             raise
@@ -479,9 +508,12 @@ class AlbumService:
         )
 
     async def get_album_basic_info(self, release_group_id: str) -> AlbumBasicInfo:
+        _album_source_context.set(capture_mb_source_context())
         release_group_id = await self._provider_album_id(release_group_id)
         try:
-            release_group_id = validate_mbid(release_group_id, "album")
+            release_group_id = normalize_mb_id(
+                validate_mbid(release_group_id, "album")
+            )
         except ValueError as e:
             logger.error(f"Invalid album MBID: {e}")
             raise
@@ -592,9 +624,12 @@ class AlbumService:
         coverage check - pass BACKGROUND_SYNC so a cold-cache finalize never jumps the
         MusicBrainz queue ahead of a user's page load (honest-priority house rule).
         Normally warm: the request flow fetched this at task creation."""
+        _album_source_context.set(capture_mb_source_context())
         release_group_id = await self._provider_album_id(release_group_id)
         try:
-            release_group_id = validate_mbid(release_group_id, "album")
+            release_group_id = normalize_mb_id(
+                validate_mbid(release_group_id, "album")
+            )
         except ValueError as e:
             logger.error(f"Invalid album MBID: {e}")
             raise
@@ -622,7 +657,12 @@ class AlbumService:
                         if is_local
                         else settings.cache_ttl_album_non_library
                     )
-                    await self._cache.set(tracks_cache_key, result, ttl_seconds=ttl)
+                    await mb_publish_if_current(
+                        _album_source_context.get(),
+                        lambda: self._cache.set(
+                            tracks_cache_key, result, ttl_seconds=ttl
+                        ),
+                    )
                 elif not self._mb_degraded():
                     # B2: empty-and-not-degraded -> cache the actual empty
                     # AlbumTracksInfo @600 s; the domain object doubles as the
@@ -631,7 +671,12 @@ class AlbumService:
                     # collapses breaker-open/HTTP failures into None exactly
                     # like 404s, so without this guard a transient outage
                     # would pin "no tracks" for 10 minutes (F-MATCH-05).
-                    await self._cache.set(tracks_cache_key, result, ttl_seconds=600)
+                    await mb_publish_if_current(
+                        _album_source_context.get(),
+                        lambda: self._cache.set(
+                            tracks_cache_key, result, ttl_seconds=600
+                        ),
+                    )
                 if not future.done():
                     future.set_result(result)
                 return result

@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('@tanstack/svelte-query-persist-client', () => ({
+	PERSISTER_KEY_PREFIX: 'tanstack-query',
 	experimental_createQueryPersister: vi.fn(() => ({
 		persisterFn: vi.fn(),
 		persistQueryByKey: vi.fn().mockResolvedValue(undefined),
@@ -23,6 +24,7 @@ const idb = vi.hoisted(() => ({
 vi.mock('idb-keyval', () => idb);
 
 import {
+	invalidateMusicBrainzProviderQueries,
 	invalidateQueriesWithPersister,
 	queryClient,
 	resetQueryCacheForUserSwitch,
@@ -61,4 +63,102 @@ it('destroys persisted rows only when removePersisted is opted into', async () =
 
 	expect(h.removeQueries).toHaveBeenCalledOnce();
 	expect(h.removeQueries).toHaveBeenCalledWith({ queryKey: ['library'] });
+});
+
+it('sweeps only correctness-bearing provider queries exactly once', async () => {
+	const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+	idb.entries.mockResolvedValueOnce([
+		[
+			'tanstack-query-provider',
+			{
+				buster: '',
+				queryHash: 'provider',
+				queryKey: ['artist', 'artist-1'],
+				state: {}
+			}
+		],
+		[
+			'tanstack-query-profile',
+			{
+				buster: '',
+				queryHash: 'profile',
+				queryKey: ['profile', 'user-a'],
+				state: {}
+			}
+		]
+	]);
+
+	await invalidateMusicBrainzProviderQueries();
+
+	expect(h.removeQueries).not.toHaveBeenCalled();
+	expect(idb.entries).toHaveBeenCalledOnce();
+	expect(idb.del).toHaveBeenCalledWith('tanstack-query-provider');
+	expect(invalidateSpy).toHaveBeenCalledOnce();
+	const filters = invalidateSpy.mock.calls[0][0] as {
+		predicate?: (query: { queryKey: readonly unknown[] }) => boolean;
+	};
+	const predicate = filters.predicate;
+	expect(predicate).toBeDefined();
+	if (!predicate) throw new Error('provider invalidation predicate missing');
+
+	expect(predicate({ queryKey: ['artist', 'artist-1'] })).toBe(true);
+	expect(predicate({ queryKey: ['artist', 'artist-1', 'extended'] })).toBe(true);
+	expect(predicate({ queryKey: ['artist', 'artist-1', 'releases'] })).toBe(true);
+	expect(predicate({ queryKey: ['artist', 'artist-1', 'lastfm-enrichment'] })).toBe(false);
+	expect(predicate({ queryKey: ['artist', 'artist-1', 'top-albums'] })).toBe(false);
+	expect(predicate({ queryKey: ['artist', 'artist-1', 'similar-artists'] })).toBe(false);
+	expect(predicate({ queryKey: ['albums', 'editions', 'user-a', 'rg-1'] })).toBe(true);
+	expect(predicate({ queryKey: ['albums', 'purchase-options', 'v2', 'rg-1'] })).toBe(false);
+	expect(predicate({ queryKey: ['search', 'user-a', 'artists', 'radiohead', 10] })).toBe(true);
+	expect(predicate({ queryKey: ['search', 'user-a', 'albums', 'radiohead', 10] })).toBe(true);
+	expect(predicate({ queryKey: ['search', 'user-a', 'suggestions', 'radiohead', 10] })).toBe(true);
+	expect(predicate({ queryKey: ['search', 'user-a', 'local-artists', 'radiohead', 10] })).toBe(
+		false
+	);
+	// The mixed discover home response intentionally remains a whole-payload correctness boundary.
+	expect(predicate({ queryKey: ['discover', 'user-a'] })).toBe(true);
+	expect(predicate({ queryKey: ['discover', 'user-a', 'radio', 'artist', 'artist-1'] })).toBe(true);
+	expect(
+		predicate({ queryKey: ['discover', 'user-a', 'playlist-suggestions', 'playlist-1'] })
+	).toBe(true);
+	expect(predicate({ queryKey: ['discover', 'user-a', 'batches'] })).toBe(false);
+	expect(predicate({ queryKey: ['discover', 'user-a', 'integrations'] })).toBe(false);
+
+	invalidateSpy.mockRestore();
+});
+
+it('still invalidates active queries and rethrows a persisted removal failure', async () => {
+	const persistedFailure = new Error('persisted cache unavailable');
+	const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+	h.removeQueries.mockRejectedValueOnce(persistedFailure);
+
+	await expect(
+		invalidateQueriesWithPersister({ queryKey: ['albums'] }, undefined, {
+			removePersisted: true
+		})
+	).rejects.toBe(persistedFailure);
+
+	expect(invalidateSpy).toHaveBeenCalledOnce();
+	invalidateSpy.mockRestore();
+});
+
+it('keeps selective cleanup retry-safe when a persisted provider row cannot be deleted', async () => {
+	const persistedFailure = new Error('provider row unavailable');
+	const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+	idb.entries.mockResolvedValueOnce([
+		[
+			'tanstack-query-provider',
+			{
+				buster: '',
+				queryHash: 'provider',
+				queryKey: ['artist', 'artist-1'],
+				state: {}
+			}
+		]
+	]);
+	idb.del.mockRejectedValueOnce(persistedFailure);
+
+	await expect(invalidateMusicBrainzProviderQueries()).rejects.toBe(persistedFailure);
+	expect(invalidateSpy).toHaveBeenCalledOnce();
+	invalidateSpy.mockRestore();
 });

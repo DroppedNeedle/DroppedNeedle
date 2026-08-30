@@ -16,6 +16,7 @@ import {
 	shouldScrobble,
 	formatServiceTooltip
 } from '$lib/stores/scrobbleHelpers';
+import { registerUserSessionReset } from '$lib/utils/userSessionCleanup';
 
 type ScrobbleStatus = 'idle' | 'tracking' | 'scrobbled' | 'error';
 
@@ -301,5 +302,6 @@ function createScrobbleManager() {
 }
 
 export const scrobbleManager = createScrobbleManager();
+registerUserSessionReset(() => scrobbleManager.reset());
 
 export { formatServiceTooltip };

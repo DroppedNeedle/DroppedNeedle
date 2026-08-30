@@ -203,3 +203,38 @@ async def test_cancelled_leader_cancels_shared_future_not_set_exception():
 
     assert future.cancelled()  # cancelled, NOT holding a set exception
     assert "k" not in dedup._pending
+
+
+@pytest.mark.anyio
+async def test_clear_does_not_let_old_leader_remove_replacement():
+    dedup = RequestDeduplicator()
+    old_started = asyncio.Event()
+    new_started = asyncio.Event()
+    release_old = asyncio.Event()
+    release_new = asyncio.Event()
+    calls = 0
+
+    async def request():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            old_started.set()
+            await release_old.wait()
+            return "old"
+        new_started.set()
+        await release_new.wait()
+        return "new"
+
+    old = asyncio.create_task(dedup.dedupe("clear-key", request))
+    await old_started.wait()
+    dedup.clear()
+    replacement = asyncio.create_task(dedup.dedupe("clear-key", request))
+    await new_started.wait()
+
+    release_old.set()
+    assert await old == "old"
+    assert dedup._pending["clear-key"] is not None
+
+    release_new.set()
+    assert await replacement == "new"
+    assert "clear-key" not in dedup._pending

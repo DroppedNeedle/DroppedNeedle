@@ -81,12 +81,14 @@ class SettingsService:
         navidrome_library_getter=None,
         plex_library_getter=None,
         discovery_snapshot_store=None,
+        disk_cache=None,
     ):
         self._preferences_service = preferences_service
         self._cache = cache
         self._navidrome_library_getter = navidrome_library_getter
         self._plex_library_getter = plex_library_getter
         self._discovery_snapshot_store = discovery_snapshot_store
+        self._disk_cache = disk_cache
 
     async def verify_jellyfin(
         self, settings: JellyfinConnectionSettings
@@ -660,16 +662,16 @@ class SettingsService:
             import httpx
             from infrastructure.validators import validate_service_url
             from core.exceptions import ValidationError as AppValidationError
-            from repositories.musicbrainz_base import mb_circuit_breaker
+            from repositories.musicbrainz_base import mb_api_probe
 
             validate_service_url(settings.api_url, label="MusicBrainz API URL")
-            mb_circuit_breaker.reset()
 
             app_settings = get_settings()
             client = get_http_client(app_settings)
-            response = await client.get(
-                f"{settings.api_url.rstrip('/')}/artist",
-                params={"query": "test", "fmt": "json", "limit": 1},
+            response = await mb_api_probe(
+                settings.api_url,
+                params={"query": "test", "limit": 1},
+                client=client,
             )
             if response.status_code == 200:
                 return MusicBrainzVerifyResult(
@@ -690,8 +692,8 @@ class SettingsService:
             return MusicBrainzVerifyResult(
                 valid=False, message="Could not connect to the specified endpoint"
             )
-        except Exception as e:  # noqa: BLE001
-            logger.exception("Failed to verify MusicBrainz connection: %s", e)
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to verify MusicBrainz connection")
             return MusicBrainzVerifyResult(
                 valid=False, message="Couldn't finish the connection test"
             )
@@ -706,15 +708,19 @@ class SettingsService:
             mb_rate_limiter_bypassed,
             mb_circuit_breaker,
             mb_deduplicator,
+            mb_source_commit_lock,
             set_mb_rate_limiter_bypass,
         )
         from api.v1.schemas.settings import (
-            is_official_musicbrainz,
+            is_musicbrainz_rate_policy_public_host,
             _OFFICIAL_MB_RATE_LIMIT,
             _OFFICIAL_MB_CONCURRENT_SEARCHES,
         )
 
-        if is_official_musicbrainz(settings.api_url):
+        rate_policy_public_host = is_musicbrainz_rate_policy_public_host(
+            settings.api_url
+        )
+        if rate_policy_public_host:
             settings.rate_limit = min(settings.rate_limit, _OFFICIAL_MB_RATE_LIMIT)
             settings.concurrent_searches = min(
                 settings.concurrent_searches, _OFFICIAL_MB_CONCURRENT_SEARCHES
@@ -723,35 +729,58 @@ class SettingsService:
             if settings.rate_limit <= 0:
                 settings.rate_limit = _OFFICIAL_MB_RATE_LIMIT
 
-        # Compare against live module state, not stored settings: the route
-        # saves before calling this handler, so stored == incoming always.
-        # While the sentinel bypasses the limiter its stored rate is inert.
-        effective_rate = 0.0 if mb_rate_limiter_bypassed() else mb_rate_limiter.rate
-        if (
-            get_mb_api_base() == settings.api_url
-            and effective_rate == settings.rate_limit
-            and mb_rate_limiter.capacity == settings.concurrent_searches
-        ):
-            logger.info(
-                "MusicBrainz connection settings unchanged; "
-                "skipping circuit breaker reset and cache clear"
+        async with mb_source_commit_lock:
+            # Compare against live module state, not stored settings: the route
+            # saves before calling this handler, so stored == incoming always.
+            # While the sentinel bypasses the limiter its stored rate is inert.
+            current_bypass = mb_rate_limiter_bypassed()
+            effective_rate = 0.0 if current_bypass else mb_rate_limiter.rate
+            effective_capacity = (
+                1 if rate_policy_public_host else settings.concurrent_searches
             )
-            return
+            requested_bypass = settings.rate_limit == 0
+            source_changed = get_mb_api_base() != settings.api_url
+            if (
+                not source_changed
+                and effective_rate == settings.rate_limit
+                and current_bypass == requested_bypass
+                and mb_rate_limiter.capacity == effective_capacity
+            ):
+                logger.info(
+                    "MusicBrainz connection settings unchanged; "
+                    "skipping circuit breaker reset and cache clear"
+                )
+                return
 
-        set_mb_api_base(settings.api_url)
-        if settings.rate_limit == 0:
-            set_mb_rate_limiter_bypass(True)
-        else:
-            set_mb_rate_limiter_bypass(False)
-            mb_rate_limiter.update_rate(settings.rate_limit)
-        mb_rate_limiter.update_capacity(settings.concurrent_searches)
-        mb_circuit_breaker.reset()
-        mb_deduplicator.clear()
+            total = 0
+            if source_changed:
+                # Cache invalidation is the source-switch commit gate. A failed
+                # clear leaves all live source/transport state untouched, so
+                # retrying the persisted settings remains actionable. Control
+                # changes intentionally retain provider results.
+                for prefix in musicbrainz_prefixes():
+                    total += await self._cache.clear_prefix(prefix)
+                if self._disk_cache is not None:
+                    await self._disk_cache.clear_musicbrainz()
+                discovery_snapshot_store = getattr(
+                    self, "_discovery_snapshot_store", None
+                )
+                if discovery_snapshot_store is not None:
+                    await discovery_snapshot_store.delete_source_dependent_snapshots()
 
-        total = 0
-        for prefix in musicbrainz_prefixes():
-            total += await self._cache.clear_prefix(prefix)
-        if total:
-            logger.info(
-                f"Cleared {total} MusicBrainz cache entries after settings change"
-            )
+            # Apply only after every source-switch clear succeeds, and keep the
+            # live mutations synchronous while the source commit lock is held.
+            set_mb_api_base(settings.api_url)
+            if requested_bypass:
+                set_mb_rate_limiter_bypass(True)
+            else:
+                set_mb_rate_limiter_bypass(False)
+                mb_rate_limiter.update_rate(settings.rate_limit)
+            mb_rate_limiter.update_capacity(effective_capacity)
+            mb_circuit_breaker.reset()
+            mb_deduplicator.clear()
+
+            if total:
+                logger.info(
+                    f"Cleared {total} MusicBrainz cache entries after settings change"
+                )

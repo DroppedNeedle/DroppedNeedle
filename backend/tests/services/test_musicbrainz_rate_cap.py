@@ -1,7 +1,7 @@
 import pytest
 
 from api.v1.schemas.settings import (
-    is_official_musicbrainz,
+    is_musicbrainz_rate_policy_public_host,
     MusicBrainzConnectionSettings,
     _OFFICIAL_MB_RATE_LIMIT,
     _OFFICIAL_MB_CONCURRENT_SEARCHES,
@@ -11,44 +11,69 @@ OFFICIAL = "https://musicbrainz.org/ws/2"
 MIRROR = "https://mirror.example.com/ws/2"
 
 
-class TestIsOfficialMusicBrainz:
-
+class TestMusicBrainzRatePolicyPublicHost:
     def test_official_https(self):
-        assert is_official_musicbrainz("https://musicbrainz.org/ws/2") is True
+        assert (
+            is_musicbrainz_rate_policy_public_host("https://musicbrainz.org/ws/2")
+            is True
+        )
 
     def test_official_http(self):
-        assert is_official_musicbrainz("http://musicbrainz.org/ws/2") is True
+        assert (
+            is_musicbrainz_rate_policy_public_host("http://musicbrainz.org/ws/2")
+            is True
+        )
 
     def test_official_www(self):
-        assert is_official_musicbrainz("https://www.musicbrainz.org/ws/2") is True
+        assert (
+            is_musicbrainz_rate_policy_public_host("https://www.musicbrainz.org/ws/2")
+            is True
+        )
 
     def test_official_uppercase(self):
-        assert is_official_musicbrainz("https://MUSICBRAINZ.ORG/ws/2") is True
+        assert (
+            is_musicbrainz_rate_policy_public_host("https://MUSICBRAINZ.ORG/ws/2")
+            is True
+        )
 
     def test_official_trailing_slash(self):
-        assert is_official_musicbrainz("https://musicbrainz.org/ws/2/") is True
+        assert (
+            is_musicbrainz_rate_policy_public_host("https://musicbrainz.org/ws/2/")
+            is True
+        )
 
     def test_official_with_spaces(self):
-        assert is_official_musicbrainz("  https://musicbrainz.org/ws/2  ") is True
+        assert (
+            is_musicbrainz_rate_policy_public_host("  https://musicbrainz.org/ws/2  ")
+            is True
+        )
 
     def test_custom_mirror(self):
-        assert is_official_musicbrainz("https://my-mirror.example.com/ws/2") is False
+        assert (
+            is_musicbrainz_rate_policy_public_host("https://my-mirror.example.com/ws/2")
+            is False
+        )
 
     def test_localhost(self):
-        assert is_official_musicbrainz("http://localhost:5000/ws/2") is False
+        assert (
+            is_musicbrainz_rate_policy_public_host("http://localhost:5000/ws/2")
+            is False
+        )
 
     def test_empty_string(self):
-        assert is_official_musicbrainz("") is False
+        assert is_musicbrainz_rate_policy_public_host("") is False
 
     def test_not_a_url(self):
-        assert is_official_musicbrainz("not a url") is False
+        assert is_musicbrainz_rate_policy_public_host("not a url") is False
 
     def test_subdomain_not_www(self):
-        assert is_official_musicbrainz("https://api.musicbrainz.org/ws/2") is False
+        assert (
+            is_musicbrainz_rate_policy_public_host("https://api.musicbrainz.org/ws/2")
+            is False
+        )
 
 
 class TestMusicBrainzSettingsClamping:
-
     def test_official_url_clamps_rate_limit(self):
         settings = MusicBrainzConnectionSettings(
             api_url="https://musicbrainz.org/ws/2",
@@ -83,6 +108,15 @@ class TestMusicBrainzSettingsClamping:
         assert settings.rate_limit == 0.5
         assert settings.concurrent_searches == 3
 
+    def test_http_official_host_still_clamps_rate_and_capacity(self):
+        settings = MusicBrainzConnectionSettings(
+            api_url="http://musicbrainz.org:80/ws/2",
+            rate_limit=50.0,
+            concurrent_searches=30,
+        )
+        assert settings.rate_limit == _OFFICIAL_MB_RATE_LIMIT
+        assert settings.concurrent_searches == _OFFICIAL_MB_CONCURRENT_SEARCHES
+
     def test_custom_url_allows_high_rate_limit(self):
         settings = MusicBrainzConnectionSettings(
             api_url="https://my-mirror.example.com/ws/2",
@@ -100,7 +134,6 @@ class TestMusicBrainzSettingsClamping:
 
 
 class TestInstanceId:
-
     def test_ensure_instance_id_generates_on_first_run(self, tmp_path):
         from core.config import Settings
         from services.preferences_service import PreferencesService

@@ -63,6 +63,37 @@ async def test_library_invalidation_marks_page_and_queue_snapshots_stale(
 
 
 @pytest.mark.asyncio
+async def test_source_dependent_snapshots_delete_only_discover_rows(tmp_path) -> None:
+    store = DiscoverySnapshotStore(tmp_path / "library.db", threading.Lock())
+    await store.save("discover_response:u1", "u1", b"response", 123.0)
+    await store.save("discover_queue:u1", "u1", b"queue", 124.0)
+    await store.save("discover:u1", "u1", b"unrelated", 125.0)
+    await store.save("queue:u1", "u1", b"also-unrelated", 126.0)
+
+    assert await store.delete_source_dependent_snapshots() == 2
+    assert await store.get("discover_response:u1") is None
+    assert await store.get("discover_queue:u1") is None
+    assert await store.get("discover:u1") == b"unrelated"
+    assert await store.get("queue:u1") == b"also-unrelated"
+
+    connection = sqlite3.connect(store.db_path)
+    try:
+        source_rows = connection.execute(
+            "SELECT COUNT(*) FROM discovery_snapshots "
+            "WHERE snapshot_key LIKE 'discover_response:%' "
+            "OR snapshot_key LIKE 'discover_queue:%'"
+        ).fetchone()[0]
+        catalog_revision = connection.execute(
+            "SELECT value FROM library_catalog_revision WHERE singleton = 1"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+
+    assert source_rows == 0
+    assert catalog_revision == 0
+
+
+@pytest.mark.asyncio
 async def test_snapshot_is_rejected_after_catalog_revision_changes(tmp_path) -> None:
     store = DiscoverySnapshotStore(tmp_path / "library.db", threading.Lock())
     await store.save("discover_response:u1", "u1", b"home", 123.0)

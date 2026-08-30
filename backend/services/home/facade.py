@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 import asyncio
 import logging
 import time
@@ -40,11 +42,20 @@ from infrastructure.cache.cache_keys import (
 )
 from infrastructure.cache.memory_cache import CacheInterface
 from infrastructure.http.deduplication import deduplicate
+from repositories.musicbrainz_base import (
+    MbSourceContext,
+    capture_mb_source_context,
+    mb_publish_if_current,
+)
 from infrastructure.serialization import clone_with_updates
 
 from .integration_helpers import HomeIntegrationHelpers, resolve_source_value
 from .section_builders import HomeSectionBuilders
 from services.weekly_exploration_service import WeeklyExplorationService
+
+_home_source_context: ContextVar[MbSourceContext | None] = ContextVar(
+    "home_source_context", default=None
+)
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +250,7 @@ class HomeService:
         return time.time() - float(at) <= HOME_STALE_REVALIDATE_SECONDS
 
     async def warm_cache(self, user_id: str) -> None:
+        _home_source_context.set(capture_mb_source_context())
         if self._workload_gate is not None:
             await self._workload_gate.wait_until_available()
         if user_id in self._building:
@@ -256,7 +268,12 @@ class HomeService:
             )
             response = await self._build_full(user_id, music)
             if self._memory_cache:
-                await self._memory_cache.set(cache_key, response, HOME_CACHE_TTL)
+                await mb_publish_if_current(
+                    _home_source_context.get(),
+                    lambda: self._memory_cache.set(
+                        cache_key, response, HOME_CACHE_TTL
+                    ),
+                )
             built_ok = True
         except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to build home data: {e}")
@@ -266,10 +283,13 @@ class HomeService:
             # so the miss path backs off after a doomed build, while sweeps of
             # the payload take the bookkeeping with them (sweep-coherent SWR)
             if cache_key is not None and self._memory_cache:
-                await self._memory_cache.set(
-                    self._home_built_sidecar_key(cache_key),
-                    {"at": time.time(), "ok": built_ok},
-                    HOME_CACHE_TTL,
+                await mb_publish_if_current(
+                    _home_source_context.get(),
+                    lambda: self._memory_cache.set(
+                        self._home_built_sidecar_key(cache_key),
+                        {"at": time.time(), "ok": built_ok},
+                        HOME_CACHE_TTL,
+                    ),
                 )
 
     async def _resolve_user_music(

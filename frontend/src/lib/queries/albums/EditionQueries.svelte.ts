@@ -14,28 +14,48 @@ import type { AlbumEditionsResponse, EditionAcquireResponse } from '$lib/types';
 const editionsUrl = (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/editions`;
 const pinUrl = (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/edition`;
 
-export const editionsKey = (mbid: string) => ['albums', 'editions', mbid] as const;
+type EditionUserId = string | null | undefined;
 
-export const getAlbumEditionsQuery = (mbid: Getter<string>, enabled: Getter<boolean>) =>
+export const editionsKey = (userId: EditionUserId, mbid: string) =>
+	['albums', 'editions', userId ?? null, mbid] as const;
+
+export const getAlbumEditionsQuery = (
+	getUserId: Getter<EditionUserId>,
+	mbid: Getter<string>,
+	enabled: Getter<boolean>
+) =>
 	createQuery(() => ({
-		queryKey: editionsKey(mbid()),
-		enabled: enabled() && !!mbid(),
+		queryKey: editionsKey(getUserId(), mbid()),
+		enabled: enabled() && !!getUserId() && !!mbid(),
 		staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
 		queryFn: ({ signal }) => api.global.get<AlbumEditionsResponse>(editionsUrl(mbid()), { signal })
 	}));
 
+type EditionPinVariables = {
+	userId: EditionUserId;
+	mbid: string;
+	releaseMbid: string;
+};
+
+type EditionClearVariables = {
+	userId: EditionUserId;
+	mbid: string;
+};
+
 export function setEditionPin() {
 	return createMutation(() => ({
-		mutationFn: ({ mbid, releaseMbid }: { mbid: string; releaseMbid: string }) =>
+		mutationFn: ({ mbid, releaseMbid }: EditionPinVariables) =>
 			api.global.put(pinUrl(mbid), { release_mbid: releaseMbid }),
-		onSuccess: (_d, { mbid }) => invalidateQueriesWithPersister({ queryKey: editionsKey(mbid) })
+		onSuccess: (_d, { userId, mbid }) =>
+			invalidateQueriesWithPersister({ queryKey: editionsKey(userId, mbid) })
 	}));
 }
 
 export function clearEditionPin() {
 	return createMutation(() => ({
-		mutationFn: ({ mbid }: { mbid: string }) => api.global.delete(pinUrl(mbid)),
-		onSuccess: (_d, { mbid }) => invalidateQueriesWithPersister({ queryKey: editionsKey(mbid) })
+		mutationFn: ({ mbid }: EditionClearVariables) => api.global.delete(pinUrl(mbid)),
+		onSuccess: (_d, { userId, mbid }) =>
+			invalidateQueriesWithPersister({ queryKey: editionsKey(userId, mbid) })
 	}));
 }
 

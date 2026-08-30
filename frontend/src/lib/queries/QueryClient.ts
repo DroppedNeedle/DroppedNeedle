@@ -9,7 +9,12 @@ import {
 	type Updater
 } from '@tanstack/svelte-query';
 import { experimental_createQueryPersister } from '@tanstack/svelte-query-persist-client';
-import { clearPersistedQueryCache, createIDBStorage } from './IndexedDbPersister.svelte';
+import {
+	clearPersistedQueryCache,
+	createIDBStorage,
+	removePersistedQueries,
+	type PersistedQueryPredicate
+} from './IndexedDbPersister.svelte';
 
 /**
  * Maximum age for queries to be persisted.
@@ -49,18 +54,93 @@ export const setQueryDataWithPersister = async <
 export const invalidateQueriesWithPersister = async <TTaggedQueryKey extends QueryKey = QueryKey>(
 	filters?: InvalidateQueryFilters<TTaggedQueryKey>,
 	options?: InvalidateOptions,
-	opts?: { removePersisted?: boolean }
+	opts?: { removePersisted?: boolean; persistedPredicate?: PersistedQueryPredicate }
 ) => {
 	// Default keeps IndexedDB rows: queries are marked stale (active ones
 	// refetch immediately, inactive ones paint the persisted payload instantly
 	// and settle in the background on next mount). Pass `removePersisted: true`
 	// only when a stale paint would be actively wrong - it destroys the 7-day
 	// persisted-cache benefit for the swept prefix.
+	let persistedFailure: unknown;
+	let persistedFailed = false;
 	if (opts?.removePersisted) {
-		await queryPersister.removeQueries(filters);
+		const persistedRemoval = opts.persistedPredicate
+			? removePersistedQueries(opts.persistedPredicate)
+			: queryPersister.removeQueries(filters);
+		try {
+			await persistedRemoval;
+		} catch (error) {
+			persistedFailure = error;
+			persistedFailed = true;
+		}
 	}
-	// eslint-disable-next-line no-restricted-syntax
-	await queryClient.invalidateQueries<TTaggedQueryKey>(filters, options);
+
+	let activeFailure: unknown;
+	let activeFailed = false;
+	try {
+		// eslint-disable-next-line no-restricted-syntax
+		await queryClient.invalidateQueries<TTaggedQueryKey>(filters, options);
+	} catch (error) {
+		activeFailure = error;
+		activeFailed = true;
+	}
+
+	if (persistedFailed && activeFailed) {
+		throw new AggregateError([persistedFailure, activeFailure], 'Query cache invalidation failed');
+	}
+	if (persistedFailed) throw persistedFailure;
+	if (activeFailed) throw activeFailure;
+};
+
+const MUSICBRAINZ_ARTIST_QUERY_SEGMENTS: Record<string, true> = {
+	extended: true,
+	releases: true
+};
+const MUSICBRAINZ_SEARCH_QUERY_SEGMENTS: Record<string, true> = {
+	artists: true,
+	albums: true,
+	suggestions: true
+};
+const MUSICBRAINZ_DISCOVER_QUERY_SEGMENTS: Record<string, true> = {
+	radio: true,
+	'playlist-suggestions': true
+};
+
+function isMusicBrainzProviderQuery(query: { queryKey: readonly unknown[] }): boolean {
+	const [root, second, third] = query.queryKey;
+	if (root === 'artist') {
+		return (
+			query.queryKey.length === 2 ||
+			(typeof third === 'string' && MUSICBRAINZ_ARTIST_QUERY_SEGMENTS[third] === true)
+		);
+	}
+	if (root === 'albums') return second === 'editions';
+	if (root === 'search') {
+		return typeof third === 'string' && MUSICBRAINZ_SEARCH_QUERY_SEGMENTS[third] === true;
+	}
+	if (root === 'discover') {
+		// The home response intentionally mixes library/user sections with provider-derived
+		// recommendations, so its whole user-keyed payload is a correctness boundary.
+		return (
+			query.queryKey.length === 2 ||
+			(typeof third === 'string' && MUSICBRAINZ_DISCOVER_QUERY_SEGMENTS[third] === true)
+		);
+	}
+	return false;
+}
+
+/**
+ * A MusicBrainz source switch invalidates provider-bearing artist/album/search/discovery
+ * queries. The discover home response is deliberately swept whole because it mixes
+ * provider recommendations with user/library sections; local search, discovery batches,
+ * integrations, and other user data stay outside this boundary. Persisted provider rows
+ * are removed because their source provenance is no longer valid.
+ */
+export const invalidateMusicBrainzProviderQueries = async (): Promise<void> => {
+	await invalidateQueriesWithPersister({ predicate: isMusicBrainzProviderQuery }, undefined, {
+		removePersisted: true,
+		persistedPredicate: isMusicBrainzProviderQuery
+	});
 };
 
 export const queryClient = new QueryClient({

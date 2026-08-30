@@ -1,5 +1,7 @@
 """Tests for SettingsService connection verification methods."""
 
+import time
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -316,3 +318,101 @@ async def test_verify_download_client_invalid_url_returns_error():
 
     assert result.status == "error"
     assert "URL" in result.message
+
+
+@pytest.mark.asyncio
+async def test_verify_musicbrainz_uses_conservative_probe_and_keeps_503_semantics():
+    import httpx
+
+    from api.v1.schemas.settings import MusicBrainzConnectionSettings
+
+    service = _make_service()
+    settings = MusicBrainzConnectionSettings(api_url="https://musicbrainz.org/ws/2")
+    probe = AsyncMock(return_value=httpx.Response(503))
+
+    with (
+        patch("infrastructure.validators.validate_service_url"),
+        patch("services.settings_service.get_settings", return_value=MagicMock()),
+        patch("services.settings_service.get_http_client", return_value=MagicMock()),
+        patch("repositories.musicbrainz_base.mb_api_probe", probe),
+    ):
+        result = await service.verify_musicbrainz(settings)
+
+    assert result.valid is True
+    assert "rate-limited" in result.message
+    probe.assert_awaited_once()
+    assert probe.await_args.kwargs["params"] == {"query": "test", "limit": 1}
+
+
+@pytest.mark.asyncio
+async def test_musicbrainz_probe_preserves_open_breaker_and_normal_funnel_rejection():
+    import httpx
+
+    import repositories.musicbrainz_base as mb_base
+    from api.v1.schemas.settings import MusicBrainzConnectionSettings
+    from infrastructure.resilience.retry import CircuitOpenError, CircuitState
+
+    service = _make_service()
+    settings = MusicBrainzConnectionSettings(api_url="https://musicbrainz.org/ws/2")
+    probe = AsyncMock(return_value=httpx.Response(200, content=b"{}"))
+    client = MagicMock()
+    client.get = AsyncMock()
+
+    breaker = mb_base.mb_circuit_breaker
+    previous = breaker.get_state()
+    try:
+        breaker.state = CircuitState.OPEN
+        breaker.failure_count = 5
+        breaker.success_count = 0
+        breaker.last_failure_time = time.time()
+        before_probe = breaker.get_state()
+
+        with (
+            patch("infrastructure.validators.validate_service_url"),
+            patch("services.settings_service.get_settings", return_value=MagicMock()),
+            patch(
+                "services.settings_service.get_http_client", return_value=MagicMock()
+            ),
+            patch("repositories.musicbrainz_base.mb_api_probe", probe),
+            patch.object(mb_base, "_http_client", client),
+        ):
+            result = await service.verify_musicbrainz(settings)
+            assert result.valid is True
+            with pytest.raises(CircuitOpenError):
+                await mb_base.mb_api_get("/artist")
+
+        assert breaker.get_state() == before_probe
+        client.get.assert_not_awaited()
+    finally:
+        breaker.state = CircuitState(previous["state"])
+        breaker.failure_count = previous["failure_count"]
+        breaker.success_count = previous["success_count"]
+        breaker.last_failure_time = previous["last_failure_time"]
+        breaker._last_open_warning = 0.0
+
+
+@pytest.mark.asyncio
+async def test_verify_musicbrainz_failure_log_redacts_configured_endpoint(caplog):
+    from api.v1.schemas.settings import MusicBrainzConnectionSettings
+
+    service = _make_service()
+    settings = MusicBrainzConnectionSettings(
+        api_url="https://user:secret@mirror.example/ws/2?token=private"
+    )
+    error = RuntimeError(f"request failed for {settings.api_url}")
+
+    with (
+        patch("infrastructure.validators.validate_service_url"),
+        patch("services.settings_service.get_settings", return_value=MagicMock()),
+        patch("services.settings_service.get_http_client", return_value=MagicMock()),
+        patch(
+            "repositories.musicbrainz_base.mb_api_probe", AsyncMock(side_effect=error)
+        ),
+        caplog.at_level(logging.WARNING, logger="services.settings_service"),
+    ):
+        result = await service.verify_musicbrainz(settings)
+
+    assert result.valid is False
+    assert str(error) not in caplog.text
+    assert settings.api_url not in caplog.text
+    assert "Failed to verify MusicBrainz connection" in caplog.text

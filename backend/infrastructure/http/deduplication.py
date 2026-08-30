@@ -71,7 +71,11 @@ class RequestDeduplicator:
                     if not future.done():
                         future.cancel()
                     async with self._lock:
-                        self._pending.pop(key, None)
+                        # A clear() followed by a new leader can install a
+                        # different future for this key.  Never let the old
+                        # leader's finalizer remove that replacement.
+                        if self._pending.get(key) is future:
+                            self._pending.pop(key, None)
 
             # Follower path: shield prevents waiter cancellation from poisoning the shared future.
             try:

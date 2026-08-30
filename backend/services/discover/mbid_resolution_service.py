@@ -6,6 +6,13 @@ from typing import Any
 from api.v1.schemas.discover import DiscoverQueueItemLight
 from infrastructure.persistence import LibraryDB, MBIDStore
 from infrastructure.queue.priority_queue import RequestPriority
+from repositories.musicbrainz_base import (
+    clear_mb_response_context,
+    get_mb_api_base,
+    get_mb_response_context,
+    mb_publish_if_current,
+    normalize_mb_source_label,
+)
 from repositories.protocols import (
     LibraryRepositoryProtocol,
     ListenBrainzRepositoryProtocol,
@@ -112,8 +119,6 @@ class MbidResolutionService:
         if not pending:
             return resolved
 
-        new_resolutions: dict[str, str | None] = {}
-
         # thorough (warmer) builds resolve everything; on-visit builds cap for speed
         lookup_limit = len(pending) if discover_build_thorough.get() else max_lookups
         lookup_mbids = pending[:lookup_limit]
@@ -131,13 +136,11 @@ class MbidResolutionService:
         # the whole gather. MusicBrainz is a hard 1 req/s, so during the ListenBrainz-
         # popularity outage this gather drains slowly and is routinely cancelled mid-flight
         # by a build budget. asyncio.gather is all-or-nothing: a cancellation at the await
-        # discards EVERY already-completed result, so persisting post-gather banked nothing
-        # and the store never warmed. Per-completion persistence means a cancelled build
-        # still keeps every resolution it earned, so on-visit reloads (and the prewarm)
-        # accumulate durably and personalisation converges.
         async def _resolve_and_bank(mbid: str) -> None:
             try:
+                clear_mb_response_context()
                 result = await self._mb_repo.get_release_group_id_from_release(mbid)
+                source_context = get_mb_response_context()
             except Exception:  # noqa: BLE001
                 unresolved.append(mbid)
                 return
@@ -145,7 +148,9 @@ class MbidResolutionService:
             if rg_mbid:
                 resolved[mbid] = rg_mbid
                 cache[mbid] = rg_mbid
-                await self._persist_resolutions({mbid: rg_mbid})
+                await self._persist_resolutions(
+                    {mbid: rg_mbid}, source_context=source_context
+                )
             else:
                 unresolved.append(mbid)
 
@@ -161,65 +166,70 @@ class MbidResolutionService:
         # USER_INITIATED they'd compete with real user page loads AND re-arm the priority
         # queue's user-activity timer, starving the build's own background lookups. The
         # primary release->RG lookup on this path is already BACKGROUND_SYNC.
+        async def _check_group(mbid: str):
+            clear_mb_response_context()
+            result = await self._mb_repo.get_release_group_by_id(
+                mbid,
+                includes=["artist-credits"],
+                priority=RequestPriority.BACKGROUND_SYNC,
+            )
+            return result, get_mb_response_context()
+
         rg_checks = await asyncio.gather(
-            *[
-                self._mb_repo.get_release_group_by_id(
-                    mbid,
-                    includes=["artist-credits"],
-                    priority=RequestPriority.BACKGROUND_SYNC,
-                )
-                for mbid in unresolved
-            ],
+            *[_check_group(mbid) for mbid in unresolved],
             return_exceptions=True,
         )
 
-        for mbid, result in zip(unresolved, rg_checks):
-            if isinstance(result, Exception):
+        for mbid, checked in zip(unresolved, rg_checks):
+            if isinstance(checked, Exception):
                 if allow_passthrough:
                     resolved[mbid] = mbid
                     cache[mbid] = mbid
                 else:
                     cache[mbid] = None
                 continue
+            result, source_context = checked
             if isinstance(result, dict) and result.get("id"):
                 resolved[mbid] = mbid
                 cache[mbid] = mbid
-                new_resolutions[mbid] = mbid
+                # The answer is persisted immediately with its source context.
+                await self._persist_resolutions(
+                    {mbid: mbid}, source_context=source_context
+                )
             elif allow_passthrough:
                 resolved[mbid] = mbid
                 cache[mbid] = mbid
             else:
                 cache[mbid] = None
-                new_resolutions[mbid] = None
-
-        await self._persist_resolutions(new_resolutions)
+                # A definitive empty result is also persisted with its source
+                # context when the provider proved it.
+                await self._persist_resolutions(
+                    {mbid: None}, source_context=source_context
+                )
 
         return resolved
 
     async def _persist_resolutions(
-        self, new_resolutions: dict[str, str | None]
+        self,
+        new_resolutions: dict[str, str | None],
+        *,
+        source_context=None,
     ) -> None:
-        """Durably bank resolved LB->RG mappings into the canonical store so
-        the cache warms across builds.
-
-        Shielded: the discover build that drives this resolver may cancel it on a
-        budget timeout (Top Picks / radio / queue) while MB lookups are still draining
-        at 1 req/s. The SQLite write that records the lookups already completed must
-        finish regardless, or a starved build banks nothing and the next build re-does
-        the same 1/s resolutions from scratch.
-
-        ST2 cutover: writes go to ``release_to_rg`` in the canonical store via
-        ``save_release_to_rg`` (empty-string = authoritative negative). The
-        legacy ``mbid_resolution_map`` table remains for request_service."""
+        """Durably bank resolved LB->RG mappings under the source commit fence."""
         if not new_resolutions or not self._mb_canonical_store:
             return
         try:
-            source_host = ""
-            await asyncio.shield(
-                self._mb_canonical_store.save_release_to_rg(
+            source_host = normalize_mb_source_label(
+                source_context.source_url
+                if source_context is not None
+                else get_mb_api_base()
+            )
+            await mb_publish_if_current(
+                source_context,
+                lambda: self._mb_canonical_store.save_release_to_rg(
                     {mbid: rg or "" for mbid, rg in new_resolutions.items()},
                     source_host,
-                )
+                ),
             )
         except Exception:  # noqa: BLE001
             logger.warning("Failed to persist MBID resolutions")

@@ -13,6 +13,12 @@ from infrastructure.persistence.mb_canonical_store import (
     OFFICIAL_MB_API_BASE,
     MbCanonicalStore,
 )
+from repositories.musicbrainz_base import (
+    MB_TRUSTED_IDENTITY_ORIGINS,
+    is_mb_identity_source,
+    is_mb_rate_policy_public_host,
+    normalize_mb_source_label,
+)
 
 
 @pytest.fixture
@@ -54,6 +60,248 @@ class TestConstructTwiceIdempotency:
         assert "recording_isrc" in tables
 
 
+class TestSourceHostRatchet:
+    @pytest.mark.asyncio
+    async def test_source_labels_are_sanitized_idempotently(self, db_path, write_lock):
+        MbCanonicalStore(db_path=db_path, write_lock=write_lock)
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            """
+            INSERT INTO canonical_redirect (
+                entity_kind, from_mbid_lower, to_mbid_lower, source,
+                source_host, first_seen_at, last_confirmed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "recording",
+                "raw-recording",
+                "raw-target",
+                "test",
+                "https://user:password@musicbrainz.org/ws/2?secret=1",
+                1,
+                1,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO release_to_rg (
+                release_mbid_lower, rg_mbid, source, source_host, saved_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                "raw-release",
+                "raw-rg",
+                "test",
+                "http://user:password@musicbrainz.org:8080/ws/2/path?secret=1#fragment",
+                1,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO canonical_redirect (
+                entity_kind, from_mbid_lower, to_mbid_lower, source,
+                source_host, first_seen_at, last_confirmed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("recording", "legacy-empty", "legacy-target", "legacy", "", 1, 1),
+        )
+        conn.commit()
+        conn.close()
+
+        store2 = MbCanonicalStore(db_path=db_path, write_lock=write_lock)
+        conn = sqlite3.connect(str(db_path))
+        canonical_host = conn.execute(
+            "SELECT source_host FROM canonical_redirect WHERE from_mbid_lower = ?",
+            ("raw-recording",),
+        ).fetchone()[0]
+        release_host = conn.execute(
+            "SELECT source_host FROM release_to_rg WHERE release_mbid_lower = ?",
+            ("raw-release",),
+        ).fetchone()[0]
+        empty_host = conn.execute(
+            "SELECT source_host FROM canonical_redirect WHERE from_mbid_lower = ?",
+            ("legacy-empty",),
+        ).fetchone()[0]
+        conn.close()
+
+        assert canonical_host == "https://musicbrainz.org"
+        assert release_host == "http://musicbrainz.org:8080"
+        assert empty_host == ""
+        assert "@" not in canonical_host + release_host
+        assert "?" not in canonical_host + release_host
+        assert "/" not in canonical_host.removeprefix("https://")
+        assert await store2.get_canonical_redirect(
+            "recording", ["raw-recording"], trusted_identity_source_only=True
+        ) == {"raw-recording": "raw-target"}
+
+        store3 = MbCanonicalStore(db_path=db_path, write_lock=write_lock)
+        conn = sqlite3.connect(str(db_path))
+        assert (
+            conn.execute(
+                "SELECT source_host FROM canonical_redirect WHERE from_mbid_lower = ?",
+                ("raw-recording",),
+            ).fetchone()[0]
+            == canonical_host
+        )
+        assert (
+            conn.execute(
+                "SELECT source_host FROM release_to_rg WHERE release_mbid_lower = ?",
+                ("raw-release",),
+            ).fetchone()[0]
+            == release_host
+        )
+        conn.close()
+        assert store3.db_path == db_path
+
+    def test_ratchet_uses_full_canonical_redirect_key(self, db_path, write_lock):
+        MbCanonicalStore(db_path=db_path, write_lock=write_lock)
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.executemany(
+                """
+                INSERT INTO canonical_redirect (
+                    entity_kind, from_mbid_lower, to_mbid_lower, source,
+                    source_host, first_seen_at, last_confirmed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        "recording",
+                        "same",
+                        "recording-target",
+                        "test",
+                        "https://user:password@musicbrainz.org/ws/2?secret=1",
+                        1,
+                        1,
+                    ),
+                    (
+                        "release",
+                        "same",
+                        "release-target",
+                        "test",
+                        "https://mirror.example/ws/2?secret=2",
+                        1,
+                        1,
+                    ),
+                ],
+            )
+
+        MbCanonicalStore(db_path=db_path, write_lock=write_lock)
+        with sqlite3.connect(str(db_path)) as conn:
+            rows = dict(
+                conn.execute(
+                    "SELECT entity_kind, source_host FROM canonical_redirect "
+                    "WHERE from_mbid_lower = ? ORDER BY entity_kind",
+                    ("same",),
+                ).fetchall()
+            )
+        assert rows == {
+            "recording": "https://musicbrainz.org",
+            "release": "https://mirror.example",
+        }
+
+        MbCanonicalStore(db_path=db_path, write_lock=write_lock)
+        with sqlite3.connect(str(db_path)) as conn:
+            assert (
+                dict(
+                    conn.execute(
+                        "SELECT entity_kind, source_host FROM canonical_redirect "
+                        "WHERE from_mbid_lower = ? ORDER BY entity_kind",
+                        ("same",),
+                    ).fetchall()
+                )
+                == rows
+            )
+
+    def test_rate_policy_and_identity_predicates_are_separate(self):
+        assert is_mb_rate_policy_public_host("https://musicbrainz.org/ws/2") is True
+        assert is_mb_rate_policy_public_host("http://musicbrainz.org/ws/2") is True
+        assert is_mb_rate_policy_public_host("http://musicbrainz.org:80/ws/2") is True
+        assert (
+            is_mb_rate_policy_public_host("https://musicbrainz.org:8443/ws/2") is False
+        )
+
+        assert is_mb_identity_source("https://musicbrainz.org/ws/2") is True
+        assert is_mb_identity_source("https://musicbrainz.org:443/ws/2") is True
+        assert is_mb_identity_source("http://musicbrainz.org/ws/2") is False
+        assert is_mb_identity_source("http://musicbrainz.org:80/ws/2") is False
+        assert MB_TRUSTED_IDENTITY_ORIGINS == tuple(sorted(MB_TRUSTED_IDENTITY_ORIGINS))
+        assert all(
+            is_mb_identity_source(origin) for origin in MB_TRUSTED_IDENTITY_ORIGINS
+        )
+        assert is_mb_identity_source("https://musicbrainz.org:8443/ws/2") is False
+
+    @pytest.mark.asyncio
+    async def test_new_source_labels_strip_url_detail(self, store):
+        raw_source = "https://user:password@mirror.example:8443/ws/2?token=secret"
+        await store.save_release_to_rg({"new-release": "new-rg"}, raw_source)
+        await store.save_canonical_redirect(
+            [
+                {
+                    "entity_kind": "recording",
+                    "from_mbid": "new-recording",
+                    "to_mbid": "new-target",
+                }
+            ],
+            raw_source,
+        )
+        conn = sqlite3.connect(str(store.db_path))
+        source_host = conn.execute(
+            "SELECT source_host FROM release_to_rg WHERE release_mbid_lower = ?",
+            ("new-release",),
+        ).fetchone()[0]
+        redirect_source_host = conn.execute(
+            "SELECT source_host FROM canonical_redirect WHERE from_mbid_lower = ?",
+            ("new-recording",),
+        ).fetchone()[0]
+        conn.close()
+        assert source_host == "https://mirror.example:8443"
+        assert redirect_source_host == source_host
+
+    def test_normalize_source_label_keeps_only_origin(self):
+        assert (
+            normalize_mb_source_label(
+                "https://user:password@MUSICBRAINZ.ORG:443/ws/2?q=secret#fragment"
+            )
+            == "https://musicbrainz.org:443"
+        )
+
+
+@pytest.mark.asyncio
+async def test_official_identity_gate_accepts_explicit_https_default_port_only(store):
+    await store.save_canonical_redirect(
+        [{"entity_kind": "recording", "from_mbid": "tls-443", "to_mbid": "target-443"}],
+        "https://musicbrainz.org:443/ws/2",
+    )
+    await store.save_canonical_redirect(
+        [
+            {
+                "entity_kind": "recording",
+                "from_mbid": "tls-custom",
+                "to_mbid": "target-custom",
+            }
+        ],
+        "https://musicbrainz.org:8443/ws/2",
+    )
+    await store.save_canonical_redirect(
+        [
+            {
+                "entity_kind": "recording",
+                "from_mbid": "http-official",
+                "to_mbid": "target-http",
+            }
+        ],
+        "http://musicbrainz.org/ws/2",
+    )
+
+    result = await store.get_canonical_redirect(
+        "recording",
+        ["tls-443", "tls-custom", "http-official"],
+        trusted_identity_source_only=True,
+    )
+
+    assert result == {"tls-443": "target-443"}
+
+
 class TestReleaseToRg:
     @pytest.mark.asyncio
     async def test_save_and_batch_read(self, store):
@@ -86,7 +334,7 @@ class TestCanonicalRedirect:
         await store.save_canonical_redirect(rows, OFFICIAL_MB_API_BASE)
 
         result = await store.get_canonical_redirect(
-            "recording", ["old-1"], official_source_only=True
+            "recording", ["old-1"], trusted_identity_source_only=True
         )
         assert result["old-1"] == "new-1"
 
@@ -103,13 +351,13 @@ class TestCanonicalRedirect:
 
         # Identity lane (official only) cannot see it.
         identity = await store.get_canonical_redirect(
-            "recording", ["old-mirror"], official_source_only=True
+            "recording", ["old-mirror"], trusted_identity_source_only=True
         )
         assert "old-mirror" not in identity
 
         # Display lane CAN see it.
         display = await store.get_canonical_redirect(
-            "recording", ["old-mirror"], official_source_only=False
+            "recording", ["old-mirror"], trusted_identity_source_only=False
         )
         assert display["old-mirror"] == "new-mirror"
 

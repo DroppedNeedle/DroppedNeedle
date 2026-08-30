@@ -16,6 +16,11 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	}
 }));
 
+const sessionCleanupMock = vi.hoisted(() => ({ run: vi.fn() }));
+vi.mock('$lib/utils/userSessionCleanup', () => ({
+	clearUserSessionState: sessionCleanupMock.run
+}));
+
 import { api, ApiError, SessionExpiredError, TransportError } from './client';
 import { pageFetch } from '$lib/utils/navigationAbort';
 
@@ -60,6 +65,10 @@ beforeEach(() => {
 	mockGlobalFetch.mockReset();
 	authMock.isAuthenticated = false;
 	authMock.clear.mockReset();
+	sessionCleanupMock.run.mockReset();
+	sessionCleanupMock.run.mockImplementation(async () => {
+		authMock.clear();
+	});
 	vi.unstubAllGlobals();
 });
 
@@ -418,6 +427,72 @@ describe('api client', () => {
 				expect((e as SessionExpiredError).code).toBe('session_expired');
 			}
 			// the Promise<T> contract is preserved by throwing
+			expect(authMock.clear).toHaveBeenCalledOnce();
+			expect(win.location.href).toBe('/login');
+		});
+
+		it('waits for successful session cleanup before redirecting or throwing', async () => {
+			authMock.isAuthenticated = true;
+			const win = { location: { href: '' } };
+			let resolveCleanup!: () => void;
+			const cleanup = new Promise<void>((resolve) => {
+				resolveCleanup = resolve;
+			});
+			sessionCleanupMock.run.mockImplementationOnce(() => {
+				authMock.clear();
+				return cleanup;
+			});
+			vi.stubGlobal('window', win);
+			mockPageFetch.mockResolvedValue(errorResponse(401, { detail: 'expired' }));
+
+			const request = api.get('/api/v1/auth/me');
+			await vi.waitFor(() => expect(sessionCleanupMock.run).toHaveBeenCalledOnce());
+			expect(authMock.clear).toHaveBeenCalledOnce();
+			expect(win.location.href).toBe('');
+
+			resolveCleanup();
+			await expect(request).rejects.toBeInstanceOf(SessionExpiredError);
+			expect(win.location.href).toBe('/login');
+		});
+
+		it('waits for rejected session cleanup before redirecting or throwing', async () => {
+			authMock.isAuthenticated = true;
+			const win = { location: { href: '' } };
+			const cleanupFailure = new Error('IndexedDB unavailable');
+			let rejectCleanup!: (reason: Error) => void;
+			const cleanup = new Promise<void>((_, reject) => {
+				rejectCleanup = reject;
+			});
+			sessionCleanupMock.run.mockImplementationOnce(() => {
+				authMock.clear();
+				return cleanup;
+			});
+			vi.stubGlobal('window', win);
+			mockPageFetch.mockResolvedValue(errorResponse(401, { detail: 'expired' }));
+
+			const request = api.get('/api/v1/auth/me');
+			await vi.waitFor(() => expect(sessionCleanupMock.run).toHaveBeenCalledOnce());
+			expect(authMock.clear).toHaveBeenCalledOnce();
+			expect(win.location.href).toBe('');
+
+			rejectCleanup(cleanupFailure);
+			await expect(request).rejects.toBeInstanceOf(SessionExpiredError);
+			expect(win.location.href).toBe('/login');
+		});
+
+		it('observes cleanup rejection while preserving auth clearing and the login redirect', async () => {
+			authMock.isAuthenticated = true;
+			const win = { location: { href: '' } };
+			const cleanupFailure = new Error('IndexedDB unavailable');
+			sessionCleanupMock.run.mockImplementationOnce(async () => {
+				authMock.clear();
+				throw cleanupFailure;
+			});
+			vi.stubGlobal('window', win);
+			mockPageFetch.mockResolvedValue(errorResponse(401, { detail: 'expired' }));
+
+			await expect(api.get('/api/v1/auth/me')).rejects.toBeInstanceOf(SessionExpiredError);
+			expect(sessionCleanupMock.run).toHaveBeenCalledOnce();
 			expect(authMock.clear).toHaveBeenCalledOnce();
 			expect(win.location.href).toBe('/login');
 		});

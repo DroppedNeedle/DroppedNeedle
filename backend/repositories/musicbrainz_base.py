@@ -1,9 +1,22 @@
+import asyncio
+import math
+import threading
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, TypeVar
+from urllib.parse import urlsplit
 
 import httpx
 import msgspec
 
-from core.exceptions import ExternalServiceError, InvalidExternalPayloadError
+from core.exceptions import (
+    ExternalServiceError,
+    InvalidExternalPayloadError,
+    RateLimitedError,
+)
 from infrastructure.resilience.retry import with_retry, CircuitBreaker
 from infrastructure.resilience.rate_limiter import TokenBucketRateLimiter
 from infrastructure.queue.priority_queue import RequestPriority, get_priority_queue
@@ -16,15 +29,148 @@ from infrastructure.observability.provider_counters import (
 from repositories.edition_policy import recall_key
 
 _mb_api_base: str = "https://musicbrainz.org/ws/2"
+_mb_source_generation = 0
+
+
+@dataclass(frozen=True)
+class MbSourceContext:
+    source_url: str
+    generation: int
+
+
+_mb_response_context: ContextVar[MbSourceContext | None] = ContextVar(
+    "musicbrainz_response_context", default=None
+)
+
+
+class _ProcessWideAsyncLock:
+    """Loop-agnostic async facade over one process-wide mutex."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+    async def acquire(self) -> bool:
+        while not self._lock.acquire(blocking=False):
+            await asyncio.sleep(0.001)
+        return True
+
+    def release(self) -> None:
+        self._lock.release()
+
+    async def __aenter__(self):
+        await self.acquire()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        self.release()
+
+
+mb_source_commit_lock = _ProcessWideAsyncLock()
+
+
+def clear_mb_response_context() -> None:
+    """Drop any prior wire context before a cache/durable-only path."""
+    _mb_response_context.set(None)
+
+
+def normalize_mb_source_label(url: str | None) -> str:
+    """Return a privacy-safe source origin without credentials or URL detail."""
+    if not isinstance(url, str) or not url.strip():
+        return ""
+    try:
+        parsed = urlsplit(url.strip())
+        hostname = parsed.hostname
+        if parsed.scheme.lower() not in {"http", "https"} or not hostname:
+            return ""
+        port = parsed.port
+    except (AttributeError, TypeError, ValueError):
+        return ""
+
+    host = hostname.casefold()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{parsed.scheme.lower()}://{host}{f':{port}' if port is not None else ''}"
+
+
+_MB_RATE_POLICY_PUBLIC_ORIGINS = frozenset(
+    {
+        "http://musicbrainz.org",
+        "http://musicbrainz.org:80",
+        "http://www.musicbrainz.org",
+        "http://www.musicbrainz.org:80",
+        "https://musicbrainz.org",
+        "https://musicbrainz.org:443",
+        "https://www.musicbrainz.org",
+        "https://www.musicbrainz.org:443",
+    }
+)
+MB_TRUSTED_IDENTITY_ORIGINS: tuple[str, ...] = (
+    "https://musicbrainz.org",
+    "https://musicbrainz.org:443",
+    "https://www.musicbrainz.org",
+    "https://www.musicbrainz.org:443",
+)
+
+
+def is_mb_rate_policy_public_host(url: str | None) -> bool:
+    """Classify public MusicBrainz origins for transport-rate policy only.
+
+    This intentionally includes HTTP so choosing an insecure transport cannot
+    bypass the official request ceiling. It must not be used as identity or
+    durable-provenance proof.
+    """
+    return normalize_mb_source_label(url) in _MB_RATE_POLICY_PUBLIC_ORIGINS
+
+
+def is_mb_identity_source(url: str | None) -> bool:
+    """Accept only TLS/default-port MusicBrainz origins as identity proof."""
+    return normalize_mb_source_label(url) in MB_TRUSTED_IDENTITY_ORIGINS
 
 
 def get_mb_api_base() -> str:
     return _mb_api_base
 
 
+def get_mb_source_generation() -> int:
+    return _mb_source_generation
+
+
+def capture_mb_source_context() -> MbSourceContext:
+    """Capture the source generation before a provider service operation."""
+    return MbSourceContext(
+        source_url=_mb_api_base,
+        generation=_mb_source_generation,
+    )
+
+
+def get_mb_response_context() -> MbSourceContext | None:
+    return _mb_response_context.get()
+
+
+def is_mb_source_current(context: MbSourceContext | None) -> bool:
+    return bool(
+        context is not None
+        and context.generation == _mb_source_generation
+        and context.source_url == _mb_api_base
+    )
+
+
+def normalize_mb_id(value: str | None) -> str:
+    """Normalize a MusicBrainz entity ID for identity keys and lookups."""
+    if not isinstance(value, str):
+        return ""
+    return value.strip().casefold()
+
+
 def set_mb_api_base(url: str) -> None:
-    global _mb_api_base
-    _mb_api_base = url.rstrip("/")
+    global _mb_api_base, _mb_source_generation
+    normalized = url.rstrip("/")
+    if normalized != _mb_api_base:
+        _mb_source_generation += 1
+    _mb_api_base = normalized
 
 
 mb_circuit_breaker = CircuitBreaker(
@@ -70,6 +216,74 @@ _http_client: httpx.AsyncClient | None = None
 T = TypeVar("T")
 
 
+_MB_MAX_RETRY_AFTER_SECONDS = 60.0
+
+
+def _parse_retry_after_seconds(value: str | None) -> float | None:
+    if not value:
+        return None
+
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        try:
+            parsed = parsedate_to_datetime(value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            seconds = (parsed - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    if not math.isfinite(seconds) or seconds <= 0:
+        return None
+    return min(seconds, _MB_MAX_RETRY_AFTER_SECONDS)
+
+
+_mb_probe_rate_limiter = TokenBucketRateLimiter(rate=1.0, capacity=1)
+
+
+async def mb_api_probe(
+    api_url: str,
+    *,
+    params: dict[str, Any] | None = None,
+    priority: RequestPriority = RequestPriority.USER_INITIATED,
+    client: httpx.AsyncClient | None = None,
+) -> httpx.Response:
+    """Run one conservative settings probe without shared MB state.
+
+    The probe shares the normal priority lane, HTTP client, and provider
+    telemetry, but has its own capacity-one limiter and performs no retry,
+    cache, source, or circuit-breaker mutation.
+    """
+    clear_mb_response_context()
+
+    priority_mgr = get_priority_queue()
+    semaphore = await priority_mgr.acquire_slot(priority)
+    async with semaphore:
+        await _mb_probe_rate_limiter.acquire(priority=int(priority))
+        probe_client = client or get_mb_http_client()
+        request_params = dict(params) if params else {}
+        request_params["fmt"] = "json"
+        try:
+            response = await probe_client.get(
+                f"{api_url.rstrip('/')}/artist", params=request_params
+            )
+        except httpx.HTTPError:
+            record_provider_call("musicbrainz", priority, None)
+            raise
+
+    record_provider_call("musicbrainz", priority, response.status_code)
+    record_rate_limit_headers("musicbrainz", response.headers)
+    if response.status_code == 429:
+        raise RateLimitedError(
+            "MusicBrainz rate limited (429): /artist",
+            retry_after_seconds=_parse_retry_after_seconds(
+                response.headers.get("Retry-After")
+            ),
+        )
+    return response
+
+
 def _decode_json_response(response: httpx.Response) -> dict[str, Any]:
     content = getattr(response, "content", None)
     if isinstance(content, (bytes, bytearray, memoryview)):
@@ -95,6 +309,56 @@ def get_mb_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
+async def _await_settled(publication: Awaitable[Any]) -> None:
+    """Wait for a publication to finish even if the caller is cancelled."""
+    task = (
+        asyncio.Task(
+            publication,
+            loop=asyncio.get_running_loop(),
+            eager_start=True,
+        )
+        if asyncio.iscoroutine(publication)
+        else asyncio.ensure_future(publication)
+    )
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001 - inner publication must settle
+            pass
+        raise
+
+
+async def mb_publish_if_current(
+    context: MbSourceContext | None,
+    publication: Callable[[], Awaitable[Any]],
+) -> bool:
+    """Publish under the process-wide source commit fence."""
+    async with mb_source_commit_lock:
+        if context is not None and not is_mb_source_current(context):
+            return False
+        await _await_settled(publication())
+        return True
+
+
+async def mb_cache_set_if_current(
+    cache: Any,
+    key: str,
+    value: Any,
+    *,
+    ttl_seconds: int | float,
+    context: MbSourceContext | None = None,
+) -> bool:
+    """Publish provider-derived cache data under the source commit fence."""
+    return await mb_publish_if_current(
+        context,
+        lambda: cache.set(key, value, ttl_seconds=ttl_seconds),
+    )
+
+
 @with_retry(
     max_attempts=3,
     circuit_breaker=mb_circuit_breaker,
@@ -113,13 +377,18 @@ async def mb_api_get(
     priority: RequestPriority = RequestPriority.USER_INITIATED,
     decode_type: type[T] | None = None,
 ) -> dict[str, Any] | T:
+    clear_mb_response_context()
     priority_mgr = get_priority_queue()
     semaphore = await priority_mgr.acquire_slot(priority)
     async with semaphore:
         if not _mb_limiter_bypassed:
             await mb_rate_limiter.acquire(priority=int(priority))
         client = get_mb_http_client()
-        url = f"{get_mb_api_base()}{path}"
+        source_url = get_mb_api_base()
+        _mb_response_context.set(
+            MbSourceContext(source_url=source_url, generation=_mb_source_generation)
+        )
+        url = f"{source_url}{path}"
         request_params = dict(params) if params else {}
         request_params["fmt"] = "json"
         try:
@@ -137,7 +406,16 @@ async def mb_api_get(
             if decode_type is not None:
                 return decode_type()
             return {}
+        if response.status_code == 429:
+            raise RateLimitedError(
+                f"MusicBrainz rate limited (429): {path}",
+                retry_after_seconds=_parse_retry_after_seconds(
+                    response.headers.get("Retry-After")
+                ),
+            )
         if response.status_code == 503:
+            # Keep 503 provider-directed delays out of the generic retry path:
+            # its current budget cannot safely coordinate host changes.
             raise ExternalServiceError(f"MusicBrainz rate limited (503): {path}")
         if response.status_code != 200:
             raise ExternalServiceError(
@@ -241,9 +519,9 @@ def select_edition(
     order minus that term.
 
     Editions with zero track-count are skipped CONSISTENTLY - they carry
-    no medium data to match against and previously drifted the
-    scanner/drop-import lane away from the native pipeline. Returns None
-    only when no release carries a usable id or any track data at all.
+    no medium data to match against and previously drifted the scanner/drop-import
+    lane away from the native pipeline. Returns None only when no release carries
+    a usable id or any track data at all.
     """
     scored: list[tuple] = []
     for release in releases:
@@ -259,8 +537,9 @@ def dedupe_by_id(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen = {}
     for item in items:
         item_id = item.get("id")
-        if item_id and item_id not in seen:
-            seen[item_id] = item
+        normalized_id = normalize_mb_id(item_id)
+        if normalized_id and normalized_id not in seen:
+            seen[normalized_id] = item
 
     result = list(seen.values())
     result.sort(key=get_score, reverse=True)

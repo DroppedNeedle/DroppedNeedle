@@ -6,7 +6,7 @@ import pytest
 
 import infrastructure.resilience.retry as retry_module
 import repositories.musicbrainz_base as mb_base
-from core.exceptions import ExternalServiceError
+from core.exceptions import ExternalServiceError, RateLimitedError
 from infrastructure.queue.priority_queue import RequestPriority
 
 
@@ -72,3 +72,73 @@ async def test_503_remains_retryable_within_budget(
     assert client.calls > 1
     assert client.calls <= 3
     assert mb_base.mb_circuit_breaker.failure_count == 1
+
+
+class _HeaderStatusClient:
+    def __init__(self, status: int, headers: dict[str, str]) -> None:
+        self.status = status
+        self.headers = headers
+        self.calls = 0
+
+    async def get(self, _url: str, params=None):
+        self.calls += 1
+        return httpx.Response(self.status, headers=self.headers, content=b"{}")
+
+
+def test_retry_after_parser_is_bounded_and_rejects_invalid_values():
+    assert mb_base._parse_retry_after_seconds("120") == 60.0
+    assert mb_base._parse_retry_after_seconds("nan") is None
+    assert mb_base._parse_retry_after_seconds("0") is None
+    assert mb_base._parse_retry_after_seconds("not-a-delay") is None
+
+
+@pytest.mark.asyncio
+async def test_429_retry_after_is_honored_without_exceeding_retry_budget(
+    reset_musicbrainz_transport, monkeypatch
+) -> None:
+    client = _HeaderStatusClient(429, {"Retry-After": "1"})
+    monkeypatch.setattr(mb_base, "_http_client", client)
+
+    with pytest.raises(RateLimitedError) as raised:
+        await mb_base.mb_api_get("/artist")
+
+    assert raised.value.retry_after_seconds == 1.0
+    assert client.calls == 3
+    assert retry_module.asyncio.sleep.await_args_list
+    assert all(
+        call.args == (1.0,) for call in retry_module.asyncio.sleep.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_probe_uses_isolated_client_path_and_telemetry(monkeypatch):
+    client = _HeaderStatusClient(200, {})
+    limiter = SimpleNamespace(acquire=AsyncMock())
+    calls = []
+    headers = []
+    monkeypatch.setattr(mb_base, "_mb_probe_rate_limiter", limiter)
+    monkeypatch.setattr(
+        mb_base,
+        "record_provider_call",
+        lambda *args: calls.append(args),
+    )
+    monkeypatch.setattr(
+        mb_base,
+        "record_rate_limit_headers",
+        lambda *args: headers.append(args),
+    )
+
+    before_source = mb_base.get_mb_api_base()
+    before_breaker = mb_base.mb_circuit_breaker.get_state()
+    response = await mb_base.mb_api_probe(
+        "https://mirror.example/ws/2",
+        params={"query": "test"},
+        client=client,
+    )
+
+    assert response.status_code == 200
+    assert client.calls == 1
+    assert mb_base.get_mb_api_base() == before_source
+    assert mb_base.mb_circuit_breaker.get_state() == before_breaker
+    assert calls == [("musicbrainz", RequestPriority.USER_INITIATED, 200)]
+    assert headers and headers[0][0] == "musicbrainz"
