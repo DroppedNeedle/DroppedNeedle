@@ -26,7 +26,16 @@
 	});
 </script>
 
-{#if localQuery.isLoading || shouldRedirect}
+<!--
+	Gate the skeleton on `!isFetched` (monotonic once the library lookup first
+	resolves), NOT on `isLoading` alone. ProviderAlbumPage re-observes this same
+	library query for its MusicBrainz-down fallback; for an unowned album that
+	404s, its mount kicks off a refetch that flips `isLoading`/`status:pending`
+	back on. Gating on `isLoading` alone would swap back to the skeleton, unmount
+	the provider page, cancel that refetch, and remount - an infinite loop that
+	hammers /api/v1/library/albums/{id} (see GH-339 / GH-341).
+-->
+{#if (localQuery.isLoading && !localQuery.isFetched) || shouldRedirect}
 	<div class="w-full max-w-7xl mx-auto px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
 		<div class="grid gap-6 lg:grid-cols-[20rem_1fr]">
 			<div class="skeleton aspect-square w-full rounded-box"></div>
