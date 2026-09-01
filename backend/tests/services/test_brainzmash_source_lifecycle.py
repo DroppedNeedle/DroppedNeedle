@@ -544,6 +544,96 @@ def test_deliberate_official_save_persists_and_survives_restart(tmp_path: Path):
     assert restarted.rate_limit == 1.0
     assert not is_brainzmash_active_binding_valid(restarted)
 
+def test_mutated_official_state_clears_brainzmash_binding_on_save_and_restart(
+    tmp_path: Path,
+):
+    from infrastructure.serialization import to_jsonable
+    from repositories.musicbrainz_base import OFFICIAL_MB_API_BASE
+    from api.v1.schemas.settings import (
+        _OFFICIAL_MB_CONCURRENT_SEARCHES,
+        _OFFICIAL_MB_RATE_LIMIT,
+    )
+
+    prefs = _preferences(tmp_path)
+    staged = prefs.stage_brainzmash()
+    pending = staged.pending_brainzmash
+    assert pending is not None
+    binding = _binding(staged)
+    prefs.accept_brainzmash_consent(binding, "admin-1")
+    prefs.record_brainzmash_verification(binding)
+    _, promoted = prefs.promote_brainzmash(binding)
+    active = promoted.active_brainzmash
+    assert active is not None
+
+    mutated = MusicBrainzConnectionSettings(
+        source_mode="official",
+        api_url=OFFICIAL_MB_API_BASE,
+        rate_limit=_OFFICIAL_MB_RATE_LIMIT,
+        concurrent_searches=_OFFICIAL_MB_CONCURRENT_SEARCHES,
+        selected_source_mode="official",
+        source_id="official-source",
+        generation=9,
+    )
+    mutated.api_url = BRAINZMASH_ENDPOINT
+    mutated.rate_limit = 500.0
+    mutated.concurrent_searches = 64
+    mutated.selected_source_mode = "brainzmash"
+    mutated.pending_brainzmash = pending
+    mutated.active_brainzmash = active
+    mutated.source_quarantined = True
+    mutated.quarantine_reason = "stale"
+    mutated.community_acknowledged = True
+    mutated.clamped_to_official_limits = True
+
+    prefs.save_musicbrainz_connection(mutated)
+    saved = prefs.get_musicbrainz_connection()
+    assert saved.source_mode == "official"
+    assert saved.api_url == OFFICIAL_MB_API_BASE
+    assert saved.rate_limit == _OFFICIAL_MB_RATE_LIMIT
+    assert saved.concurrent_searches == _OFFICIAL_MB_CONCURRENT_SEARCHES
+    assert saved.selected_source_mode == "official"
+    assert saved.pending_brainzmash is None
+    assert saved.active_brainzmash is None
+    assert saved.source_quarantined is False
+    assert saved.quarantine_reason == ""
+    assert saved.community_acknowledged is False
+    assert saved.clamped_to_official_limits is False
+
+    config_path = tmp_path / "config.json"
+    config = json.loads(config_path.read_text())
+    section = config["musicbrainz_settings"]
+    section.update(
+        {
+            "api_url": BRAINZMASH_ENDPOINT,
+            "rate_limit": 500.0,
+            "concurrent_searches": 64,
+            "selected_source_mode": "brainzmash",
+            "pending_brainzmash": to_jsonable(pending),
+            "active_brainzmash": to_jsonable(active),
+            "source_quarantined": True,
+            "quarantine_reason": "stale",
+            "community_acknowledged": True,
+            "clamped_to_official_limits": True,
+        }
+    )
+    config_path.write_text(json.dumps(config))
+
+    restarted = _preferences(tmp_path)
+    canonical = restarted.get_musicbrainz_connection()
+    assert canonical.source_mode == "official"
+    assert canonical.api_url == OFFICIAL_MB_API_BASE
+    assert canonical.rate_limit == _OFFICIAL_MB_RATE_LIMIT
+    assert canonical.concurrent_searches == _OFFICIAL_MB_CONCURRENT_SEARCHES
+    assert canonical.selected_source_mode == "official"
+    assert canonical.pending_brainzmash is None
+    assert canonical.active_brainzmash is None
+    assert canonical.source_quarantined is False
+    assert canonical.quarantine_reason == ""
+    assert canonical.community_acknowledged is False
+    assert canonical.clamped_to_official_limits is False
+    with pytest.raises(ValidationError, match="stale"):
+        restarted.promote_brainzmash(binding)
+
 
 def test_deliberate_official_marker_does_not_resurrect_missing_section(tmp_path: Path):
     prefs = _preferences(tmp_path)
