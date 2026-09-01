@@ -111,7 +111,10 @@ async def test_cache_publication_commits_before_source_switch(
         generation=mb_base.get_mb_source_generation() + 1,
     )
     old_context = mb_base.MbSourceContext(
-        old_source, mb_base.get_mb_source_generation(), "mirror"
+        old_source,
+        mb_base.get_mb_source_generation(),
+        "mirror",
+        "source-commit-cache-old",
     )
     started = asyncio.Event()
     release = asyncio.Event()
@@ -164,7 +167,10 @@ async def test_durable_publication_commits_before_source_switch(
         generation=mb_base.get_mb_source_generation() + 1,
     )
     old_context = mb_base.MbSourceContext(
-        old_source, mb_base.get_mb_source_generation(), "mirror"
+        old_source,
+        mb_base.get_mb_source_generation(),
+        "mirror",
+        "source-commit-store-old",
     )
     started = asyncio.Event()
     release = asyncio.Event()
@@ -223,7 +229,10 @@ async def test_cancelled_durable_publication_settles_before_releasing_source_loc
         generation=mb_base.get_mb_source_generation() + 1,
     )
     old_context = mb_base.MbSourceContext(
-        old_source, mb_base.get_mb_source_generation(), "mirror"
+        old_source,
+        mb_base.get_mb_source_generation(),
+        "mirror",
+        "source-commit-cancel-old",
     )
     started = asyncio.Event()
     release = asyncio.Event()

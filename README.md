@@ -113,8 +113,8 @@ settings, legacy Official settings, malformed settings, and explicit Official se
 built-in BrainzMash. A valid self-hosted mirror or Community / external source stays selected.
 
 Review **Settings > MusicBrainz** and its disclosure after an upgrade. An administrator can
-explicitly switch to a self-hosted mirror or a Community / external source afterward. In this release,
-saving the Official option normalizes the setting to BrainzMash. This startup normalization is the
+explicitly switch to Official, a self-hosted mirror, or a Community / external source afterward,
+and a deliberate Official save persists across restarts. This startup normalization is the
 exception to the normal rule that source changes are explicit; runtime failures never trigger a hidden
 fallback.
 
@@ -630,7 +630,7 @@ The full API reference is in [PLUGINS.md](PLUGINS.md).
 
 All integrations are configured through the web UI. No config files or environment variables needed beyond the basics listed below.
 
-MusicBrainz source choices are under **Settings > MusicBrainz**. **BrainzMash** is built in, the default for fresh and reset configuration, and the **Recommended** choice. The **Official** card shows the public musicbrainz.org API, but saving that setting in this release normalizes it to BrainzMash. A **Self-hosted mirror** or **Community / external server** can be saved as the persistent source. DroppedNeedle never silently falls back between sources. The BrainzMash disclosure says it receives MusicBrainz query terms and normal connection metadata.
+MusicBrainz source choices are under **Settings > MusicBrainz**. **BrainzMash** is built in, the default for fresh and reset configuration, and the **Recommended** choice. **Official**, a **Self-hosted mirror**, and a **Community / external server** can each be saved as the persistent source. DroppedNeedle never silently falls back between sources. The BrainzMash disclosure says it receives MusicBrainz query terms and normal connection metadata.
 
 See the [MusicBrainz sources and self-hosted mirrors guide](docs/musicbrainz-mirror-selfhosting.md) for source behavior, upgrade migration, consent, and mirror setup.
 

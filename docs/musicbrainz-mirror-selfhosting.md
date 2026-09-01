@@ -23,8 +23,8 @@ built-in BrainzMash. A valid Self-hosted mirror or Community / external setting 
 
 This startup normalization is not a runtime fallback. Because it can make BrainzMash active, review
 **Settings > MusicBrainz**, the active source, and its disclosure after upgrading. An administrator
-can switch to a Self-hosted mirror or Community / external by explicitly saving it. In this release,
-saving the Official option instead normalizes the setting to BrainzMash.
+can switch to Official, a Self-hosted mirror, or Community / external by explicitly saving it, and a
+deliberate Official save persists across restarts.
 
 ## Which claim comes from where?
 

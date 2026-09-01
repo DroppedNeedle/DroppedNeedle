@@ -1,7 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -295,11 +295,12 @@ def test_direct_musicbrainz_save_persists_default_and_custom_sources(
     persisted_default = json.loads((tmp_path / "config.json").read_text())[
         "musicbrainz_settings"
     ]
-    assert default.source_mode == "brainzmash"
-    assert default.api_url == BRAINZMASH_ENDPOINT.rstrip("/")
-    assert default.selected_source_mode == "brainzmash"
-    assert persisted_default["source_mode"] == "brainzmash"
-    assert persisted_default["api_url"] == BRAINZMASH_ENDPOINT.rstrip("/")
+    assert default.source_mode == "official"
+    assert default.api_url == "https://musicbrainz.org/ws/2"
+    assert default.selected_source_mode == "official"
+    assert persisted_default["source_mode"] == "official"
+    assert persisted_default["api_url"] == "https://musicbrainz.org/ws/2"
+    assert prefs.get_setting("official_source_selected") is True
 
     prefs.save_musicbrainz_connection(
         MusicBrainzConnectionSettings(source_mode="brainzmash")
@@ -308,6 +309,7 @@ def test_direct_musicbrainz_save_persists_default_and_custom_sources(
     assert is_brainzmash_active_binding_valid(generated)
     assert generated.source_id
     assert generated.generation >= 1
+    assert prefs.get_setting("official_source_selected") is None
 
     prefs.save_musicbrainz_connection(
         MusicBrainzConnectionSettings(
@@ -473,15 +475,15 @@ def test_unchanged_musicbrainz_source_preserves_identity_and_switch_allocates_ne
             concurrent_searches=6,
         )
     )
-    assert switched.source_mode == "brainzmash"
-    assert switched.selected_source_mode == "brainzmash"
-    assert switched.api_url == BRAINZMASH_ENDPOINT.rstrip("/")
-    assert switched.rate_limit == 10.0
-    assert switched.concurrent_searches == 1
+    assert switched.source_mode == "official"
+    assert switched.selected_source_mode == "official"
+    assert switched.api_url == "https://musicbrainz.org/ws/2"
+    assert switched.rate_limit == 1.0
+    assert switched.concurrent_searches == 6
     assert switched.source_id
     assert switched.source_id != "stable-source"
     assert switched.generation == 8
-
+    assert prefs.get_setting("official_source_selected") is True
 
 @pytest.mark.parametrize(
     ("source_mode", "api_url", "community_acknowledged"),
@@ -510,6 +512,85 @@ def test_noncustom_endpoints_collapse_to_the_brainzmash_default(
     assert result.api_url == BRAINZMASH_ENDPOINT.rstrip("/")
     assert result.rate_limit == 10.0
     assert result.concurrent_searches == 1
+
+
+def test_deliberate_official_save_persists_and_survives_restart(tmp_path: Path):
+    prefs = _preferences(tmp_path)
+
+    revision_before = prefs.get_musicbrainz_settings_revision()
+    saved = prefs.save_musicbrainz_update(
+        MusicBrainzSettingsUpdate(
+            source_mode="official",
+            api_url=None,
+            rate_limit=1.0,
+            concurrent_searches=6,
+        )
+    )
+    assert saved.source_mode == "official"
+    assert saved.api_url == "https://musicbrainz.org/ws/2"
+    assert saved.rate_limit == 1.0
+    assert saved.selected_source_mode == "official"
+    assert prefs.get_setting("official_source_selected") is True
+    assert prefs.get_musicbrainz_settings_revision() == revision_before + 1
+
+    persisted = json.loads((tmp_path / "config.json").read_text())
+    assert persisted["musicbrainz_settings"]["source_mode"] == "official"
+    assert persisted["_internal"]["official_source_selected"] is True
+
+    restarted = _preferences(tmp_path).get_musicbrainz_connection()
+    assert restarted.source_mode == "official"
+    assert restarted.selected_source_mode == "official"
+    assert restarted.api_url == "https://musicbrainz.org/ws/2"
+    assert restarted.rate_limit == 1.0
+    assert not is_brainzmash_active_binding_valid(restarted)
+
+
+def test_deliberate_official_marker_does_not_resurrect_missing_section(tmp_path: Path):
+    prefs = _preferences(tmp_path)
+    assert (
+        prefs.save_musicbrainz_update(
+            MusicBrainzSettingsUpdate(
+                source_mode="official",
+                api_url=None,
+                rate_limit=1.0,
+                concurrent_searches=6,
+            )
+        ).source_mode
+        == "official"
+    )
+
+    config_path = tmp_path / "config.json"
+    config = json.loads(config_path.read_text())
+    config["musicbrainz_settings"] = "not-a-section"
+    config_path.write_text(json.dumps(config))
+
+    rebuilt = _preferences(tmp_path).get_musicbrainz_connection()
+    assert rebuilt.source_mode == "brainzmash"
+    assert rebuilt.selected_source_mode == "brainzmash"
+    assert rebuilt.api_url == BRAINZMASH_ENDPOINT.rstrip("/")
+    assert rebuilt.rate_limit == 10.0
+    assert rebuilt.concurrent_searches == 1
+    assert _preferences(tmp_path).get_setting("official_source_selected") is None
+
+
+def test_migrated_official_still_converts_without_marker(tmp_path: Path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "musicbrainz_settings": {
+                    "source_mode": "official",
+                    "api_url": "https://musicbrainz.org/ws/2",
+                    "rate_limit": 1.0,
+                    "concurrent_searches": 6,
+                }
+            }
+        )
+    )
+
+    migrated = _preferences(tmp_path).get_musicbrainz_connection()
+    assert migrated.source_mode == "brainzmash"
+    assert migrated.api_url == BRAINZMASH_ENDPOINT.rstrip("/")
 
 
 def test_brainzmash_activation_is_consent_and_verification_bound(tmp_path: Path):
@@ -887,6 +968,12 @@ async def test_runtime_commit_rejects_non_builtin_brainzmash_origin():
 @pytest.mark.asyncio
 async def test_legacy_verification_cannot_probe_while_brainzmash_active():
     service = SettingsService.__new__(SettingsService)
+    service._preferences_service = MagicMock()
+    service._preferences_service.get_musicbrainz_connection.return_value = (
+        MusicBrainzConnectionSettings(source_mode="brainzmash")
+    )
+    service._preferences_service.get_musicbrainz_settings_revision.return_value = 3
+    service._preferences_service.musicbrainz_settings_match.return_value = True
     settings = MusicBrainzConnectionSettings(source_mode="brainzmash")
 
     result = await service.verify_musicbrainz(settings)

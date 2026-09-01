@@ -1772,6 +1772,10 @@ class PreferencesService:
         config = self._load_config().copy()
         config["musicbrainz_settings"] = to_jsonable(settings)
         internal = config.get("_internal", {}).copy()
+        if settings.source_mode == "official":
+            internal["official_source_selected"] = True
+        else:
+            internal.pop("official_source_selected", None)
         try:
             revision = int(internal.get("musicbrainz_settings_revision", 0))
         except (TypeError, ValueError):
@@ -1786,7 +1790,28 @@ class PreferencesService:
         try:
             with self._section_save_lock:
                 if settings.source_mode == "official":
-                    settings = self._default_musicbrainz_settings()
+                    from api.v1.schemas.settings import (
+                        _OFFICIAL_MB_CONCURRENT_SEARCHES,
+                        _OFFICIAL_MB_RATE_LIMIT,
+                    )
+                    from repositories.musicbrainz_base import OFFICIAL_MB_API_BASE
+
+                    settings.api_url = OFFICIAL_MB_API_BASE
+                    settings.rate_limit = _OFFICIAL_MB_RATE_LIMIT
+                    settings.concurrent_searches = _OFFICIAL_MB_CONCURRENT_SEARCHES
+                    settings.selected_source_mode = "official"
+                    settings.pending_brainzmash = None
+                    settings.active_brainzmash = None
+                    settings.source_quarantined = False
+                    settings.quarantine_reason = ""
+                    settings.community_acknowledged = False
+                    settings.clamped_to_official_limits = False
+                    if (
+                        not settings.source_id
+                        or settings.source_id != settings.source_id.strip()
+                    ):
+                        settings.source_id = str(uuid.uuid4())
+                    settings.generation = max(1, settings.generation)
                 elif settings.source_mode == "brainzmash":
                     if (
                         not settings.source_id
@@ -1875,7 +1900,9 @@ class PreferencesService:
     def save_musicbrainz_update(
         self, update: MusicBrainzSettingsUpdate
     ) -> MusicBrainzConnectionSettings:
-        brainzmash_update = update.source_mode in {"official", "brainzmash"}
+        if update.source_mode == "official":
+            return self._save_deliberate_official_update()
+        brainzmash_update = update.source_mode == "brainzmash"
         if not brainzmash_update:
             api_url = (update.api_url or "").strip().rstrip("/")
             brainzmash_update = (
@@ -1947,6 +1974,55 @@ class PreferencesService:
             )
             self._save_musicbrainz_connection_unlocked(settings)
             return settings
+
+    def _save_deliberate_official_update(self) -> MusicBrainzConnectionSettings:
+        """Persist an admin-chosen Official source as a genuine override.
+
+        The startup migration still converts upgrade-time Official sections to
+        BrainzMash; this path records the internal marker that distinguishes a
+        later deliberate Official save from migrated state, so the choice
+        survives restarts.
+        """
+        from api.v1.schemas.settings import (
+            _OFFICIAL_MB_CONCURRENT_SEARCHES,
+            _OFFICIAL_MB_RATE_LIMIT,
+        )
+        from repositories.musicbrainz_base import OFFICIAL_MB_API_BASE
+
+        with self._section_save_lock:
+            previous = self.get_musicbrainz_connection()
+            source_changed = previous.source_mode != "official"
+            source_id = (
+                str(uuid.uuid4())
+                if source_changed or not previous.source_id.strip()
+                else previous.source_id
+            )
+            generation = (
+                max(1, previous.generation) + 1
+                if source_changed
+                else max(1, previous.generation)
+            )
+            settings = MusicBrainzConnectionSettings(
+                source_mode="official",
+                api_url=OFFICIAL_MB_API_BASE,
+                rate_limit=_OFFICIAL_MB_RATE_LIMIT,
+                concurrent_searches=_OFFICIAL_MB_CONCURRENT_SEARCHES,
+                selected_source_mode="official",
+                source_id=source_id,
+                generation=generation,
+            )
+            self._save_musicbrainz_connection_unlocked(settings)
+            return settings
+
+    def _clear_official_source_marker(self) -> None:
+        config = self._load_config().copy()
+        internal = config.get("_internal", {})
+        if not isinstance(internal, dict) or "official_source_selected" not in internal:
+            return
+        internal = internal.copy()
+        internal.pop("official_source_selected", None)
+        config["_internal"] = internal
+        self._save_config(config)
 
     def stage_brainzmash(self) -> MusicBrainzConnectionSettings:
         """Select BrainzMash immediately; disclosure handling remains optional."""
@@ -2084,12 +2160,29 @@ class PreferencesService:
             return None
 
     def _migrate_musicbrainz_settings(self) -> None:
-        """Normalize every non-custom source to the built-in BrainzMash default."""
+        """Normalize every non-custom source to the built-in BrainzMash default.
+
+        A deliberate Official re-selection recorded by
+        `_save_deliberate_official_update` is preserved instead of migrated.
+        """
+        from api.v1.schemas.settings import (
+            _OFFICIAL_MB_CONCURRENT_SEARCHES,
+            _OFFICIAL_MB_RATE_LIMIT,
+        )
+        from repositories.musicbrainz_base import OFFICIAL_MB_API_BASE
+
         try:
             config = self._load_config()
             existing = config.get("musicbrainz_settings")
+            internal = config.get("_internal", {})
+            deliberate_official = bool(
+                isinstance(internal, dict)
+                and internal.get("official_source_selected") is True
+            )
             custom_mode = self._custom_musicbrainz_mode(existing)
             if custom_mode is not None:
+                if deliberate_official:
+                    self._clear_official_source_marker()
                 if isinstance(existing, dict) and existing.get("source_mode") in {
                     "mirror",
                     "community",
@@ -2142,6 +2235,8 @@ class PreferencesService:
                     )
                 except (msgspec.ValidationError, TypeError, ValueError):
                     current = None
+                if deliberate_official:
+                    self._clear_official_source_marker()
                 if current is not None:
                     changed = to_jsonable(current) != existing
                     if (
@@ -2164,6 +2259,37 @@ class PreferencesService:
                         self._save_section("musicbrainz_settings", current)
                     return
 
+            if (
+                deliberate_official
+                and isinstance(existing, dict)
+                and existing.get("source_mode") == "official"
+            ):
+                # An admin re-selected Official after the upgrade migration.
+                # Canonicalize the section but never convert it to BrainzMash.
+                current = msgspec.convert(
+                    existing, type=MusicBrainzConnectionSettings
+                )
+                current.source_mode = "official"
+                current.api_url = OFFICIAL_MB_API_BASE
+                current.rate_limit = _OFFICIAL_MB_RATE_LIMIT
+                current.concurrent_searches = _OFFICIAL_MB_CONCURRENT_SEARCHES
+                current.selected_source_mode = "official"
+                current.pending_brainzmash = None
+                current.active_brainzmash = None
+                current.source_quarantined = False
+                current.quarantine_reason = ""
+                current.community_acknowledged = False
+                current.clamped_to_official_limits = False
+                if not current.source_id or current.source_id != current.source_id.strip():
+                    current.source_id = str(uuid.uuid4())
+                if current.generation < 1:
+                    current.generation = 1
+                if to_jsonable(current) != existing:
+                    self._save_section("musicbrainz_settings", current)
+                return
+
+            if deliberate_official:
+                self._clear_official_source_marker()
             # Missing, legacy official, explicit official, malformed, and
             # ambiguous states all take the same active BrainzMash path.
             self._save_section(
@@ -2172,6 +2298,7 @@ class PreferencesService:
             )
         except Exception:  # noqa: BLE001
             logger.warning("Failed to normalize MusicBrainz settings; using BrainzMash")
+            self._clear_official_source_marker()
             self._save_section(
                 "musicbrainz_settings", self._default_musicbrainz_settings()
             )
