@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import Annotated
 
@@ -201,6 +202,7 @@ from .service_providers import (
     get_home_service,
     get_home_charts_service,
     get_settings_service,
+    get_release_type_policy_transition_lock,
     get_artist_discovery_service,
     get_album_discovery_service,
     get_discover_service,
@@ -231,6 +233,9 @@ CachedLocalArtworkServiceDep = Annotated[
     CachedLocalArtworkService, Depends(get_cached_local_artwork_service)
 ]
 PreferencesServiceDep = Annotated[PreferencesService, Depends(get_preferences_service)]
+ReleaseTypePolicyTransitionLockDep = Annotated[
+    asyncio.Lock, Depends(get_release_type_policy_transition_lock)
+]
 LibraryPolicyServiceDep = Annotated[
     LibraryPolicyService, Depends(get_library_policy_service)
 ]

@@ -1,6 +1,7 @@
 from typing import Any, Optional, Callable
 
 from api.v1.schemas.artist import LifeSpan, ReleaseItem
+from models.release_type_policy import should_include_release
 
 _PLATFORM_PATTERNS: dict[str, tuple[str, str]] = {
     "instagram.com": ("Instagram", "social"),
@@ -35,10 +36,20 @@ _LINK_TYPE_LABELS: dict[str, tuple[str, str]] = {
 }
 
 _ALLOWED_LABELS = {
-    "Spotify", "Apple Music", "YouTube", "Bandcamp", "SoundCloud",
-    "Deezer", "Tidal", "Amazon",
-    "Instagram", "Twitter", "Facebook",
-    "Official Website", "Wikipedia", "Last.fm",
+    "Spotify",
+    "Apple Music",
+    "YouTube",
+    "Bandcamp",
+    "SoundCloud",
+    "Deezer",
+    "Tidal",
+    "Amazon",
+    "Instagram",
+    "Twitter",
+    "Facebook",
+    "Official Website",
+    "Wikipedia",
+    "Last.fm",
 }
 
 
@@ -53,18 +64,18 @@ def detect_platform(url: str, rel_type: str) -> tuple[str, str]:
 def extract_tags(mb_artist: dict[str, Any], limit: int = 10) -> list[str]:
     tags = []
     if mb_tags := mb_artist.get("tags", []):
-        tags = list(dict.fromkeys(tag.get("name") for tag in mb_tags if tag.get("name")))[:limit]
+        tags = list(
+            dict.fromkeys(tag.get("name") for tag in mb_tags if tag.get("name"))
+        )[:limit]
     return tags
 
 
 def extract_aliases(mb_artist: dict[str, Any], limit: int = 10) -> list[str]:
     aliases = []
     if mb_aliases := mb_artist.get("aliases", []):
-        aliases = [
-            alias.get("name")
-            for alias in mb_aliases
-            if alias.get("name")
-        ][:limit]
+        aliases = [alias.get("name") for alias in mb_aliases if alias.get("name")][
+            :limit
+        ]
     return aliases
 
 
@@ -86,14 +97,21 @@ def extract_external_links(mb_artist: dict[str, Any]) -> list[dict[str, str]]:
         for url_rel in url_rels:
             rel_type = url_rel.get("type", "")
             url_obj = url_rel.get("url", {})
-            target_url = url_obj.get("resource", "") if isinstance(url_obj, dict) else ""
+            target_url = (
+                url_obj.get("resource", "") if isinstance(url_obj, dict) else ""
+            )
             if not target_url:
                 continue
             label, category = detect_platform(target_url, rel_type)
             if label not in _ALLOWED_LABELS or label in seen_labels:
                 continue
             external_links.append(
-                {"type": rel_type, "url": target_url, "label": label, "category": category}
+                {
+                    "type": rel_type,
+                    "url": target_url,
+                    "label": label,
+                    "category": category,
+                }
             )
             seen_labels.add(label)
     return external_links
@@ -116,19 +134,19 @@ def categorize_release_groups(
     if rg_list := mb_artist.get("release-group-list", []):
         for rg in rg_list:
             rg_id = rg.get("id")
-            primary_type = (rg.get("primary-type") or "").lower()
-            if primary_type not in included_primary_types:
+            if not should_include_release(
+                rg,
+                included_secondary_types,
+                included_primary_types,
+                apply_default_secondary_exclusions=False,
+            ):
                 continue
-            if included_secondary_types is not None:
-                secondary_types = set(map(str.lower, rg.get("secondary-types", []) or []))
-                if not secondary_types:
-                    if "studio" not in included_secondary_types:
-                        continue
-                elif not secondary_types.intersection(included_secondary_types):
-                    continue
+            primary_type = (rg.get("primary-type") or "").strip().casefold()
             rg_id_lower = rg_id.lower() if rg_id else ""
             in_library = rg_id_lower in album_mbids if rg_id else False
-            requested = rg_id_lower in requested_mbids if rg_id and not in_library else False
+            requested = (
+                rg_id_lower in requested_mbids if rg_id and not in_library else False
+            )
             rg_data = ReleaseItem(
                 id=rg_id,
                 title=rg.get("title"),
@@ -154,8 +172,7 @@ def categorize_release_groups(
 
 
 def extract_wiki_info(
-    mb_artist: dict[str, Any],
-    get_wikidata_id_fn: Callable[[str], Optional[str]]
+    mb_artist: dict[str, Any], get_wikidata_id_fn: Callable[[str], Optional[str]]
 ) -> tuple[Optional[str], list[str]]:
     wikidata_id = None
     wiki_urls = []
@@ -204,5 +221,6 @@ def build_base_artist_info(
         "albums": albums,
         "singles": singles,
         "eps": eps,
-        "release_group_count": release_group_count or mb_artist.get("release-group-count", 0),
+        "release_group_count": release_group_count
+        or mb_artist.get("release-group-count", 0),
     }

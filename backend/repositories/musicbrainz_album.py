@@ -37,6 +37,7 @@ from infrastructure.cache.cache_keys import (
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.resilience.retry import CircuitOpenError
 from models.musicbrainz import recording_release_group_rank
+from models.release_type_policy import should_include_release
 from repositories.musicbrainz_base import (
     MbSourceContext,
     build_recording_search_query,
@@ -54,7 +55,6 @@ from repositories.musicbrainz_base import (
     is_mb_source_current,
     normalize_mb_id,
     get_score,
-    should_include_release,
     extract_artist_name,
     parse_year,
     build_musicbrainz_tag_query,

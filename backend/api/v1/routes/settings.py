@@ -52,6 +52,7 @@ from core.dependencies import (
     get_settings_service,
     get_oidc_user_auth_service,
 )
+from core.dependencies.type_aliases import ReleaseTypePolicyTransitionLockDep
 from services.oidc_user_auth_service import OIDCUserAuthService
 from core.exceptions import ConfigurationError, RateLimitedError, ValidationError
 from core.dependencies.cleanup import clear_library_policy_dependent_caches
@@ -95,18 +96,20 @@ async def get_preferences(
 
 @router.put("/preferences", response_model=UserPreferences)
 async def update_preferences(
+    policy_transition_lock: ReleaseTypePolicyTransitionLockDep,
     preferences: UserPreferences = MsgSpecBody(UserPreferences),
     preferences_service: PreferencesService = Depends(get_preferences_service),
     settings_service: SettingsService = Depends(get_settings_service),
 ):
     try:
-        previous = preferences_service.get_preferences()
-        preferences_service.save_preferences(preferences)
-        # ST1 phase 1: identical payload -> no sweep at all; changed types ->
-        # no prefix sweeps either (search results embed sorted types in their
-        # cache key now; raw MB caches filter per request).
-        await settings_service.apply_preference_change(previous, preferences)
-        return preferences
+        async with policy_transition_lock:
+            previous = preferences_service.get_preferences()
+            preferences_service.save_preferences(preferences)
+            # ST1 phase 1: identical payload -> no sweep at all; changed types ->
+            # no prefix sweeps either (search results embed sorted types in their
+            # cache key now; raw MB caches filter per request).
+            await settings_service.apply_preference_change(previous, preferences)
+            return preferences
     except ConfigurationError as e:
         logger.warning(f"Configuration error updating preferences: {e}")
         raise HTTPException(status_code=400, detail="Couldn't save these settings")

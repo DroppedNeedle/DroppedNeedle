@@ -36,6 +36,7 @@ from infrastructure.cache.cache_keys import (
 from infrastructure.cache.memory_cache import InMemoryCache, CacheInterface
 from infrastructure.http.client import get_http_client
 from repositories.jellyfin_models import JellyfinUser
+from models.release_type_policy import normalize_release_type_filters
 
 logger = logging.getLogger(__name__)
 
@@ -165,10 +166,10 @@ class SettingsService:
             )
 
     @staticmethod
-    def _type_filters(prefs) -> tuple[list[str], list[str]]:
-        return (
-            sorted(t.casefold() for t in prefs.primary_types),
-            sorted(t.casefold() for t in prefs.secondary_types),
+    def _type_filters(prefs) -> tuple[frozenset[str], frozenset[str]]:
+        return normalize_release_type_filters(
+            prefs.primary_types,
+            prefs.secondary_types,
         )
 
     async def apply_preference_change(self, previous, incoming) -> int:

@@ -64,8 +64,12 @@ async def test_identical_preference_change_is_a_no_op():
     ]
     await _populate(cache, keys)
 
-    same = _prefs(["album", "ep", "single"], ["studio"])
-    cleared = await service.apply_preference_change(same, same)
+    previous = _prefs(
+        [" Album ", "ep", "single", "album"],
+        [" Studio ", "studio"],
+    )
+    incoming = _prefs(["single", "album", "ep"], ["studio"])
+    cleared = await service.apply_preference_change(previous, incoming)
 
     assert cleared == 0
     for key in keys:

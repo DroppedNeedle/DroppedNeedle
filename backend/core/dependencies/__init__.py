@@ -112,6 +112,7 @@ from .service_providers import (  # noqa: F401
     get_cover_delivery_thumbnailer,
     get_artwork_projection_service,
     get_library_policy_transition_lock,
+    get_release_type_policy_transition_lock,
     get_target_library_policy_reconciliation_service,
     get_target_library_policy_service,
     get_legacy_catalog_importer,

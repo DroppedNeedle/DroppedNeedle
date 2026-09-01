@@ -1417,6 +1417,11 @@ def get_follow_service() -> "FollowService":
 
 
 @singleton
+def get_release_type_policy_transition_lock() -> asyncio.Lock:
+    return asyncio.Lock()
+
+
+@singleton
 def get_lidarr_import_service() -> "LidarrImportService":
     from services.lidarr_import_service import LidarrImportService
 
@@ -1442,6 +1447,8 @@ def _build_new_release_service(*, library_repo, acquisition) -> "NewReleaseServi
         download_store=get_download_store(),
         library_repo=library_repo,
         sse_publisher=get_sse_publisher(),
+        preferences_service=get_preferences_service(),
+        policy_transition_lock=get_release_type_policy_transition_lock(),
     )
 
 

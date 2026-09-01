@@ -96,6 +96,12 @@ class DistinctFollowedArtist(msgspec.Struct, frozen=True):
     artist_name: str
 
 
+class ReleaseCheckState(msgspec.Struct, frozen=True):
+    last_checked_at: float | None
+    last_status: str | None
+    release_type_policy_revision: int | None
+
+
 class NewRelease(msgspec.Struct, frozen=True):
     release_group_mbid: str
     artist_mbid: str
@@ -182,15 +188,17 @@ class FollowStore(PersistenceBase):
                 CREATE INDEX IF NOT EXISTS idx_nrf_date ON new_release_feed(first_release_date DESC);
 
                 CREATE TABLE IF NOT EXISTS artist_release_check (
-                    artist_mbid_lower TEXT PRIMARY KEY,
-                    last_checked_at   REAL,
-                    last_status       TEXT,
-                    last_error        TEXT
+                    artist_mbid_lower             TEXT PRIMARY KEY,
+                    last_checked_at               REAL,
+                    last_status                   TEXT,
+                    last_error                    TEXT,
+                    release_type_policy_revision INTEGER
                 );
 
                 CREATE TABLE IF NOT EXISTS artist_known_releases (
-                    artist_mbid_lower TEXT NOT NULL,
-                    rg_mbid_lower     TEXT NOT NULL,
+                    artist_mbid_lower   TEXT NOT NULL,
+                    rg_mbid_lower       TEXT NOT NULL,
+                    auto_policy_revision INTEGER,
                     PRIMARY KEY (artist_mbid_lower, rg_mbid_lower)
                 );
 
@@ -200,8 +208,7 @@ class FollowStore(PersistenceBase):
                 );
                 """
             )
-            # Additive ratchet for DBs created before the LidarrImport bulk-approval columns
-            # (LidarrImport DR5). Idempotent: a no-op once the columns exist.
+            # Additive ratchets for legacy LidarrImport bulk-approval columns.
             _safe_alter(
                 conn, "ALTER TABLE auto_download_approvals ADD COLUMN batch_id TEXT"
             )
@@ -211,6 +218,23 @@ class FollowStore(PersistenceBase):
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ada_batch "
                 "ON auto_download_approvals(batch_id) WHERE batch_id IS NOT NULL"
+            )
+            # Additive ratchets for release-type policy state. Nullable columns preserve
+            # legacy cursor rows as an explicit one-time rebaseline marker.
+            _safe_alter(
+                conn,
+                "ALTER TABLE artist_release_check "
+                "ADD COLUMN release_type_policy_revision INTEGER",
+            )
+            _safe_alter(
+                conn,
+                "ALTER TABLE artist_known_releases "
+                "ADD COLUMN auto_policy_revision INTEGER",
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_akr_auto_policy "
+                "ON artist_known_releases(artist_mbid_lower, auto_policy_revision) "
+                "WHERE auto_policy_revision IS NOT NULL"
             )
             conn.commit()
         finally:
@@ -225,7 +249,9 @@ class FollowStore(PersistenceBase):
             return approval_state
         return "none"
 
-    async def follow_artist(self, user_id: str, artist_mbid: str, artist_name: str) -> None:
+    async def follow_artist(
+        self, user_id: str, artist_mbid: str, artist_name: str
+    ) -> None:
         # re-following preserves auto_download intent and followed_at, only
         # refreshing the name snapshot and updated_at.
         mbid_lower = artist_mbid.lower()
@@ -260,7 +286,9 @@ class FollowStore(PersistenceBase):
 
         return await self._write(operation)
 
-    async def set_auto_download_intent(self, user_id: str, artist_mbid: str, enabled: bool) -> None:
+    async def set_auto_download_intent(
+        self, user_id: str, artist_mbid: str, enabled: bool
+    ) -> None:
         mbid_lower = artist_mbid.lower()
         now = time.time()
 
@@ -343,7 +371,9 @@ class FollowStore(PersistenceBase):
     async def get_follow_state(self, user_id: str, artist_mbid: str) -> FollowState:
         mbid_lower = artist_mbid.lower()
 
-        def operation(conn: sqlite3.Connection) -> tuple[sqlite3.Row | None, sqlite3.Row | None]:
+        def operation(
+            conn: sqlite3.Connection,
+        ) -> tuple[sqlite3.Row | None, sqlite3.Row | None]:
             follow = conn.execute(
                 "SELECT auto_download FROM user_followed_artists "
                 "WHERE user_id = ? AND artist_mbid_lower = ?",
@@ -358,7 +388,9 @@ class FollowStore(PersistenceBase):
 
         follow, approval = await self._read(operation)
         if follow is None:
-            return FollowState(followed=False, auto_download=False, auto_download_state="none")
+            return FollowState(
+                followed=False, auto_download=False, auto_download_state="none"
+            )
         intent = bool(follow["auto_download"])
         approval_state = approval["state"] if approval else None
         return FollowState(
@@ -392,7 +424,9 @@ class FollowStore(PersistenceBase):
                     artist_mbid=row["artist_mbid"],
                     artist_name=row["artist_name"],
                     auto_download=intent,
-                    auto_download_state=self._derive_state(intent, row["approval_state"]),
+                    auto_download_state=self._derive_state(
+                        intent, row["approval_state"]
+                    ),
                     followed_at=row["followed_at"],
                 )
             )
@@ -703,29 +737,65 @@ class FollowStore(PersistenceBase):
 
         return await self._read(operation)
 
-    async def seed_baseline(self, artist_mbid_lower: str, rg_mbids_lower: list[str]) -> None:
-        # DD2 first-poll baseline. the ONLY method that creates the cursor row
-        # (update_cursor only updates) so a transient error before the first
-        # successful baseline never leaves an empty known-set behind a live cursor.
+    async def get_release_check_state(
+        self, artist_mbid_lower: str
+    ) -> ReleaseCheckState | None:
+        def operation(conn: sqlite3.Connection) -> sqlite3.Row | None:
+            return conn.execute(
+                "SELECT last_checked_at, last_status, release_type_policy_revision "
+                "FROM artist_release_check WHERE artist_mbid_lower = ?",
+                (artist_mbid_lower,),
+            ).fetchone()
+
+        row = await self._read(operation)
+        if row is None:
+            return None
+        return ReleaseCheckState(
+            last_checked_at=row["last_checked_at"],
+            last_status=row["last_status"],
+            release_type_policy_revision=row["release_type_policy_revision"],
+        )
+
+    async def seed_baseline(
+        self,
+        artist_mbid_lower: str,
+        rg_mbids_lower: list[str],
+        policy_revision: int | None = None,
+    ) -> None:
+        # The only method that creates a cursor row. A policy baseline records every
+        # observed release-group ID but emits no feed row or acquisition work.
         now = time.time()
+        known = sorted(
+            {str(rg).casefold() for rg in rg_mbids_lower if isinstance(rg, str) and rg}
+        )
 
         def operation(conn: sqlite3.Connection) -> None:
-            if rg_mbids_lower:
+            conn.execute(
+                "UPDATE artist_known_releases SET auto_policy_revision = NULL "
+                "WHERE artist_mbid_lower = ?",
+                (artist_mbid_lower,),
+            )
+            if known:
                 conn.executemany(
-                    "INSERT OR IGNORE INTO artist_known_releases (artist_mbid_lower, rg_mbid_lower) "
-                    "VALUES (?, ?)",
-                    [(artist_mbid_lower, rg) for rg in rg_mbids_lower],
+                    "INSERT OR IGNORE INTO artist_known_releases "
+                    "(artist_mbid_lower, rg_mbid_lower, auto_policy_revision) "
+                    "VALUES (?, ?, NULL)",
+                    [(artist_mbid_lower, rg) for rg in known],
                 )
             conn.execute(
                 """
-                INSERT INTO artist_release_check (artist_mbid_lower, last_checked_at, last_status, last_error)
-                VALUES (?, ?, 'ok', NULL)
+                INSERT INTO artist_release_check (
+                    artist_mbid_lower, last_checked_at, last_status, last_error,
+                    release_type_policy_revision
+                )
+                VALUES (?, ?, 'ok', NULL, ?)
                 ON CONFLICT(artist_mbid_lower) DO UPDATE SET
                     last_checked_at = excluded.last_checked_at,
                     last_status = excluded.last_status,
-                    last_error = excluded.last_error
+                    last_error = excluded.last_error,
+                    release_type_policy_revision = excluded.release_type_policy_revision
                 """,
-                (artist_mbid_lower, now),
+                (artist_mbid_lower, now, policy_revision),
             )
 
         await self._write(operation)
@@ -740,26 +810,87 @@ class FollowStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def pending_release_set(
+        self, artist_mbid_lower: str, policy_revision: int
+    ) -> set[str]:
+        def operation(conn: sqlite3.Connection) -> set[str]:
+            rows = conn.execute(
+                "SELECT rg_mbid_lower FROM artist_known_releases "
+                "WHERE artist_mbid_lower = ? AND auto_policy_revision = ?",
+                (artist_mbid_lower, policy_revision),
+            ).fetchall()
+            return {row["rg_mbid_lower"] for row in rows}
+
+        return await self._read(operation)
+
+    async def clear_pending_release(
+        self, artist_mbid_lower: str, rg_mbid_lower: str
+    ) -> None:
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "UPDATE artist_known_releases SET auto_policy_revision = NULL "
+                "WHERE artist_mbid_lower = ? AND rg_mbid_lower = ?",
+                (artist_mbid_lower, rg_mbid_lower.casefold()),
+            )
+
+        await self._write(operation)
+
     async def record_new_releases(
         self,
         artist_mbid_lower: str,
         feed_rows: list[NewReleaseInput],
         known_rg_lowers: list[str],
+        *,
+        observed_rg_lowers: list[str] | None = None,
+        pending_rg_lowers: list[str] | None = None,
+        policy_revision: int | None = None,
     ) -> None:
-        # known_rg_lowers is a subset of feed_rows: a future-dated release is
-        # added to the feed but left OUT of the known set so a later poll on/after
-        # its release date can still detect and auto-enqueue it (DD4).
-        # INSERT OR IGNORE on the feed PK makes overlapping poll runs idempotent.
-        if not feed_rows and not known_rg_lowers:
+        """Persist one successful poll's observations atomically.
+
+        ``observed_rg_lowers`` contains every valid ID returned by the provider,
+        including groups filtered out by the current policy. ``pending_rg_lowers``
+        contains observed groups that are eligible for dispatch under the current
+        policy. Legacy callers that omit both retain the feed-only store behavior.
+        """
+        observed = {
+            str(rg).casefold()
+            for rg in (
+                observed_rg_lowers
+                if observed_rg_lowers is not None
+                else known_rg_lowers
+            )
+            if isinstance(rg, str) and rg
+        }
+        pending = {
+            str(rg).casefold()
+            for rg in (pending_rg_lowers or [])
+            if isinstance(rg, str) and rg
+        } & observed
+        known = sorted(observed - pending)
+        pending = sorted(pending)
+        if not feed_rows and not observed and policy_revision is None:
             return
         now = time.time()
 
         def operation(conn: sqlite3.Connection) -> None:
-            if known_rg_lowers:
+            if known:
                 conn.executemany(
-                    "INSERT OR IGNORE INTO artist_known_releases (artist_mbid_lower, rg_mbid_lower) "
-                    "VALUES (?, ?)",
-                    [(artist_mbid_lower, rg) for rg in known_rg_lowers],
+                    "INSERT OR IGNORE INTO artist_known_releases "
+                    "(artist_mbid_lower, rg_mbid_lower, auto_policy_revision) "
+                    "VALUES (?, ?, NULL)",
+                    [(artist_mbid_lower, rg) for rg in known],
+                )
+                conn.executemany(
+                    "UPDATE artist_known_releases SET auto_policy_revision = NULL "
+                    "WHERE artist_mbid_lower = ? AND rg_mbid_lower = ?",
+                    [(artist_mbid_lower, rg) for rg in known],
+                )
+            if pending:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO artist_known_releases "
+                    "(artist_mbid_lower, rg_mbid_lower, auto_policy_revision) "
+                    "VALUES (?, ?, ?)",
+                    [(artist_mbid_lower, rg, policy_revision) for rg in pending],
                 )
             if feed_rows:
                 conn.executemany(
@@ -784,21 +915,47 @@ class FollowStore(PersistenceBase):
                         for r in feed_rows
                     ],
                 )
+            if policy_revision is not None:
+                conn.execute(
+                    """
+                    INSERT INTO artist_release_check (
+                        artist_mbid_lower, last_checked_at, last_status, last_error,
+                        release_type_policy_revision
+                    )
+                    VALUES (?, ?, 'ok', NULL, ?)
+                    ON CONFLICT(artist_mbid_lower) DO UPDATE SET
+                        last_checked_at = excluded.last_checked_at,
+                        last_status = excluded.last_status,
+                        last_error = excluded.last_error,
+                        release_type_policy_revision = excluded.release_type_policy_revision
+                    """,
+                    (artist_mbid_lower, now, policy_revision),
+                )
 
         await self._write(operation)
 
     async def update_cursor(
         self, artist_mbid_lower: str, status: str, error: str | None = None
     ) -> None:
-        # updates an EXISTING cursor row only; does nothing if no baseline exists
+        # ``last_checked_at`` is the prior successful cursor used by release
+        # discovery. Provider failures only update status/error so retries retain
+        # that cutoff date.
         now = time.time()
 
         def operation(conn: sqlite3.Connection) -> None:
-            conn.execute(
-                "UPDATE artist_release_check SET last_checked_at = ?, last_status = ?, last_error = ? "
-                "WHERE artist_mbid_lower = ?",
-                (now, status, error, artist_mbid_lower),
-            )
+            if status == "ok":
+                conn.execute(
+                    "UPDATE artist_release_check SET last_checked_at = ?, "
+                    "last_status = ?, last_error = ? "
+                    "WHERE artist_mbid_lower = ?",
+                    (now, status, error, artist_mbid_lower),
+                )
+            else:
+                conn.execute(
+                    "UPDATE artist_release_check SET last_status = ?, last_error = ? "
+                    "WHERE artist_mbid_lower = ?",
+                    (status, error, artist_mbid_lower),
+                )
 
         await self._write(operation)
 
@@ -857,7 +1014,9 @@ class FollowStore(PersistenceBase):
                     {owned_sql}
                 )
             """
-            total = conn.execute("SELECT COUNT(*) AS c " + where, (user_id,)).fetchone()["c"]
+            total = conn.execute(
+                "SELECT COUNT(*) AS c " + where, (user_id,)
+            ).fetchone()["c"]
             rows = conn.execute(
                 "SELECT nrf.release_group_mbid AS release_group_mbid, "
                 "ufa.artist_mbid AS artist_mbid, nrf.artist_name AS artist_name, "
@@ -918,7 +1077,9 @@ class FollowStore(PersistenceBase):
                 )
                 """
             params = (user_id, cutoff_date, cutoff_ts)
-            total = conn.execute("SELECT COUNT(*) AS c " + where, params).fetchone()["c"]
+            total = conn.execute("SELECT COUNT(*) AS c " + where, params).fetchone()[
+                "c"
+            ]
             rows = conn.execute(
                 "SELECT nrf.release_group_mbid AS release_group_mbid, "
                 "ufa.artist_mbid AS artist_mbid, nrf.artist_name AS artist_name, "

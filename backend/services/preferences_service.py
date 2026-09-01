@@ -80,11 +80,13 @@ from core.exceptions import (
 from infrastructure.crypto import decrypt, encrypt
 from infrastructure.file_utils import atomic_write_json, read_json
 from infrastructure.serialization import to_jsonable
+from models.release_type_policy import normalize_release_type_filters
 
 logger = logging.getLogger(__name__)
 
-
 T = TypeVar("T", bound=msgspec.Struct)
+
+_RELEASE_TYPE_POLICY_REVISION_KEY = "release_type_policy_revision"
 
 
 class PreferencesService:
@@ -183,12 +185,57 @@ class PreferencesService:
             self._save_config(config)
         return plaintext
 
+    @staticmethod
+    def _release_type_filters(
+        preferences: UserPreferences,
+    ) -> tuple[frozenset[str], frozenset[str]]:
+        return normalize_release_type_filters(
+            preferences.primary_types, preferences.secondary_types
+        )
+
+    @staticmethod
+    def _release_type_policy_revision_from_config(config: dict) -> int:
+        internal = config.get("_internal", {})
+        if not isinstance(internal, dict):
+            return 0
+        try:
+            return max(0, int(internal.get(_RELEASE_TYPE_POLICY_REVISION_KEY, 0)))
+        except (TypeError, ValueError):
+            return 0
+
     def get_preferences(self) -> UserPreferences:
         return self._get_section("user_preferences", UserPreferences)
 
+    def get_preferences_with_revision(self) -> tuple[UserPreferences, int]:
+        """Read the release-type policy and its persisted revision together."""
+        with self._section_save_lock:
+            config = self._load_config()
+            return (
+                self._get_section("user_preferences", UserPreferences),
+                self._release_type_policy_revision_from_config(config),
+            )
+
     def save_preferences(self, preferences: UserPreferences) -> None:
         try:
-            self._save_section("user_preferences", preferences)
+            with self._section_save_lock:
+                config = self._load_config().copy()
+                try:
+                    previous = msgspec.convert(
+                        config.get("user_preferences", {}), type=UserPreferences
+                    )
+                except (msgspec.ValidationError, TypeError, ValueError):
+                    previous = UserPreferences()
+
+                if self._release_type_filters(previous) != self._release_type_filters(
+                    preferences
+                ):
+                    internal = config.get("_internal", {})
+                    internal = internal.copy() if isinstance(internal, dict) else {}
+                    revision = self._release_type_policy_revision_from_config(config)
+                    internal[_RELEASE_TYPE_POLICY_REVISION_KEY] = revision + 1
+                    config["_internal"] = internal
+                config["user_preferences"] = to_jsonable(preferences)
+                self._save_config(config)
         except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to save preferences: {e}")
             raise ConfigurationError(f"Failed to save preferences: {e}")

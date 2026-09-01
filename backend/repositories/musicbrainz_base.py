@@ -932,48 +932,14 @@ async def mb_api_get(
     )
 
 
-def should_include_release(
-    release_group: dict[str, Any],
-    included_secondary_types: set[str] | None = None,
-    included_primary_types: set[str] | None = None,
-) -> bool:
-    if included_primary_types is not None:
-        primary_type = (release_group.get("primary-type") or "").lower()
-        if primary_type not in included_primary_types:
-            return False
-
-    secondary_types = set(
-        map(str.lower, release_group.get("secondary-types", []) or [])
-    )
-
-    if included_secondary_types is None:
-        exclude_types = {
-            "compilation",
-            "live",
-            "remix",
-            "soundtrack",
-            "dj-mix",
-            "mixtape/street",
-            "demo",
-        }
-        return secondary_types.isdisjoint(exclude_types)
-
-    if not secondary_types:
-        return "studio" in included_secondary_types
-
-    return bool(secondary_types.intersection(included_secondary_types))
-
-
 def extract_artist_name(release_group: dict[str, Any]) -> str | None:
     artist_credit = release_group.get("artist-credit", [])
-    if not isinstance(artist_credit, list) or not artist_credit:
-        return None
-
-    first_credit = artist_credit[0]
-    if isinstance(first_credit, dict):
-        return first_credit.get("name") or (first_credit.get("artist") or {}).get(
-            "name"
-        )
+    if isinstance(artist_credit, list) and artist_credit:
+        first_credit = artist_credit[0]
+        if isinstance(first_credit, dict):
+            return first_credit.get("name") or (first_credit.get("artist") or {}).get(
+                "name"
+            )
     return None
 
 

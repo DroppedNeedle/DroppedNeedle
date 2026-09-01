@@ -98,12 +98,44 @@ def _ri(rg: str, artist_lower: str, title: str, **kw) -> NewReleaseInput:
     )
 
 
-def test_migration_is_idempotent(tmp_path: Path):
+def test_release_policy_columns_migrate_legacy_schema(tmp_path: Path):
     db_path = tmp_path / "library.db"
-    lock = threading.Lock()
-    FollowStore(db_path=db_path, write_lock=lock)
-    FollowStore(db_path=db_path, write_lock=lock)
-    assert db_path.exists()
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE artist_release_check (
+                artist_mbid_lower TEXT PRIMARY KEY,
+                last_checked_at REAL,
+                last_status TEXT,
+                last_error TEXT
+            );
+            CREATE TABLE artist_known_releases (
+                artist_mbid_lower TEXT NOT NULL,
+                rg_mbid_lower TEXT NOT NULL,
+                PRIMARY KEY (artist_mbid_lower, rg_mbid_lower)
+            );
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    FollowStore(db_path=db_path, write_lock=threading.Lock())
+    FollowStore(db_path=db_path, write_lock=threading.Lock())
+
+    conn = sqlite3.connect(db_path)
+    try:
+        check_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(artist_release_check)")
+        }
+        known_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(artist_known_releases)")
+        }
+    finally:
+        conn.close()
+    assert "release_type_policy_revision" in check_columns
+    assert "auto_policy_revision" in known_columns
 
 
 @pytest.mark.asyncio
@@ -156,7 +188,9 @@ async def test_list_followed_artists_scoped_and_ordered(store: FollowStore):
     await store.follow_artist("user-b", "MBID-3", "Other")
     listed = await store.list_followed_artists("user-a")
     assert [a.artist_name for a in listed] == ["Second", "First"]  # followed_at DESC
-    assert [a.artist_name for a in await store.list_followed_artists("user-b")] == ["Other"]
+    assert [a.artist_name for a in await store.list_followed_artists("user-b")] == [
+        "Other"
+    ]
 
 
 @pytest.mark.asyncio
@@ -164,9 +198,13 @@ async def test_pending_then_approved_state(store: FollowStore):
     await store.follow_artist("user-a", "MBID-A", "Radiohead")
     await store.set_auto_download_intent("user-a", "MBID-A", True)
     await store.upsert_approval("user-a", "MBID-A", "Radiohead", "pending")
-    assert (await store.get_follow_state("user-a", "MBID-A")).auto_download_state == "pending"
+    assert (
+        await store.get_follow_state("user-a", "MBID-A")
+    ).auto_download_state == "pending"
 
-    updated = await store.set_approval_state("user-a", "MBID-A", "approved", ("admin-1", "Admin"))
+    updated = await store.set_approval_state(
+        "user-a", "MBID-A", "approved", ("admin-1", "Admin")
+    )
     assert updated is True
     state = await store.get_follow_state("user-a", "MBID-A")
     assert state.auto_download is True
@@ -202,7 +240,12 @@ async def test_get_approval_absent_returns_none(store: FollowStore):
 
 @pytest.mark.asyncio
 async def test_set_approval_state_missing_row_returns_false(store: FollowStore):
-    assert await store.set_approval_state("user-a", "MBID-A", "approved", ("admin-1", "Admin")) is False
+    assert (
+        await store.set_approval_state(
+            "user-a", "MBID-A", "approved", ("admin-1", "Admin")
+        )
+        is False
+    )
 
 
 @pytest.mark.asyncio
@@ -238,9 +281,7 @@ async def test_pending_approval_unit_count_uses_one_unit_per_batch(store: Follow
     await store.create_import_approval_batch(
         "user-b", [("MBID-2", "Beta"), ("MBID-3", "Gamma")], "batch-1"
     )
-    await store.create_import_approval_batch(
-        "user-a", [("MBID-4", "Delta")], "batch-2"
-    )
+    await store.create_import_approval_batch("user-a", [("MBID-4", "Delta")], "batch-2")
 
     assert await store.count_pending_approval_units() == 3
 
@@ -282,7 +323,9 @@ async def test_record_new_releases_is_idempotent(store: FollowStore, tmp_path: P
     await store.seed_baseline("mbid-a", ["rg1"])
     rows = [_ri("RG2", "mbid-a", "New Album", first_release_date="2026-01-01")]
     await store.record_new_releases("mbid-a", rows, ["rg2"])
-    await store.record_new_releases("mbid-a", rows, ["rg2"])  # INSERT OR IGNORE -> no dup
+    await store.record_new_releases(
+        "mbid-a", rows, ["rg2"]
+    )  # INSERT OR IGNORE -> no dup
     assert "rg2" in await store.known_release_set("mbid-a")
     await store.follow_artist("user-a", "MBID-A", "Radiohead")
     items, total = await store.list_new_releases_for_user("user-a", 50, 0)
@@ -384,18 +427,24 @@ async def test_unseen_count_no_marker_counts_all(store: FollowStore, tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_mark_seen_zeroes_then_later_discovery_counts(store: FollowStore, tmp_path: Path):
+async def test_mark_seen_zeroes_then_later_discovery_counts(
+    store: FollowStore, tmp_path: Path
+):
     _seed_library_files(tmp_path / "library.db", owned_rg_mbids=[])
     await store.follow_artist("user-a", "MBID-A", "Radiohead")
     await store.seed_baseline("mbid-a", [])
     await store.record_new_releases(
-        "mbid-a", [_ri("RG-1", "mbid-a", "One", first_release_date="2026-01-01")], ["rg-1"]
+        "mbid-a",
+        [_ri("RG-1", "mbid-a", "One", first_release_date="2026-01-01")],
+        ["rg-1"],
     )
     await store.mark_new_releases_seen("user-a")
     assert await store.count_unseen_new_releases_for_user("user-a") == 0
 
     await store.record_new_releases(
-        "mbid-a", [_ri("RG-2", "mbid-a", "Two", first_release_date="2026-02-01")], ["rg-2"]
+        "mbid-a",
+        [_ri("RG-2", "mbid-a", "Two", first_release_date="2026-02-01")],
+        ["rg-2"],
     )
     # RG-2 discovered after the marker counts; RG-1 stays seen
     assert await store.count_unseen_new_releases_for_user("user-a") == 1
@@ -405,7 +454,9 @@ async def test_mark_seen_zeroes_then_later_discovery_counts(store: FollowStore, 
 
 
 @pytest.mark.asyncio
-async def test_unseen_count_excludes_owned_and_other_users(store: FollowStore, tmp_path: Path):
+async def test_unseen_count_excludes_owned_and_other_users(
+    store: FollowStore, tmp_path: Path
+):
     _seed_library_files(tmp_path / "library.db", owned_rg_mbids=["RG-OWNED"])
     await store.follow_artist("user-a", "MBID-A", "Radiohead")
     await store.seed_baseline("mbid-a", [])
@@ -486,12 +537,16 @@ async def test_recent_releases_log_includes_owned_with_flag(
             _ri("RG-OWNED", "mbid-a", "Grabbed Album", first_release_date=recent),
             _ri("RG-NEW", "mbid-a", "Fresh Album", first_release_date=recent),
             _ri("RG-OLD", "mbid-a", "Ancient Album", first_release_date=old),
-            _ri("RG-DATELESS", "mbid-a", "Dateless Album"),  # falls back to discovered_at
+            _ri(
+                "RG-DATELESS", "mbid-a", "Dateless Album"
+            ),  # falls back to discovered_at
         ],
         [],
     )
 
-    items, total = await store.list_recent_releases_for_user("user-a", days=30, limit=10)
+    items, total = await store.list_recent_releases_for_user(
+        "user-a", days=30, limit=10
+    )
     assert total == 3  # the 90-day-old release is outside the window
     by_title = {i.title: i for i in items}
     assert set(by_title) == {"Grabbed Album", "Fresh Album", "Dateless Album"}
@@ -552,3 +607,47 @@ async def test_target_catalog_ownership_drives_all_new_release_views(
     assert hidden_total == 0
     assert hidden == []
     assert await store.count_unseen_new_releases_for_user("user-a") == 0
+
+
+@pytest.mark.asyncio
+async def test_release_observation_persists_pending_and_clears_it(store: FollowStore):
+    await store.seed_baseline("mbid-a", ["rg1"], policy_revision=4)
+    row = _ri("RG2", "mbid-a", "Future", first_release_date="2026-09-02")
+
+    await store.record_new_releases(
+        "mbid-a",
+        [row],
+        ["rg2"],
+        observed_rg_lowers=["rg2"],
+        pending_rg_lowers=["rg2"],
+        policy_revision=4,
+    )
+
+    state = await store.get_release_check_state("mbid-a")
+    assert state is not None
+    assert state.release_type_policy_revision == 4
+    assert await store.pending_release_set("mbid-a", 4) == {"rg2"}
+
+    await store.record_new_releases(
+        "mbid-a",
+        [],
+        ["rg2"],
+        observed_rg_lowers=["rg2"],
+        pending_rg_lowers=[],
+        policy_revision=4,
+    )
+    assert await store.pending_release_set("mbid-a", 4) == set()
+
+
+@pytest.mark.asyncio
+async def test_error_cursor_retains_prior_successful_timestamp(store: FollowStore):
+    await store.seed_baseline("mbid-a", ["rg1"], policy_revision=0)
+    before = await store.get_release_check_state("mbid-a")
+    assert before is not None
+
+    await store.update_cursor("mbid-a", "error", "provider down")
+
+    after = await store.get_release_check_state("mbid-a")
+    assert after is not None
+    assert after.last_status == "error"
+    assert after.last_checked_at == before.last_checked_at
