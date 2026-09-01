@@ -181,6 +181,7 @@ class _PlannedImport(NamedTuple):
     download_task_id: str | None
     source_path: str
     replacement: dict | None = None
+    reviewed_recording_identity: bool = False
 
 
 def _filename_track_number(path: Path) -> int | None:
@@ -747,6 +748,7 @@ class FileProcessor:
                     replacement_root_id=replacement_root_id,
                     replacement_relative_path=replacement_relative,
                     recycle_bin_path=recycle_bin_path,
+                    reviewed_recording_identity=value.reviewed_recording_identity,
                 )
             )
         digest = hashlib.sha256(
@@ -1722,13 +1724,16 @@ class FileProcessor:
                     release_mbid=held.release_mbid,
                     recording_mbid=target_tag.musicbrainz_recording_id,
                     release_track_mbid=None,
-                    medium_position=held.disc_number or 1,
-                    release_track_position=held.track_number,
-                    authoritative_mapping=bool(held.release_mbid and held.track_number),
+                    medium_position=None,
+                    release_track_position=None,
+                    authoritative_mapping=False,
                     confidence=1.0,
                     download_task_id=held.source_task_id,
                     source_path=held.held_path,
                     replacement=replacement,
+                    reviewed_recording_identity=bool(
+                        (held.recording_mbid or "").strip()
+                    ),
                 )
             ],
             idempotency_key=f"acquisition:held:{held.id}",

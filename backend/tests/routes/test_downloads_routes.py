@@ -10,6 +10,7 @@ from api.v1.routes import downloads
 from core.dependencies import get_download_service
 from core.exceptions import (
     ConflictError,
+    AutomaticManagementHoldError,
     ConfigurationError,
     PermissionDeniedError,
     ResourceNotFoundError,
@@ -549,6 +550,28 @@ def test_import_held_without_library_root_is_400_configuration_error():
     body = response.json()["error"]
     assert body["code"] == "CONFIGURATION_ERROR"
     assert "library root" in body["message"]
+
+
+def test_automatic_management_hold_returns_safe_conflict_envelope():
+    service = AsyncMock()
+    dynamic_message = (
+        "Provider script /srv/private/music/profile-secret.py rejected "
+        "destination /library/hidden-track.flac"
+    )
+    service.import_held.side_effect = AutomaticManagementHoldError(
+        "TRACK_NOT_MAPPED", dynamic_message
+    )
+
+    response = build_test_client(_app(service)).post("/downloads/held/1/import")
+
+    assert response.status_code == 409
+    assert response.json()["error"] == {
+        "code": "AUTOMATIC_MANAGEMENT_HOLD",
+        "message": "Import blocked by a Library Management safety check.",
+        "details": {"reason_code": "TRACK_NOT_MAPPED"},
+    }
+    assert dynamic_message not in response.text
+    service.import_held.assert_awaited_once_with(1, "u1", "user")
 
 
 def test_held_audio_streams_file_and_supports_range(tmp_path):

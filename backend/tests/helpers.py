@@ -15,6 +15,7 @@ from core.exception_handlers import (
     circuit_open_error_handler,
     client_disconnected_handler,
     configuration_error_handler,
+    automatic_management_hold_handler,
     external_service_error_handler,
     general_exception_handler,
     http_exception_handler,
@@ -33,6 +34,7 @@ from core.exception_handlers import (
 from core.exceptions import (
     ClientDisconnectedError,
     ConfigurationError,
+    AutomaticManagementHoldError,
     ConflictError,
     ExternalServiceError,
     PermissionDeniedError,
@@ -93,6 +95,9 @@ def add_production_exception_handlers(app: FastAPI) -> FastAPI:
     app.add_exception_handler(CircuitOpenError, circuit_open_error_handler)
     app.add_exception_handler(ValidationError, validation_error_handler)
     app.add_exception_handler(ConfigurationError, configuration_error_handler)
+    app.add_exception_handler(
+        AutomaticManagementHoldError, automatic_management_hold_handler
+    )
     app.add_exception_handler(PermissionDeniedError, permission_denied_handler)
     app.add_exception_handler(ConflictError, conflict_error_handler)
     app.add_exception_handler(StaleRevisionError, stale_revision_error_handler)
@@ -238,9 +243,9 @@ def assert_log_fields(
         Minimum number of matching records expected (default 1).
     """
     matching = [r.message for r in records if r.message.startswith(prefix)]
-    assert (
-        len(matching) >= min_count
-    ), f"Expected >= {min_count} log(s) starting with '{prefix}', found {len(matching)}"
+    assert len(matching) >= min_count, (
+        f"Expected >= {min_count} log(s) starting with '{prefix}', found {len(matching)}"
+    )
     for msg in matching:
         for field in required_fields:
             assert f"{field}=" in msg, f"Field '{field}=' missing in log: {msg}"

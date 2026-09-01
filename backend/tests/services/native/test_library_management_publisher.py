@@ -63,7 +63,7 @@ from services.native.identification_revisions import (
     album_input_revisions,
 )
 from services.native.target_import_library_service import TargetImportLibraryService
-from models.audio import AudioTag
+from models.audio import AudioInfo, AudioTag
 from models.audio_metadata import (
     AudioWritePolicy,
     DesiredAudioDocument,
@@ -267,6 +267,195 @@ def _import_file(
         source_path=source.name,
         download_task_id="task-1",
     )
+
+
+def test_minimal_import_document_adds_only_reviewed_recording_identity() -> None:
+    tag = AudioTag(
+        title="Track",
+        artist="Artist",
+        album="Album",
+        album_artist="Artist",
+        track_number=1,
+        musicbrainz_release_group_id="review-group",
+        musicbrainz_release_id="review-release",
+        musicbrainz_recording_id="review-recording",
+    )
+
+    default = LibraryManagementPublisher._minimal_import_document(tag)
+    reviewed = LibraryManagementPublisher._minimal_import_document(
+        tag, reviewed_recording_identity=True
+    )
+    default_names = {field.name for field in default.fields}
+    reviewed_names = {field.name for field in reviewed.fields}
+
+    assert "musicbrainz_recording_id" not in default_names
+    assert reviewed_names - default_names == {"musicbrainz_recording_id"}
+    assert all(field.name not in {"title", "artist"} for field in reviewed.fields)
+    recording = next(
+        field for field in reviewed.fields if field.name == "musicbrainz_recording_id"
+    )
+    assert recording.value == tag.musicbrainz_recording_id
+
+
+def _reviewed_recording_bundle(
+    tmp_path: Path,
+    *,
+    request_overrides: dict[str, object] | None = None,
+    bundle_overrides: dict[str, object] | None = None,
+) -> LibraryManagementImportBundle:
+    source = tmp_path / "held.flac"
+    source.write_bytes(b"held")
+    request = LibraryManagementImportFile(
+        ordinal=0,
+        input_path=str(source),
+        destination_root_id="root-1",
+        destination_relative_path="reviewed.flac",
+        tag=AudioTag(
+            title="Track",
+            artist="Artist",
+            album="Album",
+            album_artist="Artist",
+            track_number=1,
+            musicbrainz_release_group_id="review-group",
+            musicbrainz_release_id="review-release",
+            musicbrainz_recording_id="review-recording",
+        ),
+        info=AudioInfo(
+            duration_seconds=1.0,
+            bitrate=128,
+            sample_rate=44100,
+            channels=2,
+            file_format="flac",
+            file_size_bytes=4,
+            bit_depth=16,
+        ),
+        release_group_mbid="review-group",
+        release_mbid="review-release",
+        recording_mbid="review-recording",
+        confidence=1.0,
+        source="download",
+        source_path=str(source),
+        download_task_id="task-1",
+        reviewed_recording_identity=True,
+    )
+    request = msgspec.structs.replace(request, **(request_overrides or {}))
+    bundle = LibraryManagementImportBundle(
+        idempotency_key="acquisition:reviewed-recording",
+        origin="acquisition",
+        policy_revision="policy-1",
+        files=(request,),
+    )
+    return msgspec.structs.replace(bundle, **(bundle_overrides or {}))
+
+
+def test_reviewed_recording_identity_accepts_unmanaged_acquisition(
+    tmp_path: Path,
+) -> None:
+    LibraryManagementPublisher._validate_import_bundle(
+        _reviewed_recording_bundle(tmp_path)
+    )
+
+
+@pytest.mark.parametrize(
+    ("request_overrides", "bundle_overrides"),
+    [
+        ({"authoritative_mapping": True}, {}),
+        ({"release_track_mbid": "review-track"}, {}),
+        ({"medium_position": 1}, {}),
+        ({"release_track_position": 1}, {}),
+        ({"desired_document": DesiredAudioDocument(fields=())}, {}),
+        ({"metadata_snapshot_id": "snapshot"}, {}),
+        ({"projection_hash": "a" * 64}, {}),
+        ({"settings_revision": "settings"}, {}),
+        ({"naming_policy_revision": "naming"}, {}),
+        ({"undo_retention_days": 30}, {}),
+        ({"baseline_relative_path": "incoming.flac"}, {}),
+        ({"management_warnings": ("automatic warning",)}, {}),
+        ({"conversion_recycle_only": True}, {}),
+        ({"replacement_local_track_id": "track-1"}, {}),
+        ({"recycle_bin_path": "/tmp/recycle"}, {}),
+        ({"source": "drop"}, {}),
+        ({}, {"origin": "drop_import"}),
+    ],
+    ids=(
+        "authoritative",
+        "release-track",
+        "medium-position",
+        "release-track-position",
+        "desired-document",
+        "metadata-snapshot",
+        "projection-hash",
+        "settings-revision",
+        "naming-revision",
+        "undo-retention",
+        "baseline",
+        "management-warning",
+        "conversion-recycle",
+        "replacement",
+        "recycle",
+        "source",
+        "origin",
+    ),
+)
+def test_reviewed_recording_identity_rejects_contradictory_requests(
+    tmp_path: Path,
+    request_overrides: dict[str, object],
+    bundle_overrides: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        LibraryManagementPublisher._validate_import_bundle(
+            _reviewed_recording_bundle(
+                tmp_path,
+                request_overrides=request_overrides,
+                bundle_overrides=bundle_overrides,
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("request_recording", "tag_recording"),
+    [
+        ("", "review-recording"),
+        ("other-recording", "review-recording"),
+        ("review-recording", ""),
+    ],
+    ids=("missing-request", "mismatch", "missing-tag"),
+)
+def test_reviewed_recording_identity_requires_matching_recording_ids(
+    tmp_path: Path,
+    request_recording: str,
+    tag_recording: str,
+) -> None:
+    bundle = _reviewed_recording_bundle(tmp_path)
+    request = bundle.files[0]
+    request = msgspec.structs.replace(
+        request,
+        recording_mbid=request_recording,
+        tag=msgspec.structs.replace(
+            request.tag, musicbrainz_recording_id=tag_recording
+        ),
+    )
+    bundle = msgspec.structs.replace(bundle, files=(request,))
+
+    with pytest.raises(ValidationError):
+        LibraryManagementPublisher._validate_import_bundle(bundle)
+
+
+def test_reviewed_recording_identity_rejects_release_track_in_target_tag(
+    tmp_path: Path,
+) -> None:
+    bundle = _reviewed_recording_bundle(tmp_path)
+    request = msgspec.structs.replace(
+        bundle.files[0],
+        tag=msgspec.structs.replace(
+            bundle.files[0].tag,
+            musicbrainz_release_track_id="tampered-release-track",
+        ),
+    )
+    bundle = msgspec.structs.replace(bundle, files=(request,))
+
+    with pytest.raises(ValidationError):
+        LibraryManagementPublisher._validate_import_bundle(bundle)
 
 
 def _same_path_configuration(_root, preferences, _store) -> None:
@@ -572,6 +761,14 @@ async def test_import_bundle_publishes_once_and_commits_catalog_atomically(
     journals = await store.list_library_management_import_journals(first.bundle_id)
     barriers = await store.list_acquisition_import_bundles_for_download_task("task-1")
     assert destination.is_file()
+    source_tag, _ = legacy_audio_projection(audio.read(catalog_source))
+    destination_tag, _ = legacy_audio_projection(audio.read(destination))
+    assert destination_tag.title == source_tag.title
+    assert destination_tag.artist == source_tag.artist
+    assert destination_tag.musicbrainz_recording_id == (
+        source_tag.musicbrainz_recording_id
+    )
+    assert request.reviewed_recording_identity is False
     assert incoming.exists() is False
     assert row is not None and row["download_task_id"] == "task-1"
     assert first.paths == repeated.paths == (str(destination),)
@@ -579,6 +776,244 @@ async def test_import_bundle_publishes_once_and_commits_catalog_atomically(
     assert repeated.repeated is True
     assert [value.state for value in journals] == ["completed"]
     assert [value.id for value in barriers] == [first.bundle_id]
+
+
+@pytest.mark.asyncio
+async def test_import_anyway_with_automatic_assignment_publishes_unmanaged(
+    tmp_path: Path,
+) -> None:
+    from models.held_import import HeldImport
+    from services.native.automatic_import_management_service import (
+        AutomaticImportManagementService,
+    )
+    from tests.services.native.test_automatic_import_management_service import (
+        _service as automatic_service,
+    )
+    from tests.services.test_file_processor import _TEMPLATE, _make_processor
+
+    root, catalog_source, preferences, store, _settings, policy_revision = _configured(
+        tmp_path
+    )
+    _activate_automatic_acquisitions(preferences, policy_revision)
+    automatic, _planner = automatic_service(tmp_path, preferences, store)
+    assert isinstance(automatic, AutomaticImportManagementService)
+
+    audio = AudioMetadataEngine()
+    filesystem = LibraryFilesystemCoordinator()
+    publisher = LibraryManagementPublisher(
+        store,
+        preferences,
+        audio,
+        AudioWritePlanningService(audio),
+        LibraryManagementBlobStore(tmp_path / "import-blobs", store),
+        filesystem,
+        clock=lambda: 110.0,
+    )
+    target = TargetImportLibraryService(
+        store,
+        lambda: LibraryPolicyResolver(preferences.get_typed_library_settings_raw()),
+        AsyncMock(),
+        filesystem_coordinator=filesystem,
+        management_publisher=publisher,
+        automatic_management=automatic,
+    )
+    published_bundles = []
+
+    async def publish(bundle):
+        published_bundles.append(bundle)
+        return await target.publish_import_bundle(bundle)
+
+    fp, _manager, _client, _library, _downloads = _make_processor(
+        tmp_path / "processor", publisher=publish
+    )
+    fp._library_paths = [root]
+    fp._library_root_ids = ["root-1"]
+    fp._policy_revision_getter = lambda: policy_revision
+
+    held_dir = tmp_path / "held"
+    held_dir.mkdir()
+    held_file = held_dir / "held.flac"
+    shutil.copy2(catalog_source, held_file)
+    held = HeldImport(
+        id=1,
+        user_id="user-a",
+        held_path=str(held_file),
+        reason="fingerprint_mismatch",
+        source="usenet",
+        status="held",
+        created_at=0.0,
+        release_group_mbid="held-release-group",
+        release_mbid="held-release",
+        recording_mbid="held-recording",
+        track_number=3,
+        disc_number=1,
+        track_title="You Shook Me",
+        artist_name="Led Zeppelin",
+        album_title="Led Zeppelin I",
+        year=1969,
+        naming_template=_TEMPLATE,
+        artist_mbid="678d88b2-87b0-403b-b63d-5da7465aecc3",
+    )
+
+    destination = await fp.place_held_file(held)
+
+    assert destination.is_file()
+    assert not held_file.exists()
+    assert len(published_bundles) == 1
+    request = published_bundles[0].files[0]
+    assert request.authoritative_mapping is False
+    assert request.pinned_profile is None
+    assert (
+        request.release_track_mbid,
+        request.medium_position,
+        request.release_track_position,
+    ) == (None, None, None)
+    assert request.reviewed_recording_identity is True
+    assert (
+        request.desired_document,
+        request.pinned_profile,
+        request.metadata_snapshot_id,
+        request.projection_hash,
+        request.settings_revision,
+        request.naming_policy_revision,
+        request.undo_retention_days,
+        request.baseline_relative_path,
+        request.management_warnings,
+        request.artifacts,
+        request.conversion_recycle_only,
+    ) == (None, None, None, None, None, None, None, None, (), (), False)
+    assert (
+        request.replacement_local_track_id,
+        request.replacement_root_id,
+        request.replacement_relative_path,
+        request.recycle_bin_path,
+    ) == (None, None, None, None)
+    destination_tag, _ = legacy_audio_projection(audio.read(destination))
+    assert destination_tag.musicbrainz_recording_id == held.recording_mbid
+    source_tag, _ = legacy_audio_projection(audio.read(catalog_source))
+    assert (
+        destination_tag.musicbrainz_release_track_id
+        == source_tag.musicbrainz_release_track_id
+    )
+    assert destination_tag.title == source_tag.title
+    assert destination_tag.artist == source_tag.artist
+    assert request.tag.musicbrainz_release_group_id == held.release_group_mbid
+    assert request.tag.musicbrainz_release_id == held.release_mbid
+    assert request.tag.musicbrainz_recording_id == held.recording_mbid
+    assert request.recording_mbid == held.recording_mbid
+    assert request.tag.musicbrainz_release_track_id is None
+    with sqlite3.connect(store.db_path) as connection:
+        embedded_recording = connection.execute(
+            "SELECT embedded_recording_mbid FROM local_tracks WHERE file_path=?",
+            (str(destination),),
+        ).fetchone()
+    assert embedded_recording == (held.recording_mbid,)
+
+
+@pytest.mark.asyncio
+async def test_import_anyway_upgrade_replaces_better_file_with_reviewed_identity(
+    tmp_path: Path,
+) -> None:
+    from models.held_import import HeldImport
+    from tests.services.test_file_processor import _TEMPLATE, _make_processor
+
+    root, catalog_source, preferences, store, _settings, policy_revision = _configured(
+        tmp_path
+    )
+    audio = AudioMetadataEngine()
+    filesystem = LibraryFilesystemCoordinator()
+    publisher = LibraryManagementPublisher(
+        store,
+        preferences,
+        audio,
+        AudioWritePlanningService(audio),
+        LibraryManagementBlobStore(tmp_path / "import-blobs", store),
+        filesystem,
+        clock=lambda: 110.0,
+    )
+    target = TargetImportLibraryService(
+        store,
+        lambda: LibraryPolicyResolver(preferences.get_typed_library_settings_raw()),
+        AsyncMock(),
+        filesystem_coordinator=filesystem,
+        management_publisher=publisher,
+    )
+    published_bundles = []
+
+    async def publish(bundle):
+        published_bundles.append(bundle)
+        return await target.publish_import_bundle(bundle)
+
+    fp, _manager, _client, _library, _downloads = _make_processor(
+        tmp_path / "processor", publisher=publish
+    )
+    fp._library_paths = [root]
+    fp._library_root_ids = ["root-1"]
+    fp._policy_revision_getter = lambda: policy_revision
+    recycle_bin = tmp_path / "recycle"
+    fp._recycle_bin = recycle_bin
+    fp._library.get_file_at_position = AsyncMock(
+        return_value={
+            "id": "track-1",
+            "file_path": str(catalog_source),
+            "root_id": "root-1",
+            "relative_path": "source.flac",
+            "file_format": "mp3",
+            "bit_rate": 128,
+            "bit_depth": None,
+        }
+    )
+    held_file = tmp_path / "held-upgrade.flac"
+    shutil.copy2(catalog_source, held_file)
+    previous_bytes = catalog_source.read_bytes()
+    held = HeldImport(
+        id=1,
+        user_id="user-a",
+        held_path=str(held_file),
+        reason="fingerprint_mismatch",
+        source="usenet",
+        status="held",
+        created_at=0.0,
+        release_group_mbid="group-1",
+        release_mbid="upgrade-release",
+        recording_mbid="upgrade-recording",
+        track_number=2,
+        disc_number=1,
+        track_title="Management Track",
+        artist_name="Alpha",
+        album_title="Management Album",
+        year=2024,
+        naming_template=_TEMPLATE,
+        artist_mbid="artist-1",
+        origin="upgrade",
+    )
+
+    destination = await fp.place_held_file(held)
+
+    assert destination.is_file()
+    assert not held_file.exists()
+    assert not catalog_source.exists()
+    recycled = list(recycle_bin.rglob("source.flac"))
+    assert len(recycled) == 1
+    assert recycled[0].read_bytes() == previous_bytes
+    assert len(published_bundles) == 1
+    request = published_bundles[0].files[0]
+    assert request.reviewed_recording_identity is True
+    assert (
+        request.replacement_local_track_id,
+        request.replacement_root_id,
+        request.replacement_relative_path,
+        request.recycle_bin_path,
+    ) == ("track-1", "root-1", "source.flac", str(recycle_bin))
+    destination_tag, _ = legacy_audio_projection(audio.read(destination))
+    assert destination_tag.musicbrainz_recording_id == "upgrade-recording"
+    row = await store.get_target_track_by_path(str(destination))
+    assert row is not None
+    assert row["file_path"] == str(destination)
+    replaced = await store.get_target_track("track-1")
+    assert replaced is not None
+    assert replaced["availability"] == "indexed"
+    assert replaced["file_path"] == str(destination)
 
 
 @pytest.mark.asyncio
@@ -2383,7 +2818,11 @@ def _nfd_source_directory(root: Path, _preferences, store) -> None:
         connection.execute(
             "UPDATE local_tracks SET file_path=?,relative_path=?,path_hash=? "
             "WHERE id='track-1'",
-            (str(nested / "source.flac"), relative, hashlib.sha256(relative.encode()).hexdigest()),
+            (
+                str(nested / "source.flac"),
+                relative,
+                hashlib.sha256(relative.encode()).hexdigest(),
+            ),
         )
 
 
@@ -2426,7 +2865,10 @@ async def test_publisher_publishes_nfd_sources_to_nfc_cjk_destinations(
     result = await publisher.publish_bundle(job_id, 0, "apply-worker")
     repeated = await publisher.publish_bundle(job_id, 0, "apply-worker")
 
-    album = unicodedata.normalize("NFC", unicodedata.normalize("NFD", "ゴールド")) + "変奏曲"
+    album = (
+        unicodedata.normalize("NFC", unicodedata.normalize("NFD", "ゴールド"))
+        + "変奏曲"
+    )
     title = unicodedata.normalize("NFC", unicodedata.normalize("NFD", "ダリア"))
     destination = root / "作曲者" / f"{album} (1982)" / f"01 - {title}.flac"
     assert destination.is_file()
@@ -3124,7 +3566,9 @@ async def test_publisher_publishes_cjk_album_with_destination_side_temps(
     assert str(row["relative_path"]) == planned_relative
     published = destination_root / planned_relative
     assert published.is_file()
-    assert unicodedata.is_normalized("NFC", str(published.relative_to(destination_root)))
+    assert unicodedata.is_normalized(
+        "NFC", str(published.relative_to(destination_root))
+    )
     assert audio.read(published).metadata.value_for("title") == "星の詩 Café"
     journals = await store.list_file_mutation_journals_for_bundle(job_id, 0)
     assert journals
@@ -3183,8 +3627,9 @@ async def test_publish_logs_directory_fsync_failures_but_still_commits(
         tmp_path
     )
 
-    with caplog.at_level(logging.WARNING, logger="services.native."
-                                                     "library_management_publisher"):
+    with caplog.at_level(
+        logging.WARNING, logger="services.native.library_management_publisher"
+    ):
         await publisher.publish_bundle(job_id, 0, "apply-worker")
 
     row = await store.get_target_track("track-1")
@@ -3193,10 +3638,15 @@ async def test_publish_logs_directory_fsync_failures_but_still_commits(
     assert (root / str(row["relative_path"])).is_file()
     assert [journal.state for journal in journals] == ["completed"]
     warnings = [
-        record for record in caplog.records if "directory fsync failed" in record.getMessage()
+        record
+        for record in caplog.records
+        if "directory fsync failed" in record.getMessage()
     ]
     assert warnings, "expected a directory fsync failure warning"
-    assert any("EINVAL" in record.getMessage() or "(errno=22)" in record.getMessage() for record in warnings)
+    assert any(
+        "EINVAL" in record.getMessage() or "(errno=22)" in record.getMessage()
+        for record in warnings
+    )
 
 
 @pytest.mark.asyncio
@@ -3296,12 +3746,18 @@ async def test_post_commit_hook_failure_is_swallowed_with_exc_info(
     """F-145: a throwing hook never fails a committed bundle; the warning keeps
     its traceback, and a later replay of the terminal bundle retries the hook."""
     hook = AsyncMock(side_effect=RuntimeError("refresh backend down"))
-    _root, _source, store, audio, publisher, job_id = (
-        await _ready_apply_operation_with_hook(tmp_path, hook)
-    )
+    (
+        _root,
+        _source,
+        store,
+        audio,
+        publisher,
+        job_id,
+    ) = await _ready_apply_operation_with_hook(tmp_path, hook)
 
-    with caplog.at_level(logging.WARNING, logger="services.native."
-                                                     "library_management_publisher"):
+    with caplog.at_level(
+        logging.WARNING, logger="services.native.library_management_publisher"
+    ):
         await publisher.publish_bundle(job_id, 0, "apply-worker")
         await publisher.publish_bundle(job_id, 0, "apply-worker")
 
@@ -3430,9 +3886,7 @@ async def test_outer_compensation_mutates_roots_only_under_the_writer_fence(
         await publisher.publish_bundle(job_id, 0, "apply-worker")
 
     acquires = [
-        index
-        for index, (kind, _roots) in enumerate(recording.events)
-        if kind == "held"
+        index for index, (kind, _roots) in enumerate(recording.events) if kind == "held"
     ]
     releases = [
         index

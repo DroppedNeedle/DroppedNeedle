@@ -64,6 +64,7 @@ class LibraryManagementImportFile(AppStruct):
     replacement_relative_path: str | None = None
     recycle_bin_path: str | None = None
     authoritative_mapping: bool = False
+    reviewed_recording_identity: bool = False
     release_track_mbid: str | None = None
     medium_position: int | None = None
     release_track_position: int | None = None

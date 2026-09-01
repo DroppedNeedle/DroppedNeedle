@@ -22,6 +22,8 @@ from repositories.protocols.download_client import DownloadSearchResult
 from services.native.download_service import (
     ALREADY_IN_LIBRARY,
     DownloadService,
+    _ordinary_held_action_locks,
+    _ordinary_held_action_lock_users,
     check_downloads_mount,
 )
 
@@ -1002,6 +1004,7 @@ async def _record_held(
     *,
     task_id="t-1",
     reason="fingerprint_mismatch",
+    origin="user",
     track_number=3,
     release_mbid=None,
     release_track_mbid=None,
@@ -1013,6 +1016,7 @@ async def _record_held(
         user_id="user-a",
         held_path=str(path),
         reason=reason,
+        origin=origin,
         source="usenet",
         source_task_id=task_id,
         release_group_mbid="rg-1",
@@ -1097,6 +1101,58 @@ async def test_import_held_places_and_resolves(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_edition_conversion_held_actions_stay_in_conversion_workflow(
+    tmp_path,
+):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    held_file = tmp_path / "held" / "conversion.flac"
+    held_file.parent.mkdir()
+    held_file.write_bytes(b"audio")
+    held_id = await _record_held(store, held_file, origin="edition_conversion")
+    processor = MagicMock()
+    svc = _held_service(store, processor)
+
+    for action in (svc.import_held, svc.discard_held):
+        with pytest.raises(
+            ValidationError, match="dedicated edition conversion workflow"
+        ):
+            await action(held_id, "user-a", "user")
+
+    assert held_file.exists()
+    held = await store.get_held_import(held_id, "user-a", "user")
+    assert held is not None and held.status == "held"
+    processor.place_held_file.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_upgrade_held_import_remains_allowed(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    held_file = tmp_path / "held" / "upgrade.flac"
+    held_file.parent.mkdir()
+    held_file.write_bytes(b"audio")
+    held_id = await _record_held(store, held_file, origin="upgrade")
+    processor = MagicMock()
+    processor.place_held_file = AsyncMock(return_value=Path("/music/upgrade.flac"))
+    reconciler = MagicMock()
+    reconciler.reconcile_with_filesystem = AsyncMock()
+    svc = _held_service(store, processor, reconciler)
+
+    result = await svc.import_held(held_id, "user-a", "user")
+
+    assert result == "/music/upgrade.flac"
+    processor.place_held_file.assert_awaited_once()
+    assert await store.get_held_import(held_id, "user-a", "user") is None
+
+
+@pytest.mark.asyncio
 async def test_import_held_without_library_root_propagates_and_stays_held(tmp_path):
     """No library root configured: the ConfigurationError propagates to the route's
     400 mapping and the row stays held - the user restores a root and retries."""
@@ -1126,6 +1182,254 @@ async def test_import_held_without_library_root_propagates_and_stays_held(tmp_pa
     held = await store.list_held_imports("user-a", "user")
     assert [value.id for value in held] == [hid]
     assert await store.has_unresolved_held_for_task("t-1") is True
+    assert _ordinary_held_action_locks == {}
+    assert _ordinary_held_action_lock_users == {}
+
+
+@pytest.mark.asyncio
+async def test_automatic_management_hold_propagates_and_stays_held(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    held_file = tmp_path / "held" / "blocked.flac"
+    held_file.parent.mkdir()
+    held_file.write_bytes(b"audio")
+    held_id = await _record_held(store, held_file)
+    processor = MagicMock()
+    processor.place_held_file = AsyncMock(
+        side_effect=AutomaticManagementHoldError(
+            "TRACK_NOT_MAPPED",
+            "provider secret /srv/private/profile.py path /library/blocked.flac",
+        )
+    )
+    svc = _held_service(store, processor)
+    store.resolve_held_import = AsyncMock()
+
+    with pytest.raises(AutomaticManagementHoldError):
+        await svc.import_held(held_id, "user-a", "user")
+
+    store.resolve_held_import.assert_not_awaited()
+    assert held_file.exists()
+    held = await store.get_held_import(held_id, "user-a", "user")
+    assert held is not None and held.status == "held"
+
+
+@pytest.mark.parametrize("winner", ["import", "discard"])
+@pytest.mark.asyncio
+async def test_ordinary_held_import_and_discard_serialize_by_held_id(tmp_path, winner):
+    import sqlite3
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    assert _ordinary_held_action_locks == {}
+    assert _ordinary_held_action_lock_users == {}
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    held_file = tmp_path / "held" / "track.flac"
+    held_file.parent.mkdir()
+    held_file.write_bytes(b"held-bytes")
+    held_id = await _record_held(store, held_file, task_id="ordinary-held")
+    destination = tmp_path / "library" / "track.flac"
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def import_effect(held):  # noqa: ANN001
+        entered.set()
+        await release.wait()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(Path(held.held_path).read_bytes())
+        Path(held.held_path).unlink()
+        return destination
+
+    async def discard_effect(held):  # noqa: ANN001
+        entered.set()
+        await release.wait()
+        for value in held:
+            Path(value.held_path).unlink(missing_ok=True)
+
+    import_processor = MagicMock()
+    import_processor.place_held_file = AsyncMock(side_effect=import_effect)
+    discard_processor = MagicMock()
+    discard_processor.place_held_file = AsyncMock()
+    service_import = _held_service(store, import_processor)
+    service_discard = _held_service(store, discard_processor)
+    delete = AsyncMock(side_effect=discard_effect)
+    service_discard._delete_discarded_held_files = delete
+
+    if winner == "import":
+        first = asyncio.create_task(
+            service_import.import_held(held_id, "user-a", "user")
+        )
+    else:
+        first = asyncio.create_task(
+            service_discard.discard_held(held_id, "user-a", "user")
+        )
+    await entered.wait()
+    if winner == "import":
+        second = asyncio.create_task(
+            service_discard.discard_held(held_id, "user-a", "user")
+        )
+    else:
+        second = asyncio.create_task(
+            service_import.import_held(held_id, "user-a", "user")
+        )
+    await asyncio.sleep(0)
+
+    assert not second.done()
+    assert _ordinary_held_action_lock_users[held_id] == 2
+    if winner == "import":
+        import_processor.place_held_file.assert_awaited_once()
+        discard_processor.place_held_file.assert_not_awaited()
+        delete.assert_not_awaited()
+    else:
+        import_processor.place_held_file.assert_not_awaited()
+        discard_processor.place_held_file.assert_not_awaited()
+        assert delete.await_count == 1
+
+    release.set()
+    await first
+    with pytest.raises(ResourceNotFoundError):
+        await second
+
+    with sqlite3.connect(store.db_path) as connection:
+        status = connection.execute(
+            "SELECT status FROM held_imports WHERE id=?", (held_id,)
+        ).fetchone()[0]
+    assert status == ("imported" if winner == "import" else "discarded")
+    assert not held_file.exists()
+    if winner == "import":
+        assert destination.read_bytes() == b"held-bytes"
+    else:
+        assert not destination.exists()
+    assert _ordinary_held_action_locks == {}
+    assert _ordinary_held_action_lock_users == {}
+
+
+@pytest.mark.asyncio
+async def test_duplicate_ordinary_held_imports_have_one_side_effect(
+    tmp_path,
+):
+    import sqlite3
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    assert _ordinary_held_action_locks == {}
+    assert _ordinary_held_action_lock_users == {}
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    held_file = tmp_path / "held" / "track.flac"
+    held_file.parent.mkdir()
+    held_file.write_bytes(b"held-bytes")
+    held_id = await _record_held(store, held_file, task_id="ordinary-held")
+    destination = tmp_path / "library" / "track.flac"
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def import_effect(held):  # noqa: ANN001
+        entered.set()
+        await release.wait()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(Path(held.held_path).read_bytes())
+        Path(held.held_path).unlink()
+        return destination
+
+    first_processor = MagicMock()
+    first_processor.place_held_file = AsyncMock(side_effect=import_effect)
+    second_processor = MagicMock()
+    second_processor.place_held_file = AsyncMock()
+    first_service = _held_service(store, first_processor)
+    second_service = _held_service(store, second_processor)
+
+    first = asyncio.create_task(first_service.import_held(held_id, "user-a", "user"))
+    await entered.wait()
+    second = asyncio.create_task(second_service.import_held(held_id, "user-a", "user"))
+    await asyncio.sleep(0)
+
+    assert not second.done()
+    assert _ordinary_held_action_lock_users[held_id] == 2
+    assert first_processor.place_held_file.await_count == 1
+    assert second_processor.place_held_file.await_count == 0
+
+    release.set()
+    assert await first == str(destination)
+    with pytest.raises(ResourceNotFoundError):
+        await second
+
+    with sqlite3.connect(store.db_path) as connection:
+        status = connection.execute(
+            "SELECT status FROM held_imports WHERE id=?", (held_id,)
+        ).fetchone()[0]
+    assert (
+        first_processor.place_held_file.await_count
+        + second_processor.place_held_file.await_count
+        == 1
+    )
+    assert status == "imported"
+    assert not held_file.exists()
+    assert destination.read_bytes() == b"held-bytes"
+    assert _ordinary_held_action_locks == {}
+    assert _ordinary_held_action_lock_users == {}
+
+
+@pytest.mark.asyncio
+async def test_ordinary_held_action_registry_cleans_up_cancelled_waiter(tmp_path):
+    import sqlite3
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    assert _ordinary_held_action_locks == {}
+    assert _ordinary_held_action_lock_users == {}
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    held_file = tmp_path / "held" / "track.flac"
+    held_file.parent.mkdir()
+    held_file.write_bytes(b"held-bytes")
+    held_id = await _record_held(store, held_file, task_id="ordinary-held")
+    destination = tmp_path / "library" / "track.flac"
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def import_effect(held):  # noqa: ANN001
+        entered.set()
+        await release.wait()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(Path(held.held_path).read_bytes())
+        Path(held.held_path).unlink()
+        return destination
+
+    first_processor = MagicMock()
+    first_processor.place_held_file = AsyncMock(side_effect=import_effect)
+    second_processor = MagicMock()
+    second_processor.place_held_file = AsyncMock()
+    first_service = _held_service(store, first_processor)
+    second_service = _held_service(store, second_processor)
+
+    first = asyncio.create_task(first_service.import_held(held_id, "user-a", "user"))
+    await entered.wait()
+    second = asyncio.create_task(second_service.import_held(held_id, "user-a", "user"))
+    await asyncio.sleep(0)
+    assert _ordinary_held_action_lock_users[held_id] == 2
+
+    second.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await second
+    assert _ordinary_held_action_lock_users[held_id] == 1
+    assert first_processor.place_held_file.await_count == 1
+    assert second_processor.place_held_file.await_count == 0
+
+    release.set()
+    assert await first == str(destination)
+    with sqlite3.connect(store.db_path) as connection:
+        status = connection.execute(
+            "SELECT status FROM held_imports WHERE id=?", (held_id,)
+        ).fetchone()[0]
+    assert status == "imported"
+    assert not held_file.exists()
+    assert destination.read_bytes() == b"held-bytes"
+    assert _ordinary_held_action_locks == {}
+    assert _ordinary_held_action_lock_users == {}
 
 
 @pytest.mark.asyncio

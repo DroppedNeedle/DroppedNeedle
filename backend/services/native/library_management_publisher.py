@@ -607,6 +607,60 @@ class LibraryManagementPublisher:
             return "needs_attention"
 
     @staticmethod
+    def _validate_reviewed_recording_identity(
+        bundle: LibraryManagementImportBundle,
+        request: LibraryManagementImportFile,
+    ) -> None:
+        if not request.reviewed_recording_identity:
+            return
+        conversion_values = (
+            bundle.conversion_job_id,
+            bundle.conversion_expected_row_revision,
+            bundle.conversion_local_album_id,
+            bundle.conversion_preview_job_id,
+            bundle.conversion_recycle_bin_path,
+        )
+        projection_values = (
+            request.desired_document,
+            request.pinned_profile,
+            request.metadata_snapshot_id,
+            request.projection_hash,
+            request.settings_revision,
+            request.naming_policy_revision,
+            request.undo_retention_days,
+            request.baseline_relative_path,
+        )
+        request_recording = (request.recording_mbid or "").strip()
+        tag_recording = (request.tag.musicbrainz_recording_id or "").strip()
+        if (
+            len(bundle.files) != 1
+            or bundle.origin != "acquisition"
+            or request.source != "download"
+            or any(value is not None for value in conversion_values)
+            or request.conversion_recycle_only
+            or request.authoritative_mapping
+            or any(
+                value is not None
+                for value in (
+                    request.release_track_mbid,
+                    request.medium_position,
+                    request.release_track_position,
+                )
+            )
+            or (request.tag.musicbrainz_release_track_id or "").strip()
+            or any(value is not None for value in projection_values)
+            or request.management_warnings
+            or request.artifacts
+            or not request_recording
+            or not tag_recording
+            or request_recording.casefold() != tag_recording.casefold()
+        ):
+            raise ValidationError(
+                "A reviewed recording identity must be an unmanaged acquisition "
+                "request with matching recording IDs."
+            )
+
+    @staticmethod
     def _validate_import_bundle(bundle: LibraryManagementImportBundle) -> None:
         if not bundle.idempotency_key.strip():
             raise ValidationError("An import publication idempotency key is required.")
@@ -668,6 +722,9 @@ class LibraryManagementPublisher:
         for value in bundle.files:
             if not Path(value.input_path).is_absolute():
                 raise ValidationError("An import source path must be absolute.")
+            LibraryManagementPublisher._validate_reviewed_recording_identity(
+                bundle, value
+            )
             replacement_values = (
                 value.replacement_local_track_id,
                 value.replacement_root_id,
@@ -778,7 +835,9 @@ class LibraryManagementPublisher:
         return profile
 
     @staticmethod
-    def _minimal_import_document(tag) -> DesiredAudioDocument:  # noqa: ANN001
+    def _minimal_import_document(
+        tag, *, reviewed_recording_identity: bool = False
+    ) -> DesiredAudioDocument:  # noqa: ANN001
         fields = [DesiredAudioField(name="album", action="set", value=tag.album)]
         if tag.album_artist is not None:
             fields.append(
@@ -796,6 +855,14 @@ class LibraryManagementPublisher:
         ):
             if value:
                 fields.append(DesiredAudioField(name=name, action="set", value=value))
+        if reviewed_recording_identity and tag.musicbrainz_recording_id:
+            fields.append(
+                DesiredAudioField(
+                    name="musicbrainz_recording_id",
+                    action="set",
+                    value=tag.musicbrainz_recording_id,
+                )
+            )
         album_artist_ids = tuple(
             tag.musicbrainz_album_artist_ids
             or (
@@ -910,12 +977,15 @@ class LibraryManagementPublisher:
                 if request.pinned_profile is not None
                 else self._minimal_import_profile()
             )
-            desired = (
-                self._minimal_import_document(request.tag)
-                if request.conversion_recycle_only
-                else request.desired_document
-                or self._minimal_import_document(request.tag)
-            )
+            if request.conversion_recycle_only:
+                desired = self._minimal_import_document(request.tag)
+            elif request.desired_document is not None:
+                desired = request.desired_document
+            else:
+                desired = self._minimal_import_document(
+                    request.tag,
+                    reviewed_recording_identity=request.reviewed_recording_identity,
+                )
             plan = self._write_planner.plan(
                 current=read,
                 desired=desired,

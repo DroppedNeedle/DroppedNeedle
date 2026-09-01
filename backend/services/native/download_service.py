@@ -8,6 +8,7 @@ dispatches the orchestrator.
 import asyncio
 import logging
 import os
+import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -66,8 +67,18 @@ logger = logging.getLogger(__name__)
 _CLIENT_FOR_SOURCE = {"soulseek": "slskd", "usenet": "sabnzbd"}
 
 ALREADY_IN_LIBRARY = "already_in_library"
+_EDITION_CONVERSION_HELD_ACTION_MESSAGE = (
+    "Edition conversion holds must be handled through the "
+    "dedicated edition conversion workflow."
+)
 
 _LOSSLESS = {"flac", "alac", "wav", "ape", "wv"}
+
+# Provider rebuilds create new DownloadService instances, so ordinary held actions
+# share this process-local registry (the single-worker serialization boundary).
+_ordinary_held_action_registry_lock = threading.Lock()
+_ordinary_held_action_locks: dict[int, asyncio.Lock] = {}
+_ordinary_held_action_lock_users: dict[int, int] = {}
 
 
 def check_downloads_mount(
@@ -204,6 +215,25 @@ class DownloadService:
                     self._management_hold_locks.pop(source_task_id, None)
                 else:
                     self._management_hold_lock_users[source_task_id] = users
+
+    @asynccontextmanager
+    async def _held_action(self, held_id: int) -> AsyncIterator[None]:
+        with _ordinary_held_action_registry_lock:
+            lock = _ordinary_held_action_locks.setdefault(held_id, asyncio.Lock())
+            _ordinary_held_action_lock_users[held_id] = (
+                _ordinary_held_action_lock_users.get(held_id, 0) + 1
+            )
+        try:
+            async with lock:
+                yield
+        finally:
+            with _ordinary_held_action_registry_lock:
+                users = _ordinary_held_action_lock_users[held_id] - 1
+                if users == 0:
+                    _ordinary_held_action_lock_users.pop(held_id, None)
+                    _ordinary_held_action_locks.pop(held_id, None)
+                else:
+                    _ordinary_held_action_lock_users[held_id] = users
 
     def _ensure_enabled(self) -> None:
         # flag captured at construction; the config-save PUT clears the
@@ -1331,11 +1361,18 @@ class DownloadService:
         return await self._store.get_held_import(held_id, user_id, user_role)
 
     async def import_held(self, held_id: int, user_id: str, user_role: str) -> str:
-        """Force-import a held track, bypassing the AcoustID identity check (a human has
-        judged it correct), and mark it resolved. Returns the library path it landed at."""
+        """Force-import one held track under its per-id action lock."""
+        async with self._held_action(held_id):
+            return await self._import_held_locked(held_id, user_id, user_role)
+
+    async def _import_held_locked(
+        self, held_id: int, user_id: str, user_role: str
+    ) -> str:
         held = await self._store.get_held_import(held_id, user_id, user_role)
         if held is None:
             raise ResourceNotFoundError("Held track not found")
+        if held.origin == "edition_conversion":
+            raise ValidationError(_EDITION_CONVERSION_HELD_ACTION_MESSAGE)
         if held.reason.startswith("management:"):
             raise ValidationError(
                 "Library Management holds must be retried as one complete acquisition unit"
@@ -1376,11 +1413,18 @@ class DownloadService:
         return str(target)
 
     async def discard_held(self, held_id: int, user_id: str, user_role: str) -> None:
-        """Delete a held track's file and mark it discarded, re-enabling the album's
-        auto-retry. The file is always removed - a rejected candidate never lingers on disk."""
+        """Discard one held track under its per-id action lock."""
+        async with self._held_action(held_id):
+            await self._discard_held_locked(held_id, user_id, user_role)
+
+    async def _discard_held_locked(
+        self, held_id: int, user_id: str, user_role: str
+    ) -> None:
         held = await self._store.get_held_import(held_id, user_id, user_role)
         if held is None:
             raise ResourceNotFoundError("Held track not found")
+        if held.origin == "edition_conversion":
+            raise ValidationError(_EDITION_CONVERSION_HELD_ACTION_MESSAGE)
         if held.reason.startswith("management:"):
             raise ValidationError(
                 "Library Management holds must be discarded as one complete acquisition unit"
