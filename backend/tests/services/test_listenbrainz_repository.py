@@ -290,6 +290,25 @@ async def test_username_validation_uses_shared_request_funnel(monkeypatch):
     assert "/1/user/alice/listen-count" in http_client.request.call_args.args[1]
 
 
+@pytest.mark.parametrize(
+    ("validator", "args"),
+    [("validate_username", ("alice",)), ("validate_token", ())],
+)
+@pytest.mark.asyncio
+async def test_validation_propagates_rate_limited_error(monkeypatch, validator, args):
+    repo, _ = _make_repo()
+    error = RateLimitedError("provider body sentinel", retry_after_seconds=7)
+    request = AsyncMock(side_effect=error)
+    monkeypatch.setattr(repo, "_get", request)
+
+    with pytest.raises(RateLimitedError) as raised:
+        await getattr(repo, validator)(*args)
+
+    assert raised.value is error
+    assert raised.value.retry_after_seconds == 7
+    request.assert_awaited_once()
+
+
 @pytest.mark.parametrize("status_code", [401, 403])
 @pytest.mark.asyncio
 async def test_validation_preserves_not_found_and_invalid_token_single_attempts(

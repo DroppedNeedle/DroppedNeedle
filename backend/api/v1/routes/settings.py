@@ -53,7 +53,7 @@ from core.dependencies import (
     get_oidc_user_auth_service,
 )
 from services.oidc_user_auth_service import OIDCUserAuthService
-from core.exceptions import ConfigurationError, ValidationError
+from core.exceptions import ConfigurationError, RateLimitedError, ValidationError
 from core.dependencies.cleanup import clear_library_policy_dependent_caches
 from infrastructure.msgspec_fastapi import AppStruct, MsgSpecBody, MsgSpecRoute
 from middleware import CurrentAdminDep
@@ -462,7 +462,13 @@ async def verify_listenbrainz_connection(
     ),
     settings_service: SettingsService = Depends(get_settings_service),
 ):
-    result = await settings_service.verify_listenbrainz(settings)
+    try:
+        result = await settings_service.verify_listenbrainz(settings)
+    except RateLimitedError:
+        raise HTTPException(
+            status_code=429,
+            detail="ListenBrainz is temporarily rate-limiting this server. Try again shortly.",
+        ) from None
     return VerifyConnectionResponse(valid=result.valid, message=result.message)
 
 

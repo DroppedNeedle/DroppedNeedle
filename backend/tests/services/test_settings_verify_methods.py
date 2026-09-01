@@ -5,6 +5,7 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from core.exceptions import RateLimitedError
 
 from services.settings_service import (
     SettingsService,
@@ -52,6 +53,43 @@ async def test_verify_listenbrainz_does_not_reset_circuit_breaker():
     assert isinstance(result, ListenBrainzVerifyResult)
     assert result.valid is True
     MockRepo.reset_circuit_breaker.assert_not_called()
+
+
+@pytest.mark.parametrize("user_token", ["", "secret-token"])
+@pytest.mark.asyncio
+async def test_verify_listenbrainz_propagates_rate_limited_error(user_token):
+    from api.v1.schemas.settings import ListenBrainzConnectionSettings
+
+    service = _make_service()
+    settings = ListenBrainzConnectionSettings(username="alice", user_token=user_token)
+    error = RateLimitedError(
+        "provider body sentinel",
+        details={"credential": "credential sentinel"},
+        retry_after_seconds=9,
+    )
+    mock_repo_instance = MagicMock()
+    mock_repo_instance.validate_username = AsyncMock(side_effect=error)
+    mock_repo_instance.validate_token = AsyncMock(side_effect=error)
+
+    with (
+        patch("services.settings_service.get_settings", return_value=MagicMock()),
+        patch("services.settings_service.get_http_client", return_value=MagicMock()),
+        patch(
+            "repositories.listenbrainz_repository.ListenBrainzRepository"
+        ) as MockRepo,
+    ):
+        MockRepo.return_value = mock_repo_instance
+
+        with pytest.raises(RateLimitedError) as raised:
+            await service.verify_listenbrainz(settings)
+
+    assert raised.value is error
+    if user_token:
+        mock_repo_instance.validate_token.assert_awaited_once_with()
+        mock_repo_instance.validate_username.assert_not_awaited()
+    else:
+        mock_repo_instance.validate_username.assert_awaited_once_with("alice")
+        mock_repo_instance.validate_token.assert_not_awaited()
 
 
 @pytest.mark.asyncio

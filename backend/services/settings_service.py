@@ -22,7 +22,7 @@ from api.v1.schemas.settings import (
     BRAINZMASH_DISCLOSURE_VERSION,
 )
 from core.config import get_settings
-from core.exceptions import ConfigurationError, ValidationError
+from core.exceptions import ConfigurationError, RateLimitedError, ValidationError
 from models.common import ServiceStatus
 from infrastructure.cache.cache_keys import (
     JELLYFIN_PREFIX,
@@ -156,6 +156,8 @@ class SettingsService:
                 valid, message = await temp_repo.validate_username(settings.username)
 
             return ListenBrainzVerifyResult(valid=valid, message=message)
+        except RateLimitedError:
+            raise
         except Exception as e:  # noqa: BLE001
             logger.exception(f"Failed to verify ListenBrainz connection: {e}")
             return ListenBrainzVerifyResult(

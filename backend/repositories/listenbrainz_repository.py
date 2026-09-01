@@ -749,7 +749,7 @@ class ListenBrainzRepository:
         except _ListenBrainzValidationOutcome:
             return False, f"User '{user}' not found"
         except RateLimitedError:
-            return False, _RATE_LIMIT_HEALTH_MESSAGE
+            raise
         except CircuitOpenError:
             return False, "ListenBrainz is temporarily unavailable. Try again shortly."
         except _ListenBrainzAuthenticationError:
@@ -779,7 +779,7 @@ class ListenBrainzRepository:
         except _ListenBrainzValidationOutcome:
             return False, "Token invalid or expired"
         except RateLimitedError:
-            return False, _RATE_LIMIT_HEALTH_MESSAGE
+            raise
         except CircuitOpenError:
             return False, "ListenBrainz is temporarily unavailable. Try again shortly."
         except _ListenBrainzAuthenticationError:

@@ -59,6 +59,7 @@ from core.exceptions import (
     AuthenticationError,
     ConfigurationError,
     ExternalServiceError,
+    RateLimitedError,
     TokenNotAuthorizedError,
 )
 from core.task_registry import TaskRegistry
@@ -286,11 +287,17 @@ async def connect_listenbrainz(
     # account yields silently-empty discovery
     if not body.username.strip():
         raise HTTPException(status_code=400, detail="A ListenBrainz username is required")
-    result = await settings_service.verify_listenbrainz(
-        ListenBrainzConnectionSettings(
-            username=body.username, user_token=body.user_token, enabled=True
+    try:
+        result = await settings_service.verify_listenbrainz(
+            ListenBrainzConnectionSettings(
+                username=body.username, user_token=body.user_token, enabled=True
+            )
         )
-    )
+    except RateLimitedError:
+        raise HTTPException(
+            status_code=429,
+            detail="ListenBrainz is temporarily rate-limiting this server. Try again shortly.",
+        ) from None
     if not result.valid:
         raise HTTPException(status_code=400, detail=result.message)
     await store.upsert(
