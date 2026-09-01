@@ -276,6 +276,35 @@ def _title_conflicts(candidate: _FolderCandidate, track: ExpectedTrack) -> bool:
     return fuzz.token_set_ratio(tag_title, track.title) < _TITLE_CONFLICT_RATIO
 
 
+def _fingerprint_recording_proof(fp, expected_recording_id: str | None) -> bool | None:  # noqa: ANN001
+    """Return whether a confident fingerprint candidate set contains the expected
+    recording, or ``None`` when no positive recording proof is available.
+
+    Parsed results expose all valid candidate IDs in ``recording_ids``. An empty
+    collection falls back to the singular ``recording_id`` for manually constructed
+    and legacy results.
+    """
+    if getattr(fp, "status", None) != "pass":
+        return None
+    expected = (expected_recording_id or "").strip().casefold()
+    if not expected:
+        return None
+
+    candidates = getattr(fp, "recording_ids", None) or ()
+    candidate_ids = {
+        candidate.strip().casefold()
+        for candidate in candidates
+        if isinstance(candidate, str) and candidate.strip()
+    }
+    if not candidate_ids:
+        singular = (getattr(fp, "recording_id", None) or "").strip().casefold()
+        if singular:
+            candidate_ids.add(singular)
+    if not candidate_ids:
+        return None
+    return expected in candidate_ids
+
+
 def _import_confidence(*, tag, info, expected_track, canonical_duration, fp) -> float:  # noqa: ANN001
     """Attribution confidence for a download import, on the SCANNER's existing scale
     (P7/D7 - the hardcoded 1.0 meant "we trust the album identity", not "this audio is
@@ -300,8 +329,7 @@ def _import_confidence(*, tag, info, expected_track, canonical_duration, fp) -> 
         tag_rec = (tag.musicbrainz_recording_id or "").strip().lower()
         if tag_rec and tag_rec == expected_rec:
             return 1.0
-        fp_rec = (getattr(fp, "recording_id", None) or "").strip().lower() if fp else ""
-        if fp_rec and getattr(fp, "status", None) == "pass" and fp_rec == expected_rec:
+        if _fingerprint_recording_proof(fp, expected_rec) is True:
             return 1.0
     if (
         canonical_duration
@@ -423,10 +451,12 @@ def _fingerprint_disagrees(fp, expected_track, expected_artist: str | None) -> b
     false-rejects valid tracks (e.g. a 2011 reissue + its BBC-session bonuses). Lidarr
     verifies recording identity, not edition, and fails OPEN - a non-pass result never
     rejects, leaving the tag/duration match to stand. ``expected_track`` may be None (the
-    slskd path has no per-file title), in which case only the artist is checked. When both
-    sides provide a recording ID, a PASS fingerprint mismatch rejects before artist
-    allowances and an exact match permits display-credit differences after the title veto.
-    Without both IDs, the existing conservative artist gate remains in force."""
+    slskd path has no per-file title), in which case only the artist is checked.
+    When a confident result provides candidate recording IDs, membership in that set
+    rejects before artist allowances and a matching candidate permits display-credit
+    differences after the title veto. Without candidate IDs, the singular recording ID
+    fallback (for legacy/manual results) and existing conservative artist gate remain.
+    """
     if getattr(fp, "status", None) != "pass":
         return False
     fp_title = (getattr(fp, "title", None) or "").strip()
@@ -441,16 +471,14 @@ def _fingerprint_disagrees(fp, expected_track, expected_artist: str | None) -> b
     ):
         return True  # clearly the wrong song
 
-    fp_recording_id = (getattr(fp, "recording_id", None) or "").strip().casefold()
-    expected_recording_id = (
-        (getattr(expected_track, "recording_mbid", None) or "").strip().casefold()
+    recording_proof = _fingerprint_recording_proof(
+        fp,
+        getattr(expected_track, "recording_mbid", None)
         if expected_track is not None
-        else ""
+        else None,
     )
-    if fp_recording_id and expected_recording_id:
-        if fp_recording_id != expected_recording_id:
-            return True
-        return False
+    if recording_proof is not None:
+        return not recording_proof
 
     # Wrong artist - but skip for various-artists compilations, where the album artist
     # legitimately differs from a track's performing artist.
@@ -609,9 +637,7 @@ def _is_strict_upgrade(existing_tier: str, info: AudioInfo) -> bool:
     """Strictly-better only (D4): equal or worse NEVER replaces."""
     return tier_rank(
         tier_for(info.file_format or "", info.bitrate, info.bit_depth)
-    ) > tier_rank(
-        existing_tier
-    )
+    ) > tier_rank(existing_tier)
 
 
 class FileProcessor:
@@ -1325,10 +1351,7 @@ class FileProcessor:
                     filename=source.name,
                 )
             if conversion_verification and (
-                not track.recording_mbid
-                or getattr(fp, "status", None) != "pass"
-                or (getattr(fp, "recording_id", None) or "").casefold()
-                != track.recording_mbid.casefold()
+                _fingerprint_recording_proof(fp, track.recording_mbid) is not True
             ):
                 raise VerificationFailed(
                     "AcoustID could not prove the requested recording",
@@ -2014,11 +2037,13 @@ class FileProcessor:
                     filename=expected.filename,
                 )
             if conversion_verification and (
-                expected_track is None
-                or not expected_track.recording_mbid
-                or getattr(fp, "status", None) != "pass"
-                or (getattr(fp, "recording_id", None) or "").casefold()
-                != expected_track.recording_mbid.casefold()
+                _fingerprint_recording_proof(
+                    fp,
+                    expected_track.recording_mbid
+                    if expected_track is not None
+                    else None,
+                )
+                is not True
             ):
                 raise VerificationFailed(
                     "AcoustID could not prove the requested recording",
@@ -2027,10 +2052,8 @@ class FileProcessor:
                 )
             if (
                 expected_track is not None
-                and expected_track.recording_mbid
-                and getattr(fp, "status", None) == "pass"
-                and (getattr(fp, "recording_id", None) or "").casefold()
-                == expected_track.recording_mbid.casefold()
+                and _fingerprint_recording_proof(fp, expected_track.recording_mbid)
+                is True
             ):
                 authoritative_mapping = bool(
                     manifest.release_mbid and expected_track.release_track_mbid

@@ -14,6 +14,7 @@ Tier 3, queue for manual review". Fingerprinting never raises into the scan.
 
 import asyncio
 import hashlib
+import math
 import logging
 import os
 import subprocess
@@ -49,6 +50,7 @@ _FPCALC_TIMEOUT = 30.0
 _MAX_FPCALC_CONCURRENCY = 4
 # A best result below this AcoustID score is not a confident match.
 _ACOUSTID_MIN_SCORE = 0.70
+_ACOUSTID_MALFORMED_RESPONSE = "malformed AcoustID response"
 _ARTIST_SEPARATORS = (";", ",", "feat.", "ft.", "&", "+", "vs.", " x ", " with ")
 
 # F-040: the house resilience pattern (audiodb/coverart/geocoding precedent) -
@@ -153,19 +155,39 @@ def _retry_after_seconds(header: str | None) -> float:
 
 
 def _echo_partial(result: FingerprintResult) -> FingerprintResult:
-    values = {field: getattr(result, field) for field in (
-        "status", "score", "recording_id", "title", "artist",
-        "duration", "error", "release_group_ids",
-    )}
+    values = {
+        field: getattr(result, field)
+        for field in (
+            "status",
+            "score",
+            "recording_id",
+            "recording_ids",
+            "title",
+            "artist",
+            "duration",
+            "error",
+            "release_group_ids",
+        )
+    }
     values["partial_decode"] = True
     return FingerprintResult(**values)
 
 
 def _echo_duration(result: FingerprintResult, duration: int) -> FingerprintResult:
-    values = {field: getattr(result, field) for field in (
-        "status", "score", "recording_id", "title", "artist",
-        "duration", "error", "release_group_ids",
-    )}
+    values = {
+        field: getattr(result, field)
+        for field in (
+            "status",
+            "score",
+            "recording_id",
+            "recording_ids",
+            "title",
+            "artist",
+            "duration",
+            "error",
+            "release_group_ids",
+        )
+    }
     values["duration"] = duration
     return FingerprintResult(**values)
 
@@ -299,9 +321,7 @@ class AudioFingerprinter:
                 "AcoustID rate limit exceeded", retry_after_seconds=retry_after
             )
         if response.status_code >= 500:
-            raise ExternalServiceError(
-                f"AcoustID API error ({response.status_code})"
-            )
+            raise ExternalServiceError(f"AcoustID API error ({response.status_code})")
         if response.status_code != 200:
             raise AcoustIDRejectedError(
                 f"AcoustID rejected the lookup ({response.status_code})"
@@ -375,34 +395,134 @@ class AudioFingerprinter:
             raise ValueError("fpcalc output missing or non-positive DURATION")
         return fingerprint, duration
 
-    def _parse_response(self, payload: dict[str, Any]) -> FingerprintResult:
+    def _parse_response(self, payload: Any) -> FingerprintResult:
         # See https://acoustid.org/webservice
-        if payload.get("status") != "ok":
+        if not isinstance(payload, dict):
             return FingerprintResult(
-                status=FingerprintStatus.ERROR, error=str(payload.get("status"))
+                status=FingerprintStatus.ERROR,
+                error=_ACOUSTID_MALFORMED_RESPONSE,
             )
-        results = payload.get("results") or []
+        status = payload.get("status")
+        if not isinstance(status, str):
+            return FingerprintResult(
+                status=FingerprintStatus.ERROR,
+                error=_ACOUSTID_MALFORMED_RESPONSE,
+            )
+        if status != "ok":
+            return FingerprintResult(status=FingerprintStatus.ERROR, error=status)
+
+        raw_results = payload.get("results")
+        if raw_results is None:
+            results: list[Any] = []
+        elif isinstance(raw_results, list):
+            results = raw_results
+        else:
+            return FingerprintResult(
+                status=FingerprintStatus.ERROR,
+                error=_ACOUSTID_MALFORMED_RESPONSE,
+            )
         if not results:
             return FingerprintResult(status=FingerprintStatus.SKIP)
+
         best = results[0]
-        score = best.get("score") or 0.0
+        if not isinstance(best, dict):
+            return FingerprintResult(
+                status=FingerprintStatus.ERROR,
+                error=_ACOUSTID_MALFORMED_RESPONSE,
+            )
+        raw_score = best.get("score")
+        if raw_score is None:
+            score = 0.0
+        elif isinstance(raw_score, bool) or not isinstance(raw_score, (int, float)):
+            return FingerprintResult(
+                status=FingerprintStatus.ERROR,
+                error=_ACOUSTID_MALFORMED_RESPONSE,
+            )
+        else:
+            try:
+                score = float(raw_score)
+            except (OverflowError, ValueError):
+                return FingerprintResult(
+                    status=FingerprintStatus.ERROR,
+                    error=_ACOUSTID_MALFORMED_RESPONSE,
+                )
+            if not math.isfinite(score):
+                return FingerprintResult(
+                    status=FingerprintStatus.ERROR,
+                    error=_ACOUSTID_MALFORMED_RESPONSE,
+                )
         if score < _ACOUSTID_MIN_SCORE:
             return FingerprintResult(status=FingerprintStatus.SKIP, score=score)
-        recordings = best.get("recordings") or []
-        if not recordings or not recordings[0].get("id"):
+
+        raw_recordings = best.get("recordings")
+        if raw_recordings is None:
+            recordings: list[Any] = []
+        elif isinstance(raw_recordings, list):
+            recordings = raw_recordings
+        else:
+            return FingerprintResult(
+                status=FingerprintStatus.ERROR,
+                error=_ACOUSTID_MALFORMED_RESPONSE,
+            )
+        selected_recording: dict[str, Any] | None = None
+        recording_ids: list[str] = []
+        seen_recording_ids: set[str] = set()
+        for recording in recordings:
+            if not isinstance(recording, dict):
+                continue
+            recording_id = recording.get("id")
+            if not isinstance(recording_id, str):
+                continue
+            recording_id = recording_id.strip()
+            normalized_id = recording_id.casefold()
+            if not recording_id or normalized_id in seen_recording_ids:
+                continue
+            seen_recording_ids.add(normalized_id)
+            recording_ids.append(recording_id)
+            if selected_recording is None:
+                selected_recording = recording
+        if selected_recording is None:
             # Confident audio match, but nothing to key the library row on.
             return FingerprintResult(status=FingerprintStatus.FAIL, score=score)
-        recording = recordings[0]
-        artists = recording.get("artists") or []
-        artist = "; ".join(a.get("name", "") for a in artists if a.get("name")) or None
+        recording = selected_recording
+
+        raw_artists = recording.get("artists")
+        artist_names: list[str] = []
+        if isinstance(raw_artists, list):
+            for artist_entry in raw_artists:
+                if not isinstance(artist_entry, dict):
+                    continue
+                name = artist_entry.get("name")
+                if isinstance(name, str):
+                    name = name.strip()
+                    if name:
+                        artist_names.append(name)
+        artist = "; ".join(artist_names) or None
+
+        raw_title = recording.get("title")
+        title = raw_title.strip() or None if isinstance(raw_title, str) else None
+        raw_duration = recording.get("duration")
+        if isinstance(raw_duration, bool):
+            duration = None
+        elif isinstance(raw_duration, int):
+            duration = raw_duration
+        elif (
+            isinstance(raw_duration, float)
+            and math.isfinite(raw_duration)
+            and raw_duration.is_integer()
+        ):
+            duration = int(raw_duration)
+        else:
+            duration = None
         return FingerprintResult(
             status=FingerprintStatus.PASS,
             score=score,
-            recording_id=recording.get("id"),
-            title=recording.get("title"),
+            recording_id=recording_ids[0],
+            title=title,
             artist=artist,
-            duration=recording.get("duration"),
+            duration=duration,
             release_group_ids=self._extract_release_group_ids(recording, best),
+            recording_ids=recording_ids,
         )
 
     @staticmethod
@@ -414,9 +534,21 @@ class AudioFingerprinter:
         also carry them at the result level, so both are merged (deduped, order
         preserved). Used by the download-verify release-group check (D15/B2)."""
         ids: list[str] = []
+        if not isinstance(recording, dict) or not isinstance(best, dict):
+            return ids
+        seen_ids: set[str] = set()
         for source in (recording.get("releasegroups"), best.get("releasegroups")):
-            for rg in source or []:
-                rg_id = rg.get("id")
-                if rg_id and rg_id not in ids:
-                    ids.append(rg_id)
+            if not isinstance(source, list):
+                continue
+            for release_group in source:
+                if not isinstance(release_group, dict):
+                    continue
+                release_group_id = release_group.get("id")
+                if not isinstance(release_group_id, str):
+                    continue
+                release_group_id = release_group_id.strip()
+                if not release_group_id or release_group_id in seen_ids:
+                    continue
+                seen_ids.add(release_group_id)
+                ids.append(release_group_id)
         return ids

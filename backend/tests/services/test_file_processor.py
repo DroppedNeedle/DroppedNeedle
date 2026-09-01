@@ -267,6 +267,125 @@ def _make_processor(
     return fp, manager, client, library, downloads
 
 
+def _conversion_manifest(filename: str = "A/track.flac") -> DownloadManifest:
+    return _manifest(
+        ExpectedFile(filename=filename, size=1),
+        release_mbid="release-1",
+        is_track=True,
+        expected_tracks=[
+            ExpectedTrack(
+                track_number=1,
+                title="Airbag",
+                recording_mbid="recording-1",
+                release_track_mbid="release-track-1",
+            )
+        ],
+        origin="edition_conversion",
+    )
+
+
+def _later_recording_fingerprint() -> FingerprintResult:
+    return FingerprintResult(
+        status="pass",
+        score=0.95,
+        recording_id="recording-other",
+        recording_ids=["recording-other", "recording-1"],
+        title="Airbag",
+        artist="Radiohead",
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_one_conversion_accepts_later_recording_candidate(
+    tmp_path: Path,
+) -> None:
+    fingerprinter = MagicMock()
+    fingerprinter.fingerprint = AsyncMock(return_value=_later_recording_fingerprint())
+    fp, _manager, _client, _library, downloads = _make_processor(
+        tmp_path, fingerprinter=fingerprinter, verify=False
+    )
+    _place(downloads, "A/track.flac")
+    manifest = _conversion_manifest()
+
+    planned = await fp._process_one(manifest.target_files[0], manifest, set())
+
+    assert planned.authoritative_mapping is True
+    assert planned.recording_mbid == "recording-1"
+    assert planned.confidence == 1.0
+
+
+@pytest.mark.asyncio
+async def test_place_matched_file_conversion_accepts_later_recording_candidate(
+    tmp_path: Path,
+) -> None:
+    fingerprinter = MagicMock()
+    fingerprinter.fingerprint = AsyncMock(return_value=_later_recording_fingerprint())
+    fp, _manager, _client, _library, downloads = _make_processor(
+        tmp_path, fingerprinter=fingerprinter, verify=False
+    )
+    _place(downloads, "A/track.flac")
+    source = downloads / "A/track.flac"
+    tag, info = AudioTagger().read_tags(source)
+    candidate = _FolderCandidate(path=source, tag=tag, info=info)
+    manifest = _conversion_manifest()
+
+    planned = await fp._place_matched_file(
+        manifest, candidate, manifest.expected_tracks[0]
+    )
+
+    assert planned.authoritative_mapping is True
+    assert planned.recording_mbid == "recording-1"
+    assert planned.confidence == 1.0
+
+
+@pytest.mark.parametrize(
+    ("fingerprint", "reason"),
+    [
+        pytest.param(
+            FingerprintResult(
+                status="pass",
+                score=0.95,
+                recording_id="recording-other",
+                recording_ids=["recording-other"],
+                title="Airbag",
+                artist="Radiohead",
+            ),
+            "fingerprint_mismatch",
+            id="absent-expected-recording",
+        ),
+        pytest.param(
+            FingerprintResult(
+                status="pass",
+                score=0.95,
+                title="Airbag",
+                artist="Radiohead",
+            ),
+            "fingerprint_unverified",
+            id="no-recording-proof",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_process_one_conversion_rejects_without_positive_recording_proof(
+    tmp_path: Path,
+    fingerprint: FingerprintResult,
+    reason: str,
+) -> None:
+    fingerprinter = MagicMock()
+    fingerprinter.fingerprint = AsyncMock(return_value=fingerprint)
+    fp, _manager, _client, _library, downloads = _make_processor(
+        tmp_path, fingerprinter=fingerprinter, verify=False
+    )
+    _place(downloads, "A/track.flac")
+    manifest = _conversion_manifest()
+
+    from services.native.file_processor import VerificationFailed
+
+    with pytest.raises(VerificationFailed) as raised:
+        await fp._process_one(manifest.target_files[0], manifest, set())
+    assert raised.value.reason == reason
+
+
 @pytest.mark.asyncio
 async def test_shared_publisher_receives_complete_slskd_album_bundle(tmp_path: Path):
     async def publish(bundle):
@@ -962,13 +1081,21 @@ def test_recording_mbid_overrides_a_title_conflict(tmp_path):
 # --- fingerprint recording-identity check (release-group is NOT gated) ------------
 
 
-def _fp(status="pass", title=None, artist=None, rgs=None, recording_id=None):
+def _fp(
+    status="pass",
+    title=None,
+    artist=None,
+    rgs=None,
+    recording_id=None,
+    recording_ids=None,
+):
     from models.audio import FingerprintResult
 
     return FingerprintResult(
         status=status,
         score=0.95,
         recording_id=recording_id,
+        recording_ids=recording_ids or [],
         title=title,
         artist=artist,
         release_group_ids=rgs or [],
@@ -1071,6 +1198,44 @@ def test_fingerprint_recording_mismatch_rejects_before_various_artist_allowance(
     assert _fingerprint_disagrees(fp, track, "Various Artists")
 
 
+def test_fingerprint_accepts_expected_recording_candidate_after_selected_match():
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+
+    track = ExpectedTrack(
+        track_number=1,
+        title="Compilation Song",
+        recording_mbid="recording-wanted",
+    )
+    fp = _fp(
+        title="Compilation Song",
+        artist="Different Display Artist",
+        recording_id="recording-other",
+        recording_ids=["recording-other", "recording-wanted"],
+    )
+
+    assert _fingerprint_disagrees(fp, track, "Requested Artist") is False
+
+
+def test_fingerprint_recording_candidates_reject_absent_expected_before_artist_allowance():
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+
+    track = ExpectedTrack(
+        track_number=1,
+        title="Compilation Song",
+        recording_mbid="recording-wanted",
+    )
+    fp = _fp(
+        title="Compilation Song",
+        artist="Specific Band",
+        recording_id="recording-other",
+        recording_ids=["recording-other"],
+    )
+
+    assert _fingerprint_disagrees(fp, track, "Various Artists") is True
+
+
 def test_fingerprint_recording_mismatch_rejects_base_audio_for_requested_remix():
     from models.download_manifest import ExpectedTrack
     from services.native.file_processor import _fingerprint_disagrees
@@ -1101,6 +1266,7 @@ def test_fingerprint_title_veto_precedes_exact_recording_match():
         title="Clearly Different Song",
         artist="Unrelated Artist",
         recording_id="recording-wanted",
+        recording_ids=["recording-wanted"],
     )
     assert _fingerprint_disagrees(fp, track, "Requested Artist")
 

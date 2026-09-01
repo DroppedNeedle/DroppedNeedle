@@ -46,8 +46,8 @@ def _track(index: int, *, recording: str) -> dict:
 def _service(tmp_path: Path, *, source_ready: bool = True):
     store = AsyncMock()
     store.get_active_edition_conversion.return_value = None
-    store.create_edition_conversion.side_effect = (
-        lambda job, targets, local_files: EditionConversionJob(
+    store.create_edition_conversion.side_effect = lambda job, targets, local_files: (
+        EditionConversionJob(
             **{
                 field: getattr(job, field)
                 for field in EditionConversionJob.__struct_fields__
@@ -210,8 +210,95 @@ async def test_start_blocks_acquisition_when_no_source_is_ready(tmp_path: Path) 
     store.start_edition_conversion.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    "fingerprint",
+    [
+        pytest.param(
+            SimpleNamespace(status="no_match", recording_id=None),
+            id="no-proof",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                status="pass",
+                recording_id="recording-other",
+                recording_ids=["recording-other"],
+            ),
+            id="absent-expected-recording",
+        ),
+    ],
+)
 @pytest.mark.asyncio
 async def test_final_preview_reverifies_a_retained_copy_with_acoustid(
+    tmp_path: Path, fingerprint: SimpleNamespace
+) -> None:
+    service, store, _albums = _service(tmp_path)
+    source = tmp_path / "retained.flac"
+    source.write_bytes(b"retained audio")
+    target = EditionConversionTarget(
+        job_id="job-1",
+        ordinal=0,
+        disc_number=1,
+        track_number=1,
+        release_track_mbid=_mbid(401),
+        recording_mbid=_mbid(301),
+        title="Track",
+        duration_seconds=1,
+        state="kept",
+        kept_local_track_id="local-1",
+    )
+    job = EditionConversionJob(
+        id="job-1",
+        local_album_id="album-1",
+        target_release_group_mbid=RELEASE_GROUP,
+        target_release_mbid=RELEASE,
+        target_album_title="Album",
+        target_artist_name="Artist",
+        state="ready",
+        expected_album_revision=1,
+        expected_input_revision="input",
+        expected_identity_revision="identity",
+        preflight_token_hash="hash",
+        download_source_ready=True,
+        required_temporary_bytes=1,
+        kept_count=1,
+        acquire_count=0,
+        recycle_count=0,
+        staged_count=0,
+        failed_count=0,
+        final_preview_job_id=None,
+        final_preview_token_hash=None,
+        final_bundle_json=None,
+        final_bundle_hash=None,
+        requested_by_user_id="admin",
+        error_code=None,
+        created_at=1,
+        updated_at=1,
+        targets=(target,),
+    )
+    store.get_album_identification_context.return_value = {
+        "album": {"row_revision": 1},
+        "identity": None,
+        "tracks": [
+            {
+                "id": "local-1",
+                "availability": "indexed",
+                "file_path": str(source),
+            }
+        ],
+    }
+    service._assert_current = AsyncMock()
+    service._fingerprinter.fingerprint.return_value = fingerprint
+
+    with pytest.raises(ValidationError, match="could not be verified"):
+        await service._ensure_final_preview(job, preview_token="preview-token")
+
+    service._fingerprinter.fingerprint.assert_awaited_once()
+    store.stage_retained_edition_conversion_artifact.assert_not_awaited()
+    assert list((tmp_path / "held").iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_final_preview_accepts_expected_recording_after_selected_candidate(
     tmp_path: Path,
 ) -> None:
     service, store, _albums = _service(tmp_path)
@@ -271,12 +358,18 @@ async def test_final_preview_reverifies_a_retained_copy_with_acoustid(
     }
     service._assert_current = AsyncMock()
     service._fingerprinter.fingerprint.return_value = SimpleNamespace(
-        status="no_match", recording_id=None
+        status="pass",
+        recording_id="recording-other",
+        recording_ids=["recording-other", target.recording_mbid],
     )
 
-    with pytest.raises(ValidationError, match="could not be verified"):
+    class PreviewReachedReload(Exception):
+        pass
+
+    service._require = AsyncMock(side_effect=PreviewReachedReload)
+
+    with pytest.raises(PreviewReachedReload):
         await service._ensure_final_preview(job, preview_token="preview-token")
 
     service._fingerprinter.fingerprint.assert_awaited_once()
-    store.stage_retained_edition_conversion_artifact.assert_not_awaited()
-    assert list((tmp_path / "held").iterdir()) == []
+    store.stage_retained_edition_conversion_artifact.assert_awaited_once()

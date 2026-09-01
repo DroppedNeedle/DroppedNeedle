@@ -50,6 +50,7 @@ from models.library_management import (
 from models.library_work import OperationJob
 from api.v1.schemas.library_management import settings_revision
 from services.native.library_management_naming_policy import naming_policy_revision
+from services.native.file_processor import _fingerprint_recording_proof
 from services.native.library_policy_resolver import LibraryPolicyResolver
 from services.native.identification_revisions import (
     album_identity_revision,
@@ -778,10 +779,8 @@ class EditionConversionService:
                 )
                 fingerprint = await self._fingerprinter.fingerprint(held)
                 if (
-                    fingerprint.status != "pass"
-                    or not fingerprint.recording_id
-                    or fingerprint.recording_id.casefold()
-                    != target.recording_mbid.casefold()
+                    _fingerprint_recording_proof(fingerprint, target.recording_mbid)
+                    is not True
                 ):
                     raise ValidationError(
                         "A retained track could not be verified as the requested recording."

@@ -25,7 +25,9 @@ _FP_OK = b"DURATION=183\nFINGERPRINT=AQADtMmSaEkSRYkG\n"
 
 
 class _FakeProc:
-    def __init__(self, *, stdout=b"", stderr=b"", returncode=0, delay=0.0, concurrency=None):
+    def __init__(
+        self, *, stdout=b"", stderr=b"", returncode=0, delay=0.0, concurrency=None
+    ):
         self._stdout = stdout
         self._stderr = stderr
         self.returncode = returncode
@@ -35,7 +37,9 @@ class _FakeProc:
     async def communicate(self):
         if self._concurrency is not None:
             self._concurrency["now"] += 1
-            self._concurrency["max"] = max(self._concurrency["max"], self._concurrency["now"])
+            self._concurrency["max"] = max(
+                self._concurrency["max"], self._concurrency["now"]
+            )
         if self._delay:
             await asyncio.sleep(self._delay)
         if self._concurrency is not None:
@@ -49,11 +53,26 @@ class _FakeProc:
         return self.returncode
 
 
-def _patch_fpcalc(monkeypatch, *, stdout=_FP_OK, stderr=b"", returncode=0, delay=0.0, concurrency=None, raises=None):
+def _patch_fpcalc(
+    monkeypatch,
+    *,
+    stdout=_FP_OK,
+    stderr=b"",
+    returncode=0,
+    delay=0.0,
+    concurrency=None,
+    raises=None,
+):
     async def fake_exec(*args, **kwargs):
         if raises is not None:
             raise raises
-        return _FakeProc(stdout=stdout, stderr=stderr, returncode=returncode, delay=delay, concurrency=concurrency)
+        return _FakeProc(
+            stdout=stdout,
+            stderr=stderr,
+            returncode=returncode,
+            delay=delay,
+            concurrency=concurrency,
+        )
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
@@ -106,6 +125,187 @@ async def test_pass_returns_recording_match(monkeypatch):
     assert res.recording_id == "rec-1"
     assert res.title == "Airbag"
     assert res.artist == "Radiohead"
+
+
+def test_parse_pass_skips_malformed_recordings_and_collects_candidates():
+    payload = {
+        "status": "ok",
+        "results": [
+            {
+                "score": 0.95,
+                "recordings": [
+                    {"title": "Missing recording ID"},
+                    {
+                        "id": "REC-1",
+                        "title": "First valid",
+                        "artists": [{"name": "Artist"}],
+                        "releasegroups": [{"id": "rg-1"}],
+                    },
+                    {
+                        "id": "rec-1",
+                        "title": "Duplicate valid",
+                        "artists": [{"name": "Other Artist"}],
+                    },
+                    {
+                        "id": "rec-2",
+                        "title": "Later valid",
+                        "artists": [{"name": "Artist"}],
+                    },
+                ],
+            },
+            {
+                "score": 0.90,
+                "recordings": [
+                    {
+                        "id": "lower-result",
+                        "title": "Lower-ranked result",
+                    }
+                ],
+            },
+        ],
+    }
+
+    result = AudioFingerprinter.__new__(AudioFingerprinter)._parse_response(payload)
+
+    assert result.status == FingerprintStatus.PASS
+    assert result.recording_id == "REC-1"
+    # Only candidates on the selected highest-ranked result are retained.
+    assert result.recording_ids == ["REC-1", "rec-2"]
+    assert result.title == "First valid"
+    assert result.artist == "Artist"
+    assert result.release_group_ids == ["rg-1"]
+
+
+def test_parse_fail_when_no_recording_has_a_valid_id():
+    payload = {
+        "status": "ok",
+        "results": [
+            {
+                "score": 0.95,
+                "recordings": [{"title": "Missing recording ID"}, None],
+            }
+        ],
+    }
+
+    result = AudioFingerprinter.__new__(AudioFingerprinter)._parse_response(payload)
+
+    assert result.status == FingerprintStatus.FAIL
+    assert result.recording_id is None
+    assert result.recording_ids == []
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_status"),
+    [
+        pytest.param([], FingerprintStatus.ERROR, id="payload-not-object"),
+        pytest.param(
+            {"status": {"sensitive": "value"}},
+            FingerprintStatus.ERROR,
+            id="status-not-string",
+        ),
+        pytest.param(
+            {"status": "ok", "results": "not-a-list"},
+            FingerprintStatus.ERROR,
+            id="results-not-list",
+        ),
+        pytest.param(
+            {"status": "ok", "results": [None]},
+            FingerprintStatus.ERROR,
+            id="selected-result-not-object",
+        ),
+        pytest.param(
+            {
+                "status": "ok",
+                "results": [{"score": "not-a-number", "recordings": []}],
+            },
+            FingerprintStatus.ERROR,
+            id="score-not-number",
+        ),
+        pytest.param(
+            {
+                "status": "ok",
+                "results": [{"score": 0.95, "recordings": {"id": "rec-1"}}],
+            },
+            FingerprintStatus.ERROR,
+            id="recordings-not-list",
+        ),
+        pytest.param(
+            {"status": "ok", "results": [{"score": 0.95, "recordings": []}]},
+            FingerprintStatus.FAIL,
+            id="confident-without-recording",
+        ),
+        pytest.param(
+            {"status": "ok", "results": [{"score": 0.95, "recordings": [None]}]},
+            FingerprintStatus.FAIL,
+            id="malformed-recordings-without-recording",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_malformed_acoustid_response_returns_status_without_raising(
+    monkeypatch, payload, expected_status
+):
+    _patch_fpcalc(monkeypatch)
+    result = await _make(_http_client(payload)).fingerprint(Path("/x.flac"))
+
+    assert result.status == expected_status
+    if expected_status == FingerprintStatus.ERROR:
+        assert result.error == "malformed AcoustID response"
+
+
+@pytest.mark.asyncio
+async def test_malformed_nested_recording_fields_do_not_hide_later_candidate(
+    monkeypatch,
+):
+    _patch_fpcalc(monkeypatch)
+    payload = {
+        "status": "ok",
+        "results": [
+            {
+                "score": 0.95,
+                "recordings": [
+                    {
+                        "id": "top-recording",
+                        "title": 123,
+                        "artists": [
+                            None,
+                            {"name": "Top Artist"},
+                            {"name": 7},
+                        ],
+                        "duration": "180",
+                        "releasegroups": [
+                            None,
+                            {"id": "rg-top"},
+                            {"id": 7},
+                            {"id": "rg-top"},
+                        ],
+                    },
+                    None,
+                    {
+                        "id": "expected-recording",
+                        "title": "Airbag",
+                        "artists": [{"name": "Radiohead"}],
+                    },
+                ],
+                "releasegroups": [
+                    {"id": "rg-result"},
+                    None,
+                    {"id": None},
+                    {"id": "rg-result"},
+                ],
+            }
+        ],
+    }
+
+    result = await _make(_http_client(payload)).fingerprint(Path("/x.flac"))
+
+    assert result.status == FingerprintStatus.PASS
+    assert result.recording_id == "top-recording"
+    assert result.recording_ids == ["top-recording", "expected-recording"]
+    assert result.title is None
+    assert result.artist == "Top Artist"
+    assert result.duration == 183
+    assert result.release_group_ids == ["rg-top", "rg-result"]
 
 
 @pytest.mark.asyncio
@@ -219,6 +419,44 @@ async def test_nonzero_exit_with_fingerprint_still_passes(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_partial_and_duration_echo_preserve_recording_candidates(
+    monkeypatch, tmp_path
+):
+    _patch_fpcalc(monkeypatch, returncode=2, stdout=_FP_OK)
+    payload = {
+        "status": "ok",
+        "results": [
+            {
+                "score": 0.95,
+                "recordings": [
+                    {
+                        "id": "rec-1",
+                        "title": "Airbag",
+                        "artists": [{"name": "Radiohead"}],
+                    },
+                    {
+                        "id": "rec-2",
+                        "title": "Airbag",
+                        "artists": [{"name": "Radiohead"}],
+                    },
+                ],
+            }
+        ],
+    }
+    fp = _make(_http_client(payload))
+    audio = tmp_path / "short.flac"
+    audio.write_bytes(b"short")
+
+    result = await fp.fingerprint(audio)
+
+    assert result.status == FingerprintStatus.PASS
+    assert result.recording_ids == ["rec-1", "rec-2"]
+    assert result.recording_id == "rec-1"
+    assert result.duration == 183
+    assert result.partial_decode is True
+
+
+@pytest.mark.asyncio
 async def test_error_when_fpcalc_output_has_no_fingerprint(monkeypatch):
     _patch_fpcalc(monkeypatch, stdout=b"DURATION=100\n")
     fp = _make(_http_client(_pass_payload()))
@@ -237,7 +475,9 @@ async def test_error_when_acoustid_http_fails(monkeypatch):
 @pytest.mark.asyncio
 async def test_error_when_acoustid_status_not_ok(monkeypatch):
     _patch_fpcalc(monkeypatch)
-    fp = _make(_http_client({"status": "error", "error": {"message": "invalid client"}}))
+    fp = _make(
+        _http_client({"status": "error", "error": {"message": "invalid client"}})
+    )
     res = await fp.fingerprint(Path("/x.flac"))
     assert res.status == FingerprintStatus.ERROR
 
@@ -329,7 +569,7 @@ async def test_submits_compressed_fingerprint_not_raw(monkeypatch):
 
     assert res.status == FingerprintStatus.PASS
     assert captured[0][0] == "fpcalc"
-    assert "-raw" not in captured[0]                       # the bug: no -raw flag
+    assert "-raw" not in captured[0]  # the bug: no -raw flag
     assert http.post.call_args.kwargs["data"]["fingerprint"] == "AQADtMmSaEkSRYkG"
 
 
@@ -374,7 +614,9 @@ async def test_rate_limit_429_honors_retry_after_then_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_transient_failures_retry_then_succeed_without_breaker_failure(monkeypatch):
+async def test_transient_failures_retry_then_succeed_without_breaker_failure(
+    monkeypatch,
+):
     _patch_fpcalc(monkeypatch)
     http = MagicMock()
     ok = _acoustid_response(_pass_payload())
@@ -511,9 +753,7 @@ async def test_timeout_kills_fpcalc_and_raises(monkeypatch):
         return _HangingProc()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    monkeypatch.setattr(
-        "infrastructure.audio.fingerprinter._FPCALC_TIMEOUT", 0.05
-    )
+    monkeypatch.setattr("infrastructure.audio.fingerprinter._FPCALC_TIMEOUT", 0.05)
     fp = _make(_http_client())
     with pytest.raises(asyncio.TimeoutError):
         await fp.generate_fingerprint(Path("/x.flac"))
