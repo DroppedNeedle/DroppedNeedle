@@ -108,6 +108,16 @@ ends because newer catalog or settings changes may exist. Check the container lo
 trying a newer image. Restoring the retained backup after that point can discard those
 newer changes.
 
+On startup after an upgrade, DroppedNeedle normalizes the saved MusicBrainz source. Missing
+settings, legacy Official settings, malformed settings, and explicit Official settings migrate to
+built-in BrainzMash. A valid self-hosted mirror or Community / external source stays selected.
+
+Review **Settings > MusicBrainz** and its disclosure after an upgrade. An administrator can
+explicitly switch to a self-hosted mirror or a Community / external source afterward. In this release,
+saving the Official option normalizes the setting to BrainzMash. This startup normalization is the
+exception to the normal rule that source changes are explicit; runtime failures never trigger a hidden
+fallback.
+
 A previously upgraded installation will refuse to start if its database is later
 missing, empty, or incomplete. Restore a verified backup rather than treating that state
 as a fresh install.
@@ -253,7 +263,7 @@ With Lidarr removed, display covers resolve on demand through `AlbumCoverFetcher
 
 ### Performance
 
-Library reads aggregate from `library_files` (`GROUP BY release_group_mbid`) and are sub-second for a 10k-album library on SQLite WAL. An initial scan of a 10k-album library is roughly 50 minutes when about 30% of files need a MusicBrainz lookup (the MB client is rate limited to 1 req/s). Subsequent scans are incremental and far faster.
+Library reads aggregate from `library_files` (`GROUP BY release_group_mbid`) and are sub-second for a 10k-album library on SQLite WAL. Scan time depends on the active source and workload. DroppedNeedle paces Official at 1 request/second. Built-in BrainzMash uses DroppedNeedle's local 10 requests/second, capacity-1 policy. That is local pacing, not a provider quota or SLA. Subsequent scans are incremental.
 
 ---
 
@@ -415,7 +425,7 @@ slskd and Usenet can be enabled side by side - the source priority control decid
 - **Searches return nothing or you get disconnected.** Confirm slskd has shared folders and a healthy Soulseek connection. Leechers are banned.
 - **Scan finds nothing or files go to manual review.** Confirm the library path is correct and readable. Files with no tags and no fingerprint match need manual identification.
 - **Tier-3 fingerprinting disabled.** Set an AcoustID API key (optional). Without it, scans rely on Tier 1 and 2 only.
-- **MusicBrainz lookups are slow.** MB calls are rate limited to about 1/s, so large first scans take a while (a 10k-album library is roughly 50 minutes). Subsequent scans are incremental.
+- **MusicBrainz lookups are slow.** DroppedNeedle paces Official at 1 request/second. Built-in BrainzMash uses a local 10 requests/second, capacity-1 policy. That is local pacing, not a provider quota or SLA. Scan duration depends on the source and workload; subsequent scans are incremental.
 
 ---
 
@@ -467,7 +477,13 @@ A session lasts 30 days from login and is not extended by activity. Signing out 
 
 ### Search and request
 
-Search the full MusicBrainz catalogue for any artist or album. Request a whole album or an individual track, and the native engine handles the download: it searches your download client, preflight-scores the candidates, picks the best, verifies the files, and imports them into your library. Admin and trusted users' requests start immediately; requests from standard users are held in an approval queue until an admin approves or rejects them. A persistent queue tracks all requests, and you can browse pending and fulfilled requests on a dedicated page with retry and cancel support.
+Search the full MusicBrainz catalogue for any artist or album. Release Types under Settings >
+Preferences filter the release groups shown on artist pages and returned by search. Request a whole
+album or an individual track, and the native engine handles the download: it searches your download
+client, preflight-scores the candidates, picks the best, verifies the files, and imports them into your
+library. Admin and trusted users' requests start immediately; requests from standard users are held
+in an approval queue until an admin approves or rejects them. A persistent queue tracks all requests,
+and you can browse pending and fulfilled requests on a dedicated page with retry and cancel support.
 
 Downloads the engine cannot confidently auto-accept land in a held-import review queue. An admin can preview the audio, accept or reject the import, and supply a MusicBrainz ID before the file is moved into the library.
 
@@ -523,7 +539,13 @@ Connect Ticketmaster and Skiddle (free API keys) and DroppedNeedle shows concert
 
 ### Following artists
 
-Follow an artist to watch for new releases, and optionally auto-download them the moment they appear (standard users need a one-time admin grant per artist). Sidebar badges show how many releases and gigs you have not seen, backed by per-user seen markers that update via SSE; visiting the page clears them. The Following hub is a glanceable digest: a 30-day release log with in-library ticks, your next gigs, and your artist roster, each section one click from its full page.
+Follow an artist to watch for new releases, and optionally auto-download matching new releases when
+they are due (standard users need a one-time admin grant per artist). The Release Types selection also
+controls auto-downloads for followed artists. Saving a different Release Types selection establishes a
+fresh baseline and does not backfill releases already present. Sidebar badges show how many releases and
+gigs you have not seen, backed by per-user seen markers that update via SSE; visiting the page clears them. The
+Following hub is a glanceable digest: a 30-day release log with in-library ticks, your next gigs, and
+your artist roster, each section one click from its full page.
 
 ### Library
 
@@ -608,7 +630,9 @@ The full API reference is in [PLUGINS.md](PLUGINS.md).
 
 All integrations are configured through the web UI. No config files or environment variables needed beyond the basics listed below.
 
-Running your own [MusicBrainz](https://musicbrainz.org/) mirror instead of using the shared public API? See [docs/musicbrainz-mirror-selfhosting.md](docs/musicbrainz-mirror-selfhosting.md).
+MusicBrainz source choices are under **Settings > MusicBrainz**. **BrainzMash** is built in, the default for fresh and reset configuration, and the **Recommended** choice. The **Official** card shows the public musicbrainz.org API, but saving that setting in this release normalizes it to BrainzMash. A **Self-hosted mirror** or **Community / external server** can be saved as the persistent source. DroppedNeedle never silently falls back between sources. The BrainzMash disclosure says it receives MusicBrainz query terms and normal connection metadata.
+
+See the [MusicBrainz sources and self-hosted mirrors guide](docs/musicbrainz-mirror-selfhosting.md) for source behavior, upgrade migration, consent, and mirror setup.
 
 ---
 
@@ -659,7 +683,8 @@ is not a way to override permissions supplied by a download client.
 | Spotify client ID and secret, playlist import | Settings > Spotify |
 | Ticketmaster and Skiddle API keys, sweep scope and daily check time | Settings > Live Events |
 | Link your own Last.fm + ListenBrainz, per-user scrobble toggles, default discovery source | Profile > Scrobbling & Discovery |
-| Home page layout preferences | Settings > Preferences |
+| Home page layout and Release Types for artist pages, search, and followed-artist auto-downloads | Settings > Preferences |
+| MusicBrainz source and connection settings | Settings > MusicBrainz |
 | AudioDB settings and cache TTLs | Settings > Advanced |
 | HSTS header and HIBP password breach checking | Settings > Security |
 | User accounts, roles, and user import (Jellyfin/Plex) | Settings > Users |

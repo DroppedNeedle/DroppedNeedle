@@ -12,25 +12,65 @@
 	let saveMessage = $state('');
 
 	const primaryTypes: ReleaseTypeOption[] = [
-		{ id: 'album', title: 'Album', description: 'Full-length studio albums' },
-		{ id: 'ep', title: 'EP', description: 'Extended Play releases (shorter than albums)' },
-		{ id: 'single', title: 'Single', description: 'Individual track releases' },
-		{ id: 'broadcast', title: 'Broadcast', description: 'Radio or TV broadcast recordings' },
-		{ id: 'other', title: 'Other', description: 'Miscellaneous release types' }
+		{ id: 'album', title: 'Album', description: 'Release groups MusicBrainz classifies as albums' },
+		{ id: 'ep', title: 'EP', description: 'Release groups MusicBrainz classifies as EPs' },
+		{
+			id: 'single',
+			title: 'Single',
+			description: 'Release groups MusicBrainz classifies as singles'
+		},
+		{
+			id: 'broadcast',
+			title: 'Broadcast',
+			description: 'Release groups MusicBrainz classifies as broadcasts'
+		},
+		{
+			id: 'other',
+			title: 'Other',
+			description: 'Release groups MusicBrainz classifies as Other'
+		}
 	];
 
 	const secondaryTypes: ReleaseTypeOption[] = [
-		{ id: 'studio', title: 'Studio', description: 'Original studio recordings' },
-		{ id: 'compilation', title: 'Compilation', description: 'Greatest hits and collections' },
-		{ id: 'soundtrack', title: 'Soundtrack', description: 'Music from movies, games, or TV' },
-		{ id: 'spokenword', title: 'Spoken Word', description: 'Audiobooks and spoken content' },
-		{ id: 'interview', title: 'Interview', description: 'Interview recordings' },
-		{ id: 'audio drama', title: 'Audio Drama', description: 'Dramatic audio productions' },
-		{ id: 'live', title: 'Live', description: 'Live concert recordings' },
-		{ id: 'remix', title: 'Remix', description: 'Remix albums' },
-		{ id: 'dj-mix', title: 'DJ-mix', description: 'DJ mixed compilations' },
-		{ id: 'mixtape/street', title: 'Mixtape/Street', description: 'Unofficial mixtapes' },
-		{ id: 'demo', title: 'Demo', description: 'Demo recordings' }
+		{ id: 'studio', title: 'Studio', description: 'Release groups with no listed secondary type' },
+		{
+			id: 'compilation',
+			title: 'Compilation',
+			description: 'Release groups tagged by MusicBrainz as compilations'
+		},
+		{
+			id: 'soundtrack',
+			title: 'Soundtrack',
+			description: 'Release groups tagged by MusicBrainz as soundtracks'
+		},
+		{
+			id: 'spokenword',
+			title: 'Spoken Word',
+			description: 'Release groups tagged by MusicBrainz as spoken word'
+		},
+		{
+			id: 'interview',
+			title: 'Interview',
+			description: 'Release groups tagged by MusicBrainz as interviews'
+		},
+		{
+			id: 'audio drama',
+			title: 'Audio Drama',
+			description: 'Release groups tagged by MusicBrainz as audio dramas'
+		},
+		{ id: 'live', title: 'Live', description: 'Release groups tagged by MusicBrainz as live' },
+		{ id: 'remix', title: 'Remix', description: 'Release groups tagged by MusicBrainz as remixes' },
+		{
+			id: 'dj-mix',
+			title: 'DJ-mix',
+			description: 'Release groups tagged by MusicBrainz as DJ mixes'
+		},
+		{
+			id: 'mixtape/street',
+			title: 'Mixtape/Street',
+			description: 'Release groups tagged by MusicBrainz as mixtape or street'
+		},
+		{ id: 'demo', title: 'Demo', description: 'Release groups tagged by MusicBrainz as demos' }
 	];
 
 	function toggleType(category: 'primary_types' | 'secondary_types', id: string) {
@@ -111,15 +151,15 @@
 	<div class="card-body">
 		<h2 class="card-title text-2xl mb-2">Release Types</h2>
 		<p class="text-base-content/70 mb-6">
-			Artists put out more than studio albums - there are live records, remixes, compilations,
-			singles, and more. Pick which kinds of releases you want to see, and the rest are hidden from
-			artist pages and search results, so things stay focused on the music you actually care about.
+			Choose which release types appear on artist pages and in search. The same choices apply to
+			automatic downloads for followed artists. Saving a different selection starts a new baseline,
+			so releases already present are not queued.
 		</p>
 
 		<div class="mb-8">
 			<h3 class="text-xl font-semibold mb-1">Primary Types</h3>
 			<p class="text-base-content/60 mb-4 text-sm">
-				The main format of a release. Most people keep Albums, EPs, and Singles switched on.
+				Choose the main MusicBrainz release formats to include.
 			</p>
 			{@render typeTable(primaryTypes, 'primary_types')}
 		</div>
@@ -127,8 +167,7 @@
 		<div class="mb-8">
 			<h3 class="text-xl font-semibold mb-1">Secondary Types</h3>
 			<p class="text-base-content/60 mb-4 text-sm">
-				Extra labels layered on top of the format. Switch off the likes of Live, Remix, or
-				Compilation to keep them out of artist pages and search.
+				Choose which additional release classifications to include.
 			</p>
 			{@render typeTable(secondaryTypes, 'secondary_types')}
 		</div>

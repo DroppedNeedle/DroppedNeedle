@@ -10,10 +10,21 @@ DroppedNeedle offers four explicit MusicBrainz source choices:
 - **Self-hosted mirror**, a full MusicBrainz replica that you operate.
 - **Community / external server**, a server operated by somebody else.
 
-Selecting a card does not silently change the source serving runtime traffic. A source switch is
-an explicit save or BrainzMash stage/activation, and failures stay visible. This guide covers the
-source boundary, BrainzMash consent and contribution guidance, and the full self-hosted mirror
-setup.
+Selecting a card does not silently change the source serving runtime traffic. During normal
+operation, save a source or stage/activate BrainzMash to switch it, and failures stay visible. This
+guide covers the source boundary, BrainzMash consent and contribution guidance, and the full
+self-hosted mirror setup.
+
+## Upgrade migration
+
+On upgrade, DroppedNeedle normalizes persisted MusicBrainz settings before serving requests. Missing
+settings, legacy Official settings, malformed settings, and explicit Official settings migrate to
+built-in BrainzMash. A valid Self-hosted mirror or Community / external setting stays selected.
+
+This startup normalization is not a runtime fallback. Because it can make BrainzMash active, review
+**Settings > MusicBrainz**, the active source, and its disclosure after upgrading. An administrator
+can switch to a Self-hosted mirror or Community / external by explicitly saving it. In this release,
+saving the Official option instead normalizes the setting to BrainzMash.
 
 ## Which claim comes from where?
 
