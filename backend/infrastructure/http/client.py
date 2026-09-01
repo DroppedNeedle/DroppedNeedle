@@ -294,7 +294,7 @@ def get_spotify_cover_http_client(
     )
 
 
-def _sanitize_brainzmash_request(request: httpx.Request) -> None:
+async def _sanitize_brainzmash_request(request: httpx.Request) -> None:
     validate_brainzmash_request_url(str(request.url))
     allowed = {
         "accept",

@@ -440,17 +440,23 @@ async def test_brainzmash_transport_rejects_private_dns_results(monkeypatch):
     delegate.connect_tcp.assert_not_awaited()
 
 
-def test_brainzmash_client_isolated_from_redirects_and_pool(monkeypatch):
+@pytest.mark.asyncio
+async def test_brainzmash_client_isolated_from_redirects_and_pool():
     from infrastructure.http.client import HttpClientFactory, get_brainzmash_http_client
 
     HttpClientFactory.reset_for_tests()
     client = get_brainzmash_http_client()
-    assert client.follow_redirects is False
-    assert client.headers["accept"] == "application/json"
-    assert client._transport.__class__.__name__ == "BrainzMashTransport"
+    try:
+        assert client.follow_redirects is False
+        assert client.headers["accept"] == "application/json"
+        assert client._transport.__class__.__name__ == "BrainzMashTransport"
+    finally:
+        await client.aclose()
+        HttpClientFactory.reset_for_tests()
 
 
-def test_brainzmash_request_sanitizer_drops_credentials_and_preserves_required_headers():
+@pytest.mark.asyncio
+async def test_brainzmash_request_sanitizer_drops_credentials_and_preserves_required_headers():
     from infrastructure.http.client import _sanitize_brainzmash_request
 
     request = httpx.Request(
@@ -467,7 +473,7 @@ def test_brainzmash_request_sanitizer_drops_credentials_and_preserves_required_h
         },
     )
 
-    _sanitize_brainzmash_request(request)
+    await _sanitize_brainzmash_request(request)
 
     assert request.headers["accept"] == "application/json"
     assert request.headers["user-agent"] == "DroppedNeedleApp"
@@ -476,6 +482,62 @@ def test_brainzmash_request_sanitizer_drops_credentials_and_preserves_required_h
     assert "proxy-authorization" not in request.headers
     assert "x-brainzmash-key" not in request.headers
     assert "x-api-key" not in request.headers
+
+
+@pytest.mark.asyncio
+async def test_brainzmash_client_dispatches_async_sanitizer_before_mock_transport(
+    monkeypatch,
+):
+    from infrastructure.http import client as http_client
+
+    observed: list[httpx.Request] = []
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        observed.append(request)
+        return httpx.Response(200, json={"artist": []}, request=request)
+
+    http_client.HttpClientFactory.reset_for_tests()
+    monkeypatch.setattr(
+        http_client,
+        "BrainzMashTransport",
+        lambda: httpx.MockTransport(handle),
+    )
+    client = http_client.get_brainzmash_http_client()
+    try:
+        response = await client.get(
+            "https://api.brainzmash.cc/ws/2/artist",
+            headers={
+                "Accept": "application/json",
+                "Accept-Encoding": "identity",
+                "Connection": "keep-alive",
+                "Host": "evil.example",
+                "User-Agent": "evil-client",
+                "Authorization": "Bearer secret",
+                "Cookie": "session=secret",
+                "Proxy-Authorization": "Basic secret",
+                "X-BrainzMash-Key": "secret",
+                "X-Api-Key": "secret",
+            },
+        )
+    finally:
+        await client.aclose()
+        http_client.HttpClientFactory.reset_for_tests()
+
+    assert response.status_code == 200
+    assert len(observed) == 1
+    wire_request = observed[0]
+    assert set(wire_request.headers) == {
+        "accept",
+        "accept-encoding",
+        "connection",
+        "host",
+        "user-agent",
+    }
+    assert wire_request.headers["accept"] == "application/json"
+    assert wire_request.headers["accept-encoding"] == "identity"
+    assert wire_request.headers["connection"] == "keep-alive"
+    assert wire_request.headers["host"] == "api.brainzmash.cc"
+    assert wire_request.headers["user-agent"] == "DroppedNeedleApp"
 
 
 class _SequenceClient:
