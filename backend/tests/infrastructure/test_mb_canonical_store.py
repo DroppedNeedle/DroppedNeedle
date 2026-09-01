@@ -9,11 +9,9 @@ import sqlite3
 
 import pytest
 
-from infrastructure.persistence.mb_canonical_store import (
-    OFFICIAL_MB_API_BASE,
-    MbCanonicalStore,
-)
+from infrastructure.persistence.mb_canonical_store import MbCanonicalStore
 from repositories.musicbrainz_base import (
+    OFFICIAL_MB_API_BASE,
     MB_TRUSTED_IDENTITY_ORIGINS,
     MbSourceContext,
     capture_mb_source_context,
