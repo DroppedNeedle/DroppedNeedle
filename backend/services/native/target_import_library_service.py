@@ -53,6 +53,7 @@ from core.exceptions import (
     StaleRevisionError,
     ValidationError,
 )
+from repositories.musicbrainz_base import MbSourceContext, capture_mb_source_context
 
 if TYPE_CHECKING:
     from infrastructure.persistence.native_library_store import NativeLibraryStore
@@ -111,24 +112,32 @@ class TargetImportLibraryService:
         if self._management_publisher is None:
             raise RuntimeError("The staged import publisher is not configured.")
 
+        source_context = capture_mb_source_context()
         if self._automatic_management is not None:
-            bundle = await self._automatic_management.prepare(bundle)
+            bundle = await self._automatic_management.prepare(
+                bundle,
+                source_context=source_context,
+            )
 
         async def commit(
             bundle_id: str,
             files: tuple[LibraryManagementPublishedImportFile, ...],
+            commit_source_context: MbSourceContext | None,
         ) -> tuple[str, ...]:
             async with self._policy_transition_lock:
                 return await self._commit_published_import_bundle(
                     bundle_id,
                     files,
                     expected_policy_revision=bundle.policy_revision,
+                    source_context=commit_source_context,
                 )
 
         automatic = any(value.pinned_profile is not None for value in bundle.files)
         try:
             return await self._management_publisher.publish_import_bundle(
-                bundle, commit
+                bundle,
+                commit,
+                source_context=source_context if automatic else None,
             )
         except AutomaticManagementHoldError:
             raise
@@ -439,6 +448,7 @@ class TargetImportLibraryService:
         files: tuple[LibraryManagementPublishedImportFile, ...],
         *,
         expected_policy_revision: str,
+        source_context: MbSourceContext | None = None,
     ) -> tuple[str, ...]:
         resolver = self._resolver_getter()
         if resolver.policy_revision != expected_policy_revision:
@@ -516,6 +526,7 @@ class TargetImportLibraryService:
                 value.request.ordinal: value.destination_path for value in files
             },
             updated_at=time.time(),
+            source_context=source_context,
         )
         automatic_ordinals = {
             value.request.ordinal

@@ -2,7 +2,6 @@ from typing import Any, Protocol
 
 from infrastructure.queue.priority_queue import RequestPriority
 from models.search import SearchResult
-from models.artist import ArtistInfo
 from models.album import AlbumInfo
 from repositories.musicbrainz_base import MbSourceContext
 from models.library_contribution import (
@@ -37,15 +36,6 @@ class MusicBrainzRepositoryProtocol(Protocol):
         included_primary_types: set[str] | None = None,
         priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> list[SearchResult]: ...
-
-    async def get_artist_detail(
-        self,
-        artist_mbid: str,
-        included_types: set[str] | None = None,
-        included_secondary_types: set[str] | None = None,
-        included_statuses: set[str] | None = None,
-    ) -> ArtistInfo | None: ...
-
     # A2: explicit priority threading - the discover-queue enrichment leg
     # passes BACKGROUND_SYNC; every other caller keeps the USER_INITIATED
     # default. NOTE: protocol modules must not use `from __future__ import
@@ -67,6 +57,7 @@ class MusicBrainzRepositoryProtocol(Protocol):
         priority: RequestPriority = RequestPriority.BACKGROUND_SYNC,
         *,
         preserve_fetch_width: bool = False,
+        source_context: MbSourceContext | None = None,
     ) -> tuple[list[dict[str, Any]], int, MbSourceContext | None]: ...
 
     async def get_release_group(self, release_group_mbid: str) -> AlbumInfo | None: ...
@@ -76,7 +67,9 @@ class MusicBrainzRepositoryProtocol(Protocol):
     async def get_release_group_id_from_release(
         self,
         release_mbid: str,
+        *,
         priority: RequestPriority = RequestPriority.BACKGROUND_SYNC,
+        source_context: MbSourceContext | None = None,
     ) -> str | None: ...
 
     async def get_release_groups_by_artist(

@@ -12,9 +12,20 @@ import type {
 	NavidromeAlbumMatch,
 	PlexAlbumMatch
 } from '$lib/types';
+import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { clearLocalStorageNamespace, createLocalStorageCache } from '$lib/utils/localStorageCache';
 
 const MAX_ALBUM_DETAIL_CACHE_ENTRIES = 120;
+
+function musicBrainzCacheNamespace(): string {
+	const scope = musicBrainzSourceKey();
+	return [
+		`m-${encodeURIComponent(scope.source_mode)}`,
+		`u-${encodeURIComponent(scope.user_id ?? 'anonymous')}`,
+		`s-${encodeURIComponent(scope.source_id || 'legacy')}`,
+		`g-${scope.generation}`
+	].join('_');
+}
 
 type AlbumDiscoveryCachePayload = {
 	moreByArtist: MoreByArtistResponse | null;
@@ -36,19 +47,19 @@ type AlbumSourceMatchCachePayload = {
 export const albumBasicCache = createLocalStorageCache<AlbumBasicInfo>(
 	CACHE_KEYS.ALBUM_BASIC_CACHE,
 	CACHE_TTL.ALBUM_DETAIL_BASIC,
-	{ maxEntries: MAX_ALBUM_DETAIL_CACHE_ENTRIES }
+	{ maxEntries: MAX_ALBUM_DETAIL_CACHE_ENTRIES, keyNamespace: musicBrainzCacheNamespace }
 );
 
 export const albumTracksCache = createLocalStorageCache<AlbumTracksInfo>(
 	CACHE_KEYS.ALBUM_TRACKS_CACHE,
 	CACHE_TTL.ALBUM_DETAIL_TRACKS,
-	{ maxEntries: MAX_ALBUM_DETAIL_CACHE_ENTRIES }
+	{ maxEntries: MAX_ALBUM_DETAIL_CACHE_ENTRIES, keyNamespace: musicBrainzCacheNamespace }
 );
 
 export const albumDiscoveryCache = createLocalStorageCache<AlbumDiscoveryCachePayload>(
 	CACHE_KEYS.ALBUM_DISCOVERY_CACHE,
 	CACHE_TTL.ALBUM_DETAIL_DISCOVERY,
-	{ maxEntries: MAX_ALBUM_DETAIL_CACHE_ENTRIES }
+	{ maxEntries: MAX_ALBUM_DETAIL_CACHE_ENTRIES, keyNamespace: musicBrainzCacheNamespace }
 );
 
 export const albumLastFmCache = createLocalStorageCache<LastFmAlbumEnrichment>(

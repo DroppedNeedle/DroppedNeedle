@@ -32,6 +32,7 @@ from models.library_management_canonical import (
     CanonicalTrackDocument,
     IncomingTrackManagementMapping,
 )
+from repositories.musicbrainz_base import MbSourceContext
 from repositories.protocols.musicbrainz_management import (
     CanonicalMusicBrainzRepositoryProtocol,
     MbManagementArtist,
@@ -351,6 +352,7 @@ class CanonicalReleaseMetadataService:
         mappings: tuple[IncomingTrackManagementMapping, ...],
         profile: LibraryManagementProfile,
         priority: RequestPriority = RequestPriority.BACKGROUND_SYNC,
+        source_context: MbSourceContext | None = None,
     ) -> CanonicalReleaseProjection:
         """Resolve verified incoming positions to exact release-track identities."""
 
@@ -365,6 +367,7 @@ class CanonicalReleaseMetadataService:
             includes=includes,
             priority=priority,
             bypass_cache=False,
+            source_context=source_context,
         )
         if release is None:
             raise ProviderIdentityRequiredError(
@@ -458,6 +461,7 @@ class CanonicalReleaseMetadataService:
         includes: tuple[str, ...],
         priority: RequestPriority,
         bypass_cache: bool,
+        source_context: MbSourceContext | None = None,
     ) -> MbManagementRelease | None:
         locales = tuple(profile.metadata.artist_credits.preferred_locales)
         return await self._musicbrainz.get_canonical_release(
@@ -467,6 +471,7 @@ class CanonicalReleaseMetadataService:
             artist_standardization=profile.metadata.artist_credits.standardization,
             priority=priority,
             bypass_cache=bypass_cache,
+            source_context=source_context,
         )
 
     @staticmethod

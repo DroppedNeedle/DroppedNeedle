@@ -367,9 +367,16 @@ async def test_build_prewarm_failure_does_not_break_queue():
 
 @pytest.mark.asyncio
 async def test_source_switch_fences_old_build_and_snapshot():
-    original_source = mb_base.get_mb_api_base()
-    mb_base.set_mb_api_base("https://old.example/ws/2")
-    old_generation = mb_base.get_mb_source_generation()
+    original_source = mb_base.capture_mb_source_context()
+    original_source_id = mb_base.get_mb_source_id()
+    original_runtime = mb_base.brainzmash_runtime_enabled()
+    old_generation = original_source.generation + 1
+    mb_base.set_mb_api_base(
+        "https://old.example/ws/2",
+        source_mode="mirror",
+        source_id="discover-queue-old",
+        generation=old_generation,
+    )
     old_started = asyncio.Event()
     old_gate = asyncio.Event()
 
@@ -403,7 +410,12 @@ async def test_source_switch_fences_old_build_and_snapshot():
 
         async with mb_base.mb_source_commit_lock:
             await snapshot_store.delete_source_dependent_snapshots()
-            mb_base.set_mb_api_base("https://new.example/ws/2")
+            mb_base.set_mb_api_base(
+                "https://new.example/ws/2",
+                source_mode="mirror",
+                source_id="discover-queue-new",
+                generation=old_generation + 1,
+            )
         assert snapshot_store.delete_source_dependent_snapshots.await_count == 1
 
         result = await mgr.start_build(_UID)
@@ -425,14 +437,27 @@ async def test_source_switch_fences_old_build_and_snapshot():
         assert snapshot_store.save.await_args.args[3] == mgr._states[_UID].built_at
     finally:
         old_gate.set()
-        mb_base.set_mb_api_base(original_source)
+        mb_base.set_mb_api_base(
+            original_source.source_url,
+            source_mode=original_source.source_mode,
+            source_id=original_source_id,
+            generation=original_source.generation,
+            brainzmash_binding_valid=original_runtime,
+        )
 
 
 @pytest.mark.asyncio
 async def test_consume_delete_cannot_remove_new_source_snapshot():
-    original_source = mb_base.get_mb_api_base()
-    mb_base.set_mb_api_base("https://old.example/ws/2")
-    old_generation = mb_base.get_mb_source_generation()
+    original_source = mb_base.capture_mb_source_context()
+    original_source_id = mb_base.get_mb_source_id()
+    original_runtime = mb_base.brainzmash_runtime_enabled()
+    old_generation = original_source.generation + 1
+    mb_base.set_mb_api_base(
+        "https://old.example/ws/2",
+        source_mode="mirror",
+        source_id="discover-queue-consume-old",
+        generation=old_generation,
+    )
     old_queue = _make_queue(1, queue_id="old-queue")
     new_queue = _make_queue(1, queue_id="new-queue")
     delete_started = asyncio.Event()
@@ -477,7 +502,12 @@ async def test_consume_delete_cannot_remove_new_source_snapshot():
         consume_task = asyncio.create_task(mgr.consume_queue(_UID))
         await delete_started.wait()
 
-        mb_base.set_mb_api_base("https://new.example/ws/2")
+        mb_base.set_mb_api_base(
+            "https://new.example/ws/2",
+            source_mode="mirror",
+            source_id="discover-queue-consume-new",
+            generation=old_generation + 1,
+        )
         new_start_task = asyncio.create_task(mgr.start_build(_UID))
         await asyncio.sleep(0)
         assert not new_start_task.done()
@@ -496,4 +526,10 @@ async def test_consume_delete_cannot_remove_new_source_snapshot():
             await consume_task
         if new_start_task and not new_start_task.done():
             await new_start_task
-        mb_base.set_mb_api_base(original_source)
+        mb_base.set_mb_api_base(
+            original_source.source_url,
+            source_mode=original_source.source_mode,
+            source_id=original_source_id,
+            generation=original_source.generation,
+            brainzmash_binding_valid=original_runtime,
+        )

@@ -9,6 +9,7 @@ import httpx
 from core.config import get_settings
 from infrastructure.http.client import (
     HttpClientFactory,
+    get_brainzmash_http_client,
     get_coverart_http_client,
     get_http_client,
     get_listenbrainz_http_client,
@@ -57,11 +58,19 @@ def get_musicbrainz_repository() -> "MusicBrainzRepository":
     cache = get_cache()
     preferences_service = get_preferences_service()
     http_client = _get_configured_http_client()
+    brainzmash_client = get_brainzmash_http_client(
+        get_settings(),
+        timeout=float(preferences_service.get_advanced_settings().http_timeout),
+        connect_timeout=float(
+            preferences_service.get_advanced_settings().http_connect_timeout
+        ),
+    )
     return MusicBrainzRepository(
         http_client,
         cache,
         preferences_service,
         mb_canonical_store=get_mb_canonical_store(),
+        brainzmash_http_client=brainzmash_client,
     )
 
 
@@ -543,9 +552,9 @@ def _build_coverart_repository(
         * 1024,
         cover_non_monitored_ttl_seconds=advanced.cache_ttl_recently_viewed_bytes,
         library_db=library_db,
-        local_cover_priority=lambda: get_preferences_service()
-        .get_advanced_settings()
-        .prefer_local_cover_art,
+        local_cover_priority=lambda: (
+            get_preferences_service().get_advanced_settings().prefer_local_cover_art
+        ),
         native_library_store=native_library_store,
     )
 

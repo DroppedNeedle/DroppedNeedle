@@ -64,7 +64,17 @@ class InMemoryCache(CacheInterface):
         self._hits = 0
         self._misses = 0
 
+    @staticmethod
+    def _source_key(key: str) -> str:
+        try:
+            from repositories.musicbrainz_base import namespace_mb_cache_key
+
+            return namespace_mb_cache_key(key)
+        except (ImportError, RuntimeError):
+            return key
+
     async def get(self, key: str) -> Optional[Any]:
+        key = self._source_key(key)
         async with self._lock:
             entry = self._cache.get(key)
             if entry is None:
@@ -83,6 +93,7 @@ class InMemoryCache(CacheInterface):
     async def peek(self, key: str) -> Optional[Any]:
         # Deliberately no move_to_end (LRU untouched) and no pop: a peek is a
         # read-only observation, even of expired entries.
+        key = self._source_key(key)
         async with self._lock:
             entry = self._cache.get(key)
             if entry is None:
@@ -90,6 +101,7 @@ class InMemoryCache(CacheInterface):
             return entry.value
 
     async def set(self, key: str, value: Any, ttl_seconds: int = 60) -> None:
+        key = self._source_key(key)
         async with self._lock:
             if key not in self._cache and len(self._cache) >= self._max_entries:
                 oldest_key, _ = self._cache.popitem(last=False)
@@ -99,6 +111,7 @@ class InMemoryCache(CacheInterface):
             self._cache.move_to_end(key)
 
     async def delete(self, key: str) -> None:
+        key = self._source_key(key)
         async with self._lock:
             self._cache.pop(key, None)
 

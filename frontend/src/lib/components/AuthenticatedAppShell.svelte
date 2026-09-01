@@ -8,6 +8,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { logout } from '$lib/utils/logout';
 	import { migratePageSourceKeys } from '$lib/stores/musicSource';
+	import { watchMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
 	import { errorModal } from '$lib/stores/errorModal';
 	import { libraryStore } from '$lib/stores/library';
 	import { integrationStore } from '$lib/stores/integration';
@@ -239,6 +240,10 @@
 				syncStatus.disconnect();
 			});
 		}
+	});
+	$effect(() => {
+		if (!authStore.user?.id) return;
+		return watchMusicBrainzSourceScope();
 	});
 
 	$effect(() => {

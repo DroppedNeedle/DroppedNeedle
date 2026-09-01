@@ -44,6 +44,39 @@ async def test_retry_budget_stops_before_oversized_sleep(monkeypatch, caplog) ->
 
 
 @pytest.mark.asyncio
+async def test_retry_budget_stops_before_scheduler_managed_delay(
+    monkeypatch, caplog
+) -> None:
+    monkeypatch.setattr(retry_module.time, "monotonic", lambda: 0.0)
+    calls = 0
+    breaker = CircuitBreaker(failure_threshold=5, name="managed-budget-test")
+
+    @with_retry(
+        max_attempts=5,
+        retry_budget_seconds=1.5,
+        circuit_breaker=breaker,
+        retriable_exceptions=(RuntimeError,),
+    )
+    async def fail() -> None:
+        nonlocal calls
+        calls += 1
+        error = RuntimeError("managed delay")
+        error._retry_delay_managed = True
+        error._retry_delay_managed_seconds = 2.0
+        raise error
+
+    with (
+        caplog.at_level(logging.ERROR),
+        pytest.raises(RuntimeError, match="managed delay"),
+    ):
+        await fail()
+
+    assert calls == 1
+    assert breaker.failure_count == 1
+    assert "failed after 1 attempt (RuntimeError): managed delay" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_retry_log_names_exception_with_empty_message(caplog) -> None:
     class BlankError(Exception):
         def __str__(self) -> str:

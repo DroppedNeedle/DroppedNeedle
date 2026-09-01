@@ -378,16 +378,26 @@ async def test_youtube_settings_change_clears_home_cache():
 def mb_live_state():
     """Snapshot and restore the live MusicBrainz module state around a test."""
     from repositories.musicbrainz_base import (
-        get_mb_api_base,
+        brainzmash_runtime_enabled,
+        capture_mb_source_context,
+        get_mb_source_id,
         set_mb_api_base,
         mb_rate_limiter,
     )
 
-    base = get_mb_api_base()
+    source = capture_mb_source_context()
+    source_id = get_mb_source_id()
+    runtime = brainzmash_runtime_enabled()
     rate = mb_rate_limiter.rate
     capacity = mb_rate_limiter.capacity
     yield
-    set_mb_api_base(base)
+    set_mb_api_base(
+        source.source_url,
+        source_mode=source.source_mode,
+        source_id=source_id,
+        generation=source.generation,
+        brainzmash_binding_valid=runtime,
+    )
     mb_rate_limiter.update_rate(rate)
     mb_rate_limiter.update_capacity(capacity)
 
@@ -396,6 +406,7 @@ def _mb_settings(api_url: str, rate_limit: float, concurrent_searches: int):
     from api.v1.schemas.settings import MusicBrainzConnectionSettings
 
     return MusicBrainzConnectionSettings(
+        source_mode="mirror",
         api_url=api_url,
         rate_limit=rate_limit,
         concurrent_searches=concurrent_searches,
@@ -405,7 +416,12 @@ def _mb_settings(api_url: str, rate_limit: float, concurrent_searches: int):
 def _seed_mb_live_state(settings) -> None:
     from repositories.musicbrainz_base import set_mb_api_base, mb_rate_limiter
 
-    set_mb_api_base(settings.api_url)
+    set_mb_api_base(
+        settings.api_url,
+        source_mode=settings.source_mode,
+        source_id=settings.source_id,
+        generation=settings.generation,
+    )
     mb_rate_limiter.update_rate(settings.rate_limit)
     mb_rate_limiter.update_capacity(settings.concurrent_searches)
 

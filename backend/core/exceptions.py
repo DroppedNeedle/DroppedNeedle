@@ -17,6 +17,10 @@ class ExternalServiceError(DroppedNeedleException):
     pass
 
 
+class NonRetriableExternalServiceError(ExternalServiceError):
+    """A provider response is deterministic and must not be retried."""
+
+
 class RateLimitedError(ExternalServiceError):
     def __init__(
         self,

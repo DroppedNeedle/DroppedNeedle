@@ -734,8 +734,14 @@ async def test_top_songs_mb_fallback_fences_old_cache_write_and_new_read():
         cache_entries[key] = value
 
     svc._cache.set = AsyncMock(side_effect=cache_set)
-    original_source = mb_base.get_mb_api_base()
-    mb_base.set_mb_api_base("https://old.example/ws/2")
+    original_source = mb_base.capture_mb_source_context()
+    original_runtime = mb_base.brainzmash_runtime_enabled()
+    mb_base.set_mb_api_base(
+        "https://old.example/ws/2",
+        source_mode="mirror",
+        source_id="artist-top-songs-old",
+        generation=original_source.generation + 1,
+    )
     old_generation = mb_base.get_mb_source_generation()
 
     async def resolve(_release_id):
@@ -751,7 +757,12 @@ async def test_top_songs_mb_fallback_fences_old_cache_write_and_new_read():
     try:
         old_task = asyncio.create_task(svc.get_top_songs("artist-id", count=1))
         await old_started.wait()
-        mb_base.set_mb_api_base("https://new.example/ws/2")
+        mb_base.set_mb_api_base(
+            "https://new.example/ws/2",
+            source_mode="mirror",
+            source_id="artist-top-songs-new",
+            generation=old_generation + 1,
+        )
         new_task = asyncio.create_task(svc.get_top_songs("artist-id", count=1))
         await new_started.wait()
         new_result = await new_task
@@ -759,7 +770,13 @@ async def test_top_songs_mb_fallback_fences_old_cache_write_and_new_read():
         old_result = await old_task
     finally:
         old_gate.set()
-        mb_base.set_mb_api_base(original_source)
+        mb_base.set_mb_api_base(
+            original_source.source_url,
+            source_mode=original_source.source_mode,
+            source_id=original_source.source_id,
+            generation=original_source.generation,
+            brainzmash_binding_valid=original_runtime,
+        )
 
     cache_key = svc._build_cache_key("top_songs", "artist-id", 1, "listenbrainz")
     assert old_result.songs[0].release_group_mbid == "rg-old"
@@ -795,8 +812,14 @@ async def test_top_albums_mb_fallback_separates_generations_and_fences_cache():
         cache_entries[key] = value
 
     svc._cache.set = AsyncMock(side_effect=cache_set)
-    original_source = mb_base.get_mb_api_base()
-    mb_base.set_mb_api_base("https://old.example/ws/2")
+    original_source = mb_base.capture_mb_source_context()
+    original_runtime = mb_base.brainzmash_runtime_enabled()
+    mb_base.set_mb_api_base(
+        "https://old.example/ws/2",
+        source_mode="mirror",
+        source_id="artist-top-albums-old",
+        generation=original_source.generation + 1,
+    )
     old_generation = mb_base.get_mb_source_generation()
 
     async def resolve(_release_id):
@@ -812,7 +835,12 @@ async def test_top_albums_mb_fallback_separates_generations_and_fences_cache():
     try:
         old_task = asyncio.create_task(svc.get_top_albums("artist-id", count=1))
         await old_started.wait()
-        mb_base.set_mb_api_base("https://new.example/ws/2")
+        mb_base.set_mb_api_base(
+            "https://new.example/ws/2",
+            source_mode="mirror",
+            source_id="artist-top-albums-new",
+            generation=old_generation + 1,
+        )
         new_task = asyncio.create_task(svc.get_top_albums("artist-id", count=1))
         await new_started.wait()
         new_result = await new_task
@@ -820,7 +848,13 @@ async def test_top_albums_mb_fallback_separates_generations_and_fences_cache():
         old_result = await old_task
     finally:
         old_gate.set()
-        mb_base.set_mb_api_base(original_source)
+        mb_base.set_mb_api_base(
+            original_source.source_url,
+            source_mode=original_source.source_mode,
+            source_id=original_source.source_id,
+            generation=original_source.generation,
+            brainzmash_binding_valid=original_runtime,
+        )
 
     cache_key = svc._build_cache_key("top_albums", "artist-id", 1, "listenbrainz")
     assert old_result.albums[0].release_group_mbid == "rg-old"

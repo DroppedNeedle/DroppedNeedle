@@ -386,6 +386,9 @@ CREATE TABLE IF NOT EXISTS local_artist_external_identities (
     selected_by_user_id TEXT REFERENCES auth_users(id) ON DELETE SET NULL,
     selected_at REAL NOT NULL,
     row_revision INTEGER NOT NULL DEFAULT 1 CHECK(row_revision BETWEEN 1 AND 9223372036854775807),
+    provider_source_mode TEXT,
+    provider_source_id TEXT,
+    provider_source_generation INTEGER,
     PRIMARY KEY(local_artist_id, provider),
     UNIQUE(provider, provider_artist_id)
 );
@@ -401,6 +404,9 @@ CREATE TABLE IF NOT EXISTS local_album_external_identities (
     selected_by_user_id TEXT REFERENCES auth_users(id) ON DELETE SET NULL,
     selected_at REAL NOT NULL,
     row_revision INTEGER NOT NULL DEFAULT 1 CHECK(row_revision BETWEEN 1 AND 9223372036854775807),
+    provider_source_mode TEXT,
+    provider_source_id TEXT,
+    provider_source_generation INTEGER,
     PRIMARY KEY(local_album_id, provider)
 );
 
@@ -417,6 +423,9 @@ CREATE TABLE IF NOT EXISTS local_track_external_identities (
     attempt_id TEXT REFERENCES library_identification_attempts(id) ON DELETE RESTRICT,
     selected_at REAL NOT NULL,
     row_revision INTEGER NOT NULL DEFAULT 1 CHECK(row_revision BETWEEN 1 AND 9223372036854775807),
+    provider_source_mode TEXT,
+    provider_source_id TEXT,
+    provider_source_generation INTEGER,
     PRIMARY KEY(local_track_id, provider)
 );
 

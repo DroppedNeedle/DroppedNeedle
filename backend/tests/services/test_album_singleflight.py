@@ -190,8 +190,14 @@ class TestAlbumSingleflight:
         old_started = asyncio.Event()
         new_started = asyncio.Event()
         calls: list[int] = []
-        original_source = mb_base.get_mb_api_base()
-        mb_base.set_mb_api_base("https://old.example/ws/2")
+        original_source = mb_base.capture_mb_source_context()
+        original_runtime = mb_base.brainzmash_runtime_enabled()
+        mb_base.set_mb_api_base(
+            "https://old.example/ws/2",
+            source_mode="mirror",
+            source_id="album-info-old",
+            generation=original_source.generation + 1,
+        )
         old_generation = mb_base.get_mb_source_generation()
 
         async def fetch(*_args, **_kwargs):
@@ -214,7 +220,12 @@ class TestAlbumSingleflight:
             old_follower = asyncio.create_task(svc.get_album_info(MBID))
             await asyncio.sleep(0)
 
-            mb_base.set_mb_api_base("https://new.example/ws/2")
+            mb_base.set_mb_api_base(
+                "https://new.example/ws/2",
+                source_mode="mirror",
+                source_id="album-info-new",
+                generation=old_generation + 1,
+            )
             new_generation = mb_base.get_mb_source_generation()
             new_leader = asyncio.create_task(svc.get_album_info(MBID))
             await new_started.wait()
@@ -236,7 +247,13 @@ class TestAlbumSingleflight:
         finally:
             old_gate.set()
             new_gate.set()
-            mb_base.set_mb_api_base(original_source)
+            mb_base.set_mb_api_base(
+                original_source.source_url,
+                source_mode=original_source.source_mode,
+                source_id=original_source.source_id,
+                generation=original_source.generation,
+                brainzmash_binding_valid=original_runtime,
+            )
 
         assert calls == [old_generation, new_generation]
         assert old_leader_result.title == "Old source"
@@ -248,7 +265,6 @@ class TestAlbumSingleflight:
 
 @pytest.mark.asyncio
 async def test_refresh_replacement_does_not_evict_album_singleflight():
-    import repositories.musicbrainz_base as mb_base
 
     svc = _make_service()
     old_gate = asyncio.Event()
@@ -256,8 +272,6 @@ async def test_refresh_replacement_does_not_evict_album_singleflight():
     old_started = asyncio.Event()
     replacement_started = asyncio.Event()
     calls = 0
-    original_source = mb_base.get_mb_api_base()
-    generation = mb_base.get_mb_source_generation()
 
     async def fetch(*_args, **_kwargs):
         nonlocal calls
@@ -295,12 +309,10 @@ async def test_refresh_replacement_does_not_evict_album_singleflight():
     finally:
         old_gate.set()
         replacement_gate.set()
-        mb_base.set_mb_api_base(original_source)
 
 
 @pytest.mark.asyncio
 async def test_refresh_replacement_does_not_evict_tracks_singleflight():
-    import repositories.musicbrainz_base as mb_base
 
     svc = _make_service()
     old_gate = asyncio.Event()
@@ -308,8 +320,6 @@ async def test_refresh_replacement_does_not_evict_tracks_singleflight():
     old_started = asyncio.Event()
     replacement_started = asyncio.Event()
     calls = 0
-    original_source = mb_base.get_mb_api_base()
-    generation = mb_base.get_mb_source_generation()
     old_tracks = AlbumTracksInfo(total_tracks=1)
     replacement_tracks = AlbumTracksInfo(total_tracks=2)
 
@@ -354,4 +364,3 @@ async def test_refresh_replacement_does_not_evict_tracks_singleflight():
     finally:
         old_gate.set()
         replacement_gate.set()
-        mb_base.set_mb_api_base(original_source)

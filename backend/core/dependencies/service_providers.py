@@ -524,9 +524,9 @@ def get_library_administrative_work_service() -> "LibraryAdministrativeWorkServi
 
 def get_mb_provider_availability() -> Callable[[], bool]:
     """Live MusicBrainz breaker read shared by identification and activity routes."""
-    from repositories.musicbrainz_base import mb_circuit_breaker
+    from repositories.musicbrainz_base import get_mb_provider_circuit_breaker
 
-    return lambda: not mb_circuit_breaker.is_open()
+    return lambda: not get_mb_provider_circuit_breaker().is_open()
 
 
 @singleton

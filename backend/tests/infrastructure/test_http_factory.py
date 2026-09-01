@@ -7,7 +7,6 @@ Superseded generations retire through an awaited lifecycle and close exactly
 once; synchronous lookups never close anything."""
 
 import asyncio
-import json
 
 import httpx
 import pytest
@@ -39,7 +38,9 @@ def _settings(user_agent: str = "dropneedle/test") -> SimpleNamespace:
 
 
 @pytest.mark.parametrize("first_timeout,second_timeout", [(5.0, 30.0), (30.0, 5.0)])
-def test_same_name_different_timeouts_never_share(first_timeout: float, second_timeout: float):
+def test_same_name_different_timeouts_never_share(
+    first_timeout: float, second_timeout: float
+):
     constructed: list[dict] = []
     real_init = httpx.AsyncClient.__init__
 
@@ -49,12 +50,20 @@ def test_same_name_different_timeouts_never_share(first_timeout: float, second_t
 
     httpx.AsyncClient.__init__ = recording_init
     try:
-        first = HttpClientFactory.get_client(name="default", timeout=first_timeout,
-                                             connect_timeout=1.0, max_connections=10,
-                                             max_keepalive=10)
-        second = HttpClientFactory.get_client(name="default", timeout=second_timeout,
-                                              connect_timeout=2.0, max_connections=99,
-                                              max_keepalive=99)
+        first = HttpClientFactory.get_client(
+            name="default",
+            timeout=first_timeout,
+            connect_timeout=1.0,
+            max_connections=10,
+            max_keepalive=10,
+        )
+        second = HttpClientFactory.get_client(
+            name="default",
+            timeout=second_timeout,
+            connect_timeout=2.0,
+            max_connections=99,
+            max_keepalive=99,
+        )
     finally:
         httpx.AsyncClient.__init__ = real_init
 
@@ -88,8 +97,12 @@ def test_kwargs_participate_in_the_key():
 def test_unhashable_kwargs_are_encoded_not_dropped():
     base = dict(name="kw2", timeout=5.0)
     full = dict(connect_timeout=1.0, max_connections=5, max_keepalive=5, http2=True)
-    one = HttpClientFactory._effective_key(user_agent="ua", kwargs={"tags": ["a", "b"]}, **base, **full)
-    two = HttpClientFactory._effective_key(user_agent="ua", kwargs={"tags": ["a", "b"]}, **base, **full)
+    one = HttpClientFactory._effective_key(
+        user_agent="ua", kwargs={"tags": ["a", "b"]}, **base, **full
+    )
+    two = HttpClientFactory._effective_key(
+        user_agent="ua", kwargs={"tags": ["a", "b"]}, **base, **full
+    )
     assert one == two  # equal unhashable contents share one effective key
 
     reordered = HttpClientFactory._effective_key(
@@ -102,8 +115,12 @@ def test_unhashable_kwargs_are_encoded_not_dropped():
 
 
 def test_user_agent_identity_is_part_of_the_key():
-    first = HttpClientFactory.get_client(name="ua", timeout=5.0, settings=_settings("agent/one"))
-    second = HttpClientFactory.get_client(name="ua", timeout=5.0, settings=_settings("agent/two"))
+    first = HttpClientFactory.get_client(
+        name="ua", timeout=5.0, settings=_settings("agent/one")
+    )
+    second = HttpClientFactory.get_client(
+        name="ua", timeout=5.0, settings=_settings("agent/two")
+    )
     assert first is not second
     assert first.headers["User-Agent"] == "agent/one"
     assert second.headers["User-Agent"] == "agent/two"
@@ -135,15 +152,14 @@ def test_concurrent_first_access_builds_once():
 
     httpx.AsyncClient.__init__ = counting_init
     try:
+
         async def gather_reads():
             loop = asyncio.get_running_loop()
             return await asyncio.gather(
                 *[
                     loop.run_in_executor(
                         None,
-                        lambda: HttpClientFactory.get_client(
-                            name="race", timeout=4.0
-                        ),
+                        lambda: HttpClientFactory.get_client(name="race", timeout=4.0),
                     )
                     for _ in range(8)
                 ]
@@ -218,6 +234,7 @@ def test_settings_save_hook_targets_http_fields_only(monkeypatch):
     service = SettingsService.__new__(SettingsService)
     coverart_calls = {"n": 0}
     retire_calls: list[str] = []
+    brainzmash_client_resets: list[object] = []
 
     async def fake_coverart():
         coverart_calls["n"] += 1
@@ -229,20 +246,27 @@ def test_settings_save_hook_targets_http_fields_only(monkeypatch):
     async def fake_close_retired() -> int:
         return 3
 
-    async def fake_clear_listenbrainz() -> None:
+    def fake_clear_listenbrainz() -> None:
         return None
 
-    monkeypatch.setattr(HttpClientFactory, "retire_name",
-                        staticmethod(fake_retire))
-    monkeypatch.setattr(HttpClientFactory, "close_retired",
-                        staticmethod(fake_close_retired))
+    monkeypatch.setattr(HttpClientFactory, "retire_name", staticmethod(fake_retire))
+    monkeypatch.setattr(
+        HttpClientFactory, "close_retired", staticmethod(fake_close_retired)
+    )
     monkeypatch.setattr(service, "on_coverart_settings_changed", fake_coverart)
     import core.dependencies as dependencies_module
+    import repositories.musicbrainz_base as mb_base
 
-    monkeypatch.setattr(dependencies_module,
-                        "clear_listenbrainz_dependent_caches",
-                        fake_clear_listenbrainz)
-
+    monkeypatch.setattr(
+        dependencies_module,
+        "clear_listenbrainz_dependent_caches",
+        fake_clear_listenbrainz,
+    )
+    monkeypatch.setattr(
+        mb_base,
+        "set_mb_brainzmash_http_client",
+        lambda client: brainzmash_client_resets.append(client),
+    )
     # Targeted comparison used by the advanced-settings route: only the four
     # HTTP-affecting fields trigger generation retirement.
     previous = SimpleNamespace(
@@ -271,8 +295,10 @@ def test_settings_save_hook_targets_http_fields_only(monkeypatch):
         return any(
             getattr(a, field) != getattr(b, field)
             for field in (
-                "http_timeout", "http_connect_timeout",
-                "http_max_connections", "http_max_keepalive",
+                "http_timeout",
+                "http_connect_timeout",
+                "http_max_connections",
+                "http_max_keepalive",
             )
         )
 
@@ -281,5 +307,11 @@ def test_settings_save_hook_targets_http_fields_only(monkeypatch):
 
     asyncio.run(service.on_http_settings_changed())
 
-    assert sorted(retire_calls) == ["coverart", "default", "listenbrainz"]
+    assert sorted(retire_calls) == [
+        "coverart",
+        "default",
+        "listenbrainz",
+        "musicbrainz-brainzmash",
+    ]
     assert coverart_calls["n"] == 1  # provider graphs still rebuilt
+    assert brainzmash_client_resets == [None]

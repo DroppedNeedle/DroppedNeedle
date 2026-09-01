@@ -68,7 +68,6 @@ describe('library/home detail queryOptions factories (B7)', () => {
 		const prefetchOpts = getHomeQueryOptions('user-1');
 		expect(prefetchOpts.queryKey).toEqual(HomeQueryKeyFactory.home('user-1'));
 		expect(prefetchOpts.staleTime).toBe(CACHE_TTL.HOME);
-		expect(prefetchOpts.queryKey).toEqual(['home', 'user-1']);
 		expect(typeof prefetchOpts.queryFn).toBe('function');
 
 		const wrapped = getHomeQuery() as unknown as Record<string, unknown>;

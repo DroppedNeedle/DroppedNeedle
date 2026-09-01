@@ -67,6 +67,29 @@ describe('toAuthUser', () => {
 			providers: []
 		});
 	});
+
+	it('carries the server MusicBrainz source identity into the auth user', () => {
+		const user = toAuthUser({
+			id: 'u1',
+			display_name: 'Alice',
+			role: 'user',
+			email: null,
+			avatar_url: null,
+			username: 'alice',
+			username_display: 'Alice',
+			musicbrainz_source: {
+				source_mode: 'mirror',
+				source_id: 'mirror-a',
+				generation: 7
+			}
+		});
+
+		expect(user.musicbrainz_source).toEqual({
+			source_mode: 'mirror',
+			source_id: 'mirror-a',
+			generation: 7
+		});
+	});
 });
 
 describe('auth mutations route through api.global', () => {

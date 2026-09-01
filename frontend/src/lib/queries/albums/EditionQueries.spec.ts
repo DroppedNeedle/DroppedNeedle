@@ -72,7 +72,13 @@ it('includes the authenticated user in every editions query key', () => {
 	const userA = editionsKey('user-a', 'release-group');
 	const userB = editionsKey('user-b', 'release-group');
 
-	expect(userA).toEqual(['albums', 'editions', 'user-a', 'release-group']);
+	expect(userA).toEqual([
+		'albums',
+		'editions',
+		'user-a',
+		{ user_id: 'user-a', source_mode: 'brainzmash', source_id: '', generation: 0 },
+		'release-group'
+	]);
 	expect(userA).not.toEqual(userB);
 
 	const queryA = getAlbumEditionsQuery(

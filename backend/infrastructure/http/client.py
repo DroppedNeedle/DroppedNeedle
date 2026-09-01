@@ -6,6 +6,12 @@ from typing import Any, Optional
 import httpx
 
 from core.config import Settings, get_settings
+from infrastructure.http.brainzmash_transport import (
+    BRAINZMASH_HOST,
+    BRAINZMASH_USER_AGENT,
+    BrainzMashTransport,
+    validate_brainzmash_request_url,
+)
 
 
 def _get_user_agent(settings: Optional[Settings] = None) -> str:
@@ -60,6 +66,8 @@ class HttpClientFactory:
         max_connections: int,
         max_keepalive: int,
         http2: bool,
+        follow_redirects: bool = True,
+        transport_factory: Callable[[], httpx.AsyncBaseTransport] | None = None,
         user_agent: str,
         kwargs: dict[str, Any],
     ) -> tuple:
@@ -78,6 +86,8 @@ class HttpClientFactory:
                     max_connections,
                     max_keepalive,
                     http2,
+                    follow_redirects,
+                    transport_factory,
                     user_agent,
                     frozen_kwargs,
                 )
@@ -88,6 +98,8 @@ class HttpClientFactory:
             max_connections,
             max_keepalive,
             http2,
+            follow_redirects,
+            transport_factory,
             user_agent,
             frozen_kwargs,
         )
@@ -102,9 +114,15 @@ class HttpClientFactory:
         max_keepalive: int = 200,
         settings: Optional[Settings] = None,
         http2: bool = True,
+        follow_redirects: bool = True,
+        transport_factory: Callable[[], httpx.AsyncBaseTransport] | None = None,
+        headers: Optional[dict[str, str]] = None,
         **kwargs,
     ) -> httpx.AsyncClient:
         user_agent = _get_user_agent(settings)
+        client_headers = {"User-Agent": user_agent, **(headers or {})}
+        key_kwargs = dict(kwargs)
+        key_kwargs["headers"] = tuple(sorted(client_headers.items()))
         key = cls._effective_key(
             name=name,
             timeout=timeout,
@@ -112,8 +130,10 @@ class HttpClientFactory:
             max_connections=max_connections,
             max_keepalive=max_keepalive,
             http2=http2,
+            follow_redirects=follow_redirects,
+            transport_factory=transport_factory,
             user_agent=user_agent,
-            kwargs=kwargs,
+            kwargs=key_kwargs,
         )
         with cls._lock:
             existing = cls._clients.get(key)
@@ -130,9 +150,13 @@ class HttpClientFactory:
                     max_keepalive_connections=max_keepalive,
                     keepalive_expiry=60.0,
                 ),
-                follow_redirects=True,
-                transport=httpx.AsyncHTTPTransport(http2=http2, retries=0),
-                headers={"User-Agent": user_agent},
+                follow_redirects=follow_redirects,
+                transport=(
+                    transport_factory()
+                    if transport_factory is not None
+                    else httpx.AsyncHTTPTransport(http2=http2, retries=0)
+                ),
+                headers=client_headers,
                 **kwargs,
             )
             cls._generation_counter += 1
@@ -250,7 +274,9 @@ def get_coverart_http_client(settings: Optional[Settings] = None) -> httpx.Async
     )
 
 
-def get_spotify_cover_http_client(settings: Optional[Settings] = None) -> httpx.AsyncClient:
+def get_spotify_cover_http_client(
+    settings: Optional[Settings] = None,
+) -> httpx.AsyncClient:
     """Dedicated client for Spotify CDN playlist-cover fetches (i.scdn.co et al.).
     Covers are optional enrichment, so this uses the same SHORT budget as the
     coverart client (6s read / 3s connect): artwork that can't be had quickly is
@@ -265,4 +291,48 @@ def get_spotify_cover_http_client(settings: Optional[Settings] = None) -> httpx.
         max_connections=settings.http_max_connections,
         max_keepalive=settings.http_max_keepalive,
         settings=settings,
+    )
+
+
+def _sanitize_brainzmash_request(request: httpx.Request) -> None:
+    validate_brainzmash_request_url(str(request.url))
+    allowed = {
+        "accept",
+        "accept-encoding",
+        "connection",
+    }
+    headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.casefold() in allowed
+    }
+    headers["Host"] = BRAINZMASH_HOST
+    headers["User-Agent"] = BRAINZMASH_USER_AGENT
+    request.headers = httpx.Headers(headers)
+
+
+def get_brainzmash_http_client(
+    settings: Optional[Settings] = None,
+    *,
+    timeout: Optional[float] = None,
+    connect_timeout: Optional[float] = None,
+) -> httpx.AsyncClient:
+    """Dedicated BrainzMash client with no redirect or credential forwarding."""
+    if settings is None:
+        settings = get_settings()
+    return HttpClientFactory.get_client(
+        name="musicbrainz-brainzmash",
+        timeout=timeout or settings.http_timeout,
+        connect_timeout=connect_timeout or settings.http_connect_timeout,
+        max_connections=1,
+        max_keepalive=1,
+        settings=settings,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": BRAINZMASH_USER_AGENT,
+        },
+        http2=False,
+        follow_redirects=False,
+        transport_factory=BrainzMashTransport,
+        event_hooks={"request": [_sanitize_brainzmash_request]},
     )

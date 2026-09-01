@@ -219,6 +219,26 @@ describe('+layout load session bootstrap', () => {
 		expect(state.apiGet).not.toHaveBeenCalled();
 	});
 
+	it('hydrates the MusicBrainz source from the authenticated session response', async () => {
+		const source = {
+			source_mode: 'mirror',
+			source_id: 'mirror-a',
+			generation: 7
+		};
+		state.apiGet
+			.mockResolvedValueOnce({ required: false })
+			.mockResolvedValueOnce({ ...user, musicbrainz_source: source });
+		state.user = null;
+		state.initialized = false;
+
+		await expect(loadPage('/library')).resolves.toMatchObject({
+			user: { musicbrainz_source: source }
+		});
+		expect(state.apiGet).toHaveBeenCalledTimes(2);
+		expect(state.apiGet).toHaveBeenNthCalledWith(2, '/me', { timeoutMs: 10_000 });
+		expect(state.ensureQueryData).toHaveBeenCalledOnce();
+	});
+
 	it('keeps the new account active when persistent cleanup fails during user switch', async () => {
 		storage.set('test:last-user', 'user-old');
 		state.user = user;

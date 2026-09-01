@@ -1,20 +1,26 @@
-/**
- * Copy + pure policy helpers for the MusicBrainz three-way source picker
- * (OWNER DECISION 2026-08-24, mb-localization-phase-2-full-mirror.md).
- * Words here are design material: plain language, honest about tradeoffs,
- * written from the operator's side of the screen. Warnings, never walls.
- */
+import type { MusicBrainzSourceMode } from '$lib/queries/musicbrainz/types';
 
-export type MusicBrainzSourceMode = 'official' | 'mirror' | 'community';
+export type { MusicBrainzSourceMode } from '$lib/queries/musicbrainz/types';
 
 export const MUSICBRAINZ_GUIDE_HREF = '/docs/musicbrainz-mirror-selfhosting.md';
+export const BRAINZMASH_ENDPOINT_URL = 'https://api.brainzmash.cc/ws/2';
+export const BRAINZMASH_DISCLOSURE_VERSION = '2026-08-31';
+export const BRAINZMASH_SUPPORTED_ROUTE_FAMILIES = [
+	'artist',
+	'release-group',
+	'release',
+	'recording',
+	'isrc',
+	'url'
+] as const;
 
-/** Non-official bounds widened by the owner decision; official stays pinned forever. */
+/** Public sources use explicit provider-specific wire policies. */
 export const OFFICIAL_RATE_MAX = 1;
-export const OFFICIAL_CONCURRENT_MAX = 6;
+export const OFFICIAL_CONCURRENT_MAX = 1;
+export const BRAINZMASH_RATE_MAX = 10;
+export const BRAINZMASH_CONCURRENT_MAX = 1;
 export const NON_OFFICIAL_RATE_MAX = 500;
 export const NON_OFFICIAL_CONCURRENT_MAX = 64;
-/** rate_limit = 0 is the OFF-OFFICIAL sentinel: bypasses the client limiter. */
 export const UNLIMITED_RATE_SENTINEL = 0;
 
 export interface SourceBounds {
@@ -23,35 +29,37 @@ export interface SourceBounds {
 	allowUnlimitedRate: boolean;
 }
 
-/** Input max attributes follow the ACTIVE card's bounds; official is clamped, never raised. */
-export function sourceBounds(isOfficial: boolean): SourceBounds {
-	return isOfficial
-		? {
-				rateMax: OFFICIAL_RATE_MAX,
-				concurrentMax: OFFICIAL_CONCURRENT_MAX,
-				allowUnlimitedRate: false
-			}
-		: {
-				rateMax: NON_OFFICIAL_RATE_MAX,
-				concurrentMax: NON_OFFICIAL_CONCURRENT_MAX,
-				allowUnlimitedRate: true
-			};
+export function sourceBounds(mode: MusicBrainzSourceMode): SourceBounds {
+	if (mode === 'brainzmash') {
+		return {
+			rateMax: BRAINZMASH_RATE_MAX,
+			concurrentMax: BRAINZMASH_CONCURRENT_MAX,
+			allowUnlimitedRate: false
+		};
+	}
+	if (mode === 'official') {
+		return {
+			rateMax: OFFICIAL_RATE_MAX,
+			concurrentMax: OFFICIAL_CONCURRENT_MAX,
+			allowUnlimitedRate: false
+		};
+	}
+	return {
+		rateMax: NON_OFFICIAL_RATE_MAX,
+		concurrentMax: NON_OFFICIAL_CONCURRENT_MAX,
+		allowUnlimitedRate: true
+	};
 }
 
-/**
- * The backend's 503 verify branch says "Connected, but rate-limited. Try lowering your
- * rate limit." - advice written for the official endpoint. Off-official, a 503 means the
- * server is busy / its search index is not ready; reword instead of alarming.
- */
-export function displayVerifyMessage(message: string, isOfficial: boolean): string {
-	if (isOfficial || !/rate-limited/i.test(message)) {
-		return message;
-	}
-	return (
-		'Connected, but the server returned 503 (busy). On a mirror this usually means the ' +
-		'search index is still building or the service is starting up - it is not a ' +
-		'rate-limit problem, so there is nothing to lower.'
-	);
+export function displayVerifyMessage(
+	message: string,
+	source: MusicBrainzSourceMode | boolean
+): string {
+	const mode = typeof source === 'boolean' ? (source ? 'official' : 'mirror') : source;
+	if (mode === 'official' || !/rate-limited/i.test(message)) return message;
+	return mode === 'brainzmash'
+		? 'Connected, but BrainzMash returned 503 (busy). The provider response is explicit; no other source will be used automatically.'
+		: 'Connected, but the server returned 503 (busy). On a mirror this usually means the search index is still building or the service is starting up - it is not a rate-limit problem, so there is nothing to lower.';
 }
 
 export interface SourceCardCopy {
@@ -63,10 +71,16 @@ export interface SourceCardCopy {
 
 export const MUSICBRAINZ_SOURCE_CARDS: SourceCardCopy[] = [
 	{
+		mode: 'brainzmash',
+		title: 'BrainzMash',
+		badge: 'Recommended',
+		blurb: 'A read-only public MusicBrainz pool with no consumer credential required.'
+	},
+	{
 		mode: 'official',
 		title: 'Official',
-		badge: 'Recommended',
-		blurb: 'The public musicbrainz.org API. Politeness-capped at 1 request per second.'
+		badge: null,
+		blurb: "The public musicbrainz.org API, with DroppedNeedle's conservative local 1/1 policy."
 	},
 	{
 		mode: 'mirror',
@@ -84,44 +98,44 @@ export const MUSICBRAINZ_SOURCE_CARDS: SourceCardCopy[] = [
 
 export const MORE_INFO_SUMMARY = 'More info';
 
+export const BRAINZMASH_PRIVACY_DISCLOSURE =
+	'BrainzMash receives MusicBrainz query terms and normal connection metadata. Recent search terms and partial network or location information have appeared on its public dashboard. Retention, redaction, and exact client-IP handling are unspecified.';
+
+export const BRAINZMASH_TRANSPORT_DISABLED_COPY =
+	'BrainzMash is the built-in source. This optional disclosure proposal remains transport-disabled until it is reviewed.';
+export const BRAINZMASH_LOCAL_POLICY_COPY =
+	'DroppedNeedle local wire policy: 10 requests/second with token capacity 1. This is a local safety limit, not a provider quota or SLA.';
+export const BRAINZMASH_ACTIVE_BINDING_COPY =
+	'BrainzMash is the active runtime source. Optional disclosure metadata may be reviewed without interrupting traffic.';
+export const BRAINZMASH_PENDING_TRANSPORT_COPY =
+	'BrainzMash remains active while the optional disclosure binding is reviewed.';
+export const BRAINZMASH_NO_ALTERNATE_PROBE_COPY =
+	'Test Connection is unavailable while BrainzMash is active because no non-Brainz provider traffic may run before this source switch.';
+
 export const MORE_INFO_DISCLOSURES: Record<MusicBrainzSourceMode, string[]> = {
+	brainzmash: [
+		'Read-only support covers artist, release-group, release, recording, ISRC, and URL MusicBrainz route families. DroppedNeedle does not depend on provider cache, quorum, freshness, or availability guarantees.',
+		BRAINZMASH_PRIVACY_DISCLOSURE,
+		BRAINZMASH_LOCAL_POLICY_COPY
+	],
 	official: [
-		'Why the 1 request/second cap? musicbrainz.org is one shared public service with a ' +
-			'provider-enforced limit. Staying under it is both courtesy to every other consumer ' +
-			'and protection against getting your own access throttled.',
-		'This is the recommended default: zero setup, always current, and DroppedNeedle caches ' +
-			'aggressively so the cap rarely bites.'
+		'MusicBrainz documents a current default average of 1 request/second per source IP unless separately agreed. Its rate rules may change, and meaningful User-Agent information is required.',
+		'DroppedNeedle keeps Official traffic on a conservative local 1 request/second, capacity-1 wire policy. Local queue concurrency must not create a burst.'
 	],
 	mirror: [
-		'Running a mirror means hosting your own full copy of the MusicBrainz database. Be ' +
-			'honest with yourself about the footprint: roughly 8-16 GB of RAM and 100-350 GB of ' +
-			'disk, plus a weekly search-index rebuild.',
-		'Your data is exactly as fresh as your replication schedule, and search quality depends ' +
-			'on your reindex cadence - which is precisely why raised or unlimited request limits ' +
-			'are fine here. It is your machine; you set the rules.',
-		'The setup guide walks through musicbrainz-docker, the replication token, sizing, and ' +
-			'the one-line command to check your data vintage.'
+		'Running a mirror means hosting your own full copy of the MusicBrainz database. Be honest with yourself about the footprint: roughly 8-16 GB of RAM and 100-350 GB of disk, plus a weekly search-index rebuild.',
+		'Your data is exactly as fresh as your replication schedule, and search quality depends on your reindex cadence - which is precisely why raised or unlimited request limits are fine here. It is your machine; you set the rules.',
+		'The setup guide walks through musicbrainz-docker, the replication token, sizing, and the one-line command to check your data vintage.'
 	],
 	community: [
-		"What this is: somebody else's server answers MusicBrainz queries for you. Volunteer-run " +
-			'mirror copies catch honest mistakes - they do not protect against deliberately bad ' +
-			'data, and one operator controls the front door. Some public dashboards even display ' +
-			"other people's search terms.",
-		'Protocol caveat: the currently known BrainzMash shared pool speaks a different API ' +
-			'dialect and WILL fail the Test Connection below. That is expected, not a bug. Any ' +
-			'server genuinely speaking the MusicBrainz ws/2 format plugs straight in.',
-		'Politeness: "Unlimited" is meant for your own hardware. Be reasonable with servers ' +
-			'you do not own.',
-		'Your choice, your ownership: identity decisions made while connected to this server ' +
-			'stay fully enabled - nothing is blocked or downgraded. They belong to whoever chose ' +
-			'the source: you.'
+		"What this is: somebody else's server answers MusicBrainz queries for you. Volunteer-run mirror copies catch honest mistakes - they do not protect against deliberately bad data, and one operator controls the front door. Some public dashboards even display other people's search terms.",
+		'Politeness: "Unlimited" is meant for your own hardware. Be reasonable with servers you do not own.',
+		'Your choice, your ownership: identity decisions made while connected to this server stay fully enabled - nothing is blocked or downgraded.'
 	]
 };
 
 export const COMMUNITY_RISK_BANNER =
-	'Community servers are run by volunteers: trust the operator before you trust the data. ' +
-	'Quorum-style copies catch accidents, not coordinated bad data; one person controls the ' +
-	'front door, and some public dashboards leak search terms.';
+	'Community servers are run by volunteers: trust the operator before you trust the data. Quorum-style copies catch accidents, not coordinated bad data; one person controls the front door, and some public dashboards leak search terms.';
 
 export const COMMUNITY_CONFIRM_LABEL =
 	'I understand the risks of routing identity data through a server I do not control.';
@@ -129,15 +143,13 @@ export const COMMUNITY_CONFIRM_LABEL =
 export const COMMUNITY_CONFIRM_BUTTON_HINT = 'Acknowledge the risk notice to enable saving.';
 
 export const MIRROR_BANNER_LINES = [
-	'You are using a non-official MusicBrainz endpoint. Search results depend on that ' +
-		"server's reindex schedule - search indexes are not replicated.",
+	"You are using a non-official MusicBrainz endpoint. Search results depend on that server's reindex schedule - search indexes are not replicated.",
 	"Metadata freshness is bounded by the operator's replication cron.",
 	'Identity verification quality depends on the operator.'
 ];
 
 export const CLAMPED_WARNING =
-	'Values were clamped to official limits - the public musicbrainz.org endpoint always runs ' +
-	'at 1 request/second and 6 concurrent searches regardless of entered values.';
+	'Values were clamped to the conservative Official 1 request/second, capacity-1 local policy.';
 
 export const UNLIMITED_RATE_LABEL = 'Unlimited';
 

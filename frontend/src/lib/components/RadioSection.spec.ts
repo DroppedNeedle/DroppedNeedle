@@ -13,12 +13,26 @@ const USER = 'user-a';
 describe('DiscoverQueryKeyFactory.radio', () => {
 	it('returns the expected key shape for artist seed', () => {
 		const key = DiscoverQueryKeyFactory.radio(USER, 'artist', 'test-mbid');
-		expect(key).toEqual(['discover', USER, 'radio', 'artist', 'test-mbid']);
+		expect(key).toEqual([
+			'discover',
+			USER,
+			{ user_id: USER, source_mode: 'brainzmash', source_id: '', generation: 0 },
+			'radio',
+			'artist',
+			'test-mbid'
+		]);
 	});
 
 	it('returns the expected key shape for album seed', () => {
 		const key = DiscoverQueryKeyFactory.radio(USER, 'album', 'album-mbid');
-		expect(key).toEqual(['discover', USER, 'radio', 'album', 'album-mbid']);
+		expect(key).toEqual([
+			'discover',
+			USER,
+			{ user_id: USER, source_mode: 'brainzmash', source_id: '', generation: 0 },
+			'radio',
+			'album',
+			'album-mbid'
+		]);
 	});
 
 	it('generates different keys for different seed types', () => {
@@ -43,7 +57,13 @@ describe('DiscoverQueryKeyFactory.radio', () => {
 		const key = DiscoverQueryKeyFactory.radio(USER, 'artist', 'test-mbid');
 		expect(key[0]).toBe('discover');
 		expect(key[1]).toBe(USER);
-		expect(key[2]).toBe('radio');
+		expect(key[2]).toEqual({
+			user_id: USER,
+			source_mode: 'brainzmash',
+			source_id: '',
+			generation: 0
+		});
+		expect(key[3]).toBe('radio');
 	});
 });
 
@@ -63,7 +83,14 @@ describe('RadioSection refresh invalidation contract', () => {
 
 		expect(mockInvalidate).toHaveBeenCalledOnce();
 		expect(mockInvalidate).toHaveBeenCalledWith({
-			queryKey: ['discover', USER, 'radio', 'artist', 'abc-123']
+			queryKey: [
+				'discover',
+				USER,
+				{ user_id: USER, source_mode: 'brainzmash', source_id: '', generation: 0 },
+				'radio',
+				'artist',
+				'abc-123'
+			]
 		});
 	});
 

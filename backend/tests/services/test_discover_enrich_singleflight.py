@@ -227,8 +227,14 @@ class TestEnrichSingleflight:
         old_started = asyncio.Event()
         new_started = asyncio.Event()
         calls: list[int] = []
-        original_source = mb_base.get_mb_api_base()
-        mb_base.set_mb_api_base("https://old.example/ws/2")
+        original_source = mb_base.capture_mb_source_context()
+        original_runtime = mb_base.brainzmash_runtime_enabled()
+        mb_base.set_mb_api_base(
+            "https://old.example/ws/2",
+            source_mode="mirror",
+            source_id="discover-enrich-old",
+            generation=original_source.generation + 1,
+        )
         old_generation = mb_base.get_mb_source_generation()
 
         async def delayed_release_group(*_args, **_kwargs):
@@ -251,7 +257,12 @@ class TestEnrichSingleflight:
             old_follower = asyncio.create_task(service.enrich_queue_item(MBID))
             await asyncio.sleep(0)
 
-            mb_base.set_mb_api_base("https://new.example/ws/2")
+            mb_base.set_mb_api_base(
+                "https://new.example/ws/2",
+                source_mode="mirror",
+                source_id="discover-enrich-new",
+                generation=old_generation + 1,
+            )
             new_generation = mb_base.get_mb_source_generation()
             new_leader = asyncio.create_task(service.enrich_queue_item(MBID))
             await new_started.wait()
@@ -280,7 +291,13 @@ class TestEnrichSingleflight:
         finally:
             old_gate.set()
             new_gate.set()
-            mb_base.set_mb_api_base(original_source)
+            mb_base.set_mb_api_base(
+                original_source.source_url,
+                source_mode=original_source.source_mode,
+                source_id=original_source.source_id,
+                generation=original_source.generation,
+                brainzmash_binding_valid=original_runtime,
+            )
 
         assert calls == [old_generation, new_generation]
         assert old_leader_result.tags == ["old"]
@@ -304,7 +321,9 @@ async def test_popularity_coalescer_batches_concurrent_listen_counts():
     service._enrichment._flush_popularity_now()
 
     assert await asyncio.gather(first, second) == [17, 4]
-    lb_repo.get_release_group_popularity_batch.assert_awaited_once_with(["rg-a", "rg-b"])
+    lb_repo.get_release_group_popularity_batch.assert_awaited_once_with(
+        ["rg-a", "rg-b"]
+    )
     flush_task = service._enrichment._popularity_flush_task
     if flush_task is not None:
         await flush_task

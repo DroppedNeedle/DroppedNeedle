@@ -1,8 +1,16 @@
+import { musicBrainzSourceKey } from './musicbrainz/sourceScope.svelte';
+
 export const HomeQueryKeyFactory = {
 	prefix: ['home'] as const,
-	// userId dimension isolates one user's home cache from another's on a shared browser.
-	home: (userId: string | null | undefined) =>
-		[...HomeQueryKeyFactory.prefix, userId ?? null] as const,
+	// userId and the active MusicBrainz source identity isolate persisted provider data.
+	home: (userId: string | null | undefined) => {
+		const normalizedUserId = userId ?? null;
+		return [
+			...HomeQueryKeyFactory.prefix,
+			normalizedUserId,
+			musicBrainzSourceKey(normalizedUserId)
+		] as const;
+	},
 	integrationStatus: (userId: string | null | undefined) =>
-		[...HomeQueryKeyFactory.home(userId), 'integration-status'] as const
+		[...HomeQueryKeyFactory.prefix, userId ?? null, 'integration-status'] as const
 };

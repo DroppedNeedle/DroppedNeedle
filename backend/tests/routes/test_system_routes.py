@@ -7,6 +7,7 @@ from api.v1.routes import system as system_routes
 from infrastructure.cache.cache_metrics import WindowedCounterMap
 from infrastructure.observability import provider_counters
 from infrastructure.observability.provider_counters import RateLimitGauge
+from repositories.musicbrainz_base import MbSourceContext
 from infrastructure.queue.priority_queue import get_priority_queue
 from middleware import _get_current_admin
 from tests.helpers import build_test_client, mock_admin_user
@@ -106,7 +107,6 @@ class TestProviderStatsAuthMatrix:
                 "limit": 15,
                 "remaining": 14,
                 "reset_epoch": 1787600000.0,
-                "limiter": "lua",
                 "observed_at": rate_limits[0]["observed_at"],
                 "low_remaining_events_window": 0,
             }
@@ -132,5 +132,38 @@ class TestProviderStatsRows:
                 "outcome": "ok",
                 "count_total": 12,
                 "rate_per_min_window": round(12 / 60, 2),
+            }
+        ]
+
+    def test_admin_gets_source_dimensions_on_musicbrainz_rows(self, monkeypatch):
+        fresh = WindowedCounterMap()
+        monkeypatch.setattr(provider_counters, "_counters", fresh)
+        provider_counters.record_provider_call(
+            "musicbrainz",
+            "background_sync",
+            200,
+            source_context=MbSourceContext(
+                source_url="https://mirror.example/ws/2",
+                generation=4,
+                source_mode="mirror",
+                source_id="mirror-4",
+            ),
+        )
+
+        response = build_test_client(_app(mock_admin_user)).get(
+            "/system/provider-stats"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["providers"] == [
+            {
+                "provider": "musicbrainz",
+                "priority": "background_sync",
+                "outcome": "ok",
+                "count_total": 1,
+                "rate_per_min_window": round(1 / 60, 2),
+                "source_mode": "mirror",
+                "source_id": "mirror-4",
+                "source_generation": 4,
             }
         ]

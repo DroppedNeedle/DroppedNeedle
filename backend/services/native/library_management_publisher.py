@@ -20,6 +20,7 @@ from pathlib import Path, PurePosixPath
 import msgspec
 
 from api.v1.schemas.library_management import (
+    LibraryManagementRootAssignment,
     picard_style_organizer_profile,
     settings_revision,
 )
@@ -66,10 +67,13 @@ from models.library_management_planning import (
     naming_policy_revision,
     pin_library_management_profile,
 )
-from api.v1.schemas.library_management import LibraryManagementRootAssignment
-from services.native.artwork_projection_service import merge_embedded_artwork
 from services.native.audio_write_planning_service import AudioWritePlanningService
 from services.native.file_revision import revision_from_stat
+from services.native.library_management_profile_service import (
+    LibraryManagementProfileService,
+)
+from services.native.library_policy_resolver import LibraryPolicyResolver
+from services.native.recycle_bin import recycle
 from services.native.library_filesystem_coordinator import (
     MANAGEMENT_ARTIFACT_PREFIX,
     LibraryFilesystemCoordinator,
@@ -77,12 +81,8 @@ from services.native.library_filesystem_coordinator import (
     replace_rooted_publication,
     unlink_rooted,
 )
-from services.native.library_policy_resolver import LibraryPolicyResolver
-from services.native.library_management_profile_service import (
-    LibraryManagementProfileService,
-)
-from services.native.recycle_bin import recycle
 from services.preferences_service import PreferencesService
+from repositories.musicbrainz_base import MbSourceContext
 
 logger = logging.getLogger(__name__)
 _JOURNAL_NAMESPACE = uuid.UUID("c646c2dd-f0cc-4c9d-8b2c-feb0a8a660c9")
@@ -90,10 +90,9 @@ _SNAPSHOT_NAMESPACE = uuid.UUID("77d7be20-4ff2-475a-941f-e0a575806d78")
 _BASELINE_NAMESPACE = uuid.UUID("bf48a4f8-5968-41f6-9c82-f95a976a8f21")
 _IMPORT_BUNDLE_NAMESPACE = uuid.UUID("4ac147e4-7371-4eb4-89d3-5cc30f394277")
 _MAX_DIRECTORY_COLLISION_ENTRIES = 10_000
-
 CommitCallback = Callable[[set[str], set[str]], Awaitable[None]]
 ImportCommitCallback = Callable[
-    [str, tuple[LibraryManagementPublishedImportFile, ...]],
+    [str, tuple[LibraryManagementPublishedImportFile, ...], MbSourceContext | None],
     Awaitable[tuple[str, ...]],
 ]
 
@@ -337,13 +336,14 @@ class LibraryManagementPublisher:
         self,
         bundle: LibraryManagementImportBundle,
         catalog_commit: ImportCommitCallback,
+        *,
+        source_context: MbSourceContext | None = None,
     ) -> LibraryManagementImportResult:
         """Publish one verified acquisition/drop unit through a durable journal.
 
-        Incoming files do not exist in the catalog yet, so they cannot use the
-        foreign-keyed manual-management plan table. This import lane shares the
-        staged writer, root leases, safe path checks, publish/rollback rules, and
-        NativeLibraryStore transaction owner without inventing another work queue.
+        The provider source context is an internal admission stamp. It is
+        intentionally not serialized into the import request or any HTTP/domain
+        model.
         """
 
         self._validate_import_bundle(bundle)
@@ -354,12 +354,12 @@ class LibraryManagementPublisher:
         # F-175: serialize duplicate publications of one bundle id so a second
         # caller cannot interleave staging/rollback under the winner's critical
         # section; it awaits the lock and re-runs the state machine instead.
-        lock = self._import_publication_locks.setdefault(
-            bundle_id, asyncio.Lock()
-        )
+        lock = self._import_publication_locks.setdefault(bundle_id, asyncio.Lock())
         try:
             async with lock:
-                return await self._publish_import_bundle(bundle, catalog_commit)
+                return await self._publish_import_bundle(
+                    bundle, catalog_commit, source_context
+                )
         finally:
             remaining = self._active_import_bundles[bundle_id] - 1
             if remaining:
@@ -374,6 +374,7 @@ class LibraryManagementPublisher:
         self,
         bundle: LibraryManagementImportBundle,
         catalog_commit: ImportCommitCallback,
+        source_context: MbSourceContext | None,
     ) -> LibraryManagementImportResult:
         request_json = msgspec.json.encode(bundle).decode()
         request_hash = hashlib.sha256(request_json.encode()).hexdigest()
@@ -482,7 +483,9 @@ class LibraryManagementPublisher:
                         [await self._published_import_file(value) for value in prepared]
                     )
                     self._validate_automatic_import_configuration(bundle)
-                    committed = await catalog_commit(bundle_id, published)
+                    committed = await catalog_commit(
+                        bundle_id, published, source_context
+                    )
                     if len(committed) != len(prepared):
                         raise ValidationError(
                             "The import catalog commit returned an incomplete result."
@@ -1391,9 +1394,7 @@ class LibraryManagementPublisher:
                     artifact.destination_relative_path,
                 )
                 # F-179: durable directory entry before its journal advances.
-                await asyncio.to_thread(
-                    self._fsync_directory, artifact.destination
-                )
+                await asyncio.to_thread(self._fsync_directory, artifact.destination)
             elif (
                 not artifact.destination.exists()
                 or await asyncio.to_thread(self._hash_file, artifact.destination)
@@ -1778,8 +1779,7 @@ class LibraryManagementPublisher:
                 # F-178: startup drains these cleanups, so a persistent failure
                 # must be observable instead of landing as a silent ordinal.
                 logger.warning(
-                    "Library Management import cleanup failed for bundle %s "
-                    "ordinal %s",
+                    "Library Management import cleanup failed for bundle %s ordinal %s",
                     record.id,
                     request.ordinal,
                     exc_info=True,
@@ -1905,9 +1905,7 @@ class LibraryManagementPublisher:
             }
             album_ids: set[str] = set()
             if track_ids:
-                tracks = await self._store.get_target_tracks_by_ids(
-                    sorted(track_ids)
-                )
+                tracks = await self._store.get_target_tracks_by_ids(sorted(track_ids))
                 album_ids = {
                     str(track["local_album_id"])
                     for track in tracks.values()
@@ -3629,6 +3627,7 @@ class LibraryManagementPublisher:
                         )
                     except (StaleRevisionError, ValidationError):
                         pass
+
     async def _cleanup_committed(
         self,
         prepared: list[_PreparedMutation],
@@ -3700,9 +3699,7 @@ class LibraryManagementPublisher:
         journals = await self._store.list_file_mutation_journals_for_bundle(
             job_id, bundle_ordinal
         )
-        current = next(
-            (value for value in journals if value.id == journal_id), None
-        )
+        current = next((value for value in journals if value.id == journal_id), None)
         if current is None or current.state != "catalog_committed":
             return None
         try:
@@ -3754,8 +3751,7 @@ class LibraryManagementPublisher:
                 value.destination.is_symlink()
                 or not value.destination.is_file()
                 or value.journal.staged_fingerprint is None
-                or cls._hash_file(value.destination)
-                != value.journal.staged_fingerprint
+                or cls._hash_file(value.destination) != value.journal.staged_fingerprint
             ):
                 raise ConflictError(
                     "A published management destination changed during rollback."
@@ -3927,8 +3923,7 @@ class LibraryManagementPublisher:
                 return
             except OSError:
                 logger.warning(
-                    "Library Management staging fell back to the system "
-                    "temp for %s",
+                    "Library Management staging fell back to the system temp for %s",
                     temporary,
                     exc_info=True,
                 )
@@ -3956,8 +3951,7 @@ class LibraryManagementPublisher:
             except OSError as error:
                 # F-146: observability without a new failure mode.
                 logger.warning(
-                    "Library Management cleanup directory fsync failed "
-                    "(errno=%s): %s",
+                    "Library Management cleanup directory fsync failed (errno=%s): %s",
                     error.errno,
                     directory,
                 )

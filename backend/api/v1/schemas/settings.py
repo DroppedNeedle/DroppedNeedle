@@ -6,6 +6,7 @@ import msgspec
 
 from api.v1.schemas.advanced_settings import _validate_range
 from api.v1.schemas.plex import PlexLibrarySectionInfo
+from infrastructure.http.brainzmash_transport import BRAINZMASH_ENDPOINT
 from infrastructure.msgspec_fastapi import AppStruct
 
 LASTFM_SECRET_MASK = "••••••••"
@@ -786,6 +787,14 @@ class PrimaryMusicSourceSettings(AppStruct):
 
 _OFFICIAL_MB_RATE_LIMIT = 1.0
 _OFFICIAL_MB_CONCURRENT_SEARCHES = 6
+_BRAINZMASH_RATE_LIMIT = 10.0
+_BRAINZMASH_CONCURRENT_SEARCHES = 1
+
+# BrainzMash is deliberately a server-owned source.  The endpoint and disclosure
+# version are never accepted from a browser request.
+BRAINZMASH_DISCLOSURE_VERSION = "brainzmash-v1"
+MusicBrainzSourceMode = Literal["official", "mirror", "community", "brainzmash"]
+
 
 # P2 full-mirror tier (owner decision 2026-08-24): non-official endpoints are
 # user-owned or deliberately chosen infrastructure, so throughput there is a
@@ -802,6 +811,64 @@ def is_musicbrainz_rate_policy_public_host(url: str) -> bool:
     return is_mb_rate_policy_public_host(url)
 
 
+class BrainzMashPendingProposal(AppStruct):
+    endpoint: str = BRAINZMASH_ENDPOINT
+    access_revision: str = ""
+    source_id: str = ""
+    generation: int = 0
+    disclosure_version: str = BRAINZMASH_DISCLOSURE_VERSION
+    consented: bool = False
+    verified: bool = False
+
+
+class BrainzMashActiveBinding(AppStruct):
+    endpoint: str = BRAINZMASH_ENDPOINT
+    access_revision: str = ""
+    source_id: str = ""
+    generation: int = 0
+    disclosure_version: str = BRAINZMASH_DISCLOSURE_VERSION
+    consented: bool = False
+    verified: bool = False
+
+
+class MusicBrainzBindingRequest(AppStruct):
+    access_revision: str
+    source_id: str
+    generation: int
+    disclosure_version: str
+
+
+class MusicBrainzSettingsUpdate(AppStruct):
+    source_mode: MusicBrainzSourceMode = "official"
+    api_url: str | None = None
+    rate_limit: float = 1.0
+    concurrent_searches: int = 6
+    community_acknowledged: bool | None = False
+
+    def __post_init__(self) -> None:
+        if self.source_mode in {"mirror", "community"} and not self.api_url:
+            raise msgspec.ValidationError(
+                "api_url is required for mirror and community sources"
+            )
+        if self.source_mode == "official":
+            from repositories.musicbrainz_base import OFFICIAL_MB_API_BASE
+
+            self.api_url = OFFICIAL_MB_API_BASE
+        elif self.api_url is not None:
+            self.api_url = self.api_url.strip().rstrip("/")
+            if self.source_mode in {
+                "mirror",
+                "community",
+            } and not self.api_url.startswith(("http://", "https://")):
+                raise msgspec.ValidationError(
+                    "api_url must be an absolute HTTP(S) URL for non-official sources"
+                )
+        if not math.isfinite(self.rate_limit):
+            raise msgspec.ValidationError("rate_limit must be finite")
+        if self.concurrent_searches < 1:
+            raise msgspec.ValidationError("concurrent_searches must be at least 1")
+
+
 class SecuritySettings(AppStruct):
     hibp_check: bool = True
     # local HIBP "Pwned Passwords" file; when present, used instead of the API
@@ -814,9 +881,18 @@ class SecuritySettings(AppStruct):
 
 
 class MusicBrainzConnectionSettings(AppStruct):
+    source_mode: MusicBrainzSourceMode = "official"
     api_url: str = "https://musicbrainz.org/ws/2"
     rate_limit: float = 1.0
     concurrent_searches: int = 6
+    community_acknowledged: bool = False
+    selected_source_mode: MusicBrainzSourceMode = "official"
+    source_id: str = ""
+    generation: int = 0
+    pending_brainzmash: BrainzMashPendingProposal | None = None
+    active_brainzmash: BrainzMashActiveBinding | None = None
+    source_quarantined: bool = False
+    quarantine_reason: str = ""
     # Surfaced on the save/settings response: True when the official-host clamp
     # had to force entered values down (or lift a sentinel 0 up) to the official
     # limits. The frontend renders this as "values were clamped to official
@@ -824,15 +900,40 @@ class MusicBrainzConnectionSettings(AppStruct):
     clamped_to_official_limits: bool = False
 
     def __post_init__(self) -> None:
+        from repositories.musicbrainz_base import OFFICIAL_MB_API_BASE
+
+        if self.source_mode not in {
+            "official",
+            "mirror",
+            "community",
+            "brainzmash",
+        }:
+            raise msgspec.ValidationError("invalid MusicBrainz source_mode")
+        if self.selected_source_mode not in {
+            "official",
+            "mirror",
+            "community",
+            "brainzmash",
+        }:
+            raise msgspec.ValidationError("invalid selected MusicBrainz source_mode")
         self.api_url = self.api_url.strip()
-        if not self.api_url or not self.api_url.startswith(("http://", "https://")):
-            self.api_url = "https://musicbrainz.org/ws/2"
+        if self.source_mode == "official":
+            self.api_url = OFFICIAL_MB_API_BASE
+        elif self.source_mode == "brainzmash":
+            self.api_url = BRAINZMASH_ENDPOINT.rstrip("/")
+        elif not self.api_url or not self.api_url.startswith(("http://", "https://")):
+            raise msgspec.ValidationError(
+                "api_url must be an absolute HTTP(S) URL for non-official sources"
+            )
         self.api_url = self.api_url.rstrip("/")
         self.clamped_to_official_limits = False
         if not math.isfinite(self.rate_limit):
             raise msgspec.ValidationError("rate_limit must be finite")
         if self.concurrent_searches < 1:
             raise msgspec.ValidationError("concurrent_searches must be at least 1")
+        if self.source_mode == "brainzmash":
+            self.rate_limit = _BRAINZMASH_RATE_LIMIT
+            self.concurrent_searches = _BRAINZMASH_CONCURRENT_SEARCHES
         if is_musicbrainz_rate_policy_public_host(self.api_url):
             before = (self.rate_limit, self.concurrent_searches)
             self.rate_limit = min(self.rate_limit, _OFFICIAL_MB_RATE_LIMIT)
@@ -865,6 +966,29 @@ class MusicBrainzConnectionSettings(AppStruct):
             raise msgspec.ValidationError(
                 f"concurrent_searches must be between 1 and {_MAX_MB_CONCURRENT_SEARCHES}"
             )
+
+
+def is_brainzmash_active_binding_valid(
+    settings: MusicBrainzConnectionSettings,
+) -> bool:
+    """Return whether the pinned built-in BrainzMash source may serve traffic.
+
+    BrainzMash is the built-in source, so an interactive disclosure/verification
+    binding is optional rather than a prerequisite for the default. The source
+    identity and canonical endpoint checks still fence caches and transport to
+    the approved origin.
+    """
+
+    def exact_nonblank(value: str) -> bool:
+        return bool(value) and value == value.strip()
+
+    return bool(
+        not settings.source_quarantined
+        and settings.source_mode == "brainzmash"
+        and settings.api_url == BRAINZMASH_ENDPOINT.rstrip("/")
+        and settings.generation > 0
+        and exact_nonblank(settings.source_id)
+    )
 
 
 class ConnectAppsSettings(AppStruct):

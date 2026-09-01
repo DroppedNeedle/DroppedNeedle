@@ -631,9 +631,9 @@ async def production_target_lifespan(app: FastAPI):
             )
 
         def mb_provider_state() -> CircuitState:
-            from repositories.musicbrainz_base import mb_circuit_breaker
+            from repositories.musicbrainz_base import get_mb_provider_circuit_breaker
 
-            return mb_circuit_breaker.state
+            return get_mb_provider_circuit_breaker().state
 
         async def probe_mb_provider() -> None:
             # Thin background-priority probe mirroring verify_musicbrainz; the
@@ -671,6 +671,7 @@ async def production_target_lifespan(app: FastAPI):
                 get_library_contribution_verification_worker,
                 work_wakeups,
             )
+
         worker_starters = {
             SUPERVISOR_TASK_NAME: start_scan_supervisor,
             IDENTIFICATION_WORKER_TASK_NAME: start_identification_worker,
@@ -802,7 +803,9 @@ def create_production_target_application() -> FastAPI:
         routes=[*subsonic_router.routes, *jellyfin_router.routes],
     )
     # Legacy settings doubles omit base_path; absence means unprefixed serving.
-    app.add_middleware(BasePathMiddleware, base_path=getattr(get_settings(), "base_path", ""))
+    app.add_middleware(
+        BasePathMiddleware, base_path=getattr(get_settings(), "base_path", "")
+    )
     app.add_middleware(
         ProxyHeadersMiddleware, trusted_hosts=get_settings().trusted_proxy_ips
     )

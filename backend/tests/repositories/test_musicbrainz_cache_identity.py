@@ -14,10 +14,14 @@ class _Cache:
         self.writes = []
 
     async def get(self, key):
-        return self.values.get(key)
+        from repositories.musicbrainz_base import namespace_mb_cache_key
+
+        return self.values.get(namespace_mb_cache_key(key))
 
     async def set(self, key, value, ttl_seconds=None):
-        self.values[key] = value
+        from repositories.musicbrainz_base import namespace_mb_cache_key
+
+        self.values[namespace_mb_cache_key(key)] = value
         self.writes.append((key, value, ttl_seconds))
 
 
@@ -115,7 +119,14 @@ async def test_concurrent_tag_callers_share_one_provider_request(monkeypatch):
 async def test_cached_release_group_miss_returns_none_without_wire(monkeypatch):
     repo = _repo()
     includes = ["artist-credits", "releases"]
-    repo._cache.values[mb_release_group_key("missing", includes)] = {}
+    from repositories.musicbrainz_base import (
+        capture_mb_source_context,
+        namespace_mb_cache_key,
+    )
+
+    source_context = capture_mb_source_context()
+    raw_key = mb_release_group_key("missing", includes)
+    repo._cache.values[namespace_mb_cache_key(raw_key, source_context)] = {}
     provider = AsyncMock()
     monkeypatch.setattr(mb_album, "mb_api_get", provider)
 

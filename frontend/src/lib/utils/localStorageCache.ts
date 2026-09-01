@@ -7,6 +7,8 @@ interface CachedEntry<T> {
 
 interface LocalStorageCacheOptions {
 	maxEntries?: number;
+	/** Recomputed for every access so source/user changes cannot reuse old data. */
+	keyNamespace?: () => string;
 }
 
 interface LocalStorageRecord<T> {
@@ -22,9 +24,15 @@ export function createLocalStorageCache<T>(
 	let ttl = initialTtl;
 	const keyPrefix = `${baseKey}_`;
 	const maxEntries = options.maxEntries;
+	const keyNamespace = options.keyNamespace;
+
+	function scopedBaseKey(): string {
+		return keyNamespace ? `${baseKey}_${keyNamespace()}` : baseKey;
+	}
 
 	function resolveKey(suffix?: string): string {
-		return suffix ? `${baseKey}_${suffix}` : baseKey;
+		const scopedBase = scopedBaseKey();
+		return suffix ? `${scopedBase}_${suffix}` : scopedBase;
 	}
 
 	function parseEntry(raw: string | null): CachedEntry<T> | null {

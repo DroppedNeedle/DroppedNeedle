@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI, Request
@@ -13,12 +14,23 @@ from fastapi.testclient import TestClient
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.v1.routes.auth import router
+from core.dependencies import get_preferences_service
 from core.dependencies.auth_providers import get_auth_service
 from infrastructure.persistence.auth_store import AuthStore, TokenRecord, UserRecord
-from middleware import AuthMiddleware, _get_current_admin, _get_current_token, _get_current_user
+from middleware import (
+    AuthMiddleware,
+    _get_current_admin,
+    _get_current_token,
+    _get_current_user,
+)
 from services.auth_service import AuthService
 from core.base_path import BasePathMiddleware
-from tests.helpers import build_test_client, add_production_exception_handlers, mock_admin_user, mock_user
+from tests.helpers import (
+    build_test_client,
+    add_production_exception_handlers,
+    mock_admin_user,
+    mock_user,
+)
 
 PASSWORD = "correct horse battery staple"
 
@@ -75,9 +87,7 @@ def test_standard_session_can_mint_companion_session(tmp_path):
             password=PASSWORD,
         )
     )
-    source_token = _override_authenticated_session(
-        app, service, user, account_token
-    )
+    source_token = _override_authenticated_session(app, service, user, account_token)
     client = build_test_client(app)
 
     response = client.post(
@@ -88,18 +98,15 @@ def test_standard_session_can_mint_companion_session(tmp_path):
     assert response.status_code == 200
     assert response.json()["token"]
     sessions = asyncio.run(service.list_sessions(user.id))
-    companion = next(
-        session
-        for session in sessions
-        if session.id != source_token.id
-    )
+    companion = next(session for session in sessions if session.id != source_token.id)
     assert companion.session_kind == "companion"
     assert companion.user_agent == "DroppedNeedle companion · Kyle Apple Watch Ultra"
     projected = client.get("/auth/sessions")
     assert projected.status_code == 200
-    assert {
-        session["session_kind"] for session in projected.json()["sessions"]
-    } == {"standard", "companion"}
+    assert {session["session_kind"] for session in projected.json()["sessions"]} == {
+        "standard",
+        "companion",
+    }
 
 
 def test_device_session_is_no_store_and_persists_only_raw_token_hash(tmp_path):
@@ -128,8 +135,7 @@ def test_device_session_is_no_store_and_persists_only_raw_token_hash(tmp_path):
     assert raw_token not in listed.text
     with sqlite3.connect(tmp_path / "library.db") as connection:
         hashes = {
-            row[0]
-            for row in connection.execute("SELECT token_hash FROM auth_tokens")
+            row[0] for row in connection.execute("SELECT token_hash FROM auth_tokens")
         }
     assert hashlib.sha256(raw_token.encode()).hexdigest() in hashes
     assert raw_token not in hashes
@@ -212,9 +218,7 @@ def test_ordinary_session_with_companion_label_is_not_revoked(tmp_path):
             user_agent=label,
         )
     )
-    source_token = _override_authenticated_session(
-        app, service, user, account_token
-    )
+    source_token = _override_authenticated_session(app, service, user, account_token)
     client = build_test_client(app)
 
     created = client.post(
@@ -348,20 +352,28 @@ def test_login_by_username_mixed_case_and_generic_401(tmp_path):
     assert ok.status_code == 200
     assert ok.json()["user"]["username"] == "jane.doe"
 
-    bad_pw = client.post("/auth/login", json={"username": "jane.doe", "password": "nope-nope-nope"})
+    bad_pw = client.post(
+        "/auth/login", json={"username": "jane.doe", "password": "nope-nope-nope"}
+    )
     assert bad_pw.status_code == 401
     assert bad_pw.json()["error"]["message"] == "Invalid username or password"
 
     # Unknown username must not 500 (dummy-verify path).
-    unknown = client.post("/auth/login", json={"username": "ghost", "password": PASSWORD})
+    unknown = client.post(
+        "/auth/login", json={"username": "ghost", "password": PASSWORD}
+    )
     assert unknown.status_code == 401
 
 
 def test_me_returns_username_fields(tmp_path):
     app, _ = _app(tmp_path)
     app.dependency_overrides[_get_current_user] = lambda: UserRecord(
-        id="u", display_name="Jane", role="user", created_at="t",
-        username="jane", username_display="Jane",
+        id="u",
+        display_name="Jane",
+        role="user",
+        created_at="t",
+        username="jane",
+        username_display="Jane",
     )
     client = build_test_client(app)
 
@@ -372,6 +384,34 @@ def test_me_returns_username_fields(tmp_path):
     assert body["username_display"] == "Jane"
 
 
+def test_me_includes_musicbrainz_source_for_non_admin_session_user(tmp_path):
+    app, _ = _app(tmp_path)
+    app.dependency_overrides[_get_current_user] = lambda: UserRecord(
+        id="u",
+        display_name="Jane",
+        role="user",
+        created_at="t",
+        username="jane",
+        username_display="Jane",
+    )
+    app.dependency_overrides[get_preferences_service] = lambda: SimpleNamespace(
+        get_musicbrainz_connection=lambda: SimpleNamespace(
+            source_mode="mirror",
+            source_id="mirror-u",
+            generation=7,
+        )
+    )
+
+    body = build_test_client(app).get("/auth/me")
+
+    assert body.status_code == 200
+    assert body.json()["musicbrainz_source"] == {
+        "source_mode": "mirror",
+        "source_id": "mirror-u",
+        "generation": 7,
+    }
+
+
 def test_admin_create_user_with_username_and_duplicate_conflict(tmp_path):
     app, _ = _app(tmp_path)
     app.dependency_overrides[_get_current_admin] = mock_admin_user
@@ -379,7 +419,12 @@ def test_admin_create_user_with_username_and_duplicate_conflict(tmp_path):
 
     created = client.post(
         "/auth/admin/users",
-        json={"display_name": "Bob", "username": "Bob", "password": PASSWORD, "role": "user"},
+        json={
+            "display_name": "Bob",
+            "username": "Bob",
+            "password": PASSWORD,
+            "role": "user",
+        },
     )
     assert created.status_code == 201
     body = created.json()
@@ -435,9 +480,7 @@ def test_admin_generates_code_and_public_route_resets_password(tmp_path):
     )
     assert reset.status_code == 204
     recovered, _ = asyncio.run(
-        auth.login_local(
-            username="bob", password="another correct staple value"
-        )
+        auth.login_local(username="bob", password="another correct staple value")
     )
     assert recovered.id == user["id"]
 
@@ -472,7 +515,10 @@ def test_password_recovery_rejects_passwords_over_bcrypt_limit(tmp_path):
         },
     )
     assert response.status_code == 400
-    assert response.json()["error"]["message"] == "Password is too long. Use 72 UTF-8 bytes or fewer."
+    assert (
+        response.json()["error"]["message"]
+        == "Password is too long. Use 72 UTF-8 bytes or fewer."
+    )
 
 
 def test_password_recovery_code_generation_forbidden_for_non_admin(tmp_path):
@@ -540,12 +586,19 @@ def test_session_cookie_scopes_to_base_api_and_logout_clears_same_path(tmp_path)
         raise_server_exceptions=False,
     )
 
-    setup = client.post("/music/auth/setup", json={
-        "display_name": "Jane", "username": "jane", "password": PASSWORD,
-    })
+    setup = client.post(
+        "/music/auth/setup",
+        json={
+            "display_name": "Jane",
+            "username": "jane",
+            "password": PASSWORD,
+        },
+    )
     assert setup.status_code == 201
 
-    login = client.post("/music/auth/login", json={"username": "jane", "password": PASSWORD})
+    login = client.post(
+        "/music/auth/login", json={"username": "jane", "password": PASSWORD}
+    )
     assert login.status_code == 200
     login_cookie = login.headers["set-cookie"]
     assert "droppedneedle_session=" in login_cookie

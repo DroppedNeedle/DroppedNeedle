@@ -228,7 +228,7 @@ def with_retry(
     max_delay: float = 10.0,
     exponential_base: float = 2.0,
     jitter: bool = True,
-    circuit_breaker: Optional[CircuitBreaker] = None,
+    circuit_breaker: Optional[CircuitBreaker | Callable[..., CircuitBreaker]] = None,
     retriable_exceptions: tuple = (Exception,),
     non_breaking_exceptions: tuple = (),
     non_retriable_exceptions: tuple = (),
@@ -247,17 +247,20 @@ def with_retry(
         # See ``CircuitBreaker.record_failure`` for HALF_OPEN policy.
         @wraps(func)
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-            service_name = circuit_breaker.name if circuit_breaker else "unknown"
+            breaker = circuit_breaker
+            if breaker is not None and not isinstance(breaker, CircuitBreaker):
+                breaker = breaker(*args, **kwargs)
+            service_name = breaker.name if breaker else "unknown"
             func_name = func.__name__
 
-            if circuit_breaker:
-                await circuit_breaker.atry_transition()
-                retry_after = await circuit_breaker.aremaining_open_seconds()
-                if circuit_breaker.is_open():
-                    if circuit_breaker.should_log_open_warning():
+            if breaker:
+                await breaker.atry_transition()
+                retry_after = await breaker.aremaining_open_seconds()
+                if breaker.is_open():
+                    if breaker.should_log_open_warning():
                         logger.warning(
                             "Circuit breaker '%s' is OPEN",
-                            circuit_breaker.name,
+                            breaker.name,
                             extra={"service_name": service_name, "function": func_name},
                         )
                     if (
@@ -265,12 +268,12 @@ def with_retry(
                         or not math.isfinite(retry_after)
                         or retry_after <= 0
                     ):
-                        retry_after = circuit_breaker.timeout
+                        retry_after = breaker.timeout
                         if not math.isfinite(retry_after) or retry_after <= 0:
                             retry_after = None
                     raise CircuitOpenError(
-                        f"Circuit breaker '{circuit_breaker.name}' is OPEN",
-                        breaker_name=circuit_breaker.name,
+                        f"Circuit breaker '{breaker.name}' is OPEN",
+                        breaker_name=breaker.name,
                         retry_after_seconds=retry_after,
                     )
 
@@ -284,8 +287,8 @@ def with_retry(
                 try:
                     result = await func(*args, **kwargs)
 
-                    if circuit_breaker:
-                        await circuit_breaker.arecord_success()
+                    if breaker:
+                        await breaker.arecord_success()
 
                     return result
 
@@ -305,6 +308,29 @@ def with_retry(
                         should_log_failure = True
                         break
 
+                    if getattr(e, "_retry_delay_managed", False):
+                        if retry_budget_seconds is not None:
+                            managed_delay = getattr(
+                                e, "_retry_delay_managed_seconds", None
+                            )
+                            if managed_delay is not None:
+                                try:
+                                    managed_delay = float(managed_delay)
+                                except (TypeError, ValueError):
+                                    managed_delay = None
+                            if managed_delay is not None and (
+                                not math.isfinite(managed_delay) or managed_delay < 0
+                            ):
+                                managed_delay = None
+                            if managed_delay is not None:
+                                elapsed = time.monotonic() - started_at
+                                remaining = retry_budget_seconds - elapsed
+                                if remaining <= 0 or managed_delay >= remaining:
+                                    should_log_failure = True
+                                    break
+                        # A shared provider scheduler already admitted and
+                        # paced the next attempt; do not sleep twice here.
+                        continue
                     retry_after_override = _get_retry_after_seconds(e)
                     if retry_after_override is not None:
                         delay = retry_after_override
@@ -338,14 +364,14 @@ def with_retry(
                     last_exception,
                 )
 
-            if circuit_breaker:
+            if breaker:
                 is_non_breaking = (
                     isinstance(last_exception, non_breaking_exceptions)
                     if non_breaking_exceptions
                     else False
                 )
                 if not is_non_breaking:
-                    await circuit_breaker.arecord_failure()
+                    await breaker.arecord_failure()
 
             raise last_exception
 

@@ -416,3 +416,95 @@ async def test_verify_musicbrainz_failure_log_redacts_configured_endpoint(caplog
     assert str(error) not in caplog.text
     assert settings.api_url not in caplog.text
     assert "Failed to verify MusicBrainz connection" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_quarantined_alternate_probe_rejects_settings_change_during_wire(
+    monkeypatch,
+):
+    import httpx
+
+    import repositories.musicbrainz_base as mb_base
+    from api.v1.schemas.settings import (
+        BRAINZMASH_DISCLOSURE_VERSION,
+        BRAINZMASH_ENDPOINT,
+        BrainzMashActiveBinding,
+        MusicBrainzConnectionSettings,
+    )
+    from core.exceptions import ConfigurationError
+
+    before = mb_base.capture_mb_source_context()
+    before_runtime = mb_base.brainzmash_runtime_enabled()
+    current = MusicBrainzConnectionSettings(
+        source_mode="brainzmash",
+        api_url=BRAINZMASH_ENDPOINT,
+        source_id="quarantined-source",
+        generation=8,
+        source_quarantined=True,
+        active_brainzmash=BrainzMashActiveBinding(
+            endpoint=BRAINZMASH_ENDPOINT,
+            access_revision="access-8",
+            source_id="quarantined-source",
+            generation=8,
+            disclosure_version=BRAINZMASH_DISCLOSURE_VERSION,
+            consented=True,
+            verified=True,
+        ),
+    )
+    changed = MusicBrainzConnectionSettings(
+        source_mode="brainzmash",
+        api_url=BRAINZMASH_ENDPOINT,
+        source_id="quarantined-source",
+        generation=8,
+        source_quarantined=False,
+        active_brainzmash=current.active_brainzmash,
+    )
+    state = {"settings": current, "revision": 12}
+    prefs = MagicMock()
+    prefs.get_musicbrainz_connection.side_effect = lambda: state["settings"]
+    prefs.get_musicbrainz_settings_revision.side_effect = lambda: state["revision"]
+    prefs.musicbrainz_settings_match.side_effect = lambda expected: (
+        state["settings"] == expected
+    )
+    service = _make_service(preferences=prefs)
+    candidate = MusicBrainzConnectionSettings(
+        source_mode="mirror",
+        api_url="https://mirror.example/ws/2",
+    )
+    mb_base.set_mb_api_base(
+        BRAINZMASH_ENDPOINT,
+        source_mode="brainzmash",
+        source_id=current.source_id,
+        generation=current.generation,
+        brainzmash_binding_valid=False,
+    )
+
+    async def probe(*_args, **kwargs):
+        assert kwargs["allow_quarantined_alternate"] is True
+        assert kwargs["admission_check"]() is True
+        state["settings"] = changed
+        state["revision"] += 1
+        if not kwargs["admission_check"]():
+            raise ConfigurationError("MusicBrainz source changed during the request")
+        return httpx.Response(200)
+
+    monkeypatch.setattr(mb_base, "mb_api_probe", probe)
+    try:
+        with (
+            patch("infrastructure.validators.validate_service_url"),
+            patch("services.settings_service.get_settings", return_value=MagicMock()),
+            patch(
+                "services.settings_service.get_http_client", return_value=MagicMock()
+            ),
+        ):
+            result = await service.verify_musicbrainz(candidate)
+    finally:
+        mb_base.set_mb_api_base(
+            before.source_url,
+            source_mode=before.source_mode,
+            source_id=before.source_id,
+            generation=before.generation,
+            brainzmash_binding_valid=before_runtime,
+        )
+
+    assert result.valid is False

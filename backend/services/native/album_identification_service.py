@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Sequence
 
-import msgspec
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
+from repositories.musicbrainz_base import capture_mb_source_context
 from infrastructure.degradation import (
     clear_degradation_context,
     init_degradation_context,
@@ -434,6 +433,7 @@ class AlbumIdentificationService:
         now: float | None = None,
     ) -> str:
         timestamp = time.time() if now is None else now
+        operation_source_context = capture_mb_source_context()
         context = await self._store.get_album_identification_context(
             str(job["local_album_id"])
         )
@@ -736,6 +736,7 @@ class AlbumIdentificationService:
                     if decision_source == "manual" and job["requested_by_user_id"]
                     else None
                 ),
+                source_context=operation_source_context,
             )
             if decision.outcome == "identified" and self._on_identified is not None:
                 try:

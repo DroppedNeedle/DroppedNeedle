@@ -1,10 +1,11 @@
 """P2 full-mirror provenance stamping (owner decision 2026-08-24).
 
-The additive ``provider_base_url`` column records which MusicBrainz endpoint
-served an accepted AUTOMATIC identity - auditability only. These tests pin:
-the ratchet is idempotent (construct-twice), automatic rows carry the serving
-base URL, and manual/legacy rows stay NULL. No read path or identity predicate
-consumes the column."""
+The additive ``provider_source_*`` columns record the opaque MusicBrainz source
+identity for an accepted AUTOMATIC identity. The legacy ``provider_base_url``
+column remains NULL so endpoint details are never persisted. These tests pin:
+the ratchet is idempotent (construct-twice), automatic rows keep endpoint data
+out of storage, and manual/legacy rows stay NULL. No read path or identity
+predicate consumes the columns."""
 
 import sqlite3
 import threading
@@ -14,7 +15,14 @@ import pytest
 
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from models.local_catalog import LocalAlbumExternalIdentity
-from repositories.musicbrainz_base import get_mb_api_base, set_mb_api_base
+from infrastructure.http.brainzmash_transport import BRAINZMASH_ENDPOINT
+from repositories.musicbrainz_base import (
+    brainzmash_runtime_enabled,
+    capture_mb_source_context,
+    clear_mb_response_context,
+    get_mb_source_id,
+    set_mb_api_base,
+)
 
 
 @pytest.fixture
@@ -34,10 +42,23 @@ def store(db_path: Path) -> NativeLibraryStore:
 @pytest.fixture
 def mirror_base():
     """Point the MB base at a mirror for capture-time stamping; restore after."""
-    original = get_mb_api_base()
-    set_mb_api_base("https://mirror.example.com/ws/2")
+    original = capture_mb_source_context()
+    original_source_id = get_mb_source_id()
+    original_runtime = brainzmash_runtime_enabled()
+    set_mb_api_base(
+        "https://mirror.example.com/ws/2",
+        source_mode="mirror",
+        source_id="mirror-provenance",
+        generation=original.generation + 1,
+    )
     yield "https://mirror.example.com/ws/2"
-    set_mb_api_base(original)
+    set_mb_api_base(
+        original.source_url,
+        source_mode=original.source_mode,
+        source_id=original_source_id,
+        generation=original.generation,
+        brainzmash_binding_valid=original_runtime,
+    )
 
 
 def _seed_album(store: NativeLibraryStore, album_id: str) -> None:
@@ -91,7 +112,7 @@ class TestProviderBaseUrlRatchet:
 
 class TestAutomaticProvenanceStamping:
     @pytest.mark.asyncio
-    async def test_automatic_attach_carries_serving_base_url(
+    async def test_automatic_attach_does_not_persist_serving_base_url(
         self, store: NativeLibraryStore, mirror_base: str
     ):
         _seed_album(store, "alb-1")
@@ -108,7 +129,7 @@ class TestAutomaticProvenanceStamping:
 
         row = _album_identity_row(store, "alb-1")
 
-        assert row["provider_base_url"] == mirror_base
+        assert row["provider_base_url"] is None
         assert row["release_group_mbid"] == "rg-1"
 
     @pytest.mark.asyncio
@@ -130,7 +151,7 @@ class TestAutomaticProvenanceStamping:
         assert _album_identity_row(store, f"alb-{source}")["provider_base_url"] is None
 
     @pytest.mark.asyncio
-    async def test_automatic_update_restamps_current_base(
+    async def test_automatic_update_keeps_endpoint_unpersisted(
         self, store: NativeLibraryStore, mirror_base: str
     ):
         _seed_album(store, "alb-upd")
@@ -145,7 +166,14 @@ class TestAutomaticProvenanceStamping:
         )
 
         # a later automatic pass through a different endpoint restamps
-        set_mb_api_base("https://other-mirror.example.com/ws/2")
+        mirror_context = capture_mb_source_context()
+        mirror_source_id = get_mb_source_id()
+        set_mb_api_base(
+            "https://other-mirror.example.com/ws/2",
+            source_mode="mirror",
+            source_id="other-mirror-provenance",
+            generation=mirror_context.generation + 1,
+        )
         try:
             with sqlite3.connect(store.db_path) as connection:
                 current_revision = connection.execute(
@@ -161,9 +189,68 @@ class TestAutomaticProvenanceStamping:
                 expected_album_revision=current_revision,
             )
         finally:
-            set_mb_api_base(mirror_base)
+            set_mb_api_base(
+                mirror_context.source_url,
+                source_mode=mirror_context.source_mode,
+                source_id=mirror_source_id,
+                generation=mirror_context.generation,
+            )
 
         row = _album_identity_row(store, "alb-upd")
 
         assert row["release_group_mbid"] == "rg-new"
-        assert row["provider_base_url"] == "https://other-mirror.example.com/ws/2"
+        assert row["provider_base_url"] is None
+
+    @pytest.mark.asyncio
+    async def test_brainzmash_automatic_identity_stores_opaque_provenance(
+        self, store: NativeLibraryStore
+    ):
+        original = capture_mb_source_context()
+        original_source_id = get_mb_source_id()
+        original_runtime = brainzmash_runtime_enabled()
+        clear_mb_response_context()
+        brainzmash_generation = original.generation + 1
+        set_mb_api_base(
+            BRAINZMASH_ENDPOINT.rstrip("/"),
+            source_mode="brainzmash",
+            source_id="brainzmash-provenance",
+            generation=brainzmash_generation,
+        )
+        capture_mb_source_context()
+        try:
+            _seed_album(store, "alb-brainzmash")
+            await store.attach_album_identity(
+                LocalAlbumExternalIdentity(
+                    local_album_id="alb-brainzmash",
+                    release_group_mbid="rg-brainz",
+                    decision_source="automatic",
+                    selected_at=30.0,
+                    provider_source_mode="brainzmash",
+                    provider_source_id="brainzmash-provenance",
+                    provider_source_generation=brainzmash_generation,
+                ),
+                expected_album_revision=1,
+            )
+            with sqlite3.connect(store.db_path) as connection:
+                row = connection.execute(
+                    "SELECT provider_base_url, provider_source_mode, "
+                    "provider_source_id, provider_source_generation "
+                    "FROM local_album_external_identities "
+                    "WHERE local_album_id = 'alb-brainzmash'"
+                ).fetchone()
+        finally:
+            set_mb_api_base(
+                original.source_url,
+                source_mode=original.source_mode,
+                source_id=original_source_id,
+                generation=original.generation,
+                brainzmash_binding_valid=original_runtime,
+            )
+            clear_mb_response_context()
+
+        assert row == (
+            None,
+            "brainzmash",
+            "brainzmash-provenance",
+            brainzmash_generation,
+        )

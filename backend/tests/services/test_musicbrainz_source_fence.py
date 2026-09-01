@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.exceptions import ExternalServiceError
 from api.v1.schemas.discover import DiscoverResponse
 from api.v1.schemas.home import HomeGenre, HomeResponse, HomeSection
 from models.album import AlbumInfo
@@ -108,10 +109,8 @@ async def test_artist_provider_result_is_not_published_after_source_switch(monke
         return ArtistInfo(name="Artist", musicbrainz_id=_ARTIST_MBID)
 
     service._build_artist_from_musicbrainz = AsyncMock(side_effect=build)
-
-    result = await service.get_artist_info_basic(_ARTIST_MBID.upper())
-
-    assert result.name == "Artist"
+    with pytest.raises(ExternalServiceError, match="source changed"):
+        await service.get_artist_info_basic(_ARTIST_MBID.upper())
     service._cache.set.assert_not_awaited()
     service._disk_cache.set_artist.assert_not_awaited()
 

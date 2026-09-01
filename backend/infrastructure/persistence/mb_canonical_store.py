@@ -12,12 +12,11 @@ MusicBrainz-derived mapping families:
 - ``recording_isrc`` - ISRC → recording mbid pairs from Spotify-import
   /isrc/ lookups (#22).
 
-Provenance: every row stamps ``source_host`` with the privacy-safe source
-origin that answered. Per internal-mb-surface.md §5a, persisted MB-derived
-mappings inherit MB proof status regardless of serving host - but the
-identity-lane gate additionally narrows to rows captured against the official
-endpoint, because a user-settable ``api_url`` is not provenance-stamped
-upstream.
+Provenance: every row stamps opaque ``source_mode``, ``source_id``, and
+``source_generation`` fields. The legacy ``source_host`` columns remain only
+for SQLite compatibility and are always blank after migration. Canonical
+redirect rows retain a derived ``official_evidence`` bit for the identity-lane
+gate; endpoint labels are never persisted.
 
 The store survives ``musicbrainz_prefixes()`` sweeps by design (no prefix-list
 entry anywhere): its rows are durable derived state in the shared library DB,
@@ -32,18 +31,65 @@ import time
 from pathlib import Path
 from typing import Any
 
-from infrastructure.persistence._database import PersistenceBase
+from core.exceptions import ConfigurationError
+from infrastructure.persistence._database import PersistenceBase, _safe_alter
 from repositories.musicbrainz_base import (
     MB_TRUSTED_IDENTITY_ORIGINS,
+    MbSourceContext,
+    mb_publish_if_current,
     normalize_mb_id,
     normalize_mb_source_label,
 )
 
 logger = logging.getLogger(__name__)
 
-OFFICIAL_MB_API_BASE = "https://musicbrainz.org/ws/2"
 
 _SOURCE_MB_RECORDING_LOOKUP = "mb-recording-lookup"
+
+
+def _provenance(
+    source_context: MbSourceContext | None,
+    legacy_source: str | None = None,
+) -> tuple[str, str, int]:
+    if source_context is not None:
+        return (
+            source_context.source_mode,
+            source_context.source_id,
+            source_context.generation,
+        )
+    if legacy_source:
+        normalized = normalize_mb_source_label(legacy_source)
+        if normalized in MB_TRUSTED_IDENTITY_ORIGINS:
+            return ("official", "", 0)
+        return ("legacy", "", 0)
+    return ("", "", 0)
+
+
+def _official_evidence(
+    source_context: MbSourceContext | None,
+    legacy_source: str | None = None,
+) -> int:
+    if source_context is not None:
+        return int(
+            source_context.source_mode == "official"
+            and normalize_mb_source_label(source_context.source_url)
+            in MB_TRUSTED_IDENTITY_ORIGINS
+        )
+    return int(normalize_mb_source_label(legacy_source) in MB_TRUSTED_IDENTITY_ORIGINS)
+
+
+def _require_source_context(source_context: MbSourceContext | None) -> MbSourceContext:
+    if source_context is None:
+        raise ConfigurationError("MusicBrainz source context is required")
+    return source_context
+
+
+def _legacy_source_host(
+    source_context: MbSourceContext | None,
+    source_host: str | None,
+) -> str:
+    """Keep the compatibility column empty; provenance is opaque only."""
+    return ""
 
 
 class MbCanonicalStore(PersistenceBase):
@@ -85,6 +131,7 @@ class MbCanonicalStore(PersistenceBase):
                     rg_mbid TEXT NOT NULL DEFAULT '',
                     source TEXT NOT NULL,
                     source_host TEXT NOT NULL,
+                    official_evidence INTEGER NOT NULL DEFAULT 0,
                     saved_at REAL NOT NULL
                 )
                 """
@@ -100,6 +147,30 @@ class MbCanonicalStore(PersistenceBase):
                 """
             )
             # Additive ratchets only - later columns join through _safe_alter.
+            # Opaque source provenance is additive so existing SQLite files
+            # remain readable. ``source_host`` is retained only as a legacy
+            # column and is blanked by the ratchet below.
+            for table in ("canonical_redirect", "release_to_rg", "recording_isrc"):
+                _safe_alter(
+                    conn,
+                    f"ALTER TABLE {table} ADD COLUMN source_mode TEXT NOT NULL DEFAULT ''",
+                )
+                _safe_alter(
+                    conn,
+                    f"ALTER TABLE {table} ADD COLUMN source_id TEXT NOT NULL DEFAULT ''",
+                )
+                _safe_alter(
+                    conn,
+                    f"ALTER TABLE {table} ADD COLUMN source_generation INTEGER NOT NULL DEFAULT 0",
+                )
+            _safe_alter(
+                conn,
+                "ALTER TABLE canonical_redirect ADD COLUMN official_evidence INTEGER NOT NULL DEFAULT 0",
+            )
+            _safe_alter(
+                conn,
+                "ALTER TABLE release_to_rg ADD COLUMN official_evidence INTEGER NOT NULL DEFAULT 0",
+            )
             self._ratchet_source_labels(conn)
             conn.commit()
         finally:
@@ -107,24 +178,39 @@ class MbCanonicalStore(PersistenceBase):
 
     @staticmethod
     def _ratchet_source_labels(conn: sqlite3.Connection) -> None:
-        """Strip credentials and URL detail from existing provenance rows."""
-        for table, key_columns in (
-            ("canonical_redirect", ("entity_kind", "from_mbid_lower")),
-            ("release_to_rg", ("release_mbid_lower",)),
-        ):
-            selected_columns = ", ".join((*key_columns, "source_host"))
-            rows = conn.execute(
-                f"SELECT {selected_columns} FROM {table} WHERE source_host <> ''"
-            ).fetchall()
-            where_clause = " AND ".join(f"{column} = ?" for column in key_columns)
-            for row in rows:
-                current = str(row["source_host"])
-                normalized = normalize_mb_source_label(current)
-                if normalized != current:
-                    conn.execute(
-                        f"UPDATE {table} SET source_host = ? WHERE {where_clause}",
-                        (normalized, *(row[column] for column in key_columns)),
-                    )
+        """Derive official evidence once, then clear legacy endpoint labels."""
+        rows = conn.execute(
+            "SELECT entity_kind, from_mbid_lower, source_host "
+            "FROM canonical_redirect WHERE source_host <> ''"
+        ).fetchall()
+        for row in rows:
+            normalized = normalize_mb_source_label(str(row["source_host"]))
+            conn.execute(
+                """
+                UPDATE canonical_redirect
+                SET source_host = '', official_evidence = ?
+                WHERE entity_kind = ? AND from_mbid_lower = ?
+                """,
+                (
+                    int(normalized in MB_TRUSTED_IDENTITY_ORIGINS),
+                    row["entity_kind"],
+                    row["from_mbid_lower"],
+                ),
+            )
+        release_rows = conn.execute(
+            "SELECT release_mbid_lower, source_host FROM release_to_rg "
+            "WHERE source_host <> ''"
+        ).fetchall()
+        for row in release_rows:
+            normalized = normalize_mb_source_label(str(row["source_host"]))
+            conn.execute(
+                "UPDATE release_to_rg SET source_host = '', official_evidence = ? "
+                "WHERE release_mbid_lower = ?",
+                (
+                    int(normalized in MB_TRUSTED_IDENTITY_ORIGINS),
+                    row["release_mbid_lower"],
+                ),
+            )
 
     def _seed_from_mbid_resolution_map(self) -> None:
         """One-time idempotent migration: bank legacy discover-lane
@@ -163,30 +249,48 @@ class MbCanonicalStore(PersistenceBase):
         finally:
             conn.close()
 
-    async def get_release_to_rg_batch(self, release_mbids: list[str]) -> dict[str, str]:
-        """Map of lowercased release id -> rg id ('' = known-negative). Only
-        ids present in the store appear in the result."""
+    async def get_release_to_rg_batch(
+        self,
+        release_mbids: list[str],
+        *,
+        source_context: MbSourceContext,
+    ) -> dict[str, str]:
+        """Return mappings for the captured source context only."""
+        source_context = _require_source_context(source_context)
         normalized = sorted({normalize_mb_id(m) for m in release_mbids if m})
         if not normalized:
             return {}
 
         def operation(conn: sqlite3.Connection) -> dict[str, str]:
             placeholders = ",".join("?" for _ in normalized)
-            rows = conn.execute(
-                f"SELECT release_mbid_lower, rg_mbid FROM release_to_rg "
-                f"WHERE release_mbid_lower IN ({placeholders})",
-                normalized,
-            ).fetchall()
+            params: list[Any] = [
+                *normalized,
+                source_context.source_mode,
+                source_context.source_id,
+                source_context.generation,
+            ]
+            sql = (
+                "SELECT release_mbid_lower, rg_mbid FROM release_to_rg "
+                f"WHERE release_mbid_lower IN ({placeholders}) "
+                "AND source_mode = ? AND source_id = ? AND source_generation = ?"
+            )
+            rows = conn.execute(sql, params).fetchall()
             return {str(row["release_mbid_lower"]): str(row["rg_mbid"]) for row in rows}
 
         return await self._read(operation)
 
     async def save_release_to_rg(
-        self, mapping: dict[str, str], source_host: str
+        self,
+        mapping: dict[str, str],
+        source_host: str | None = None,
+        *,
+        source_context: MbSourceContext | None = None,
     ) -> None:
-        """Batch upsert. Empty-string values are authoritative negatives;
-        callers must never pass failures here."""
-        source_label = normalize_mb_source_label(source_host)
+        """Batch upsert with opaque source provenance."""
+        source_mode, source_id, source_generation = _provenance(
+            source_context, source_host
+        )
+        persisted_source_host = _legacy_source_host(source_context, source_host)
         rows: dict[str, str] = {}
         for release_mbid, release_group_mbid in mapping.items():
             normalized_release = normalize_mb_id(release_mbid)
@@ -203,44 +307,69 @@ class MbCanonicalStore(PersistenceBase):
             conn.executemany(
                 """
                 INSERT INTO release_to_rg (
-                    release_mbid_lower, rg_mbid, source, source_host, saved_at
+                    release_mbid_lower, rg_mbid, source, source_host,
+                    official_evidence, source_mode, source_id, source_generation, saved_at
                 )
-                VALUES (?, ?, 'mb-release-lookup', ?, ?)
+                VALUES (?, ?, 'mb-release-lookup', ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(release_mbid_lower) DO UPDATE SET
                     rg_mbid = excluded.rg_mbid,
                     source = excluded.source,
                     source_host = excluded.source_host,
+                    official_evidence = excluded.official_evidence,
+                    source_mode = excluded.source_mode,
+                    source_id = excluded.source_id,
+                    source_generation = excluded.source_generation,
                     saved_at = excluded.saved_at
                 """,
-                [(mbid, rg, source_label, now) for mbid, rg in sorted(rows.items())],
+                [
+                    (
+                        mbid,
+                        rg,
+                        persisted_source_host,
+                        _official_evidence(source_context, source_host),
+                        source_mode,
+                        source_id,
+                        source_generation,
+                        now,
+                    )
+                    for mbid, rg in sorted(rows.items())
+                ],
             )
             conn.commit()
 
-        await self._write(operation)
+        await mb_publish_if_current(source_context, lambda: self._write(operation))
 
     async def get_canonical_redirect(
         self,
         kind: str,
         from_mbids: list[str],
         *,
+        source_context: MbSourceContext,
         trusted_identity_source_only: bool = False,
     ) -> dict[str, str]:
+        source_context = _require_source_context(source_context)
         normalized = sorted({normalize_mb_id(m) for m in from_mbids if m})
         if not normalized:
             return {}
 
         def operation(conn: sqlite3.Connection) -> dict[str, str]:
             placeholders = ",".join("?" for _ in normalized)
-            params: list[Any] = [kind, *normalized]
+            params: list[Any] = [
+                kind,
+                *normalized,
+                source_context.source_mode,
+                source_context.source_id,
+                source_context.generation,
+            ]
             sql = (
                 "SELECT from_mbid_lower, to_mbid_lower FROM canonical_redirect "
                 "WHERE entity_kind = ? "
-                f"AND from_mbid_lower IN ({placeholders})"
+                f"AND from_mbid_lower IN ({placeholders}) "
+                "AND source_mode = ? AND source_id = ? "
+                "AND source_generation = ?"
             )
             if trusted_identity_source_only:
-                source_placeholders = ",".join("?" for _ in MB_TRUSTED_IDENTITY_ORIGINS)
-                sql += f" AND source_host IN ({source_placeholders})"
-                params.extend(MB_TRUSTED_IDENTITY_ORIGINS)
+                sql += " AND official_evidence = 1"
             rows = conn.execute(sql, params).fetchall()
             return {
                 str(row["from_mbid_lower"]): str(row["to_mbid_lower"]) for row in rows
@@ -249,19 +378,28 @@ class MbCanonicalStore(PersistenceBase):
         return await self._read(operation)
 
     async def save_canonical_redirect(
-        self, rows: list[dict[str, Any]], source_host: str
+        self,
+        rows: list[dict[str, Any]],
+        source_host: str | None = None,
+        *,
+        source_context: MbSourceContext | None = None,
     ) -> None:
-        """Upsert redirect rows in a single transaction. Each row needs
-        ``entity_kind``, ``from_mbid``, ``to_mbid`` and optionally ``source``
-        (default ``mb-recording-lookup``)."""
-        source_label = normalize_mb_source_label(source_host)
+        """Upsert redirect rows with opaque provenance."""
+        source_mode, source_id, source_generation = _provenance(
+            source_context, source_host
+        )
+        persisted_source_host = _legacy_source_host(source_context, source_host)
         clean = [
             (
                 str(row["entity_kind"]),
                 normalize_mb_id(row["from_mbid"]),
                 normalize_mb_id(row["to_mbid"]),
                 str(row.get("source") or _SOURCE_MB_RECORDING_LOOKUP),
-                source_label,
+                persisted_source_host,
+                source_mode,
+                source_id,
+                source_generation,
+                _official_evidence(source_context, source_host),
                 time.time(),
             )
             for row in rows
@@ -275,37 +413,78 @@ class MbCanonicalStore(PersistenceBase):
                 """
                 INSERT INTO canonical_redirect (
                     entity_kind, from_mbid_lower, to_mbid_lower, source,
-                    source_host, first_seen_at, last_confirmed_at
+                    source_host, source_mode, source_id, source_generation,
+                    official_evidence, first_seen_at, last_confirmed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(entity_kind, from_mbid_lower) DO UPDATE SET
                     to_mbid_lower = excluded.to_mbid_lower,
                     source = excluded.source,
                     source_host = excluded.source_host,
+                    source_mode = excluded.source_mode,
+                    source_id = excluded.source_id,
+                    source_generation = excluded.source_generation,
+                    official_evidence = excluded.official_evidence,
                     last_confirmed_at = excluded.last_confirmed_at
+                WHERE canonical_redirect.official_evidence = 0
+                   OR excluded.official_evidence = 1
                 """,
-                [(k, f, t, s, h, ts, ts) for (k, f, t, s, h, ts) in clean],
+                [
+                    (k, f, t, s, host, mode, sid, generation, official, ts, ts)
+                    for (
+                        k,
+                        f,
+                        t,
+                        s,
+                        host,
+                        mode,
+                        sid,
+                        generation,
+                        official,
+                        ts,
+                    ) in clean
+                ],
             )
             conn.commit()
 
-        await self._write(operation)
+        await mb_publish_if_current(source_context, lambda: self._write(operation))
 
-    async def get_recordings_by_isrc(self, isrc: str) -> list[str]:
+    async def get_recordings_by_isrc(
+        self,
+        isrc: str,
+        *,
+        source_context: MbSourceContext,
+    ) -> list[str]:
+        source_context = _require_source_context(source_context)
         isrc_normalized = isrc.strip().upper()
         if not isrc_normalized:
             return []
 
         def operation(conn: sqlite3.Connection) -> list[str]:
-            rows = conn.execute(
-                "SELECT recording_mbid_lower FROM recording_isrc WHERE isrc = ?",
-                (isrc_normalized,),
-            ).fetchall()
+            sql = (
+                "SELECT recording_mbid_lower FROM recording_isrc "
+                "WHERE isrc = ? AND source_mode = ? AND source_id = ? "
+                "AND source_generation = ?"
+            )
+            params: list[Any] = [
+                isrc_normalized,
+                source_context.source_mode,
+                source_context.source_id,
+                source_context.generation,
+            ]
+            rows = conn.execute(sql, params).fetchall()
             return [str(row["recording_mbid_lower"]) for row in rows]
 
         return await self._read(operation)
 
-    async def save_isrc_recordings(self, pairs: list[tuple[str, str]]) -> None:
-        """Bank ``(isrc, recording_mbid)`` pairs in one transaction."""
+    async def save_isrc_recordings(
+        self,
+        pairs: list[tuple[str, str]],
+        *,
+        source_context: MbSourceContext | None = None,
+    ) -> None:
+        """Bank ``(isrc, recording_mbid)`` pairs with opaque provenance."""
+        source_mode, source_id, source_generation = _provenance(source_context)
         clean = [
             (str(isrc).strip().upper(), str(rec).casefold())
             for isrc, rec in pairs
@@ -318,12 +497,20 @@ class MbCanonicalStore(PersistenceBase):
         def operation(conn: sqlite3.Connection) -> None:
             conn.executemany(
                 """
-                INSERT OR IGNORE INTO recording_isrc (
-                    isrc, recording_mbid_lower, first_seen_at
-                ) VALUES (?, ?, ?)
+                INSERT INTO recording_isrc (
+                    isrc, recording_mbid_lower, source_mode, source_id,
+                    source_generation, first_seen_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(isrc, recording_mbid_lower) DO UPDATE SET
+                    source_mode = excluded.source_mode,
+                    source_id = excluded.source_id,
+                    source_generation = excluded.source_generation
                 """,
-                [(isrc, rec, now) for isrc, rec in clean],
+                [
+                    (isrc, rec, source_mode, source_id, source_generation, now)
+                    for isrc, rec in clean
+                ],
             )
             conn.commit()
 
-        await self._write(operation)
+        await mb_publish_if_current(source_context, lambda: self._write(operation))

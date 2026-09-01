@@ -56,18 +56,29 @@ class TestLimiterSentinelBypass:
     def restore_limiter_state(self):
         rate = mb_rate_limiter.rate
         capacity = mb_rate_limiter.capacity
-        base = get_mb_api_base()
+        source = mb_base.capture_mb_source_context()
+        source_id = mb_base.get_mb_source_id()
+        runtime = mb_base.brainzmash_runtime_enabled()
         yield
         set_mb_rate_limiter_bypass(False)
         mb_rate_limiter.update_rate(rate)
         mb_rate_limiter.update_capacity(capacity)
-        set_mb_api_base(base)
+        mb_base.set_mb_api_base(
+            source.source_url,
+            source_mode=source.source_mode,
+            source_id=source_id,
+            generation=source.generation,
+            brainzmash_binding_valid=runtime,
+        )
 
     @staticmethod
     def _make_repository(api_url: str, rate_limit: float, concurrent: int):
         prefs = MagicMock()
         prefs.get_musicbrainz_connection.return_value = MusicBrainzConnectionSettings(
-            api_url=api_url, rate_limit=rate_limit, concurrent_searches=concurrent
+            source_mode="mirror",
+            api_url=api_url,
+            rate_limit=rate_limit,
+            concurrent_searches=concurrent,
         )
         return MusicBrainzRepository(
             http_client=httpx.AsyncClient(),
@@ -139,12 +150,20 @@ class TestOnSettingsChangedSentinel:
     def restore_limiter_state(self):
         rate = mb_rate_limiter.rate
         capacity = mb_rate_limiter.capacity
-        base = get_mb_api_base()
+        source = mb_base.capture_mb_source_context()
+        source_id = mb_base.get_mb_source_id()
+        runtime = mb_base.brainzmash_runtime_enabled()
         yield
         set_mb_rate_limiter_bypass(False)
         mb_rate_limiter.update_rate(rate)
         mb_rate_limiter.update_capacity(capacity)
-        set_mb_api_base(base)
+        mb_base.set_mb_api_base(
+            source.source_url,
+            source_mode=source.source_mode,
+            source_id=source_id,
+            generation=source.generation,
+            brainzmash_binding_valid=runtime,
+        )
 
     @staticmethod
     def _cache_counter(counter: dict):
@@ -166,7 +185,10 @@ class TestOnSettingsChangedSentinel:
 
         await service.on_musicbrainz_settings_changed(
             MusicBrainzConnectionSettings(
-                api_url=MIRROR, rate_limit=0, concurrent_searches=64
+                source_mode="mirror",
+                api_url=MIRROR,
+                rate_limit=0,
+                concurrent_searches=64,
             )
         )
 
@@ -187,7 +209,10 @@ class TestOnSettingsChangedSentinel:
 
         await service.on_musicbrainz_settings_changed(
             MusicBrainzConnectionSettings(
-                api_url=MIRROR, rate_limit=12.0, concurrent_searches=8
+                source_mode="mirror",
+                api_url=MIRROR,
+                rate_limit=12.0,
+                concurrent_searches=8,
             )
         )
 

@@ -33,11 +33,26 @@ class _BlockingStore:
         self.events = events
         self.saved = []
 
-    async def save_release_to_rg(self, mapping, source_host):
-        self.started.set()
-        await self.release.wait()
-        self.events.append(("store", mb_base.get_mb_api_base()))
-        self.saved.append((dict(mapping), source_host))
+    async def save_release_to_rg(
+        self, mapping, source_host=None, *, source_context=None
+    ):
+        async def write():
+            self.started.set()
+            await self.release.wait()
+            self.events.append(("store", mb_base.get_mb_api_base()))
+            self.saved.append(
+                (
+                    dict(mapping),
+                    source_host
+                    or (
+                        source_context.source_url.split("/ws/2", 1)[0]
+                        if source_context is not None
+                        else None
+                    ),
+                )
+            )
+
+        await mb_base.mb_publish_if_current(source_context, write)
 
 
 class _Repo(MusicBrainzAlbumMixin):
@@ -51,14 +66,22 @@ class _Repo(MusicBrainzAlbumMixin):
 
 @pytest.fixture
 def restore_transport_state():
-    original_source = mb_base.get_mb_api_base()
+    original_source = mb_base.capture_mb_source_context()
+    original_source_id = mb_base.get_mb_source_id()
+    original_runtime = mb_base.brainzmash_runtime_enabled()
     original_rate = mb_base.mb_rate_limiter.rate
     original_capacity = mb_base.mb_rate_limiter.capacity
     original_bypass = mb_base.mb_rate_limiter_bypassed()
     mb_base.set_mb_rate_limiter_bypass(False)
     mb_base.mb_circuit_breaker.reset()
     yield
-    mb_base.set_mb_api_base(original_source)
+    mb_base.set_mb_api_base(
+        original_source.source_url,
+        source_mode=original_source.source_mode,
+        source_id=original_source_id,
+        generation=original_source.generation,
+        brainzmash_binding_valid=original_runtime,
+    )
     mb_base.mb_rate_limiter.update_rate(original_rate)
     mb_base.mb_rate_limiter.update_capacity(original_capacity)
     mb_base.set_mb_rate_limiter_bypass(original_bypass)
@@ -67,6 +90,8 @@ def restore_transport_state():
 
 def _settings(url: str) -> MusicBrainzConnectionSettings:
     return MusicBrainzConnectionSettings(
+        source_mode="mirror",
+        selected_source_mode="mirror",
         api_url=url,
         rate_limit=2.0,
         concurrent_searches=4,
@@ -79,9 +104,14 @@ async def test_cache_publication_commits_before_source_switch(
 ):
     old_source = "https://old.example/ws/2"
     new_source = "https://new.example/ws/2"
-    mb_base.set_mb_api_base(old_source)
+    mb_base.set_mb_api_base(
+        old_source,
+        source_mode="mirror",
+        source_id="source-commit-cache-old",
+        generation=mb_base.get_mb_source_generation() + 1,
+    )
     old_context = mb_base.MbSourceContext(
-        old_source, mb_base.get_mb_source_generation()
+        old_source, mb_base.get_mb_source_generation(), "mirror"
     )
     started = asyncio.Event()
     release = asyncio.Event()
@@ -91,8 +121,8 @@ async def test_cache_publication_commits_before_source_switch(
     source_events = []
     original_set = mb_base.set_mb_api_base
 
-    def record_source(url):
-        original_set(url)
+    def record_source(url, **kwargs):
+        original_set(url, **kwargs)
         source_events.append(("source", mb_base.get_mb_api_base()))
 
     monkeypatch.setattr(mb_base, "set_mb_api_base", record_source)
@@ -127,9 +157,14 @@ async def test_durable_publication_commits_before_source_switch(
 ):
     old_source = "https://old.example/ws/2"
     new_source = "https://new.example/ws/2"
-    mb_base.set_mb_api_base(old_source)
+    mb_base.set_mb_api_base(
+        old_source,
+        source_mode="mirror",
+        source_id="source-commit-store-old",
+        generation=mb_base.get_mb_source_generation() + 1,
+    )
     old_context = mb_base.MbSourceContext(
-        old_source, mb_base.get_mb_source_generation()
+        old_source, mb_base.get_mb_source_generation(), "mirror"
     )
     started = asyncio.Event()
     release = asyncio.Event()
@@ -142,8 +177,8 @@ async def test_durable_publication_commits_before_source_switch(
     source_events = []
     original_set = mb_base.set_mb_api_base
 
-    def record_source(url):
-        original_set(url)
+    def record_source(url, **kwargs):
+        original_set(url, **kwargs)
         source_events.append(("source", mb_base.get_mb_api_base()))
 
     monkeypatch.setattr(mb_base, "set_mb_api_base", record_source)
@@ -181,9 +216,14 @@ async def test_cancelled_durable_publication_settles_before_releasing_source_loc
 ):
     old_source = "https://old.example/ws/2"
     new_source = "https://new.example/ws/2"
-    mb_base.set_mb_api_base(old_source)
+    mb_base.set_mb_api_base(
+        old_source,
+        source_mode="mirror",
+        source_id="source-commit-cancel-old",
+        generation=mb_base.get_mb_source_generation() + 1,
+    )
     old_context = mb_base.MbSourceContext(
-        old_source, mb_base.get_mb_source_generation()
+        old_source, mb_base.get_mb_source_generation(), "mirror"
     )
     started = asyncio.Event()
     release = asyncio.Event()
@@ -192,9 +232,10 @@ async def test_cancelled_durable_publication_settles_before_releasing_source_loc
     service = SettingsService(preferences_service=None, cache=InMemoryCache())
 
     publication = asyncio.create_task(
-        mb_base.mb_publish_if_current(
-            old_context,
-            lambda: store.save_release_to_rg({"rel-cancel": "rg-old"}, old_source),
+        store.save_release_to_rg(
+            {"rel-cancel": "rg-old"},
+            old_source,
+            source_context=old_context,
         )
     )
     await started.wait()

@@ -41,6 +41,7 @@ class DeviceSessionRequest(AppStruct):
 
     device_name: str
 
+
 class PasswordRecoveryResetRequest(AppStruct):
     username: str
     recovery_code: str
@@ -52,6 +53,14 @@ class PasswordRecoveryCodeResponse(AppStruct):
     expires_at: str
 
 
+class MusicBrainzSourceIdentity(AppStruct):
+    """Opaque source identity used to isolate provider state in clients."""
+
+    source_mode: str
+    source_id: str
+    generation: int
+
+
 class UserResponse(AppStruct):
     id: str
     display_name: str
@@ -61,11 +70,13 @@ class UserResponse(AppStruct):
     username: str | None = None
     username_display: str | None = None
     providers: list[str] = []
+    musicbrainz_source: MusicBrainzSourceIdentity | None = None
 
 
 class DeviceSessionResponse(AppStruct):
     token: str
     user: UserResponse
+
 
 class AuthResponse(AppStruct):
     token: str
@@ -79,6 +90,7 @@ class SessionResponse(AppStruct):
     last_seen_at: str
     user_agent: str | None = None
     session_kind: str = "standard"
+
 
 class SessionListResponse(AppStruct):
     sessions: list[SessionResponse]
@@ -162,36 +174,41 @@ class OIDCExchangeRequest(AppStruct):
     code: str
 
 
-def user_to_response(user, providers: list[str] | None = None) -> UserResponse:
+def user_to_response(
+    user,
+    providers: list[str] | None = None,
+    musicbrainz_source: MusicBrainzSourceIdentity | None = None,
+) -> UserResponse:
     return UserResponse(
-        id = user.id,
-        display_name = user.display_name,
-        role = user.role,
-        email = user.email,
-        avatar_url = user.avatar_url,
-        username = user.username,
-        username_display = user.username_display,
-        providers = providers or [],
+        id=user.id,
+        display_name=user.display_name,
+        role=user.role,
+        email=user.email,
+        avatar_url=user.avatar_url,
+        username=user.username,
+        username_display=user.username_display,
+        providers=providers or [],
+        musicbrainz_source=musicbrainz_source,
     )
 
 
 def import_candidate_to_response(candidate) -> ImportCandidateResponse:
     return ImportCandidateResponse(
-        provider = candidate.provider,
-        provider_uid = candidate.provider_uid,
-        display_name = candidate.display_name,
-        avatar_url = candidate.avatar_url,
-        email = candidate.email,
-        already_imported = candidate.already_imported,
+        provider=candidate.provider,
+        provider_uid=candidate.provider_uid,
+        display_name=candidate.display_name,
+        avatar_url=candidate.avatar_url,
+        email=candidate.email,
+        already_imported=candidate.already_imported,
     )
 
 
 def session_to_response(token) -> SessionResponse:
     return SessionResponse(
-        id = token.id,
-        issued_at = token.issued_at,
-        expires_at = token.expires_at,
-        last_seen_at = token.last_seen_at,
-        user_agent = token.user_agent,
-        session_kind = token.session_kind,
+        id=token.id,
+        issued_at=token.issued_at,
+        expires_at=token.expires_at,
+        last_seen_at=token.last_seen_at,
+        user_agent=token.user_agent,
+        session_kind=token.session_kind,
     )

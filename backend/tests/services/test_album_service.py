@@ -576,8 +576,15 @@ async def test_source_switch_separates_track_leaders_and_followers():
     old_started = asyncio.Event()
     new_started = asyncio.Event()
     calls: list[int] = []
-    original_source = mb_base.get_mb_api_base()
-    mb_base.set_mb_api_base("https://old.example/ws/2")
+    original_source = mb_base.capture_mb_source_context()
+    original_runtime = mb_base.brainzmash_runtime_enabled()
+    old_source = "https://old.example/ws/2"
+    mb_base.set_mb_api_base(
+        old_source,
+        source_mode="mirror",
+        source_id="album-tracks-old",
+        generation=original_source.generation + 1,
+    )
     old_generation = mb_base.get_mb_source_generation()
 
     async def build(*_args, **_kwargs):
@@ -600,7 +607,12 @@ async def test_source_switch_separates_track_leaders_and_followers():
         old_follower = asyncio.create_task(service.get_album_tracks_info(_MBID))
         await asyncio.sleep(0)
 
-        mb_base.set_mb_api_base("https://new.example/ws/2")
+        mb_base.set_mb_api_base(
+            "https://new.example/ws/2",
+            source_mode="mirror",
+            source_id="album-tracks-new",
+            generation=old_generation + 1,
+        )
         new_generation = mb_base.get_mb_source_generation()
         new_leader = asyncio.create_task(service.get_album_tracks_info(_MBID))
         await new_started.wait()
@@ -622,7 +634,13 @@ async def test_source_switch_separates_track_leaders_and_followers():
     finally:
         old_gate.set()
         new_gate.set()
-        mb_base.set_mb_api_base(original_source)
+        mb_base.set_mb_api_base(
+            original_source.source_url,
+            source_mode=original_source.source_mode,
+            source_id=original_source.source_id,
+            generation=original_source.generation,
+            brainzmash_binding_valid=original_runtime,
+        )
 
     assert calls == [old_generation, new_generation]
     assert old_leader_result.tracks == ["old"]
@@ -632,7 +650,7 @@ async def test_source_switch_separates_track_leaders_and_followers():
     assert service._tracks_in_flight == {}
 
 
-# -- P5: annotate_album_coverage (shared matcher on the album page) --
+# P5: annotate_album_coverage (shared matcher on the album page)
 
 
 def _lib_track(id, *, disc=1, track=0, title="", recording=None, duration=None):

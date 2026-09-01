@@ -1,4 +1,4 @@
-import type { AuthUser } from '$lib/stores/authStore.svelte';
+import type { AuthUser, MusicBrainzSourceIdentity } from '$lib/stores/authStore.svelte';
 
 export interface AuthProviders {
 	local: boolean;
@@ -17,6 +17,7 @@ export interface AuthSessionUser {
 	username: string | null;
 	username_display: string | null;
 	providers?: string[];
+	musicbrainz_source?: MusicBrainzSourceIdentity | null;
 }
 
 export interface AuthSessionResponse {
@@ -119,6 +120,9 @@ export function toAuthUser(user: AuthSessionUser): AuthUser {
 		avatar_url: user.avatar_url,
 		username: user.username,
 		username_display: user.username_display,
-		providers: user.providers ?? []
+		providers: user.providers ?? [],
+		...(user.musicbrainz_source === undefined
+			? {}
+			: { musicbrainz_source: user.musicbrainz_source })
 	};
 }

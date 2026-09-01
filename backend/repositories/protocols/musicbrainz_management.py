@@ -1,7 +1,8 @@
 from typing import Protocol
 
 from infrastructure.queue.priority_queue import RequestPriority
-from repositories.musicbrainz_management_models import (
+from repositories.musicbrainz_base import MbSourceContext
+from repositories.musicbrainz_management_models import (  # noqa: F401
     MbManagementArtist,
     MbManagementArtistCredit,
     MbManagementRelation,
@@ -20,6 +21,7 @@ class CanonicalMusicBrainzRepositoryProtocol(Protocol):
         artist_standardization: str = "credited",
         priority: RequestPriority = RequestPriority.USER_INITIATED,
         bypass_cache: bool = False,
+        source_context: MbSourceContext | None = None,
     ) -> MbManagementRelease | None: ...
 
     async def resolve_recording_mbid(

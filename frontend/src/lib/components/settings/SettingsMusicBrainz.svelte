@@ -1,406 +1,531 @@
 <script lang="ts">
-	import { API } from '$lib/constants';
 	import { invalidateMusicBrainzProviderQueries } from '$lib/queries/QueryClient';
+	import {
+		activateBrainzMash,
+		consentBrainzMash,
+		saveMusicBrainzSettings,
+		stageBrainzMash as stageBrainzMashMutation,
+		testMusicBrainzConnection
+	} from '$lib/queries/musicbrainz/MusicBrainzMutations.svelte';
+	import { getMusicBrainzSettingsQuery } from '$lib/queries/musicbrainz/MusicBrainzQueries.svelte';
+	import type {
+		BrainzMashBinding,
+		BrainzMashPendingProposal,
+		MusicBrainzSettingsResponse,
+		MusicBrainzSettingsUpdate,
+		MusicBrainzSourceMode
+	} from '$lib/queries/musicbrainz/types';
 	import { clearMusicBrainzProviderCaches } from '$lib/utils/albumDetailCache';
-	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
-	import { CircleAlert, ExternalLink, Server, ShieldCheck, Users } from 'lucide-svelte';
-	import { onDestroy } from 'svelte';
+	import {
+		CircleAlert,
+		ExternalLink,
+		Globe,
+		Network,
+		Server,
+		ShieldCheck,
+		Users
+	} from 'lucide-svelte';
 
 	import {
-		COMMUNITY_CONFIRM_LABEL,
+		BRAINZMASH_ACTIVE_BINDING_COPY,
+		BRAINZMASH_ENDPOINT_URL,
+		BRAINZMASH_LOCAL_POLICY_COPY,
+		BRAINZMASH_NO_ALTERNATE_PROBE_COPY,
+		BRAINZMASH_PENDING_TRANSPORT_COPY,
+		BRAINZMASH_PRIVACY_DISCLOSURE,
+		BRAINZMASH_RATE_MAX,
+		BRAINZMASH_SUPPORTED_ROUTE_FAMILIES,
+		BRAINZMASH_TRANSPORT_DISABLED_COPY,
 		COMMUNITY_CONFIRM_BUTTON_HINT,
+		COMMUNITY_CONFIRM_LABEL,
 		COMMUNITY_RISK_BANNER,
 		displayVerifyMessage,
-		CLAMPED_WARNING,
 		MIRROR_BANNER_LINES,
 		MORE_INFO_DISCLOSURES,
 		MORE_INFO_SUMMARY,
 		MUSICBRAINZ_GUIDE_HREF,
 		MUSICBRAINZ_SOURCE_CARDS,
 		OFFICIAL_ENDPOINT_URL,
-		UNLIMITED_RATE_LABEL,
-		type MusicBrainzSourceMode,
-		sourceBounds
+		CLAMPED_WARNING,
+		sourceBounds,
+		UNLIMITED_RATE_LABEL
 	} from './musicBrainzSourceCopy';
 
-	type MusicBrainzConnectionSettings = {
-		api_url: string;
-		rate_limit: number;
-		concurrent_searches: number;
-		/** Backend sets this when the official-host clamp had to force entered values
-		 * down to 1 r/s / 6 concurrent - applied, never refused. */
-		clamped_to_official_limits?: boolean;
-	};
-
-	type MusicBrainzTestResult = { valid: boolean; message: string };
-	type MusicBrainzSettingsForm = ReturnType<
-		typeof createSettingsForm<MusicBrainzConnectionSettings>
-	> & {
-		testResult: MusicBrainzTestResult | null;
-	};
-
-	function sourceIdentity(url: string): string {
-		const trimmed = url.trim();
-		try {
-			const parsed = new URL(trimmed);
-			const pathname = parsed.pathname.replace(/\/+$/, '') || '/';
-			const credentials =
-				parsed.username || parsed.password ? `${parsed.username}:${parsed.password}@` : '';
-			return `${parsed.protocol}//${credentials}${parsed.host}${pathname}${parsed.search}`;
-		} catch {
-			return trimmed;
-		}
+	interface MusicBrainzTestResult {
+		valid: boolean;
+		message: string;
 	}
 
-	let loadedSourceIdentity: string | null = null;
+	const settingsQuery = getMusicBrainzSettingsQuery();
+	const saveMutation = saveMusicBrainzSettings();
+	const consentMutation = consentBrainzMash();
+	const verifyMutation = testMusicBrainzConnection();
+	const stageMutation = stageBrainzMashMutation();
+	const activateMutation = activateBrainzMash();
 
-	async function handleSaved(data: MusicBrainzConnectionSettings): Promise<void> {
-		const nextSourceIdentity = sourceIdentity(data.api_url);
-		const sourceChanged =
-			loadedSourceIdentity !== null && loadedSourceIdentity !== nextSourceIdentity;
-		if (!sourceChanged) return;
+	const CARD_ICONS = {
+		brainzmash: Network,
+		official: ShieldCheck,
+		mirror: Server,
+		community: Users
+	};
 
-		let invalidationSucceeded = false;
+	let settings = $state<MusicBrainzSettingsResponse | null>(null);
+	let selectedMode = $state<MusicBrainzSourceMode>('brainzmash');
+	let apiUrl = $state('');
+	let rateLimit = $state(1);
+	let concurrentSearches = $state(1);
+	let communityAcknowledged = $state(false);
+	let testResult = $state<MusicBrainzTestResult | null>(null);
+	let actionError = $state('');
+	let actionNotice = $state('');
+	let seeded = $state(false);
+	let providerSweepPending = $state(false);
+	let activeMode = $derived(settings?.source_mode ?? 'brainzmash');
+	let pendingBrainzMash = $derived(settings?.pending_brainzmash ?? null);
+	let activeBrainzMash = $derived(hasValidActiveBrainzMashBinding(settings));
+	let switchingAwayFromBrainz = $derived(activeBrainzMash && selectedMode !== 'brainzmash');
+	let activeSourceLabel = $derived(
+		MUSICBRAINZ_SOURCE_CARDS.find((card) => card.mode === activeMode)?.title ?? activeMode
+	);
+	let selectedCard = $derived(
+		MUSICBRAINZ_SOURCE_CARDS.find((card) => card.mode === selectedMode) ??
+			MUSICBRAINZ_SOURCE_CARDS[0]
+	);
+	let selectedBounds = $derived(sourceBounds(selectedMode));
+	let isBrainzMash = $derived(selectedMode === 'brainzmash');
+	let hasConsent = $derived(pendingBrainzMash?.consented === true);
+	let hasVerification = $derived(pendingBrainzMash?.verified === true);
+	let actionBusy = $derived(
+		saveMutation.isPending ||
+			consentMutation.isPending ||
+			verifyMutation.isPending ||
+			stageMutation.isPending ||
+			activateMutation.isPending
+	);
+	let nonBrainzTestPassed = $derived(testResult?.valid === true);
+	let nonBrainzTestRequired = $derived(!switchingAwayFromBrainz);
+	let communityNeedsAcknowledgment = $derived(
+		selectedMode === 'community' && !communityAcknowledged
+	);
+	let saveDisabled = $derived(
+		actionBusy ||
+			(nonBrainzTestRequired && !nonBrainzTestPassed) ||
+			communityNeedsAcknowledgment ||
+			!apiUrl.trim()
+	);
+	let selectedModeNeedsStage = $derived(
+		isBrainzMash && pendingBrainzMash === null && activeMode !== 'brainzmash'
+	);
+	let displayedTestMessage = $derived(
+		testResult ? displayVerifyMessage(testResult.message, selectedMode) : ''
+	);
+
+	function hasValidActiveBrainzMashBinding(data: MusicBrainzSettingsResponse | null): boolean {
+		if (
+			!data ||
+			data.source_quarantined === true ||
+			data.source_mode !== 'brainzmash' ||
+			typeof data.api_url !== 'string' ||
+			data.api_url.trim().replace(/\/+$/, '') !== BRAINZMASH_ENDPOINT_URL ||
+			typeof data.source_id !== 'string' ||
+			!data.source_id.trim() ||
+			!Number.isInteger(data.generation) ||
+			data.generation < 1
+		) {
+			return false;
+		}
+		// The pinned built-in source is active without an interactive disclosure
+		// binding. Binding metadata remains optional audit information.
+		return true;
+	}
+
+	function cloneSettings(data: MusicBrainzSettingsResponse): MusicBrainzSettingsResponse {
+		return {
+			...data,
+			pending_brainzmash: data.pending_brainzmash ? { ...data.pending_brainzmash } : null
+		};
+	}
+
+	function seedDraft(data: MusicBrainzSettingsResponse): void {
+		settings = cloneSettings(data);
+		selectedMode = data.selected_source_mode ?? data.source_mode;
+		apiUrl = data.source_quarantined
+			? selectedMode === 'official'
+				? OFFICIAL_ENDPOINT_URL
+				: selectedMode === 'brainzmash'
+					? BRAINZMASH_ENDPOINT_URL
+					: ''
+			: (data.api_url ?? '');
+		const fixedWirePolicy = selectedMode === 'brainzmash' || selectedMode === 'official';
+		const customModeFromFixedSource =
+			(data.source_mode === 'brainzmash' || data.source_mode === 'official') &&
+			(selectedMode === 'mirror' || selectedMode === 'community');
+		rateLimit =
+			selectedMode === 'brainzmash'
+				? BRAINZMASH_RATE_MAX
+				: fixedWirePolicy || customModeFromFixedSource
+					? 1
+					: data.rate_limit;
+		concurrentSearches =
+			fixedWirePolicy || customModeFromFixedSource ? 1 : data.concurrent_searches;
+		communityAcknowledged = data.community_acknowledged ?? false;
+	}
+
+	function applySettings(data: MusicBrainzSettingsResponse): void {
+		seedDraft(data);
+		testResult = null;
+	}
+
+	function sourceIdentity(data: MusicBrainzSettingsResponse): string {
+		return `${data.source_mode}\u0000${data.source_id}\u0000${data.generation}`;
+	}
+
+	function bindingFor(proposal: BrainzMashPendingProposal): BrainzMashBinding {
+		return {
+			access_revision: proposal.access_revision,
+			source_id: proposal.source_id,
+			generation: proposal.generation,
+			disclosure_version: proposal.disclosure_version
+		};
+	}
+
+	function errorMessage(error: unknown, fallback: string): string {
+		return error instanceof Error && error.message.trim() ? error.message : fallback;
+	}
+
+	async function sweepProviderCaches(): Promise<void> {
+		let succeeded = true;
 		try {
 			await invalidateMusicBrainzProviderQueries();
-			invalidationSucceeded = true;
 		} catch {
-			// The server PUT already succeeded; leave the identity unchanged so a later save retries.
+			succeeded = false;
 		}
-
-		let localCachesCleared = false;
 		try {
-			localCachesCleared = clearMusicBrainzProviderCaches();
+			if (!clearMusicBrainzProviderCaches()) succeeded = false;
 		} catch {
-			// Browser cache cleanup is best effort; do not expose the configured source URL.
+			succeeded = false;
 		}
-
-		if (invalidationSucceeded && localCachesCleared) {
-			loadedSourceIdentity = nextSourceIdentity;
+		providerSweepPending = !succeeded;
+		if (!succeeded) {
+			actionError =
+				'Settings saved, but cached MusicBrainz data could not be cleared. Save again to retry.';
 		}
 	}
 
-	const form = createSettingsForm<MusicBrainzConnectionSettings>({
-		loadEndpoint: API.settingsMusicbrainz(),
-		saveEndpoint: API.settingsMusicbrainz(),
-		testEndpoint: API.settingsMusicbrainzVerify(),
-		defaultValue: {
-			api_url: OFFICIAL_ENDPOINT_URL,
-			rate_limit: 1.0,
-			concurrent_searches: 6
-		},
-		afterSave: handleSaved
-	}) as MusicBrainzSettingsForm;
-
-	export async function load() {
-		await form.load();
-		if (form.data) loadedSourceIdentity = sourceIdentity(form.data.api_url);
+	async function syncResponse(
+		previous: MusicBrainzSettingsResponse | null,
+		next: MusicBrainzSettingsResponse
+	): Promise<void> {
+		const sourceChanged = previous !== null && sourceIdentity(previous) !== sourceIdentity(next);
+		applySettings(next);
+		if (sourceChanged || providerSweepPending) await sweepProviderCaches();
 	}
 
-	async function save() {
-		await form.save();
+	function selectedSettings(): MusicBrainzSettingsUpdate {
+		const fixedWirePolicy = selectedMode === 'brainzmash' || selectedMode === 'official';
+		const rate =
+			selectedMode === 'brainzmash' ? BRAINZMASH_RATE_MAX : fixedWirePolicy ? 1 : Number(rateLimit);
+		const concurrency = fixedWirePolicy ? 1 : Number(concurrentSearches);
+		return {
+			source_mode: selectedMode,
+			api_url: selectedMode === 'brainzmash' ? null : apiUrl.trim(),
+			rate_limit: Number.isFinite(rate) ? rate : 1,
+			concurrent_searches: Number.isFinite(concurrency) ? concurrency : 1,
+			community_acknowledged: selectedMode === 'community' ? communityAcknowledged : null
+		};
 	}
 
-	async function test() {
-		await form.test();
-	}
-
-	function resetToDefaults() {
-		if (form.data) {
-			form.data.api_url = OFFICIAL_ENDPOINT_URL;
-			form.data.rate_limit = 1.0;
-			form.data.concurrent_searches = 6;
-			form.testResult = null;
-		}
-		selectedMode = 'official';
-		communityAcknowledged = false;
-	}
-
-	function isOfficialMusicBrainz(url: string): boolean {
+	async function stageBrainzMash(): Promise<void> {
+		actionError = '';
+		actionNotice = '';
+		testResult = null;
+		const previous = settings;
 		try {
-			const parsed = new URL(url.trim());
-			const hostname = parsed.hostname.toLowerCase();
-			if (hostname !== 'musicbrainz.org' && hostname !== 'www.musicbrainz.org') return false;
-			if (parsed.protocol === 'http:') return parsed.port === '' || parsed.port === '80';
-			if (parsed.protocol === 'https:') return parsed.port === '' || parsed.port === '443';
-			return false;
-		} catch {
-			return false;
+			const next = await stageMutation.mutateAsync();
+			await syncResponse(previous, next);
+			actionNotice = 'BrainzMash is active. No provider request was made.';
+		} catch (error) {
+			actionError = errorMessage(error, 'Could not stage BrainzMash.');
 		}
 	}
 
-	let isOfficialApi = $derived(form.data ? isOfficialMusicBrainz(form.data.api_url) : true);
+	async function acceptBrainzMashDisclosure(): Promise<void> {
+		const proposal = pendingBrainzMash;
+		if (!proposal || proposal.consented) return;
+		actionError = '';
+		actionNotice = '';
+		try {
+			const next = await consentMutation.mutateAsync(bindingFor(proposal));
+			await syncResponse(settings, next);
+			actionNotice = 'Disclosure accepted locally. Test Connection is now enabled.';
+		} catch (error) {
+			actionError = errorMessage(error, 'Could not record BrainzMash consent.');
+		}
+	}
 
-	// Explicit card selection sets the mode (OWNER DECISION: the picker auto-highlights
-	// Official only for the initial loaded state; a chosen card always wins).
-	let selectedMode = $state<MusicBrainzSourceMode>('official');
-	let communityAcknowledged = $state(false);
-	let modeInitialized = $state(false);
+	async function testConnection(): Promise<void> {
+		const proposal = pendingBrainzMash;
+		if (switchingAwayFromBrainz) {
+			actionError = BRAINZMASH_NO_ALTERNATE_PROBE_COPY;
+			return;
+		}
+		if (isBrainzMash && (!proposal || !proposal.consented)) return;
+		actionError = '';
+		actionNotice = '';
+		testResult = null;
+		try {
+			if (isBrainzMash) {
+				const next = await verifyMutation.mutateAsync(
+					bindingFor(proposal as BrainzMashPendingProposal)
+				);
+				await syncResponse(settings, next);
+			} else {
+				await verifyMutation.mutateAsync(selectedSettings());
+			}
+			testResult = {
+				valid: true,
+				message: isBrainzMash ? 'Connected to BrainzMash.' : 'Connected to MusicBrainz.'
+			};
+			actionNotice = isBrainzMash
+				? 'BrainzMash connection verified. Activate to finish binding this proposal.'
+				: 'MusicBrainz connection verified.';
+		} catch (error) {
+			testResult = { valid: false, message: errorMessage(error, 'Connection test failed.') };
+			actionError = testResult.message;
+		}
+	}
 
-	let effectiveMode = $derived(selectedMode);
-	let bounds = $derived(sourceBounds(effectiveMode === 'official'));
-	let rateUnlimited = $derived(!isOfficialApi && form.data?.rate_limit === 0);
+	async function activateBrainzMashSource(): Promise<void> {
+		const proposal = pendingBrainzMash;
+		if (!proposal || !proposal.consented || !proposal.verified) return;
+		actionError = '';
+		actionNotice = '';
+		try {
+			const next = await activateMutation.mutateAsync(bindingFor(proposal));
+			await syncResponse(settings, next);
+			actionNotice = 'BrainzMash is active.';
+		} catch (error) {
+			actionError = errorMessage(error, 'Could not activate BrainzMash.');
+		}
+	}
 
-	let hasPassedTest = $derived(
-		form.testResult != null && (form.testResult as MusicBrainzTestResult).valid === true
-	);
+	async function saveNonBrainzSettings(): Promise<void> {
+		if (isBrainzMash || saveDisabled) return;
+		actionError = '';
+		actionNotice = '';
+		const previous = settings;
+		try {
+			const next = await saveMutation.mutateAsync(selectedSettings());
+			await syncResponse(previous, next);
+			actionNotice = 'MusicBrainz settings saved.';
+		} catch (error) {
+			actionError = errorMessage(error, 'Could not save MusicBrainz settings.');
+		}
+	}
 
-	let communityNeedsAcknowledgment = $derived(
-		effectiveMode === 'community' && !communityAcknowledged
-	);
-	let saveDisabled = $derived(form.saving || !hasPassedTest || communityNeedsAcknowledgment);
-	let saveTooltip = $derived(
-		!hasPassedTest
-			? 'Test connection before saving'
-			: communityNeedsAcknowledgment
-				? COMMUNITY_CONFIRM_BUTTON_HINT
-				: ''
-	);
+	function resetToDefaults(): void {
+		void stageBrainzMash();
+	}
 
-	let displayedTestMessage = $derived(
-		form.testResult
-			? displayVerifyMessage((form.testResult as MusicBrainzTestResult).message, isOfficialApi)
-			: ''
-	);
-
-	const CARD_ICONS = { official: ShieldCheck, mirror: Server, community: Users };
-
-	function selectMode(mode: MusicBrainzSourceMode) {
+	function selectMode(mode: MusicBrainzSourceMode): void {
+		const previousMode = selectedMode;
 		selectedMode = mode;
-		if (mode === 'official' && form.data) {
-			form.data.api_url = OFFICIAL_ENDPOINT_URL;
+		testResult = null;
+		actionError = '';
+		actionNotice = '';
+		if (mode === 'brainzmash') {
+			apiUrl = pendingBrainzMash?.endpoint ?? BRAINZMASH_ENDPOINT_URL;
+			rateLimit = BRAINZMASH_RATE_MAX;
+			concurrentSearches = 1;
+			return;
 		}
-		if (mode === 'community') {
-			communityAcknowledged = false;
+		if (mode === 'official') {
+			apiUrl = OFFICIAL_ENDPOINT_URL;
+			rateLimit = 1;
+			concurrentSearches = 1;
+		}
+		if (mode === 'mirror' || mode === 'community') {
+			const normalizedApiUrl = apiUrl.trim().replace(/\/+$/, '');
+			const leavingFixedSource = previousMode === 'brainzmash' || previousMode === 'official';
+			const usingBuiltInEndpoint =
+				normalizedApiUrl === BRAINZMASH_ENDPOINT_URL || normalizedApiUrl === OFFICIAL_ENDPOINT_URL;
+			if (usingBuiltInEndpoint) {
+				apiUrl = '';
+			}
+			if (leavingFixedSource || usingBuiltInEndpoint) {
+				rateLimit = 1;
+				concurrentSearches = 1;
+			}
 		}
 	}
 
-	function onCardKeydown(event: KeyboardEvent, mode: MusicBrainzSourceMode) {
+	function onRadioKeydown(event: KeyboardEvent, mode: MusicBrainzSourceMode): void {
 		if (event.key === 'Enter' || event.key === ' ') {
 			event.preventDefault();
 			selectMode(mode);
+			return;
+		}
+		if (
+			event.key !== 'ArrowRight' &&
+			event.key !== 'ArrowDown' &&
+			event.key !== 'ArrowLeft' &&
+			event.key !== 'ArrowUp'
+		) {
+			return;
+		}
+		event.preventDefault();
+		const index = MUSICBRAINZ_SOURCE_CARDS.findIndex((card) => card.mode === mode);
+		const delta = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
+		const nextIndex =
+			(index + delta + MUSICBRAINZ_SOURCE_CARDS.length) % MUSICBRAINZ_SOURCE_CARDS.length;
+		const nextMode = MUSICBRAINZ_SOURCE_CARDS[nextIndex].mode;
+		selectMode(nextMode);
+		const nextRadio = document.getElementById(`musicbrainz-source-${nextMode}`);
+		if (nextRadio instanceof HTMLInputElement) {
+			nextRadio.focus();
+			nextRadio.click();
 		}
 	}
 
 	$effect(() => {
-		if (isOfficialApi && form.data) {
-			if (form.data.rate_limit > 1.0) form.data.rate_limit = 1.0;
-			if (form.data.rate_limit < 0.1) form.data.rate_limit = 1.0;
-			if (form.data.concurrent_searches > 6) form.data.concurrent_searches = 6;
+		const data = settingsQuery.data;
+		if (data && !seeded) {
+			seedDraft(data);
+			seeded = true;
 		}
 	});
-
-	// Consent is tied to the specific server: editing the URL under community mode
-	// withdraws the acknowledgment until it is given again.
-	$effect(() => {
-		if (form.data) {
-			const _url = form.data.api_url;
-			if (selectedMode === 'community') communityAcknowledged = false;
-		}
-	});
-
-	// A saved non-official URL loads as the mirror card (the recommended non-official
-	// path); switching to community is always an explicit, re-confirmed choice.
-	$effect(() => {
-		if (!modeInitialized && form.data) {
-			modeInitialized = true;
-			if (!isOfficialMusicBrainz(form.data.api_url)) selectedMode = 'mirror';
-		}
-	});
-
-	$effect(() => {
-		void load();
-	});
-
-	onDestroy(() => form.cleanup());
 </script>
 
 <div class="card bg-base-200">
 	<div class="card-body">
 		<h2 class="card-title text-2xl">MusicBrainz</h2>
-		<p class="text-base-content/70 mb-4">
-			Choose where MusicBrainz data comes from, and how fast this server may talk to it. The public
-			API is the recommended default; mirrors and community servers are advanced options.
+		<p class="mb-4 text-base-content/70">
+			Choose where MusicBrainz data comes from. BrainzMash is the built-in default and is active
+			unless you choose a custom mirror or community server.
 		</p>
 
-		{#if form.loading}
-			<div class="flex justify-center items-center py-12">
-				<span class="loading loading-spinner loading-lg"></span>
+		{#if settingsQuery.isLoading}
+			<div class="flex items-center justify-center py-12">
+				<span class="loading loading-spinner loading-lg" aria-label="Loading MusicBrainz settings"
+				></span>
 			</div>
-		{:else if form.data}
+		{:else if settingsQuery.isError}
+			<div class="alert alert-error" role="alert">
+				<CircleAlert class="h-5 w-5 shrink-0" aria-hidden="true" />
+				<span>{errorMessage(settingsQuery.error, 'Could not load MusicBrainz settings.')}</span>
+			</div>
+		{:else if settings}
 			<div class="space-y-4">
-				{#if form.data.clamped_to_official_limits}
+				{#if settings.clamped_to_official_limits}
 					<div class="alert alert-warning text-sm" role="status">
 						<CircleAlert class="h-5 w-5 shrink-0" aria-hidden="true" />
 						<span>{CLAMPED_WARNING}</span>
 					</div>
 				{/if}
 
-				<div
-					role="radiogroup"
-					aria-label="MusicBrainz data source"
-					class="grid grid-cols-1 md:grid-cols-3 gap-3"
-				>
-					{#each MUSICBRAINZ_SOURCE_CARDS as card (card.mode)}
-						{@const CardIcon = CARD_ICONS[card.mode]}
-						{@const isSelected = effectiveMode === card.mode}
-						<div
-							role="radio"
-							aria-checked={isSelected}
-							aria-label={card.title}
-							tabindex={isSelected ? 0 : -1}
-							class="rounded-box border p-4 cursor-pointer space-y-2 focus-visible:outline-2 focus-visible:outline-primary transition-colors {isSelected
-								? 'border-primary bg-primary/5'
-								: 'border-base-content/15 bg-base-100/60 hover:border-base-content/30'}"
-							onclick={() => selectMode(card.mode)}
-							onkeydown={(e) => onCardKeydown(e, card.mode)}
-						>
-							<div class="flex items-center justify-between gap-2">
-								<span class="flex items-center gap-2 font-semibold">
-									<CardIcon
-										class="h-4 w-4 {isSelected ? 'text-primary' : 'text-base-content/60'}"
-										aria-hidden="true"
-									/>
-									{card.title}
-								</span>
-								{#if card.badge}
-									<span class="badge badge-primary badge-sm">{card.badge}</span>
-								{/if}
-							</div>
-							<p class="text-xs text-base-content/60">{card.blurb}</p>
-							<details class="text-xs text-base-content/70">
-								<summary
-									class="cursor-pointer select-none text-base-content/50 hover:text-base-content/80"
-								>
-									{MORE_INFO_SUMMARY}
-								</summary>
-								<div class="mt-2 space-y-2">
-									{#each MORE_INFO_DISCLOSURES[card.mode] as paragraph (paragraph.slice(0, 40))}
-										<p>{paragraph}</p>
-									{/each}
-									{#if card.mode !== 'official'}
-										<a
-											href={MUSICBRAINZ_GUIDE_HREF}
-											target="_blank"
-											rel="noopener noreferrer"
-											class="link link-hover inline-flex items-center gap-1 text-primary"
-										>
-											<ExternalLink class="h-3 w-3" aria-hidden="true" />
-											Setup guide
-										</a>
-									{/if}
-								</div>
-							</details>
-						</div>
-					{/each}
-				</div>
-
-				{#if effectiveMode !== 'official'}
-					<div class="form-control w-full">
-						<label class="label" for="mb-api-url">
-							<span class="label-text">
-								{effectiveMode === 'mirror'
-									? 'Mirror API Endpoint URL'
-									: 'Community Server API Endpoint URL'}
-							</span>
-						</label>
-						<input
-							id="mb-api-url"
-							type="text"
-							bind:value={form.data.api_url}
-							class="input w-full"
-							placeholder={effectiveMode === 'mirror'
-								? 'http://mirror-host:5000/ws/2'
-								: 'https://mb.example.org/ws/2'}
-						/>
-						<p class="text-xs text-base-content/50 mt-1 ml-1">
-							The full URL to the server's MusicBrainz API, including the version path.
-						</p>
-						{#if effectiveMode === 'mirror'}
-							<p class="text-xs text-base-content/50 mt-1 ml-1">
-								Test Connection checks the server is alive. Data vintage is documented in the
-								<a
-									href={MUSICBRAINZ_GUIDE_HREF}
-									target="_blank"
-									rel="noopener noreferrer"
-									class="link link-hover text-primary">setup guide</a
-								> (one-line psql command).
-							</p>
-						{/if}
+				{#if settings.source_quarantined}
+					<div class="alert alert-error text-sm" role="alert" data-testid="musicbrainz-quarantined">
+						<CircleAlert class="h-5 w-5 shrink-0" aria-hidden="true" />
+						<span>
+							{settings.quarantine_reason ||
+								'Existing MusicBrainz source settings require review. Select and save a valid source to re-enable traffic.'}
+						</span>
 					</div>
 				{/if}
 
-				{#if effectiveMode === 'community'}
-					<div class="alert alert-warning text-sm" role="alert">
-						<CircleAlert class="h-5 w-5 shrink-0" aria-hidden="true" />
-						<span>{COMMUNITY_RISK_BANNER}</span>
+				{#if activeMode !== selectedMode}
+					<div class="alert alert-info text-sm" role="status" data-testid="active-source-preserved">
+						<Globe class="h-5 w-5 shrink-0" aria-hidden="true" />
+						<span>
+							Active source: <strong>{activeSourceLabel}</strong>. It stays active until the pending
+							source is saved or activated.
+						</span>
 					</div>
-					<label
-						class="label cursor-pointer justify-start gap-3 rounded-box border border-base-content/15 bg-base-100/60 p-4"
+				{/if}
+				{#if activeBrainzMash && pendingBrainzMash}
+					<div
+						class="alert alert-success text-sm"
+						role="status"
+						data-testid="active-brainzmash-binding"
 					>
-						<input
-							type="checkbox"
-							class="checkbox checkbox-primary"
-							bind:checked={communityAcknowledged}
-						/>
-						<span class="label-text text-sm">{COMMUNITY_CONFIRM_LABEL}</span>
-					</label>
+						<Network class="h-5 w-5 shrink-0" aria-hidden="true" />
+						<span>{BRAINZMASH_ACTIVE_BINDING_COPY}</span>
+					</div>
+				{/if}
+				{#if activeBrainzMash && pendingBrainzMash && !isBrainzMash}
+					<div
+						class="alert alert-info text-sm"
+						role="status"
+						data-testid="pending-brainzmash-disabled"
+					>
+						<Network class="h-5 w-5 shrink-0" aria-hidden="true" />
+						<span>{BRAINZMASH_PENDING_TRANSPORT_COPY}</span>
+					</div>
 				{/if}
 
-				<div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
-					<div class="form-control w-full">
-						<label class="label" for="mb-rate-limit">
-							<span class="label-text">Rate Limit (requests/sec)</span>
-							{#if rateUnlimited}
-								<span class="badge badge-info badge-sm">{UNLIMITED_RATE_LABEL}</span>
-							{/if}
-						</label>
-						<input
-							id="mb-rate-limit"
-							type="number"
-							min={bounds.allowUnlimitedRate ? 0 : 0.1}
-							max={bounds.rateMax}
-							step="0.1"
-							bind:value={form.data.rate_limit}
-							class="input w-full"
-						/>
-						<p class="text-xs text-base-content/50 mt-1 ml-1">
-							{#if bounds.allowUnlimitedRate}
-								Up to {bounds.rateMax} req/sec on your own or a chosen server. 0 = {UNLIMITED_RATE_LABEL}
-								(no client-side limiter). Be polite with servers you do not own.
-							{:else}
-								Maximum sustained requests per second. The official MusicBrainz limit is 1 req/sec -
-								it is clamped here, not refused.
-							{/if}
-						</p>
+				<fieldset>
+					<legend class="mb-2 text-sm font-semibold">MusicBrainz data source</legend>
+					<div class="grid grid-cols-1 gap-3 md:grid-cols-2" data-testid="musicbrainz-source-grid">
+						{#each MUSICBRAINZ_SOURCE_CARDS as card (card.mode)}
+							{@const CardIcon = CARD_ICONS[card.mode]}
+							{@const isSelected = selectedMode === card.mode}
+							<label
+								class="flex cursor-pointer items-start gap-3 rounded-box border p-4 transition-colors focus-within:outline-2 focus-within:outline-primary {isSelected
+									? 'border-primary bg-primary/5'
+									: 'border-base-content/15 bg-base-100/60 hover:border-base-content/30'}"
+								for={`musicbrainz-source-${card.mode}`}
+								data-testid={`musicbrainz-card-${card.mode}`}
+							>
+								<input
+									id={`musicbrainz-source-${card.mode}`}
+									class="radio radio-primary mt-0.5 shrink-0"
+									type="radio"
+									name="musicbrainz-source"
+									value={card.mode}
+									tabindex={isSelected ? 0 : -1}
+									bind:group={selectedMode}
+									aria-label={card.title}
+									aria-describedby={`musicbrainz-source-${card.mode}-description`}
+									onchange={() => selectMode(card.mode)}
+									onkeydown={(event) => onRadioKeydown(event, card.mode)}
+								/>
+								<span class="min-w-0 space-y-2">
+									<span class="flex items-center justify-between gap-2">
+										<span class="flex items-center gap-2 font-semibold">
+											<CardIcon
+												class="h-4 w-4 {isSelected ? 'text-primary' : 'text-base-content/60'}"
+												aria-hidden="true"
+											/>
+											{card.title}
+										</span>
+										{#if card.badge}
+											<span class="badge badge-primary badge-sm">{card.badge}</span>
+										{/if}
+									</span>
+									<span
+										id={`musicbrainz-source-${card.mode}-description`}
+										class="block text-xs text-base-content/60"
+									>
+										{card.blurb}
+									</span>
+								</span>
+							</label>
+						{/each}
 					</div>
+				</fieldset>
 
-					<div class="form-control w-full">
-						<label class="label" for="mb-concurrent">
-							<span class="label-text">Concurrent Searches</span>
-						</label>
-						<input
-							id="mb-concurrent"
-							type="number"
-							min="1"
-							max={bounds.concurrentMax}
-							bind:value={form.data.concurrent_searches}
-							class="input w-full"
-						/>
-						<p class="text-xs text-base-content/50 mt-1 ml-1">
-							Burst capacity for parallel API requests (official default: 6, max
-							{bounds.concurrentMax}).
-						</p>
-					</div>
-				</div>
-
-				{#if !isOfficialApi}
-					<div class="alert alert-info text-sm">
-						<CircleAlert class="h-5 w-5 shrink-0" aria-hidden="true" />
-						<div class="space-y-1">
-							{#each MIRROR_BANNER_LINES as line (line.slice(0, 40))}
-								<p>{line}</p>
-							{/each}
+				<details
+					class="rounded-box border border-base-content/10 bg-base-100/40 p-3 text-xs text-base-content/70"
+				>
+					<summary class="cursor-pointer select-none font-medium text-base-content/70">
+						{MORE_INFO_SUMMARY}: {selectedCard.title}
+					</summary>
+					<div class="mt-3 space-y-2">
+						{#each MORE_INFO_DISCLOSURES[selectedMode] as paragraph (paragraph.slice(0, 40))}
+							<p>{paragraph}</p>
+						{/each}
+						{#if selectedMode !== 'official' && selectedMode !== 'brainzmash'}
 							<a
 								href={MUSICBRAINZ_GUIDE_HREF}
 								target="_blank"
@@ -408,58 +533,340 @@
 								class="link link-hover inline-flex items-center gap-1 text-primary"
 							>
 								<ExternalLink class="h-3 w-3" aria-hidden="true" />
-								Mirror setup guide
+								Setup guide
 							</a>
+						{/if}
+					</div>
+				</details>
+
+				{#if isBrainzMash}
+					<section
+						class="space-y-3 rounded-box border border-primary/25 bg-primary/5 p-4"
+						aria-labelledby="brainzmash-pending-heading"
+					>
+						<div class="flex items-start gap-3">
+							<Network class="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
+							<div class="min-w-0 space-y-1">
+								<h3 id="brainzmash-pending-heading" class="font-semibold">BrainzMash setup</h3>
+								<p class="text-sm text-base-content/70">
+									Built-in endpoint: <code
+										>{pendingBrainzMash?.endpoint ?? BRAINZMASH_ENDPOINT_URL}</code
+									>
+								</p>
+								<p class="text-xs text-base-content/60">
+									Supported read-only route families: {BRAINZMASH_SUPPORTED_ROUTE_FAMILIES.join(
+										', '
+									)}.
+								</p>
+							</div>
+						</div>
+
+						{#if selectedModeNeedsStage}
+							<p class="text-sm text-base-content/70">
+								Stage the built-in endpoint locally to receive a fresh pending access revision and
+								source identity.
+							</p>
+							<button
+								class="btn btn-primary btn-sm"
+								type="button"
+								onclick={stageBrainzMash}
+								disabled={actionBusy}
+							>
+								{#if stageMutation.isPending}<span class="loading loading-spinner loading-xs"
+									></span>{/if}
+								Stage BrainzMash
+							</button>
+						{:else if pendingBrainzMash}
+							<div class="space-y-3">
+								<div
+									class="rounded-box border border-warning/30 bg-warning/5 p-3 text-sm"
+									role="note"
+								>
+									<p class="font-medium">
+										Privacy disclosure {pendingBrainzMash.disclosure_version}
+									</p>
+									<p class="mt-1 text-base-content/70">{BRAINZMASH_PRIVACY_DISCLOSURE}</p>
+								</div>
+								<p class="text-sm text-base-content/70">{BRAINZMASH_LOCAL_POLICY_COPY}</p>
+								{#if activeBrainzMash}
+									<p class="text-sm text-base-content/70" data-testid="pending-brainzmash-disabled">
+										{BRAINZMASH_PENDING_TRANSPORT_COPY}
+									</p>
+								{:else}
+									<p class="text-sm text-base-content/70">{BRAINZMASH_TRANSPORT_DISABLED_COPY}</p>
+								{/if}
+
+								<label
+									class="flex items-start gap-3 rounded-box border border-base-content/15 bg-base-100/50 p-3"
+									for="brainzmash-consent"
+								>
+									<input
+										id="brainzmash-consent"
+										class="checkbox checkbox-primary mt-0.5 shrink-0"
+										type="checkbox"
+										checked={hasConsent}
+										disabled={hasConsent || actionBusy}
+										aria-label="Accept BrainzMash privacy disclosure"
+										onchange={(event) => {
+											if ((event.currentTarget as HTMLInputElement).checked)
+												void acceptBrainzMashDisclosure();
+										}}
+									/>
+									<span class="text-sm"
+										>{COMMUNITY_CONFIRM_LABEL.replace(
+											'routing identity data through a server I do not control',
+											'routing MusicBrainz query data through BrainzMash'
+										)}</span
+									>
+								</label>
+
+								<div class="flex flex-wrap gap-2">
+									<button
+										class="btn btn-ghost btn-sm"
+										type="button"
+										onclick={testConnection}
+										disabled={actionBusy || !hasConsent}
+									>
+										{#if verifyMutation.isPending}<span class="loading loading-spinner loading-xs"
+											></span>{/if}
+										Test Connection
+									</button>
+									<button
+										class="btn btn-primary btn-sm"
+										type="button"
+										onclick={activateBrainzMashSource}
+										disabled={actionBusy || !hasConsent || !hasVerification}
+									>
+										{#if activateMutation.isPending}<span class="loading loading-spinner loading-xs"
+											></span>{/if}
+										Activate BrainzMash
+									</button>
+								</div>
+							</div>
+						{:else if activeMode === 'brainzmash'}
+							<p class="text-sm text-success">
+								BrainzMash is the active runtime source. Traffic uses the local 10 requests/second
+								policy and one concurrent search.
+							</p>
+						{/if}
+						<button
+							type="button"
+							class="btn btn-outline btn-error btn-sm"
+							onclick={resetToDefaults}
+							disabled={actionBusy}
+						>
+							Reset to Defaults
+						</button>
+					</section>
+				{:else}
+					<div class="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+						{#if selectedMode !== 'official'}
+							<div class="form-control w-full">
+								<label class="label" for="mb-api-url">
+									<span class="label-text"
+										>{selectedMode === 'mirror'
+											? 'Mirror API Endpoint URL'
+											: 'Community Server API Endpoint URL'}</span
+									>
+								</label>
+								<input
+									id="mb-api-url"
+									type="text"
+									value={apiUrl}
+									class="input w-full"
+									placeholder={selectedMode === 'mirror'
+										? 'http://mirror-host:5000/ws/2'
+										: 'https://mb.example.org/ws/2'}
+									oninput={(event) => (apiUrl = (event.currentTarget as HTMLInputElement).value)}
+								/>
+								<p class="mt-1 ml-1 text-xs text-base-content/50">
+									The full URL to the server's MusicBrainz API, including the version path.
+								</p>
+								{#if selectedMode === 'mirror'}
+									<p class="mt-1 ml-1 text-xs text-base-content/50">
+										Test Connection checks the server is alive. Data vintage is documented in the
+										<a
+											href={MUSICBRAINZ_GUIDE_HREF}
+											target="_blank"
+											rel="noopener noreferrer"
+											class="link link-hover text-primary">setup guide</a
+										>.
+									</p>
+								{/if}
+							</div>
+						{:else}
+							<div class="rounded-box border border-base-content/10 bg-base-100/40 p-4 text-sm">
+								<p class="font-medium">Official endpoint</p>
+								<p class="mt-1 text-base-content/70">{OFFICIAL_ENDPOINT_URL}</p>
+								<p class="mt-1 text-xs text-base-content/50">
+									Endpoint editing is disabled for the official source.
+								</p>
+							</div>
+						{/if}
+
+						<div class="space-y-4">
+							<div class="form-control w-full">
+								<label class="label" for="mb-rate-limit">
+									<span class="label-text">Rate Limit (requests/sec)</span>
+									{#if selectedBounds.allowUnlimitedRate}<span class="badge badge-info badge-sm"
+											>{UNLIMITED_RATE_LABEL}</span
+										>{/if}
+								</label>
+								<input
+									id="mb-rate-limit"
+									type="number"
+									min={selectedBounds.allowUnlimitedRate ? 0 : 0.1}
+									max={selectedBounds.rateMax}
+									step="0.1"
+									value={rateLimit}
+									class="input w-full"
+									oninput={(event) =>
+										(rateLimit = Number((event.currentTarget as HTMLInputElement).value))}
+								/>
+								<p class="mt-1 ml-1 text-xs text-base-content/50">
+									{#if selectedBounds.allowUnlimitedRate}Up to {selectedBounds.rateMax} req/sec on your
+										own or a chosen server. 0 = {UNLIMITED_RATE_LABEL}. Be polite with servers you
+										do not own.{:else}DroppedNeedle keeps this source at 1 request/second.{/if}
+								</p>
+							</div>
+							<div class="form-control w-full">
+								<label class="label" for="mb-concurrent"
+									><span class="label-text">Concurrent Searches</span></label
+								>
+								<input
+									id="mb-concurrent"
+									type="number"
+									min="1"
+									max={selectedBounds.concurrentMax}
+									value={concurrentSearches}
+									class="input w-full"
+									oninput={(event) =>
+										(concurrentSearches = Number((event.currentTarget as HTMLInputElement).value))}
+								/>
+								<p class="mt-1 ml-1 text-xs text-base-content/50">
+									Local queue capacity, maximum {selectedBounds.concurrentMax}.
+								</p>
+							</div>
+						</div>
+					</div>
+
+					{#if selectedMode === 'community'}
+						<div class="alert alert-warning text-sm" role="alert">
+							<CircleAlert class="h-5 w-5 shrink-0" aria-hidden="true" />
+							<span>{COMMUNITY_RISK_BANNER}</span>
+						</div>
+						<label
+							class="label cursor-pointer justify-start gap-3 rounded-box border border-base-content/15 bg-base-100/60 p-4"
+							for="community-acknowledgment"
+						>
+							<input
+								id="community-acknowledgment"
+								type="checkbox"
+								class="checkbox checkbox-primary"
+								checked={communityAcknowledged}
+								onchange={(event) =>
+									(communityAcknowledged = (event.currentTarget as HTMLInputElement).checked)}
+							/>
+							<span class="label-text text-sm">{COMMUNITY_CONFIRM_LABEL}</span>
+						</label>
+					{/if}
+
+					{#if selectedMode !== 'official'}
+						<div class="alert alert-info text-sm" role="status">
+							<CircleAlert class="h-5 w-5 shrink-0" aria-hidden="true" />
+							<div class="space-y-1">
+								{#each MIRROR_BANNER_LINES as line (line.slice(0, 40))}<p>{line}</p>{/each}
+								<a
+									href={MUSICBRAINZ_GUIDE_HREF}
+									target="_blank"
+									rel="noopener noreferrer"
+									class="link link-hover inline-flex items-center gap-1 text-primary"
+									><ExternalLink class="h-3 w-3" aria-hidden="true" />Mirror setup guide</a
+								>
+							</div>
+						</div>
+					{/if}
+
+					{#if testResult}
+						<div
+							class="alert"
+							class:alert-success={testResult.valid}
+							class:alert-error={!testResult.valid}
+							role="status"
+						>
+							<span>{displayedTestMessage}</span>
+						</div>
+					{/if}
+
+					{#if switchingAwayFromBrainz}
+						<div
+							class="alert alert-info text-sm"
+							role="status"
+							data-testid="brainzmash-no-alternate-test"
+						>
+							<Globe class="h-5 w-5 shrink-0" aria-hidden="true" />
+							<span>{BRAINZMASH_NO_ALTERNATE_PROBE_COPY}</span>
+						</div>
+					{/if}
+					<div class="flex flex-wrap items-center justify-between gap-3 pt-2">
+						<button
+							type="button"
+							class="btn btn-outline btn-error btn-sm"
+							onclick={resetToDefaults}
+							disabled={actionBusy}>Reset to Defaults</button
+						>
+						<div class="flex gap-2">
+							<button
+								type="button"
+								class="btn btn-ghost"
+								onclick={testConnection}
+								disabled={actionBusy || !apiUrl.trim() || switchingAwayFromBrainz}
+							>
+								{#if verifyMutation.isPending}<span class="loading loading-spinner loading-sm"
+									></span>{/if}Test Connection
+							</button>
+							<div
+								class="tooltip"
+								data-tip={switchingAwayFromBrainz
+									? BRAINZMASH_NO_ALTERNATE_PROBE_COPY
+									: communityNeedsAcknowledgment
+										? COMMUNITY_CONFIRM_BUTTON_HINT
+										: 'Test connection before saving'}
+							>
+								<button
+									type="button"
+									class="btn btn-primary"
+									onclick={saveNonBrainzSettings}
+									disabled={saveDisabled}
+								>
+									{#if saveMutation.isPending}<span class="loading loading-spinner loading-sm"
+										></span>{/if}Save Settings
+								</button>
+							</div>
 						</div>
 					</div>
 				{/if}
 
-				{#if form.testResult}
+				{#if testResult && isBrainzMash}
 					<div
 						class="alert"
-						class:alert-success={form.testResult.valid}
-						class:alert-error={!form.testResult.valid}
+						class:alert-success={testResult.valid}
+						class:alert-error={!testResult.valid}
+						role="status"
 					>
 						<span>{displayedTestMessage}</span>
 					</div>
 				{/if}
-
-				{#if form.message}
-					<div
-						class="alert"
-						class:alert-success={form.messageType === 'success'}
-						class:alert-error={form.messageType === 'error'}
-					>
-						<span>{form.message}</span>
+				{#if actionError}
+					<div class="alert alert-error" role="alert">
+						<CircleAlert class="h-5 w-5 shrink-0" aria-hidden="true" /><span>{actionError}</span>
 					</div>
 				{/if}
-
-				<div class="flex justify-between items-center pt-2">
-					<button type="button" class="btn btn-outline btn-error btn-sm" onclick={resetToDefaults}>
-						Reset to Defaults
-					</button>
-					<div class="flex gap-2">
-						<button
-							type="button"
-							class="btn btn-ghost"
-							onclick={test}
-							disabled={form.testing || !form.data.api_url}
-						>
-							{#if form.testing}
-								<span class="loading loading-spinner loading-sm"></span>
-							{/if}
-							Test Connection
-						</button>
-						<div class="tooltip" class:tooltip-left={!hasPassedTest} data-tip={saveTooltip}>
-							<button type="button" class="btn btn-primary" onclick={save} disabled={saveDisabled}>
-								{#if form.saving}
-									<span class="loading loading-spinner loading-sm"></span>
-								{/if}
-								Save Settings
-							</button>
-						</div>
+				{#if actionNotice}
+					<div class="alert alert-success" role="status" aria-live="polite">
+						<span>{actionNotice}</span>
 					</div>
-				</div>
+				{/if}
 			</div>
 		{/if}
 	</div>

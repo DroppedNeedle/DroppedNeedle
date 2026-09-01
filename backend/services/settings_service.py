@@ -1,5 +1,6 @@
+import asyncio
 import logging
-
+import uuid
 import msgspec
 
 from api.v1.schemas.settings import (
@@ -15,9 +16,13 @@ from api.v1.schemas.settings import (
     DownloadClientConnectionSettings,
     DOWNLOAD_CLIENT_API_KEY_MASK,
     MusicBrainzConnectionSettings,
+    MusicBrainzSettingsUpdate,
+    MusicBrainzBindingRequest,
+    BRAINZMASH_ENDPOINT,
+    BRAINZMASH_DISCLOSURE_VERSION,
 )
 from core.config import get_settings
-from core.exceptions import ValidationError
+from core.exceptions import ConfigurationError, ValidationError
 from models.common import ServiceStatus
 from infrastructure.cache.cache_keys import (
     JELLYFIN_PREFIX,
@@ -89,6 +94,7 @@ class SettingsService:
         self._plex_library_getter = plex_library_getter
         self._discovery_snapshot_store = discovery_snapshot_store
         self._disk_cache = disk_cache
+        self._musicbrainz_coordinator_lock = asyncio.Lock()
 
     async def verify_jellyfin(
         self, settings: JellyfinConnectionSettings
@@ -367,9 +373,16 @@ class SettingsService:
         default/ListenBrainz/cover-art clients, and close the superseded
         generations through the awaited lifecycle path."""
         from infrastructure.http.client import HttpClientFactory
+        from repositories.musicbrainz_base import set_mb_brainzmash_http_client
 
-        for logical_name in ("default", "listenbrainz", "coverart"):
+        for logical_name in (
+            "default",
+            "listenbrainz",
+            "coverart",
+            "musicbrainz-brainzmash",
+        ):
             HttpClientFactory.retire_name(logical_name)
+        set_mb_brainzmash_http_client(None)
         from core.dependencies import clear_listenbrainz_dependent_caches
 
         clear_listenbrainz_dependent_caches()
@@ -655,23 +668,158 @@ class SettingsService:
         sections = await temp_repo.get_music_libraries()
         return [(s.key, s.title) for s in sections]
 
+    async def verify_brainzmash(
+        self, binding: MusicBrainzBindingRequest
+    ) -> MusicBrainzVerifyResult:
+        """Verify the server-owned, consent-bound BrainzMash proposal."""
+        current = self._preferences_service.get_musicbrainz_connection()
+        pending = current.pending_brainzmash
+        if (
+            pending is None
+            or pending.access_revision != binding.access_revision
+            or pending.source_id != binding.source_id
+            or pending.generation != binding.generation
+            or pending.disclosure_version != binding.disclosure_version
+        ):
+            raise ValidationError("BrainzMash proposal is stale")
+        if not pending.consented:
+            raise ValidationError("BrainzMash consent is required")
+        if pending.disclosure_version != BRAINZMASH_DISCLOSURE_VERSION:
+            raise ValidationError("BrainzMash disclosure is outdated")
+        from infrastructure.http.brainzmash_transport import validate_brainzmash_url
+        from repositories.musicbrainz_base import (
+            MbSourceContext,
+            capture_mb_source_context,
+        )
+
+        admission_context = capture_mb_source_context()
+
+        def pending_is_current() -> bool:
+            latest = self._preferences_service.get_musicbrainz_connection()
+            candidate = latest.pending_brainzmash
+            return bool(
+                candidate is not None
+                and self._preferences_service._pending_brainzmash_policy_is_current(
+                    candidate
+                )
+                and candidate.access_revision == binding.access_revision
+                and candidate.source_id == binding.source_id
+                and candidate.generation == binding.generation
+                and candidate.disclosure_version == binding.disclosure_version
+                and candidate.consented
+            )
+
+        try:
+            validate_brainzmash_url(pending.endpoint)
+        except ValueError as exc:
+            raise ValidationError("BrainzMash endpoint is outdated") from exc
+        try:
+            from repositories.musicbrainz_base import mb_api_probe
+            from infrastructure.http.client import get_brainzmash_http_client
+
+            response = await mb_api_probe(
+                BRAINZMASH_ENDPOINT,
+                client=get_brainzmash_http_client(),
+                allow_unbound_brainzmash=True,
+                brainzmash=True,
+                source_context=MbSourceContext(
+                    source_url=BRAINZMASH_ENDPOINT.rstrip("/"),
+                    generation=pending.generation,
+                    source_mode="brainzmash",
+                    source_id=pending.source_id,
+                ),
+                admission_context=admission_context,
+                admission_check=pending_is_current,
+            )
+        except ValidationError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - route returns a safe provider error
+            logger.warning("BrainzMash verification failed: %s", type(exc).__name__)
+            return MusicBrainzVerifyResult(
+                valid=False, message="Could not connect to BrainzMash"
+            )
+        if response.status_code != 200:
+            return MusicBrainzVerifyResult(
+                valid=False,
+                message=f"BrainzMash verification returned HTTP {response.status_code}",
+            )
+        return MusicBrainzVerifyResult(valid=True, message="Connected to BrainzMash")
+
     async def verify_musicbrainz(
         self, settings: MusicBrainzConnectionSettings
     ) -> MusicBrainzVerifyResult:
+        from api.v1.schemas.settings import is_brainzmash_active_binding_valid
+        from repositories.musicbrainz_base import (
+            MbSourceContext,
+            brainzmash_runtime_enabled,
+            capture_mb_source_context,
+            mb_api_probe,
+        )
+
+        if settings.source_mode == "brainzmash":
+            return MusicBrainzVerifyResult(
+                valid=False,
+                message="Use the consent-bound BrainzMash verification flow",
+            )
+
+        current = self._preferences_service.get_musicbrainz_connection()
+        admission_context = capture_mb_source_context()
+        admission_revision = (
+            self._preferences_service.get_musicbrainz_settings_revision()
+        )
+        active_brainzmash = (
+            brainzmash_runtime_enabled() and is_brainzmash_active_binding_valid(current)
+        )
+        if active_brainzmash and settings.source_mode != "brainzmash":
+            return MusicBrainzVerifyResult(
+                valid=False,
+                message="Alternative MusicBrainz tests are disabled while BrainzMash is active",
+            )
+
+        quarantined_alternate = bool(
+            current.source_mode == "brainzmash"
+            and current.source_quarantined
+            and not brainzmash_runtime_enabled()
+            and admission_context.source_mode == "brainzmash"
+            and admission_context.source_url == current.api_url.rstrip("/")
+            and admission_context.source_id == current.source_id
+            and admission_context.generation == current.generation
+        )
+
+        def quarantined_probe_is_current() -> bool:
+            latest = self._preferences_service.get_musicbrainz_connection()
+            return bool(
+                quarantined_alternate
+                and self._preferences_service.get_musicbrainz_settings_revision()
+                == admission_revision
+                and self._preferences_service.musicbrainz_settings_match(current)
+                and latest.source_mode == "brainzmash"
+                and latest.source_quarantined
+            )
+
         try:
             import httpx
             from infrastructure.validators import validate_service_url
             from core.exceptions import ValidationError as AppValidationError
-            from repositories.musicbrainz_base import mb_api_probe
 
             validate_service_url(settings.api_url, label="MusicBrainz API URL")
-
             app_settings = get_settings()
             client = get_http_client(app_settings)
             response = await mb_api_probe(
                 settings.api_url,
                 params={"query": "test", "limit": 1},
                 client=client,
+                source_context=MbSourceContext(
+                    source_url=settings.api_url.rstrip("/"),
+                    generation=admission_context.generation,
+                    source_mode=settings.source_mode,
+                    source_id=f"probe-{uuid.uuid4().hex}",
+                ),
+                admission_context=admission_context,
+                admission_check=(
+                    quarantined_probe_is_current if quarantined_alternate else None
+                ),
+                allow_quarantined_alternate=quarantined_alternate,
             )
             if response.status_code == 200:
                 return MusicBrainzVerifyResult(
@@ -698,11 +846,17 @@ class SettingsService:
                 valid=False, message="Couldn't finish the connection test"
             )
 
-    async def on_musicbrainz_settings_changed(
+    async def _apply_musicbrainz_settings(
         self, settings: MusicBrainzConnectionSettings
     ) -> None:
         from repositories.musicbrainz_base import (
+            brainzmash_rate_limiter,
+            brainzmash_runtime_enabled,
+            brainzmash_circuit_breaker,
             get_mb_api_base,
+            get_mb_source_generation,
+            get_mb_source_mode,
+            get_mb_source_id,
             set_mb_api_base,
             mb_rate_limiter,
             mb_rate_limiter_bypassed,
@@ -712,37 +866,63 @@ class SettingsService:
             set_mb_rate_limiter_bypass,
         )
         from api.v1.schemas.settings import (
-            is_musicbrainz_rate_policy_public_host,
-            _OFFICIAL_MB_RATE_LIMIT,
+            _BRAINZMASH_RATE_LIMIT,
             _OFFICIAL_MB_CONCURRENT_SEARCHES,
+            _OFFICIAL_MB_RATE_LIMIT,
+            is_brainzmash_active_binding_valid,
+            is_musicbrainz_rate_policy_public_host,
         )
+        from infrastructure.http.brainzmash_transport import validate_brainzmash_url
 
-        rate_policy_public_host = is_musicbrainz_rate_policy_public_host(
-            settings.api_url
-        )
-        if rate_policy_public_host:
+        brainzmash_binding_valid = True
+        if settings.source_mode == "brainzmash":
+            try:
+                validate_brainzmash_url(settings.api_url)
+            except ValueError as exc:
+                raise ConfigurationError(str(exc)) from exc
+            brainzmash_binding_valid = is_brainzmash_active_binding_valid(settings)
+        if settings.source_mode == "brainzmash":
+            settings.rate_limit = _BRAINZMASH_RATE_LIMIT
+            settings.concurrent_searches = 1
+            brainzmash_rate_limiter.update_rate(_BRAINZMASH_RATE_LIMIT)
+            brainzmash_rate_limiter.update_capacity(1)
+
+        official_host = is_musicbrainz_rate_policy_public_host(settings.api_url)
+        rate_policy_public_host = settings.source_mode == "brainzmash" or official_host
+        if official_host:
             settings.rate_limit = min(settings.rate_limit, _OFFICIAL_MB_RATE_LIMIT)
             settings.concurrent_searches = min(
                 settings.concurrent_searches, _OFFICIAL_MB_CONCURRENT_SEARCHES
             )
-            # the Unlimited sentinel is off-official only
             if settings.rate_limit <= 0:
                 settings.rate_limit = _OFFICIAL_MB_RATE_LIMIT
 
+        limiter_rate = (
+            _OFFICIAL_MB_RATE_LIMIT
+            if settings.source_mode == "brainzmash"
+            else settings.rate_limit
+        )
         async with mb_source_commit_lock:
-            # Compare against live module state, not stored settings: the route
-            # saves before calling this handler, so stored == incoming always.
-            # While the sentinel bypasses the limiter its stored rate is inert.
             current_bypass = mb_rate_limiter_bypassed()
             effective_rate = 0.0 if current_bypass else mb_rate_limiter.rate
             effective_capacity = (
                 1 if rate_policy_public_host else settings.concurrent_searches
             )
-            requested_bypass = settings.rate_limit == 0
-            source_changed = get_mb_api_base() != settings.api_url
+            requested_bypass = settings.rate_limit == 0 and not rate_policy_public_host
+            runtime_binding_changed = (
+                settings.source_mode == "brainzmash"
+                and brainzmash_runtime_enabled() != brainzmash_binding_valid
+            )
+            source_changed = (
+                get_mb_api_base() != settings.api_url
+                or get_mb_source_mode() != settings.source_mode
+                or get_mb_source_id() != settings.source_id
+                or get_mb_source_generation() != settings.generation
+            )
             if (
                 not source_changed
-                and effective_rate == settings.rate_limit
+                and not runtime_binding_changed
+                and effective_rate == limiter_rate
                 and current_bypass == requested_bypass
                 and mb_rate_limiter.capacity == effective_capacity
             ):
@@ -777,17 +957,136 @@ class SettingsService:
                 SearchService.clear_cached_results()
             # Apply only after every source-switch clear succeeds, and keep the
             # live mutations synchronous while the source commit lock is held.
-            set_mb_api_base(settings.api_url)
+            set_mb_api_base(
+                settings.api_url,
+                source_mode=settings.source_mode,
+                source_id=settings.source_id,
+                generation=settings.generation,
+                brainzmash_binding_valid=brainzmash_binding_valid,
+            )
             if requested_bypass:
                 set_mb_rate_limiter_bypass(True)
             else:
                 set_mb_rate_limiter_bypass(False)
-                mb_rate_limiter.update_rate(settings.rate_limit)
+                mb_rate_limiter.update_rate(limiter_rate)
             mb_rate_limiter.update_capacity(effective_capacity)
             mb_circuit_breaker.reset()
+            brainzmash_circuit_breaker.reset()
             mb_deduplicator.clear()
 
             if total:
                 logger.info(
                     f"Cleared {total} MusicBrainz cache entries after settings change"
                 )
+
+    async def _restore_musicbrainz_after_failed_commit(
+        self,
+        expected: MusicBrainzConnectionSettings,
+        replacement: MusicBrainzConnectionSettings,
+        *,
+        expected_revision: int,
+    ) -> None:
+        restored = self._preferences_service.restore_musicbrainz_connection_if_current(
+            expected,
+            replacement,
+            expected_revision=expected_revision,
+        )
+        if not restored:
+            return
+        try:
+            await self._apply_musicbrainz_settings(replacement)
+        except BaseException:
+            logger.exception("Failed to restore live MusicBrainz source state")
+
+    async def on_musicbrainz_settings_changed(
+        self, settings: MusicBrainzConnectionSettings
+    ) -> None:
+        """Apply already-persisted settings during startup or maintenance."""
+        lock = getattr(self, "_musicbrainz_coordinator_lock", None)
+        if lock is None:
+            await self._apply_musicbrainz_settings(settings)
+            return
+        async with lock:
+            await self._apply_musicbrainz_settings(settings)
+
+    async def save_musicbrainz_update(
+        self, update: MusicBrainzSettingsUpdate
+    ) -> MusicBrainzConnectionSettings:
+        """Persist and apply one normalized MusicBrainz source change as one CAS commit."""
+        async with self._musicbrainz_coordinator_lock:
+            previous = self._preferences_service.get_musicbrainz_connection()
+            new_settings = self._preferences_service.save_musicbrainz_update(update)
+            new_revision = self._preferences_service.get_musicbrainz_settings_revision()
+            try:
+                await self._apply_musicbrainz_settings(new_settings)
+                if (
+                    self._preferences_service.get_musicbrainz_settings_revision()
+                    != new_revision
+                    or not self._preferences_service.musicbrainz_settings_match(
+                        new_settings
+                    )
+                ):
+                    raise ConfigurationError(
+                        "MusicBrainz settings changed before runtime apply completed"
+                    )
+            except BaseException:
+                await self._restore_musicbrainz_after_failed_commit(
+                    new_settings,
+                    previous,
+                    expected_revision=new_revision,
+                )
+                raise
+            return self._preferences_service.get_musicbrainz_connection()
+
+    async def stage_brainzmash(self) -> MusicBrainzConnectionSettings:
+        """Persist and apply a BrainzMash proposal without probing upstream."""
+        async with self._musicbrainz_coordinator_lock:
+            previous = self._preferences_service.get_musicbrainz_connection()
+            staged = self._preferences_service.stage_brainzmash()
+            new_revision = self._preferences_service.get_musicbrainz_settings_revision()
+            try:
+                await self._apply_musicbrainz_settings(staged)
+                if (
+                    self._preferences_service.get_musicbrainz_settings_revision()
+                    != new_revision
+                    or not self._preferences_service.musicbrainz_settings_match(staged)
+                ):
+                    raise ConfigurationError(
+                        "MusicBrainz settings changed before BrainzMash staging completed"
+                    )
+            except BaseException:
+                await self._restore_musicbrainz_after_failed_commit(
+                    staged,
+                    previous,
+                    expected_revision=new_revision,
+                )
+                raise
+            return self._preferences_service.get_musicbrainz_connection()
+
+    async def activate_brainzmash(
+        self, binding: MusicBrainzBindingRequest
+    ) -> MusicBrainzConnectionSettings:
+        """Promote and apply a verified BrainzMash binding under one coordinator."""
+        async with self._musicbrainz_coordinator_lock:
+            previous, promoted = self._preferences_service.promote_brainzmash(binding)
+            new_revision = self._preferences_service.get_musicbrainz_settings_revision()
+            try:
+                await self._apply_musicbrainz_settings(promoted)
+                if (
+                    self._preferences_service.get_musicbrainz_settings_revision()
+                    != new_revision
+                    or not self._preferences_service.musicbrainz_settings_match(
+                        promoted
+                    )
+                ):
+                    raise ConfigurationError(
+                        "MusicBrainz settings changed before runtime activation completed"
+                    )
+            except BaseException:
+                await self._restore_musicbrainz_after_failed_commit(
+                    promoted,
+                    previous,
+                    expected_revision=new_revision,
+                )
+                raise
+            return self._preferences_service.get_musicbrainz_connection()

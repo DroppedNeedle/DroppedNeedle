@@ -16,10 +16,11 @@ from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.validators import validate_spotify_cover_url
 from repositories.musicbrainz_album import _pick_best_release_group
 from repositories.musicbrainz_base import (
+    capture_mb_source_context,
     clear_mb_response_context,
     get_mb_response_context,
+    is_mb_source_current,
     mb_api_get,
-    mb_publish_if_current,
 )
 from repositories.async_playlist_repository import AsyncPlaylistRepository
 
@@ -330,11 +331,17 @@ class SpotifyImportService:
         self, isrc: str | None, artist: str, album_name: str
     ) -> str | None:
         clear_mb_response_context()
+        operation_context = capture_mb_source_context()
         if isrc:
             canonical_store = getattr(self._mb_repo, "mb_canonical_store", None)
             if canonical_store is not None:
                 try:
-                    existing = await canonical_store.get_recordings_by_isrc(isrc)
+                    existing = await canonical_store.get_recordings_by_isrc(
+                        isrc,
+                        source_context=operation_context,
+                    )
+                    if not is_mb_source_current(operation_context):
+                        existing = []
                 except Exception:  # noqa: BLE001 - durable miss falls through to wire
                     existing = []
                 if not isinstance(existing, (list, tuple, set)):
@@ -357,32 +364,36 @@ class SpotifyImportService:
                         if mbid:
                             return mbid
 
+            operation_context = capture_mb_source_context()
             try:
                 data = await mb_api_get(
                     f"/isrc/{isrc}",
                     priority=RequestPriority.BACKGROUND_SYNC,
+                    source_context=operation_context,
                 )
-                response_context = get_mb_response_context()
+                response_context = get_mb_response_context() or operation_context
+                if response_context != operation_context or not is_mb_source_current(
+                    operation_context
+                ):
+                    raise RuntimeError("MusicBrainz source changed during ISRC lookup")
                 recordings: list[dict] = data.get("recordings") or []
                 if isinstance(recordings, dict):
                     recordings = [recordings]
                 # ST2 P1: bank ISRC -> recording ids durably (write-through)
                 # only for the source generation that answered.
-                if canonical_store is not None:
+                if canonical_store is not None and operation_context is not None:
                     try:
-                        await mb_publish_if_current(
-                            response_context,
-                            lambda: canonical_store.save_isrc_recordings(
-                                [
-                                    (isrc, rec["id"])
-                                    for rec in recordings
-                                    if rec.get("id")
-                                ]
-                            ),
+                        await canonical_store.save_isrc_recordings(
+                            [(isrc, rec["id"]) for rec in recordings if rec.get("id")],
+                            source_context=operation_context,
                         )
                     except Exception:  # noqa: BLE001
                         pass  # write-through must never break the import
                 for rec in recordings:
+                    if not is_mb_source_current(operation_context):
+                        raise RuntimeError(
+                            "MusicBrainz source changed during recording resolution"
+                        )
                     rec_id = rec.get("id")
                     if not rec_id:
                         continue
@@ -391,6 +402,10 @@ class SpotifyImportService:
                     )
                     if mbid:
                         return mbid
+                if not is_mb_source_current(operation_context):
+                    raise RuntimeError(
+                        "MusicBrainz source changed during ISRC release selection"
+                    )
                 all_releases: list[dict] = []
                 for rec in recordings:
                     all_releases.extend(rec.get("releases") or [])

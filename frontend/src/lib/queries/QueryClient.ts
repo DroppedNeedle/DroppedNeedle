@@ -15,6 +15,7 @@ import {
 	removePersistedQueries,
 	type PersistedQueryPredicate
 } from './IndexedDbPersister.svelte';
+import { subscribeMusicBrainzSourceScope } from './musicbrainz/sourceScope.svelte';
 
 /**
  * Maximum age for queries to be persisted.
@@ -107,24 +108,32 @@ const MUSICBRAINZ_DISCOVER_QUERY_SEGMENTS: Record<string, true> = {
 };
 
 function isMusicBrainzProviderQuery(query: { queryKey: readonly unknown[] }): boolean {
-	const [root, second, third] = query.queryKey;
+	const [root, second, third, fourth] = query.queryKey;
 	if (root === 'artist') {
-		return (
-			query.queryKey.length === 2 ||
-			(typeof third === 'string' && MUSICBRAINZ_ARTIST_QUERY_SEGMENTS[third] === true)
-		);
+		if (query.queryKey.length === 2) return true;
+		if (typeof second === 'object' && second !== null) {
+			if (query.queryKey.length === 3) return true;
+			return typeof fourth === 'string' && MUSICBRAINZ_ARTIST_QUERY_SEGMENTS[fourth] === true;
+		}
+		return typeof third === 'string' && MUSICBRAINZ_ARTIST_QUERY_SEGMENTS[third] === true;
 	}
 	if (root === 'albums') return second === 'editions';
 	if (root === 'search') {
-		return typeof third === 'string' && MUSICBRAINZ_SEARCH_QUERY_SEGMENTS[third] === true;
+		const segment = typeof third === 'string' ? third : fourth;
+		return typeof segment === 'string' && MUSICBRAINZ_SEARCH_QUERY_SEGMENTS[segment] === true;
 	}
 	if (root === 'discover') {
+		const segment = typeof third === 'string' ? third : fourth;
 		// The home response intentionally mixes library/user sections with provider-derived
 		// recommendations, so its whole user-keyed payload is a correctness boundary.
-		return (
-			query.queryKey.length === 2 ||
-			(typeof third === 'string' && MUSICBRAINZ_DISCOVER_QUERY_SEGMENTS[third] === true)
-		);
+		if (typeof segment !== 'string') {
+			return query.queryKey.length === 2 || (typeof third === 'object' && third !== null);
+		}
+		return MUSICBRAINZ_DISCOVER_QUERY_SEGMENTS[segment] === true;
+	}
+	if (root === 'home') {
+		// Home's source-scoped payload mixes provider recommendations with local sections.
+		return typeof third === 'object' && third !== null;
 	}
 	return false;
 }
@@ -142,6 +151,18 @@ export const invalidateMusicBrainzProviderQueries = async (): Promise<void> => {
 		persistedPredicate: isMusicBrainzProviderQuery
 	});
 };
+subscribeMusicBrainzSourceScope((next, previous) => {
+	if (
+		next.userId === null ||
+		next.userId !== previous.userId ||
+		(next.sourceMode === previous.sourceMode &&
+			next.sourceId === previous.sourceId &&
+			next.generation === previous.generation)
+	) {
+		return;
+	}
+	void invalidateMusicBrainzProviderQueries().catch(() => undefined);
+});
 
 export const queryClient = new QueryClient({
 	defaultOptions: {

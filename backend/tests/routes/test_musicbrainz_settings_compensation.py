@@ -6,12 +6,39 @@ import pytest
 from fastapi import HTTPException
 
 from api.v1.routes.settings import update_musicbrainz_settings
-from api.v1.schemas.settings import MusicBrainzConnectionSettings
+from api.v1.schemas.settings import (
+    MusicBrainzConnectionSettings,
+    MusicBrainzSettingsUpdate,
+)
 from infrastructure.msgspec_fastapi import MsgSpecBody
 
 
-def _settings(api_url: str, rate_limit: float = 2.0, concurrent_searches: int = 4):
+def _settings(
+    api_url: str,
+    rate_limit: float = 2.0,
+    concurrent_searches: int = 4,
+    *,
+    source_id: str = "source-id",
+    generation: int = 2,
+):
     return MusicBrainzConnectionSettings(
+        source_mode="mirror",
+        selected_source_mode="mirror",
+        api_url=api_url,
+        rate_limit=rate_limit,
+        concurrent_searches=concurrent_searches,
+        source_id=source_id,
+        generation=generation,
+    )
+
+
+def _update(
+    api_url: str,
+    rate_limit: float = 2.0,
+    concurrent_searches: int = 4,
+):
+    return MusicBrainzSettingsUpdate(
+        source_mode="mirror",
         api_url=api_url,
         rate_limit=rate_limit,
         concurrent_searches=concurrent_searches,
@@ -19,33 +46,22 @@ def _settings(api_url: str, rate_limit: float = 2.0, concurrent_searches: int = 
 
 
 @pytest.mark.asyncio
-async def test_musicbrainz_route_compensates_persistence_when_apply_fails():
-    previous = _settings("https://old.example/ws/2")
-    incoming = _settings(
+async def test_musicbrainz_route_delegates_atomic_update_to_settings_service():
+    incoming = _update(
         "https://new.example/ws/2", rate_limit=3.0, concurrent_searches=8
     )
-    persisted = {"value": previous}
-    runtime = {"value": previous}
-    apply_attempts = 0
-
-    preferences_service = MagicMock()
-
-    def save(settings):
-        persisted["value"] = settings
-
-    preferences_service.get_musicbrainz_connection.return_value = previous
-    preferences_service.save_musicbrainz_connection.side_effect = save
-
+    new_settings = _settings(
+        "https://new.example/ws/2",
+        rate_limit=3.0,
+        concurrent_searches=8,
+        source_id="new-source-id",
+        generation=3,
+    )
     settings_service = MagicMock()
-
-    async def apply(settings):
-        nonlocal apply_attempts
-        apply_attempts += 1
-        if apply_attempts == 1:
-            raise RuntimeError("synthetic cache clear failure")
-        runtime["value"] = settings
-
-    settings_service.on_musicbrainz_settings_changed.side_effect = apply
+    settings_service.save_musicbrainz_update = AsyncMock(
+        side_effect=[RuntimeError("synthetic cache clear failure"), new_settings]
+    )
+    preferences_service = MagicMock()
 
     with pytest.raises(RuntimeError, match="synthetic cache clear failure"):
         await update_musicbrainz_settings(
@@ -53,34 +69,22 @@ async def test_musicbrainz_route_compensates_persistence_when_apply_fails():
             preferences_service=preferences_service,
             settings_service=settings_service,
         )
-
-    assert persisted["value"] == previous
-    assert runtime["value"] == previous
-
     result = await update_musicbrainz_settings(
         incoming,
         preferences_service=preferences_service,
         settings_service=settings_service,
     )
 
-    assert result == incoming
-    assert persisted["value"] == incoming
-    assert runtime["value"] == incoming
-    assert apply_attempts == 2
+    assert result == new_settings
+    settings_service.save_musicbrainz_update.assert_awaited()
 
 
 @pytest.mark.asyncio
-async def test_musicbrainz_route_compensates_persistence_on_cancellation():
-    previous = _settings("https://old.example/ws/2")
-    incoming = _settings("https://new.example/ws/2")
-    saved = []
-
+async def test_musicbrainz_route_preserves_cancellation_from_coordinator():
+    incoming = _update("https://new.example/ws/2")
     preferences_service = MagicMock()
-    preferences_service.get_musicbrainz_connection.return_value = previous
-    preferences_service.save_musicbrainz_connection.side_effect = saved.append
-
     settings_service = MagicMock()
-    settings_service.on_musicbrainz_settings_changed = AsyncMock(
+    settings_service.save_musicbrainz_update = AsyncMock(
         side_effect=asyncio.CancelledError
     )
 
@@ -90,8 +94,6 @@ async def test_musicbrainz_route_compensates_persistence_on_cancellation():
             preferences_service=preferences_service,
             settings_service=settings_service,
         )
-
-    assert saved == [incoming, previous]
 
 
 @pytest.mark.asyncio

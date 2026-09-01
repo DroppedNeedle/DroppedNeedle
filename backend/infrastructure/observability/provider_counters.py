@@ -8,8 +8,8 @@ classified from the HTTP response status at the site's existing error mapping:
 ``http_error``.
 
 Rate-limit telemetry: a separate bounded gauge fed from response headers
-(``x-ratelimit-limit/remaining/reset``, ``x-mb-rate-limiter``). It is
-deliberately NOT part of the call counters so telemetry observations can never
+(``x-ratelimit-limit/remaining/reset``). It is deliberately NOT part of the
+call counters so telemetry observations can never
 perturb ok/empty_404/http_error counts. WARN logs at most once per minute per
 provider when remaining slots drop to the low threshold.
 
@@ -80,13 +80,25 @@ def record_provider_call(
     provider: str,
     priority: RequestPriority | str | None,
     status_code: int | None,
+    source_context: Any | None = None,
 ) -> None:
-    """One wire attempt: ``(provider, priority_lane, outcome)`` +1.
+    """Record one wire attempt and, for source-bound calls, its identity.
 
-    Pass ``status_code=None`` for transport-level failures (the request never
-    produced a response); those classify as ``http_error``.
+    Source metadata is deliberately limited to the mode, opaque source id, and
+    generation. Endpoints and request URLs never enter telemetry.
     """
-    _counters.increment((provider, lane_label(priority), classify_outcome(status_code)))
+    key: tuple[Any, ...] = (
+        provider,
+        lane_label(priority),
+        classify_outcome(status_code),
+    )
+    if source_context is not None:
+        key += (
+            str(getattr(source_context, "source_mode", "")),
+            str(getattr(source_context, "source_id", "")),
+            int(getattr(source_context, "generation", 0)),
+        )
+    _counters.increment(key)
 
 
 def snapshot_provider_rows(
@@ -98,16 +110,24 @@ def snapshot_provider_rows(
     totals = _counters.totals()
     per_minute_divisor = window / 60
     rows: list[dict[str, Any]] = []
-    for (provider, lane, outcome), window_count in sorted(snapshot.items()):
-        rows.append(
-            {
-                "provider": provider,
-                "priority": lane,
-                "outcome": outcome,
-                "count_total": totals.get((provider, lane, outcome), 0),
-                "rate_per_min_window": round(window_count / per_minute_divisor, 2),
-            }
-        )
+    for key, window_count in sorted(snapshot.items()):
+        provider, lane, outcome = key[:3]
+        row: dict[str, Any] = {
+            "provider": provider,
+            "priority": lane,
+            "outcome": outcome,
+            "count_total": totals.get(key, 0),
+            "rate_per_min_window": round(window_count / per_minute_divisor, 2),
+        }
+        if len(key) == 6:
+            row.update(
+                {
+                    "source_mode": key[3],
+                    "source_id": key[4],
+                    "source_generation": key[5],
+                }
+            )
+        rows.append(row)
     return rows
 
 
@@ -122,7 +142,6 @@ _RATELIMIT_HEADER_NAMES = (
     "x-ratelimit-limit",
     "x-ratelimit-remaining",
     "x-ratelimit-reset",
-    "x-mb-rate-limiter",
 )
 
 
@@ -175,7 +194,6 @@ class RateLimitGauge:
             # Verbatim x-ratelimit-reset value (MusicBrainz sends epoch
             # seconds); consumers compute seconds-until themselves.
             "reset_epoch": _header_float(headers, "x-ratelimit-reset"),
-            "limiter": headers.get("x-mb-rate-limiter"),
             "observed_at": time.time(),
         }
         if remaining is not None and remaining <= LOW_REMAINING_THRESHOLD:
@@ -189,8 +207,7 @@ class RateLimitGauge:
             return
         self._last_warn[provider] = now
         logger.warning(
-            "provider_rate_limit.low_remaining provider=%s remaining=%d "
-            "threshold=%d",
+            "provider_rate_limit.low_remaining provider=%s remaining=%d threshold=%d",
             provider,
             remaining,
             LOW_REMAINING_THRESHOLD,

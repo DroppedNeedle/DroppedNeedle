@@ -25,6 +25,7 @@ from core.exceptions import (
     StaleRevisionError,
     ValidationError,
 )
+from repositories.musicbrainz_base import MbSourceContext, capture_mb_source_context
 from infrastructure.audio.metadata_engine import (
     AUDIO_EXTENSION_FORMATS,
     AudioMetadataEngine,
@@ -129,8 +130,12 @@ class AutomaticImportManagementService:
         self._replaygain = replaygain
 
     async def prepare(
-        self, bundle: LibraryManagementImportBundle
+        self,
+        bundle: LibraryManagementImportBundle,
+        *,
+        source_context: MbSourceContext | None = None,
     ) -> LibraryManagementImportBundle:
+        source_context = source_context or capture_mb_source_context()
         managed = [value.pinned_profile is not None for value in bundle.files]
         if managed and all(managed):
             return bundle
@@ -189,8 +194,7 @@ class AutomaticImportManagementService:
             if not automatic:
                 return bundle
             if any(
-                value.conversion_recycle_only
-                and value.ordinal not in automatic
+                value.conversion_recycle_only and value.ordinal not in automatic
                 for value in bundle.files
             ):
                 raise ConfigurationError(
@@ -267,6 +271,7 @@ class AutomaticImportManagementService:
                     mappings=mappings,
                     profile=profile,
                     priority=RequestPriority.BACKGROUND_SYNC,
+                    source_context=source_context,
                 )
                 canonical_tracks = {
                     track.local_track_id: track

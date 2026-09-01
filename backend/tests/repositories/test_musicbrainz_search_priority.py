@@ -12,8 +12,9 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from core.exceptions import ExternalServiceError
+from core.exceptions import ConfigurationError, ExternalServiceError
 from infrastructure.queue.priority_queue import RequestPriority
+import repositories.musicbrainz_base as mb_base
 from repositories.musicbrainz_album import (
     MusicBrainzAlbumMixin,
     _RecordingSearchPayload,
@@ -38,6 +39,52 @@ class _Repo(MusicBrainzAlbumMixin):
         self._cache.set = AsyncMock()
         self._preferences_service = SimpleNamespace(
             get_advanced_settings=lambda: SimpleNamespace(cache_ttl_search=3600)
+        )
+
+
+@pytest.mark.asyncio
+async def test_grouped_search_rejects_mixed_source_generations():
+    from repositories.musicbrainz_repository import MusicBrainzRepository
+
+    repository = MusicBrainzRepository.__new__(MusicBrainzRepository)
+    original_source = mb_base.capture_mb_source_context()
+    original_source_id = mb_base.get_mb_source_id()
+    original_runtime = mb_base.brainzmash_runtime_enabled()
+    old_generation = original_source.generation + 1
+    mb_base.set_mb_api_base(
+        "https://old.example/ws/2",
+        source_mode="mirror",
+        source_id="old-grouped",
+        generation=old_generation,
+    )
+
+    async def search_artists(*_args, **_kwargs):
+        mb_base.set_mb_api_base(
+            "https://new.example/ws/2",
+            source_mode="mirror",
+            source_id="new-grouped",
+            generation=old_generation + 1,
+        )
+        return []
+
+    async def search_albums(*_args, **_kwargs):
+        return []
+
+    repository.search_artists = search_artists
+    repository.search_albums = search_albums
+    try:
+        with pytest.raises(ConfigurationError, match="grouped search"):
+            await repository.search_grouped(
+                "query",
+                {"artists": 1, "albums": 1},
+            )
+    finally:
+        mb_base.set_mb_api_base(
+            original_source.source_url,
+            source_mode=original_source.source_mode,
+            source_id=original_source_id,
+            generation=original_source.generation,
+            brainzmash_binding_valid=original_runtime,
         )
 
 

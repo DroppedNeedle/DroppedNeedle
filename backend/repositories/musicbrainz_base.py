@@ -1,22 +1,26 @@
 import asyncio
 import math
+import random
 import threading
-from collections.abc import Awaitable, Callable
+import time
+import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, TypeVar
+from typing import Any, Awaitable, Callable, TypeVar
 from urllib.parse import urlsplit
 
 import httpx
 import msgspec
-
 from core.exceptions import (
+    ConfigurationError,
     ExternalServiceError,
     InvalidExternalPayloadError,
+    NonRetriableExternalServiceError,
     RateLimitedError,
 )
+from infrastructure.resilience import retry as retry_module
 from infrastructure.resilience.retry import with_retry, CircuitBreaker
 from infrastructure.resilience.rate_limiter import TokenBucketRateLimiter
 from infrastructure.queue.priority_queue import RequestPriority, get_priority_queue
@@ -26,16 +30,32 @@ from infrastructure.observability.provider_counters import (
     record_provider_call,
     record_rate_limit_headers,
 )
+from infrastructure.http.brainzmash_transport import (
+    BRAINZMASH_ENDPOINT,
+    validate_brainzmash_path,
+    validate_brainzmash_url,
+)
 from repositories.edition_policy import recall_key
 
-_mb_api_base: str = "https://musicbrainz.org/ws/2"
+T = TypeVar("T")
+
+OFFICIAL_MB_API_BASE = "https://musicbrainz.org/ws/2"
+_mb_api_base: str = OFFICIAL_MB_API_BASE
 _mb_source_generation = 0
+_mb_source_mode = "official"
+_mb_source_id = ""
+_brainzmash_runtime_enabled = False
+_mb_operation_context: ContextVar["MbSourceContext | None"] = ContextVar(
+    "musicbrainz_operation_context", default=None
+)
 
 
 @dataclass(frozen=True)
 class MbSourceContext:
     source_url: str
     generation: int
+    source_mode: str = "official"
+    source_id: str = ""
 
 
 _mb_response_context: ContextVar[MbSourceContext | None] = ContextVar(
@@ -74,6 +94,11 @@ mb_source_commit_lock = _ProcessWideAsyncLock()
 def clear_mb_response_context() -> None:
     """Drop any prior wire context before a cache/durable-only path."""
     _mb_response_context.set(None)
+
+
+def _stale_source_error() -> ConfigurationError:
+    clear_mb_response_context()
+    return ConfigurationError("MusicBrainz source changed during the request")
 
 
 def normalize_mb_source_label(url: str | None) -> str:
@@ -138,12 +163,61 @@ def get_mb_source_generation() -> int:
     return _mb_source_generation
 
 
+def get_mb_source_mode() -> str:
+    return _mb_source_mode
+
+
+def get_mb_source_id() -> str:
+    return _mb_source_id
+
+
 def capture_mb_source_context() -> MbSourceContext:
-    """Capture the source generation before a provider service operation."""
-    return MbSourceContext(
+    """Capture the source context before a provider service operation."""
+    context = MbSourceContext(
         source_url=_mb_api_base,
         generation=_mb_source_generation,
+        source_mode=_mb_source_mode,
+        source_id=_mb_source_id,
     )
+    _mb_operation_context.set(context)
+    return context
+
+
+def set_brainzmash_runtime_enabled(enabled: bool) -> None:
+    global _brainzmash_runtime_enabled
+    _brainzmash_runtime_enabled = bool(enabled)
+
+
+def brainzmash_runtime_enabled() -> bool:
+    return _brainzmash_runtime_enabled
+
+
+def get_mb_operation_context() -> MbSourceContext | None:
+    return _mb_operation_context.get()
+
+
+def mb_cache_namespace(context: MbSourceContext | None = None) -> str:
+    context = context or _mb_operation_context.get()
+    if context is None:
+        return ""
+    source_id = context.source_id or "legacy"
+    return f"source:{context.source_mode}:{source_id}:g{context.generation}:"
+
+
+def namespace_mb_cache_key(key: str, context: MbSourceContext | None = None) -> str:
+    """Namespace source-dependent cache keys while retaining clear-prefix support."""
+    from infrastructure.cache.cache_keys import musicbrainz_prefixes
+
+    namespace = mb_cache_namespace(context)
+    if not namespace:
+        return key
+    for prefix in musicbrainz_prefixes():
+        if key.startswith(prefix):
+            remainder = key[len(prefix) :]
+            if remainder.startswith(namespace):
+                return key
+            return f"{prefix}{namespace}{remainder}"
+    return key
 
 
 def get_mb_response_context() -> MbSourceContext | None:
@@ -155,6 +229,9 @@ def is_mb_source_current(context: MbSourceContext | None) -> bool:
         context is not None
         and context.generation == _mb_source_generation
         and context.source_url == _mb_api_base
+        and context.source_mode == _mb_source_mode
+        and context.source_id == _mb_source_id
+        and (context.source_mode != "brainzmash" or _brainzmash_runtime_enabled)
     )
 
 
@@ -165,12 +242,32 @@ def normalize_mb_id(value: str | None) -> str:
     return value.strip().casefold()
 
 
-def set_mb_api_base(url: str) -> None:
-    global _mb_api_base, _mb_source_generation
-    normalized = url.rstrip("/")
-    if normalized != _mb_api_base:
+def set_mb_api_base(
+    url: str,
+    *,
+    source_mode: str = "official",
+    source_id: str = "",
+    generation: int | None = None,
+    brainzmash_binding_valid: bool = False,
+) -> None:
+    global _brainzmash_runtime_enabled
+    global _mb_api_base, _mb_source_generation, _mb_source_mode, _mb_source_id
+    normalized = OFFICIAL_MB_API_BASE if source_mode == "official" else url.rstrip("/")
+    changed = (
+        normalized != _mb_api_base
+        or source_mode != _mb_source_mode
+        or source_id != _mb_source_id
+    )
+    if generation is not None:
+        _mb_source_generation = generation
+    elif changed:
         _mb_source_generation += 1
     _mb_api_base = normalized
+    _mb_source_mode = source_mode
+    _mb_source_id = source_id
+    _brainzmash_runtime_enabled = (
+        bool(brainzmash_binding_valid) if source_mode == "brainzmash" else False
+    )
 
 
 mb_circuit_breaker = CircuitBreaker(
@@ -185,11 +282,134 @@ mb_circuit_breaker = CircuitBreaker(
         "search and album or artist details may be incomplete for now.",
     ),
 )
+brainzmash_circuit_breaker = CircuitBreaker(
+    failure_threshold=5,
+    success_threshold=2,
+    timeout=60.0,
+    name="musicbrainz-brainzmash",
+    on_state_change=report_breaker_health(
+        "musicbrainz-brainzmash",
+        "metadata",
+        message="BrainzMash, our community source for music data, is having trouble - "
+        "search and album or artist details may be incomplete for now.",
+    ),
+)
+
+
+def get_mb_provider_circuit_breaker() -> CircuitBreaker:
+    """Return the breaker governing the currently active MusicBrainz source."""
+    return (
+        brainzmash_circuit_breaker
+        if _mb_source_mode == "brainzmash"
+        else mb_circuit_breaker
+    )
+
 
 # MusicBrainz requires clients to make no more than one request per second:
 # https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting
-# A larger bucket preserves the average refill rate but still permits a cold-start burst.
 mb_rate_limiter = TokenBucketRateLimiter(rate=1.0, capacity=1)
+
+# BrainzMash has a shared sustained 10 requests/second policy with no burst
+# capacity. The process-wide scheduler below serializes every BrainzMash wire
+# attempt, including settings probes and retries.
+brainzmash_rate_limiter = TokenBucketRateLimiter(rate=10.0, capacity=1)
+brainzmash_probe_rate_limiter = brainzmash_rate_limiter
+
+_BRAINZMASH_COOLDOWN_BASE_SECONDS = 1.0
+_BRAINZMASH_MAX_COOLDOWN_SECONDS = 60.0
+_BRAINZMASH_JITTER_FLOOR = 0.5
+
+
+class _BrainzMashScheduler:
+    """Serialize, pace, and cool down all BrainzMash attempts in this process."""
+
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        random_fn: Callable[[], float] = random.random,
+        sleep: Callable[[float], Awaitable[Any]] | None = None,
+    ) -> None:
+        self._lock = _ProcessWideAsyncLock()
+        self._cooldown_lock = threading.Lock()
+        self._clock = clock
+        self._random = random_fn
+        self._sleep = sleep or self._sleep_default
+        self._cooldown_until = 0.0
+        self._consecutive_no_retry_after = 0
+
+    async def _sleep_default(self, seconds: float) -> None:
+        await retry_module.asyncio.sleep(seconds)
+
+    def note_cooldown(self, seconds: float | None) -> float:
+        """Record one 429 and return the bounded delay selected for it."""
+        try:
+            parsed = float(seconds) if seconds is not None else None
+        except (TypeError, ValueError):
+            parsed = None
+        valid_retry_after = parsed is not None and math.isfinite(parsed) and parsed >= 0
+        with self._cooldown_lock:
+            if valid_retry_after:
+                self._consecutive_no_retry_after = 0
+                delay = min(parsed, _BRAINZMASH_MAX_COOLDOWN_SECONDS)
+            else:
+                self._consecutive_no_retry_after += 1
+                exponent = min(self._consecutive_no_retry_after - 1, 10)
+                base_delay = min(
+                    _BRAINZMASH_MAX_COOLDOWN_SECONDS,
+                    _BRAINZMASH_COOLDOWN_BASE_SECONDS * (2**exponent),
+                )
+                try:
+                    jitter = float(self._random())
+                except (TypeError, ValueError):
+                    jitter = 0.5
+                if not math.isfinite(jitter):
+                    jitter = 0.5
+                jitter = min(1.0, max(0.0, jitter))
+                delay = min(
+                    _BRAINZMASH_MAX_COOLDOWN_SECONDS,
+                    base_delay
+                    * (
+                        _BRAINZMASH_JITTER_FLOOR
+                        + (1 - _BRAINZMASH_JITTER_FLOOR) * jitter
+                    ),
+                )
+            self._cooldown_until = max(self._cooldown_until, self._clock() + delay)
+            return delay
+
+    def note_success(self) -> None:
+        """A successful BrainzMash response clears the shared cooldown streak."""
+        with self._cooldown_lock:
+            self._consecutive_no_retry_after = 0
+            self._cooldown_until = 0.0
+
+    def cooldown_remaining(self) -> float:
+        with self._cooldown_lock:
+            return max(0.0, self._cooldown_until - self._clock())
+
+    def reset(self) -> None:
+        self.note_success()
+
+    async def run(
+        self,
+        priority: RequestPriority,
+        operation: Callable[[], Awaitable[T]],
+        *,
+        limiter: Any,
+        on_result: Callable[[T], None] | None = None,
+    ) -> T:
+        async with self._lock:
+            remaining = self.cooldown_remaining()
+            if remaining > 0:
+                await self._sleep(remaining)
+            await limiter.acquire(priority=int(priority))
+            result = await operation()
+            if on_result is not None:
+                on_result(result)
+            return result
+
+
+brainzmash_scheduler = _BrainzMashScheduler()
 
 # P2 full-mirror tier (owner decision 2026-08-24): rate_limit=0 on a
 # NON-official host means "Unlimited" - the client-side limiter is bypassed
@@ -210,10 +430,32 @@ def mb_rate_limiter_bypassed() -> bool:
     return _mb_limiter_bypassed
 
 
-mb_deduplicator = RequestDeduplicator()
+class _SourceScopedRequestDeduplicator(RequestDeduplicator):
+    async def dedupe(self, key: str, coro_factory: Callable[[], Awaitable[T]]) -> T:
+        namespace = mb_cache_namespace()
+        if namespace and not key.startswith(namespace):
+            key = f"{namespace}{key}"
+        return await super().dedupe(key, coro_factory)
+
+
+mb_deduplicator = _SourceScopedRequestDeduplicator()
 
 _http_client: httpx.AsyncClient | None = None
-T = TypeVar("T")
+_brainzmash_http_client: httpx.AsyncClient | None = None
+
+
+def set_mb_brainzmash_http_client(client: httpx.AsyncClient | None) -> None:
+    global _brainzmash_http_client
+    _brainzmash_http_client = client
+
+
+def get_mb_brainzmash_http_client() -> httpx.AsyncClient:
+    if _brainzmash_http_client is None:
+        from infrastructure.http.client import get_brainzmash_http_client
+
+        set_mb_brainzmash_http_client(get_brainzmash_http_client())
+    assert _brainzmash_http_client is not None
+    return _brainzmash_http_client
 
 
 _MB_MAX_RETRY_AFTER_SECONDS = 60.0
@@ -234,12 +476,24 @@ def _parse_retry_after_seconds(value: str | None) -> float | None:
         except (TypeError, ValueError, OverflowError):
             return None
 
-    if not math.isfinite(seconds) or seconds <= 0:
+    if not math.isfinite(seconds) or seconds < 0:
         return None
     return min(seconds, _MB_MAX_RETRY_AFTER_SECONDS)
 
 
+def _note_brainzmash_response(response: httpx.Response) -> None:
+    if response.status_code == 429:
+        brainzmash_scheduler.note_cooldown(
+            _parse_retry_after_seconds(response.headers.get("Retry-After"))
+        )
+    elif response.status_code == 200:
+        brainzmash_scheduler.note_success()
+
+
 _mb_probe_rate_limiter = TokenBucketRateLimiter(rate=1.0, capacity=1)
+
+
+_BRAINZMASH_PROBE_ARTIST_ID = "5441c29d-3602-4898-b1a1-b77fa23b8e50"
 
 
 async def mb_api_probe(
@@ -248,39 +502,152 @@ async def mb_api_probe(
     params: dict[str, Any] | None = None,
     priority: RequestPriority = RequestPriority.USER_INITIATED,
     client: httpx.AsyncClient | None = None,
+    brainzmash: bool = False,
+    allow_unbound_brainzmash: bool = False,
+    allow_quarantined_alternate: bool = False,
+    source_context: MbSourceContext | None = None,
+    admission_context: MbSourceContext | None = None,
+    admission_check: Callable[[], bool] | None = None,
 ) -> httpx.Response:
-    """Run one conservative settings probe without shared MB state.
+    """Run the fixed probe route without changing the active runtime source."""
+    endpoint = api_url.rstrip("/")
+    admission_context = admission_context or capture_mb_source_context()
+    if source_context is None:
+        source_context = MbSourceContext(
+            source_url=endpoint,
+            generation=admission_context.generation,
+            source_mode=admission_context.source_mode,
+            source_id=f"probe-{uuid.uuid4().hex}",
+        )
+    if (
+        not brainzmash
+        and _mb_source_mode == "brainzmash"
+        and not allow_quarantined_alternate
+    ):
+        raise ConfigurationError(
+            "Alternative MusicBrainz probes are disabled while BrainzMash is active"
+        )
+    if brainzmash:
+        if not _brainzmash_runtime_enabled and not allow_unbound_brainzmash:
+            raise ConfigurationError("BrainzMash active binding is not valid")
+        try:
+            validate_brainzmash_url(api_url)
+        except ValueError as exc:
+            raise ExternalServiceError("BrainzMash endpoint is invalid") from exc
+        endpoint = BRAINZMASH_ENDPOINT.rstrip("/")
+    brainzmash_context = source_context
 
-    The probe shares the normal priority lane, HTTP client, and provider
-    telemetry, but has its own capacity-one limiter and performs no retry,
-    cache, source, or circuit-breaker mutation.
-    """
     clear_mb_response_context()
-
     priority_mgr = get_priority_queue()
     semaphore = await priority_mgr.acquire_slot(priority)
     async with semaphore:
-        await _mb_probe_rate_limiter.acquire(priority=int(priority))
-        probe_client = client or get_mb_http_client()
-        request_params = dict(params) if params else {}
+        probe_client = (
+            get_mb_brainzmash_http_client()
+            if brainzmash
+            else (client or get_mb_http_client())
+        )
+        request_params = {} if brainzmash else dict(params or {})
         request_params["fmt"] = "json"
+        probe_path = (
+            validate_brainzmash_path(f"/artist/{_BRAINZMASH_PROBE_ARTIST_ID}")
+            if brainzmash
+            else "/artist"
+        )
+
+        def admission_is_current() -> bool:
+            try:
+                source_current = is_mb_source_current(admission_context)
+                if not source_current and allow_quarantined_alternate:
+                    source_current = bool(
+                        admission_check is not None
+                        and not brainzmash
+                        and not _brainzmash_runtime_enabled
+                        and admission_context.source_mode == "brainzmash"
+                        and admission_context.generation == _mb_source_generation
+                        and admission_context.source_url == _mb_api_base
+                        and admission_context.source_id == _mb_source_id
+                    )
+                if not source_current:
+                    return False
+                return bool(admission_check()) if admission_check is not None else True
+            except Exception:  # noqa: BLE001 - stale admission fails closed
+                return False
+
+        async def request() -> httpx.Response:
+            async with mb_source_commit_lock:
+                if not admission_is_current():
+                    raise _stale_source_error()
+                response = await probe_client.get(
+                    f"{endpoint}{probe_path}",
+                    params=request_params,
+                )
+                if not admission_is_current():
+                    raise _stale_source_error()
+                return response
+
         try:
-            response = await probe_client.get(
-                f"{api_url.rstrip('/')}/artist", params=request_params
-            )
+            if brainzmash:
+                response = await brainzmash_scheduler.run(
+                    priority,
+                    request,
+                    limiter=brainzmash_probe_rate_limiter,
+                    on_result=_note_brainzmash_response,
+                )
+            else:
+                await _mb_probe_rate_limiter.acquire(priority=int(priority))
+                response = await request()
         except httpx.HTTPError:
-            record_provider_call("musicbrainz", priority, None)
+            async with mb_source_commit_lock:
+                if not admission_is_current():
+                    raise _stale_source_error()
+                record_provider_call(
+                    "musicbrainz",
+                    priority,
+                    None,
+                    brainzmash_context,
+                )
             raise
 
-    record_provider_call("musicbrainz", priority, response.status_code)
-    record_rate_limit_headers("musicbrainz", response.headers)
-    if response.status_code == 429:
-        raise RateLimitedError(
-            "MusicBrainz rate limited (429): /artist",
-            retry_after_seconds=_parse_retry_after_seconds(
-                response.headers.get("Retry-After")
-            ),
+    async with mb_source_commit_lock:
+        if not admission_is_current():
+            raise _stale_source_error()
+        record_provider_call(
+            "musicbrainz",
+            priority,
+            response.status_code,
+            brainzmash_context,
         )
+        record_rate_limit_headers("musicbrainz", response.headers)
+        if response.status_code == 429:
+            retry_after_seconds = _parse_retry_after_seconds(
+                response.headers.get("Retry-After")
+            )
+            raise RateLimitedError(
+                "BrainzMash rate limited (429)"
+                if brainzmash
+                else "MusicBrainz rate limited (429)",
+                retry_after_seconds=retry_after_seconds,
+            )
+        if 300 <= response.status_code < 400:
+            raise NonRetriableExternalServiceError(
+                f"MusicBrainz probe redirect ({response.status_code})"
+            )
+        if brainzmash and response.status_code == 200:
+            try:
+                payload = _decode_json_response(response)
+            except Exception as exc:  # noqa: BLE001 - strict probe contract
+                raise InvalidExternalPayloadError(
+                    "BrainzMash probe returned an unexpected payload"
+                ) from exc
+            if (
+                not isinstance(payload, dict)
+                or payload.get("id") != _BRAINZMASH_PROBE_ARTIST_ID
+                or not isinstance(payload.get("name"), str)
+                or not payload["name"].strip()
+            ):
+                raise InvalidExternalPayloadError(
+                    "BrainzMash probe returned an unexpected payload"
+                )
     return response
 
 
@@ -304,6 +671,10 @@ def set_mb_http_client(client: httpx.AsyncClient) -> None:
 
 
 def get_mb_http_client() -> httpx.AsyncClient:
+    if _mb_source_mode == "brainzmash":
+        raise ConfigurationError(
+            "The official MusicBrainz client is unavailable while BrainzMash is active"
+        )
     if _http_client is None:
         raise RuntimeError("MusicBrainz HTTP client not initialized")
     return _http_client
@@ -340,8 +711,33 @@ async def mb_publish_if_current(
     async with mb_source_commit_lock:
         if context is not None and not is_mb_source_current(context):
             return False
-        await _await_settled(publication())
+        token = _mb_operation_context.set(context)
+        try:
+            await _await_settled(publication())
+        finally:
+            _mb_operation_context.reset(token)
         return True
+
+
+async def mb_cache_get_if_current(
+    cache: Any,
+    key: str,
+    context: MbSourceContext | None,
+) -> Any:
+    """Read only the explicitly scoped cache entry for a current source."""
+    if context is None or not is_mb_source_current(context):
+        return None
+    namespaced_key = namespace_mb_cache_key(key, context)
+    if namespaced_key == key:
+        return None
+    token = _mb_operation_context.set(context)
+    try:
+        cached = await cache.get(namespaced_key)
+    finally:
+        _mb_operation_context.reset(token)
+    if not is_mb_source_current(context):
+        return None
+    return cached
 
 
 async def mb_cache_set_if_current(
@@ -359,87 +755,181 @@ async def mb_cache_set_if_current(
     )
 
 
+def _musicbrainz_breaker_for_request(*args: Any, **kwargs: Any) -> CircuitBreaker:
+    context = kwargs.get("source_context")
+    if context is None and len(args) >= 5:
+        context = args[4]
+    if isinstance(context, MbSourceContext) and context.source_mode == "brainzmash":
+        return brainzmash_circuit_breaker
+    return mb_circuit_breaker
+
+
 @with_retry(
     max_attempts=3,
-    circuit_breaker=mb_circuit_breaker,
+    circuit_breaker=_musicbrainz_breaker_for_request,
     retriable_exceptions=(httpx.HTTPError, ExternalServiceError),
     non_breaking_exceptions=(InvalidExternalPayloadError,),
     non_retriable_exceptions=(
         InvalidExternalPayloadError,
+        NonRetriableExternalServiceError,
         httpx.ConnectError,
         httpx.ProtocolError,
     ),
     retry_budget_seconds=2.5,
 )
+async def _mb_api_get_attempt(
+    path: str,
+    params: dict[str, Any] | None,
+    priority: RequestPriority,
+    decode_type: type[T] | None,
+    source_context: MbSourceContext,
+) -> dict[str, Any] | T:
+    if source_context.source_mode == "brainzmash" and not _brainzmash_runtime_enabled:
+        raise ConfigurationError("BrainzMash active binding is not valid")
+    _mb_response_context.set(source_context)
+    if not is_mb_source_current(source_context):
+        raise _stale_source_error()
+
+    brainzmash = source_context.source_mode == "brainzmash"
+    if brainzmash:
+        try:
+            validate_brainzmash_url(source_context.source_url)
+            safe_path = validate_brainzmash_path(path)
+        except ValueError as exc:
+            raise ConfigurationError(str(exc)) from exc
+    else:
+        safe_path = path
+
+    priority_mgr = get_priority_queue()
+    semaphore = await priority_mgr.acquire_slot(priority)
+    async with semaphore:
+        url = f"{source_context.source_url.rstrip('/')}{safe_path}"
+        request_params = dict(params) if params else {}
+        request_params["fmt"] = "json"
+
+        async def request() -> httpx.Response:
+            if not is_mb_source_current(source_context):
+                raise _stale_source_error()
+            client = (
+                get_mb_brainzmash_http_client() if brainzmash else get_mb_http_client()
+            )
+            return await client.get(url, params=request_params)
+
+        try:
+            if brainzmash:
+                response = await brainzmash_scheduler.run(
+                    priority,
+                    request,
+                    limiter=brainzmash_rate_limiter,
+                    on_result=_note_brainzmash_response,
+                )
+            else:
+                if not _mb_limiter_bypassed:
+                    await mb_rate_limiter.acquire(priority=int(priority))
+                response = await request()
+        except httpx.HTTPError:
+            # Transport-level failure: record only the opaque source context.
+            record_provider_call("musicbrainz", priority, None, source_context)
+            raise
+        record_provider_call(
+            "musicbrainz", priority, response.status_code, source_context
+        )
+        # A source commit can land while the socket was in flight. Do not
+        # decode or publish a response captured under the old generation.
+        if not is_mb_source_current(source_context):
+            raise _stale_source_error()
+        # QW11 Part 2: free early-warning telemetry from the same response.
+        # Separate gauge - this cannot perturb the call counters above.
+        record_rate_limit_headers("musicbrainz", response.headers)
+        if response.status_code == 404:
+            empty_result: dict[str, Any] | T
+            if decode_type is not None:
+                empty_result = decode_type()
+            else:
+                empty_result = {}
+            if not is_mb_source_current(source_context):
+                raise _stale_source_error()
+            return empty_result
+        if response.status_code == 429:
+            retry_after_seconds = _parse_retry_after_seconds(
+                response.headers.get("Retry-After")
+            )
+            error = RateLimitedError(
+                "BrainzMash rate limited (429)"
+                if brainzmash
+                else f"MusicBrainz rate limited (429): {safe_path}",
+                retry_after_seconds=retry_after_seconds,
+            )
+            if brainzmash:
+                setattr(error, "_retry_delay_managed", True)
+                setattr(
+                    error,
+                    "_retry_delay_managed_seconds",
+                    brainzmash_scheduler.cooldown_remaining(),
+                )
+            raise error
+        if response.status_code == 503:
+            raise ExternalServiceError(
+                "BrainzMash temporarily unavailable (503)"
+                if brainzmash
+                else f"MusicBrainz rate limited (503): {safe_path}"
+            )
+        if 300 <= response.status_code < 400:
+            raise NonRetriableExternalServiceError(
+                "BrainzMash redirect rejected (3xx)"
+                if brainzmash
+                else f"MusicBrainz API redirect ({response.status_code}): {safe_path}"
+            )
+        if brainzmash and 400 <= response.status_code < 500:
+            raise NonRetriableExternalServiceError(
+                f"BrainzMash request rejected ({response.status_code})"
+            )
+        if response.status_code != 200:
+            raise ExternalServiceError(
+                "BrainzMash request failed"
+                if brainzmash
+                else f"MusicBrainz API error ({response.status_code}): {safe_path}"
+            )
+        try:
+            if decode_type is not None:
+                decoded: dict[str, Any] | T = _decode_typed_response(
+                    response, decode_type
+                )
+            else:
+                decoded = _decode_json_response(response)
+            if not is_mb_source_current(source_context):
+                raise _stale_source_error()
+            return decoded
+        except msgspec.ValidationError as exc:
+            raise InvalidExternalPayloadError(
+                "BrainzMash returned an unexpected payload shape"
+                if brainzmash
+                else f"MusicBrainz returned an unexpected payload shape for {safe_path}: {exc}"
+            ) from exc
+        except (msgspec.DecodeError, TypeError) as exc:
+            raise InvalidExternalPayloadError(
+                "BrainzMash returned an unparseable payload"
+                if brainzmash
+                else f"MusicBrainz returned an unparseable payload for {safe_path}: {exc}"
+            ) from exc
+
+
 async def mb_api_get(
     path: str,
     params: dict[str, Any] | None = None,
     priority: RequestPriority = RequestPriority.USER_INITIATED,
     decode_type: type[T] | None = None,
+    *,
+    source_context: MbSourceContext | None = None,
 ) -> dict[str, Any] | T:
+    """Make one logical request against an explicitly captured source context."""
+    source_context = source_context or capture_mb_source_context()
+    if source_context.source_mode == "brainzmash" and not _brainzmash_runtime_enabled:
+        raise ConfigurationError("BrainzMash active binding is not valid")
     clear_mb_response_context()
-    priority_mgr = get_priority_queue()
-    semaphore = await priority_mgr.acquire_slot(priority)
-    async with semaphore:
-        if not _mb_limiter_bypassed:
-            await mb_rate_limiter.acquire(priority=int(priority))
-        client = get_mb_http_client()
-        source_url = get_mb_api_base()
-        _mb_response_context.set(
-            MbSourceContext(source_url=source_url, generation=_mb_source_generation)
-        )
-        url = f"{source_url}{path}"
-        request_params = dict(params) if params else {}
-        request_params["fmt"] = "json"
-        try:
-            response = await client.get(url, params=request_params)
-        except httpx.HTTPError:
-            # transport-level failure (e.g. h2 stream reset): never produced a
-            # response, so record http_error with no status and re-raise
-            record_provider_call("musicbrainz", priority, None)
-            raise
-        record_provider_call("musicbrainz", priority, response.status_code)
-        # QW11 Part 2: free early-warning telemetry from the same response.
-        # Separate gauge - this cannot perturb the call counters above.
-        record_rate_limit_headers("musicbrainz", response.headers)
-        if response.status_code == 404:
-            if decode_type is not None:
-                return decode_type()
-            return {}
-        if response.status_code == 429:
-            raise RateLimitedError(
-                f"MusicBrainz rate limited (429): {path}",
-                retry_after_seconds=_parse_retry_after_seconds(
-                    response.headers.get("Retry-After")
-                ),
-            )
-        if response.status_code == 503:
-            # Keep 503 provider-directed delays out of the generic retry path:
-            # its current budget cannot safely coordinate host changes.
-            raise ExternalServiceError(f"MusicBrainz rate limited (503): {path}")
-        if response.status_code != 200:
-            raise ExternalServiceError(
-                f"MusicBrainz API error ({response.status_code}): {path}"
-            )
-        try:
-            if decode_type is not None:
-                return _decode_typed_response(response, decode_type)
-            return _decode_json_response(response)
-        except msgspec.ValidationError as exc:
-            # deterministic per payload (e.g. a field MusicBrainz sends as JSON
-            # null), so it says nothing about service health and never counts
-            # toward the circuit breaker
-            raise InvalidExternalPayloadError(
-                f"MusicBrainz returned an unexpected payload shape for {path}: {exc}"
-            ) from exc
-        except (msgspec.DecodeError, TypeError) as exc:
-            # F-056: a malformed-but-deterministic payload says nothing about
-            # service health - it must not count toward the breaker and must
-            # not be retriable, or poison payloads churn forever as
-            # PROVIDER_TEMPORARILY_UNAVAILABLE.
-            raise InvalidExternalPayloadError(
-                f"MusicBrainz returned an unparseable payload for {path}: {exc}"
-            ) from exc
+    return await _mb_api_get_attempt(
+        path, params, priority, decode_type, source_context
+    )
 
 
 def should_include_release(

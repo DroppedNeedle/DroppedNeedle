@@ -5,6 +5,7 @@ import { api } from '$lib/api/client';
 import { CACHE_TTL } from '$lib/constants';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
+import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { AlbumEditionsResponse, EditionAcquireResponse } from '$lib/types';
 
@@ -16,8 +17,16 @@ const pinUrl = (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/edi
 
 type EditionUserId = string | null | undefined;
 
-export const editionsKey = (userId: EditionUserId, mbid: string) =>
-	['albums', 'editions', userId ?? null, mbid] as const;
+export const editionsKey = (userId: EditionUserId, mbid: string) => {
+	const normalizedUserId = userId ?? null;
+	return [
+		'albums',
+		'editions',
+		normalizedUserId,
+		musicBrainzSourceKey(normalizedUserId),
+		mbid
+	] as const;
+};
 
 export const getAlbumEditionsQuery = (
 	getUserId: Getter<EditionUserId>,

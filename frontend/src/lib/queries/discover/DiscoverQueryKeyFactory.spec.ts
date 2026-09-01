@@ -7,8 +7,12 @@ describe('DiscoverQueryKeyFactory (AMU-5)', () => {
 	});
 
 	describe('discover', () => {
-		it('includes userId', () => {
-			expect(DiscoverQueryKeyFactory.discover('user-a')).toEqual(['discover', 'user-a']);
+		it('includes userId and MusicBrainz source identity', () => {
+			expect(DiscoverQueryKeyFactory.discover('user-a')).toEqual([
+				'discover',
+				'user-a',
+				{ user_id: 'user-a', source_mode: 'brainzmash', source_id: '', generation: 0 }
+			]);
 		});
 
 		it('differs per user (no cross-user collision)', () => {
@@ -19,10 +23,11 @@ describe('DiscoverQueryKeyFactory (AMU-5)', () => {
 	});
 
 	describe('radio', () => {
-		it('includes userId', () => {
+		it('includes userId and MusicBrainz source identity', () => {
 			expect(DiscoverQueryKeyFactory.radio('user-a', 'artist', 'mbid-1')).toEqual([
 				'discover',
 				'user-a',
+				{ user_id: 'user-a', source_mode: 'brainzmash', source_id: '', generation: 0 },
 				'radio',
 				'artist',
 				'mbid-1'
@@ -37,10 +42,11 @@ describe('DiscoverQueryKeyFactory (AMU-5)', () => {
 	});
 
 	describe('playlistSuggestions', () => {
-		it('includes userId', () => {
+		it('includes userId and MusicBrainz source identity', () => {
 			expect(DiscoverQueryKeyFactory.playlistSuggestions('user-a', 'pl-1')).toEqual([
 				'discover',
 				'user-a',
+				{ user_id: 'user-a', source_mode: 'brainzmash', source_id: '', generation: 0 },
 				'playlist-suggestions',
 				'pl-1'
 			]);
@@ -52,8 +58,11 @@ describe('DiscoverQueryKeyFactory (AMU-5)', () => {
 			);
 		});
 	});
-
 	it('normalizes a missing userId to null', () => {
-		expect(DiscoverQueryKeyFactory.discover(undefined)).toEqual(['discover', null]);
+		expect(DiscoverQueryKeyFactory.discover(undefined)).toEqual([
+			'discover',
+			null,
+			{ user_id: null, source_mode: 'brainzmash', source_id: '', generation: 0 }
+		]);
 	});
 });

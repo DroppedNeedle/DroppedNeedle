@@ -43,10 +43,11 @@ describe('Search queries', () => {
 		await options.queryFn({ signal });
 		expect(api.global.get).toHaveBeenCalledWith(API.search.artists('Muse', 24), { signal });
 	});
-	it('dimensions every persisted key by user id', () => {
+	it('dimensions every provider key by user and MusicBrainz source identity', () => {
 		expect(SearchQueryKeyFactory.artists('user-a', 'Muse', 6)).toEqual([
 			'search',
 			'user-a',
+			{ user_id: 'user-a', source_mode: 'brainzmash', source_id: '', generation: 0 },
 			'artists',
 			'muse',
 			6
@@ -57,6 +58,7 @@ describe('Search queries', () => {
 		expect(SearchQueryKeyFactory.suggestions('user-a', ' Muse ', 5)).toEqual([
 			'search',
 			'user-a',
+			{ user_id: 'user-a', source_mode: 'brainzmash', source_id: '', generation: 0 },
 			'suggestions',
 			'muse',
 			5

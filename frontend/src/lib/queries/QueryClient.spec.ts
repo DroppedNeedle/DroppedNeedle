@@ -123,6 +123,34 @@ it('sweeps only correctness-bearing provider queries exactly once', async () => 
 	).toBe(true);
 	expect(predicate({ queryKey: ['discover', 'user-a', 'batches'] })).toBe(false);
 	expect(predicate({ queryKey: ['discover', 'user-a', 'integrations'] })).toBe(false);
+	expect(
+		predicate({
+			queryKey: [
+				'artist',
+				{ user_id: 'user-a', source_mode: 'official', source_id: 's1', generation: 1 },
+				'artist-1'
+			]
+		})
+	).toBe(true);
+	expect(
+		predicate({
+			queryKey: [
+				'search',
+				'user-a',
+				{ user_id: 'user-a', source_mode: 'official', source_id: 's1', generation: 1 },
+				'artists'
+			]
+		})
+	).toBe(true);
+	expect(
+		predicate({
+			queryKey: [
+				'home',
+				'user-a',
+				{ user_id: 'user-a', source_mode: 'official', source_id: 's1', generation: 1 }
+			]
+		})
+	).toBe(true);
 
 	invalidateSpy.mockRestore();
 });

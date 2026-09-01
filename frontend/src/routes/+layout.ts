@@ -1,7 +1,8 @@
 import { browser } from '$app/environment';
 import { ApiError, api } from '$lib/api/client';
-import { API, AUTH_FREE_PATHS } from '$lib/constants';
 import { queryClient } from '$lib/queries/QueryClient';
+import { API, AUTH_FREE_PATHS } from '$lib/constants';
+import { toAuthUser, type AuthSessionUser } from '$lib/queries/auth/types';
 import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
 import { DEFAULT_SOURCE, isMusicSource, musicSourceStore } from '$lib/stores/musicSource';
 import { authStore, LAST_USER_ID_KEY } from '$lib/stores/authStore.svelte';
@@ -33,26 +34,10 @@ export const load: LayoutLoad = async ({ url }) => {
 		}
 
 		try {
-			const user = await api.global.get<{
-				id: string;
-				display_name: string;
-				role: string;
-				email: string | null;
-				avatar_url: string | null;
-				username: string | null;
-				username_display: string | null;
-				providers: string[];
-			}>(API.auth.me(), { timeoutMs: BOOTSTRAP_TIMEOUT_MS });
-			authStore.setUser({
-				id: user.id,
-				display_name: user.display_name,
-				role: user.role as 'admin' | 'trusted' | 'user',
-				email: user.email,
-				avatar_url: user.avatar_url,
-				username: user.username,
-				username_display: user.username_display,
-				providers: user.providers ?? []
+			const user = await api.global.get<AuthSessionUser>(API.auth.me(), {
+				timeoutMs: BOOTSTRAP_TIMEOUT_MS
 			});
+			authStore.setUser(toAuthUser(user));
 		} catch (cause) {
 			if (cause instanceof ApiError && cause.status === 401) {
 				await clearUserSessionState().catch(() => undefined);

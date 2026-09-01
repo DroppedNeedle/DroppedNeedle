@@ -24,12 +24,15 @@ class QueueStatsResponse(AppStruct):
     stats: QueueStatsRow
 
 
-class ProviderStatRow(AppStruct):
+class ProviderStatRow(AppStruct, omit_defaults=True):
     provider: str
     priority: str
     outcome: str
     count_total: int
     rate_per_min_window: float
+    source_mode: str | None = None
+    source_id: str | None = None
+    source_generation: int | None = None
 
 
 class ProviderRateLimitStat(AppStruct):
@@ -43,7 +46,6 @@ class ProviderRateLimitStat(AppStruct):
     # Verbatim x-ratelimit-reset value (MusicBrainz sends epoch seconds);
     # consumers compute seconds-until as reset_epoch - now.
     reset_epoch: float | None = None
-    limiter: str | None = None
     observed_at: float = 0.0
     low_remaining_events_window: int = 0
 

@@ -11,7 +11,6 @@ from infrastructure.observability import provider_counters
 from infrastructure.observability.provider_counters import (
     LOW_REMAINING_THRESHOLD,
     RateLimitGauge,
-    record_provider_call,
 )
 
 
@@ -60,7 +59,6 @@ class TestHeaderParsing:
                 "limit": 15,
                 "remaining": 10,
                 "reset_epoch": 1787600000.0,
-                "limiter": "lua",
                 "observed_at": rows[0]["observed_at"],
                 "low_remaining_events_window": 0,
             }
@@ -77,7 +75,6 @@ class TestHeaderParsing:
             row["limit"] is None
             and row["remaining"] is None
             and row["reset_epoch"] is None
-            and row["limiter"] is None
         )
 
         gauge.observe(

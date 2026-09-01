@@ -108,6 +108,11 @@ describe('extended artist query', () => {
 		const query = getExtendedArtistQueryOptions('artist-1');
 
 		expect(query.notifyOnChangeProps).toBe('all');
-		expect(query.queryKey).toEqual(['artist', 'artist-1', 'extended']);
+		expect(query.queryKey).toEqual([
+			'artist',
+			{ user_id: null, source_mode: 'brainzmash', source_id: '', generation: 0 },
+			'artist-1',
+			'extended'
+		]);
 	});
 });

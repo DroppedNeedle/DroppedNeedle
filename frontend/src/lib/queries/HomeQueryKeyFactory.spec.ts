@@ -6,8 +6,12 @@ describe('HomeQueryKeyFactory (AMU-5)', () => {
 		expect(HomeQueryKeyFactory.prefix).toEqual(['home']);
 	});
 
-	it('home key includes the userId dimension', () => {
-		expect(HomeQueryKeyFactory.home('user-a')).toEqual(['home', 'user-a']);
+	it('home key includes the userId and MusicBrainz source identity dimensions', () => {
+		expect(HomeQueryKeyFactory.home('user-a')).toEqual([
+			'home',
+			'user-a',
+			{ user_id: 'user-a', source_mode: 'brainzmash', source_id: '', generation: 0 }
+		]);
 	});
 
 	it('produces different keys for different users (no cross-user collision)', () => {
@@ -17,7 +21,11 @@ describe('HomeQueryKeyFactory (AMU-5)', () => {
 	});
 
 	it('normalizes a missing userId to null', () => {
-		expect(HomeQueryKeyFactory.home(undefined)).toEqual(['home', null]);
+		expect(HomeQueryKeyFactory.home(undefined)).toEqual([
+			'home',
+			null,
+			{ user_id: null, source_mode: 'brainzmash', source_id: '', generation: 0 }
+		]);
 	});
 
 	it('scopes integration status by user', () => {

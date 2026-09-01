@@ -15,9 +15,22 @@ from infrastructure.persistence.mb_canonical_store import (
 )
 from repositories.musicbrainz_base import (
     MB_TRUSTED_IDENTITY_ORIGINS,
+    MbSourceContext,
+    capture_mb_source_context,
     is_mb_identity_source,
     is_mb_rate_policy_public_host,
     normalize_mb_source_label,
+    set_mb_api_base,
+)
+
+_EMPTY_SOURCE_CONTEXT = MbSourceContext(
+    source_url="", generation=0, source_mode="", source_id=""
+)
+_LEGACY_SOURCE_CONTEXT = MbSourceContext(
+    source_url="", generation=0, source_mode="legacy", source_id=""
+)
+_OFFICIAL_SOURCE_CONTEXT = MbSourceContext(
+    source_url=OFFICIAL_MB_API_BASE, generation=0, source_mode="official", source_id=""
 )
 
 
@@ -110,47 +123,46 @@ class TestSourceHostRatchet:
 
         store2 = MbCanonicalStore(db_path=db_path, write_lock=write_lock)
         conn = sqlite3.connect(str(db_path))
-        canonical_host = conn.execute(
-            "SELECT source_host FROM canonical_redirect WHERE from_mbid_lower = ?",
+        canonical_row = conn.execute(
+            "SELECT source_host, official_evidence FROM canonical_redirect "
+            "WHERE from_mbid_lower = ?",
             ("raw-recording",),
-        ).fetchone()[0]
-        release_host = conn.execute(
-            "SELECT source_host FROM release_to_rg WHERE release_mbid_lower = ?",
+        ).fetchone()
+        release_row = conn.execute(
+            "SELECT source_host, official_evidence FROM release_to_rg "
+            "WHERE release_mbid_lower = ?",
             ("raw-release",),
-        ).fetchone()[0]
+        ).fetchone()
         empty_host = conn.execute(
             "SELECT source_host FROM canonical_redirect WHERE from_mbid_lower = ?",
             ("legacy-empty",),
         ).fetchone()[0]
         conn.close()
 
-        assert canonical_host == "https://musicbrainz.org"
-        assert release_host == "http://musicbrainz.org:8080"
+        assert canonical_row == ("", 1)
+        assert release_row == ("", 0)
         assert empty_host == ""
-        assert "@" not in canonical_host + release_host
-        assert "?" not in canonical_host + release_host
-        assert "/" not in canonical_host.removeprefix("https://")
         assert await store2.get_canonical_redirect(
-            "recording", ["raw-recording"], trusted_identity_source_only=True
+            "recording",
+            ["raw-recording"],
+            source_context=_EMPTY_SOURCE_CONTEXT,
+            trusted_identity_source_only=True,
         ) == {"raw-recording": "raw-target"}
-
         store3 = MbCanonicalStore(db_path=db_path, write_lock=write_lock)
         conn = sqlite3.connect(str(db_path))
-        assert (
-            conn.execute(
-                "SELECT source_host FROM canonical_redirect WHERE from_mbid_lower = ?",
-                ("raw-recording",),
-            ).fetchone()[0]
-            == canonical_host
-        )
-        assert (
-            conn.execute(
-                "SELECT source_host FROM release_to_rg WHERE release_mbid_lower = ?",
-                ("raw-release",),
-            ).fetchone()[0]
-            == release_host
-        )
+        canonical_row_again = conn.execute(
+            "SELECT source_host, official_evidence FROM canonical_redirect "
+            "WHERE from_mbid_lower = ?",
+            ("raw-recording",),
+        ).fetchone()
+        release_row_again = conn.execute(
+            "SELECT source_host, official_evidence FROM release_to_rg "
+            "WHERE release_mbid_lower = ?",
+            ("raw-release",),
+        ).fetchone()
         conn.close()
+        assert canonical_row_again == canonical_row
+        assert release_row_again == release_row
         assert store3.db_path == db_path
 
     def test_ratchet_uses_full_canonical_redirect_key(self, db_path, write_lock):
@@ -187,30 +199,32 @@ class TestSourceHostRatchet:
 
         MbCanonicalStore(db_path=db_path, write_lock=write_lock)
         with sqlite3.connect(str(db_path)) as conn:
-            rows = dict(
-                conn.execute(
-                    "SELECT entity_kind, source_host FROM canonical_redirect "
+            rows = {
+                row[0]: tuple(row[1:])
+                for row in conn.execute(
+                    "SELECT entity_kind, source_host, official_evidence "
+                    "FROM canonical_redirect "
                     "WHERE from_mbid_lower = ? ORDER BY entity_kind",
                     ("same",),
                 ).fetchall()
-            )
+            }
         assert rows == {
-            "recording": "https://musicbrainz.org",
-            "release": "https://mirror.example",
+            "recording": ("", 1),
+            "release": ("", 0),
         }
 
         MbCanonicalStore(db_path=db_path, write_lock=write_lock)
         with sqlite3.connect(str(db_path)) as conn:
-            assert (
-                dict(
-                    conn.execute(
-                        "SELECT entity_kind, source_host FROM canonical_redirect "
-                        "WHERE from_mbid_lower = ? ORDER BY entity_kind",
-                        ("same",),
-                    ).fetchall()
-                )
-                == rows
-            )
+            rows_again = {
+                row[0]: tuple(row[1:])
+                for row in conn.execute(
+                    "SELECT entity_kind, source_host, official_evidence "
+                    "FROM canonical_redirect "
+                    "WHERE from_mbid_lower = ? ORDER BY entity_kind",
+                    ("same",),
+                ).fetchall()
+            }
+        assert rows_again == rows
 
     def test_rate_policy_and_identity_predicates_are_separate(self):
         assert is_mb_rate_policy_public_host("https://musicbrainz.org/ws/2") is True
@@ -245,17 +259,19 @@ class TestSourceHostRatchet:
             raw_source,
         )
         conn = sqlite3.connect(str(store.db_path))
-        source_host = conn.execute(
-            "SELECT source_host FROM release_to_rg WHERE release_mbid_lower = ?",
+        release_row = conn.execute(
+            "SELECT source_host, official_evidence FROM release_to_rg "
+            "WHERE release_mbid_lower = ?",
             ("new-release",),
-        ).fetchone()[0]
-        redirect_source_host = conn.execute(
-            "SELECT source_host FROM canonical_redirect WHERE from_mbid_lower = ?",
+        ).fetchone()
+        redirect_row = conn.execute(
+            "SELECT source_host, official_evidence FROM canonical_redirect "
+            "WHERE from_mbid_lower = ?",
             ("new-recording",),
-        ).fetchone()[0]
+        ).fetchone()
         conn.close()
-        assert source_host == "https://mirror.example:8443"
-        assert redirect_source_host == source_host
+        assert release_row == ("", 0)
+        assert redirect_row == ("", 0)
 
     def test_normalize_source_label_keeps_only_origin(self):
         assert (
@@ -296,6 +312,7 @@ async def test_official_identity_gate_accepts_explicit_https_default_port_only(s
     result = await store.get_canonical_redirect(
         "recording",
         ["tls-443", "tls-custom", "http-official"],
+        source_context=_OFFICIAL_SOURCE_CONTEXT,
         trusted_identity_source_only=True,
     )
 
@@ -308,20 +325,58 @@ class TestReleaseToRg:
         await store.save_release_to_rg(
             {"rel-1": "rg-1", "rel-2": ""}, source_host="https://mb.example"
         )
-        result = await store.get_release_to_rg_batch(["rel-1", "rel-2"])
+        result = await store.get_release_to_rg_batch(
+            ["rel-1", "rel-2"], source_context=_LEGACY_SOURCE_CONTEXT
+        )
         assert result["rel-1"] == "rg-1"
         assert result["rel-2"] == ""  # authoritative negative
 
     @pytest.mark.asyncio
+    async def test_foreign_generation_rows_do_not_satisfy_current_lookup(self, store):
+        with sqlite3.connect(str(store.db_path)) as conn:
+            conn.execute(
+                """
+                INSERT INTO release_to_rg (
+                    release_mbid_lower, rg_mbid, source, source_host,
+                    source_mode, source_id, source_generation, saved_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "rel-foreign",
+                    "rg-foreign",
+                    "test",
+                    "",
+                    "mirror",
+                    "mirror-source",
+                    3,
+                    1,
+                ),
+            )
+        current = MbSourceContext(
+            source_url="https://mirror.example/ws/2",
+            generation=4,
+            source_mode="mirror",
+            source_id="mirror-source",
+        )
+        assert (
+            await store.get_release_to_rg_batch(["rel-foreign"], source_context=current)
+            == {}
+        )
+
+    @pytest.mark.asyncio
     async def test_empty_string_is_authoritative_negative(self, store):
         await store.save_release_to_rg({"rel-neg": ""}, source_host="https://x")
-        result = await store.get_release_to_rg_batch(["rel-neg"])
+        result = await store.get_release_to_rg_batch(
+            ["rel-neg"], source_context=_LEGACY_SOURCE_CONTEXT
+        )
         assert "rel-neg" in result  # present = known
         assert result["rel-neg"] == ""
 
     @pytest.mark.asyncio
     async def test_miss_returns_empty_dict(self, store):
-        result = await store.get_release_to_rg_batch(["never-seen"])
+        result = await store.get_release_to_rg_batch(
+            ["never-seen"], source_context=_LEGACY_SOURCE_CONTEXT
+        )
         assert result == {}
 
 
@@ -334,7 +389,10 @@ class TestCanonicalRedirect:
         await store.save_canonical_redirect(rows, OFFICIAL_MB_API_BASE)
 
         result = await store.get_canonical_redirect(
-            "recording", ["old-1"], trusted_identity_source_only=True
+            "recording",
+            ["old-1"],
+            source_context=_OFFICIAL_SOURCE_CONTEXT,
+            trusted_identity_source_only=True,
         )
         assert result["old-1"] == "new-1"
 
@@ -351,27 +409,112 @@ class TestCanonicalRedirect:
 
         # Identity lane (official only) cannot see it.
         identity = await store.get_canonical_redirect(
-            "recording", ["old-mirror"], trusted_identity_source_only=True
+            "recording",
+            ["old-mirror"],
+            source_context=_LEGACY_SOURCE_CONTEXT,
+            trusted_identity_source_only=True,
         )
         assert "old-mirror" not in identity
 
         # Display lane CAN see it.
         display = await store.get_canonical_redirect(
-            "recording", ["old-mirror"], trusted_identity_source_only=False
+            "recording",
+            ["old-mirror"],
+            source_context=_LEGACY_SOURCE_CONTEXT,
+            trusted_identity_source_only=False,
         )
         assert display["old-mirror"] == "new-mirror"
+
+    @pytest.mark.asyncio
+    async def test_brainzmash_cannot_replace_official_identity_evidence(self, store):
+        before = capture_mb_source_context()
+        official = MbSourceContext(
+            "https://musicbrainz.org/ws/2",
+            before.generation + 1,
+            source_mode="official",
+            source_id="official-evidence-test",
+        )
+        brainzmash = MbSourceContext(
+            "https://api.brainzmash.cc/ws/2",
+            official.generation + 1,
+            source_mode="brainzmash",
+            source_id="brainzmash-evidence-test",
+        )
+        set_mb_api_base(
+            official.source_url,
+            source_mode=official.source_mode,
+            source_id=official.source_id,
+            generation=official.generation,
+        )
+        try:
+            await store.save_canonical_redirect(
+                [
+                    {
+                        "entity_kind": "recording",
+                        "from_mbid": "same",
+                        "to_mbid": "official",
+                    }
+                ],
+                source_context=official,
+            )
+            set_mb_api_base(
+                brainzmash.source_url,
+                source_mode=brainzmash.source_mode,
+                source_id=brainzmash.source_id,
+                generation=brainzmash.generation,
+            )
+            await store.save_canonical_redirect(
+                [
+                    {
+                        "entity_kind": "recording",
+                        "from_mbid": "same",
+                        "to_mbid": "brainz",
+                    }
+                ],
+                source_context=brainzmash,
+            )
+        finally:
+            set_mb_api_base(
+                before.source_url,
+                source_mode=before.source_mode,
+                source_id=before.source_id,
+                generation=before.generation,
+            )
+
+        with sqlite3.connect(str(store.db_path)) as conn:
+            row = conn.execute(
+                "SELECT to_mbid_lower, source_host, source_mode, source_id, "
+                "source_generation, official_evidence "
+                "FROM canonical_redirect WHERE from_mbid_lower = ?",
+                ("same",),
+            ).fetchone()
+        assert row == (
+            "official",
+            "",
+            "official",
+            "official-evidence-test",
+            official.generation,
+            1,
+        )
 
 
 class TestIsrc:
     @pytest.mark.asyncio
     async def test_bank_and_retrieve(self, store):
         await store.save_isrc_recordings([("USUM71703861", "rec-abc")])
-        recordings = await store.get_recordings_by_isrc("USUM71703861")
+        recordings = await store.get_recordings_by_isrc(
+            "USUM71703861", source_context=_EMPTY_SOURCE_CONTEXT
+        )
         assert "rec-abc" in recordings
 
     @pytest.mark.asyncio
     async def test_unknown_isrc_returns_empty(self, store):
-        assert await store.get_recordings_by_isrc("UNKNOWN") == []
+        assert (
+            await store.get_recordings_by_isrc(
+                "UNKNOWN", source_context=_EMPTY_SOURCE_CONTEXT
+            )
+            == []
+        )
 
 
 class TestSeedMigration:
@@ -433,13 +576,85 @@ class TestSeedMigration:
         assert row is None
 
 
+@pytest.mark.asyncio
+async def test_stale_source_context_rejects_all_canonical_writes(store):
+    before = capture_mb_source_context()
+    current = MbSourceContext(
+        "https://mirror.example/ws/2",
+        before.generation + 2,
+        source_mode="mirror",
+        source_id="current-source",
+    )
+    stale = MbSourceContext(
+        "https://old.example/ws/2",
+        before.generation + 1,
+        source_mode="mirror",
+        source_id="stale-source",
+    )
+    set_mb_api_base(
+        current.source_url,
+        source_mode=current.source_mode,
+        source_id=current.source_id,
+        generation=current.generation,
+    )
+    try:
+        await store.save_release_to_rg(
+            {"stale-release": "stale-rg"},
+            source_context=stale,
+        )
+        await store.save_canonical_redirect(
+            [{"entity_kind": "recording", "from_mbid": "stale", "to_mbid": "target"}],
+            source_context=stale,
+        )
+        await store.save_isrc_recordings(
+            [("US-STALE-1", "stale-recording")],
+            source_context=stale,
+        )
+    finally:
+        set_mb_api_base(
+            before.source_url,
+            source_mode=before.source_mode,
+            source_id=before.source_id,
+            generation=before.generation,
+        )
+
+    with sqlite3.connect(str(store.db_path)) as conn:
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM release_to_rg WHERE release_mbid_lower = ?",
+                ("stale-release",),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM canonical_redirect WHERE from_mbid_lower = ?",
+                ("stale",),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM recording_isrc WHERE isrc = ?",
+                ("US-STALE-1",),
+            ).fetchone()[0]
+            == 0
+        )
+
+
 class TestWriteThroughPersistence:
     @pytest.mark.asyncio
     async def test_failure_writes_nothing(self, store):
         """Transient failures must never write anything to the store."""
-        initial_count = len(await store.get_release_to_rg_batch([]))
+        initial_count = len(
+            await store.get_release_to_rg_batch(
+                [], source_context=_LEGACY_SOURCE_CONTEXT
+            )
+        )
 
         # save_release_to_rg with empty mapping writes nothing
         await store.save_release_to_rg({}, "https://x")
-        result = await store.get_release_to_rg_batch([])
+        result = await store.get_release_to_rg_batch(
+            [], source_context=_LEGACY_SOURCE_CONTEXT
+        )
         assert len(result) == initial_count

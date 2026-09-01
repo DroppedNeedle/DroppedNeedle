@@ -798,6 +798,28 @@ const COVERAGE: Array<[string, string, string]> = [
 	],
 	['get-it settings', API.settingsGetIt(), '/api/v1/settings/get-it'],
 	['free-music settings', API.settingsFreeMusic(), '/api/v1/settings/free-music'],
+	// MusicBrainz settings: staged source selection, consent, verification, and activation
+	['MusicBrainz settings', API.settingsMusicbrainz(), '/api/v1/settings/musicbrainz'],
+	[
+		'BrainzMash stage',
+		API.settingsMusicbrainzBrainzMashStage(),
+		'/api/v1/settings/musicbrainz/brainzmash/stage'
+	],
+	[
+		'BrainzMash consent',
+		API.settingsMusicbrainzBrainzMashConsent(),
+		'/api/v1/settings/musicbrainz/brainzmash/consent'
+	],
+	[
+		'MusicBrainz verification',
+		API.settingsMusicbrainzVerify(),
+		'/api/v1/settings/musicbrainz/verify'
+	],
+	[
+		'BrainzMash activation',
+		API.settingsMusicbrainzActivate(),
+		'/api/v1/settings/musicbrainz/activate'
+	],
 	// Plugin API (phase 01b): admin roster + curator source surfaces
 	['plugins list', API.plugins.list(), '/api/v1/plugins'],
 	['plugin install', API.plugins.install(), '/api/v1/plugins/install'],

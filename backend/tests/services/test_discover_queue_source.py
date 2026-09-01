@@ -43,10 +43,14 @@ def _make_prefs(
     primary_source: str = "listenbrainz",
 ) -> MagicMock:
     prefs = MagicMock()
-    prefs.get_listenbrainz_connection.return_value = _make_lb_settings(enabled=lb_enabled)
+    prefs.get_listenbrainz_connection.return_value = _make_lb_settings(
+        enabled=lb_enabled
+    )
     prefs.get_lastfm_connection.return_value = _make_lfm_settings(enabled=lfm_enabled)
     prefs.is_lastfm_enabled.return_value = lfm_enabled
-    prefs.get_primary_music_source.return_value = PrimaryMusicSourceSettings(source=primary_source)
+    prefs.get_primary_music_source.return_value = PrimaryMusicSourceSettings(
+        source=primary_source
+    )
     prefs.get_advanced_settings.return_value = AdvancedSettings()
 
     jf_settings = MagicMock()
@@ -113,14 +117,22 @@ def _make_service(
 
     # factory resolves the user's client; return the same mock repos so assertions hold
     factory = MagicMock()
-    factory.resolve_listenbrainz = AsyncMock(return_value=lb_repo if lb_enabled else None)
+    factory.resolve_listenbrainz = AsyncMock(
+        return_value=lb_repo if lb_enabled else None
+    )
     factory.resolve_lastfm = AsyncMock(return_value=lfm_repo if lfm_enabled else None)
-    factory.resolve_listenbrainz_username = AsyncMock(return_value="lbuser" if lb_enabled else None)
-    factory.resolve_lastfm_username = AsyncMock(return_value="lfmuser" if lfm_enabled else None)
+    factory.resolve_listenbrainz_username = AsyncMock(
+        return_value="lbuser" if lb_enabled else None
+    )
+    factory.resolve_lastfm_username = AsyncMock(
+        return_value="lfmuser" if lfm_enabled else None
+    )
     factory.is_listenbrainz_linked = AsyncMock(return_value=lb_enabled)
     factory.is_lastfm_linked = AsyncMock(return_value=lfm_enabled)
     prefs_store = MagicMock()
-    prefs_store.get = AsyncMock(return_value=SimpleNamespace(primary_music_source=primary_source))
+    prefs_store.get = AsyncMock(
+        return_value=SimpleNamespace(primary_music_source=primary_source)
+    )
 
     service = DiscoverService(
         listenbrainz_repo=lb_repo,
@@ -145,7 +157,9 @@ class TestBuildQueueSourceRouting:
             LastFmArtist(name="Artist1", mbid="mbid-1", playcount=1000, listeners=500),
         ]
         lfm_repo.get_artist_top_albums.return_value = [
-            LastFmAlbum(name="Album1", mbid="album-mbid-1", playcount=100, artist_name="Artist1"),
+            LastFmAlbum(
+                name="Album1", mbid="album-mbid-1", playcount=100, artist_name="Artist1"
+            ),
         ]
 
         result = await service.build_queue(_UID, count=5)
@@ -270,10 +284,17 @@ class TestLastFmQueueDataQuality:
         service._mbid_resolution._mb_repo.get_release_group_id_from_release.return_value = "rg-mbid-1"
 
         lfm_repo.get_global_top_artists.return_value = [
-            LastFmArtist(name="Artist1", mbid="artist-mbid-1", playcount=1000, listeners=500),
+            LastFmArtist(
+                name="Artist1", mbid="artist-mbid-1", playcount=1000, listeners=500
+            ),
         ]
         lfm_repo.get_artist_top_albums.return_value = [
-            LastFmAlbum(name="Album1", mbid="release-mbid-1", playcount=100, artist_name="Artist1"),
+            LastFmAlbum(
+                name="Album1",
+                mbid="release-mbid-1",
+                playcount=100,
+                artist_name="Artist1",
+            ),
         ]
 
         result = await service.build_queue(_UID, count=5)
@@ -302,10 +323,17 @@ class TestLastFmQueueDataQuality:
         service._mbid_resolution._mb_repo.get_release_group_by_id.return_value = None
 
         lfm_repo.get_global_top_artists.return_value = [
-            LastFmArtist(name="Artist1", mbid="artist-mbid-1", playcount=1000, listeners=500),
+            LastFmArtist(
+                name="Artist1", mbid="artist-mbid-1", playcount=1000, listeners=500
+            ),
         ]
         lfm_repo.get_artist_top_albums.return_value = [
-            LastFmAlbum(name="Album1", mbid="release-mbid-1", playcount=100, artist_name="Artist1"),
+            LastFmAlbum(
+                name="Album1",
+                mbid="release-mbid-1",
+                playcount=100,
+                artist_name="Artist1",
+            ),
         ]
 
         result = await service.build_queue(_UID, count=5)
@@ -319,15 +347,29 @@ class TestLastFmQueueDataQuality:
             lb_enabled=False, lfm_enabled=True, primary_source="lastfm"
         )
 
-        service._mbid_resolution.resolve_lastfm_release_group_mbids = AsyncMock(return_value={
-            "release-a": "rg-shared",
-            "release-b": "rg-shared",
-        })
+        service._mbid_resolution.resolve_lastfm_release_group_mbids = AsyncMock(
+            return_value={
+                "release-a": "rg-shared",
+                "release-b": "rg-shared",
+            }
+        )
 
-        artist_a = LastFmArtist(name="Artist A", mbid="artist-a", playcount=100, listeners=10)
-        artist_b = LastFmArtist(name="Artist B", mbid="artist-b", playcount=120, listeners=12)
-        albums_a = [LastFmAlbum(name="Album A", mbid="release-a", playcount=50, artist_name="Artist A")]
-        albums_b = [LastFmAlbum(name="Album B", mbid="release-b", playcount=60, artist_name="Artist B")]
+        artist_a = LastFmArtist(
+            name="Artist A", mbid="artist-a", playcount=100, listeners=10
+        )
+        artist_b = LastFmArtist(
+            name="Artist B", mbid="artist-b", playcount=120, listeners=12
+        )
+        albums_a = [
+            LastFmAlbum(
+                name="Album A", mbid="release-a", playcount=50, artist_name="Artist A"
+            )
+        ]
+        albums_b = [
+            LastFmAlbum(
+                name="Album B", mbid="release-b", playcount=60, artist_name="Artist B"
+            )
+        ]
 
         items = await service._mbid_resolution.lastfm_albums_to_queue_items(
             [(artist_a, albums_a), (artist_b, albums_b)],
@@ -349,9 +391,14 @@ class TestLastFmResolutionBehavior:
 
         album_mbids = [f"release-mbid-{idx}" for idx in range(10)]
 
-        await service._mbid_resolution.resolve_lastfm_release_group_mbids(album_mbids, max_lookups=3)
+        await service._mbid_resolution.resolve_lastfm_release_group_mbids(
+            album_mbids, max_lookups=3
+        )
 
-        assert service._mbid_resolution._mb_repo.get_release_group_id_from_release.await_count == 3
+        assert (
+            service._mbid_resolution._mb_repo.get_release_group_id_from_release.await_count
+            == 3
+        )
 
     @pytest.mark.asyncio
     async def test_release_to_rg_hits_persist_before_second_gather(self):
@@ -379,7 +426,7 @@ class TestLastFmResolutionBehavior:
         canonical_store = AsyncMock()
         canonical_store.get_release_to_rg_batch = AsyncMock(return_value={})
 
-        async def _save(mapping, source_host=""):
+        async def _save(mapping, source_host="", *, source_context=None):
             events.append(("save", dict(mapping)))
 
         canonical_store.save_canonical_redirect = AsyncMock(side_effect=_save)
@@ -407,17 +454,23 @@ class TestLastFmResolutionBehavior:
 
 class TestLastFmQueueResilience:
     @pytest.mark.asyncio
-    async def test_lastfm_queue_falls_back_to_decade_results_when_top_albums_sparse(self):
+    async def test_lastfm_queue_falls_back_to_decade_results_when_top_albums_sparse(
+        self,
+    ):
         service, _, lfm_repo, _ = _make_service(
             lb_enabled=False, lfm_enabled=True, primary_source="lastfm"
         )
 
         lfm_repo.get_user_top_artists.return_value = []
         lfm_repo.get_global_top_artists.return_value = [
-            LastFmArtist(name="Artist1", mbid="artist-mbid-1", playcount=1000, listeners=500),
+            LastFmArtist(
+                name="Artist1", mbid="artist-mbid-1", playcount=1000, listeners=500
+            ),
         ]
         lfm_repo.get_artist_top_albums.return_value = [
-            LastFmAlbum(name="Album No MBID", mbid=None, playcount=100, artist_name="Artist1"),
+            LastFmAlbum(
+                name="Album No MBID", mbid=None, playcount=100, artist_name="Artist1"
+            ),
         ]
 
         fallback_rg = MagicMock()
