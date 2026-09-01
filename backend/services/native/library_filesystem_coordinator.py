@@ -24,6 +24,11 @@ _NOREPLACE_UNSUPPORTED_ERRNOS = frozenset(
 _LIBC = ctypes.CDLL(None, use_errno=True)
 
 
+def _wake_async_future(future: asyncio.Future[None]) -> None:
+    if not future.done():
+        future.set_result(None)
+
+
 class _RootLeaseState:
     def __init__(self) -> None:
         self.condition = threading.Condition()
@@ -31,6 +36,33 @@ class _RootLeaseState:
         self.writer_active = False
         self.waiting_writers = 0
         self.revision = 0
+        self._async_waiters: set[asyncio.Future[None]] = set()
+
+    def _take_async_waiters_locked(self) -> set[asyncio.Future[None]]:
+        waiters = self._async_waiters
+        self._async_waiters = set()
+        return waiters
+
+    @staticmethod
+    def _notify_async_waiters(
+        waiters: set[asyncio.Future[None]],
+    ) -> None:
+        for waiter in waiters:
+            loop = waiter.get_loop()
+            if loop.is_closed():
+                continue
+            try:
+                loop.call_soon_threadsafe(_wake_async_future, waiter)
+            except RuntimeError:
+                continue
+
+    def acquire_read_or_wait(self, waiter: asyncio.Future[None]) -> bool:
+        with self.condition:
+            if self.writer_active or self.waiting_writers:
+                self._async_waiters.add(waiter)
+                return False
+            self.readers += 1
+            return True
 
     def acquire_read(self) -> None:
         with self.condition:
@@ -43,6 +75,10 @@ class _RootLeaseState:
             self.readers -= 1
             if self.readers == 0:
                 self.condition.notify_all()
+                waiters = self._take_async_waiters_locked()
+            else:
+                waiters = set()
+        self._notify_async_waiters(waiters)
 
     def register_write_waiter(self) -> None:
         with self.condition:
@@ -51,8 +87,22 @@ class _RootLeaseState:
     def unregister_write_waiter(self) -> None:
         with self.condition:
             self.waiting_writers -= 1
-            # a departing pending writer may unblock parked readers
-            self.condition.notify_all()
+            if self.waiting_writers == 0:
+                # a departing pending writer may unblock parked readers
+                self.condition.notify_all()
+                waiters = self._take_async_waiters_locked()
+            else:
+                waiters = set()
+        self._notify_async_waiters(waiters)
+
+    def acquire_registered_write_or_wait(self, waiter: asyncio.Future[None]) -> bool:
+        with self.condition:
+            if self.writer_active or self.readers:
+                self._async_waiters.add(waiter)
+                return False
+            self.waiting_writers -= 1
+            self.writer_active = True
+            return True
 
     def acquire_registered_write(self) -> None:
         with self.condition:
@@ -67,11 +117,17 @@ class _RootLeaseState:
         self.register_write_waiter()
         self.acquire_registered_write()
 
+    def cancel_async_waiter(self, waiter: asyncio.Future[None]) -> None:
+        with self.condition:
+            self._async_waiters.discard(waiter)
+
     def release_write(self) -> None:
         with self.condition:
             self.writer_active = False
             self.revision += 1
             self.condition.notify_all()
+            waiters = self._take_async_waiters_locked()
+        self._notify_async_waiters(waiters)
 
     def current_revision(self) -> int:
         with self.condition:
@@ -81,9 +137,8 @@ class _RootLeaseState:
 class LibraryFilesystemCoordinator:
     """Writer-preferring read/write leases, isolated by stable library-root ID.
 
-    The coordinator is deliberately in-process: production uses one worker. Durable
-    publication and recovery state belongs in SQLite and the filesystem journal, not
-    in this object.
+    Async waiters park on event-loop futures while synchronous ``read_sync``
+    callers continue to use the blocking condition directly.
     """
 
     def __init__(self) -> None:
@@ -105,22 +160,21 @@ class LibraryFilesystemCoordinator:
             raise ValueError("A filesystem lease requires at least one library root.")
         return [(root_id, self._state(root_id)) for root_id in ordered]
 
-    @staticmethod
     async def _acquire_without_leaking_on_cancel(
-        acquire: Callable[[], None], release: Callable[[], None]
+        self,
+        state: _RootLeaseState,
+        acquire_or_wait: Callable[[asyncio.Future[None]], bool],
     ) -> None:
-        pending = asyncio.create_task(asyncio.to_thread(acquire))
-        try:
-            await asyncio.shield(pending)
-        except asyncio.CancelledError:
-            while not pending.done():
-                try:
-                    await asyncio.shield(pending)
-                except asyncio.CancelledError:
-                    continue
-            pending.result()
-            release()
-            raise
+        loop = asyncio.get_running_loop()
+        while True:
+            waiter = loop.create_future()
+            if acquire_or_wait(waiter):
+                return
+            try:
+                await waiter
+            except asyncio.CancelledError:
+                state.cancel_async_waiter(waiter)
+                raise
 
     @asynccontextmanager
     async def read(self, root_id: str) -> AsyncIterator[None]:
@@ -130,17 +184,39 @@ class LibraryFilesystemCoordinator:
     @asynccontextmanager
     async def read_many(self, root_ids: Iterable[str]) -> AsyncIterator[None]:
         states = self._ordered_states(root_ids)
-        acquired: list[_RootLeaseState] = []
-        try:
-            for _root_id, state in states:
-                await self._acquire_without_leaking_on_cancel(
-                    state.acquire_read, state.release_read
-                )
-                acquired.append(state)
-            yield
-        finally:
-            for state in reversed(acquired):
-                state.release_read()
+        loop = asyncio.get_running_loop()
+        while True:
+            acquired: list[_RootLeaseState] = []
+            blocked_state: _RootLeaseState | None = None
+            blocked_waiter: asyncio.Future[None] | None = None
+            try:
+                for _root_id, state in states:
+                    waiter = loop.create_future()
+                    if state.acquire_read_or_wait(waiter):
+                        acquired.append(state)
+                        continue
+                    blocked_state = state
+                    blocked_waiter = waiter
+                    break
+
+                if blocked_waiter is None:
+                    yield
+                    return
+
+                # Register the blocked root before releasing any partial reads.
+                # The full root set is retried after this waiter wakes.
+                for state in reversed(acquired):
+                    state.release_read()
+                acquired.clear()
+                try:
+                    await blocked_waiter
+                except asyncio.CancelledError:
+                    assert blocked_state is not None
+                    blocked_state.cancel_async_waiter(blocked_waiter)
+                    raise
+            finally:
+                for state in reversed(acquired):
+                    state.release_read()
 
     @asynccontextmanager
     async def write(self, root_id: str) -> AsyncIterator[None]:
@@ -159,15 +235,15 @@ class LibraryFilesystemCoordinator:
                 state.register_write_waiter()
             for _root_id, state in states:
                 await self._acquire_without_leaking_on_cancel(
-                    state.acquire_registered_write, state.release_write
+                    state, state.acquire_registered_write_or_wait
                 )
                 acquired.append(state)
             yield
         finally:
             for state in reversed(acquired):
                 state.release_write()
-            # acquire_registered_write consumes its own registration, so only
-            # the registered-but-not-acquired remainder needs unwinding.
+            # acquire_registered_write_or_wait consumes its own registration,
+            # so only the registered-but-not-acquired remainder needs unwinding.
             for _root_id, lease in states[len(acquired) :]:
                 lease.unregister_write_waiter()
 
@@ -268,9 +344,7 @@ def replace_rooted_publication(
     except KeyError as error:
         raise ValueError("A rooted replacement references an unknown root.") from error
     with _rooted_parent(source_root, source_relative_path) as source:
-        with _rooted_parent(
-            destination_root, destination_relative_path
-        ) as destination:
+        with _rooted_parent(destination_root, destination_relative_path) as destination:
             try:
                 _renameat2_noreplace(
                     source[0], source[1], destination[0], destination[1]
