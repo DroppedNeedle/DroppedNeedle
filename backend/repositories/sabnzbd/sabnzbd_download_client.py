@@ -40,6 +40,17 @@ _AUDIO_SUFFIXES = {".flac", ".mp3", ".m4a", ".m4b", ".mp4", ".ogg", ".oga", ".op
 # queue that isn't true "Downloading" is post-processing -> "processing".
 _QUEUE_NOT_ACTIVE = {"queued", "grabbing", "propagating", "paused"}
 _HISTORY_LIMIT = 50
+# Bound for the failure-path-only suffix walk below (same order as the slskd
+# walk budget; a correct mount never walks, so this only prices misconfig).
+_REMAP_WALK_BUDGET = 10_000
+
+
+def _posix_norm(value: str) -> str:
+    """Fold SABnzbd-reported separators to posix before any remap. A
+    Windows-native SAB reports backslash paths, which ``PurePosixPath`` would
+    otherwise treat as one opaque segment (the same folding the slskd path
+    handling applies)."""
+    return value.replace("\\", "/")
 
 
 class SabnzbdDownloadClient:
@@ -316,16 +327,88 @@ class SabnzbdDownloadClient:
     async def _local_storage(self, storage: str) -> Path:
         """Remap SABnzbd's ``storage`` (its namespace) onto the DroppedNeedle mount by
         stripping the SABnzbd ``complete_dir`` prefix; fall back to the job-folder
-        basename when the prefix doesn't match."""
+        basename when the prefix doesn't match.
+
+        Two deterministic breakages are repaired before the fallback (#245): a
+        Windows-native SAB reports backslash paths (normalised first), and a
+        ``downloads_mount`` pointed at a category subfolder (``complete_dir`` +
+        ``/music``) resolves via a bounded suffix walk of the mount. A remap that
+        still fails logs a WARNING with the SAB path, ``complete_dir``, and the
+        mount - user config paths, never secrets."""
         complete_dir = await self._complete_dir()
-        remote = PurePosixPath(storage)
+        remote = PurePosixPath(_posix_norm(storage))
         if complete_dir:
+            complete = PurePosixPath(_posix_norm(complete_dir))
             try:
-                rel = remote.relative_to(PurePosixPath(complete_dir))
-                return self._mount / Path(*rel.parts)
+                rel = remote.relative_to(complete)
             except ValueError:
-                pass
+                rel = None
+            if rel is not None:
+                if not rel.parts:
+                    return self._mount
+                direct = self._mount / Path(*rel.parts)
+                try:
+                    if direct.is_dir():
+                        return direct
+                except OSError:
+                    pass
+                walked = await asyncio.to_thread(self._suffix_walk, rel)
+                if walked is not None:
+                    return walked
+            logger.warning(
+                "sabnzbd storage remap failed: SAB path %s (complete_dir %s) does not "
+                "resolve under mount %s; falling back to basename %s",
+                storage,
+                complete_dir,
+                str(self._mount),
+                remote.name,
+            )
         return self._mount / remote.name
+
+    def _suffix_walk(self, rel: PurePosixPath) -> Path | None:
+        """Bounded walk for a directory under the mount whose path ends with the
+        storage-relative suffix (the category-subfolder mount: the mount IS
+        ``complete_dir/<cat>``, so the stripped remainder still carries the
+        category component). Longest suffix wins; failure-path only. Sync
+        filesystem I/O - the caller offloads it off the event loop."""
+        try:
+            mount = self._mount.resolve()
+        except OSError:
+            return None
+        suffixes = ["/".join(rel.parts[i:]) for i in range(len(rel.parts))]
+        best: Path | None = None
+        best_len = -1
+        seen_dirs: set[Path] = set()
+        stack = [mount]
+        seen = 0
+        while stack:
+            try:
+                current = stack.pop().resolve()
+            except OSError:
+                continue
+            if not current.is_relative_to(mount) or current in seen_dirs:
+                continue
+            seen_dirs.add(current)
+            dir_rel = current.relative_to(mount).as_posix()
+            for suffix in suffixes:
+                if dir_rel == suffix or dir_rel.endswith("/" + suffix):
+                    if len(suffix) > best_len:
+                        best, best_len = current, len(suffix)
+                    break
+            try:
+                entries = list(current.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                seen += 1
+                if seen > _REMAP_WALK_BUDGET:
+                    return best
+                try:
+                    if entry.is_dir():
+                        stack.append(entry)
+                except OSError:
+                    continue
+        return best
 
     async def _exact_local_storage(self, storage: str) -> Path | None:
         """Map cleanup evidence only when SAB's complete root is known exactly."""
@@ -334,7 +417,9 @@ class SabnzbdDownloadClient:
         if not complete_dir:
             return None
         try:
-            relative = PurePosixPath(storage).relative_to(PurePosixPath(complete_dir))
+            relative = PurePosixPath(_posix_norm(storage)).relative_to(
+                PurePosixPath(_posix_norm(complete_dir))
+            )
         except ValueError:
             return None
         return self._mount / Path(*relative.parts)

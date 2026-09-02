@@ -767,6 +767,76 @@ async def test_usenet_completed_files_appear_after_settle(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_usenet_missing_folder_after_settle_preserves_and_skips_blocklist(
+    tmp_path: Path,
+):
+    import time
+
+    # SABnzbd Completed but the job folder resolves NOWHERE on the mount (the
+    # storage-remap fault: backslash paths, category-subfolder mounts). That is
+    # an environment suspicion, not a dead release: do NOT blocklist, and
+    # PRESERVE the workspace so a later reimport can still recover the files.
+    # The release is OLD on purpose: the age guard would not have spared it.
+    missing = tmp_path / "complete" / "droppedneedle-vanished"
+    tracks = [_track(1, "Airbag", 300)]
+    store, manager, orch, sab, library = _build(
+        tmp_path,
+        album_tracks=tracks,
+        completed_folder=missing,
+        sab_status="completed",
+        release_usenet_date=time.time() - 86400,
+    )
+    task = await store.create_task(
+        user_id="user-a",
+        download_type="album",
+        release_group_mbid="rg-okc",
+        artist_name="Radiohead",
+        album_title="OK Computer",
+        year=1997,
+        track_count=1,
+    )
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "failed"
+    assert await store.load_quarantine_set() == set()  # remap fault -> NOT blocklisted
+    assert (await store.list_download_attempts(task.id))[-1].state == "preserved"
+
+
+@pytest.mark.asyncio
+async def test_usenet_settle_uses_real_cadence_and_stability(tmp_path: Path):
+    # The harness injects a 0.0 settle interval everywhere else; this test runs
+    # the real 2s cadence once and pins the stability rule: the first file does
+    # NOT end the settle, only a second identical poll does.
+    completed = tmp_path / "complete" / "droppedneedle-job"
+    _place_track(completed, "01 Airbag.flac", title="Airbag", track=1)
+    tracks = [_track(1, "Airbag", 300)]
+    store, manager, orch, sab, library = _build(
+        tmp_path,
+        album_tracks=tracks,
+        completed_folder=completed,
+        files_visible_after=1,  # first enumeration empty, then the file appears
+    )
+    orch._strategies["usenet"]._import_settle = 2.0
+    task = await store.create_task(
+        user_id="user-a",
+        download_type="album",
+        release_group_mbid="rg-okc",
+        artist_name="Radiohead",
+        album_title="OK Computer",
+        year=1997,
+        track_count=1,
+    )
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "completed"
+    assert len(list(library.rglob("*.flac"))) == 1
+    assert sab._list_calls >= 3  # first empty + two polls to prove stability
+    assert await store.load_quarantine_set() == set()
+
+
+@pytest.mark.asyncio
 async def test_usenet_interrupted_poll_does_not_blocklist(tmp_path: Path, monkeypatch):
     import time
 

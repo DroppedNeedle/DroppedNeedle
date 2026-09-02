@@ -35,9 +35,11 @@ from services.native.title_match import title_containment_score
 
 logger = logging.getLogger(__name__)
 
-# Re-poll budget for an unpacked Usenet job folder, tolerating a separate-NFS-client
-# directory-attribute cache lag (a shared client sees the move instantly).
-_USENET_SETTLE_SECONDS = 20.0
+# Re-poll budget for an unpacked Usenet job folder that EXISTS but is empty,
+# tolerating slow mount-visibility lag (NFS/SMB attribute-cache delays can
+# exceed the old 20s window). A missing folder never settles - it short-
+# circuits to the remap-fault path in import_files.
+_USENET_SETTLE_SECONDS = 60.0
 
 # A SABnzbd failure mentioning one of these is a password-protected NZB - a non-retryable
 # skip (blocklisted regardless of age, since propagation can't fix encryption).
@@ -786,6 +788,17 @@ class UsenetStrategy:
         # CHECK-constrained in the DB AND shown in the Quarantine panel, so it must stay in the
         # allowed vocabulary - "verify_failed" is the existing term for "downloaded but didn't
         # match", reusing the soulseek import-verify reasons.
+        if completed and not enumerated_any and await self._completed_folder_missing(task):
+            # A Completed job whose folder is missing on the mount is a
+            # storage-remap fault (Windows backslashes, category-subfolder
+            # mounts), not a dead release: never blocklist it. The workspace is
+            # preserved by the import path, so a later reimport can still
+            # recover the files (#245).
+            logger.info(
+                "download.usenet_remap_skip",
+                extra={"task_id": task.id},
+            )
+            return
         stored_reason = "verify_failed" if confirms_underdelivery else "download_failed"
         await self._store.record_quarantine(
             source="usenet",
@@ -948,9 +961,20 @@ class UsenetStrategy:
         # by identity in the failover loop (it can be a zero-file Failed that never reaches here).
         files = await self._client.list_completed_files(manifest.handle)
         if not files and completed:
-            # A good release's files are present at Completed; re-poll briefly only to cover a
-            # separate-NFS-client visibility lag before concluding empty. A failed job is
-            # terminal (waiting won't add files), so don't settle.
+            # An empty first enumeration is either mount-visibility lag or a
+            # storage-remap fault. A missing folder short-circuits to the
+            # remap-fault path (no settle can fix a path that resolves
+            # nowhere); an existing-but-empty folder settles first (#245).
+            if await self._completed_folder_missing_handle(manifest.handle):
+                logger.warning(
+                    "download.usenet_folder_missing",
+                    extra={"task_id": task.id},
+                )
+                return ProcessResult(
+                    succeeded=[],
+                    failed=[],
+                    workspace_disposition="preserve",
+                ), 0
             files = await self._settle_files(manifest.handle)
         enumerated = len(files)
         logger.info(
@@ -1014,21 +1038,74 @@ class UsenetStrategy:
             await self._store.set_final_path(
                 task.id, str(Path(result.succeeded[0]).parent)
             )
+        if not files and completed:
+            # Ambiguous empty after settle on a reachable mount (remap fault or
+            # slow visibility): never discard the user's completed folder -
+            # preserve it so a later reimport can still find the files. The 6h
+            # orphan reconcile is the terminal state for genuinely dead folders
+            # (#245). (The mount-unreachable path returned above.)
+            result = ProcessResult(
+                succeeded=list(result.succeeded),
+                failed=list(result.failed),
+                publisher_bundle_ids=list(result.publisher_bundle_ids),
+                workspace_disposition="preserve",
+            )
         return result, enumerated
 
+    async def _completed_folder_missing(self, task) -> bool:  # noqa: ANN001
+        """Whether the Completed job's folder is missing on the mount (or its
+        storage unresolvable) - the remap-fault signal (#245)."""
+        try:
+            attempt = await self._store.get_download_attempt_for_candidate(
+                task.id, "usenet", task.candidate_index
+            )
+        except Exception:  # noqa: BLE001 - journal trouble reads as missing (safe path)
+            return True
+        handle = attempt.handle if attempt is not None else None
+        return await self._completed_folder_missing_handle(handle)
+
+    async def _completed_folder_missing_handle(self, handle) -> bool:  # noqa: ANN001
+        """Handle-level half of :meth:`_completed_folder_missing`, shared with the
+        import path (which already holds the manifest handle).
+
+        Resolved through the exact-path evidence: when the exact path is
+        unresolvable but the hardened remap could still apply, this reads
+        missing and the caller takes the safe path (preserve, no blocklist) -
+        the fail-safe direction. An inspect failure also reads missing.
+        """
+        if handle is None or not (handle.job_name or handle.nzo_id):
+            return True
+        try:
+            material = await self._client.inspect_materialization(handle)
+        except Exception:  # noqa: BLE001 - diagnostic failure reads as missing
+            return True
+        workspace = material.workspace_path or ""
+        if not workspace:
+            return True
+        try:
+            return not await asyncio.to_thread(Path(workspace).is_dir)
+        except OSError:
+            return True
+
     async def _settle_files(self, handle):  # noqa: ANN001, ANN201
-        """Re-poll the completed job's folder for audio, tolerating the window where a
-        separate NFS client's directory-attribute cache delays visibility. Returns as soon
-        as any file appears, else [] after polling for up to ``_USENET_SETTLE_SECONDS``."""
+        """Re-poll the completed job's existing-but-empty folder for audio,
+        tolerating slow mount-visibility lag. Returns once the enumerated set is
+        stable across two polls (a partially-materialised folder must not import
+        short), else whatever the last poll saw after polling for up to
+        ``_USENET_SETTLE_SECONDS``."""
         interval = self._import_settle
-        tries = max(1, int(_USENET_SETTLE_SECONDS / interval)) if interval > 0 else 5
+        tries = max(2, int(_USENET_SETTLE_SECONDS / interval)) if interval > 0 else 5
+        previous: list[str] = []
+        files: list[Path] = []
         for _ in range(tries):
             if interval > 0:
                 await asyncio.sleep(interval)
             files = await self._client.list_completed_files(handle)
-            if files:
+            current = sorted(str(p) for p in files)
+            if current and current == previous:
                 return files
-        return []
+            previous = current
+        return files
 
 
 def _basename(filename: str) -> str:

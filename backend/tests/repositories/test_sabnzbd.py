@@ -297,6 +297,80 @@ async def test_list_completed_files_remaps_and_enumerates(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_list_completed_files_normalizes_windows_separators(tmp_path):
+    # A Windows-native SAB reports backslash storage paths; without separator
+    # folding the remap misses and every import enumerates 0 (#245 shape 1).
+    job = tmp_path / "complete" / "droppedneedle-t1"
+    job.mkdir(parents=True)
+    (job / "01 track.flac").write_bytes(b"x")
+    mock = sabnzbd_mock.SabnzbdMock()
+    mock.complete_dir = "C:\\Downloads\\complete"
+    mock.history_job(nzo_id="nzo-1", name="droppedneedle-t1", status="Completed",
+                     storage="C:\\Downloads\\complete\\droppedneedle-t1")
+    files = await _dc(mock, mount=str(tmp_path / "complete")).list_completed_files(
+        _handle()
+    )
+    assert [f.name for f in files] == ["01 track.flac"]
+
+
+@pytest.mark.asyncio
+async def test_list_completed_files_resolves_category_subfolder_mount(tmp_path):
+    # downloads_mount pointed at complete_dir/music while SAB stores under
+    # complete_dir/music/job: the stripped remainder still carries the category
+    # component, resolved by the suffix walk (#245 shape 2).
+    job = tmp_path / "complete" / "droppedneedle-t1"
+    job.mkdir(parents=True)
+    (job / "01 track.flac").write_bytes(b"x")
+    mock = sabnzbd_mock.SabnzbdMock()
+    mock.complete_dir = "/data/Downloads/complete"
+    mock.history_job(nzo_id="nzo-1", name="droppedneedle-t1", status="Completed",
+                     storage="/data/Downloads/complete/music/droppedneedle-t1")
+    files = await _dc(mock, mount=str(tmp_path / "complete")).list_completed_files(
+        _handle()
+    )
+    assert [f.name for f in files] == ["01 track.flac"]
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_storage_falls_back_to_basename_with_warning(
+    tmp_path, caplog
+):
+    import logging
+
+    mount = tmp_path / "complete"
+    mount.mkdir()
+    mock = sabnzbd_mock.SabnzbdMock()
+    mock.complete_dir = "/data/Downloads/complete"
+    mock.history_job(nzo_id="nzo-1", name="droppedneedle-t1", status="Completed",
+                     storage="/elsewhere/droppedneedle-t1")
+    with caplog.at_level(logging.WARNING):
+        files = await _dc(mock, mount=str(mount)).list_completed_files(_handle())
+    assert files == []
+    assert "sabnzbd storage remap failed" in caplog.text
+    assert "/elsewhere/droppedneedle-t1" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_exact_storage_normalizes_windows_separators(tmp_path):
+    mock = sabnzbd_mock.SabnzbdMock()
+    mock.complete_dir = "C:\\Downloads\\complete"
+    mock.history_job(
+        nzo_id="nzo-1",
+        name="droppedneedle-t1",
+        status="Completed",
+        storage="C:\\Downloads\\complete\\audio\\droppedneedle-t1",
+    )
+    mount = tmp_path / "complete"
+    mount.mkdir()
+
+    materialization = await _dc(mock, mount=str(mount)).inspect_materialization(
+        _handle()
+    )
+
+    assert materialization.workspace_path == str(mount / "audio" / "droppedneedle-t1")
+
+
+@pytest.mark.asyncio
 async def test_history_lookup_filters_to_the_job():
     # A busy SABnzbd can push our job past the 50-entry window; the client must filter
     # history to THIS job (nzo_ids/search) so it's always found.
