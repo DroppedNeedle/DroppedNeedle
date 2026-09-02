@@ -2570,6 +2570,30 @@ class DownloadOrchestrator:
         logger.info(
             "download.cancelled", extra={"task_id": task.id, "user_id": task.user_id}
         )
+        # Cancelling stops the wanted watch too (one action, no secret second
+        # switch, #255): a surviving 'watching' row would re-dispatch
+        # origin='wanted' on its next due date and restart the ladder. Only the
+        # task owner's watching row is stopped (rows are per user + RG); a watch
+        # the user re-arms later works normally - stopping is not destructive.
+        # Best-effort: the cancellation itself already committed above.
+        if task.release_group_mbid and self._wanted_store is not None:
+            try:
+                watch = await self._wanted_store.get_watch(task.release_group_mbid)
+            except Exception:  # noqa: BLE001 - watch settlement is best-effort
+                watch = None
+            if (
+                watch is not None
+                and watch.state == "watching"
+                and watch.user_id == task.user_id
+                and await self._wanted_store.stop_watch(task.release_group_mbid)
+            ):
+                logger.info(
+                    "download.cancel_stopped_watch",
+                    extra={
+                        "task_id": task.id,
+                        "release_group_mbid": task.release_group_mbid,
+                    },
+                )
         # Flip the linked request to 'cancelled' too, so a cancelled (or stopped-retrying)
         # download clears the album UI's "retry scheduled" line instead of sitting failed.
         await self._sync_request_on_terminal(task, DownloadStatus.CANCELLED)

@@ -7,6 +7,7 @@ request relink writes, capped per-track partial dispatch with per-recording
 dedup, satisfaction-first (no search on a covered want), the active-work
 guards, cadence math with jitter bounds, and dormancy."""
 
+import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -17,9 +18,12 @@ import pytest
 
 from api.v1.schemas.settings import WantedWatcherSettings
 from core.exceptions import ResourceNotFoundError
+from infrastructure.persistence.download_store import DownloadStore
 from infrastructure.persistence.request_history import RequestHistoryRecord
 from infrastructure.persistence.wanted_store import WantedStore
+from infrastructure.sse_publisher import SSEPublisher
 from models.download import ScoredCandidate
+from models.download_manifest import ManifestCodec
 from services.native.download_orchestrator import (
     _FILES_NOT_FOUND_MSG,
     _IMPORT_FAILED_MSG,
@@ -1459,3 +1463,109 @@ async def test_failed_membership_read_stays_fail_open_per_want(env):
     assert summary.fulfilled == 0
     assert summary.errors == 0
     assert attempts["n"] == 3
+
+
+# cancel stops the wanted watch (#255 residual, "cancel doesn't stick")
+
+
+def _cancel_orchestrator(tmp_path, download_store, wanted_store) -> DownloadOrchestrator:
+    """A real orchestrator over real stores, for the cancel→watch path only."""
+    return DownloadOrchestrator(
+        client=Mock(),
+        indexer=Mock(),
+        download_store=download_store,
+        file_processor=Mock(),
+        library_manager=Mock(),
+        scorer=Mock(),
+        track_matcher=Mock(),
+        manifest_codec=ManifestCodec(),
+        event_bus=SSEPublisher(),
+        staging_path=tmp_path / "staging",
+        naming_template="{artist}/{album}",
+        wanted_store=wanted_store,
+    )
+
+
+async def _task_with_live_watch(tmp_path, env, **watch_overrides):
+    db_path = tmp_path / "downloads.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS auth_users (id TEXT PRIMARY KEY, username TEXT, role TEXT)"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO auth_users (id, username, role) VALUES (?, ?, ?)",
+            ("user-a", "alice", "admin"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    download_store = DownloadStore(db_path=db_path, write_lock=threading.Lock())
+    orch = _cancel_orchestrator(tmp_path, download_store, env.store)
+    task = await download_store.create_task(
+        user_id="user-a",
+        download_type="album",
+        release_group_mbid="rg-1",
+        artist_name="Yan Qing",
+        album_title="the arrival",
+        year=2026,
+        track_count=12,
+    )
+    await _add_watch(env, **watch_overrides)
+    return download_store, orch, task
+
+
+@pytest.mark.asyncio
+async def test_cancel_stops_the_linked_wanted_watch(env, tmp_path):
+    download_store, orch, task = await _task_with_live_watch(tmp_path, env)
+    assert (await env.store.get_watch("rg-1")).state == "watching"
+
+    await orch.cancel_task(task.id, "user-a", "user")
+
+    assert (await download_store.get_task(task.id)).status == "cancelled"
+    assert (await env.store.get_watch("rg-1")).state == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_cancel_leaves_another_users_watch_alone(env, tmp_path):
+    download_store, orch, task = await _task_with_live_watch(
+        tmp_path, env, user_id="user-b"
+    )
+
+    await orch.cancel_task(task.id, "user-a", "user")
+
+    assert (await download_store.get_task(task.id)).status == "cancelled"
+    assert (await env.store.get_watch("rg-1")).state == "watching"
+
+
+@pytest.mark.asyncio
+async def test_cancel_leaves_a_dormant_watch_alone(env, tmp_path):
+    download_store, orch, task = await _task_with_live_watch(tmp_path, env)
+    await env.store.record_cycle(
+        "rg-1",
+        outcome="no_results",
+        next_check_at=time.time() + 3600,
+        quiet=True,
+        go_dormant=True,
+    )
+    assert (await env.store.get_watch("rg-1")).state == "dormant"
+
+    await orch.cancel_task(task.id, "user-a", "user")
+
+    assert (await env.store.get_watch("rg-1")).state == "dormant"
+
+
+@pytest.mark.asyncio
+async def test_stopped_watch_rearms_and_redispatches_after_cancel(env, tmp_path):
+    _download_store, orch, task = await _task_with_live_watch(tmp_path, env)
+    await orch.cancel_task(task.id, "user-a", "user")
+    assert (await env.store.get_watch("rg-1")).state == "stopped"
+
+    # stopping is not destructive: a deliberate re-arm works normally.
+    watch = await env.watcher.resume("rg-1", "user-a", "user")
+    assert watch.state == "watching"
+
+    env.ds.scout_album.return_value = [_cand(tier="auto")]
+    summary = await env.watcher.run_sweep()
+    assert summary.dispatched == 1
+    env.ds.request_album.assert_awaited_once()
