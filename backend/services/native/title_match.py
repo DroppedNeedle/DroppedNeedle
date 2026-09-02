@@ -25,6 +25,11 @@ Design (validated against real Newznab/Soulseek result sets):
   be settled by the indexer-match base score + the import tag-match (Q4 obfuscation tolerance).
 - Version descriptors (deluxe/remaster/edition...) are stripped from BOTH sides, so a
   deluxe/remastered edition of the requested album still matches.
+- Canonical punctuation is normalized on BOTH sides before splitting (GH #259 / #307):
+  apostrophes inside words are deleted (``man's`` -> ``mans``, matching the scene-named
+  ``Mans_Best_Friend``), and the abutting paren-obfuscation shape unfolds
+  (``O(verly)`` -> ``overly``). Standalone paren groups (``(2014)``, ``(Deluxe
+  Version)``, ``(feat. X)``) still split into separate tokens.
 - Roman series numerals (II..) are ordinary alpha words, so they discriminate naturally.
   Digit volumes ("Vol. 2" vs "Vol. 3") are NOT distinguished: a bare digit can't be told
   from a year / bit-depth / catalog number, and ``volNN+NN`` par2 names would false-reject -
@@ -41,7 +46,22 @@ from unidecode import unidecode
 # A leading Usenet part counter: ``[002/113] "`` (and the opening quote of the real name).
 _PART_COUNTER_RE = re.compile(r'^\s*\[\d+\s*/\s*\d+\]\s*"?')
 # Title separators -> spaces, so ``led_zeppelin``, ``In.Through``, ``(2014)`` all tokenise.
+# Word-INTERNAL apostrophes/quotes are deleted before this split (see ``_APOS_RE``):
+# scene names drop them entirely (``Mans_Best_Friend``) while MusicBrainz titles carry
+# them (``Man's Best Friend``), so splitting on them made the two sides tokenise
+# asymmetrically (GH #259). A quote with a space on one side still splits here - it
+# frames the title, it isn't part of a word.
 _SEP_RE = re.compile(r"[_.\-/()\[\]{}+,'\"]")
+# The GH #307 paren-obfuscation shape: a paren group DIRECTLY abutting a preceding word
+# char with a single word run inside (``O(verly)``, ``D(edicated)``) is the next chunk of
+# that word, not a standalone group - unfold it (``O(verly)`` -> ``overly``). Standalone
+# groups (``(2014)``, ``(Deluxe Version)``, ``(feat. X)``) keep their split behaviour.
+_PAREN_UNFOLD_RE = re.compile(r"(\w)\((\w+)\)")
+# Word-internal apostrophes/quotes: ``man's`` -> ``mans``, ``can't`` -> ``cant``,
+# ``Man"s`` -> ``mans``. fold() unidecodes typographic ``’`` (and its cousins) to ``'``
+# first, so one ASCII class covers both spellings; a quote with a space on one side
+# (framing the title) is not word-internal and is left for the separator split.
+_APOS_RE = re.compile(r'(?<=\w)["\'](?=\w)')
 # A trailing/inline featuring credit: ``(feat. X)`` / ``ft. X`` / ``featuring X`` - not part of
 # album identity, and a long credit tail drags the fuzzy ratio + can read as a foreign word.
 _FEAT_RE = re.compile(r"\s[(\[]?\b(feat|ft|featuring)\b\.?.*$", re.IGNORECASE)
@@ -125,7 +145,14 @@ _STOP = frozenset({
 
 
 def _tokens(text: str) -> list[str]:
+    # GH #259 / #307: canonical MB punctuation vs scene names. One normalization pass,
+    # applied symmetrically to both sides before splitting: unfold the abutting paren
+    # shape (``O(verly)`` -> ``overly``), then delete apostrophes/quotes inside words
+    # instead of splitting on them (``man's`` -> ``mans``, matching the scene-named
+    # ``Mans_Best_Friend``; ``can't`` -> ``cant``).
     cleaned = strip_featuring(fold(_PART_COUNTER_RE.sub("", text or "")))
+    cleaned = _PAREN_UNFOLD_RE.sub(r"\1\2", cleaned)
+    cleaned = _APOS_RE.sub("", cleaned)
     return [t for t in _SEP_RE.sub(" ", cleaned).split() if t]
 
 

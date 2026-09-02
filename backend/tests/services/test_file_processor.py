@@ -1353,6 +1353,20 @@ def test_import_guard_keeps_album_when_only_a_minority_mis_tagged():
     assert _folder_names_wrong_album(cands, "Led Zeppelin", "Led Zeppelin") is False
 
 
+def test_import_guard_accepts_rip_tag_without_the_canonical_apostrophe():
+    # GH #259 (import leg): the MB target carries "Man's Best Friend" but rips are
+    # routinely tagged without the apostrophe - that must NOT read as a wrong album.
+    cands = [_fc("Mans Best Friend", artist="Sabrina Carpenter") for _ in range(5)]
+    assert _folder_names_wrong_album(cands, "Sabrina Carpenter", "Man's Best Friend") is False
+
+
+def test_import_guard_still_quarantines_a_different_album_with_apostrophes():
+    # ...while "Emails I Can't Send" is a genuinely different Sabrina Carpenter album:
+    # the quarantine decision (process.folder_wrong_album) must still fire.
+    cands = [_fc("Emails I Can’t Send", artist="Sabrina Carpenter") for _ in range(5)]
+    assert _folder_names_wrong_album(cands, "Sabrina Carpenter", "Man's Best Friend") is True
+
+
 # -- held imports (capture on verify-fail + force-import) --
 
 

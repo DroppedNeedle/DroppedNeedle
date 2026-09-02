@@ -463,3 +463,56 @@ def test_wrong_album_still_rejects_different_album_same_artist():
     cand = Candidate(source="soulseek", match_text="Led Zeppelin - Physical Graffiti")
     decision = wrong_album(cand, _LZ, _EMPTY, _POLICY)
     assert isinstance(decision, Reject)
+
+
+# GH #259 (scorer leg) + GH #307: canonical MusicBrainz punctuation vs scene-named
+# releases, through the shared spec pipeline so the guard surface itself is pinned.
+
+_MBF_TARGET = TargetAlbum(
+    artist_name="Sabrina Carpenter", album_title="Man's Best Friend", year=2025, track_count=12,
+)
+
+
+@pytest.mark.parametrize(
+    "candidate_title",
+    [
+        "Sabrina_Carpenter-Mans_Best_Friend-CD-FLAC-2025-GROUP",
+        "Sabrina Carpenter - Mans Best Friend (2025) [MP3-320]",
+        '[002/95] "Sabrina_Carpenter-Mans_Best_Friend-2025.part001.rar"',
+    ],
+)
+def test_wrong_album_accepts_apostropheless_scene_named_release(candidate_title):
+    # The shape of psykix's `dropped_wrong_album=4`: every release the indexer returned
+    # was rejected WRONG_ALBUM/PERMANENT because `_SEP_RE` split ``man's`` asymmetrically.
+    cand = Candidate(source="usenet", match_text=candidate_title)
+    assert isinstance(wrong_album(cand, _MBF_TARGET, _EMPTY, _POLICY), Accept), candidate_title
+
+
+@pytest.mark.parametrize("album_title", ["Man's Best Friend", "Man’s Best Friend"])
+def test_wrong_album_accepts_typographic_apostrophe_target(album_title):
+    # MusicBrainz carries the typographic apostrophe; either spelling of the target
+    # must accept the scene-named release.
+    target = TargetAlbum(
+        artist_name="Sabrina Carpenter", album_title=album_title, year=2025, track_count=12,
+    )
+    cand = Candidate(source="usenet", match_text="Sabrina_Carpenter-Mans_Best_Friend-CD-FLAC-2025-GROUP")
+    assert isinstance(wrong_album(cand, target, _EMPTY, _POLICY), Accept), album_title
+
+
+def test_wrong_album_accepts_paren_obfuscated_title():
+    # GH #307: "O(verly) D(edicated)" used to split to o + verly with the 1-char
+    # fragment dropped, leaving 'verly' reading as a foreign album word.
+    target = TargetAlbum(
+        artist_name="ScHoolboy Q", album_title="Overly Dedicated", year=2010, track_count=15,
+    )
+    cand = Candidate(source="usenet", match_text="Schoolboy_Q-O(verly)_D(edicated)-2010")
+    assert isinstance(wrong_album(cand, target, _EMPTY, _POLICY), Accept)
+
+
+def test_wrong_album_still_rejects_genuinely_different_album_with_apostrophes():
+    # Negative control: "Emails I Can't Send" is a different Sabrina Carpenter album -
+    # the apostrophe relaxation must not open a wrong-album floodgate.
+    cand = Candidate(source="usenet", match_text="Sabrina Carpenter - Emails I Can’t Send")
+    decision = wrong_album(cand, _MBF_TARGET, _EMPTY, _POLICY)
+    assert isinstance(decision, Reject)
+    assert decision.code is RejectCode.WRONG_ALBUM
