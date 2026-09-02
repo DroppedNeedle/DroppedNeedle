@@ -252,12 +252,9 @@ async def restart_with_current_policy(
     guidance (their dedicated abort path is cancel/re-request). Storage
     admission re-runs before reset; the whole swap is one atomic transaction
     that retains the old snapshot on any failure."""
-    import json
-
     from core.dependencies import get_download_orchestrator, get_quota_service
     from core.exceptions import ConflictError, ResourceNotFoundError, ValidationError
-    from infrastructure.serialization import to_jsonable
-    from services.native.acquisition.quality import build_snapshot
+    from services.native.acquisition.quality import build_snapshot, encode_snapshot
 
     store = get_download_store()
     prefs = get_preferences_service()
@@ -276,7 +273,9 @@ async def restart_with_current_policy(
             "request again so the new policy applies"
         )
     if task.status not in ("queued", "downloading", "processing"):
-        raise ValidationError("Only an active search or queued download can be restarted")
+        raise ValidationError(
+            "Only an active search or queued download can be restarted"
+        )
 
     quota = get_quota_service()
     await quota.check_storage_admission(task.user_id, task.origin or "user")
@@ -286,7 +285,7 @@ async def restart_with_current_policy(
     ok = await store.apply_quality_policy_restart(
         task.id,
         expected_snapshot_hash=expected,
-        new_snapshot_json=json.dumps(to_jsonable(snapshot)),
+        new_snapshot_json=encode_snapshot(snapshot),
         new_snapshot_hash=snapshot.snapshot_hash,
         new_snapshot_summary=snapshot.summary,
     )

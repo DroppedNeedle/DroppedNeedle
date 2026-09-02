@@ -7,8 +7,13 @@ from pathlib import Path
 import msgspec
 import pytest
 
-from api.v1.schemas.settings import DOWNLOAD_CLIENT_API_KEY_MASK, DownloadClientConnectionSettings
+from api.v1.schemas.settings import (
+    DOWNLOAD_CLIENT_API_KEY_MASK,
+    DownloadClientConnectionSettings,
+    DownloadPolicySettings,
+)
 from core.config import Settings
+from services.native.acquisition.quality import build_snapshot
 from services.preferences_service import PreferencesService
 
 
@@ -38,7 +43,9 @@ def test_key_masked_on_read_decrypted_raw(prefs):
 
 
 def test_key_stored_encrypted(prefs):
-    prefs.save_download_client_settings(DownloadClientConnectionSettings(api_key="secret-key"))
+    prefs.save_download_client_settings(
+        DownloadClientConnectionSettings(api_key="secret-key")
+    )
     stored = json.loads(prefs._config_path.read_text())["download_client"]["api_key"]
     assert stored != "secret-key"  # ciphertext
     assert stored != ""
@@ -50,7 +57,9 @@ def test_mask_on_save_preserves_existing_key(prefs):
     )
     # Re-save with the masked sentinel + a changed url - key must be preserved.
     prefs.save_download_client_settings(
-        DownloadClientConnectionSettings(url="http://b:5030", api_key=DOWNLOAD_CLIENT_API_KEY_MASK)
+        DownloadClientConnectionSettings(
+            url="http://b:5030", api_key=DOWNLOAD_CLIENT_API_KEY_MASK
+        )
     )
     raw = prefs.get_download_client_settings_raw()
     assert raw.api_key == "secret-key"  # preserved
@@ -61,7 +70,9 @@ def test_api_key_never_logged(prefs, caplog):
     # task-040: the slskd api_key must never appear in logs, even at DEBUG.
     with caplog.at_level(logging.DEBUG):
         prefs.save_download_client_settings(
-            DownloadClientConnectionSettings(url="http://slskd:5030", api_key="super-secret-key")
+            DownloadClientConnectionSettings(
+                url="http://slskd:5030", api_key="super-secret-key"
+            )
         )
         prefs.get_download_client_settings()
         prefs.get_download_client_settings_raw()
@@ -77,21 +88,34 @@ def test_url_scheme_normalised_for_bare_host():
 
 
 def test_url_scheme_preserved_when_already_present():
-    assert DownloadClientConnectionSettings(url="http://slskd:5030").url == "http://slskd:5030"
+    assert (
+        DownloadClientConnectionSettings(url="http://slskd:5030").url
+        == "http://slskd:5030"
+    )
     assert DownloadClientConnectionSettings(url="").url == ""
 
 
 def test_downloads_subpath_sanitised_and_round_trips(prefs):
     # leading slashes / "." / ".." components are stripped so the subpath can never
     # escape the mount, and the safe remainder persists.
-    assert DownloadClientConnectionSettings(downloads_subpath="/downloads/slskd/").downloads_subpath == (
-        "downloads/slskd"
+    assert DownloadClientConnectionSettings(
+        downloads_subpath="/downloads/slskd/"
+    ).downloads_subpath == ("downloads/slskd")
+    assert (
+        DownloadClientConnectionSettings(
+            downloads_subpath="../../etc"
+        ).downloads_subpath
+        == "etc"
     )
-    assert DownloadClientConnectionSettings(downloads_subpath="../../etc").downloads_subpath == "etc"
     prefs.save_download_client_settings(
-        DownloadClientConnectionSettings(url="http://a:5030", downloads_subpath="downloads/slskd/complete")
+        DownloadClientConnectionSettings(
+            url="http://a:5030", downloads_subpath="downloads/slskd/complete"
+        )
     )
-    assert prefs.get_download_client_settings().downloads_subpath == "downloads/slskd/complete"
+    assert (
+        prefs.get_download_client_settings().downloads_subpath
+        == "downloads/slskd/complete"
+    )
 
 
 def test_auto_retry_fields_default_and_validate():
@@ -102,7 +126,9 @@ def test_auto_retry_fields_default_and_validate():
 
     with pytest.raises(msgspec.ValidationError, match="auto_retry_max_attempts"):
         DownloadClientConnectionSettings(auto_retry_max_attempts=21)
-    with pytest.raises(msgspec.ValidationError, match="auto_retry_base_interval_minutes"):
+    with pytest.raises(
+        msgspec.ValidationError, match="auto_retry_base_interval_minutes"
+    ):
         DownloadClientConnectionSettings(auto_retry_base_interval_minutes=0)
 
 
@@ -120,3 +146,97 @@ def test_quality_and_threshold_fields_persist(prefs):
     assert raw.verify_downloads is False
     assert raw.preflight_score_auto_accept == 0.80
     assert raw.preflight_score_manual_min == 0.40
+
+
+def test_quality_recipe_save_round_trips_with_legacy_mirrors(prefs):
+    from models.acquisition_quality import QualityRecipeEntry
+
+    recipe = [
+        QualityRecipeEntry(format="flac", quality="cd"),
+        QualityRecipeEntry(format="mp3", quality="320_plus"),
+    ]
+    prefs.save_download_policy(
+        DownloadPolicySettings(quality_recipe=recipe, quality_preference_order=[])
+    )
+
+    stored = json.loads(prefs._config_path.read_text())
+    section = stored["download_policy"]
+    assert section["quality_recipe"] == [
+        {
+            "format": "flac",
+            "quality": "cd",
+            "min_bitrate_kbps": None,
+            "target_bitrate_kbps": None,
+            "max_bitrate_kbps": None,
+            "bit_depth": None,
+            "sample_rate_hz": None,
+        },
+        {
+            "format": "mp3",
+            "quality": "320_plus",
+            "min_bitrate_kbps": 320,
+            "target_bitrate_kbps": 320,
+            "max_bitrate_kbps": None,
+            "bit_depth": None,
+            "sample_rate_hz": None,
+        },
+    ]
+    assert section["quality_min"] == "mp3_320"
+    assert section["quality_max"] == "lossless"
+    assert section["quality_preference_order"] == ["lossless", "mp3_320"]
+    assert prefs.get_free_music_settings().preferred_format == "flac"
+
+    loaded = prefs.get_download_policy()
+    assert loaded.quality_recipe_status == "v2"
+    assert loaded.quality_recipe_error is None
+    assert build_snapshot(loaded).schema_version == 2
+
+
+def test_non_convertible_recipe_status_preserves_source_and_uses_v1_snapshot(prefs):
+    from models.acquisition_quality import QualityRecipeEntry
+
+    recipe = [QualityRecipeEntry(format="mp3", quality="320_plus")]
+    prefs._save_config(
+        {
+            "download_policy": {
+                "flac_mp3_only": False,
+                "quality_recipe": [
+                    {
+                        "format": entry.format,
+                        "quality": entry.quality,
+                        "min_bitrate_kbps": entry.min_bitrate_kbps,
+                        "target_bitrate_kbps": entry.target_bitrate_kbps,
+                        "max_bitrate_kbps": entry.max_bitrate_kbps,
+                        "bit_depth": entry.bit_depth,
+                        "sample_rate_hz": entry.sample_rate_hz,
+                    }
+                    for entry in recipe
+                ],
+            }
+        }
+    )
+    before = prefs._config_path.read_text()
+    loaded = prefs.get_download_policy()
+    assert loaded.quality_recipe_status == "non_convertible"
+    assert loaded.quality_recipe_error
+    assert loaded.quality_recipe
+    assert build_snapshot(loaded).schema_version == 1
+    assert prefs._config_path.read_text() == before
+
+
+def test_invalid_stored_recipe_is_reported_without_healing_config(prefs):
+    prefs._save_config(
+        {
+            "download_policy": {
+                "quality_min": "mp3_192",
+                "quality_max": "lossless",
+                "quality_recipe": [{"format": "mp3", "quality": "not-a-quality"}],
+            }
+        }
+    )
+    before = prefs._config_path.read_text()
+    loaded = prefs.get_download_policy()
+    assert loaded.quality_recipe_status == "invalid"
+    assert loaded.quality_recipe == []
+    assert loaded.quality_recipe_error
+    assert prefs._config_path.read_text() == before

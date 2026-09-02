@@ -19,6 +19,7 @@ from models.acquisition_quality import (
     EvidenceProvenance as P,
     QualityDecision,
     QualityReason as QR,
+    QualityRecipeEntry,
     lossless_detail_step,
 )
 from services.native.acquisition.quality import (
@@ -80,10 +81,16 @@ def test_existing_install_migration_derives_highest_first_order():
 
 def test_derive_default_order_contiguous_and_descending():
     assert derive_default_order("low", "lossless") == [
-        "lossless", "mp3_320", "mp3_256", "mp3_192", "low",
+        "lossless",
+        "mp3_320",
+        "mp3_256",
+        "mp3_192",
+        "low",
     ]
     assert derive_default_order("mp3_192", "mp3_320") == [
-        "mp3_320", "mp3_256", "mp3_192",
+        "mp3_320",
+        "mp3_256",
+        "mp3_192",
     ]
 
 
@@ -93,7 +100,9 @@ def test_normalize_order_rejects_missing_extra_and_wrong_endpoints():
     with pytest.raises(ValueError):
         normalize_order(["lossless"], "mp3_192", "lossless")
     with pytest.raises(ValueError):  # duplicate-ish wrong set
-        normalize_order(["lossless", "mp3_320", "mp3_256", "low"], "mp3_192", "lossless")
+        normalize_order(
+            ["lossless", "mp3_320", "mp3_256", "low"], "mp3_192", "lossless"
+        )
     # A non-default permutation IS valid (order[0] = most preferred), e.g.
     # the Efficient-192+ preset list.
     assert normalize_order(
@@ -105,7 +114,9 @@ def test_snapshot_hash_stable_and_summary_independent():
     a = build_snapshot(policy(**BALANCED))
     b = build_snapshot(policy(**BALANCED))
     assert a.snapshot_hash == b.snapshot_hash
-    changed = build_snapshot(policy(**{**BALANCED, "preferred_lossy_bitrate_kbps": 256}))
+    changed = build_snapshot(
+        policy(**{**BALANCED, "preferred_lossy_bitrate_kbps": 256})
+    )
     assert changed.snapshot_hash != a.snapshot_hash
 
 
@@ -122,9 +133,9 @@ def test_migration_snapshot_tags_origin():
     [
         (16, 44100, 0),
         (16, 48000, 0),
-        (20, 48000, 1),   # 20-bit maps to the up-to-24-bit step
+        (20, 48000, 1),  # 20-bit maps to the up-to-24-bit step
         (24, 44100, 1),
-        (24, 88200, 2),   # 88.2 kHz folds into the 96 step
+        (24, 88200, 2),  # 88.2 kHz folds into the 96 step
         (24, 96000, 2),
         (24, 176400, 3),  # 176.4 folds into 192
         (24, 192000, 3),
@@ -171,7 +182,15 @@ def test_target_mode_walks_ladder_upward_from_target():
 
 def test_preferred_cd_lossless_is_step_zero_with_resolution_code():
     snap = build_snapshot(policy(**BALANCED))
-    d = evaluate(snap, EV(extension="flac", codec_family=F.LOSSLESS, bit_depth=16, sample_rate_hz=44100))
+    d = evaluate(
+        snap,
+        EV(
+            extension="flac",
+            codec_family=F.LOSSLESS,
+            bit_depth=16,
+            sample_rate_hz=44100,
+        ),
+    )
     assert d.eligible and d.preference_step == 0 and d.tier == "lossless"
     names = [r.name for r in d.reasons]
     assert "PREFERRED_TIER" in names and "PREFERRED_LOSSLESS_RESOLUTION" in names
@@ -184,14 +203,20 @@ def test_hires_violates_provable_cap_even_when_one_axis_unknown():
     assert d.disposition == "outside_policy"
     assert any(r is QR.LOSSLESS_RESOLUTION_ABOVE_MAXIMUM for r in d.reasons)
     # Known-axis compliance + missing axis cannot prove violation -> eligible partial.
-    d2 = evaluate(snap, EV(extension="flac", codec_family=F.LOSSLESS, sample_rate_hz=44100))
+    d2 = evaluate(
+        snap, EV(extension="flac", codec_family=F.LOSSLESS, sample_rate_hz=44100)
+    )
     assert d2.eligible
     assert any(r is QR.LOSSLESS_RESOLUTION_PARTIAL for r in d2.reasons)
 
 
 def test_unknown_family_rules_dispatch():
     review = evaluate(build_snapshot(policy(unknown_quality_behavior="review")), EV())
-    assert review.disposition == "needs_review" and review.tier is None and not review.eligible
+    assert (
+        review.disposition == "needs_review"
+        and review.tier is None
+        and not review.eligible
+    )
     rej = evaluate(build_snapshot(policy(unknown_quality_behavior="reject")), EV())
     assert rej.disposition == "unknown_rejected" and not rej.eligible
     fb = evaluate(build_snapshot(policy()), EV())  # allow_as_fallback default
@@ -201,7 +226,9 @@ def test_unknown_family_rules_dispatch():
 def test_family_unknown_fallback_ranks_strictly_after_known_steps():
     snap = build_snapshot(policy(unknown_quality_behavior="allow_as_fallback"))
     known_best = preference_step(snap, EV(extension="flac", codec_family=F.LOSSLESS))
-    known_worst = preference_step(snap, EV(extension="mp3", codec_family=F.LOSSY, bitrate_kbps=320))
+    known_worst = preference_step(
+        snap, EV(extension="mp3", codec_family=F.LOSSY, bitrate_kbps=320)
+    )
     unknown = preference_step(snap, EV(codec_family=F.UNKNOWN))
     assert unknown == len(snap.quality_preference_order)
     assert unknown > max(m for m in (known_best, known_worst) if m is not None)
@@ -218,7 +245,9 @@ def test_missing_bitrate_lossy_keeps_low_projection_and_never_promotes():
     assert d2.eligible and d2.preference_step == len(wide.quality_preference_order) - 1
     codes = [r.name for r in d2.reasons]
     assert "LOSSY_BITRATE_UNKNOWN" in codes and "FALLBACK_TIER" in codes
-    assert "OUTSIDE_GLOBAL_PREFERENCE" not in codes or d2.disposition != "outside_policy"
+    assert (
+        "OUTSIDE_GLOBAL_PREFERENCE" not in codes or d2.disposition != "outside_policy"
+    )
 
 
 def test_lossy_bounds_reject_outside_band():
@@ -230,10 +259,18 @@ def test_lossy_bounds_reject_outside_band():
             lossy_max_bitrate_kbps=320,
         )
     )
-    below = evaluate(bounded, EV(extension="mp3", codec_family=F.LOSSY, bitrate_kbps=160))
-    above = evaluate(bounded, EV(extension="ogg", codec_family=F.LOSSY, bitrate_kbps=500))
-    assert not below.eligible and any(r is QR.LOSSY_BITRATE_BELOW_MINIMUM for r in below.reasons)
-    assert not above.eligible and any(r is QR.LOSSY_BITRATE_ABOVE_MAXIMUM for r in above.reasons)
+    below = evaluate(
+        bounded, EV(extension="mp3", codec_family=F.LOSSY, bitrate_kbps=160)
+    )
+    above = evaluate(
+        bounded, EV(extension="ogg", codec_family=F.LOSSY, bitrate_kbps=500)
+    )
+    assert not below.eligible and any(
+        r is QR.LOSSY_BITRATE_BELOW_MINIMUM for r in below.reasons
+    )
+    assert not above.eligible and any(
+        r is QR.LOSSY_BITRATE_ABOVE_MAXIMUM for r in above.reasons
+    )
 
 
 def test_lossy_target_exact_hit_records_code():
@@ -255,7 +292,12 @@ def test_inferred_provenance_codes_attached():
     )
     cat = evaluate(
         build_snapshot(policy()),
-        EV(extension="mp3", codec_family=F.LOSSY, bitrate_kbps=320, provenance=P.CATEGORY),
+        EV(
+            extension="mp3",
+            codec_family=F.LOSSY,
+            bitrate_kbps=320,
+            provenance=P.CATEGORY,
+        ),
     )
     assert any(r is QR.QUALITY_INFERRED_FROM_TITLE for r in title.reasons)
     assert any(r is QR.QUALITY_INFERRED_FROM_CATEGORY for r in cat.reasons)
@@ -269,7 +311,12 @@ def test_evaluate_worst_takes_worst_policy_step():
     folded = evaluate_worst(
         snap,
         [
-            EV(extension="flac", codec_family=F.LOSSLESS, bit_depth=16, sample_rate_hz=44100),
+            EV(
+                extension="flac",
+                codec_family=F.LOSSLESS,
+                bit_depth=16,
+                sample_rate_hz=44100,
+            ),
             EV(extension="mp3", codec_family=F.LOSSY, bitrate_kbps=320),
         ],
     )
@@ -279,10 +326,23 @@ def test_evaluate_worst_takes_worst_policy_step():
 
 def test_evaluate_worst_flags_mixed_folder_and_floors_certainty():
     snap = build_snapshot(policy())
-    a = EV(extension="flac", codec_family=F.LOSSLESS, bit_depth=24, sample_rate_hz=96000,
-           certainty=C.PARTIAL, audio_file_count=3, total_bytes=100)
-    b = EV(extension="mp3", codec_family=F.LOSSY, bitrate_kbps=320, certainty=C.EXACT,
-           audio_file_count=1, total_bytes=50)
+    a = EV(
+        extension="flac",
+        codec_family=F.LOSSLESS,
+        bit_depth=24,
+        sample_rate_hz=96000,
+        certainty=C.PARTIAL,
+        audio_file_count=3,
+        total_bytes=100,
+    )
+    b = EV(
+        extension="mp3",
+        codec_family=F.LOSSY,
+        bitrate_kbps=320,
+        certainty=C.EXACT,
+        audio_file_count=1,
+        total_bytes=50,
+    )
     folded = evaluate_worst(snap, [a, b])
     assert folded.evidence.certainty is C.PARTIAL
     assert folded.evidence.total_bytes == 150
@@ -299,7 +359,12 @@ def test_evaluate_worst_prefers_review_over_eligible_and_not_importable_over_all
         review_snap,
         [
             EV(codec_family=F.UNKNOWN),
-            EV(extension="flac", codec_family=F.LOSSLESS, bit_depth=16, sample_rate_hz=44100),
+            EV(
+                extension="flac",
+                codec_family=F.LOSSLESS,
+                bit_depth=16,
+                sample_rate_hz=44100,
+            ),
         ],
     )
     assert mixed.disposition == "needs_review"  # one unknown file parks the folder
@@ -345,7 +410,15 @@ def test_archive_24bit_flac_proves_cap_violation_without_sample_rate():
 
 def test_decision_roundtrips_through_house_json_codec():
     snap = build_snapshot(policy(**BALANCED))
-    d = evaluate(snap, EV(extension="flac", codec_family=F.LOSSLESS, bit_depth=16, sample_rate_hz=44100))
+    d = evaluate(
+        snap,
+        EV(
+            extension="flac",
+            codec_family=F.LOSSLESS,
+            bit_depth=16,
+            sample_rate_hz=44100,
+        ),
+    )
     blob = msgspec.json.encode(d)
     back = msgspec.convert(msgspec.json.decode(blob), type=QualityDecision)
     assert back == d
@@ -357,7 +430,9 @@ def test_policy_hash_changes_only_on_policy_inputs():
     s2.summary += " (edited)"
     s2.origin = "manual_override"
     assert snapshot_policy_hash(s1) == snapshot_policy_hash(s2)
-    s3 = build_snapshot(policy(**{**BALANCED, "source_selection_mode": "quality_first"}))
+    s3 = build_snapshot(
+        policy(**{**BALANCED, "source_selection_mode": "quality_first"})
+    )
     assert snapshot_policy_hash(s3) != snapshot_policy_hash(s1)
 
 
@@ -397,3 +472,76 @@ def test_efficient_preset_orders_band_then_target_distance_then_lossless():
 def test_snapshot_struct_version_pinned():
     snap = AcquisitionQualitySnapshot()
     assert snap.schema_version == 1
+
+
+def test_recipe_entry_requires_exact_evidence_for_automatic_claim():
+    snap = build_snapshot(
+        policy(
+            quality_recipe=[
+                QualityRecipeEntry(format="flac", quality="cd"),
+                QualityRecipeEntry(format="mp3", quality="320_plus"),
+            ],
+            unknown_quality_behavior="review",
+        )
+    )
+    partial = evaluate(
+        snap,
+        EV(
+            extension="mp3",
+            codec_family=F.LOSSY,
+            bitrate_kbps=320,
+            certainty=C.PARTIAL,
+            provenance=P.SOURCE_METADATA,
+        ),
+    )
+    inferred = evaluate(
+        snap,
+        EV(
+            extension="mp3",
+            codec_family=F.LOSSY,
+            bitrate_kbps=320,
+            certainty=C.INFERRED,
+            provenance=P.CATEGORY,
+        ),
+    )
+    assert partial.disposition == "needs_review"
+    assert inferred.disposition == "needs_review"
+    assert partial.quality_recipe_index is None
+    assert inferred.quality_recipe_entry is None
+
+    exact = evaluate(
+        snap,
+        EV(
+            extension="mp3",
+            codec_family=F.LOSSY,
+            bitrate_kbps=320,
+            certainty=C.EXACT,
+            provenance=P.SOURCE_METADATA,
+        ),
+    )
+    assert exact.eligible is True
+    assert exact.quality_recipe_index == 1
+    assert exact.quality_recipe_entry == snap.quality_recipe[1]
+
+
+def test_recipe_unknown_allow_is_last_resort_without_entry():
+    snap = build_snapshot(
+        policy(
+            quality_recipe=[QualityRecipeEntry(format="mp3", quality="320_plus")],
+            unknown_quality_behavior="allow_as_fallback",
+        )
+    )
+    decision = evaluate(
+        snap,
+        EV(
+            extension="mp3",
+            codec_family=F.LOSSY,
+            bitrate_kbps=320,
+            certainty=C.INFERRED,
+            provenance=P.RELEASE_TITLE,
+        ),
+    )
+    assert decision.eligible is True
+    assert decision.disposition == "fallback"
+    assert decision.preference_step == len(snap.quality_recipe)
+    assert decision.quality_recipe_index is None

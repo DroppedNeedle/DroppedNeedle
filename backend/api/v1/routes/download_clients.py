@@ -155,16 +155,14 @@ async def update_policy(
     # submitted field (Acquisition plan: never clamp new-field submissions).
     try:
         validate_new_quality_fields(payload)
-    except ValueError as exc:
+        policy = msgspec.convert(payload, type=DownloadPolicySettings)
+    except (ValueError, TypeError, msgspec.ValidationError) as exc:
         from core.exceptions import ValidationError
 
         raise ValidationError(str(exc)) from exc
-    policy = msgspec.convert(payload, type=DownloadPolicySettings)
     preferences.save_download_policy(policy)
     _clear_download_client_cache()
     return preferences.get_download_policy()
-
-
 
 
 @router.get("/policy-summary", response_model=PolicySummaryResponse)
@@ -197,10 +195,12 @@ async def get_policy_summary(
     return PolicySummaryResponse(
         summary=snapshot.summary,
         source_mode=policy.source_selection_mode,
-        legacy_rollback_compatible=legacy_rollback_compatible,
+        legacy_rollback_compatible=(
+            not policy.quality_recipe and legacy_rollback_compatible
+        ),
+        quality_recipe_status=policy.quality_recipe_status,
+        quality_recipe_error=policy.quality_recipe_error,
     )
-
-
 
 
 @router.post("/policy/impact", response_model=PolicyImpactResponse)
@@ -220,29 +220,20 @@ async def preview_policy_impact(
 
     try:
         validate_new_quality_fields(payload)
-    except ValueError as exc:
+        candidate = msgspec.convert(payload, type=DownloadPolicySettings)
+        snapshot = build_snapshot(candidate)
+    except (ValueError, TypeError, msgspec.ValidationError) as exc:
         from core.exceptions import ValidationError
 
         raise ValidationError(str(exc)) from exc
-    candidate = msgspec.convert(payload, type=DownloadPolicySettings)
-    snapshot = build_snapshot(candidate)
-    legacy_representable = (
-        snapshot.quality_preference_order == derive_default_order(
-            candidate.quality_min, candidate.quality_max
-        )
-        or snapshot.quality_preference_order == list(snapshot.quality_preference_order)
-        and False
-    )
     # Legacy-representable = EXACTLY today's default shape (hi-res-first over a
     # contiguous range with no custom targets/caps/evidence overrides) - i.e.
     # what an older image can reproduce on load.
     legacy_representable = (
-        sorted(snapshot.quality_preference_order) == sorted(
-            derive_default_order(candidate.quality_min, candidate.quality_max)
-        )
-        and snapshot.quality_preference_order == derive_default_order(
-            candidate.quality_min, candidate.quality_max
-        )
+        sorted(snapshot.quality_preference_order)
+        == sorted(derive_default_order(candidate.quality_min, candidate.quality_max))
+        and snapshot.quality_preference_order
+        == derive_default_order(candidate.quality_min, candidate.quality_max)
         and candidate.lossless_preference == "highest"
         and candidate.lossless_max_bit_depth is None
         and candidate.lossless_max_sample_rate_hz is None
@@ -262,6 +253,7 @@ async def preview_policy_impact(
         held_reviews=buckets["held_reviews"],
         legacy_representable=bool(legacy_representable),
     )
+
 
 @router.get("/wanted", response_model=WantedWatcherSettings)
 async def get_wanted_watcher_settings(

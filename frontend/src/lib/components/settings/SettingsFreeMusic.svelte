@@ -6,6 +6,7 @@
 	import { getPolicySummaryQuery } from '$lib/queries/downloads/PolicyQueries.svelte';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import type { FreeMusicSettings } from '$lib/types';
+	import { withBasePath } from '$lib/utils/basePath';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 
 	// Enabling this flips is_download_source_ready(), which gates the request buttons,
@@ -25,6 +26,16 @@
 	// Read-only consumption of the global acquisition policy (spec): the Archive
 	// flow no longer carries its own format choice - the shared order governs it.
 	const policySummary = getPolicySummaryQuery();
+	const policyStatus = $derived(policySummary.data?.quality_recipe_status ?? null);
+	const policyNeedsAttention = $derived(
+		policyStatus === 'invalid' || policyStatus === 'non_convertible'
+	);
+	const policyStatusMessage = $derived(
+		policySummary.data?.quality_recipe_error ||
+			(policyStatus === 'non_convertible'
+				? 'The saved policy includes formats outside the supported FLAC and MP3 recipe.'
+				: 'Choose a valid acquisition recipe before requesting music.')
+	);
 	onDestroy(() => form.cleanup());
 </script>
 
@@ -68,13 +79,28 @@
 
 			<div class="form-control pt-2">
 				<span class="label-text font-medium">Quality</span>
-				<p class="text-sm text-base-content/70" data-testid="free-music-policy-summary">
-					{#if policySummary.data?.summary}
-						{policySummary.data.summary}
-					{:else}
-						Use the admin policy summary
-					{/if}
-				</p>
+				{#if policyNeedsAttention}
+					<div class="alert alert-warning mt-2 items-start" role="alert">
+						<div class="min-w-0">
+							<strong>Acquisition quality policy needs attention</strong>
+							<p class="text-sm">{policyStatusMessage}</p>
+						</div>
+						<a
+							href={withBasePath('/settings?tab=download-client')}
+							class="btn btn-warning btn-outline btn-sm min-h-11 shrink-0"
+						>
+							Open acquisition policy
+						</a>
+					</div>
+				{:else if policySummary.isError}
+					<div class="alert alert-warning mt-2" role="alert">
+						<p>Could not load the acquisition policy summary.</p>
+					</div>
+				{:else}
+					<p class="text-sm text-base-content/70" data-testid="free-music-policy-summary">
+						{policySummary.data?.summary || 'Use the admin policy summary'}
+					</p>
+				{/if}
 				<p class="mt-1 text-xs text-base-content/50">
 					Archive requests follow the server's download-quality order, so no separate format is
 					chosen here.

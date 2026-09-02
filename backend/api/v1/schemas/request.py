@@ -18,6 +18,7 @@ class RequestAcceptedResponse(AppStruct):
     message: str
     musicbrainz_id: str
     status: str = "pending"
+    quality_snapshot_summary: str | None = None
 
 
 class BatchAlbumItem(AppStruct):

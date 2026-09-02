@@ -34,6 +34,7 @@ _FREE_MUSIC_QUALITY_UPDATABLE = frozenset(
     }
 )
 
+
 def _row_to_task(row: sqlite3.Row) -> FreeMusicTask:
     return FreeMusicTask(
         id=row["id"],
@@ -359,6 +360,42 @@ class FreeMusicStore(PersistenceBase):
         def operation(conn: sqlite3.Connection) -> None:
             for sql, sql_params in statements:
                 conn.execute(sql, sql_params)
+
+        return await self._write(operation)
+
+    async def backfill_free_music_quality_fields(self, updates: list[dict]) -> int:
+        """Stamp only snapshot-less Free Music tasks during startup migration."""
+        if not updates:
+            return 0
+        now = time.time()
+        statements: list[tuple[str, tuple[Any, ...]]] = []
+        for change in updates:
+            task_id = change.get("id")
+            if not isinstance(task_id, str) or not task_id:
+                raise ValueError("each quality-field update needs a task id")
+            sets = ["updated_at = ?"]
+            params: list[Any] = [now]
+            for key, value in change.items():
+                if key == "id":
+                    continue
+                if key not in _FREE_MUSIC_QUALITY_UPDATABLE:
+                    raise ValueError(f"free_music_tasks column not updatable: {key}")
+                sets.append(f"{key} = ?")
+                params.append(value)
+            params.append(task_id)
+            statements.append(
+                (
+                    "UPDATE free_music_tasks SET "
+                    f"{', '.join(sets)} WHERE id = ? AND quality_snapshot_json IS NULL",
+                    tuple(params),
+                )
+            )
+
+        def operation(conn: sqlite3.Connection) -> int:
+            changed = 0
+            for sql, sql_params in statements:
+                changed += conn.execute(sql, sql_params).rowcount
+            return changed
 
         return await self._write(operation)
 

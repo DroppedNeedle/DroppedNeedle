@@ -18,7 +18,7 @@ drop-import handoff skips or upgrades an owned album after the fact.
 
 from typing import TYPE_CHECKING, Callable
 
-from core.exceptions import ProviderIdentityRequiredError
+from core.exceptions import ProviderIdentityRequiredError, ResourceNotFoundError
 from infrastructure.queue.priority_queue import RequestPriority
 
 if TYPE_CHECKING:
@@ -78,6 +78,20 @@ class AcquisitionDispatcher:
                 "Free Music needs the album tracklist before it can choose a source."
             )
         return album.total_tracks
+
+    async def get_quality_snapshot_summary(
+        self, task_id: str, user_id: str, user_role: str
+    ) -> str | None:
+        """Read the summary pinned to the just-created task, regardless of backend."""
+        try:
+            task = await self._get_download_service().get_task(
+                task_id, user_id, user_role
+            )
+        except ResourceNotFoundError:
+            task = await self._get_free_music_service().get_task(
+                task_id, user_id=user_id, is_admin=user_role == "admin"
+            )
+        return getattr(task, "quality_snapshot_summary", None)
 
     async def request_album(
         self,

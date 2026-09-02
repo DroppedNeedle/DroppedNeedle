@@ -26,6 +26,8 @@ export interface FreeMusicTask {
 	bytes_total: number;
 	bytes_downloaded: number;
 	error: string | null;
+	quality_snapshot_hash: string | null;
+	quality_snapshot_summary: string | null;
 }
 
 export interface FreeMusicTasks {

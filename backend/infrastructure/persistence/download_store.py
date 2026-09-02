@@ -761,6 +761,7 @@ class DownloadStore(PersistenceBase):
         quality_preference_step: int | None = None,
         quality_certainty: str | None = None,
         quality_provenance: str | None = None,
+        manual_quality_override: bool = False,
     ) -> DownloadTask:
         now = time.time()
         task = DownloadTask(
@@ -799,6 +800,7 @@ class DownloadStore(PersistenceBase):
             quality_preference_step=quality_preference_step,
             quality_certainty=quality_certainty,
             quality_provenance=quality_provenance,
+            manual_quality_override=manual_quality_override,
         )
         values = tuple(getattr(task, col) for col in _TASK_COLUMNS)
         placeholders = ", ".join("?" for _ in _TASK_COLUMNS)
@@ -1176,6 +1178,49 @@ class DownloadStore(PersistenceBase):
 
         return await self._write(operation)
 
+    async def backfill_task_quality_fields(self, updates: list[dict]) -> int:
+        """Stamp only rows still missing a snapshot during startup migration.
+
+        The feed is read before this write, so a live task may pin its own
+        snapshot in the meantime. The SQL guard makes the migration idempotent
+        and prevents it from overwriting that live snapshot.
+        """
+        if not updates:
+            return 0
+        now = time.time()
+        statements: list[tuple[str, tuple[Any, ...]]] = []
+        for change in updates:
+            task_id = change.get("id")
+            if not isinstance(task_id, str) or not task_id:
+                raise ValueError("each quality-field update needs a task id")
+            sets = ["updated_at = ?"]
+            params: list[Any] = [now]
+            for key, value in change.items():
+                if key == "id":
+                    continue
+                if key not in _TASK_QUALITY_UPDATABLE:
+                    raise ValueError(f"download_tasks column not updatable: {key}")
+                if key == "manual_quality_override":
+                    value = int(bool(value))
+                sets.append(f"{key} = ?")
+                params.append(value)
+            params.append(task_id)
+            statements.append(
+                (
+                    "UPDATE download_tasks SET "
+                    f"{', '.join(sets)} WHERE id = ? AND quality_snapshot_json IS NULL",
+                    tuple(params),
+                )
+            )
+
+        def operation(conn: sqlite3.Connection) -> int:
+            changed = 0
+            for sql, sql_params in statements:
+                changed += conn.execute(sql, sql_params).rowcount
+            return changed
+
+        return await self._write(operation)
+
     async def set_source_username(self, task_id: str, username: str) -> None:
         def operation(conn: sqlite3.Connection) -> None:
             conn.execute(
@@ -1208,6 +1253,10 @@ class DownloadStore(PersistenceBase):
         *,
         source: str = "soulseek",
         download_client: str = "slskd",
+        quality_preference_step: int | None = None,
+        quality_certainty: str | None = None,
+        quality_provenance: str | None = None,
+        manual_quality_override: bool = False,
     ) -> None:
         """(AUD-8) Link task<->candidate AND move the search job to 'matched' in
         ONE transaction (single commit). ``source``/``download_client`` route a picked
@@ -1219,7 +1268,9 @@ class DownloadStore(PersistenceBase):
                 """UPDATE download_tasks
                    SET search_job_id = ?, candidate_index = ?, source_username = ?,
                        source_directory = ?, preflight_score = ?, source = ?,
-                       download_client = ?, updated_at = ?
+                       download_client = ?, quality_preference_step = ?,
+                       quality_certainty = ?, quality_provenance = ?,
+                       manual_quality_override = ?, updated_at = ?
                    WHERE id = ?""",
                 (
                     search_job_id,
@@ -1229,6 +1280,10 @@ class DownloadStore(PersistenceBase):
                     preflight_score,
                     source,
                     download_client,
+                    quality_preference_step,
+                    quality_certainty,
+                    quality_provenance,
+                    int(manual_quality_override),
                     now,
                     task_id,
                 ),
@@ -2731,6 +2786,42 @@ class DownloadStore(PersistenceBase):
         def operation(conn: sqlite3.Connection) -> None:
             for sql, sql_params in statements:
                 conn.execute(sql, sql_params)
+
+        return await self._write(operation)
+
+    async def backfill_search_job_quality_snapshots(self, updates: list[dict]) -> int:
+        """Stamp only snapshot-less search jobs during startup migration."""
+        if not updates:
+            return 0
+        now = time.time()
+        statements: list[tuple[str, tuple[Any, ...]]] = []
+        for change in updates:
+            job_id = change.get("id")
+            if not isinstance(job_id, str) or not job_id:
+                raise ValueError("each snapshot update needs a search job id")
+            sets = ["updated_at = ?"]
+            params: list[Any] = [now]
+            for key, value in change.items():
+                if key == "id":
+                    continue
+                if key not in _SEARCH_JOB_QUALITY_UPDATABLE:
+                    raise ValueError(f"search_jobs column not updatable: {key}")
+                sets.append(f"{key} = ?")
+                params.append(value)
+            params.append(job_id)
+            statements.append(
+                (
+                    "UPDATE search_jobs SET "
+                    f"{', '.join(sets)} WHERE id = ? AND quality_snapshot_json IS NULL",
+                    tuple(params),
+                )
+            )
+
+        def operation(conn: sqlite3.Connection) -> int:
+            changed = 0
+            for sql, sql_params in statements:
+                changed += conn.execute(sql, sql_params).rowcount
+            return changed
 
         return await self._write(operation)
 

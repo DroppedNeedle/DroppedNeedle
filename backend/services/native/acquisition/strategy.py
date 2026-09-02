@@ -161,9 +161,8 @@ def _file_serves_expected(value, tracks) -> bool:  # noqa: ANN001
             title_ok = title_containment_score(track.title, stem) >= _TAG_TITLE_WEAK
         duration_ok = None
         if track.duration_seconds and value.duration:
-            duration_ok = (
-                abs(value.duration - track.duration_seconds)
-                <= max(15.0, 0.10 * track.duration_seconds)
+            duration_ok = abs(value.duration - track.duration_seconds) <= max(
+                15.0, 0.10 * track.duration_seconds
             )
         if duration_ok is False:
             continue
@@ -187,18 +186,19 @@ def pre_publication_quality_check(
     if tagger is None or not files:
         return None
     raw = getattr(task, "quality_snapshot_json", None)
-    if not raw:
-        return None
-    from models.acquisition_quality import AcquisitionQualitySnapshot
-
-    import msgspec as _ms
-
-    try:
-        snapshot = _ms.json.decode(raw, type=AcquisitionQualitySnapshot)
-    except ValueError:
+    if raw is None:
         return None
 
     from services.native.acquisition import quality as acq_quality
+
+    try:
+        snapshot = acq_quality.decode_snapshot(raw)
+    except acq_quality.SnapshotValidationError:
+        return {
+            "reason": "post_download_quality_mismatch",
+            "detail": "Stored quality policy snapshot is invalid.",
+        }
+
     from services.native.acquisition.local_probe import (
         expected_vs_actual_copy,
         probe_files_sync,
@@ -216,7 +216,6 @@ def pre_publication_quality_check(
             "detail": expected_vs_actual_copy(decision, probed),
         }
     return None
-
 
 
 @runtime_checkable
@@ -362,9 +361,7 @@ class SoulseekStrategy:
         # there's no release-level blocklist to apply at failover time.
         return
 
-    async def search_and_score(
-        self, task, *, timeout, auto, manual, snapshot
-    ):  # noqa: ANN001, ANN201
+    async def search_and_score(self, task, *, timeout, auto, manual, snapshot):  # noqa: ANN001, ANN201
         held_tier = await _upgrade_held_tier(self._library, task)
         extras = self._extras()
         if task.download_type == "track":
@@ -615,7 +612,10 @@ class SoulseekStrategy:
             if mismatch is not None:
                 logger.info(
                     "download.quality_mismatch",
-                    extra={"task_id": task.id, **{k: v for k, v in mismatch.items() if k != "probed"}},
+                    extra={
+                        "task_id": task.id,
+                        **{k: v for k, v in mismatch.items() if k != "probed"},
+                    },
                 )
                 failed = [
                     FileFailure(filename=f.filename, reason=mismatch["reason"])
@@ -663,9 +663,7 @@ class SoulseekStrategy:
         try:
             if task.search_job_id is None or task.candidate_index is None:
                 return None
-            candidates = await self._store.get_search_job_candidates(
-                task.search_job_id
-            )
+            candidates = await self._store.get_search_job_candidates(task.search_job_id)
             if 0 <= task.candidate_index < len(candidates):
                 return candidates[task.candidate_index]
         except Exception:  # noqa: BLE001 - probe path must fail open
@@ -805,9 +803,7 @@ class UsenetStrategy:
             },
         )
 
-    async def search_and_score(
-        self, task, *, timeout, auto, manual, snapshot
-    ):  # noqa: ANN001, ANN201
+    async def search_and_score(self, task, *, timeout, auto, manual, snapshot):  # noqa: ANN001, ANN201
         # A track upgrade still fetches the album NZB (D4), but its floor is the
         # RECORDING's held tier - _upgrade_held_tier scopes by download_type.
         held_tier = await _upgrade_held_tier(self._library, task)
@@ -994,8 +990,10 @@ class UsenetStrategy:
             if mismatch is not None:
                 logger.info(
                     "download.quality_mismatch",
-                    extra={"task_id": task.id,
-                           "detail": mismatch.get("detail", "")[:200]},
+                    extra={
+                        "task_id": task.id,
+                        "detail": mismatch.get("detail", "")[:200],
+                    },
                 )
                 return (
                     ProcessResult(

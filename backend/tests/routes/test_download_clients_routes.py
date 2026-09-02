@@ -13,9 +13,10 @@ from api.v1.schemas.settings import (
     WantedWatcherSettings,
 )
 from core.dependencies import get_preferences_service
-from middleware import _get_current_admin
+from middleware import _get_current_admin, _get_current_user
+from models.acquisition_quality import QualityRecipeEntry
 from models.common import ServiceStatus
-from tests.helpers import build_test_client, mock_admin_user
+from tests.helpers import build_test_client, mock_admin_user, mock_user
 
 
 def _prefs():
@@ -200,3 +201,70 @@ def test_policy_impact_maps_invalid_submission_to_domain_error():
         raise AssertionError(f"unmapped ValueError leaked to routing: {exc}")
     raise AssertionError("expected ValidationError")
 
+
+def test_put_policy_recipe_returns_v2_status_and_recipe(monkeypatch):
+    prefs = _prefs()
+    returned = DownloadPolicySettings(
+        quality_recipe=[
+            QualityRecipeEntry(format="flac", quality="cd"),
+            QualityRecipeEntry(format="mp3", quality="320_plus"),
+        ],
+        quality_recipe_status="v2",
+    )
+    prefs.get_download_policy.return_value = returned
+    monkeypatch.setattr(download_clients, "_clear_download_client_cache", lambda: None)
+    app = _app(prefs)
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    response = build_test_client(app).put(
+        "/download-clients/policy",
+        json={
+            "flac_mp3_only": True,
+            "quality_recipe": [
+                {"format": "flac", "quality": "cd"},
+                {"format": "mp3", "quality": "320_plus"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["quality_recipe_status"] == "v2"
+    assert body["quality_recipe_error"] is None
+    assert [entry["quality"] for entry in body["quality_recipe"]] == ["cd", "320_plus"]
+    prefs.save_download_policy.assert_called_once()
+
+
+def test_put_policy_recipe_rejects_invalid_entry_before_save(monkeypatch):
+    prefs = _prefs()
+    monkeypatch.setattr(download_clients, "_clear_download_client_cache", lambda: None)
+    app = _app(prefs)
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+
+    response = build_test_client(app).put(
+        "/download-clients/policy",
+        json={
+            "flac_mp3_only": True,
+            "quality_recipe": [{"format": "mp3", "quality": "not-valid"}],
+        },
+    )
+
+    assert response.status_code in (400, 422)
+    prefs.save_download_policy.assert_not_called()
+
+
+def test_policy_summary_exposes_recipe_status_and_error():
+    prefs = _prefs()
+    prefs.get_download_policy.return_value = DownloadPolicySettings(
+        quality_recipe_status="non_convertible",
+        quality_recipe_error="v2 recipes require FLAC/MP3-only mode",
+        flac_mp3_only=False,
+    )
+    app = _app(prefs)
+    app.dependency_overrides[_get_current_user] = lambda: mock_user(role="user")
+
+    response = build_test_client(app).get("/download-clients/policy-summary")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["quality_recipe_status"] == "non_convertible"
+    assert body["quality_recipe_error"] == "v2 recipes require FLAC/MP3-only mode"

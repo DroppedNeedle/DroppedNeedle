@@ -17,6 +17,7 @@ import pytest
 from core.exceptions import ValidationError
 from infrastructure.persistence.free_music_store import FreeMusicStore
 from models.free_music import FreeMusicStatus
+from models.acquisition_quality import QualityRecipeEntry
 from repositories.archive_repository import ArchiveError, ArchiveFile, ArchiveItem
 from services.native.free_music_service import FreeMusicService
 
@@ -246,7 +247,220 @@ async def test_snapshot_preference_orders_flac_above_unknown_bitrate_mp3(tmp_pat
     assert task.quality_snapshot_hash
     ladder = json.loads(task.tried_candidates_json or "[]")
     assert {"identifier": "jamendo-117853", "format": "FLAC"} in [
-        {k: v for k, v in entry.items() if k != "reason"} for entry in ladder
+        {key: value for key, value in entry.items() if key not in {"reason", "outcome"}}
+        for entry in ladder
+    ]
+
+
+@pytest.mark.asyncio
+async def test_v2_recipe_review_candidate_uses_exact_probe_before_import(tmp_path):
+    """A review-only Archive label may download, but only exact local quality
+    evidence can authorize the Drop Import handoff."""
+    from api.v1.schemas.settings import DownloadPolicySettings
+
+    service, store, _archive, drop_import = _build(tmp_path, files=_files("FLAC"))
+    policy = DownloadPolicySettings(
+        flac_mp3_only=True,
+        quality_recipe=[QualityRecipeEntry(format="flac", quality="cd")],
+        unknown_quality_behavior="review",
+    )
+    service._prefs.get_download_policy = lambda: policy
+    probe = MagicMock()
+    probe.read_tags.return_value = (
+        None,
+        SimpleNamespace(
+            file_format="flac",
+            bitrate=700,
+            sample_rate=44100,
+            bit_depth=16,
+            file_size_bytes=500,
+        ),
+    )
+    service._probe_tagger = probe
+
+    task_id = await service.request_album(
+        user_id="u1",
+        release_group_mbid="rg",
+        artist_name="Brad Sucks",
+        album_title="Guess Who's a Mess",
+    )
+    task = await _settle(service, store, task_id)
+
+    assert task.status == FreeMusicStatus.COMPLETED
+    drop_import.create_job.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_v2_recipe_review_probe_unavailable_tries_next_without_import(tmp_path):
+    """An unavailable exact probe must record the outcome, clean the bytes, and
+    continue down the persisted candidate ladder without publishing."""
+    from api.v1.schemas.settings import DownloadPolicySettings
+
+    files = _files("FLAC", count=1, size=5000) + _files("VBR MP3", count=1, size=1000)
+    service, store, archive, drop_import = _build(tmp_path, files=files)
+    policy = DownloadPolicySettings(
+        flac_mp3_only=True,
+        quality_recipe=[
+            QualityRecipeEntry(format="flac", quality="cd"),
+            QualityRecipeEntry(format="mp3", quality="320_plus"),
+        ],
+        unknown_quality_behavior="review",
+    )
+    service._prefs.get_download_policy = lambda: policy
+    service._probe_tagger = None
+    stream_calls: list[tuple[str, str]] = []
+
+    async def stream(identifier, filename):
+        stream_calls.append((identifier, filename))
+        yield b"audio-bytes"
+
+    archive.stream_file = stream
+
+    task_id = await service.request_album(
+        user_id="u1",
+        release_group_mbid="rg",
+        artist_name="Brad Sucks",
+        album_title="Guess Who's a Mess",
+    )
+    task = await _settle(service, store, task_id)
+
+    assert task.status == FreeMusicStatus.FAILED
+    assert len(stream_calls) == 2
+    assert "quality-verified" in (task.error or "")
+    drop_import.create_job.assert_not_awaited()
+    ladder = json.loads(task.tried_candidates_json)
+    assert [entry["outcome"] for entry in ladder] == [
+        "quality_probe_unavailable",
+        "quality_probe_unavailable",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_v2_recipe_reject_excludes_candidate_before_download(tmp_path):
+    """The explicit reject rule remains a pre-download exclusion."""
+    from api.v1.schemas.settings import DownloadPolicySettings
+
+    service, store, archive, drop_import = _build(tmp_path, files=_files("FLAC"))
+    policy = DownloadPolicySettings(
+        flac_mp3_only=True,
+        quality_recipe=[QualityRecipeEntry(format="flac", quality="cd")],
+        unknown_quality_behavior="reject",
+    )
+    service._prefs.get_download_policy = lambda: policy
+    stream_calls: list[tuple[str, str]] = []
+
+    async def stream(identifier, filename):
+        stream_calls.append((identifier, filename))
+        yield b"audio-bytes"
+
+    archive.stream_file = stream
+
+    task_id = await service.request_album(
+        user_id="u1",
+        release_group_mbid="rg",
+        artist_name="Brad Sucks",
+        album_title="Guess Who's a Mess",
+    )
+    task = await _settle(service, store, task_id)
+
+    assert task.status == FreeMusicStatus.FAILED
+    assert stream_calls == []
+    drop_import.create_job.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_v1_flac_mp3_only_rejects_archive_ogg_before_download(tmp_path):
+    service, store, archive, drop_import = _build(
+        tmp_path, files=_files("Ogg Vorbis", count=1)
+    )
+    archive.extension_for = MagicMock(return_value="ogg")
+    stream_calls: list[tuple[str, str]] = []
+
+    async def stream(identifier, filename):
+        stream_calls.append((identifier, filename))
+        yield b"audio-bytes"
+
+    archive.stream_file = stream
+
+    task_id = await service.request_album(
+        user_id="u1",
+        release_group_mbid="rg",
+        artist_name="Brad Sucks",
+        album_title="Guess Who's a Mess",
+    )
+    task = await _settle(service, store, task_id)
+
+    assert task.status == FreeMusicStatus.FAILED
+    assert stream_calls == []
+    drop_import.create_job.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_v1_outside_policy_candidate_is_probed_then_fails_over(tmp_path):
+    from api.v1.schemas.settings import DownloadPolicySettings
+
+    items = [_item(identifier="low"), _item(identifier="good")]
+    service, store, archive, drop_import = _build(tmp_path, items=items)
+    archive.extension_for = MagicMock(return_value="mp3")
+    archive.get_item_files = AsyncMock(
+        side_effect=[
+            (CC, _files("VBR MP3", count=1, size=200)),
+            (CC, _files("VBR MP3", count=1, size=100)),
+        ]
+    )
+    service._prefs.get_download_policy = lambda: DownloadPolicySettings(
+        quality_min="mp3_192",
+        quality_max="lossless",
+        lossy_min_bitrate_kbps=192,
+        lossy_max_bitrate_kbps=320,
+        preferred_lossy_bitrate_kbps=320,
+    )
+    service._probe_tagger = MagicMock()
+    service._probe_tagger.read_tags.side_effect = [
+        (
+            None,
+            SimpleNamespace(
+                file_format="mp3",
+                bitrate=128,
+                sample_rate=44100,
+                bit_depth=None,
+                file_size_bytes=200,
+            ),
+        ),
+        (
+            None,
+            SimpleNamespace(
+                file_format="mp3",
+                bitrate=320,
+                sample_rate=44100,
+                bit_depth=None,
+                file_size_bytes=100,
+            ),
+        ),
+    ]
+    stream_calls: list[tuple[str, str]] = []
+
+    async def stream(identifier, filename):
+        stream_calls.append((identifier, filename))
+        yield b"audio-bytes"
+
+    archive.stream_file = stream
+
+    task_id = await service.request_album(
+        user_id="u1",
+        release_group_mbid="rg",
+        artist_name="Brad Sucks",
+        album_title="Guess Who's a Mess",
+    )
+    task = await _settle(service, store, task_id)
+
+    assert task.status == FreeMusicStatus.COMPLETED
+    assert [identifier for identifier, _filename in stream_calls] == ["low", "good"]
+    drop_import.create_job.assert_awaited_once()
+    ladder = json.loads(task.tried_candidates_json)
+    assert [entry["outcome"] for entry in ladder] == [
+        "post_download_quality_mismatch",
+        "completed",
     ]
 
 

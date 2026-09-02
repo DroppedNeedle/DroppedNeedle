@@ -35,7 +35,7 @@
 </script>
 
 <div class="flex flex-col gap-3">
-	<label class="label cursor-pointer justify-start gap-3 p-0">
+	<label class="label min-h-11 cursor-pointer justify-start gap-3 p-0">
 		<input type="checkbox" class="toggle toggle-sm toggle-primary" bind:checked={upgradeAllowed} />
 		<span class="label-text">Allow automatic upgrades</span>
 	</label>
@@ -43,7 +43,7 @@
 		When on, DroppedNeedle looks for better-quality copies of anything below your cutoff. It never
 		downgrades anything.
 	</p>
-	<label class="label cursor-pointer justify-start gap-3 p-0">
+	<label class="label min-h-11 cursor-pointer justify-start gap-3 p-0">
 		<input
 			type="checkbox"
 			class="toggle toggle-sm toggle-primary"
@@ -59,7 +59,7 @@
 	<label class="form-control max-w-xs">
 		<span class="label-text">Upgrade until quality reaches</span>
 		<select
-			class="select select-bordered select-sm"
+			class="select select-bordered select-sm min-h-11"
 			bind:value={qualityCutoff}
 			disabled={!upgradeAllowed}
 			aria-label="Upgrade until quality reaches"

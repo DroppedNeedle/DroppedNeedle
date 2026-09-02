@@ -8,6 +8,7 @@ from api.v1.schemas.advanced_settings import _validate_range
 from api.v1.schemas.plex import PlexLibrarySectionInfo
 from infrastructure.http.brainzmash_transport import BRAINZMASH_ENDPOINT
 from infrastructure.msgspec_fastapi import AppStruct
+from models.acquisition_quality import QualityRecipeEntry, validate_quality_recipe
 
 LASTFM_SECRET_MASK = "••••••••"
 
@@ -227,11 +228,14 @@ class DownloadPolicySettings(AppStruct):
     background_upgrade_scan_enabled: bool = False
     background_upgrade_scan_interval_hours: int = 12
     background_upgrade_max_per_run: int = 3
-
-    # --- Acquisition-quality preference fields (Acquisition plan, 2026-08-27).
-    # Additive so a pre-feature config keeps decoding (existing install keeps
-    # today's behavior); empty ``quality_preference_order`` derives the legacy
-    # highest-to-lowest order inside [quality_min, quality_max].
+    # v2 ordered format-quality recipe. Empty preserves the v1 policy shape and
+    # semantics; non-empty values are validated strictly before PUT conversion.
+    quality_recipe: list[QualityRecipeEntry] = msgspec.field(default_factory=list)
+    # Read-only status metadata used when a legacy policy cannot be projected
+    # without silently dropping codecs. These values are stripped before save.
+    quality_recipe_status: Literal["v1", "v2", "non_convertible", "invalid"] = "v1"
+    quality_recipe_error: str | None = None
+    # Legacy v1 order/quality fields remain for rollback and old persisted blobs.
     quality_preference_order: list[str] = msgspec.field(default_factory=list)
     preferred_lossy_bitrate_kbps: int | None = None
     lossy_min_bitrate_kbps: int | None = None
@@ -390,6 +394,24 @@ def validate_new_quality_fields(payload: Mapping[str, Any]) -> None:
     submitted_order = payload.get("quality_preference_order")
     if submitted_order:  # [] / missing = derive (same contract as GET→PUT round-trip)
         normalize_order(list(submitted_order), quality_min, quality_max)
+    submitted_recipe = payload.get("quality_recipe")
+    if submitted_recipe is not None:
+        if not isinstance(submitted_recipe, list):
+            raise ValueError("quality_recipe must be a list")
+        if submitted_recipe:
+            if payload.get("flac_mp3_only", True) is not True:
+                raise ValueError(
+                    "quality_recipe requires flac_mp3_only=true; "
+                    "replace the non-convertible policy first"
+                )
+            try:
+                entries = [
+                    msgspec.convert(item, type=QualityRecipeEntry, strict=True)
+                    for item in submitted_recipe
+                ]
+                validate_quality_recipe(entries)
+            except (msgspec.ValidationError, TypeError, ValueError) as exc:
+                raise ValueError(str(exc)) from exc
     _lossless_prefs = {"cd", "24_48", "24_96", "24_192", "highest"}
     _unknown_rules = {"reject", "review", "allow_as_fallback"}
     _source_modes = {"source_first", "quality_first"}

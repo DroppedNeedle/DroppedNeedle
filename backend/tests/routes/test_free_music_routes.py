@@ -31,6 +31,8 @@ def _task(task_id: str = "t1", user_id: str = "test-user-id") -> FreeMusicTask:
         licence_url="http://creativecommons.org/licenses/by-nc-sa/3.0/",
         files_total=10,
         files_completed=3,
+        quality_snapshot_hash="snapshot-hash",
+        quality_snapshot_summary="Try FLAC, then MP3 320 kbps.",
     )
 
 
@@ -60,7 +62,22 @@ def test_list_returns_the_callers_tasks():
     body = response.json()["tasks"][0]
     assert body["identifier"] == "jamendo-117853"
     assert body["licence_url"].startswith("http://creativecommons.org/")
+    assert body["quality_snapshot_hash"] == "snapshot-hash"
+    assert body["quality_snapshot_summary"] == "Try FLAC, then MP3 320 kbps."
+    assert "quality_snapshot_json" not in body
     assert service.list_tasks.await_args.kwargs["include_all"] is False
+
+
+def test_quality_snapshot_context_is_safe_and_available_on_detail():
+    client, _service = _client()
+
+    response = client.get("/api/v1/free-music/tasks/t1")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["quality_snapshot_hash"] == "snapshot-hash"
+    assert body["quality_snapshot_summary"] == "Try FLAC, then MP3 320 kbps."
+    assert "quality_snapshot_json" not in body
 
 
 def test_all_is_admin_only():

@@ -15,10 +15,21 @@ from core.exceptions import (
     ResourceNotFoundError,
     ValidationError,
 )
-from core.task_registry import TaskRegistry
+from api.v1.schemas.settings import DownloadPolicySettings
 from infrastructure.queue.priority_queue import RequestPriority
+from models.acquisition_quality import (
+    AcquisitionQualitySnapshot,
+    AudioQualityEvidence,
+    CodecFamily,
+    EvidenceCertainty,
+    EvidenceProvenance,
+    QualityDecision,
+    QualityReason,
+    QualityRecipeEntry,
+)
 from models.download import DownloadTask, ScoredCandidate, SearchJob
 from repositories.protocols.download_client import DownloadSearchResult
+from core.task_registry import TaskRegistry
 from services.native.download_service import (
     ALREADY_IN_LIBRARY,
     DownloadService,
@@ -26,6 +37,7 @@ from services.native.download_service import (
     _ordinary_held_action_lock_users,
     check_downloads_mount,
 )
+from services.native.acquisition import quality as acq_quality
 
 
 def _candidate() -> ScoredCandidate:
@@ -296,6 +308,83 @@ async def test_pick_candidate_creates_queued_task_and_matches():
     assert kwargs["search_job_id"] == "job1"
     assert kwargs["candidate_index"] == 0
     store.update_search_job_status.assert_any_await("job1", "matched")
+
+
+def _quality_pick_fixture(*, hard: bool):
+    snapshot = acq_quality.build_snapshot(
+        DownloadPolicySettings(
+            quality_min="lossless",
+            quality_max="lossless",
+            quality_recipe=[
+                QualityRecipeEntry(format="flac", quality="cd"),
+            ],
+        )
+    )
+    evidence = AudioQualityEvidence(
+        extension="mp3",
+        codec_family=CodecFamily.LOSSY,
+        bitrate_kbps=192,
+        certainty=EvidenceCertainty.EXACT,
+        provenance=EvidenceProvenance.SOURCE_METADATA,
+    )
+    decision = QualityDecision(
+        eligible=False,
+        disposition="outside_policy",
+        tier="mp3_192",
+        evidence=evidence,
+        reasons=[
+            QualityReason.LOSSY_BITRATE_BELOW_MINIMUM
+            if hard
+            else QualityReason.OUTSIDE_GLOBAL_PREFERENCE
+        ],
+        summary="quality test",
+    )
+    candidate = ScoredCandidate(
+        username="alice",
+        parent_directory="A - B",
+        final_score=0.88,
+        tier="manual",
+        quality_evidence=evidence,
+        quality_decision=decision,
+    )
+    return snapshot, candidate
+
+
+@pytest.mark.asyncio
+async def test_pick_candidate_persists_soft_quality_override():
+    service, store, *_ = _make_service()
+    snapshot, candidate = _quality_pick_fixture(hard=False)
+    store.get_search_job.return_value = SearchJob(
+        id="job1",
+        user_id="u1",
+        artist_name="A",
+        album_title="B",
+        quality_snapshot_json=acq_quality.encode_snapshot(snapshot),
+    )
+    store.get_search_job_candidates.return_value = [candidate]
+
+    await service.pick_candidate("u1", "job1", 0)
+
+    assert store.create_task.await_args.kwargs["manual_quality_override"] is True
+
+
+@pytest.mark.asyncio
+async def test_pick_candidate_rejects_hard_quality_override():
+    service, store, *_ = _make_service()
+    snapshot, candidate = _quality_pick_fixture(hard=True)
+    store.get_search_job.return_value = SearchJob(
+        id="job1",
+        user_id="u1",
+        artist_name="A",
+        album_title="B",
+        quality_snapshot_json=acq_quality.encode_snapshot(snapshot),
+    )
+    store.get_search_job_candidates.return_value = [candidate]
+
+    with pytest.raises(ValidationError):
+        await service.pick_candidate("u1", "job1", 0)
+
+    store.create_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -2204,3 +2293,43 @@ async def test_import_held_unlink_failure_leaves_row_retryable(tmp_path):
     assert [value.id for value in held] == [hid]
     assert await store.has_unresolved_held_for_task("t-1") is True
     assert held_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_manual_search_pins_snapshot_for_job_and_scorer():
+    service, store, _bus, _indexer, scorer, _orchestrator = _make_service()
+    snapshot = AcquisitionQualitySnapshot(
+        quality_preference_order=["lossless"],
+        source_selection_mode="quality_first",
+        snapshot_hash="manual-snapshot",
+        summary="Try lossless.",
+    )
+    snapshot.snapshot_hash = acq_quality.snapshot_policy_hash(snapshot)
+    service._snapshot_factory = lambda: snapshot
+
+    job_id = await service.search_album("u1", "A", "B", release_group_mbid="rg")
+    await TaskRegistry.get_instance().get_all()["search-job1"]
+
+    create_kwargs = store.create_search_job.call_args.kwargs
+    assert create_kwargs["quality_snapshot_hash"] == snapshot.snapshot_hash
+    assert scorer.rank.await_args.kwargs["snapshot"] == snapshot
+    assert job_id == "job1"
+
+
+@pytest.mark.asyncio
+async def test_standalone_pick_uses_search_snapshot_on_new_task():
+    service, store, _bus, _indexer, _scorer, _orchestrator = _make_service()
+    snapshot = AcquisitionQualitySnapshot(
+        quality_preference_order=["lossless"],
+        source_selection_mode="quality_first",
+        snapshot_hash="job-snapshot",
+        summary="Try lossless.",
+    )
+    snapshot.snapshot_hash = acq_quality.snapshot_policy_hash(snapshot)
+    service._snapshot_factory = lambda: snapshot
+
+    await service.pick_candidate("u1", "job1", 0)
+
+    create_kwargs = store.create_task.await_args.kwargs
+    assert create_kwargs["quality_snapshot_hash"] == snapshot.snapshot_hash
+    assert create_kwargs["quality_snapshot_summary"] == "Try lossless."

@@ -10,13 +10,11 @@ import { toastStore } from '$lib/stores/toast';
 // Request-surface copy lives beside the other acquisition label mappings.
 import { batchRequestCopy, requestStatusCopy } from '$lib/utils/acquisitionLabels';
 import { albumRequestOutcome } from '$lib/utils/requestOutcome';
-
+import type { RequestAccepted } from '$lib/types';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 
-// Response mirrors for the consolidated request paths. $lib/types intentionally has
-// no hand-mirror for these shapes yet and this module may not extend it, so they are
-// declared narrowly here instead. `RequestAccepted.task` stays optional: current
-// /requests/new payloads omit it, but a snapshot-carrying backend can fill it.
+// Response mirrors for the consolidated request paths that are not shared with
+// the application-wide type contract.
 interface CancelDownloadResponse {
 	status?: string;
 }
@@ -28,14 +26,6 @@ interface NextSourceResponse {
 interface ReimportDownloadResponse {
 	status: string;
 	error_message?: string | null;
-}
-
-interface RequestAccepted {
-	success: boolean;
-	message: string;
-	musicbrainz_id: string;
-	status: string;
-	task?: { quality_snapshot_summary?: string | null } | null;
 }
 
 interface RetryDownloadResponse {
@@ -138,7 +128,7 @@ export function requestAlbum() {
 				return data;
 			}
 			const outcome = albumRequestOutcome(data);
-			const summary = data.task?.quality_snapshot_summary ?? undefined;
+			const summary = data.quality_snapshot_summary ?? undefined;
 			toastStore.show({
 				message: requestStatusCopy(outcome ?? 'dispatched', summary),
 				type: outcome === 'duplicate_active' || outcome === 'in_library' ? 'info' : 'success'

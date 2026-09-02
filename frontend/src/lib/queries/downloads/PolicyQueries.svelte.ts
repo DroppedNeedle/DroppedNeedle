@@ -9,7 +9,7 @@ import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 const policySummaryOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
-		queryKey: [...DownloadQueryKeyFactory.all, 'policy-summary'] as const,
+		queryKey: DownloadQueryKeyFactory.policySummary(),
 		queryFn: ({ signal }) =>
 			api.global.get<PolicySummary>(API.downloadClients.policySummary(), { signal })
 	});

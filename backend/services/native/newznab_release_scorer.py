@@ -49,19 +49,31 @@ _CAT_MP3 = 3010
 _CAT_VIDEO = 3020  # music videos - not a music codec; reject for album/track music
 _CAT_AUDIO_PARENT = 3000
 
-_LOSSLESS_RE = re.compile(r"\b(flac|alac|ape|wavpack|wav|24[\s\-]?bit|24[\s\-]?44|24[\s\-]?96|dsd|lossless)\b", re.IGNORECASE)
+_LOSSLESS_RE = re.compile(
+    r"\b(flac|alac|ape|wavpack|wav|24[\s\-]?bit|24[\s\-]?44|24[\s\-]?96|dsd|lossless)\b",
+    re.IGNORECASE,
+)
 # Hi-res markers (H1): Usenet captures no per-file bit-depth/sample-rate, so read them from
 # the (noisy) title to prefer a 24-bit/96k+ release over a 16/44 one of EQUAL score. DSD and
 # 24/192 outrank 24/96. A pure tie-breaker - never lifts a worse-scored or non-matching release.
-_HIRES_192_RE = re.compile(r"\b(24[\s\-]?192|192[\s\-]?khz|dsd|dsf|sacd)\b", re.IGNORECASE)
-_HIRES_RE = re.compile(r"\b(24[\s\-]?bit|24[\s\-]?96|24[\s\-]?88|96[\s\-]?khz|88[\.\s\-]?2[\s\-]?khz|hi[\s\-]?res)\b", re.IGNORECASE)
+_HIRES_192_RE = re.compile(
+    r"\b(24[\s\-]?192|192[\s\-]?khz|dsd|dsf|sacd)\b", re.IGNORECASE
+)
+_HIRES_RE = re.compile(
+    r"\b(24[\s\-]?bit|24[\s\-]?96|24[\s\-]?88|96[\s\-]?khz|88[\.\s\-]?2[\s\-]?khz|hi[\s\-]?res)\b",
+    re.IGNORECASE,
+)
 _MP3_320_RE = re.compile(r"\b(320|v0|cbr[\s\-]?320)\b", re.IGNORECASE)
 _MP3_256_RE = re.compile(r"\b(256|v2)\b", re.IGNORECASE)
 _MP3_192_RE = re.compile(r"\b(192|v5)\b", re.IGNORECASE)
 _MP3_GENERIC_RE = re.compile(r"\b(mp3|cbr|vbr)\b", re.IGNORECASE)
 
 _QUALITY_SCORE = {
-    "lossless": 1.0, "mp3_320": 0.8, "mp3_256": 0.65, "mp3_192": 0.5, "low": 0.3,
+    "lossless": 1.0,
+    "mp3_320": 0.8,
+    "mp3_256": 0.65,
+    "mp3_192": 0.5,
+    "low": 0.3,
     "unknown": 0.5,
 }
 
@@ -72,7 +84,11 @@ _QUALITY_SCORE = {
 # like Lidarr, lossless size varies too much - 16-bit vs 24/192 - to cap; oversized
 # boxsets are rejected by NAME below, not size.)
 _TIER_NOMINAL_KBPS = {
-    "lossless": 700, "mp3_320": 320, "mp3_256": 256, "mp3_192": 192, "low": 128,
+    "lossless": 700,
+    "mp3_320": 320,
+    "mp3_256": 256,
+    "mp3_192": 192,
+    "low": 128,
     "unknown": 320,
 }
 _SIZE_MIN_FRAC = 0.35
@@ -94,43 +110,122 @@ def _hires_rank(title: str) -> int:
     return 0
 
 
-def _release_evidence(release: UsenetRelease, tier: str) -> AudioQualityEvidence:
-    """Category/title provenance on a release-level projection. Title regexes can
-    carry bit-rate hints for lossy bands; Usenet exposes no trustworthy depth/rate."""
+def _release_evidence(
+    release: UsenetRelease,
+    tier: str,
+    snapshot: AcquisitionQualitySnapshot | None = None,
+) -> AudioQualityEvidence:
+    """Project release metadata into the shared quality evaluator.
+
+    v1 keeps the historical tier projection. A v2 recipe never invents a
+    bitrate or FLAC resolution when the title/category does not provide one.
+    """
     title = release.title or ""
+    categories = set(release.category_ids)
     provenance = (
         EvidenceProvenance.CATEGORY
-        if _CAT_LOSSLESS in set(release.category_ids)
-        or _CAT_MP3 in set(release.category_ids)
+        if _CAT_LOSSLESS in categories or _CAT_MP3 in categories
         else EvidenceProvenance.RELEASE_TITLE
     )
-    bitrate = None
-    family = CodecFamily.UNKNOWN
-    certainty = EvidenceCertainty.INFERRED
-    ext = ""
-    if tier == "lossless":
-        family = CodecFamily.LOSSLESS
-        ext = "flac"
-    elif tier == "mp3_320":
-        family = CodecFamily.LOSSY
-        bitrate = 320
-        ext = "mp3"
-        certainty = (
-            EvidenceCertainty.PARTIAL
-            if _MP3_320_RE.search(title) or _MP3_GENERIC_RE.search(title)
-            else EvidenceCertainty.INFERRED
+    if re.search(r"\b(dsd|dsf|dff|sacd)\b", title, re.IGNORECASE):
+        return AudioQualityEvidence(
+            extension="dsf",
+            codec_family=CodecFamily.UNKNOWN,
+            total_bytes=release.size_bytes,
+            audio_file_count=1,
+            certainty=EvidenceCertainty.PARTIAL,
+            provenance=provenance,
         )
-    elif tier == "mp3_256":
-        family, bitrate, ext = CodecFamily.LOSSY, 256, "mp3"
-    elif tier == "mp3_192":
-        family, bitrate, ext = CodecFamily.LOSSY, 192, "mp3"
+    if snapshot is None or not acq_quality.is_recipe_snapshot(snapshot):
+        bitrate = None
+        family = CodecFamily.UNKNOWN
+        certainty = EvidenceCertainty.INFERRED
+        ext = ""
+        if tier == "lossless":
+            family = CodecFamily.LOSSLESS
+            ext = "flac"
+        elif tier == "mp3_320":
+            family = CodecFamily.LOSSY
+            bitrate = 320
+            ext = "mp3"
+            certainty = (
+                EvidenceCertainty.PARTIAL
+                if _MP3_320_RE.search(title) or _MP3_GENERIC_RE.search(title)
+                else EvidenceCertainty.INFERRED
+            )
+        elif tier == "mp3_256":
+            family, bitrate, ext = CodecFamily.LOSSY, 256, "mp3"
+        elif tier == "mp3_192":
+            family, bitrate, ext = CodecFamily.LOSSY, 192, "mp3"
+        return AudioQualityEvidence(
+            extension=ext,
+            codec_family=family,
+            bitrate_kbps=bitrate,
+            total_bytes=release.size_bytes,
+            audio_file_count=1,
+            certainty=certainty,
+            provenance=provenance,
+        )
+
+    if _CAT_MP3 in categories or _MP3_GENERIC_RE.search(title):
+        bitrate = (
+            320
+            if _MP3_320_RE.search(title)
+            else 256
+            if _MP3_256_RE.search(title)
+            else 192
+            if _MP3_192_RE.search(title)
+            else None
+        )
+        return AudioQualityEvidence(
+            extension="mp3",
+            codec_family=CodecFamily.LOSSY,
+            bitrate_kbps=bitrate,
+            total_bytes=release.size_bytes,
+            audio_file_count=1,
+            certainty=(
+                EvidenceCertainty.PARTIAL
+                if bitrate is not None
+                else EvidenceCertainty.INFERRED
+            ),
+            provenance=provenance,
+        )
+
+    if _CAT_LOSSLESS in categories or _LOSSLESS_RE.search(title):
+        bit_depth = (
+            24 if _HIRES_RE.search(title) or _HIRES_192_RE.search(title) else None
+        )
+        sample_rate = None
+        if _HIRES_192_RE.search(title):
+            sample_rate = 192000
+        elif re.search(r"(?:24[\s\-]?96|96[\s\-]?khz)", title, re.IGNORECASE):
+            sample_rate = 96000
+        elif re.search(r"(?:24[\s\-]?48|48[\s\-]?khz)", title, re.IGNORECASE):
+            sample_rate = 48000
+        elif re.search(
+            r"(?:24[\s\-]?44(?:\.1)?|44(?:\.1)?[\s\-]?khz)", title, re.IGNORECASE
+        ):
+            sample_rate = 44100
+        return AudioQualityEvidence(
+            extension="flac",
+            codec_family=CodecFamily.LOSSLESS,
+            bit_depth=bit_depth,
+            sample_rate_hz=sample_rate,
+            total_bytes=release.size_bytes,
+            audio_file_count=1,
+            certainty=(
+                EvidenceCertainty.PARTIAL
+                if bit_depth is not None and sample_rate is not None
+                else EvidenceCertainty.INFERRED
+            ),
+            provenance=provenance,
+        )
     return AudioQualityEvidence(
-        extension=ext,
-        codec_family=family,
-        bitrate_kbps=bitrate,
+        extension="",
+        codec_family=CodecFamily.UNKNOWN,
         total_bytes=release.size_bytes,
         audio_file_count=1,
-        certainty=certainty,
+        certainty=EvidenceCertainty.INFERRED,
         provenance=provenance,
     )
 
@@ -160,9 +255,14 @@ class NewznabReleaseScorer:
         import msgspec as _ms
 
         order = snapshot.quality_preference_order
+        recipe_mode = acq_quality.is_recipe_snapshot(snapshot)
         policy = SpecPolicy(
-            quality_min=order[-1] if order else "low",
-            quality_max=order[0] if order else "lossless",
+            quality_min="low" if recipe_mode else order[-1] if order else "low",
+            quality_max="lossless"
+            if recipe_mode
+            else order[0]
+            if order
+            else "lossless",
         )
         if spec_extras is not None:
             policy = _ms.structs.replace(
@@ -201,24 +301,18 @@ class NewznabReleaseScorer:
                     usenet_date=release.usenet_date,
                     password=release.password,
                 ),
-                target, context, policy,
+                target,
+                context,
+                policy,
             )
             if isinstance(decision, Reject):
                 pipeline_drops[decision.code] += 1
                 continue
-            # The ONE sanctioned change (spec): a literal 'unknown' tier no longer
-            # passes unconditionally - it obeys the snapshot's family-unknown rule.
-            if tier == "unknown":
-                rule = snapshot.unknown_quality_behavior
-                if rule == "reject":
-                    pipeline_drops[RejectCode.QUALITY_REJECTED] += 1
-                    continue
-                # 'review' and 'allow_as_fallback' stay scoreable here; review parks
-                # downstream when NO auto/manual candidate exists, and the fallback
-                # ordering slot is applied by the sort key below.
             # Size-plausibility MIN (min_size, Usenet-only) stays inline: it needs the DECLARED
             # tier's nominal bitrate + the album runtime, not just the candidate's bytes.
-            if self._size_implausible(release, declared, tracks, target.duration_seconds):
+            if self._size_implausible(
+                release, declared, tracks, target.duration_seconds
+            ):
                 dropped_size += 1
                 continue
 
@@ -227,12 +321,23 @@ class NewznabReleaseScorer:
             health = min(1.0, (release.grabs or 0) / 50.0)
             final = 0.40 * identity + 0.45 * quality + 0.15 * health
             band = (
-                "auto" if final >= auto_accept_threshold
-                else "manual" if final >= manual_threshold
+                "auto"
+                if final >= auto_accept_threshold
+                else "manual"
+                if final >= manual_threshold
                 else "rejected"
             )
-            decision_ev = _release_evidence(release, tier)
+            decision_ev = _release_evidence(release, tier, snapshot)
             release_decision = acq_quality.evaluate(snapshot, decision_ev)
+            if (
+                recipe_mode
+                and not release_decision.eligible
+                and acq_quality.is_hard_quality_rejection(release_decision)
+            ):
+                pipeline_drops[RejectCode.QUALITY_REJECTED] += 1
+                continue
+            if recipe_mode and not release_decision.eligible and band == "auto":
+                band = "manual"
             scored.append(
                 ScoredCandidate(
                     source="usenet",
@@ -246,8 +351,6 @@ class NewznabReleaseScorer:
                 )
             )
 
-        # Best score first; hi-res breaks an exact tie (a 24/96 release over a 16/44 one of
-        # equal identity+quality+health) - H1, parallel to the Soulseek bit-depth/rate sort.
         band_rank = {"auto": 2, "manual": 1, "rejected": 0}
         worst_step = len(order) + 2
 
@@ -255,6 +358,20 @@ class NewznabReleaseScorer:
             decision_ = cand.quality_decision
             evidence_ = cand.quality_evidence
             step = decision_.preference_step if decision_ else None
+            if recipe_mode:
+                step = step if step is not None else len(snapshot.quality_recipe) + 1
+                refinement = acq_quality.recipe_refinement_key(
+                    snapshot, evidence_ or AudioQualityEvidence()
+                )
+                return (
+                    band_rank.get(cand.tier, 0),
+                    -step,
+                    *(-value for value in refinement),
+                    cand.final_score,
+                    _hires_rank(
+                        cand.usenet_release.title if cand.usenet_release else ""
+                    ),
+                )
             certainty = acq_quality.CERTAINTY_RANK[
                 evidence_.certainty if evidence_ else EvidenceCertainty.PARTIAL
             ]
@@ -263,9 +380,7 @@ class NewznabReleaseScorer:
                 -(step if step is not None else worst_step),
                 -certainty,
                 cand.final_score,
-                _hires_rank(
-                    cand.usenet_release.title if cand.usenet_release else ""
-                ),
+                _hires_rank(cand.usenet_release.title if cand.usenet_release else ""),
             )
 
         scored.sort(key=_sort_key, reverse=True)
@@ -278,20 +393,27 @@ class NewznabReleaseScorer:
                     # inline category/size gates, plus one key per shared-spec reject code.
                     "dropped_video": dropped_video,
                     "dropped_size": dropped_size,
-                    **{f"dropped_{code.value}": n for code, n in pipeline_drops.items()},
+                    **{
+                        f"dropped_{code.value}": n for code, n in pipeline_drops.items()
+                    },
                 },
             )
         return scored[:50]
 
     def _size_implausible(
-        self, release: UsenetRelease, declared_tier: str, track_count: int | None,
+        self,
+        release: UsenetRelease,
+        declared_tier: str,
+        track_count: int | None,
         duration_seconds: float | None,
     ) -> bool:
         """True when the release is far too SMALL to hold the album at its declared tier
         (a single track / fragment). Indeterminate inputs never reject."""
         if not release.size_bytes:
             return False
-        seconds = duration_seconds or (track_count * _AVG_TRACK_SECONDS if track_count else None)
+        seconds = duration_seconds or (
+            track_count * _AVG_TRACK_SECONDS if track_count else None
+        )
         if not seconds:
             return False
         nominal = _TIER_NOMINAL_KBPS.get(declared_tier, 320)
@@ -317,7 +439,9 @@ class NewznabReleaseScorer:
             return "mp3_320"
         return "unknown"
 
-    def release_tier(self, release: UsenetRelease, track_count: int | None = None) -> str:
+    def release_tier(
+        self, release: UsenetRelease, track_count: int | None = None
+    ) -> str:
         """Public accessor for the scoring tier, so the orchestrator's Phase-2 re-gate
         can re-judge a stored Usenet candidate the same way it was scored."""
         return self._release_tier(release, track_count)
@@ -354,5 +478,7 @@ class NewznabReleaseScorer:
         ratio = fuzz.token_set_ratio(query, fold(release.title or ""))
         score = base + 0.4 * (ratio / 100.0)
         if target.year and str(target.year) in (release.title or ""):
-            score += 0.08  # tie-breaker between editions, not enough to lift a non-match
+            score += (
+                0.08  # tie-breaker between editions, not enough to lift a non-match
+            )
         return min(1.0, score)

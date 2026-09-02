@@ -117,6 +117,22 @@ async def test_create_task_returns_uuid(store):
 
 
 @pytest.mark.asyncio
+async def test_create_task_persists_manual_quality_override(store):
+    task = await store.create_task(
+        user_id="user-a",
+        release_group_mbid="rg-override",
+        artist_name="A",
+        album_title="B",
+        manual_quality_override=True,
+    )
+
+    assert task.manual_quality_override is True
+    fetched = await store.get_task(task.id)
+    assert fetched is not None
+    assert fetched.manual_quality_override is True
+
+
+@pytest.mark.asyncio
 async def test_quality_queue_state_roundtrips_and_progress_clears_deadline(store):
     task = await store.create_task(
         user_id="user-a", release_group_mbid="rg-1", artist_name="A", album_title="B"

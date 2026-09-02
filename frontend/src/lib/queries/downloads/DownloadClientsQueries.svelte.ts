@@ -83,7 +83,12 @@ export function saveDownloadPolicy() {
 	return createMutation(() => ({
 		mutationFn: (policy: DownloadPolicySettings) =>
 			api.global.put<DownloadPolicySettings>(API.downloadClients.policy(), policy),
-		onSuccess: () => invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.policy() })
+		onSuccess: async () => {
+			await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.policy() });
+			await invalidateQueriesWithPersister({
+				queryKey: DownloadQueryKeyFactory.policySummary()
+			});
+		}
 	}));
 }
 

@@ -10,11 +10,13 @@ vi.mock('@tanstack/svelte-query', () => ({
 
 const mockGet = vi.fn();
 const mockPost = vi.fn();
+const mockPut = vi.fn();
 vi.mock('$lib/api/client', () => ({
 	api: {
 		global: {
 			get: (...args: unknown[]) => mockGet(...args),
-			post: (...args: unknown[]) => mockPost(...args)
+			post: (...args: unknown[]) => mockPost(...args),
+			put: (...args: unknown[]) => mockPut(...args)
 		}
 	}
 }));
@@ -57,6 +59,7 @@ import {
 	retryDownload,
 	tryNextSource
 } from './DownloadMutations.svelte';
+import { saveDownloadPolicy } from './DownloadClientsQueries.svelte';
 describe('download queue queries', () => {
 	// Promise.withResolvers needs Node 22+; this repo runs Node 20. The deferred
 	// below keeps the same linear hand-off for the session-switch tests.
@@ -70,8 +73,28 @@ describe('download queue queries', () => {
 
 	beforeEach(() => {
 		authStoreUser.current.id = 'user-1';
+		mockGet.mockClear();
+		mockPost.mockClear();
+		mockPut.mockClear();
+		mockInvalidate.mockClear();
 		mockToast.mockClear();
 		mockAddRequested.mockClear();
+	});
+
+	it('invalidates policy and policy summary with the persister after saving', async () => {
+		mockInvalidate.mockClear();
+		const mutation = saveDownloadPolicy() as unknown as {
+			onSuccess: () => Promise<void>;
+		};
+
+		await mutation.onSuccess();
+
+		expect(mockInvalidate).toHaveBeenNthCalledWith(1, {
+			queryKey: DownloadQueryKeyFactory.policy()
+		});
+		expect(mockInvalidate).toHaveBeenNthCalledWith(2, {
+			queryKey: DownloadQueryKeyFactory.policySummary()
+		});
 	});
 
 	it('the downloads list query hits /api/v1/downloads', async () => {
@@ -287,7 +310,7 @@ describe('download queue queries', () => {
 				message: status === 'pending' ? 'Request accepted' : 'Request already in progress',
 				musicbrainz_id: 'rg',
 				status,
-				task: { quality_snapshot_summary: 'Balanced' }
+				quality_snapshot_summary: 'Balanced'
 			});
 			const m = requestAlbum() as unknown as { mutationFn: (i: unknown) => Promise<unknown> };
 			await m.mutationFn({ release_group_mbid: 'rg' });

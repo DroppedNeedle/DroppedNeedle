@@ -11,12 +11,10 @@ rows already carrying a snapshot, so a crash mid-run converges on the next
 startup instead of double-writing.
 """
 
-import json
 import logging
 
 from infrastructure.persistence.download_store import DownloadStore
 from infrastructure.persistence.free_music_store import FreeMusicStore
-from infrastructure.serialization import to_jsonable
 from services.native.acquisition import quality
 
 logger = logging.getLogger(__name__)
@@ -25,7 +23,7 @@ _NATIVE_ACTIVE_STATUSES = ("queued", "downloading", "processing")
 
 
 def _snapshot_blob(snapshot) -> str:
-    return json.dumps(to_jsonable(snapshot))
+    return quality.encode_snapshot(snapshot)
 
 
 async def run_acquisition_snapshot_backfill(
@@ -51,8 +49,11 @@ async def run_acquisition_snapshot_backfill(
         }
         for task in tasks
     ]
-    if task_updates:
-        await download_store.update_task_quality_fields(task_updates)
+    native_count = (
+        await download_store.backfill_task_quality_fields(task_updates)
+        if task_updates
+        else 0
+    )
 
     # Search jobs: parked-review jobs linked from the snapshotted tasks plus any
     # still-searching rows. The task-linked set is authoritative for review.
@@ -76,8 +77,11 @@ async def run_acquisition_snapshot_backfill(
                 "quality_snapshot_summary": snapshot.summary,
             }
         )
-    if job_updates:
-        await download_store.update_search_job_quality_snapshots(job_updates)
+    job_count = (
+        await download_store.backfill_search_job_quality_snapshots(job_updates)
+        if job_updates
+        else 0
+    )
 
     fm_tasks = await free_music_store.list_tasks_missing_snapshot()
     fm_updates = [
@@ -89,12 +93,11 @@ async def run_acquisition_snapshot_backfill(
         }
         for task in fm_tasks
     ]
-    if fm_updates:
-        await free_music_store.update_free_music_quality_fields(fm_updates)
-
-    native_count = len(task_updates)
-    job_count = len(job_updates)
-    fm_count = len(fm_updates)
+    fm_count = (
+        await free_music_store.backfill_free_music_quality_fields(fm_updates)
+        if fm_updates
+        else 0
+    )
     await download_store.mark_acquisition_backfill(
         native_tasks=native_count, search_jobs=job_count + fm_count
     )

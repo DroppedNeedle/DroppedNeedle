@@ -1,5 +1,7 @@
 """Request/response DTOs for the download-client + search + quarantine routes (Phase 6)."""
 
+from typing import Literal
+
 import msgspec
 
 from infrastructure.msgspec_fastapi import AppStruct
@@ -77,6 +79,13 @@ class SearchAlbumResponse(AppStruct):
     job_id: str | None = None
 
 
+class QualityRejectionSummary(AppStruct):
+    outside_policy: int = 0
+    unknown_rejected: int = 0
+    not_importable: int = 0
+    needs_review: int = 0
+
+
 class SearchJobResponse(AppStruct):
     job_id: str
     status: str
@@ -84,6 +93,10 @@ class SearchJobResponse(AppStruct):
     album_title: str
     candidate_count: int
     top_score: float | None = None
+    quality_snapshot_summary: str | None = None
+    quality_rejections: QualityRejectionSummary = msgspec.field(
+        default_factory=QualityRejectionSummary
+    )
     candidates: list[ScoredCandidate] = msgspec.field(default_factory=list)
 
 
@@ -196,6 +209,8 @@ class PolicySummaryResponse(AppStruct):
     summary: str
     source_mode: str
     legacy_rollback_compatible: bool
+    quality_recipe_status: Literal["v1", "v2", "non_convertible", "invalid"] = "v1"
+    quality_recipe_error: str | None = None
 
 
 class PolicyImpactResponse(AppStruct):
@@ -212,7 +227,6 @@ class PolicyImpactResponse(AppStruct):
     legacy_representable: bool = True
 
 
-
 class RestartWithPolicyRequest(AppStruct):
     """Guard against acting on a stale view: the caller echoes the stored
     hash it saw; a mismatch aborts the atomic restart."""
@@ -224,6 +238,7 @@ class RestartWithPolicyResponse(AppStruct):
     accepted: bool
     snapshot_summary: str | None = None
     message: str | None = None
+
 
 class HeldImportResponse(AppStruct):
     """A downloaded track held for an "import anyway" review: the audio matched the track by

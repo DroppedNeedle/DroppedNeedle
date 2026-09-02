@@ -22,6 +22,8 @@ class FreeMusicTaskResponse(AppStruct):
     bytes_total: int = 0
     bytes_downloaded: int = 0
     error: str | None = None
+    quality_snapshot_hash: str | None = None
+    quality_snapshot_summary: str | None = None
 
 
 class FreeMusicTasksResponse(AppStruct):
@@ -51,4 +53,6 @@ def task_to_response(task: FreeMusicTask) -> FreeMusicTaskResponse:
         bytes_total=task.bytes_total,
         bytes_downloaded=task.bytes_downloaded,
         error=task.error,
+        quality_snapshot_hash=task.quality_snapshot_hash,
+        quality_snapshot_summary=task.quality_snapshot_summary,
     )

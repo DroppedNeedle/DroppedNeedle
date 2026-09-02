@@ -3,6 +3,12 @@
 
 	import { BLOCKED_PICK_REASON, candidateQualityLabel } from '$lib/utils/acquisitionLabels';
 	import type { ScoredCandidate } from '$lib/types';
+	const HARD_QUALITY_REASONS: ReadonlySet<string> = new Set([
+		'format_not_importable',
+		'lossless_resolution_above_maximum',
+		'lossy_bitrate_below_minimum',
+		'lossy_bitrate_above_maximum'
+	]);
 
 	interface Props {
 		candidate: ScoredCandidate;
@@ -71,22 +77,54 @@
 				? 'ring-warning text-warning'
 				: 'ring-base-content/30 text-base-content/50'
 	);
-	type CandidateQualityExtras = {
-		preference_step?: number | null;
-		preference_steps_total?: number | null;
-		certainty?: string | null;
-	};
-
-	const hardBlocked = $derived(candidate.tier === 'rejected');
+	const qualityDecision = $derived(candidate.quality_decision);
+	const qualityEvidence = $derived(candidate.quality_evidence ?? qualityDecision?.evidence ?? null);
+	const qualityDisposition = $derived(qualityDecision?.disposition ?? null);
+	const hardQualityRejection = $derived(
+		qualityDecision?.reasons.some((reason) => HARD_QUALITY_REASONS.has(reason)) ?? false
+	);
+	const qualityStep = $derived(
+		qualityDecision?.preference_step ?? qualityDecision?.quality_recipe_index ?? null
+	);
+	const qualityHardBlocked = $derived(
+		qualityDisposition === 'not_importable' ||
+			qualityDisposition === 'unknown_rejected' ||
+			hardQualityRejection
+	);
+	const hardBlocked = $derived(candidate.tier === 'rejected' || qualityHardBlocked);
+	const softOutsidePolicy = $derived(!hardBlocked && qualityDisposition === 'outside_policy');
 	const qualityLabel = $derived.by(() => {
-		if (hardBlocked) return 'Outside policy';
-		const extras = candidate as ScoredCandidate & CandidateQualityExtras;
-		return candidateQualityLabel({
-			preference_step: extras.preference_step,
-			preference_steps_total: extras.preference_steps_total,
-			certainty: extras.certainty
-		});
+		if (hardBlocked) return qualityDecision ? 'Rejected' : 'Outside policy';
+		if (softOutsidePolicy) return 'Outside policy';
+		return candidateQualityLabel(
+			qualityDecision
+				? {
+						preference_step: qualityStep,
+						certainty: qualityEvidence?.certainty
+					}
+				: qualityEvidence
+					? { certainty: qualityEvidence.certainty }
+					: null
+		);
 	});
+	const recipeStepLabel = $derived(
+		typeof qualityStep === 'number' ? `Recipe step ${qualityStep + 1}` : null
+	);
+	const certaintyLabel = $derived(
+		qualityEvidence?.certainty
+			? `Certainty: ${qualityEvidence.certainty[0].toUpperCase()}${qualityEvidence.certainty.slice(1)}`
+			: null
+	);
+	const dispositionLabel = $derived(
+		qualityDisposition ? `Disposition: ${qualityDisposition.replaceAll('_', ' ')}` : null
+	);
+	const blockedReason = $derived(
+		hardBlocked
+			? qualityHardBlocked
+				? qualityDecision?.summary || BLOCKED_PICK_REASON
+				: BLOCKED_PICK_REASON
+			: undefined
+	);
 
 	const breakdown = $derived(
 		isUsenet
@@ -96,7 +134,6 @@
 					`File confidence ${Math.round(candidate.file_confidence * 100)}% · ` +
 					`${freeSlot ? 'Free slot' : 'Queued'}${uploadSpeed ? ` · ${Math.round(uploadSpeed / 1000)} KB/s` : ''}`
 	);
-
 	const heading = $derived(
 		isUsenet
 			? albumTitle || rel?.title || 'Unknown'
@@ -126,18 +163,27 @@
 			<span
 				class="badge badge-sm"
 				class:badge-error={hardBlocked}
+				class:badge-warning={softOutsidePolicy}
 				title={`Quality: ${qualityLabel}`}
 			>
 				{qualityLabel}
 			</span>
+			{#if recipeStepLabel}
+				<span class="badge badge-ghost badge-sm">{recipeStepLabel}</span>
+			{/if}
+			{#if certaintyLabel}
+				<span class="badge badge-ghost badge-sm">{certaintyLabel}</span>
+			{/if}
+			{#if dispositionLabel}
+				<span class="badge badge-ghost badge-sm">{dispositionLabel}</span>
+			{/if}
 			{#if isUsenet}
 				<span class="badge badge-ghost badge-sm gap-1">
 					<Library class="size-3" aria-hidden="true" />{rel?.indexer_name}
 				</span>
 				<span
 					class="badge badge-sm"
-					class:badge-success={usenetFormat !== 'unknown' && candidate.tier !== 'rejected'}
-					>{usenetFormat}</span
+					class:badge-success={usenetFormat !== 'unknown' && !hardBlocked}>{usenetFormat}</span
 				>
 				<span class="badge badge-ghost badge-sm">{sizeLabel}</span>
 				{#if rel?.grabs}
@@ -152,9 +198,7 @@
 					>
 				{/if}
 			{:else}
-				<span class="badge badge-sm" class:badge-success={candidate.tier !== 'rejected'}
-					>{soulseekFormat}</span
-				>
+				<span class="badge badge-sm" class:badge-success={!hardBlocked}>{soulseekFormat}</span>
 				<span class="badge badge-ghost badge-sm gap-1">
 					<Files class="size-3" aria-hidden="true" />{fileCount}
 					{fileCount === 1 ? 'track' : 'tracks'}
@@ -207,13 +251,13 @@
 
 	<button
 		type="button"
-		class="btn btn-primary btn-sm shrink-0"
+		class="btn btn-primary btn-sm min-h-11 shrink-0"
 		onclick={onPick}
 		disabled={hardBlocked || picking || disabled}
-		title={hardBlocked ? BLOCKED_PICK_REASON : undefined}
+		title={blockedReason}
 		aria-label={isUsenet
-			? `Pick candidate from ${rel?.indexer_name}${hardBlocked ? ` - ${BLOCKED_PICK_REASON}` : ''}`
-			: `Pick candidate from ${candidate.username}${hardBlocked ? ` - ${BLOCKED_PICK_REASON}` : ''}`}
+			? `Pick candidate from ${rel?.indexer_name}${hardBlocked ? ` - ${blockedReason}` : ''}`
+			: `Pick candidate from ${candidate.username}${hardBlocked ? ` - ${blockedReason}` : ''}`}
 	>
 		{#if picking}<span class="loading loading-spinner loading-xs"></span>{/if}
 		{#if hardBlocked}
@@ -269,6 +313,13 @@
 		.sleeve-card,
 		.ring-progress {
 			animation: none;
+		}
+		.sleeve-card {
+			transition: none;
+		}
+		.sleeve-card:hover {
+			transform: none;
+			box-shadow: none;
 		}
 	}
 </style>

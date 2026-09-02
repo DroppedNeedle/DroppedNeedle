@@ -29,6 +29,7 @@ from models.acquisition_quality import (
     AcquisitionQualitySnapshot,
     EvidenceCertainty,
     EvidenceProvenance,
+    QualityRecipeEntry,
 )
 from services.native.acquisition.quality import build_snapshot
 
@@ -132,8 +133,7 @@ def _seed_auth_users(db_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS auth_users "
-            "(id TEXT PRIMARY KEY, username TEXT)"
+            "CREATE TABLE IF NOT EXISTS auth_users (id TEXT PRIMARY KEY, username TEXT)"
         )
         conn.execute(
             "INSERT OR IGNORE INTO auth_users (id, username) VALUES ('user-a', 'alice')"
@@ -411,9 +411,7 @@ async def test_list_tasks_missing_snapshot_filters_statuses_and_limit(
         status="completed",
     )
 
-    queued_ids = [
-        t.id for t in await store.list_tasks_missing_snapshot(["queued"])
-    ]
+    queued_ids = [t.id for t in await store.list_tasks_missing_snapshot(["queued"])]
     assert queued_ids == [newer_queued.id, older_queued.id]
 
     limited = await store.list_tasks_missing_snapshot(["queued"], limit=1)
@@ -444,6 +442,126 @@ async def test_list_tasks_missing_snapshot_filters_statuses_and_limit(
             (terminal_done.id,),
         ).fetchone()[0]
     assert landed is None
+
+
+@pytest.mark.asyncio
+async def test_task_snapshot_backfill_cas_preserves_live_pin_and_fills_null(
+    tmp_path: Path,
+):
+    store = _make_download_store(tmp_path / "library.db")
+    live = await store.create_task(
+        user_id="user-a",
+        release_group_mbid="rg-live",
+        artist_name="A",
+        album_title="Live",
+    )
+    pending = await store.create_task(
+        user_id="user-a",
+        release_group_mbid="rg-pending",
+        artist_name="A",
+        album_title="Pending",
+    )
+    await store.update_task_quality_fields(
+        [
+            {
+                "id": live.id,
+                "quality_snapshot_json": "live-json",
+                "quality_snapshot_hash": "live-hash",
+                "quality_snapshot_summary": "Live policy",
+            }
+        ]
+    )
+
+    changed = await store.backfill_task_quality_fields(
+        [
+            {
+                "id": live.id,
+                "quality_snapshot_json": "migration-json",
+                "quality_snapshot_hash": "migration-hash",
+                "quality_snapshot_summary": "Migration policy",
+            },
+            {
+                "id": pending.id,
+                "quality_snapshot_json": "migration-json",
+                "quality_snapshot_hash": "migration-hash",
+                "quality_snapshot_summary": "Migration policy",
+            },
+        ]
+    )
+
+    assert changed == 1
+    live_after = await store.get_task(live.id)
+    pending_after = await store.get_task(pending.id)
+    assert live_after is not None and pending_after is not None
+    assert (live_after.quality_snapshot_json, live_after.quality_snapshot_hash) == (
+        "live-json",
+        "live-hash",
+    )
+    assert live_after.quality_snapshot_summary == "Live policy"
+    assert (
+        pending_after.quality_snapshot_json,
+        pending_after.quality_snapshot_hash,
+    ) == (
+        "migration-json",
+        "migration-hash",
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_snapshot_backfill_cas_preserves_live_pin_and_fills_null(
+    tmp_path: Path,
+):
+    store = _make_download_store(tmp_path / "library.db")
+    live = await store.create_search_job(
+        "user-a", "A", "Live", None, None, "rg-live", "q"
+    )
+    pending = await store.create_search_job(
+        "user-a", "A", "Pending", None, None, "rg-pending", "q"
+    )
+    await store.update_search_job_quality_snapshots(
+        [
+            {
+                "id": live.id,
+                "quality_snapshot_json": "live-json",
+                "quality_snapshot_hash": "live-hash",
+                "quality_snapshot_summary": "Live policy",
+            }
+        ]
+    )
+
+    changed = await store.backfill_search_job_quality_snapshots(
+        [
+            {
+                "id": live.id,
+                "quality_snapshot_json": "migration-json",
+                "quality_snapshot_hash": "migration-hash",
+                "quality_snapshot_summary": "Migration policy",
+            },
+            {
+                "id": pending.id,
+                "quality_snapshot_json": "migration-json",
+                "quality_snapshot_hash": "migration-hash",
+                "quality_snapshot_summary": "Migration policy",
+            },
+        ]
+    )
+
+    assert changed == 1
+    live_after = await store.get_search_job(live.id)
+    pending_after = await store.get_search_job(pending.id)
+    assert live_after is not None and pending_after is not None
+    assert (live_after.quality_snapshot_json, live_after.quality_snapshot_hash) == (
+        "live-json",
+        "live-hash",
+    )
+    assert live_after.quality_snapshot_summary == "Live policy"
+    assert (
+        pending_after.quality_snapshot_json,
+        pending_after.quality_snapshot_hash,
+    ) == (
+        "migration-json",
+        "migration-hash",
+    )
 
 
 # --- Backfill marker ------------------------------------------------------------
@@ -569,6 +687,53 @@ async def test_free_music_create_carries_snapshot_and_writer_flips_fields(
 
 
 @pytest.mark.asyncio
+async def test_free_music_snapshot_backfill_cas_preserves_live_pin_and_fills_null(
+    tmp_path: Path,
+):
+    store = _make_free_music_store(tmp_path / "library.db")
+    await store.create("fm-live", "user-a", "album", "rg-live", "Artist", "Live")
+    await store.create(
+        "fm-pending", "user-a", "album", "rg-pending", "Artist", "Pending"
+    )
+
+    await store.update_free_music_quality_fields(
+        [
+            {
+                "id": "fm-live",
+                "quality_snapshot_json": '{"schema_version": 2, "live": true}',
+                "quality_snapshot_hash": "live-hash",
+                "quality_snapshot_summary": "Live policy",
+            }
+        ]
+    )
+    changed = await store.backfill_free_music_quality_fields(
+        [
+            {
+                "id": "fm-live",
+                "quality_snapshot_json": '{"schema_version": 2, "migration": true}',
+                "quality_snapshot_hash": "migration-hash",
+                "quality_snapshot_summary": "Migrated policy",
+            },
+            {
+                "id": "fm-pending",
+                "quality_snapshot_json": '{"schema_version": 2, "migration": true}',
+                "quality_snapshot_hash": "migration-hash",
+                "quality_snapshot_summary": "Migrated policy",
+            },
+        ]
+    )
+
+    assert changed == 1
+    live = await store.get("fm-live")
+    pending = await store.get("fm-pending")
+    assert live is not None and pending is not None
+    assert live.quality_snapshot_hash == "live-hash"
+    assert live.quality_snapshot_json == '{"schema_version": 2, "live": true}'
+    assert pending.quality_snapshot_hash == "migration-hash"
+    assert pending.quality_snapshot_summary == "Migrated policy"
+
+
+@pytest.mark.asyncio
 async def test_free_music_missing_snapshot_feed_includes_terminal_history(
     tmp_path: Path,
 ):
@@ -587,3 +752,60 @@ async def test_free_music_missing_snapshot_feed_includes_terminal_history(
     )
     remaining = await store.list_tasks_missing_snapshot()
     assert [t.id for t in remaining] == ["fm-newer"]
+
+
+@pytest.mark.asyncio
+async def test_recipe_search_job_and_selected_quality_fields_round_trip(tmp_path: Path):
+    store = _make_download_store(tmp_path / "library.db")
+    recipe = [
+        QualityRecipeEntry(format="flac", quality="cd"),
+        QualityRecipeEntry(format="mp3", quality="320_plus"),
+    ]
+    snapshot = build_snapshot(_policy(quality_recipe=recipe))
+    job = await store.create_search_job(
+        "user-a",
+        "Recipe Artist",
+        "Recipe Album",
+        2024,
+        2,
+        "rg-recipe",
+        "recipe query",
+        quality_snapshot_json=_snapshot_blob(snapshot),
+        quality_snapshot_hash=snapshot.snapshot_hash,
+        quality_snapshot_summary=snapshot.summary,
+    )
+    task = await store.create_task(
+        user_id="user-a",
+        release_group_mbid="rg-recipe",
+        artist_name="Recipe Artist",
+        album_title="Recipe Album",
+    )
+
+    await store.link_picked_candidate(
+        task_id=task.id,
+        search_job_id=job.id,
+        candidate_index=0,
+        source_username="peer",
+        source_directory="Recipe Artist - Recipe Album",
+        preflight_score=0.91,
+        quality_preference_step=1,
+        quality_certainty=EvidenceCertainty.EXACT.value,
+        quality_provenance=EvidenceProvenance.SOURCE_METADATA.value,
+    )
+
+    fetched_task = await store.get_task(task.id)
+    fetched_job = await store.get_search_job(job.id)
+    assert fetched_task is not None
+    assert fetched_task.quality_preference_step == 1
+    assert fetched_task.quality_certainty == EvidenceCertainty.EXACT.value
+    assert fetched_task.quality_provenance == EvidenceProvenance.SOURCE_METADATA.value
+    assert fetched_job is not None
+    assert fetched_job.quality_snapshot_hash == snapshot.snapshot_hash
+    assert (
+        msgspec.convert(
+            json.loads(fetched_job.quality_snapshot_json),
+            type=AcquisitionQualitySnapshot,
+            strict=False,
+        )
+        == snapshot
+    )

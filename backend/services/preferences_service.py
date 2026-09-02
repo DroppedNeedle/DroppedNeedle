@@ -46,7 +46,9 @@ from api.v1.schemas.settings import (
     LidarrImportConnectionSettings,
     NewznabIndexerSettings,
     SabnzbdConnectionSettings,
+    QualityRecipeEntry,
     SpotifySettings,
+    validate_quality_recipe,
     SPOTIFY_SECRET_MASK,
     EventsSettings,
     FreeMusicSettings,
@@ -338,17 +340,63 @@ class PreferencesService:
             logger.error("Failed to save download client settings: %s", e)
             raise ConfigurationError(f"Failed to save download client settings: {e}")
 
+    def _decode_download_policy(self, data: object) -> DownloadPolicySettings:
+        """Decode policy while preserving invalid recipe status.
+
+        Legacy fields remain usable when a hand-edited/stale v2 recipe cannot
+        decode. The raw invalid blob is never rewritten by this read path.
+        """
+        if not isinstance(data, dict):
+            return DownloadPolicySettings(
+                quality_recipe_status="invalid",
+                quality_recipe_error="download_policy must be an object",
+            )
+        try:
+            policy = msgspec.convert(data, type=DownloadPolicySettings, strict=True)
+            if policy.quality_recipe:
+                validate_quality_recipe(policy.quality_recipe)
+                if not policy.flac_mp3_only:
+                    policy.quality_recipe_status = "non_convertible"
+                    policy.quality_recipe_error = (
+                        "v2 recipes require FLAC/MP3-only mode"
+                    )
+                else:
+                    policy.quality_recipe_status = "v2"
+                    policy.quality_recipe_error = None
+            else:
+                policy.quality_recipe_status = (
+                    "v1" if policy.flac_mp3_only else "non_convertible"
+                )
+                policy.quality_recipe_error = (
+                    None
+                    if policy.flac_mp3_only
+                    else "legacy policy allows codecs outside FLAC/MP3"
+                )
+            return policy
+        except (msgspec.ValidationError, TypeError, ValueError) as exc:
+            # Strip only the malformed v2 field; all legacy policy controls
+            # still decode and the caller can show an actionable status.
+            legacy = dict(data)
+            legacy.pop("quality_recipe", None)
+            try:
+                policy = msgspec.convert(
+                    legacy, type=DownloadPolicySettings, strict=True
+                )
+            except (msgspec.ValidationError, TypeError, ValueError):
+                policy = DownloadPolicySettings()
+            policy.quality_recipe = []
+            policy.quality_recipe_status = "invalid"
+            policy.quality_recipe_error = str(exc)
+            return policy
+
     def get_download_policy(self) -> DownloadPolicySettings:
-        """The source-agnostic acquisition policy. Reads ``download_policy`` if present;
-        otherwise derives it (migration-on-read, COPY-not-delete) from the legacy
-        ``download_client`` (slskd) policy fields so existing installs are unchanged and
-        a Usenet-only install still gets working thresholds."""
+        """Read the shared policy without healing away invalid v2 data."""
         config = self._load_config()
         if "download_policy" in config:
-            return self._get_section("download_policy", DownloadPolicySettings)
+            return self._decode_download_policy(config.get("download_policy"))
         dc = config.get("download_client", {})
         if dc:
-            return DownloadPolicySettings(
+            policy = DownloadPolicySettings(
                 quality_min=dc.get("quality_min", "mp3_320"),
                 quality_max=dc.get("quality_max", "lossless"),
                 flac_mp3_only=dc.get("flac_mp3_only", True),
@@ -372,20 +420,57 @@ class PreferencesService:
                     "auto_retry_base_interval_minutes", 15
                 ),
             )
+            policy.quality_recipe_status = (
+                "v1" if policy.flac_mp3_only else "non_convertible"
+            )
+            policy.quality_recipe_error = (
+                None
+                if policy.flac_mp3_only
+                else "legacy policy allows codecs outside FLAC/MP3"
+            )
+            return policy
         return DownloadPolicySettings()
 
     def save_download_policy(self, policy: DownloadPolicySettings) -> None:
         try:
             config = self._load_config().copy()
             section = to_jsonable(policy)
+            section.pop("quality_recipe_status", None)
+            section.pop("quality_recipe_error", None)
+            if policy.quality_recipe:
+                if not policy.flac_mp3_only:
+                    raise ConfigurationError(
+                        "A v2 recipe cannot be saved while non-FLAC/MP3 formats are enabled"
+                    )
+                from services.native.acquisition.quality import (
+                    legacy_range_from_recipe,
+                    legacy_recipe_order,
+                )
+
+                canonical = validate_quality_recipe(policy.quality_recipe)
+                quality_min, quality_max = legacy_range_from_recipe(canonical)
+                section["quality_recipe"] = to_jsonable(canonical)
+                section["quality_min"] = quality_min
+                section["quality_max"] = quality_max
+                section["quality_preference_order"] = legacy_recipe_order(canonical)
+                section["flac_mp3_only"] = True
+            else:
+                section["quality_min"] = policy.quality_min
+                section["quality_max"] = policy.quality_max
+                section["flac_mp3_only"] = policy.flac_mp3_only
+
+            # Keep the legacy upgrade cutoff inside the canonical range projected
+            # above, including after a recipe narrows that range.
+            from services.native.quality_tiers import TIER_KEYS, tier_rank
+
+            cutoff_rank = tier_rank(policy.quality_cutoff)
+            minimum_rank = tier_rank(section["quality_min"])
+            maximum_rank = tier_rank(section["quality_max"])
+            cutoff_rank = min(max(cutoff_rank, minimum_rank), maximum_rank)
+            section["quality_cutoff"] = TIER_KEYS[len(TIER_KEYS) - 1 - cutoff_rank]
+
             # Legacy rollback mirrors (Acquisition plan): after every new-policy
-            # save, keep the closest legacy-representable values populated so a
-            # down-level image still loads a sane policy. Range/codec/wait keys
-            # are identity; Free Music's preferred_format tracks whether the
-            # accepted range includes lossless.
-            section["quality_min"] = policy.quality_min
-            section["quality_max"] = policy.quality_max
-            section["flac_mp3_only"] = policy.flac_mp3_only
+            # save, keep the closest legacy-representable values populated.
             section["preferred_quality_wait_minutes"] = (
                 policy.preferred_quality_wait_minutes
             )
@@ -394,11 +479,20 @@ class PreferencesService:
             if not isinstance(free_music, dict):
                 free_music = {}
             free_music["preferred_format"] = (
-                "flac" if "lossless" in policy.quality_preference_order else "mp3"
+                policy.quality_recipe[0].format
+                if policy.quality_recipe
+                else (
+                    "flac"
+                    if policy.quality_preference_order
+                    and policy.quality_preference_order[0] == "lossless"
+                    else "mp3"
+                )
             )
             config["free_music"] = free_music
             self._save_config(config)
             logger.info("Saved download policy to %s", self._config_path)
+        except ConfigurationError:
+            raise
         except Exception as e:  # noqa: BLE001
             logger.error("Failed to save download policy: %s", e)
             raise ConfigurationError(f"Failed to save download policy: {e}")
@@ -2266,9 +2360,7 @@ class PreferencesService:
             ):
                 # An admin re-selected Official after the upgrade migration.
                 # Canonicalize the section but never convert it to BrainzMash.
-                current = msgspec.convert(
-                    existing, type=MusicBrainzConnectionSettings
-                )
+                current = msgspec.convert(existing, type=MusicBrainzConnectionSettings)
                 current.source_mode = "official"
                 current.api_url = OFFICIAL_MB_API_BASE
                 current.rate_limit = _OFFICIAL_MB_RATE_LIMIT
@@ -2280,7 +2372,10 @@ class PreferencesService:
                 current.quarantine_reason = ""
                 current.community_acknowledged = False
                 current.clamped_to_official_limits = False
-                if not current.source_id or current.source_id != current.source_id.strip():
+                if (
+                    not current.source_id
+                    or current.source_id != current.source_id.strip()
+                ):
                     current.source_id = str(uuid.uuid4())
                 if current.generation < 1:
                     current.generation = 1

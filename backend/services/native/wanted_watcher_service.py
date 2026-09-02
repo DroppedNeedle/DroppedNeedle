@@ -183,7 +183,9 @@ class WantedWatcherService:
                     exc_info=True,
                 )
                 retry_after = getattr(exc, "retry_after_seconds", None)
-                await self._record_error_cycle(want, settings, retry_after_seconds=retry_after)
+                await self._record_error_cycle(
+                    want, settings, retry_after_seconds=retry_after
+                )
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - one bad want must never kill the sweep
@@ -309,9 +311,7 @@ class WantedWatcherService:
             request_kind="album",
         )
         task_ids = [
-            record.download_task_id
-            for record in records
-            if record.download_task_id
+            record.download_task_id for record in records if record.download_task_id
         ]
         tasks = await self._download_store.get_tasks(task_ids)
         return records, next_cursor, tasks
@@ -485,10 +485,14 @@ class WantedWatcherService:
         if settings.watch_partial_albums:
             statuses.append("incomplete")
         # Sweep-level provider gate: read once, after enabled gate, for optional date enrichment
-        provider_available = self._provider_available() if self._provider_available is not None else True
+        provider_available = (
+            self._provider_available() if self._provider_available is not None else True
+        )
         cache: dict[str, str | None] = {}
         if not provider_available:
-            logger.warning("wanted.enrol_provider_outage", extra={"reason": "circuit_open"})
+            logger.warning(
+                "wanted.enrol_provider_outage", extra={"reason": "circuit_open"}
+            )
         for status in statuses:
             cursor: tuple[str, str] | None = None
             while True:
@@ -559,7 +563,9 @@ class WantedWatcherService:
         if not record.user_id:
             return False  # no requester to act for (D7)
 
-        first_release_date = await self._first_release_date(record, provider_available, cache)
+        first_release_date = await self._first_release_date(
+            record, provider_available, cache
+        )
         next_check = now + self._interval_seconds(
             first_release_date, quiet_streak=0, now=now
         )
@@ -616,7 +622,10 @@ class WantedWatcherService:
         )
 
     async def _first_release_date(
-        self, record: "RequestHistoryRecord", provider_available: bool = True, cache: dict[str, str | None] | None = None
+        self,
+        record: "RequestHistoryRecord",
+        provider_available: bool = True,
+        cache: dict[str, str | None] | None = None,
     ) -> str | None:
         if cache is None:
             cache = {}
@@ -625,7 +634,11 @@ class WantedWatcherService:
         )
 
     async def _first_release_date_for_mbid(
-        self, mbid: str, year: int | None, provider_available: bool = True, cache: dict[str, str | None] | None = None
+        self,
+        mbid: str,
+        year: int | None,
+        provider_available: bool = True,
+        cache: dict[str, str | None] | None = None,
     ) -> str | None:
         if cache is None:
             cache = {}
@@ -714,14 +727,18 @@ class WantedWatcherService:
             )
             return "guarded"
 
-        # (c) scout: no job row, no task (D10)
+        # Capture once before scouting. The exact snapshot that ranked these
+        # candidates must also be pinned onto the task; a live settings save
+        # between these awaits must not re-rank the work being dispatched.
         download_service = self._get_download_service()
         try:
+            scout_snapshot = download_service.capture_quality_snapshot()
             candidates = await download_service.scout_album(
                 artist_name=want.artist_name,
                 album_title=want.album_title,
                 year=want.year,
                 release_group_mbid=mbid,
+                quality_snapshot=scout_snapshot,
             )
         except ConfigurationError:
             # no download source is enabled - nothing to scout against
@@ -736,10 +753,14 @@ class WantedWatcherService:
 
         identities = [(c.source, self._candidate_identity(c)) for c in candidates]
 
-        # (d) auto-tier hit -> silent dispatch through the normal gated pipeline
         if settings.auto_download_on_find and self._has_auto_hit(candidates):
             if (
-                await self._dispatch(want, missing_tracks, download_service)
+                await self._dispatch(
+                    want,
+                    missing_tracks,
+                    download_service,
+                    quality_snapshot=scout_snapshot,
+                )
                 == "satisfied"
             ):
                 return "satisfied"
@@ -797,7 +818,10 @@ class WantedWatcherService:
         return outcome
 
     async def _record_error_cycle(
-        self, want: WantedWatch, settings, retry_after_seconds: float | None = None  # noqa: ANN001
+        self,
+        want: WantedWatch,
+        settings,
+        retry_after_seconds: float | None = None,  # noqa: ANN001
     ) -> None:  # noqa: ANN001
         """A per-want failure reschedules normally with last_outcome='error' -
         one bad want never kills the sweep (§5.2.3)."""
@@ -834,14 +858,27 @@ class WantedWatcherService:
         want: WantedWatch,
         missing_tracks: list,
         download_service: "DownloadService",
+        *,
+        quality_snapshot,
     ) -> str:
         if want.kind == "missing":
-            return await self._dispatch_album(want, download_service)
-        await self._dispatch_tracks(want, missing_tracks, download_service)
+            return await self._dispatch_album(
+                want, download_service, quality_snapshot=quality_snapshot
+            )
+        await self._dispatch_tracks(
+            want,
+            missing_tracks,
+            download_service,
+            quality_snapshot=quality_snapshot,
+        )
         return "dispatched"
 
     async def _dispatch_album(
-        self, want: WantedWatch, download_service: "DownloadService"
+        self,
+        want: WantedWatch,
+        download_service: "DownloadService",
+        *,
+        quality_snapshot,
     ) -> str:
         mbid = want.release_group_mbid
         # §4.8: the same two request writes the requests-page retry does, or the
@@ -857,6 +894,7 @@ class WantedWatcherService:
                 year=want.year,
                 artist_mbid=want.artist_mbid,
                 origin="wanted",
+                quality_snapshot=quality_snapshot,
             )
         except Exception:
             await self._requests.async_update_status(mbid, "failed")
@@ -879,6 +917,8 @@ class WantedWatcherService:
         want: WantedWatch,
         missing_tracks: list,
         download_service: "DownloadService",
+        *,
+        quality_snapshot,
     ) -> None:
         """Per-track dispatch for a partial want (D9), capped per cycle with the
         drop logged. Deliberately does NOT touch the album request's task link
@@ -900,6 +940,7 @@ class WantedWatcherService:
                     release_group_mbid=mbid,
                     artist_mbid=want.artist_mbid,
                     origin="wanted",
+                    quality_snapshot=quality_snapshot,
                 )
             except (ValidationError, ConfigurationError) as exc:
                 logger.warning(

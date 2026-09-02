@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { SOURCE_MODE_OPTIONS } from './qualityOrderModel';
+	import { SOURCE_MODE_OPTIONS } from './qualityRecipeModel';
 
 	interface Props {
 		sourceSelectionMode: string;
@@ -10,7 +10,7 @@
 
 <div role="radiogroup" aria-label="Source selection mode" class="flex flex-col gap-2">
 	{#each SOURCE_MODE_OPTIONS as mode (mode.value)}
-		<label class="label cursor-pointer justify-start gap-3">
+		<label class="label min-h-11 cursor-pointer justify-start gap-3">
 			<input
 				type="radio"
 				name="acq-source-mode"

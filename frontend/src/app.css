@@ -4591,16 +4591,6 @@ textarea {
 		opacity: 0 !important;
 		transition: none !important;
 	}
-	.acq-order-row {
-		transition: none !important;
-	}
-}
-
-/* Acquisition quality order editor (settings): rows ease when reordered. */
-.acq-order-row {
-	transition:
-		transform 0.15s ease-out,
-		opacity 0.15s ease-out;
 }
 
 dialog.whats-new-modal::backdrop {

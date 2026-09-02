@@ -18,6 +18,7 @@ from api.v1.schemas.download import (
     DismissReviewResponse,
     PickRequest,
     PickResponse,
+    QualityRejectionSummary,
     SearchAlbumRequest,
     SearchAlbumResponse,
     SearchJobResponse,
@@ -40,6 +41,22 @@ _SSE_HEADERS = {
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
 }
+
+
+def _quality_rejection_summary(candidates) -> QualityRejectionSummary:  # noqa: ANN001
+    summary = QualityRejectionSummary()
+    for candidate in candidates:
+        decision = getattr(candidate, "quality_decision", None)
+        disposition = getattr(decision, "disposition", None)
+        if disposition == "outside_policy":
+            summary.outside_policy += 1
+        elif disposition == "unknown_rejected":
+            summary.unknown_rejected += 1
+        elif disposition == "not_importable":
+            summary.not_importable += 1
+        elif disposition == "needs_review":
+            summary.needs_review += 1
+    return summary
 
 
 @router.post("/search/album", response_model=SearchAlbumResponse)
@@ -101,6 +118,8 @@ async def get_search_job(
         album_title=job.album_title,
         candidate_count=len(candidates),
         top_score=candidates[0].final_score if candidates else None,
+        quality_snapshot_summary=job.quality_snapshot_summary,
+        quality_rejections=_quality_rejection_summary(candidates),
         candidates=candidates,
     )
 
@@ -112,7 +131,9 @@ async def pick_candidate(
     body: PickRequest = MsgSpecBody(PickRequest),
     service=Depends(get_download_service),
 ):
-    task_id = await service.pick_candidate(current_user.id, job_id, body.candidate_index)
+    task_id = await service.pick_candidate(
+        current_user.id, job_id, body.candidate_index
+    )
     return PickResponse(task_id=task_id)
 
 

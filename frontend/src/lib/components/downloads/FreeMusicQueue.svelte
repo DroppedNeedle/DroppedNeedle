@@ -119,6 +119,15 @@
 								· {task.format.toUpperCase()}
 							{/if}
 						</p>
+						{#if task.quality_snapshot_summary}
+							<p
+								class="mt-1 max-w-full truncate text-[11px] text-base-content/45"
+								data-testid="free-music-quality-summary"
+								title={task.quality_snapshot_summary}
+							>
+								{task.quality_snapshot_summary}
+							</p>
+						{/if}
 						{#if task.error}
 							<p class="mt-0.5 truncate text-xs text-error" title={task.error}>{task.error}</p>
 						{/if}

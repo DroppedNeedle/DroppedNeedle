@@ -49,6 +49,8 @@ function task(overrides: Partial<FreeMusicTask> = {}): FreeMusicTask {
 		bytes_total: 1000,
 		bytes_downloaded: 250,
 		error: null,
+		quality_snapshot_hash: null,
+		quality_snapshot_summary: null,
 		...overrides
 	};
 }
@@ -71,6 +73,20 @@ describe('FreeMusicQueue.svelte', () => {
 		tasks = [task()];
 		render(FreeMusicQueue);
 		await expect.element(page.getByText('CC BY-NC-SA 3.0')).toBeInTheDocument();
+	});
+	it('shows the pinned quality summary without exposing its raw hash', async () => {
+		tasks = [
+			task({
+				quality_snapshot_hash: 'snapshot-hash',
+				quality_snapshot_summary: 'Lossless preferred; MP3 320 fallback.'
+			})
+		];
+		render(FreeMusicQueue);
+
+		const summary = page.getByTestId('free-music-quality-summary');
+		await expect.element(summary).toHaveTextContent('Lossless preferred; MP3 320 fallback.');
+		await expect.element(summary).toHaveAttribute('title', 'Lossless preferred; MP3 320 fallback.');
+		await expect.element(page.getByText('snapshot-hash')).not.toBeInTheDocument();
 	});
 
 	it('names a public-domain licence rather than showing a raw URL', async () => {

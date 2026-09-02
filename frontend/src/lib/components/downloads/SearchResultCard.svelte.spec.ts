@@ -2,7 +2,7 @@ import { page } from '@vitest/browser/context';
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-import type { ScoredCandidate } from '$lib/types';
+import type { QualityDecision, ScoredCandidate } from '$lib/types';
 
 import SearchResultCard from './SearchResultCard.svelte';
 
@@ -12,15 +12,35 @@ function renderCard(props: Record<string, unknown>) {
 	return render(SearchResultCard, { props } as unknown as RenderOpts);
 }
 
-type CandidateExtras = {
-	preference_step?: number | null;
-	preference_steps_total?: number | null;
-	certainty?: string | null;
-};
+function makeDecision(overrides: Partial<QualityDecision> = {}): QualityDecision {
+	return {
+		eligible: true,
+		disposition: 'fallback',
+		tier: 'manual',
+		preference_step: 2,
+		quality_recipe_index: 2,
+		quality_recipe_entry: { format: 'mp3', quality: '320_plus' },
+		lossless_detail_step: null,
+		evidence: {
+			extension: 'mp3',
+			codec_family: 'lossy',
+			bitrate_kbps: 320,
+			bit_depth: null,
+			sample_rate_hz: null,
+			total_bytes: 30_000_000,
+			audio_file_count: 1,
+			mixed_format: false,
+			mixed_quality: false,
+			certainty: 'partial',
+			provenance: 'source_metadata'
+		},
+		reasons: [],
+		summary: 'Fallback quality candidate.',
+		...overrides
+	};
+}
 
-function makeCandidate(
-	overrides: Partial<ScoredCandidate> & CandidateExtras = {}
-): ScoredCandidate & CandidateExtras {
+function makeCandidate(overrides: Partial<ScoredCandidate> = {}): ScoredCandidate {
 	return {
 		username: 'alice',
 		parent_directory: 'Radiohead - OK Computer (1997)',
@@ -137,7 +157,17 @@ describe('SearchResultCard.svelte', () => {
 	});
 
 	it('marks the top-ranked step as Preferred with a plain Pick button', async () => {
-		renderCard({ candidate: makeCandidate({ tier: 'auto', preference_step: 0 }) });
+		renderCard({
+			candidate: makeCandidate({
+				tier: 'auto',
+				quality_decision: makeDecision({
+					disposition: 'preferred',
+					tier: 'auto',
+					preference_step: 0,
+					quality_recipe_index: 0
+				})
+			})
+		});
 		await expect.element(page.getByText('Preferred', { exact: true })).toBeVisible();
 		await expect
 			.element(page.getByRole('button', { name: /Pick candidate from alice/ }))
@@ -147,15 +177,50 @@ describe('SearchResultCard.svelte', () => {
 	it('maps computed fallback steps into the Quality chip', async () => {
 		renderCard({
 			candidate: makeCandidate({
-				preference_step: 2,
-				preference_steps_total: 5,
-				certainty: 'partial'
+				quality_decision: makeDecision({
+					preference_step: 2,
+					quality_recipe_index: 2,
+					evidence: { ...makeDecision().evidence, certainty: 'partial' }
+				})
 			})
 		});
 		await expect.element(page.getByText('Fallback 2', { exact: true })).toBeVisible();
 		await expect.element(page.getByText('Unknown', { exact: true })).not.toBeInTheDocument();
-		renderCard({ candidate: makeCandidate({ preference_step: 2, certainty: 'unknown' }) });
+		renderCard({
+			candidate: makeCandidate({
+				quality_decision: makeDecision({
+					preference_step: 2,
+					quality_recipe_index: 2,
+					evidence: { ...makeDecision().evidence, certainty: 'unknown' }
+				})
+			})
+		});
 		await expect.element(page.getByText('Unknown', { exact: true })).toBeVisible();
+	});
+
+	it('renders nested quality evidence and keeps soft outside-policy manual picks available', async () => {
+		const candidate = makeCandidate({
+			tier: 'manual',
+			quality_decision: makeDecision({
+				eligible: false,
+				disposition: 'outside_policy',
+				tier: 'manual',
+				preference_step: 1,
+				quality_recipe_index: 1,
+				evidence: { ...makeDecision().evidence, certainty: 'inferred' },
+				summary: 'This copy is outside the accepted recipe.'
+			})
+		});
+		renderCard({ candidate });
+		await expect.element(page.getByText('Outside policy', { exact: true })).toBeVisible();
+		await expect.element(page.getByText('Recipe step 2', { exact: true })).toBeVisible();
+		await expect.element(page.getByText('Certainty: Inferred', { exact: true })).toBeVisible();
+		await expect
+			.element(page.getByText('Disposition: outside policy', { exact: true }))
+			.toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: /Pick candidate from alice/ }))
+			.toBeEnabled();
 	});
 
 	it('blocks unimportable candidates while outside-policy imports stay reachable via Show all', async () => {
@@ -168,5 +233,74 @@ describe('SearchResultCard.svelte', () => {
 		await expect.element(button).toHaveTextContent('Unavailable');
 		await expect.element(page.getByText('Outside policy', { exact: true })).toBeVisible();
 		expect(onPick).not.toHaveBeenCalled();
+	});
+	it('keeps hard quality rejection unavailable and explains its nested disposition', async () => {
+		renderCard({
+			candidate: makeCandidate({
+				tier: 'rejected',
+				quality_decision: makeDecision({
+					eligible: false,
+					disposition: 'not_importable',
+					tier: null,
+					preference_step: null,
+					quality_recipe_index: null,
+					summary: 'DSD is not an importable audio format.'
+				})
+			})
+		});
+		await expect.element(page.getByText('Rejected', { exact: true })).toBeVisible();
+		await expect
+			.element(page.getByText('Disposition: not importable', { exact: true }))
+			.toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: /Pick candidate from alice/ }))
+			.toBeDisabled();
+	});
+	it('blocks outside-policy candidates with hard quality reasons', async () => {
+		const onPick = vi.fn();
+		renderCard({
+			candidate: makeCandidate({
+				quality_decision: makeDecision({
+					eligible: false,
+					disposition: 'outside_policy',
+					tier: 'lossless',
+					preference_step: 0,
+					quality_recipe_index: 0,
+					reasons: ['lossless_resolution_above_maximum'],
+					summary: 'FLAC copy exceeds the server limit (24-bit).'
+				})
+			}),
+			onPick
+		});
+
+		const button = page.getByRole('button', {
+			name: /Pick candidate from alice - FLAC copy exceeds the server limit/
+		});
+		await expect.element(button).toBeDisabled();
+		await expect.element(button).toHaveTextContent('Unavailable');
+		expect(onPick).not.toHaveBeenCalled();
+	});
+	it('uses the generic identity reason for rejected candidates with eligible quality', async () => {
+		const onPick = vi.fn();
+		renderCard({
+			candidate: makeCandidate({
+				tier: 'rejected',
+				quality_decision: makeDecision({
+					eligible: true,
+					disposition: 'fallback',
+					summary: 'Fallback quality candidate.'
+				})
+			}),
+			onPick
+		});
+
+		const button = page.getByRole('button', {
+			name: /Pick candidate from alice - Blocked: outside the accepted quality policy\./
+		});
+		await expect.element(button).toBeDisabled();
+		await expect
+			.element(button)
+			.toHaveAttribute('title', 'Blocked: outside the accepted quality policy.');
+		await expect.element(button).not.toHaveAttribute('title', 'Fallback quality candidate.');
 	});
 });

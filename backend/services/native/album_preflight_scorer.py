@@ -172,13 +172,24 @@ def _availability_key(candidate: ScoredCandidate) -> tuple[int, int, int, int, i
 
 
 def _file_evidence(file: DownloadSearchResult) -> AudioQualityEvidence:
-    """Per-file source-metadata projection (peer-supplied => ``partial``)."""
+    """Per-file source-metadata projection with exact axes when fully present."""
     ext = _effective_extension(file)
     tier = tier_for(ext, file.bitrate, file.bit_depth)
     family = (
         CodecFamily.LOSSLESS
         if tier == "lossless"
         else CodecFamily.LOSSY
+        if tier in {"low", "mp3_192", "mp3_256", "mp3_320"}
+        else CodecFamily.UNKNOWN
+    )
+    exact = (
+        family is CodecFamily.LOSSY and file.bitrate is not None and file.bitrate > 0
+    ) or (
+        family is CodecFamily.LOSSLESS
+        and file.bit_depth is not None
+        and file.bit_depth > 0
+        and file.sample_rate is not None
+        and file.sample_rate > 0
     )
     return AudioQualityEvidence(
         extension=ext,
@@ -190,12 +201,35 @@ def _file_evidence(file: DownloadSearchResult) -> AudioQualityEvidence:
         audio_file_count=1,
         mixed_format=False,
         mixed_quality=False,
-        certainty=EvidenceCertainty.PARTIAL,
+        certainty=EvidenceCertainty.EXACT if exact else EvidenceCertainty.PARTIAL,
         provenance=EvidenceProvenance.SOURCE_METADATA,
     )
 
 
-def _legacy_candidate_rank_key(candidate: ScoredCandidate):
+def _legacy_candidate_rank_key(
+    candidate: ScoredCandidate,
+    snapshot: AcquisitionQualitySnapshot | None = None,
+):
+    if snapshot is not None and acq_quality.is_recipe_snapshot(snapshot):
+        decision = candidate.quality_decision
+        if decision is None and candidate.files:
+            decision = acq_quality.evaluate_worst(
+                snapshot, [_file_evidence(file) for file in candidate.files]
+            )
+        step = (
+            decision.preference_step
+            if decision is not None and decision.preference_step is not None
+            else len(snapshot.quality_recipe) + 1
+        )
+        evidence = decision.evidence if decision is not None else AudioQualityEvidence()
+        refinement = acq_quality.recipe_refinement_key(snapshot, evidence)
+        return (
+            _ACCEPTANCE_RANK.get(candidate.tier, 0),
+            -step,
+            *(-value for value in refinement),
+            *_availability_key(candidate),
+            candidate.final_score,
+        )
     return (
         _ACCEPTANCE_RANK.get(candidate.tier, 0),
         tier_rank(candidate_tier(candidate.files)),
@@ -206,7 +240,9 @@ def _legacy_candidate_rank_key(candidate: ScoredCandidate):
 
 
 def rank_stored_candidates(
-    target: TargetAlbum, candidates: list[ScoredCandidate]
+    target: TargetAlbum,
+    candidates: list[ScoredCandidate],
+    snapshot: AcquisitionQualitySnapshot | None = None,
 ) -> list[ScoredCandidate]:
     """Apply current safety and ranking rules to a read-only review projection.
 
@@ -223,6 +259,24 @@ def rank_stored_candidates(
             _album_identity_text(target, candidate.parent_directory, candidate.files),
         ):
             continue
+        if snapshot is not None and acq_quality.is_recipe_snapshot(snapshot):
+            if source == "soulseek" and candidate.files:
+                evidence = [_file_evidence(file) for file in candidate.files]
+                decision = acq_quality.evaluate_worst(snapshot, evidence)
+                if not decision.eligible and acq_quality.is_hard_quality_rejection(
+                    decision
+                ):
+                    continue
+                candidate = msgspec.structs.replace(
+                    candidate,
+                    tier=(
+                        "manual"
+                        if not decision.eligible and candidate.tier == "auto"
+                        else candidate.tier
+                    ),
+                    quality_evidence=decision.evidence,
+                    quality_decision=decision,
+                )
         if source not in by_source:
             by_source[source] = []
             source_order.append(source)
@@ -233,7 +287,11 @@ def rank_stored_candidates(
     projected: list[ScoredCandidate] = []
     for source in source_order:
         projected.extend(
-            sorted(by_source[source], key=_legacy_candidate_rank_key, reverse=True)
+            sorted(
+                by_source[source],
+                key=lambda candidate: _legacy_candidate_rank_key(candidate, snapshot),
+                reverse=True,
+            )
         )
     return projected
 
@@ -305,8 +363,6 @@ def _file_confidence(
             _normalize_for_match(file_artist),
         )
         / 100.0
-        if file_artist
-        else 0.0
     )
 
     # penalise when exactly one side carries a version marker
@@ -347,8 +403,16 @@ class AlbumPreflightScorer:
         # Canonical quality endpoints come from the SNAPSHOT; non-quality gates
         # (max size / terms / retention) arrive via spec_extras, fresh per call.
         policy = SpecPolicy(
-            quality_min=snapshot.quality_preference_order[-1],
-            quality_max=snapshot.quality_preference_order[0],
+            quality_min=(
+                "low"
+                if acq_quality.is_recipe_snapshot(snapshot)
+                else snapshot.quality_preference_order[-1]
+            ),
+            quality_max=(
+                "lossless"
+                if acq_quality.is_recipe_snapshot(snapshot)
+                else snapshot.quality_preference_order[0]
+            ),
         )
         if spec_extras is not None:
             import msgspec as _ms
@@ -502,10 +566,21 @@ class AlbumPreflightScorer:
             # Folder-worst evidence from per-file projections; attached so the
             # orchestrator's stored-snapshot recheck and the review UI reuse the
             # SAME evaluation instead of re-deriving from raw files.
-            file_evidence = [
-                _file_evidence(f) for f in audio
-            ]
+            file_evidence = [_file_evidence(f) for f in audio]
             folder_decision = acq_quality.evaluate_worst(snapshot, file_evidence)
+            if (
+                acq_quality.is_recipe_snapshot(snapshot)
+                and not folder_decision.eligible
+                and acq_quality.is_hard_quality_rejection(folder_decision)
+            ):
+                pipeline_drops[RejectCode.QUALITY_REJECTED] += 1
+                continue
+            if (
+                acq_quality.is_recipe_snapshot(snapshot)
+                and not folder_decision.eligible
+                and tier == "auto"
+            ):
+                tier = "manual"
             scored.append(
                 ScoredCandidate(
                     username=username,
@@ -520,13 +595,27 @@ class AlbumPreflightScorer:
                 )
             )
 
-        # Identity first (unchanged), then the SNAPSHOT'S global preference step,
-        # then same-step refinement: exact beats partial evidence and a candidate
-        # closer to the configured lossy target wins its band. The legacy
-        # availability tuple + final score remain the tail tie-breaks. A legacy
-        # composite key (fidelity-first) survives as _legacy_candidate_rank_key
-        # for the pre-cutover characterization suite.
         def _rank_key(candidate: ScoredCandidate):
+            if acq_quality.is_recipe_snapshot(snapshot):
+                decision = candidate.quality_decision
+                step = (
+                    decision.preference_step
+                    if decision is not None and decision.preference_step is not None
+                    else len(snapshot.quality_recipe) + 1
+                )
+                evidence = (
+                    decision.evidence
+                    if decision is not None
+                    else AudioQualityEvidence()
+                )
+                refinement = acq_quality.recipe_refinement_key(snapshot, evidence)
+                return (
+                    _ACCEPTANCE_RANK.get(candidate.tier, 0),
+                    -step,
+                    *(-value for value in refinement),
+                    *_availability_key(candidate),
+                    candidate.final_score,
+                )
             step = None
             dist = None
             certainty = EvidenceCertainty.PARTIAL

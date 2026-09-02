@@ -23,6 +23,11 @@ from models.acquisition_quality import (
     EvidenceProvenance,
     QualityDecision,
 )
+from services.native.acquisition.quality import (
+    CERTAINTY_RANK,
+    evaluate,
+    project_canonical_tier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +53,13 @@ def family_for_format(file_format: str, bit_depth: int | None) -> CodecFamily:
 def _evidence_from_info(path: Path, info) -> AudioQualityEvidence:
     """info: ``infrastructure.audio`` AudioInfo (duration/bitrate/sample_rate/
     channels/file_format/file_size_bytes/bit_depth)."""
+    fmt = (info.file_format or path.suffix.lstrip(".")).lower()
     return AudioQualityEvidence(
-        extension=(info.file_format or path.suffix.lstrip(".")).lower(),
-        codec_family=family_for_format(info.file_format, info.bit_depth),
-        bitrate_kbps=info.bitrate if info.file_format.lower() not in _LOSSLESS_FORMATS | _MP4_FAMILY else None,
+        extension=fmt,
+        codec_family=family_for_format(fmt, info.bit_depth),
+        bitrate_kbps=info.bitrate
+        if fmt not in _LOSSLESS_FORMATS | _MP4_FAMILY
+        else None,
         bit_depth=info.bit_depth,
         sample_rate_hz=info.sample_rate,
         total_bytes=info.file_size_bytes,
@@ -76,20 +84,33 @@ def _merge(evidences: list[AudioQualityEvidence]) -> AudioQualityEvidence:
         else CodecFamily.UNKNOWN
     )
     lossy = [e for e in evidences if e.codec_family is CodecFamily.LOSSY]
+    if len(families) > 1:
+        mixed_quality = True
+    elif families == {CodecFamily.LOSSY}:
+        mixed_quality = len({e.bitrate_kbps for e in evidences}) > 1
+    elif families == {CodecFamily.LOSSLESS}:
+        mixed_quality = len({(e.bit_depth, e.sample_rate_hz) for e in evidences}) > 1
+    else:
+        mixed_quality = (
+            len({(e.bitrate_kbps, e.bit_depth, e.sample_rate_hz) for e in evidences})
+            > 1
+        )
+    mixed_quality = mixed_quality or any(e.mixed_quality for e in evidences)
     return AudioQualityEvidence(
         extension=sorted(extensions)[0] if len(extensions) == 1 else "",
         codec_family=(
-            CodecFamily.LOSSLESS if len(families - {CodecFamily.LOSSY}) == 1 and not lossy else worst_family
+            CodecFamily.LOSSLESS if families == {CodecFamily.LOSSLESS} else worst_family
         ),
-        bitrate_kbps=min((e.bitrate_kbps for e in lossy if e.bitrate_kbps is not None), default=None),
+        bitrate_kbps=min(
+            (e.bitrate_kbps for e in lossy if e.bitrate_kbps is not None), default=None
+        ),
         bit_depth=min(depths) if depths else None,
         sample_rate_hz=min(rates) if rates else None,
         total_bytes=sum(e.total_bytes or 0 for e in evidences) or None,
         audio_file_count=len(evidences),
         mixed_format=len(extensions) > 1,
-        mixed_quality=len({family_for_format(f, None) for f in extensions}) > 1
-        or any(e.mixed_quality for e in evidences),
-        certainty=min((e.certainty for e in evidences), key=lambda c: c.value != ""),
+        mixed_quality=mixed_quality,
+        certainty=min((e.certainty for e in evidences), key=CERTAINTY_RANK.__getitem__),
         provenance=EvidenceProvenance.LOCAL_PROBE,
     )
 
@@ -140,14 +161,20 @@ def quality_mismatch(
     decision: QualityDecision | None,
     probed: AudioQualityEvidence,
 ) -> bool:
-    """Whether PROBED reality materially contradicts what selection promised:
-    the probed canonical tier must equal the decision's tier AND the probed
-    evidence must remain eligible under the same stored snapshot (lossless
-    caps, lossy bounds, unknown rules re-run on measured facts)."""
-    from services.native.acquisition.quality import evaluate, project_canonical_tier
+    """Whether PROBED reality materially contradicts what selection promised.
 
+    A canonical-tier comparison is meaningful only when the selection itself
+    had exact evidence; partial source labels are re-evaluated from the probe
+    under the pinned snapshot instead of treating a conservative projection as
+    a promise.
+    """
     projected = project_canonical_tier(probed)
-    if decision is not None and decision.tier is not None and projected != decision.tier:
+    if (
+        decision is not None
+        and decision.tier is not None
+        and decision.evidence.certainty is EvidenceCertainty.EXACT
+        and projected != decision.tier
+    ):
         return True
     probed_decision = evaluate(snapshot, probed)
     return not probed_decision.eligible
@@ -156,18 +183,28 @@ def quality_mismatch(
 def expected_vs_actual_copy(
     decision: QualityDecision | None, probed: AudioQualityEvidence
 ) -> str:
-    expected = decision.summary if decision is not None and decision.summary else "the policy-accepted copy"
+    expected = (
+        decision.summary
+        if decision is not None and decision.summary
+        else "the policy-accepted copy"
+    )
     probed_bits: list[str] = []
     if probed.codec_family is CodecFamily.LOSSLESS and probed.bit_depth is not None:
         rate = probed.sample_rate_hz
         probed_bits.append(
-            f"{probed.bit_depth}-bit/{round(rate / 1000)} kHz" if rate else f"{probed.bit_depth}-bit"
+            f"{probed.bit_depth}-bit/{round(rate / 1000)} kHz"
+            if rate
+            else f"{probed.bit_depth}-bit"
         )
     elif probed.bitrate_kbps is not None:
         probed_bits.append(f"{probed.bitrate_kbps} kbps")
     elif probed.extension:
         probed_bits.append(probed.extension.upper())
-    actual = f"{probed.codec_family.value} ({', '.join(probed_bits)})" if probed_bits else probed.codec_family.value
+    actual = (
+        f"{probed.codec_family.value} ({', '.join(probed_bits)})"
+        if probed_bits
+        else probed.codec_family.value
+    )
     return f"Expected {expected.rstrip('.')} but downloaded files are {actual}."
 
 
