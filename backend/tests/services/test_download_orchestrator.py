@@ -3941,3 +3941,85 @@ async def test_failover_requests_only_missing_tracks_from_next_peer(tmp_path: Pa
     assert second_files == ["p2/02.flac"]
     final = await store.get_task(task.id)
     assert final.status == "completed"
+
+
+# Delivery-trust exception (#131 family) on the Usenet path.
+#
+# A Usenet grab is one opaque NZB, so its manifest is built with target_files=[]
+# (acquisition/strategy.py) and carries the requested edition in expected_tracks
+# instead. The delivery-trust exception in _download_is_complete sized "what this
+# source was asked for" from target_files alone, making it 0 for every Usenet album;
+# `asked < task.track_count` was then always true, the exception never fired, and a
+# complete correct import was declared under-delivered -> quarantined -> re-downloaded
+# in a loop that never terminates.
+
+
+def _write_album_manifest(orch, task_id, *, target_files, expected_tracks):
+    manifest = DownloadManifest(
+        task_id=task_id,
+        release_group_mbid="rg-1",
+        artist_name="Artist",
+        album_title="Album",
+        naming_template=_TEMPLATE,
+        target_files=target_files,
+        expected_tracks=expected_tracks,
+    )
+    path = orch._staging / task_id / "manifest.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(ManifestCodec().encode(manifest))
+
+
+@pytest.mark.asyncio
+async def test_usenet_full_delivery_completes_when_release_group_has_no_rows(
+    tmp_path: Path,
+):
+    """target_files=[] must not read as 'this source was asked for nothing'."""
+    store, orch, _fp, _lib = _build(tmp_path)
+    task = await _new_task(store, track_count=16)
+    _write_album_manifest(
+        orch,
+        task.id,
+        target_files=[],
+        expected_tracks=[ExpectedTrack(track_number=n) for n in range(1, 17)],
+    )
+    orch._coverage = AsyncMock(return_value=(0, 16, []))
+    result = ProcessResult(
+        succeeded=[f"/lib/{n:02d}.flac" for n in range(1, 17)], failed=[]
+    )
+
+    assert await orch._download_is_complete(task, True, result) is True
+
+
+@pytest.mark.asyncio
+async def test_usenet_short_delivery_still_fails_over(tmp_path: Path):
+    """The under-delivery veto must survive: fewer files than the edition asked for."""
+    store, orch, _fp, _lib = _build(tmp_path)
+    task = await _new_task(store, track_count=16)
+    _write_album_manifest(
+        orch,
+        task.id,
+        target_files=[],
+        expected_tracks=[ExpectedTrack(track_number=n) for n in range(1, 17)],
+    )
+    orch._coverage = AsyncMock(return_value=(0, 16, []))
+    result = ProcessResult(succeeded=[f"/lib/{n:02d}.flac" for n in range(1, 6)], failed=[])
+
+    assert await orch._download_is_complete(task, True, result) is False
+
+
+@pytest.mark.asyncio
+async def test_soulseek_short_manifest_still_fails_over(tmp_path: Path):
+    """Soulseek behaviour is unchanged: a manifest smaller than the requested
+    tracklist under-delivered even when every file published cleanly."""
+    store, orch, _fp, _lib = _build(tmp_path)
+    task = await _new_task(store, track_count=16)
+    _write_album_manifest(
+        orch,
+        task.id,
+        target_files=[ExpectedFile(filename=f"{n:02d}.flac", size=1) for n in range(1, 6)],
+        expected_tracks=[ExpectedTrack(track_number=n) for n in range(1, 17)],
+    )
+    orch._coverage = AsyncMock(return_value=(0, 16, []))
+    result = ProcessResult(succeeded=[f"/lib/{n:02d}.flac" for n in range(1, 6)], failed=[])
+
+    assert await orch._download_is_complete(task, True, result) is False

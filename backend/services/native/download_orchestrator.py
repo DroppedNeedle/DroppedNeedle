@@ -1880,7 +1880,15 @@ class DownloadOrchestrator:
                 and result.management_hold_reason_code is None
             ):
                 try:
-                    asked = len(self._read_manifest(task.id).target_files)
+                    manifest = self._read_manifest(task.id)
+                    # A Usenet grab is one opaque NZB, so its manifest carries no
+                    # per-file entries (acquisition/strategy.py builds it with
+                    # ``target_files=[]``) and the requested tracklist is what this
+                    # source was asked for. Reading ``target_files`` alone makes
+                    # ``asked`` 0 for every Usenet album, which then always trips the
+                    # ``asked < task.track_count`` under-delivery test below and
+                    # defeats this exception on that path entirely.
+                    asked = len(manifest.target_files) or len(manifest.expected_tracks)
                 except OrchestrationError:
                     asked = None
                 rows = []
