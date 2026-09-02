@@ -30,6 +30,7 @@
 	import { logout } from '$lib/utils/logout';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { getProfileQuery } from '$lib/queries/profile/ProfileQuery.svelte';
+	import { getAuthProvidersQuery } from '$lib/queries/auth/AuthProvidersQuery.svelte';
 	import {
 		createUpdateDisplayNameMutation,
 		createUpdateUsernameMutation,
@@ -60,6 +61,12 @@
 	const profile = $derived(profileQuery.data);
 	const providers = $derived(profile?.providers ?? authStore.user?.providers ?? []);
 	const hasLocalPassword = $derived(providers.includes('local'));
+
+	// Instance-wide: whether local password auth is permitted at all
+	// (ALLOW_PASSWORD_LOGIN). Distinct from hasLocalPassword above, which is
+	// whether *this user* has a local credential set.
+	const authProvidersQuery = getAuthProvidersQuery();
+	const passwordLoginAllowed = $derived(authProvidersQuery.data?.local ?? true);
 
 	// lastfm + listenbrainz are per-user (managed in the scrobbling card), so drop from the read-only grid
 	const HIDDEN_SERVICES = new Set(['ListenBrainz', 'Last.fm']);
@@ -622,88 +629,95 @@
 							{/if}
 						</div>
 
-						<div class="px-5 py-4">
-							<div class="flex items-center gap-3">
-								<div
-									class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-base-content/70"
-								>
-									<KeyRound class="h-4 w-4" />
+						{#if passwordLoginAllowed}
+							<!-- ALLOW_PASSWORD_LOGIN=false: the password endpoints 403, so the
+							     controls are hidden rather than left to fail on submit. -->
+							<div class="px-5 py-4">
+								<div class="flex items-center gap-3">
+									<div
+										class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-base-content/70"
+									>
+										<KeyRound class="h-4 w-4" />
+									</div>
+									<div class="min-w-0 flex-1">
+										<p
+											class="text-[10px] font-medium uppercase tracking-wider text-base-content/40"
+										>
+											Password
+										</p>
+										{#if hasLocalPassword}
+											<p class="text-sm font-medium tracking-widest">••••••••</p>
+										{:else}
+											<p class="text-sm text-base-content/40">No local password</p>
+										{/if}
+									</div>
+									<button
+										onclick={togglePasswordForm}
+										class="btn btn-ghost btn-sm gap-1.5 text-base-content/60 hover:text-primary"
+									>
+										{#if showPasswordForm}
+											Cancel
+										{:else if hasLocalPassword}
+											<Pencil class="h-3.5 w-3.5" /> Change
+										{:else}
+											<KeyRound class="h-3.5 w-3.5" /> Set a password
+										{/if}
+									</button>
 								</div>
-								<div class="min-w-0 flex-1">
-									<p class="text-[10px] font-medium uppercase tracking-wider text-base-content/40">
-										Password
+
+								{#if passwordDone && !showPasswordForm}
+									<p class="mt-2 flex items-center gap-1.5 pl-12 text-xs text-success">
+										<Check class="h-3.5 w-3.5" />
+										{hasLocalPassword ? 'Password updated' : 'Local password set'}
 									</p>
-									{#if hasLocalPassword}
-										<p class="text-sm font-medium tracking-widest">••••••••</p>
-									{:else}
-										<p class="text-sm text-base-content/40">No local password</p>
-									{/if}
-								</div>
-								<button
-									onclick={togglePasswordForm}
-									class="btn btn-ghost btn-sm gap-1.5 text-base-content/60 hover:text-primary"
-								>
-									{#if showPasswordForm}
-										Cancel
-									{:else if hasLocalPassword}
-										<Pencil class="h-3.5 w-3.5" /> Change
-									{:else}
-										<KeyRound class="h-3.5 w-3.5" /> Set a password
-									{/if}
-								</button>
-							</div>
+								{/if}
 
-							{#if passwordDone && !showPasswordForm}
-								<p class="mt-2 flex items-center gap-1.5 pl-12 text-xs text-success">
-									<Check class="h-3.5 w-3.5" />
-									{hasLocalPassword ? 'Password updated' : 'Local password set'}
-								</p>
-							{/if}
-
-							{#if showPasswordForm}
-								<div class="mt-3 space-y-2 pl-0 sm:pl-12">
-									{#if hasLocalPassword}
+								{#if showPasswordForm}
+									<div class="mt-3 space-y-2 pl-0 sm:pl-12">
+										{#if hasLocalPassword}
+											<input
+												type="password"
+												bind:value={currentPassword}
+												autocomplete="current-password"
+												class="input input-sm input-soft w-full max-w-sm"
+												placeholder="Current password"
+											/>
+										{:else}
+											<p class="text-xs text-base-content/50">
+												Add a password so you can also sign in with your username.
+											</p>
+										{/if}
 										<input
 											type="password"
-											bind:value={currentPassword}
-											autocomplete="current-password"
+											bind:value={newPassword}
+											autocomplete="new-password"
 											class="input input-sm input-soft w-full max-w-sm"
-											placeholder="Current password"
+											placeholder="New password (min 12 characters)"
 										/>
-									{:else}
-										<p class="text-xs text-base-content/50">
-											Add a password so you can also sign in with your username.
-										</p>
-									{/if}
-									<input
-										type="password"
-										bind:value={newPassword}
-										autocomplete="new-password"
-										class="input input-sm input-soft w-full max-w-sm"
-										placeholder="New password (min 12 characters)"
-									/>
-									{#if passwordError}
-										<p class="text-xs text-error">{passwordError}</p>
-									{/if}
-									<div class="flex gap-2 pt-1">
-										<button
-											onclick={() => void submitPassword()}
-											class="btn btn-primary btn-sm glow-primary-soft gap-1.5 rounded-full"
-											disabled={passwordPending ||
-												!newPassword ||
-												(hasLocalPassword && !currentPassword)}
-										>
-											{#if passwordPending}
-												<span class="loading loading-spinner loading-xs"></span>
-											{/if}
-											{hasLocalPassword ? 'Update password' : 'Set password'}
-										</button>
-										<button onclick={togglePasswordForm} class="btn btn-ghost btn-sm">Cancel</button
-										>
+										{#if passwordError}
+											<p class="text-xs text-error">{passwordError}</p>
+										{/if}
+										<div class="flex gap-2 pt-1">
+											<button
+												onclick={() => void submitPassword()}
+												class="btn btn-primary btn-sm glow-primary-soft gap-1.5 rounded-full"
+												disabled={passwordPending ||
+													!newPassword ||
+													(hasLocalPassword && !currentPassword)}
+											>
+												{#if passwordPending}
+													<span class="loading loading-spinner loading-xs"></span>
+												{/if}
+												{hasLocalPassword ? 'Update password' : 'Set password'}
+											</button>
+											<button onclick={togglePasswordForm} class="btn btn-ghost btn-sm"
+												>Cancel</button
+											>
+										</div>
 									</div>
-								</div>
-							{/if}
-						</div>
+								{/if}
+							</div>
+						{/if}
 					</div>
 				</section>
 

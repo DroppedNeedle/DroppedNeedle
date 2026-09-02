@@ -48,6 +48,7 @@ from api.v1.schemas.auth import (
 from core.base_path import scope_base_path
 from core.config import get_settings
 from core.dependencies import get_preferences_service, get_quota_service
+from core.password_policy import require_password_login_enabled
 from core.dependencies.auth_providers import (
     get_auth_service,
     get_plex_user_auth_service,
@@ -196,7 +197,11 @@ async def setup(
     )
 
 
-@router.post("/login", response_model=AuthResponse)
+@router.post(
+    "/login",
+    response_model=AuthResponse,
+    dependencies=[Depends(require_password_login_enabled)],
+)
 async def login(
     request: Request,
     response: Response,
@@ -226,7 +231,11 @@ async def login(
     )
 
 
-@router.post("/password-recovery/reset", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/password-recovery/reset",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_password_login_enabled)],
+)
 async def reset_password_with_recovery_code(
     body: PasswordRecoveryResetRequest = MsgSpecBody(PasswordRecoveryResetRequest),
     auth: AuthService = Depends(get_auth_service),
