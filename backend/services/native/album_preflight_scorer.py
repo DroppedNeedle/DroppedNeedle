@@ -35,7 +35,7 @@ from models.acquisition_quality import (
     EvidenceProvenance,
 )
 from models.download import ScoredCandidate, TargetAlbum
-from models.download_identity import soulseek_identity
+from models.download_identity import canonical_soulseek_identity, soulseek_identity
 from models.acquisition_quality import (
     AudioQualityEvidence,
     CodecFamily,
@@ -452,6 +452,22 @@ class AlbumPreflightScorer:
         for result in filtered:
             groups[(result.username, result.parent_directory)].append(result)
 
+        # Peer-folder exhaustion (#255 defect 2): a clean import that still
+        # under-delivers records a BARE-username quarantine row, which can never
+        # match a per-file (username, filename) identity. Consult it here at
+        # folder level - the grouping key already is (username, directory) - and
+        # drop that peer's folders for this release group. A manual re-request
+        # clears album-scoped rows by RG (covering bare rows too), restoring it.
+        exhausted = {
+            key
+            for key in groups
+            if ("soulseek", canonical_soulseek_identity(key[0]))
+            in context.quarantine_set
+        }
+        drop_peer_exhausted = len(exhausted)
+        for key in exhausted:
+            del groups[key]
+
         scored: list[ScoredCandidate] = []
         drop_no_audio = drop_codec = 0
         pipeline_drops: Counter[RejectCode] = Counter()
@@ -660,6 +676,7 @@ class AlbumPreflightScorer:
                 "groups_total": len(groups),
                 "dropped_no_audio": drop_no_audio,
                 "dropped_codec": drop_codec,
+                "dropped_peer_exhausted": drop_peer_exhausted,
                 **{f"dropped_{code.value}": n for code, n in pipeline_drops.items()},
             },
         )

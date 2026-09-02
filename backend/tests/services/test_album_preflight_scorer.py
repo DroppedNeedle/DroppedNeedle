@@ -10,11 +10,14 @@ the Review tab's "Show all results anyway" needs no re-search) rather than
 removed - so junk/mixed-source assertions check the tier, not absence.
 """
 
+from pathlib import Path
 from unittest.mock import AsyncMock
+import threading
 
 import pytest
 from rapidfuzz import fuzz
 
+from infrastructure.persistence.download_store import DownloadStore
 from models.download import ScoredCandidate, TargetAlbum
 from repositories.protocols.download_client import DownloadSearchResult
 from api.v1.schemas.settings import DownloadPolicySettings
@@ -153,6 +156,53 @@ async def test_quarantined_candidate_excluded():
     scorer = AlbumPreflightScorer(_store(quarantine=quarantined))
     candidates = await scorer.rank(_TARGET, files, snapshot=policy_snapshot())
     assert all(c.username != "alice" for c in candidates)
+
+
+@pytest.mark.asyncio
+async def test_peer_folder_exhaustion_row_drops_peer_folders():
+    """#255 defect 2 consumption: the orchestrator's bare-username row (a clean
+    import that under-delivered) must remove that peer's folders from ranking -
+    no per-file identity can ever match it, so the folder-level consult does."""
+    pool = [
+        _mk(_PARENT, f"OK Computer {n:02d}.flac", username=username)
+        for username in ("peer", "freshpeer")
+        for n in (1, 2)
+    ]
+    scorer = AlbumPreflightScorer(_store(quarantine={("soulseek", "peer")}))
+    candidates = await scorer.rank(_TARGET, pool, snapshot=policy_snapshot())
+    assert {c.username for c in candidates} == {"freshpeer"}
+    # without the row both peers rank
+    control = await AlbumPreflightScorer(_store()).rank(
+        _TARGET, pool, snapshot=policy_snapshot()
+    )
+    assert {c.username for c in control} == {"peer", "freshpeer"}
+
+
+@pytest.mark.asyncio
+async def test_peer_folder_exhaustion_round_trip_through_store(tmp_path: Path):
+    """End to end through real persistence: the recorded bare row suppresses the
+    peer on a fresh search for the same RG, and the manual re-request clear
+    (delete by RG) restores it."""
+    store = DownloadStore(db_path=tmp_path / "c.db", write_lock=threading.Lock())
+    await store.record_quarantine(
+        source="soulseek",
+        identity="peer",
+        reason="verify_failed",
+        release_group_mbid="rg-1",
+    )
+    assert ("soulseek", "peer") in await store.load_quarantine_set()
+    pool = [
+        _mk(_PARENT, f"OK Computer {n:02d}.flac", username=username)
+        for username in ("peer", "freshpeer")
+        for n in (1, 2)
+    ]
+    scorer = AlbumPreflightScorer(store)
+    ranked = await scorer.rank(_TARGET, pool, snapshot=policy_snapshot())
+    assert {c.username for c in ranked} == {"freshpeer"}
+    cleared = await store.delete_quarantine_for_album("rg-1")
+    assert cleared == 1
+    restored = await scorer.rank(_TARGET, pool, snapshot=policy_snapshot())
+    assert {c.username for c in restored} == {"peer", "freshpeer"}
 
 
 @pytest.mark.asyncio
