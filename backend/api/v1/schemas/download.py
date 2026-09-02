@@ -35,13 +35,19 @@ class IndexerSavedResponse(AppStruct):
 
 class SabnzbdTestResponse(AppStruct):
     """Result of testing SABnzbd: version + the category list (for the picker) + the
-    SABnzbd-side completed dir (the mount hint)."""
+    SABnzbd-side completed dir (the mount hint) + the mount diagnosis (how many
+    sampled SABnzbd downloads resolve under the submitted mount, with an
+    actionable message when they don't)."""
 
     valid: bool
     version: str | None = None
     message: str = ""
     categories: list[str] = msgspec.field(default_factory=list)
     complete_dir: str | None = None
+    mount_has_files: bool | None = None
+    resolvable_downloads: int | None = None
+    sampled_downloads: int | None = None
+    mount_message: str | None = None
 
 
 class IndexerReorderRequest(AppStruct):

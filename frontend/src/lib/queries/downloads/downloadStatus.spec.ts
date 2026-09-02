@@ -185,6 +185,44 @@ describe('canReimport', () => {
 			canReimport(task({ status: 'downloading', search_job_id: 'j', candidate_index: 0 }))
 		).toBe(false);
 	});
+
+	it('allows reimport for Usenet tasks whose username is always empty', () => {
+		expect(
+			canReimport(
+				task({
+					status: 'failed',
+					source: 'usenet',
+					search_job_id: 'j',
+					candidate_index: 0,
+					source_username: ''
+				})
+			)
+		).toBe(true);
+	});
+
+	it('disallows reimport for Soulseek tasks with an empty username', () => {
+		expect(
+			canReimport(
+				task({
+					status: 'failed',
+					source: 'soulseek',
+					search_job_id: 'j',
+					candidate_index: 0,
+					source_username: ''
+				})
+			)
+		).toBe(false);
+		expect(
+			canReimport(
+				task({
+					status: 'failed',
+					search_job_id: 'j',
+					candidate_index: 0,
+					source_username: null
+				})
+			)
+		).toBe(false);
+	});
 });
 
 describe('nowPressing', () => {

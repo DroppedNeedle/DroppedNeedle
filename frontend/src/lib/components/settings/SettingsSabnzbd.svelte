@@ -238,6 +238,9 @@
 					bind:value={downloadsMount}
 					placeholder="/sabnzbd-downloads"
 				/>
+				{#if testResult?.mount_message}
+					<p class="text-xs leading-relaxed text-warning">{testResult.mount_message}</p>
+				{/if}
 			</div>
 		</section>
 

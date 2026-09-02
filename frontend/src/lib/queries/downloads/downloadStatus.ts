@@ -68,13 +68,13 @@ export function canRetry(task: DownloadTask): boolean {
 }
 
 export function canReimport(task: DownloadTask): boolean {
-	return (
-		!task.held_for_review &&
-		(task.status === 'failed' || task.status === 'partial') &&
-		task.search_job_id != null &&
-		task.candidate_index != null &&
-		task.source_username != null
-	);
+	if (task.held_for_review) return false;
+	if (!(task.status === 'failed' || task.status === 'partial')) return false;
+	if (task.search_job_id == null || task.candidate_index == null) return false;
+	// Mirrors the backend reimport guard: Soulseek needs the picked username, while
+	// Usenet reimports from the journaled SABnzbd handle (its username is always "").
+	if (task.source === 'usenet') return true;
+	return task.source_username != null && task.source_username !== '';
 }
 
 export type RetryDisplay =

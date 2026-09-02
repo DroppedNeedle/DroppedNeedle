@@ -898,6 +898,10 @@ class DownloadStore(PersistenceBase):
         return await self._read(operation)
 
     async def get_reimportable_task_ids(self, task_ids: list[str]) -> set[str]:
+        # NOTE (#245): Usenet tasks persist source_username="" (never NULL) - the
+        # empty string is the Usenet-linked marker, and the reimport guard keys
+        # those tasks off the journaled SABnzbd handle instead of a username.
+        # NULL still means never-linked (either source) and stays excluded.
         if not task_ids:
             return set()
 

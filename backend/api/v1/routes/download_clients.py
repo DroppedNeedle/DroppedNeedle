@@ -101,7 +101,7 @@ async def test_sabnzbd(
     if api_key == SABNZBD_API_KEY_MASK:
         api_key = preferences.get_sabnzbd_connection_raw().api_key
 
-    client = build_sabnzbd_download_client(settings.url, api_key)
+    client = build_sabnzbd_download_client(settings.url, api_key, settings.downloads_mount)
     try:
         status = await client.health_check()
         if status.status != "ok":
@@ -112,12 +112,31 @@ async def test_sabnzbd(
         complete_dir = await client.get_complete_dir()
     except ExternalServiceError as exc:
         return SabnzbdTestResponse(valid=False, message=str(exc))
+    # Catch a misconfigured downloads mount at config time (rokim's class of
+    # report): the submitted mount - not the stored one - is diagnosed, so an
+    # unsaved correction already shows the fixed verdict.
+    diagnosis = await client.diagnose_downloads_mount()
+    mount_message = None
+    if (
+        diagnosis.sampled_downloads > 0
+        and diagnosis.resolvable_downloads < diagnosis.sampled_downloads
+    ):
+        mount_message = (
+            f"Only {diagnosis.resolvable_downloads}/{diagnosis.sampled_downloads} "
+            f"sampled SABnzbd download(s) resolve under {settings.downloads_mount} - "
+            "the mount likely points at the wrong folder (for example a category "
+            "subfolder of SABnzbd's completed dir shown above)"
+        )
     return SabnzbdTestResponse(
         valid=True,
         version=status.version,
         message=f"SABnzbd {status.version}",
         categories=cats,
         complete_dir=complete_dir or None,
+        mount_has_files=diagnosis.mount_has_files,
+        resolvable_downloads=diagnosis.resolvable_downloads,
+        sampled_downloads=diagnosis.sampled_downloads,
+        mount_message=mount_message,
     )
 
 

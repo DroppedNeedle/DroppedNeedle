@@ -142,14 +142,26 @@ def test_put_wanted_settings_rejects_out_of_range():
 
 
 def test_test_sabnzbd_reports_version_and_categories(monkeypatch):
+    from repositories.protocols.download_client import MountDiagnosis
+
     fake_client = MagicMock()
     fake_client.health_check = AsyncMock(
         return_value=ServiceStatus(status="ok", version="5.0.4")
     )
     fake_client.get_categories = AsyncMock(return_value=["*", "audio"])
     fake_client.get_complete_dir = AsyncMock(return_value="/data/Downloads/complete")
+    fake_client.diagnose_downloads_mount = AsyncMock(
+        return_value=MountDiagnosis(
+            supported=True,
+            completed_downloads=2,
+            mount_has_files=True,
+            resolvable_downloads=2,
+            sampled_downloads=2,
+            client_downloads_dir="/data/Downloads/complete",
+        )
+    )
     monkeypatch.setattr(
-        download_clients, "build_sabnzbd_download_client", lambda url, key: fake_client
+        download_clients, "build_sabnzbd_download_client", lambda url, key, mount="/tmp": fake_client
     )
 
     app = _app()
@@ -164,6 +176,51 @@ def test_test_sabnzbd_reports_version_and_categories(monkeypatch):
     assert body["version"] == "5.0.4"
     assert "audio" in body["categories"]
     assert body["complete_dir"] == "/data/Downloads/complete"
+    assert body["resolvable_downloads"] == 2
+    assert body["sampled_downloads"] == 2
+    assert body["mount_message"] is None  # healthy mount -> no advisory
+
+
+def test_test_sabnzbd_flags_unresolvable_mount(monkeypatch):
+    from repositories.protocols.download_client import MountDiagnosis
+
+    fake_client = MagicMock()
+    fake_client.health_check = AsyncMock(
+        return_value=ServiceStatus(status="ok", version="5.0.4")
+    )
+    fake_client.get_categories = AsyncMock(return_value=["*", "audio"])
+    fake_client.get_complete_dir = AsyncMock(return_value="/data/Downloads/complete")
+    fake_client.diagnose_downloads_mount = AsyncMock(
+        return_value=MountDiagnosis(
+            supported=True,
+            completed_downloads=3,
+            mount_has_files=True,
+            resolvable_downloads=0,
+            sampled_downloads=3,
+            client_downloads_dir="/data/Downloads/complete",
+        )
+    )
+    monkeypatch.setattr(
+        download_clients, "build_sabnzbd_download_client", lambda url, key, mount="/tmp": fake_client
+    )
+
+    app = _app()
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    resp = build_test_client(app).post(
+        "/download-clients/sabnzbd/test",
+        json={
+            "url": "http://sab:8080",
+            "api_key": "k",
+            "downloads_mount": "/wrong/mount",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["valid"] is True
+    assert body["resolvable_downloads"] == 0
+    assert body["sampled_downloads"] == 3
+    assert "0/3" in (body["mount_message"] or "")
+    assert "/wrong/mount" in (body["mount_message"] or "")
 
 
 # --- Acquisition-quality policy routes

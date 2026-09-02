@@ -2660,20 +2660,16 @@ class DownloadOrchestrator:
 
     async def _reimport_task_locked(self, task_id: str):  # noqa: ANN201
         """Re-run only the import half of the pipeline for a ``failed``/``partial``
-        task whose download the user finished by hand in slskd (e.g. resumed a
-        stalled/errored transfer in slskd's own UI after DroppedNeedle had already
-        given up). This re-resolves the SAME candidate slskd already picked.
+        task whose download the user finished by hand (e.g. resumed a stalled
+        transfer, or a SABnzbd job whose files only became visible after the
+        import failed). This re-resolves the SAME picked candidate.
         Admin-gated at the route (``CurrentAdminDep``)."""
         task = await self._store.get_task(task_id)
         if task is None:
             raise ResourceNotFoundError("Download task not found")
         if task.status not in ("failed", "partial"):
             raise ValidationError("Only failed or partial downloads can be reimported")
-        if (
-            task.search_job_id is None
-            or task.candidate_index is None
-            or not task.source_username
-        ):
+        if task.search_job_id is None or task.candidate_index is None:
             raise ValidationError(
                 "This download never selected a source to reimport from"
             )
@@ -2682,8 +2678,27 @@ class DownloadOrchestrator:
         if task.candidate_index >= len(candidates):
             raise ValidationError("Original source is no longer available")
         candidate = candidates[task.candidate_index]
+        if (task.source or candidate.source) == "usenet":
+            # Usenet candidates never set a username; the journaled SABnzbd
+            # handle (job_name + nzo_id) is the source identity instead (#245).
+            # Without a journaled handle there are no files to reimport.
+            attempt = await self._store.get_download_attempt_for_candidate(
+                task.id, task.source, task.candidate_index
+            )
+            if (
+                attempt is None
+                or attempt.handle is None
+                or not (attempt.handle.job_name or attempt.handle.nzo_id)
+            ):
+                raise ValidationError(
+                    "This download never selected a source to reimport from"
+                )
+        elif not task.source_username:
+            raise ValidationError(
+                "This download never selected a source to reimport from"
+            )
         # NOTE: reimport is deliberately NOT quality-re-gated (owner D2). It re-imports
-        # files the admin already fetched by hand in slskd; blocking on a since-tightened
+        # files the admin already fetched by hand; blocking on a since-tightened
         # policy would only strand already-downloaded bytes, so honour the explicit action.
 
         # A 1-track album (a single) reimports under the same canonical-duration

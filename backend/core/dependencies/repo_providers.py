@@ -788,7 +788,9 @@ def get_sabnzbd_download_client() -> "SabnzbdDownloadClient":
     )
 
 
-def build_sabnzbd_download_client(url: str, api_key: str) -> "SabnzbdDownloadClient":
+def build_sabnzbd_download_client(
+    url: str, api_key: str, downloads_mount: str = "/tmp"
+) -> "SabnzbdDownloadClient":
     """Transient client from caller-supplied credentials, for the Test-connection route."""
     from pathlib import Path
 
@@ -799,7 +801,7 @@ def build_sabnzbd_download_client(url: str, api_key: str) -> "SabnzbdDownloadCli
         name="sabnzbd-verify", timeout=60.0, connect_timeout=5.0
     )
     return SabnzbdDownloadClient(
-        SabnzbdClient(http, url, api_key), url, api_key, Path("/tmp")
+        SabnzbdClient(http, url, api_key), url, api_key, Path(downloads_mount)
     )
 
 
