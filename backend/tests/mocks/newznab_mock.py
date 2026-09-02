@@ -156,6 +156,67 @@ def _xml(body: str, status: int = 200) -> httpx.Response:
     return httpx.Response(status, content=body.encode(), headers={"Content-Type": "application/rss+xml"})
 
 
+# --- Punctuation-ladder scenario (GH #259) ------------------------------------
+# Live-verified NZBGeek behavior: the canonical punctuated free-text query
+# returns 0 releases; the punctuation-stripped query returns the release.
+# Existing fixtures stay intact: any other query still gets the default feed.
+_GATED_Q_MARKER = "honestly"  # Drake "Honestly, Nevermind" stand-in
+_NORESULT_MARKER = "xyzzynomatch"  # punctuation-clean query matching nothing
+_PUNCTUATION_CHARS = frozenset({",", "'", '"', "?", "!", ";", ":", "&", "‘", "’", "“", "”"})
+
+_GATED_RELEASE_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+ <channel>
+  <newznab:response offset="0" total="1"/>
+  <item>
+   <title>Drake-Honestly_Nevermind-WEB-FLAC-2022-GROUP</title>
+   <guid isPermaLink="true">https://drunkenslug.com/details/d9aa0f7e5c4b4a3b8f6e1d2c5b7a49301</guid>
+   <pubDate>Fri, 17 Jun 2022 12:00:00 +0100</pubDate>
+   <enclosure url="https://drunkenslug.com/getnzb/d9aa.nzb&amp;i=1&amp;r=KEY" length="734003200" type="application/x-nzb"/>
+   <newznab:attr name="category" value="3040"/>
+   <newznab:attr name="size" value="734003200"/>
+   <newznab:attr name="files" value="42"/>
+   <newznab:attr name="grabs" value="87"/>
+   <newznab:attr name="password" value="0"/>
+   <newznab:attr name="usenetdate" value="Fri, 17 Jun 2022 11:58:00 +0100"/>
+  </item>
+ </channel>
+</rss>"""
+
+_DS_EMPTY = (
+    '<?xml version="1.0"?><rss version="2.0" '
+    'xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">'
+    "<channel></channel></rss>"
+)
+
+# Every free-text ``q`` received, in order - the assertable wire record for the
+# query ladder. Reset per test with ``reset_state`` (mirrors slskd_mock).
+received_q: list[str] = []
+
+
+def reset_state() -> None:
+    del received_q[:]
+
+
+def _record(request: httpx.Request) -> str:
+    q = request.url.params.get("q", "")
+    received_q.append(q)
+    return q
+
+
+def _free_text_feed(q: str | None, default: str) -> str:
+    """The feed for one free-text query: the gated release only on the
+    punctuation-free rung, empty on the canonical punctuated rung."""
+    low = (q or "").lower()
+    if _GATED_Q_MARKER in low:
+        if any(ch in (q or "") for ch in _PUNCTUATION_CHARS):
+            return _DS_EMPTY
+        return _GATED_RELEASE_FEED
+    if _NORESULT_MARKER in low:
+        return _DS_EMPTY
+    return default
+
+
 def drunkenslug_handler(request: httpx.Request) -> httpx.Response:
     t = request.url.params.get("t")
     if t == "caps":
@@ -163,7 +224,7 @@ def drunkenslug_handler(request: httpx.Request) -> httpx.Response:
     if t == "music":
         return _xml(_DS_MUSIC_ERROR)
     if t == "search":
-        return _xml(_DS_SEARCH)
+        return _xml(_free_text_feed(_record(request), _DS_SEARCH))
     return _xml(_DS_MUSIC_ERROR)
 
 
@@ -174,6 +235,7 @@ def audionix_handler(request: httpx.Request) -> httpx.Response:
     if t == "music":
         return _xml(_AX_MUSIC)
     if t == "search":
+        _record(request)
         return _xml(_AX_SEARCH_WRONG)  # sentinel: should NOT be hit when caps=audio-search
     return _xml(_AX_MUSIC)
 
@@ -186,7 +248,7 @@ def audionix_broken_music_handler(request: httpx.Request) -> httpx.Response:
         return _xml(_AX_CAPS)
     if t == "music":
         return _xml(_DS_MUSIC_ERROR)  # code 202
-    return _xml(_AX_MUSIC)
+    return _xml(_free_text_feed(_record(request), _AX_MUSIC))
 
 
 def auth_error_handler(request: httpx.Request) -> httpx.Response:

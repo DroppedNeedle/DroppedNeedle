@@ -4,11 +4,16 @@ XML path, the caps-gated query strategy, dedup, partial-failure tolerance, the
 rate-limit backoff, and the short-TTL search cache."""
 
 import httpx
+import logging
 import pytest
 
 from core.exceptions import NewznabApiError, NewznabAuthError, RateLimitedError
 from repositories.newznab.newznab_client import NewznabClient
-from repositories.newznab.newznab_indexer import NewznabIndexer, NewznabIndexerEntry
+from repositories.newznab.newznab_indexer import (
+    NewznabIndexer,
+    NewznabIndexerEntry,
+    normalize_newznab_query,
+)
 from tests.mocks import newznab_mock
 
 _BASE = "https://idx.test/api"
@@ -207,6 +212,158 @@ async def test_strategy_falls_back_to_search_on_music_202():
     results = await idx.search_album("Radiohead", "In Rainbows")
     # caps said audio-search=yes, music 202'd, fell back to t=search -> the valid feed.
     assert len(results) == 2
+
+
+# --- query ladder: punctuation-normalized retry on zero results (#259) --------
+
+def test_normalize_newznab_query_strips_scene_punctuation():
+    assert (
+        normalize_newznab_query("Drake Honestly, Nevermind")
+        == "Drake Honestly Nevermind"
+    )
+    assert (
+        normalize_newznab_query("Sabrina Carpenter Man's Best Friend")
+        == "Sabrina Carpenter Mans Best Friend"
+    )
+    assert (
+        normalize_newznab_query("Who? What! Why; How: A & B")
+        == "Who What Why How A B"
+    )
+
+
+def test_normalize_newznab_query_folds_typographic_quotes():
+    assert (
+        normalize_newznab_query("Sabrina Carpenter Man’s Best Friend")
+        == "Sabrina Carpenter Mans Best Friend"
+    )
+    assert (
+        normalize_newznab_query("Drake “Honestly, Nevermind”")
+        == "Drake Honestly Nevermind"
+    )
+
+
+def test_normalize_newznab_query_idempotent_and_clean_safe():
+    assert normalize_newznab_query("Radiohead In Rainbows") == "Radiohead In Rainbows"
+    once = normalize_newznab_query("Drake Honestly, Nevermind!")
+    assert normalize_newznab_query(once) == once
+
+
+@pytest.mark.asyncio
+async def test_ladder_retries_with_normalized_query_on_zero_results():
+    newznab_mock.reset_state()
+    idx = NewznabIndexer([_entry(newznab_mock.drunkenslug_handler, indexer_id="ds", name="DS")])
+    results = await idx.search_album("Drake", "Honestly, Nevermind")
+    assert len(results) == 1
+    assert results[0].usenet is not None and "Honestly" in results[0].usenet.title
+    # exact wire sequence: canonical first, normalized rung second.
+    assert newznab_mock.received_q == [
+        "Drake Honestly, Nevermind",
+        "Drake Honestly Nevermind",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ladder_logs_the_retry_rung(caplog):
+    newznab_mock.reset_state()
+    idx = NewznabIndexer([_entry(newznab_mock.drunkenslug_handler, indexer_id="ds", name="DS")])
+    with caplog.at_level(logging.INFO):
+        await idx.search_album("Drake", "Honestly, Nevermind")
+    assert "newznab.query_normalized_retry" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_track_search_runs_the_ladder():
+    newznab_mock.reset_state()
+    idx = NewznabIndexer([_entry(newznab_mock.drunkenslug_handler, indexer_id="ds", name="DS")])
+    results = await idx.search_track("Drake", "Honestly, Nevermind")
+    assert len(results) == 1
+    assert newznab_mock.received_q == [
+        "Drake Honestly, Nevermind",
+        "Drake Honestly Nevermind",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_second_query_when_canonical_has_results():
+    newznab_mock.reset_state()
+    idx = NewznabIndexer([_entry(newznab_mock.drunkenslug_handler, indexer_id="ds", name="DS")])
+    results = await idx.search_album("Radiohead", "In Rainbows")
+    assert len(results) == 3
+    assert newznab_mock.received_q == ["Radiohead In Rainbows"]
+
+
+@pytest.mark.asyncio
+async def test_no_retry_when_normalized_equals_canonical():
+    newznab_mock.reset_state()
+    idx = NewznabIndexer([_entry(newznab_mock.drunkenslug_handler, indexer_id="ds", name="DS")])
+    # punctuation-clean yet matching nothing: a single query, no second rung.
+    results = await idx.search_album("XyzzyNomatch", "Unknown Album")
+    assert results == []
+    assert newznab_mock.received_q == ["XyzzyNomatch Unknown Album"]
+
+
+@pytest.mark.asyncio
+async def test_no_retry_when_indexer_rate_limited():
+    counter = _Counter(newznab_mock.rate_limit_handler)
+    idx = NewznabIndexer(
+        [_entry(counter, indexer_id="ds", name="DS")], rate_limit_backoff=600.0
+    )
+    assert await idx.search_album("Drake", "Honestly, Nevermind") == []
+    # the backoff silence is not a genuine empty: the normalized rung never fired.
+    assert counter.counts.get("search") == 1
+
+
+@pytest.mark.asyncio
+async def test_no_retry_when_indexer_auth_fails():
+    counter = _Counter(newznab_mock.auth_error_handler)
+    idx = NewznabIndexer([_entry(counter, indexer_id="bad", name="BAD")])
+    assert await idx.search_album("Drake", "Honestly, Nevermind") == []
+    assert counter.counts.get("search") == 1
+
+
+@pytest.mark.asyncio
+async def test_no_retry_when_a_peer_indexer_errored():
+    newznab_mock.reset_state()
+    idx = NewznabIndexer([
+        _entry(newznab_mock.auth_error_handler, indexer_id="bad", name="BAD", priority=1),
+        _entry(newznab_mock.drunkenslug_handler, indexer_id="ds", name="DS", priority=2),
+    ])
+    results = await idx.search_album("Drake", "Honestly, Nevermind")
+    assert results == []
+    # DS answered empty on the canonical rung, but BAD errored: the pool is
+    # untrustworthy, so the normalized rung never fires.
+    assert newznab_mock.received_q == ["Drake Honestly, Nevermind"]
+
+
+@pytest.mark.asyncio
+async def test_music_params_stay_canonical():
+    cap = _Capture(newznab_mock.audionix_handler)
+    idx = NewznabIndexer([_entry(cap, indexer_id="ax", name="AX")])
+    results = await idx.search_album("Drake", "Honestly, Nevermind")
+    assert len(results) == 2
+    music = [r for r in cap.requests if r.url.params.get("t") == "music"]
+    assert music
+    assert music[-1].url.params.get("artist") == "Drake"
+    assert music[-1].url.params.get("album") == "Honestly, Nevermind"
+    # t=music answered: no free-text rung at all.
+    assert not [r for r in cap.requests if r.url.params.get("t") == "search"]
+
+
+@pytest.mark.asyncio
+async def test_music_202_fallback_runs_the_ladder():
+    newznab_mock.reset_state()
+    cap = _Capture(newznab_mock.audionix_broken_music_handler)
+    idx = NewznabIndexer([_entry(cap, indexer_id="ax", name="AX")])
+    results = await idx.search_album("Drake", "Honestly, Nevermind")
+    assert len(results) == 1
+    # rung 1 fell back to t=search with the canonical q (empty); the retry rung
+    # sent the normalized q as free text instead of re-sending t=music.
+    assert newznab_mock.received_q == [
+        "Drake Honestly, Nevermind",
+        "Drake Honestly Nevermind",
+    ]
+    music = [r for r in cap.requests if r.url.params.get("t") == "music"]
+    assert len(music) == 1
 
 
 # --- indexer: fan-out + dedup ---------------------------------------------------
