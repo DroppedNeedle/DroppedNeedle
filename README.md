@@ -237,6 +237,7 @@ Everything user-editable lives in the web UI and lands in `config/config.json`. 
 | `TRUSTED_PROXY_IPS` | `127.0.0.1,::1` | IPs/CIDRs whose `X-Forwarded-*` headers are trusted; point it at your reverse proxy, listing every address family it arrives on |
 | `TZ` | `Etc/UTC` | Container timezone |
 | `SLSKD_DOWNLOADS_PATH` | `/data/downloads/slskd` | Exact in-container path to slskd completions (the compose example uses `/data/slskd/complete`) |
+| `ALLOW_PASSWORD_LOGIN` | `true` | Set `false` for SSO-only sign-in: hides the Username tab and 403s every endpoint that accepts or writes a local password. See [SSO-only sign-in](#sso-only-sign-in) |
 
 The app answers on IPv4 and IPv6, but Docker still has to publish the port on both. `docker port droppedneedle` should list `0.0.0.0:8688` and `[::]:8688`; if only the first appears, turn on IPv6 for the daemon (`"ipv6"` and `"ip6tables"` in `/etc/docker/daemon.json`). Pinning `BIND_HOST` to one interface IP answers only there: the upgrade readiness probe follows the pin automatically, but the container `HEALTHCHECK` still uses localhost, so keep a wildcard or loopback value unless you check that address yourself.
 
@@ -290,7 +291,7 @@ Link Last.fm from Profile > Scrobbling & Discovery after the admin saves the ins
 | Trusted | Requests start immediately, no approval | Nothing admin side |
 | User | Requests wait for admin approval | Nothing admin side |
 
-The first account is always admin. Later accounts are created by an admin or automatically on first Jellyfin, Plex, or OIDC sign-in (all start as User). Every login method toggles in the UI; no environment variables involved. Sessions last 30 days and die with the account if an admin deletes it.
+The first account is always admin. Later accounts are created by an admin or automatically on first Jellyfin, Plex, or OIDC sign-in (all start as User). Jellyfin, Plex, and OIDC toggle in the UI; local username/password login is on by default and controlled by `ALLOW_PASSWORD_LOGIN` (see SSO-only sign-in below). Sessions last 30 days and die with the account if an admin deletes it.
 
 <details>
 <summary>Setting up OIDC</summary>
@@ -300,6 +301,20 @@ Any provider with the authorization code flow works (Authelia, Keycloak, Authent
 1. Create a client in your provider with redirect URI `https://your-droppedneedle-url/api/v1/auth/oidc/callback`.
 2. Enter the issuer URL, client ID, and client secret under Settings > Security.
 3. Save. An SSO button appears on the login page.
+
+</details>
+
+<details>
+<summary>SSO-only sign-in</summary>
+
+<a id="sso-only-sign-in"></a>
+Set `ALLOW_PASSWORD_LOGIN=false` to turn local credentials off entirely. The Username tab and "Forgot password?" link disappear (with OIDC as the only provider, users land straight on the SSO button), the password controls leave the profile page, and `POST /api/v1/auth/login`, `/auth/password-recovery/reset`, `/profile/password`, and `/profile/set-password` return 403. The check runs before the credential is read, so a correct password is refused exactly like a wrong one.
+
+**Configure and test an external provider first**, and promote your OIDC account to Admin (first sign-in creates a User). Otherwise nobody can sign in.
+
+**Recovery:** set `ALLOW_PASSWORD_LOGIN=true` and restart. It is environment-only on purpose, so it stays reachable when you cannot sign in, and `config.json` cannot override it. A warning is logged at startup while it is active.
+
+**Not covered:** `/api/v1/auth/setup` stays open (it already 409s once any user exists, and a fresh SSO-only instance needs it to create its first admin). App-passwords under Connect apps keep working, since Subsonic and Jellyfin clients cannot do OIDC; revoke them individually if you want that surface closed.
 
 </details>
 
