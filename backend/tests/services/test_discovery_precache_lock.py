@@ -155,9 +155,9 @@ async def test_listenbrainz_fallback_and_expected_misses_reuse_lastfm_cache() ->
     svc._lastfm_repo.get_artist_top_tracks.assert_awaited_once()
     svc._lastfm_repo.get_artist_top_albums.assert_awaited_once()
     assert {key for key in cache_values if key.endswith(":lastfm")} == {
-        "artist_discovery:similar:mbid-a:15:lastfm",
-        "artist_discovery:top_songs:mbid-a:10:lastfm",
-        "artist_discovery:top_albums:mbid-a:10:lastfm",
+        svc._build_cache_key("similar", "mbid-a", 15, "lastfm"),
+        svc._build_cache_key("top_songs", "mbid-a", 10, "lastfm"),
+        svc._build_cache_key("top_albums", "mbid-a", 10, "lastfm"),
     }
 
 

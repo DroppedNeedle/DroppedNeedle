@@ -4,7 +4,14 @@ from types import SimpleNamespace
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from api.v1.schemas.discovery import SimilarArtist
+from api.v1.schemas.discovery import (
+    SimilarArtist,
+    SimilarArtistsResponse,
+    TopAlbum,
+    TopAlbumsResponse,
+    TopSong,
+    TopSongsResponse,
+)
 from repositories.lastfm_models import LastFmAlbum, LastFmSimilarArtist, LastFmTrack
 from repositories.listenbrainz_models import (
     ListenBrainzRecording,
@@ -50,6 +57,18 @@ def _make_memory_cache() -> AsyncMock:
     cache.get = AsyncMock(return_value=None)
     cache.set = AsyncMock()
     return cache
+
+
+class _DictCache:
+    def __init__(self) -> None:
+        self.entries: dict[str, tuple[object, int | None]] = {}
+
+    async def get(self, key: str):
+        entry = self.entries.get(key)
+        return entry[0] if entry is not None else None
+
+    async def set(self, key: str, value, ttl_seconds: int | None = None):
+        self.entries[key] = (value, ttl_seconds)
 
 
 def _make_service(
@@ -861,3 +880,363 @@ async def test_top_albums_mb_fallback_separates_generations_and_fences_cache():
     assert new_result.albums[0].release_group_mbid == "rg-new"
     assert cache_entries[cache_key] is new_result
     assert svc._top_albums_in_flight == {}
+
+
+@pytest.mark.parametrize("category", ["similar", "top_songs", "top_albums"])
+@pytest.mark.asyncio
+async def test_discovery_cache_scopes_users_and_short_caches_lb_fallback(
+    category, monkeypatch
+):
+    svc, lb_repo, lastfm_repo, _ = _make_service()
+    cache = _DictCache()
+    svc._cache = cache
+    monkeypatch.setattr(svc, "_is_library_artist", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "_get_discovery_ttl", lambda _in_library: 3600)
+    svc._library_repo.get_library_mbids = AsyncMock(return_value=set())
+    svc._library_repo.get_requested_mbids = AsyncMock(return_value=set())
+
+    if category == "similar":
+        lb_repo.get_similar_artists.return_value = []
+
+        async def lastfm_result(*_args, **_kwargs):
+            return [
+                LastFmSimilarArtist(
+                    name=f"Fallback {lastfm_result.calls}",
+                    mbid=f"fallback-{lastfm_result.calls}",
+                    match=0.9,
+                    url="",
+                )
+            ]
+
+        lastfm_result.calls = 0
+
+        async def counted_lastfm_result(*args, **kwargs):
+            lastfm_result.calls += 1
+            return await lastfm_result(*args, **kwargs)
+
+        lastfm_repo.get_similar_artists.side_effect = counted_lastfm_result
+
+        async def request(user_id):
+            return await svc.get_similar_artists(
+                "artist-id", count=5, source="listenbrainz", user_id=user_id
+            )
+
+        payload = lambda result: result.similar_artists[0].name
+    elif category == "top_songs":
+        lb_repo.get_artist_top_recordings.return_value = []
+
+        async def lastfm_result(*_args, **_kwargs):
+            return [
+                LastFmTrack(
+                    name=f"Fallback {lastfm_result.calls}",
+                    artist_name="Artist",
+                    mbid=f"fallback-{lastfm_result.calls}",
+                    playcount=100,
+                )
+            ]
+
+        lastfm_result.calls = 0
+
+        async def counted_lastfm_result(*args, **kwargs):
+            lastfm_result.calls += 1
+            return await lastfm_result(*args, **kwargs)
+
+        lastfm_repo.get_artist_top_tracks.side_effect = counted_lastfm_result
+
+        async def request(user_id):
+            return await svc.get_top_songs(
+                "artist-id", count=5, source="listenbrainz", user_id=user_id
+            )
+
+        payload = lambda result: result.songs[0].title
+    else:
+        lb_repo.get_artist_top_release_groups.return_value = []
+        lb_repo.get_artist_top_recordings.return_value = []
+
+        async def lastfm_result(*_args, **_kwargs):
+            return [
+                LastFmAlbum(
+                    name=f"Fallback {lastfm_result.calls}",
+                    artist_name="Artist",
+                    mbid=f"fallback-{lastfm_result.calls}",
+                    playcount=100,
+                )
+            ]
+
+        lastfm_result.calls = 0
+
+        async def counted_lastfm_result(*args, **kwargs):
+            lastfm_result.calls += 1
+            return await lastfm_result(*args, **kwargs)
+
+        lastfm_repo.get_artist_top_albums.side_effect = counted_lastfm_result
+
+        async def request(user_id):
+            return await svc.get_top_albums(
+                "artist-id", count=5, source="listenbrainz", user_id=user_id
+            )
+
+        payload = lambda result: result.albums[0].title
+
+    first = await request("user-a")
+    cached = await request("user-a")
+    second_user = await request("user-b")
+
+    assert first.source == "lastfm"
+    assert cached.source == "lastfm"
+    assert second_user.source == "lastfm"
+    assert payload(first) == payload(cached) == "Fallback 1"
+    assert payload(second_user) == "Fallback 2"
+
+    lb_key_a = svc._build_cache_key(
+        category, "artist-id", 5, "listenbrainz", user_id="user-a"
+    )
+    lastfm_key_a = svc._build_cache_key(
+        category, "artist-id", 5, "lastfm", user_id="user-a"
+    )
+    lb_key_b = svc._build_cache_key(
+        category, "artist-id", 5, "listenbrainz", user_id="user-b"
+    )
+    assert lb_key_a != lb_key_b
+    assert cache.entries[lb_key_a][0] is first
+    assert cache.entries[lb_key_a][1] == 30
+    assert cache.entries[lastfm_key_a][1] == 3600
+
+    # Expiring only the requested ListenBrainz entry retries LB while the
+    # recursively cached Last.fm response remains reusable.
+    cache.entries.pop(lb_key_a)
+    expired = await request("user-a")
+    assert payload(expired) == "Fallback 1"
+    assert lb_repo.get_similar_artists.await_count == (
+        3 if category == "similar" else 0
+    )
+    if category == "top_songs":
+        assert lb_repo.get_artist_top_recordings.await_count == 3
+    elif category == "top_albums":
+        assert lb_repo.get_artist_top_release_groups.await_count == 3
+
+
+@pytest.mark.parametrize("category", ["similar", "top_songs", "top_albums"])
+@pytest.mark.asyncio
+async def test_lb_exception_empty_uses_short_ttl(category, monkeypatch):
+    svc, lb_repo, _, _ = _make_service(lastfm_enabled=False)
+    cache = _DictCache()
+    svc._cache = cache
+    monkeypatch.setattr(
+        "services.artist_discovery_service.lb_popularity_degraded", lambda: False
+    )
+
+    if category == "similar":
+        lb_repo.get_similar_artists.side_effect = RuntimeError("LB unavailable")
+
+        async def request():
+            return await svc.get_similar_artists(
+                "artist-id", count=5, source="listenbrainz", user_id="user-a"
+            )
+
+    elif category == "top_songs":
+        lb_repo.get_artist_top_recordings.side_effect = RuntimeError("LB unavailable")
+
+        async def request():
+            return await svc.get_top_songs(
+                "artist-id", count=5, source="listenbrainz", user_id="user-a"
+            )
+
+    else:
+        lb_repo.get_artist_top_release_groups.side_effect = RuntimeError(
+            "LB unavailable"
+        )
+
+        async def request():
+            return await svc.get_top_albums(
+                "artist-id", count=5, source="listenbrainz", user_id="user-a"
+            )
+
+    result = await request()
+    assert result.source == "listenbrainz"
+    if category == "similar":
+        assert result.similar_artists == []
+    elif category == "top_songs":
+        assert result.songs == []
+    else:
+        assert result.albums == []
+
+    key = svc._build_cache_key(
+        category, "artist-id", 5, "listenbrainz", user_id="user-a"
+    )
+    assert cache.entries[key][1] == 30
+
+
+@pytest.mark.asyncio
+async def test_top_albums_recordings_fallback_after_lb_failure_is_short_lived(
+    monkeypatch,
+):
+    svc, lb_repo, _, _ = _make_service(lastfm_enabled=False)
+    cache = _DictCache()
+    svc._cache = cache
+    monkeypatch.setattr(
+        "services.artist_discovery_service.lb_popularity_degraded", lambda: False
+    )
+    lb_repo.get_artist_top_release_groups.side_effect = RuntimeError("LB unavailable")
+    lb_repo.get_artist_top_recordings.return_value = [
+        ListenBrainzRecording(
+            track_name="Song",
+            artist_name="Artist",
+            listen_count=10,
+            release_name="Album",
+        )
+    ]
+    svc._library_repo.get_library_mbids = AsyncMock(return_value=set())
+    svc._library_repo.get_requested_mbids = AsyncMock(return_value=set())
+
+    result = await svc.get_top_albums(
+        "artist-id", count=5, source="listenbrainz", user_id="user-a"
+    )
+
+    assert result.source == "listenbrainz"
+    assert [album.title for album in result.albums] == ["Album"]
+    key = svc._build_cache_key(
+        "top_albums", "artist-id", 5, "listenbrainz", user_id="user-a"
+    )
+    assert cache.entries[key][1] == 30
+
+
+@pytest.mark.parametrize("category", ["similar", "top_songs", "top_albums"])
+@pytest.mark.parametrize("source", ["listenbrainz", "lastfm"])
+@pytest.mark.asyncio
+async def test_healthy_discovery_data_keeps_normal_ttl(category, source, monkeypatch):
+    svc, lb_repo, lastfm_repo, _ = _make_service()
+    cache = _DictCache()
+    svc._cache = cache
+    monkeypatch.setattr(svc, "_is_library_artist", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "_get_discovery_ttl", lambda _in_library: 3600)
+    svc._library_repo.get_library_mbids = AsyncMock(return_value=set())
+    svc._library_repo.get_requested_mbids = AsyncMock(return_value=set())
+
+    if source == "listenbrainz":
+        if category == "similar":
+            lb_repo.get_similar_artists.return_value = [
+                SimpleNamespace(
+                    artist_mbid="lb-artist", artist_name="LB Artist", listen_count=10
+                )
+            ]
+        elif category == "top_songs":
+            lb_repo.get_artist_top_recordings.return_value = [
+                ListenBrainzRecording(
+                    track_name="LB Song",
+                    artist_name="Artist",
+                    listen_count=10,
+                    recording_mbid="lb-recording",
+                )
+            ]
+        else:
+            lb_repo.get_artist_top_release_groups.return_value = [
+                ListenBrainzReleaseGroup(
+                    release_group_name="LB Album",
+                    artist_name="Artist",
+                    listen_count=10,
+                    release_group_mbid="lb-release-group",
+                )
+            ]
+    elif category == "similar":
+        lastfm_repo.get_similar_artists.return_value = [
+            LastFmSimilarArtist(
+                name="Last.fm Artist", mbid="lfm-artist", match=0.9, url=""
+            )
+        ]
+    elif category == "top_songs":
+        lastfm_repo.get_artist_top_tracks.return_value = [
+            LastFmTrack(
+                name="Last.fm Song",
+                artist_name="Artist",
+                mbid="lfm-recording",
+                playcount=10,
+            )
+        ]
+    else:
+        lastfm_repo.get_artist_top_albums.return_value = [
+            LastFmAlbum(
+                name="Last.fm Album",
+                artist_name="Artist",
+                mbid="lfm-album",
+                playcount=10,
+            )
+        ]
+
+    if category == "similar":
+        result = await svc.get_similar_artists(
+            "artist-id", count=5, source=source, user_id="user-a"
+        )
+    elif category == "top_songs":
+        result = await svc.get_top_songs(
+            "artist-id", count=5, source=source, user_id="user-a"
+        )
+    else:
+        result = await svc.get_top_albums(
+            "artist-id", count=5, source=source, user_id="user-a"
+        )
+
+    assert result.source == source
+    key = svc._build_cache_key(category, "artist-id", 5, source, user_id="user-a")
+    assert cache.entries[key][1] == 3600
+
+
+@pytest.mark.parametrize("category", ["similar", "top_albums"])
+@pytest.mark.asyncio
+async def test_existing_stampede_keys_include_user_scope(category, monkeypatch):
+    svc, _, _, _ = _make_service()
+    svc._cache.get = AsyncMock(return_value=None)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    if category == "similar":
+
+        async def load(_artist_mbid, _count, _source, user_id, _cache_key):
+            if user_id == "user-a":
+                started.set()
+                await release.wait()
+            return SimilarArtistsResponse(
+                similar_artists=[SimilarArtist(musicbrainz_id=user_id, name=user_id)]
+            )
+
+        monkeypatch.setattr(svc, "_load_similar_artists", load)
+
+        async def request(user_id):
+            return await svc.get_similar_artists(
+                "artist-id", count=5, source="listenbrainz", user_id=user_id
+            )
+
+    else:
+
+        async def load(_artist_mbid, _count, _source, user_id, _cache_key, **_kwargs):
+            if user_id == "user-a":
+                started.set()
+                await release.wait()
+            return TopAlbumsResponse(
+                albums=[TopAlbum(title=user_id, artist_name="Artist")]
+            )
+
+        monkeypatch.setattr(svc, "_load_top_albums", load)
+
+        async def request(user_id):
+            return await svc.get_top_albums(
+                "artist-id", count=5, source="listenbrainz", user_id=user_id
+            )
+
+    first_task = asyncio.create_task(request("user-a"))
+    await started.wait()
+    second_task = asyncio.create_task(request("user-b"))
+
+    try:
+        second = await asyncio.wait_for(second_task, timeout=0.2)
+    finally:
+        release.set()
+    first = await first_task
+
+    assert second is not None
+    if category == "similar":
+        assert second.similar_artists[0].name == "user-b"
+        assert first.similar_artists[0].name == "user-a"
+    else:
+        assert second.albums[0].title == "user-b"
+        assert first.albums[0].title == "user-a"

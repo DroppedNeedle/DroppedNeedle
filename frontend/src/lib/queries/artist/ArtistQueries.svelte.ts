@@ -14,6 +14,7 @@ import type {
 	TopSongsResponse
 } from '$lib/types';
 import type { MusicSource } from '$lib/stores/musicSource';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { extractServiceStatus } from '$lib/utils/serviceStatus';
 import { setQueryDataWithPersister } from '../QueryClient';
 
@@ -50,13 +51,14 @@ export const getExtendedArtistQuery = (getArtistId: Getter<string>) =>
 	createQuery(() => getExtendedArtistQueryOptions(getArtistId()));
 
 export const getSimilarArtistsQuery = (
-	getParams: Getter<{ artistId: string; source: MusicSource }>
+	getParams: Getter<{ artistId: string; source: MusicSource; enabled?: boolean }>
 ) =>
 	createQuery(() => {
-		const { artistId, source } = getParams();
+		const { artistId, source, enabled = true } = getParams();
 		return {
+			enabled,
 			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
-			queryKey: ArtistQueryKeyFactory.similarArtists(artistId, source),
+			queryKey: ArtistQueryKeyFactory.similarArtists(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
 				api.global.get<SimilarArtistsResponse>(API.artist.similarArtists(artistId, source), {
 					signal
@@ -65,13 +67,14 @@ export const getSimilarArtistsQuery = (
 	});
 
 export const getArtistTopAlbumsQuery = (
-	getParams: Getter<{ artistId: string; source: MusicSource }>
+	getParams: Getter<{ artistId: string; source: MusicSource; enabled?: boolean }>
 ) =>
 	createQuery(() => {
-		const { artistId, source } = getParams();
+		const { artistId, source, enabled = true } = getParams();
 		return {
+			enabled,
 			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
-			queryKey: ArtistQueryKeyFactory.topAlbums(artistId, source),
+			queryKey: ArtistQueryKeyFactory.topAlbums(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
 				api.global.get<TopAlbumsResponse>(API.artist.topAlbums(artistId, source), {
 					signal
@@ -80,13 +83,14 @@ export const getArtistTopAlbumsQuery = (
 	});
 
 export const getArtistTopSongsQuery = (
-	getParams: Getter<{ artistId: string; source: MusicSource }>
+	getParams: Getter<{ artistId: string; source: MusicSource; enabled?: boolean }>
 ) =>
 	createQuery(() => {
-		const { artistId, source } = getParams();
+		const { artistId, source, enabled = true } = getParams();
 		return {
+			enabled,
 			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
-			queryKey: ArtistQueryKeyFactory.topSongs(artistId, source),
+			queryKey: ArtistQueryKeyFactory.topSongs(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
 				api.global.get<TopSongsResponse>(API.artist.topSongs(artistId, source), {
 					signal

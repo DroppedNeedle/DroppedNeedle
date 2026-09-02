@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ArtistReleases } from '$lib/types';
 
@@ -8,6 +8,16 @@ vi.mock('@tanstack/svelte-query', () => ({
 	queryOptions: vi.fn((options: unknown) => options)
 }));
 
+const authState = vi.hoisted(() => ({ userId: null as string | null }));
+
+vi.mock('$lib/stores/authStore.svelte', () => ({
+	authStore: {
+		get user() {
+			return authState.userId ? { id: authState.userId } : null;
+		}
+	}
+}));
+
 const mockGet = vi.fn();
 vi.mock('$lib/api/client', () => ({
 	api: { global: { get: (...args: unknown[]) => mockGet(...args) } }
@@ -15,9 +25,17 @@ vi.mock('$lib/api/client', () => ({
 
 vi.mock('../QueryClient', () => ({ setQueryDataWithPersister: vi.fn() }));
 
+beforeEach(() => {
+	authState.userId = null;
+	mockGet.mockReset();
+});
+
 import {
 	getArtistReleasesInfiniteQuery,
-	getExtendedArtistQueryOptions
+	getArtistTopAlbumsQuery,
+	getArtistTopSongsQuery,
+	getExtendedArtistQueryOptions,
+	getSimilarArtistsQuery
 } from './ArtistQueries.svelte';
 
 function releasePage(overrides: Partial<ArtistReleases> = {}): ArtistReleases {
@@ -101,6 +119,88 @@ describe('artist release pagination query', () => {
 		expect(query.refetchInterval({ state: { data: undefined } })).toBe(false);
 		expect(query.refetchInterval({ state: {} })).toBe(false);
 	});
+});
+
+describe('source-dependent artist discovery queries', () => {
+	type DiscoveryQuery = {
+		enabled: boolean;
+		queryKey: readonly unknown[];
+		queryFn: (context: { signal: AbortSignal }) => Promise<unknown>;
+	};
+
+	it('fetches ListenBrainz top songs from the source-specific endpoint', async () => {
+		const query = getArtistTopSongsQuery(() => ({
+			artistId: 'artist-1',
+			source: 'listenbrainz'
+		})) as unknown as DiscoveryQuery;
+		const signal = new AbortController().signal;
+
+		await query.queryFn({ signal });
+
+		expect(mockGet).toHaveBeenCalledWith(
+			'/api/v1/artists/artist-1/top-songs?count=10&source=listenbrainz',
+			{ signal }
+		);
+		expect(query.queryKey).toContainEqual({ source: 'listenbrainz' });
+	});
+
+	it('fetches ListenBrainz top albums and similar artists from source-specific endpoints', async () => {
+		const signal = new AbortController().signal;
+		const queries = [
+			getArtistTopAlbumsQuery(() => ({ artistId: 'artist-1', source: 'listenbrainz' })),
+			getSimilarArtistsQuery(() => ({ artistId: 'artist-1', source: 'listenbrainz' }))
+		] as unknown as DiscoveryQuery[];
+
+		for (const query of queries) await query.queryFn({ signal });
+
+		expect(mockGet).toHaveBeenNthCalledWith(
+			1,
+			'/api/v1/artists/artist-1/top-albums?count=10&source=listenbrainz',
+			{ signal }
+		);
+		expect(mockGet).toHaveBeenNthCalledWith(
+			2,
+			'/api/v1/artists/artist-1/similar?count=15&source=listenbrainz',
+			{ signal }
+		);
+	});
+	it('keeps all source-dependent queries disabled when explicitly gated', () => {
+		const queries = [
+			getSimilarArtistsQuery(() => ({
+				artistId: 'artist-1',
+				source: 'listenbrainz',
+				enabled: false
+			})),
+			getArtistTopAlbumsQuery(() => ({
+				artistId: 'artist-1',
+				source: 'listenbrainz',
+				enabled: false
+			})),
+			getArtistTopSongsQuery(() => ({
+				artistId: 'artist-1',
+				source: 'listenbrainz',
+				enabled: false
+			}))
+		] as unknown as DiscoveryQuery[];
+
+		expect(queries.every((query) => query.enabled === false)).toBe(true);
+	});
+});
+
+it('includes the authenticated user in every source-dependent discovery key', () => {
+	authState.userId = 'user-a';
+	const userA = getArtistTopSongsQuery(() => ({
+		artistId: 'artist-1',
+		source: 'listenbrainz'
+	})) as unknown as { queryKey: readonly unknown[] };
+
+	authState.userId = 'user-b';
+	const userB = getArtistTopSongsQuery(() => ({
+		artistId: 'artist-1',
+		source: 'listenbrainz'
+	})) as unknown as { queryKey: readonly unknown[] };
+
+	expect(userA.queryKey).not.toEqual(userB.queryKey);
 });
 
 describe('extended artist query', () => {

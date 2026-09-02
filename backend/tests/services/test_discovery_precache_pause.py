@@ -429,7 +429,7 @@ async def test_top_albums_degraded_empty_uses_short_ttl(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_fallback_data_uses_normal_ttl_despite_primary_degradation(monkeypatch):
+async def test_fallback_data_uses_short_ttl_after_primary_degradation(monkeypatch):
     from api.v1.schemas.discovery import SimilarArtistsResponse
     from infrastructure.degradation import init_degradation_context, clear_degradation_context
     from infrastructure.integration_result import IntegrationResult
@@ -459,5 +459,8 @@ async def test_fallback_data_uses_normal_ttl_despite_primary_degradation(monkeyp
     monkeypatch.setattr(svc, "_resolve_source", lambda s: "listenbrainz")
     res = await svc.get_similar_artists("mbid-test", count=15, source="listenbrainz", user_id="user-a")
     assert len(res.similar_artists) == 1
-    assert captured["ttl"] != 30
+    assert captured["ttl"] == 30
+    assert captured["key"] == svc._build_cache_key(
+        "similar", "mbid-test", 15, "listenbrainz", user_id="user-a"
+    )
     clear_degradation_context()

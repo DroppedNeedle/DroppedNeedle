@@ -31,6 +31,7 @@
 		getSimilarArtistsQuery,
 		updateArtistReleaseInCache
 	} from '$lib/queries/artist/ArtistQueries.svelte';
+	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
 	import { PAGE_SOURCE_KEYS } from '$lib/constants';
@@ -57,10 +58,40 @@
 		PAGE_SOURCE_KEYS['artist'],
 		data.primarySource
 	);
-
-	let validSource = $derived(
+	let selectedSource = $derived(
 		isMusicSource(activeSource.current) ? activeSource.current : data.primarySource
 	);
+
+	const connectionsQuery = getConnectionsQuery();
+	const connectionsSettled = $derived(connectionsQuery.isPending !== true);
+	const connectionsUsable = $derived(
+		connectionsSettled &&
+			connectionsQuery.data !== undefined &&
+			connectionsQuery.isError !== true &&
+			connectionsQuery.isSuccess !== false
+	);
+	const linkedSources = $derived.by<MusicSource[]>(() => {
+		if (!connectionsUsable) return [];
+
+		const services = connectionsQuery.data?.connections ?? [];
+		return (['listenbrainz', 'lastfm'] as const).filter((source) =>
+			services.some((connection) => connection.service === source)
+		);
+	});
+	const resolvedSource = $derived.by<MusicSource>(() => {
+		if (!connectionsUsable || linkedSources.length === 0) return selectedSource;
+		if (linkedSources.includes(selectedSource)) return selectedSource;
+		if (linkedSources.includes(data.primarySource)) return data.primarySource;
+		return linkedSources.includes('listenbrainz') ? 'listenbrainz' : 'lastfm';
+	});
+	const discoveryEnabled = $derived(connectionsSettled);
+
+	$effect(() => {
+		if (!connectionsUsable || linkedSources.length === 0) return;
+		if (linkedSources.includes(selectedSource)) return;
+
+		activeSource.current = resolvedSource;
+	});
 
 	let showToast = $state(false);
 	let toastMessage = 'Added to Library';
@@ -92,24 +123,27 @@
 
 	const similarArtistsQuery = getSimilarArtistsQuery(() => ({
 		artistId: data.artistId,
-		source: validSource
+		source: resolvedSource,
+		enabled: discoveryEnabled
 	}));
-	const similarArtists = $derived(similarArtistsQuery.data);
-	const loadingSimilar = $derived(similarArtistsQuery.isLoading);
+	const similarArtists = $derived(discoveryEnabled ? similarArtistsQuery.data : undefined);
+	const loadingSimilar = $derived(!discoveryEnabled || similarArtistsQuery.isLoading);
 
 	const topSongsQuery = getArtistTopSongsQuery(() => ({
 		artistId: data.artistId,
-		source: validSource
+		source: resolvedSource,
+		enabled: discoveryEnabled
 	}));
-	const topSongs = $derived(topSongsQuery.data);
-	const loadingTopSongs = $derived(topSongsQuery.isLoading);
+	const topSongs = $derived(discoveryEnabled ? topSongsQuery.data : undefined);
+	const loadingTopSongs = $derived(!discoveryEnabled || topSongsQuery.isLoading);
 
 	const topAlbumsQuery = getArtistTopAlbumsQuery(() => ({
 		artistId: data.artistId,
-		source: validSource
+		source: resolvedSource,
+		enabled: discoveryEnabled
 	}));
-	const topAlbums = $derived(topAlbumsQuery.data);
-	const loadingTopAlbums = $derived(topAlbumsQuery.isLoading);
+	const topAlbums = $derived(discoveryEnabled ? topAlbumsQuery.data : undefined);
+	const loadingTopAlbums = $derived(!discoveryEnabled || topAlbumsQuery.isLoading);
 
 	const lastFmEnrichmentQuery = getArtistLastFmEnrichmentQuery(() => ({
 		artistId: data.artistId,
@@ -377,14 +411,16 @@
 					loading={loadingBasic}
 				/>
 
-				<div class="flex items-center justify-end mt-8 mb-4">
-					<SimpleSourceSwitcher
-						currentSource={validSource}
-						onSourceChange={(newSource) => {
-							activeSource.current = newSource;
-						}}
-					/>
-				</div>
+				{#if linkedSources.length === 2}
+					<div class="flex items-center justify-end mt-8 mb-4">
+						<SimpleSourceSwitcher
+							currentSource={resolvedSource}
+							onSourceChange={(newSource) => {
+								activeSource.current = newSource;
+							}}
+						/>
+					</div>
+				{/if}
 
 				<div class="flex flex-col md:flex-row gap-6 md:items-stretch">
 					<div class="flex-1 min-w-0">

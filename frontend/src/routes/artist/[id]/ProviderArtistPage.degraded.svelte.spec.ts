@@ -41,6 +41,14 @@ vi.mock('$lib/queries/artist/ArtistQueries.svelte', () => ({
 		fetchNextPage: vi.fn()
 	})
 }));
+vi.mock('$lib/queries/connections/ConnectionsQuery.svelte', () => ({
+	getConnectionsQuery: () => ({
+		data: { connections: [] },
+		isPending: false,
+		isError: false,
+		isSuccess: true
+	})
+}));
 
 vi.mock('./LocalArtistPage.svelte', () => {
 	const Component = function (_anchor: unknown, props: { artistId: string }) {
