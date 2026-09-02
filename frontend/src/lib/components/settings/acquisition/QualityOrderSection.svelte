@@ -1,6 +1,7 @@
 <script lang="ts">
 	import {
 		ChevronDown,
+		ChevronRight,
 		ChevronUp,
 		Disc3,
 		GripVertical,
@@ -381,11 +382,26 @@
 				<span class="badge badge-warning badge-sm">Unsaved changes</span>
 			{/if}
 		</div>
-		<p class="mt-2 break-words font-medium leading-6">{summary}</p>
-		<p class="mt-1 text-sm text-base-content/75">{unknownQualitySummary(unknownQualityBehavior)}</p>
+		<p class="sr-only">{summary}</p>
+		{#if qualityRecipe.length}
+			<div class="mt-2 flex flex-wrap items-center gap-1.5" aria-hidden="true">
+				{#each qualityRecipe as entry, index (entry.id)}
+					{#if index > 0}
+						<ChevronRight class="size-3.5 shrink-0 text-base-content/40" aria-hidden="true" />
+					{/if}
+					<span
+						class="rounded-full border border-base-300 bg-base-200/60 px-2.5 py-1 text-xs whitespace-nowrap"
+					>
+						{recipeEntrySummary(entry)}
+					</span>
+				{/each}
+			</div>
+		{:else}
+			<p class="mt-2 text-xs text-base-content/55">No recipe entries yet.</p>
+		{/if}
 		<p class="mt-2 text-xs leading-5 text-base-content/55">
-			This applies when a complete album cannot map to exactly one recipe entry; it is not another
-			preference position.
+			{unknownQualitySummary(unknownQualityBehavior)} This applies when a complete album cannot map to
+			exactly one recipe entry; it is not another preference position.
 		</p>
 	</section>
 
@@ -403,26 +419,23 @@
 		</div>
 
 		{#if qualityRecipe.length}
-			<ol
-				class="relative ms-3 space-y-3 border-s-2 border-primary/35 ps-6 max-[420px]:ms-0 max-[420px]:border-s-0 max-[420px]:ps-0"
-				aria-label="Ordered quality recipe entries"
-			>
+			<ol class="space-y-3" aria-label="Ordered quality recipe entries">
 				{#each qualityRecipe as entry, index (entry.id)}
 					{@const Icon = FORMAT_ICONS[entry.format]}
 					<li
-						class="quality-recipe-row relative min-w-0 rounded-box border border-base-300 bg-base-100 p-3 transition-[transform,opacity] duration-150 ease-out motion-reduce:transition-none"
+						class="quality-recipe-row min-w-0 rounded-box border border-base-300 bg-base-100 p-3 transition-[transform,opacity] duration-150 ease-out motion-reduce:transition-none"
 						data-recipe-id={entry.id}
 						role="listitem"
 						ondragover={(event) => event.preventDefault()}
 						ondrop={() => onDrop(index)}
 					>
-						<span
-							class="absolute -start-[2.15rem] top-4 grid size-7 place-items-center rounded-full border-2 border-base-100 bg-primary font-mono text-xs font-semibold text-primary-content max-[420px]:static max-[420px]:mb-2"
-							aria-hidden="true"
-						>
-							{index + 1}
-						</span>
 						<div class="flex min-w-0 flex-wrap items-start gap-3">
+							<span
+								class="grid size-7 shrink-0 self-center place-items-center rounded-full bg-primary font-mono text-xs font-semibold text-primary-content"
+								aria-hidden="true"
+							>
+								{index + 1}
+							</span>
 							<button
 								type="button"
 								class="btn btn-ghost btn-square min-h-11 min-w-11 cursor-grab text-base-content/45 motion-reduce:transition-none hover:text-base-content active:cursor-grabbing"
@@ -526,7 +539,7 @@
 	</section>
 
 	<div class="grid min-w-0 gap-4 lg:grid-cols-2">
-		<fieldset class="fieldset min-w-0 border-t border-base-300 pt-4">
+		<fieldset class="fieldset flex h-full min-w-0 flex-col border-t border-base-300 pt-4">
 			<legend class="fieldset-legend">Add FLAC</legend>
 			<div class="grid min-w-0 gap-2 sm:grid-cols-2">
 				{#each FLAC_OPTIONS as option (option.quality)}
@@ -596,7 +609,7 @@
 					</label>
 				</div>
 			{/if}
-			<div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+			<div class="mt-auto flex flex-wrap items-center justify-between gap-2 pt-2">
 				<p
 					class="text-xs leading-4 {flacFormError ? 'text-error' : 'text-base-content/55'}"
 					role={flacFormError ? 'alert' : undefined}
@@ -616,7 +629,7 @@
 			</div>
 		</fieldset>
 
-		<fieldset class="fieldset min-w-0 border-t border-base-300 pt-4">
+		<fieldset class="fieldset flex h-full min-w-0 flex-col border-t border-base-300 pt-4">
 			<legend class="fieldset-legend">Add MP3</legend>
 			<div class="grid min-w-0 gap-2 sm:grid-cols-2">
 				{#each MP3_OPTIONS as option (option.quality)}
@@ -699,7 +712,7 @@
 					>
 				</div>
 			{/if}
-			<div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+			<div class="mt-auto flex flex-wrap items-center justify-between gap-2 pt-2">
 				<p
 					class="text-xs leading-4 {mp3FormError ? 'text-error' : 'text-base-content/55'}"
 					role={mp3FormError ? 'alert' : undefined}

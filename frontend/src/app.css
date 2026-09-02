@@ -3944,6 +3944,23 @@ textarea {
 	);
 }
 
+/* Settings runs as a fixed two-pane app surface at desktop widths: the drawer
+   column locks to the viewport and the page's own panes scroll instead of the
+   document, so the shell stops emitting a third whole-page scrollbar. The
+   footer is omitted on this route, so main-content's fill-the-viewport
+   min-height would force a phantom document overflow; neutralize it and let
+   flexbox distribute the locked height instead. */
+@media (min-width: 1024px) {
+	.drawer-content.droppedneedle-pane-mode {
+		height: 100dvh;
+		overflow: hidden;
+	}
+
+	.droppedneedle-pane-mode .droppedneedle-main-content {
+		min-height: 0;
+	}
+}
+
 .droppedneedle-bottom-nav {
 	position: fixed;
 	right: 0;

@@ -149,21 +149,20 @@
 	});
 </script>
 
-<div class="min-h-screen bg-base-100">
-	<!-- Desktop is an app-style two-pane layout: the page itself doesn't scroll;
-	     the tab rail and the content pane each scroll independently, so the wheel
-	     isn't trapped by a hidden sidebar scroller when the tab list grows taller
-	     than the viewport. Mobile keeps natural page flow. -->
-	<div class="container mx-auto p-4 max-w-7xl lg:flex lg:h-[calc(100vh-4rem)] lg:flex-col">
+<div class="flex min-h-screen flex-col bg-base-100 lg:h-full lg:min-h-0">
+	<!-- Desktop is an app-style two-pane layout inside the shell's locked
+	     viewport column: the page itself doesn't scroll; the tab rail and the
+	     content pane each scroll independently, so the wheel isn't trapped by a
+	     hidden sidebar scroller when the tab list grows taller than the
+	     viewport. Mobile keeps natural page flow. -->
+	<div class="container mx-auto p-4 max-w-7xl lg:flex lg:h-full lg:min-h-0 lg:flex-col">
 		<div class="mb-6 lg:shrink-0">
 			<h1 class="text-3xl font-bold">Settings</h1>
 			<p class="text-base-content/70 mt-2">Manage your preferences and app settings.</p>
 		</div>
 
 		<div class="flex flex-col lg:flex-row gap-6 lg:min-h-0 lg:flex-1">
-			<aside
-				class="scrollbar-hide w-full lg:w-80 lg:shrink-0 space-y-3 lg:min-h-0 lg:overflow-y-auto lg:pb-4"
-			>
+			<aside class="w-full lg:w-80 lg:shrink-0 space-y-3 lg:min-h-0 lg:overflow-y-auto lg:pb-4">
 				<label class="relative block">
 					<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-base-content/40" />
 					<input
