@@ -62,6 +62,11 @@ def _record_degradation(msg: str) -> None:
         ctx.record(IntegrationResult.error(source=_SOURCE, msg=msg))
 
 
+# headerless 429s carry no server delay: escalate the cooldown geometrically,
+# capped, instead of re-probing a throttling upstream every couple of seconds
+_HEADERLESS_429_BASE_COOLDOWN_SECONDS = 2.0
+_HEADERLESS_429_EXPONENT_BASE = 2.0
+_HEADERLESS_429_MAX_COOLDOWN_SECONDS = 300.0
 _RATE_LIMIT_SAFETY_MARGIN_SECONDS = 0.5
 _RATE_LIMIT_DEFAULT_COOLDOWN_SECONDS = 2.0
 _RATE_LIMIT_MAX_DELAY_SECONDS = 3600.0
@@ -98,6 +103,16 @@ def _parse_retry_after(response: httpx.Response) -> float:
     return _RATE_LIMIT_DEFAULT_COOLDOWN_SECONDS
 
 
+def _parse_retry_after_info(response: httpx.Response) -> tuple[float, bool]:
+    """Return the retry delay and whether the server supplied it explicitly."""
+    headers = response.headers
+    for header in ("X-RateLimit-Reset-In", "Retry-After"):
+        seconds = _parse_nonnegative_header(headers, header)
+        if seconds is not None and seconds > 0:
+            return min(seconds, _RATE_LIMIT_MAX_DELAY_SECONDS), True
+    return _RATE_LIMIT_DEFAULT_COOLDOWN_SECONDS, False
+
+
 def _mark_rate_limit_degraded(ttl_seconds: float) -> None:
     from infrastructure.service_health import service_health
 
@@ -126,6 +141,7 @@ class _ListenBrainzRateLimitState:
         self._remaining: float | None = None
         self._cooldown_until = 0.0
         self._unknown_in_flight = 0
+        self._headerless_429_streak = 0
 
     def _release_unknown_locked(self) -> None:
         if self._unknown_in_flight > 0:
@@ -274,6 +290,29 @@ class _ListenBrainzRateLimitState:
             self._activate_cooldown_locked(now, seconds)
             return max(self._cooldown_until - now, _RATE_LIMIT_SAFETY_MARGIN_SECONDS)
 
+    def activate_headerless_429_cooldown(self) -> float:
+        """Escalate the cooldown for a 429 response that carried no delay header.
+        Consecutive headerless refusals double the cooldown up to
+        ``_HEADERLESS_429_MAX_COOLDOWN_SECONDS``; any explicit server delay or
+        successful response resets the streak.
+        """
+        now = self._clock()
+        with self._lock:
+            self._expire_locked(now)
+            self._headerless_429_streak += 1
+            delay = min(
+                _HEADERLESS_429_BASE_COOLDOWN_SECONDS
+                * _HEADERLESS_429_EXPONENT_BASE ** (self._headerless_429_streak - 1),
+                _HEADERLESS_429_MAX_COOLDOWN_SECONDS,
+            )
+            self._activate_cooldown_locked(now, delay)
+            return max(self._cooldown_until - now, _RATE_LIMIT_SAFETY_MARGIN_SECONDS)
+
+    def record_success(self) -> None:
+        """Reset the headerless-429 streak after any non-429 response."""
+        with self._lock:
+            self._headerless_429_streak = 0
+
     def cooldown_active(self) -> bool:
         now = self._clock()
         with self._lock:
@@ -295,6 +334,7 @@ class _ListenBrainzRateLimitState:
             self._remaining = None
             self._cooldown_until = 0.0
             self._unknown_in_flight = 0
+            self._headerless_429_streak = 0
             self._clock = lambda: time.monotonic()
             _heal_rate_limit()
 
@@ -626,16 +666,29 @@ class ListenBrainzRepository:
                 reservation_unknown = False
                 record_rate_limit_headers("listenbrainz", response.headers)
 
-                # QW9 Part 3: one increment per wire attempt, classified from
-                # the status; this funnel has no priority lane -> "unlaned"
                 record_provider_call("listenbrainz", None, response.status_code)
+                if response.status_code != 429:
+                    # anything but a wire 429 heals the escalation streak
+                    _listenbrainz_rate_limit_state.record_success()
                 if response.status_code == 204:
                     return None
 
                 if response.status_code == 429:
-                    retry_after = _listenbrainz_rate_limit_state.activate_cooldown(
-                        _parse_retry_after(response)
+                    retry_after, has_explicit_delay = _parse_retry_after_info(
+                        response
                     )
+                    if has_explicit_delay:
+                        # explicit server delay wins and resets the streak
+                        _listenbrainz_rate_limit_state.record_success()
+                        retry_after = (
+                            _listenbrainz_rate_limit_state.activate_cooldown(
+                                retry_after
+                            )
+                        )
+                    else:
+                        retry_after = (
+                            _listenbrainz_rate_limit_state.activate_headerless_429_cooldown()
+                        )
                     raise RateLimitedError(
                         _RATE_LIMIT_HEALTH_MESSAGE,
                         retry_after_seconds=retry_after,

@@ -17,7 +17,9 @@ from repositories.listenbrainz_repository import (
     _listenbrainz_circuit_breaker,
     _listenbrainz_rate_limit_state,
     _listenbrainz_rate_limiter,
+    _RATE_LIMIT_DEFAULT_COOLDOWN_SECONDS,
     _parse_retry_after,
+    _parse_retry_after_info,
     _reset_listenbrainz_rate_limit_state,
     listenbrainz_rate_limit_cooldown_active,
 )
@@ -181,6 +183,111 @@ def test_retry_after_ignores_invalid_reset_in_and_uses_retry_after():
 
     response.headers = {"X-RateLimit-Reset-In": "malformed", "Retry-After": "7"}
     assert _parse_retry_after(response) == pytest.approx(7.0)
+
+
+def _headerless_429() -> MagicMock:
+    response = MagicMock()
+    response.status_code = 429
+    response.headers = {}
+    return response
+
+
+def test_consecutive_headerless_429s_escalate_cooldown():
+    now = [500.0]
+    _listenbrainz_rate_limit_state._clock = lambda: now[0]
+
+    first = _listenbrainz_rate_limit_state.activate_headerless_429_cooldown()
+    assert first == pytest.approx(2.5)
+    now[0] += first
+
+    second = _listenbrainz_rate_limit_state.activate_headerless_429_cooldown()
+    assert second == pytest.approx(4.5)
+    now[0] += second
+
+    third = _listenbrainz_rate_limit_state.activate_headerless_429_cooldown()
+    assert third == pytest.approx(8.5)
+
+
+def test_headerless_429_cooldown_caps_at_five_minutes():
+    now = [500.0]
+    _listenbrainz_rate_limit_state._clock = lambda: now[0]
+    for _ in range(20):
+        delay = _listenbrainz_rate_limit_state.activate_headerless_429_cooldown()
+        now[0] += delay
+
+    assert delay == pytest.approx(300.5)
+
+
+def test_success_resets_headerless_429_streak():
+    now = [500.0]
+    _listenbrainz_rate_limit_state._clock = lambda: now[0]
+    _listenbrainz_rate_limit_state.activate_headerless_429_cooldown()
+    _listenbrainz_rate_limit_state.record_success()
+
+    delay = _listenbrainz_rate_limit_state.activate_headerless_429_cooldown()
+
+    assert delay == pytest.approx(2.5)
+
+
+def test_explicit_retry_after_resets_headerless_429_streak():
+    now = [500.0]
+    _listenbrainz_rate_limit_state._clock = lambda: now[0]
+    _listenbrainz_rate_limit_state.activate_headerless_429_cooldown()
+
+    explicit = MagicMock()
+    explicit.headers = {"Retry-After": "7"}
+    seconds, has_explicit = _parse_retry_after_info(explicit)
+
+    assert (seconds, has_explicit) == (pytest.approx(7.0), True)
+    _listenbrainz_rate_limit_state.record_success()
+    delay = _listenbrainz_rate_limit_state.activate_cooldown(seconds)
+    assert delay == pytest.approx(7.5)
+
+    now[0] += delay
+    assert (
+        _listenbrainz_rate_limit_state.activate_headerless_429_cooldown()
+        == pytest.approx(2.5)
+    )
+
+
+def test_parse_retry_after_info_flags_headerless_responses():
+    seconds, has_explicit = _parse_retry_after_info(_headerless_429())
+    assert has_explicit is False
+    assert seconds == pytest.approx(_RATE_LIMIT_DEFAULT_COOLDOWN_SECONDS)
+
+    response = MagicMock()
+    response.headers = {"X-RateLimit-Reset-In": "3"}
+    assert _parse_retry_after_info(response) == (pytest.approx(3.0), True)
+
+
+@pytest.mark.asyncio
+async def test_wire_429s_escalate_through_repository(monkeypatch):
+    service_health.clear()
+    monkeypatch.setattr(_listenbrainz_rate_limiter, "acquire", AsyncMock())
+    repo, http_client = _make_repo()
+    http_client.request = AsyncMock(return_value=_headerless_429())
+
+    delays = []
+    for _ in range(3):
+        with pytest.raises(RateLimitedError) as exc_info:
+            await repo._get("/probe")
+        delays.append(exc_info.value.retry_after_seconds)
+        # honor the returned delay before retrying
+        now_value = _listenbrainz_rate_limit_state._clock() + delays[-1]
+        _listenbrainz_rate_limit_state._clock = lambda v=now_value: v
+
+    assert [d == pytest.approx(e) for d, e in zip(delays, (2.5, 4.5, 8.5))]
+    assert http_client.request.await_count == 3
+
+    http_client.request = AsyncMock(return_value=_ok_response())
+    assert await repo._get("/recovered") == {"status": "ok"}
+
+    now_value = _listenbrainz_rate_limit_state._clock() + 1.0
+    _listenbrainz_rate_limit_state._clock = lambda v=now_value: v
+    http_client.request = AsyncMock(return_value=_headerless_429())
+    with pytest.raises(RateLimitedError) as exc_info:
+        await repo._get("/probe-again")
+    assert exc_info.value.retry_after_seconds == pytest.approx(2.5)
 
 
 @pytest.mark.asyncio
