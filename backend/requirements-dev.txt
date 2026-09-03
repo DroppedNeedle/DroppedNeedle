@@ -1,7 +1,7 @@
 -r requirements.txt
 mypy==2.3.1
-pytest==8.3.5
-pytest-asyncio==0.25.3
+pytest==8.4.2
+pytest-asyncio==1.4.0
 ruff==0.16.5
 testcontainers==4.15.0
 types-PyYAML==6.0.12.20250915
