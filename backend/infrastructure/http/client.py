@@ -8,7 +8,6 @@ import httpx
 from core.config import Settings, get_settings
 from infrastructure.http.brainzmash_transport import (
     BRAINZMASH_HOST,
-    BRAINZMASH_USER_AGENT,
     BrainzMashTransport,
     validate_brainzmash_request_url,
 )
@@ -307,7 +306,7 @@ async def _sanitize_brainzmash_request(request: httpx.Request) -> None:
         if key.casefold() in allowed
     }
     headers["Host"] = BRAINZMASH_HOST
-    headers["User-Agent"] = BRAINZMASH_USER_AGENT
+    headers["User-Agent"] = _get_user_agent()
     request.headers = httpx.Headers(headers)
 
 
@@ -329,7 +328,7 @@ def get_brainzmash_http_client(
         settings=settings,
         headers={
             "Accept": "application/json",
-            "User-Agent": BRAINZMASH_USER_AGENT,
+            "User-Agent": settings.get_user_agent(),
         },
         http2=False,
         follow_redirects=False,

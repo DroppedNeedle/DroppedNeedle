@@ -476,7 +476,8 @@ async def test_brainzmash_request_sanitizer_drops_credentials_and_preserves_requ
     await _sanitize_brainzmash_request(request)
 
     assert request.headers["accept"] == "application/json"
-    assert request.headers["user-agent"] == "DroppedNeedleApp"
+    assert request.headers["user-agent"].startswith("DroppedNeedleApp/")
+    assert "DroppedNeedle" in request.headers["user-agent"]
     assert "cookie" not in request.headers
     assert "authorization" not in request.headers
     assert "proxy-authorization" not in request.headers
@@ -537,7 +538,8 @@ async def test_brainzmash_client_dispatches_async_sanitizer_before_mock_transpor
     assert wire_request.headers["accept-encoding"] == "identity"
     assert wire_request.headers["connection"] == "keep-alive"
     assert wire_request.headers["host"] == "api.brainzmash.cc"
-    assert wire_request.headers["user-agent"] == "DroppedNeedleApp"
+    assert wire_request.headers["user-agent"].startswith("DroppedNeedleApp/")
+    assert "DroppedNeedle" in wire_request.headers["user-agent"]
 
 
 class _SequenceClient:

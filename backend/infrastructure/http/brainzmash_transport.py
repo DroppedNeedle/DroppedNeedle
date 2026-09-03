@@ -12,7 +12,6 @@ import httpx
 
 BRAINZMASH_ENDPOINT = "https://api.brainzmash.cc/ws/2"
 BRAINZMASH_HOST = "api.brainzmash.cc"
-BRAINZMASH_USER_AGENT = "DroppedNeedleApp"
 _BRAINZMASH_ENTITY_PATHS = frozenset(
     {"artist", "release-group", "release", "recording", "isrc", "url"}
 )
