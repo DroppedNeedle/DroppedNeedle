@@ -1,6 +1,10 @@
 <script lang="ts">
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import type { ReviewListItem } from '$lib/queries/library/LibraryOperationsTypes';
+	import {
+		isStillMatchingJobState,
+		reviewReasonShortLabel
+	} from './LibraryReviewTable.svelte';
 
 	interface Props {
 		item: ReviewListItem;
@@ -10,18 +14,8 @@
 	}
 	let { item, selected, onselect, onreview }: Props = $props();
 
-	const reason = $derived(
-		item.reason_code === 'NO_CANDIDATE'
-			? 'No external result'
-			: item.reason_code === 'AMBIGUOUS'
-				? 'Several equally likely releases'
-				: item.reason_code === 'CONTRADICTORY'
-					? 'Conflicting track evidence'
-					: item.reason_code === 'RELEASE_TYPE_REQUIRES_CONFIRMATION' ||
-						  item.reason_code === 'UNSAFE_RELEASE_TYPE'
-						? 'Compilation or live edition needs confirmation'
-						: item.reason_code.replaceAll('_', ' ').toLowerCase()
-	);
+	const reason = $derived(reviewReasonShortLabel(item.reason_code));
+	const stillMatching = $derived(isStillMatchingJobState(item.active_job_state));
 </script>
 
 <article class="rounded-box border border-base-content/10 bg-base-100 p-3">
@@ -39,7 +33,10 @@
 			</p>
 			<p class="mt-1 text-xs text-warning">{reason}</p>
 		</div>
-		<span class="badge badge-ghost badge-sm">{item.state.replaceAll('_', ' ')}</span>
+		<div class="flex shrink-0 flex-col items-end gap-1">
+			<span class="badge badge-ghost badge-sm">{item.state.replaceAll('_', ' ')}</span>
+			{#if stillMatching}<span class="badge badge-warning badge-sm">Matching...</span>{/if}
+		</div>
 	</div>
 	<div class="mt-3 flex items-center justify-between gap-2">
 		<label class="flex items-center gap-2 text-sm"

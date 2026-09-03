@@ -571,7 +571,7 @@ CREATE TABLE IF NOT EXISTS library_identification_reviews (
     id TEXT PRIMARY KEY,
     local_album_id TEXT REFERENCES local_albums(id) ON DELETE RESTRICT,
     local_track_id TEXT REFERENCES local_tracks(id) ON DELETE RESTRICT,
-    state TEXT NOT NULL CHECK(state IN ('needs_review','keep_tagged','excluded','resolved')),
+    state TEXT NOT NULL CHECK(state IN ('needs_review','keep_tagged','excluded','resolved','edition_to_confirm')),
     reason_code TEXT NOT NULL,
     attempt_id TEXT REFERENCES library_identification_attempts(id) ON DELETE RESTRICT,
     input_revision TEXT NOT NULL,
@@ -581,6 +581,8 @@ CREATE TABLE IF NOT EXISTS library_identification_reviews (
     updated_at REAL NOT NULL,
     decided_at REAL,
     row_revision INTEGER NOT NULL DEFAULT 1 CHECK(row_revision BETWEEN 1 AND 9223372036854775807),
+    edition_uncertain INTEGER NOT NULL DEFAULT 0 CHECK(edition_uncertain IN (0,1)),
+    ranked_edition_keys_json TEXT NOT NULL DEFAULT '[]',
     CHECK((local_album_id IS NOT NULL) != (local_track_id IS NOT NULL))
 );
 

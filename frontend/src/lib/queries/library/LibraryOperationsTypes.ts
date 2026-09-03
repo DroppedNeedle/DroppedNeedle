@@ -90,6 +90,12 @@ export interface LibraryWorkItem {
 	priority: number;
 	failure_event_id: string | null;
 	failure_at: number | null;
+	/** Presentation-only synthetic drain marker (id 'identification-drain', never a real run). */
+	synthetic?: boolean;
+	/** False while a settled scan still has albums awaiting identification. */
+	catalog_settled?: boolean | null;
+	/** Albums still awaiting identification when the synthetic drain is active. */
+	pending_identification?: number | null;
 }
 
 export interface LibraryActivityResponse {
@@ -194,7 +200,19 @@ export interface IdentificationControlResponse {
 	row_revision: number;
 }
 
-export type ReviewState = 'needs_review' | 'keep_tagged' | 'excluded' | 'resolved';
+export type ReviewState = 'needs_review' | 'edition_to_confirm' | 'keep_tagged' | 'excluded' | 'resolved';
+
+export const EDITION_UNCERTAIN_REASON = 'EDITION_UNCERTAIN';
+
+export function isEditionToConfirmReview(
+	item: Pick<ReviewListItem, 'state' | 'reason_code'> & { edition_uncertain?: boolean | null }
+): boolean {
+	return (
+		item.state === 'edition_to_confirm' ||
+		item.reason_code === EDITION_UNCERTAIN_REASON ||
+		item.edition_uncertain === true
+	);
+}
 
 export interface ReviewListItem {
 	id: string;
@@ -212,8 +230,9 @@ export interface ReviewListItem {
 	effective_policy: string;
 	exclusion_source: string | null;
 	release_group_mbid: string | null;
+	edition_uncertain?: boolean | null;
+	ranked_edition_keys?: string[] | null;
 	identity_source: string | null;
-	candidate_count: number;
 	evidence_summary: Record<string, number>;
 	active_job_state: string | null;
 	created_at: number;
@@ -228,6 +247,7 @@ export interface ReviewListResponse {
 	filtered_total: number;
 	counts_by_state: Record<string, number>;
 	counts_by_reason: Record<string, number>;
+	counts_by_reason_filtered?: Record<string, number>;
 	catalog_revision: number;
 }
 

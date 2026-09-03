@@ -6,6 +6,7 @@
 	import { integrationStore } from '$lib/stores/integration';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getLocalStatsQuery } from '$lib/queries/local/LocalQueries.svelte';
+	import { getLibraryActivityQuery } from '$lib/queries/library/LibraryActivityQueries.svelte';
 	import { getLibraryStatsQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { formatLastUpdated } from '$lib/utils/formatting';
 	import type { FormatInfo } from '$lib/types';
@@ -43,10 +44,16 @@
 
 	const localStatsQuery = getLocalStatsQuery(() => localEnabled);
 	const libraryStatsQuery = getLibraryStatsQuery();
+	const libraryActivityQuery = getLibraryActivityQuery(() => authStore.user?.id);
 
 	const localStats = $derived(localStatsQuery.data);
 	const libraryStats = $derived(libraryStatsQuery.data);
-
+	const identificationActivity = $derived(
+		libraryActivityQuery.data?.items.find((item) => item.kind === 'identification')
+	);
+	const stillMatching = $derived(
+		(identificationActivity?.waiting_count ?? 0) + (identificationActivity?.deferred_count ?? 0)
+	);
 	function topFormats(breakdown: Record<string, FormatInfo>): string {
 		return Object.entries(breakdown)
 			.sort((a, b) => b[1].count - a[1].count)
@@ -77,15 +84,18 @@
 	);
 
 	const musicFooter = $derived(
-		libUnmatched > 0
-			? `${libUnmatched} album${libUnmatched === 1 ? '' : 's'} need review`
-			: localStats && localStats.total_tracks > 0
-				? `${localStats.total_size_human}${localFormats ? ' · ' + localFormats : ''}`
-				: libLastScan
-					? `Scanned ${formatLastUpdated(libLastScan)}`
-					: 'Not scanned yet'
+		stillMatching > 0 && libUnmatched > 0
+			? `${stillMatching.toLocaleString()} still matching — ${libUnmatched.toLocaleString()} need a decision`
+			: stillMatching > 0
+				? `${stillMatching.toLocaleString()} still matching`
+				: libUnmatched > 0
+					? `${libUnmatched} album${libUnmatched === 1 ? '' : 's'} need review`
+					: localStats && localStats.total_tracks > 0
+						? `${localStats.total_size_human}${localFormats ? ' · ' + localFormats : ''}`
+						: libLastScan
+							? `Scanned ${formatLastUpdated(libLastScan)}`
+							: 'Not scanned yet'
 	);
-
 	const musicCard: EntryCard = $derived({
 		href: localEnabled ? '/library/local' : '/library',
 		icon: Headphones,
@@ -100,7 +110,7 @@
 				]
 			: [],
 		footer: musicFooter,
-		footerWarning: libUnmatched > 0,
+		footerWarning: stillMatching === 0 && libUnmatched > 0,
 		ctaLabel:
 			musicState === 'prompt' ? 'Open library' : localEnabled ? 'Enter the room' : 'Manage library',
 		promptText: authStore.isAdmin

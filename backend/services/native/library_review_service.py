@@ -41,10 +41,36 @@ PREVIEW_TTL_SECONDS = 15 * 60
 AUTOMATIC_SAFE_EVIDENCE_REASONS = frozenset(
     {"SUPPORTED", "ACCEPTED", "SUPPORTED_EMBEDDED_IDS"}
 )
-REVIEW_STATES = frozenset({"needs_review", "keep_tagged", "excluded", "resolved"})
+REVIEW_STATES = frozenset(
+    {"needs_review", "keep_tagged", "excluded", "resolved", "edition_to_confirm"}
+)
+TIER_STATE = "edition_to_confirm"
+TIER_REASON = "EDITION_UNCERTAIN"
+
+
+def _is_tier_row(row: dict[str, Any]) -> bool:
+    """Tolerant tier detection: state OR reason OR persisted flag."""
+    return (
+        bool(row.get("edition_uncertain"))
+        or str(row.get("state") or "") == TIER_STATE
+        or str(row.get("reason_code") or "") == TIER_REASON
+    )
+
+
+def _tier_edition_keys(row: dict[str, Any]) -> list[str]:
+    """Ranked `rg:release` edition keys for tier rows, else empty."""
+    raw = row.get("ranked_edition_keys_json")
+    if raw is None:
+        return []
+    try:
+        decoded = msgspec.json.decode(str(raw).encode(), type=list[str])
+    except (msgspec.DecodeError, UnicodeEncodeError):
+        return []
+    return [str(key) for key in decoded]
+
+
 REVIEW_POLICIES = frozenset({"automatic", "local_metadata", "excluded"})
 ACTIVE_JOB_STATES = frozenset({"queued", "running", "paused"})
-
 logger = logging.getLogger(__name__)
 
 
@@ -181,6 +207,7 @@ class LibraryReviewService:
         metadata_incomplete: bool | None = None,
         candidate_available: bool | None = None,
         job_state: str | None = None,
+        exclude_active_jobs: bool = False,
         sort: str = "newest",
         created_from: float | None = None,
         created_to: float | None = None,
@@ -238,6 +265,7 @@ class LibraryReviewService:
             metadata_incomplete=metadata_incomplete,
             candidate_available=candidate_available,
             job_state=job_state,
+            exclude_active_jobs=exclude_active_jobs,
             created_from=created_from,
             created_to=created_to,
             updated_from=updated_from,
@@ -260,6 +288,10 @@ class LibraryReviewService:
             counts_by_reason={
                 str(key): int(value)
                 for key, value in result["counts_by_reason"].items()
+            },
+            counts_by_reason_filtered={
+                str(key): int(value)
+                for key, value in result.get("counts_by_reason_filtered", {}).items()
             },
             catalog_revision=await self._store.get_catalog_revision(),
         )
@@ -631,6 +663,8 @@ class LibraryReviewService:
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
             row_revision=int(row["row_revision"]),
+            edition_uncertain=_is_tier_row(row),
+            ranked_edition_keys=_tier_edition_keys(row),
         )
 
     @staticmethod

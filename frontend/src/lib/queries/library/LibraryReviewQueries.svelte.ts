@@ -13,6 +13,8 @@ export interface LibraryReviewFilters {
 	policy?: string;
 	search?: string;
 	sort?: string;
+	candidateAvailable?: boolean;
+	hideMatching?: boolean;
 }
 
 export const getLibraryReviewsQuery = (getFilters: Getter<LibraryReviewFilters>) =>
@@ -23,7 +25,12 @@ export const getLibraryReviewsQuery = (getFilters: Getter<LibraryReviewFilters>)
 			initialPageParam: filters.cursor,
 			queryFn: ({ pageParam, signal }) =>
 				api.global.get<ReviewListResponse>(
-					API.library.reviews({ ...filters, cursor: pageParam, limit: 50 }),
+					API.library.reviews({
+						...filters,
+						exclude_active_jobs: filters.hideMatching,
+						cursor: pageParam,
+						limit: 50
+					}),
 					{ signal }
 				),
 			getNextPageParam: (lastPage: ReviewListResponse) => lastPage.next_cursor ?? undefined

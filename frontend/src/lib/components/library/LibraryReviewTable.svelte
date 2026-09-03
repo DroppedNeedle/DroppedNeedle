@@ -1,7 +1,23 @@
+<script module lang="ts">
+	export function reviewReasonShortLabel(code: string): string {
+		if (code === 'NO_CANDIDATE') return 'No external result';
+		if (code === 'AMBIGUOUS') return 'Several equally likely releases';
+		if (code === 'CONTRADICTORY') return 'Conflicting track evidence';
+		if (code === 'EDITION_UNCERTAIN') return 'Edition to confirm — release group pinned';
+		if (code === 'RELEASE_TYPE_REQUIRES_CONFIRMATION' || code === 'UNSAFE_RELEASE_TYPE') {
+			return 'Compilation or live edition needs confirmation';
+		}
+		return code.replaceAll('_', ' ').toLowerCase();
+	}
+
+	export function isStillMatchingJobState(state: string | null): boolean {
+		return state === 'queued' || state === 'running' || state === 'paused';
+	}
+</script>
+
 <script lang="ts">
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
-	import { ClipboardCheck } from 'lucide-svelte';
 	import type { ReviewListItem } from '$lib/queries/library/LibraryOperationsTypes';
 	import LibraryReviewCard from './LibraryReviewCard.svelte';
 
@@ -11,6 +27,8 @@
 		filtered: boolean;
 		state?: string;
 		rootLabels?: Record<string, string>;
+		waitingCount?: number;
+		onclearfilters?: (() => void) | null;
 		onselectionchange: (ids: string[]) => void;
 		onreview: (id: string) => void;
 	}
@@ -20,6 +38,8 @@
 		filtered,
 		state = undefined,
 		rootLabels = {},
+		waitingCount = 0,
+		onclearfilters = null,
 		onselectionchange,
 		onreview
 	}: Props = $props();
@@ -31,30 +51,36 @@
 	}
 
 	function reason(code: string): string {
-		if (code === 'NO_CANDIDATE') return 'No external result';
-		if (code === 'AMBIGUOUS') return 'Several equally likely releases';
-		if (code === 'CONTRADICTORY') return 'Conflicting track evidence';
-		if (code === 'RELEASE_TYPE_REQUIRES_CONFIRMATION' || code === 'UNSAFE_RELEASE_TYPE') {
-			return 'Compilation or live edition needs confirmation';
-		}
-		return code.replaceAll('_', ' ').toLowerCase();
+		return reviewReasonShortLabel(code);
 	}
 </script>
 
 {#if items.length === 0}
 	<EmptyState
-		icon={ClipboardCheck}
 		title={state === 'keep_tagged'
 			? 'No albums have been kept with local metadata yet.'
-			: filtered
-				? 'No review items match these filters.'
-				: 'No albums need identification review.'}
+			: state === 'edition_to_confirm'
+				? 'No editions need confirmation.'
+				: filtered
+					? 'No review items match these filters.'
+					: waitingCount > 0
+						? 'Matching still running — check back.'
+						: 'No albums need identification review.'}
 		description={state === 'keep_tagged'
 			? 'Albums you keep as tagged will appear here.'
-			: filtered
-				? 'Remove a filter or try a different search.'
-				: 'Albums kept with local metadata remain playable and appear under their own filter.'}
+			: state === 'edition_to_confirm'
+				? 'Albums whose release group matched but pressing is unproven will appear here.'
+				: filtered
+					? 'Remove a filter or try a different search.'
+					: waitingCount > 0
+						? 'First-scan matching is still working through the queue. Albums that need a decision will appear here.'
+						: 'Albums kept with local metadata remain playable and appear under their own filter.'}
 	/>
+	{#if filtered && onclearfilters}
+		<div class="mt-3 flex justify-center">
+			<button class="btn btn-outline btn-sm" onclick={onclearfilters}>Clear all filters</button>
+		</div>
+	{/if}
 {:else}
 	<div
 		class="hidden overflow-x-auto rounded-box border border-base-content/10 bg-base-100 lg:block"
@@ -101,7 +127,10 @@
 							><span class="badge badge-ghost badge-sm"
 								>{item.effective_policy.replace('_', ' ')}</span
 							></td
-						><td>{item.candidate_count ? `${item.candidate_count} available` : 'None'}</td><td
+					><td>{#if isStillMatchingJobState(item.active_job_state)}<span
+								class="badge badge-warning badge-sm">Matching...</span
+							>{:else}{item.candidate_count ? `${item.candidate_count} available` : 'None'}{/if}</td
+						><td
 							>{new Date(item.updated_at * 1000).toLocaleDateString()}</td
 						><td
 							><button class="btn btn-primary btn-sm" onclick={() => onreview(item.id)}

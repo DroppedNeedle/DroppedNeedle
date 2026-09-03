@@ -71,7 +71,22 @@
 		return () => window.clearInterval(timer);
 	});
 
-	const items = $derived(activityQuery.data?.work_items ?? []);
+	const items = $derived(
+		(activityQuery.data?.work_items ?? []).filter((item) => item.id !== 'identification-drain')
+	);
+	const drain = $derived(
+		(activityQuery.data?.work_items ?? []).find((item) => item.id === 'identification-drain')
+	);
+	const identificationActivity = $derived(
+		(activityQuery.data?.items ?? []).find((item) => item.kind === 'identification')
+	);
+	const drainPending = $derived(
+		drain?.pending_identification ??
+			(identificationActivity?.waiting_count ?? 0) + (identificationActivity?.deferred_count ?? 0)
+	);
+	const drainActive = $derived(
+		Boolean(drain?.synthetic) && (drainPending ?? 0) > 0
+	);
 	const primary = $derived(items[0] ?? null);
 	const additional = $derived(items.slice(1));
 	const facts = $derived(primary ? libraryWorkFacts(primary) : []);
@@ -217,25 +232,55 @@
 		{:else if activityQuery.isError}
 			<div class="alert alert-error m-5 sm:m-6">Could not load current work.</div>
 		{:else if !primary}
-			<div class="flex flex-wrap items-center gap-4 p-5 sm:p-6">
-				<span
-					class="flex h-11 w-11 flex-none items-center justify-center rounded-2xl bg-primary/10 text-primary"
-				>
-					<CircleCheck class="h-5 w-5" />
-				</span>
-				<div class="min-w-0 flex-1">
-					<p
-						class="font-mono text-[0.65rem] font-semibold tracking-widest text-primary/70 uppercase"
+			{#if drainActive}
+				<div class="flex flex-wrap items-center gap-4 p-5 sm:p-6">
+					<span
+						class="flex h-11 w-11 flex-none items-center justify-center rounded-2xl bg-primary/10 text-primary"
 					>
-						Current work
-					</p>
-					<h2 class="font-display mt-1 text-2xl font-bold">Nothing is running right now</h2>
-					<p class="mt-1 text-sm text-base-content/60">
-						Start a scan or preview file organization below - anything in progress will show up
-						here.
-					</p>
+						<ScanSearch class="h-5 w-5" />
+					</span>
+					<div class="min-w-0 flex-1">
+						<p
+							class="font-mono text-[0.65rem] font-semibold tracking-widest text-primary/70 uppercase"
+						>
+							Current work
+						</p>
+						<h2 class="font-display mt-1 text-2xl font-bold">
+							Scan complete ({totalTracks.toLocaleString()} files) — Matching {drainPending.toLocaleString()}
+							{drainPending === 1 ? 'album' : 'albums'}
+						</h2>
+						<p class="mt-1 text-sm text-base-content/60">
+							MusicBrainz 1/s limit, playback unaffected.
+						</p>
+					</div>
+					<a
+						class="btn btn-ghost btn-sm"
+						href={withBasePath('/library/management?tab=scanning#scanning-controls')}
+					>
+						View matching progress <ArrowRight class="h-4 w-4" />
+					</a>
 				</div>
-			</div>
+			{:else}
+				<div class="flex flex-wrap items-center gap-4 p-5 sm:p-6">
+					<span
+						class="flex h-11 w-11 flex-none items-center justify-center rounded-2xl bg-primary/10 text-primary"
+					>
+						<CircleCheck class="h-5 w-5" />
+					</span>
+					<div class="min-w-0 flex-1">
+						<p
+							class="font-mono text-[0.65rem] font-semibold tracking-widest text-primary/70 uppercase"
+						>
+							Current work
+						</p>
+						<h2 class="font-display mt-1 text-2xl font-bold">Nothing is running right now</h2>
+						<p class="mt-1 text-sm text-base-content/60">
+							Start a scan or preview file organization below - anything in progress will show up
+							here.
+						</p>
+					</div>
+				</div>
+			{/if}
 		{:else}
 			<div class="space-y-4 p-5 sm:p-6">
 				<header class="flex flex-wrap items-start gap-4">

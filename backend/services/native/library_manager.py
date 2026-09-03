@@ -128,6 +128,7 @@ class LibraryStats(AppStruct):
     total_size_bytes: int = 0
     format_breakdown: dict[str, int] = {}
     unmatched_count: int = 0
+    edition_to_confirm_count: int = 0
     last_scan_at: float | None = None
     recently_added: list[LibraryAlbumSummary] = []
 
@@ -390,6 +391,7 @@ class LibraryManager:
             total_size_bytes=data["total_size_bytes"],
             format_breakdown=data["format_breakdown"],
             unmatched_count=data["unmatched_count"],
+            edition_to_confirm_count=int(data.get("edition_to_confirm_count", 0)),
             last_scan_at=data.get("last_scan_at"),
             recently_added=recently_added,
         )

@@ -13,6 +13,7 @@
 		ReviewListItem
 	} from '$lib/queries/library/LibraryOperationsTypes';
 	import type { LibraryReviewFilters } from '$lib/queries/library/LibraryReviewQueries.svelte';
+	import { API } from '$lib/constants';
 	import { createUuid } from '$lib/utils/uuid';
 
 	interface Props {
@@ -21,9 +22,20 @@
 		matchingCount: number;
 		filters: LibraryReviewFilters;
 		catalogRevision: number;
+		bulkOpenRequest?: { action: BulkReviewAction; nonce: number } | null;
+		onbulkopened?: (() => void) | null;
 		onclear: () => void;
 	}
-	let { selected, allMatching, matchingCount, filters, catalogRevision, onclear }: Props = $props();
+	let {
+		selected,
+		allMatching,
+		matchingCount,
+		filters,
+		catalogRevision,
+		bulkOpenRequest = null,
+		onbulkopened = null,
+		onclear
+	}: Props = $props();
 	const preview = previewBulkLibraryReview();
 	const apply = applyBulkLibraryReview();
 	const pause = controlLibraryOperation('pause');
@@ -65,19 +77,26 @@
 			Object.entries(filters)
 				.filter(([key]) => !['cursor', 'sort'].includes(key))
 				.filter(([, value]) => value !== undefined && value !== '')
-				.map(([key, value]) => [
-					key === 'reasonCode' ? 'reason_code' : key === 'rootId' ? 'root_id' : key,
+			.map(([key, value]) => [
+					key === 'reasonCode'
+						? 'reason_code'
+						: key === 'rootId'
+							? 'root_id'
+							: key === 'candidateAvailable'
+								? 'candidate_available'
+								: key === 'hideMatching'
+									? 'exclude_active_jobs'
+									: key,
 					String(value)
 				])
 		),
 		catalog_revision: catalogRevision
 	});
-
-	async function openPreview(
+	async function openPreviewForAction(
 		nextAction: BulkReviewAction,
-		event: MouseEvent & { currentTarget: HTMLButtonElement }
+		nextOpener: HTMLButtonElement | null
 	): Promise<void> {
-		opener = event.currentTarget;
+		opener = nextOpener;
 		action = nextAction;
 		candidateKey = null;
 		try {
@@ -88,6 +107,23 @@
 		dialog.showModal();
 		dialogHeading.focus();
 	}
+
+	async function openPreview(
+		nextAction: BulkReviewAction,
+		event: MouseEvent & { currentTarget: HTMLButtonElement }
+	): Promise<void> {
+		await openPreviewForAction(nextAction, event.currentTarget);
+	}
+
+	let lastBulkNonce = $state(0);
+
+	$effect(() => {
+		const request = bulkOpenRequest;
+		if (!request || request.nonce === lastBulkNonce) return;
+		if (!selected.length && !allMatching) return;
+		lastBulkNonce = request.nonce;
+		void openPreviewForAction(request.action, null).finally(() => onbulkopened?.());
+	});
 
 	async function previewCandidate(key: string): Promise<void> {
 		candidateKey = key || null;
@@ -202,7 +238,8 @@
 		></progress>
 		<p class="mt-1 text-xs text-base-content/60">
 			{job.completed_count.toLocaleString()} complete · {job.skipped_count.toLocaleString()} skipped ·
-			{job.failed_count.toLocaleString()} failed
+			{job.failed_count.toLocaleString()} failed ·
+			<a class="link link-primary" href={API.library.operation(job.id)}>Operation {job.id}</a>
 		</p>
 	</div>
 {/if}
@@ -247,10 +284,17 @@
 						</div>
 					{/if}
 				{/if}
-				<p>
-					<strong>{preview.data.eligible_count.toLocaleString()} eligible</strong> across {preview.data.album_count.toLocaleString()}
+			<p>
+					<strong>{preview.data.eligible_count.toLocaleString()} eligible</strong>, {preview.data
+						.ineligible_count.toLocaleString()} ineligible, {preview.data.stale_count.toLocaleString()}
+					changed since selection — nothing changed yet. Covers {preview.data.album_count.toLocaleString()}
 					albums and {preview.data.root_count.toLocaleString()} roots.
 				</p>
+				{#if selection.normalized_filter.reason_code}
+					<p class="text-xs text-base-content/60">
+						Scope: {String(selection.normalized_filter.reason_code).replaceAll('_', ' ').toLowerCase()}
+					</p>
+				{/if}
 				{#if preview.data.ineligible_count || preview.data.stale_count}<details
 						class="rounded-box bg-base-200 p-3"
 					>

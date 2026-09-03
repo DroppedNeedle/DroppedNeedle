@@ -223,6 +223,7 @@ class TargetLibraryRepository:
                 str(key): int(value) for key, value in stats["format_breakdown"].items()
             },
             unmatched_count=int(stats["unmatched_count"]),
+            edition_to_confirm_count=int(stats.get("edition_to_confirm_count", 0)),
             last_scan_at=stats.get("last_scan_at"),
             recently_added=recently_added,
         )

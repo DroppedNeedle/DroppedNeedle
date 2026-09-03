@@ -30,7 +30,11 @@ from services.native.album_candidate_service import (
     RECALL_SOURCE_KINDS,
     AlbumCandidateService,
 )
-from services.native.album_evidence_engine import MATCHER_VERSION, AlbumEvidenceEngine
+from services.native.album_evidence_engine import (
+    MATCHER_VERSION,
+    AlbumEvidenceEngine,
+    is_edition_uncertain,
+)
 from services.native.conditional_fingerprint_service import (
     FINGERPRINTER_VERSION,
     ConditionalFingerprintService,
@@ -356,7 +360,7 @@ def _enforce_raw_track_identities(
         decision.selected_candidate_key = None
 
 
-_SIBLING_TRIAL_OUTCOMES = ("ambiguous", "insufficient_evidence")
+_SIBLING_TRIAL_OUTCOMES = ("ambiguous", "insufficient_evidence", "edition_uncertain")
 
 
 def _sibling_trial_release_groups(
@@ -455,6 +459,23 @@ class AlbumIdentificationService:
         identity_revision = album_identity_revision(context["identity"], raw_tracks)
         tracks = [_to_grouping_track(row) for row in raw_tracks]
         degradation = init_degradation_context()
+        # P1-A: snapshot before any provider call so later delta isolates
+        # failures recorded during this attempt.
+        degraded_before = set(degradation.degraded_summary())
+        deterministic_before = set(degradation.deterministic_sources())
+
+        def _full_recall() -> bool:
+            # P2 tier gate: a lone RELEASE_TYPE-blocked edition pins its RG only
+            # on proven full recall, i.e. an empty P1 transient delta since the
+            # snapshots above (no transient provider gap during this attempt).
+            degraded_delta = set(degradation.degraded_summary()) - degraded_before
+            transient_delta = {
+                source
+                for source in degraded_delta
+                if source not in degradation.deterministic_sources()
+            }
+            return not transient_delta
+
         decision: IdentificationDecision | None = None
 
         async def checkpoint() -> bool:
@@ -540,7 +561,9 @@ class AlbumIdentificationService:
                 if await self._queue.is_paused():
                     await self._pause(job, worker_id, "candidate_search")
                     return "paused"
-                decision = self._evidence_engine.decide(tracks, recalled)
+                decision = self._evidence_engine.decide(
+                    tracks, recalled, full_recall=_full_recall()
+                )
                 new_release_groups: list[str] = []
                 if decision.outcome in ("ambiguous", "insufficient_evidence"):
                     requested = 0
@@ -619,14 +642,19 @@ class AlbumIdentificationService:
                         if await self._queue.is_paused():
                             await self._pause(job, worker_id, "candidate_search")
                             return "paused"
-                        decision = self._evidence_engine.decide(tracks, recalled)
+                        decision = self._evidence_engine.decide(
+                    tracks, recalled, full_recall=_full_recall()
+                )
+                # P1-A/C(a): skip the extra sibling fetch whenever transient delta
+                # is nonempty (saves 1 fetch exactly under throttle).
+                _sibling_det_delta = set(degradation.deterministic_sources()) - deterministic_before
+                _sibling_deg_delta = set(degradation.degraded_summary()) - degraded_before
+                _sibling_transient = {source for source in _sibling_deg_delta if source not in degradation.deterministic_sources()}
                 if (
                     decision.outcome in _SIBLING_TRIAL_OUTCOMES
-                    and not (
-                        degradation.has_deterministic_failure()
-                        and not decision.candidates
-                    )
-                    and not (degradation.degraded_summary() and not decision.candidates)
+                    and not (_sibling_det_delta and not decision.candidates)
+                    and not (_sibling_deg_delta and not decision.candidates)
+                    and not _sibling_transient
                     and (self._provider_available is None or self._provider_available())
                 ):
                     # EditionsEtc Phase 2 within-group sibling trial: when the
@@ -652,11 +680,25 @@ class AlbumIdentificationService:
                         if await self._queue.is_paused():
                             await self._pause(job, worker_id, "candidate_search")
                             return "paused"
-                        decision = self._evidence_engine.decide(tracks, recalled)
+                        decision = self._evidence_engine.decide(
+                    tracks, recalled, full_recall=_full_recall()
+                )
 
+            # P2 RG edition-uncertain tier mapping point: an edition-uncertain
+            # decision is already a non-review terminal (RG pin + ranked keys).
+            # It flows through both backstops below unchanged: embedded or
+            # manual/legacy conflicts still flip it to contradictory review.
             _enforce_raw_track_identities(decision, raw_tracks)
             degraded = degradation.degraded_summary()
-            if degradation.has_deterministic_failure() and not decision.candidates:
+            # P1-A: delta since init splits deterministic vs transient failures
+            # during this attempt. Deterministic keeps the UNMAPPABLE path;
+            # transient-only delta defers even with partial candidates. Empty
+            # delta (genuine empty, embedded/local-metadata fast paths with no
+            # provider calls) stays terminal.
+            deterministic_delta = set(degradation.deterministic_sources()) - deterministic_before
+            degraded_delta = set(degraded) - degraded_before
+            transient_delta = {source for source in degraded_delta if source not in degradation.deterministic_sources()}
+            if deterministic_delta and not decision.candidates:
                 # F-IDENT-02: a typed payload-shape failure is deterministic,
                 # not an outage. Defer under the honest code so the row keeps
                 # the ordinary bounded backoff but never provider-resurrects.
@@ -667,15 +709,27 @@ class AlbumIdentificationService:
                     now=timestamp,
                 )
                 return "provider_deferred"
-            if degraded and not decision.candidates:
-                await self._queue.defer(
-                    job,
-                    worker_id,
-                    "PROVIDER_TEMPORARILY_UNAVAILABLE",
-                    now=timestamp,
-                )
-                return "provider_deferred"
+            if transient_delta:
+                # P1-A force-review cap: >=6 attempts with zero candidates falls
+                # through to terminal review instead of another defer, preventing
+                # a defer-loop on genuinely-empty albums.
+                try:
+                    _attempt_count = int(job.get("attempt_count", 1) or 1)
+                except (TypeError, ValueError):
+                    _attempt_count = 1
+                if not (_attempt_count >= 6 and not decision.candidates):
+                    await self._queue.defer(
+                        job,
+                        worker_id,
+                        "PROVIDER_TEMPORARILY_UNAVAILABLE",
+                        now=timestamp,
+                    )
+                    return "provider_deferred"
             _enforce_existing_album_identity(decision, context["identity"], raw_tracks)
+            # P2 tier terminal (evaluated after both backstops above): the RG pin
+            # and ranked keys persist RG-only; a flipped contradictory outcome
+            # clears the predicate and takes the ordinary review path instead.
+            tier_terminal = is_edition_uncertain(decision)
             evidence_records = [
                 IdentificationEvidenceRecord(
                     id=str(uuid.uuid4()),
@@ -737,6 +791,13 @@ class AlbumIdentificationService:
                     else None
                 ),
                 source_context=operation_source_context,
+                edition_uncertain=tier_terminal,
+                release_group_mbid=(
+                    decision.release_group_mbid if tier_terminal else None
+                ),
+                ranked_edition_keys=(
+                    list(decision.ranked_edition_keys) if tier_terminal else None
+                ),
             )
             if decision.outcome == "identified" and self._on_identified is not None:
                 try:

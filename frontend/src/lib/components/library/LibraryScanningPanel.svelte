@@ -432,6 +432,7 @@
 							<span class="block text-xs text-base-content/50">Waiting</span><strong
 								>{(identification?.waiting_count ?? 0).toLocaleString()}</strong
 							>
+							<span class="block text-xs text-base-content/50">will auto-retry</span>
 						</div>
 						<div>
 							<span class="block text-xs text-base-content/50">Kept local</span><strong
@@ -444,9 +445,10 @@
 							>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Needs review</span><strong
+							<span class="block text-xs text-base-content/50">Needs decision</span><strong
 								>{(identification?.needs_review_count ?? reviewCount).toLocaleString()}</strong
 							>
+							<span class="block text-xs text-base-content/50">will not auto-resolve</span>
 						</div>
 						<div>
 							<span class="block text-xs text-base-content/50">Deferred</span><strong

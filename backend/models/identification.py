@@ -11,6 +11,7 @@ from infrastructure.msgspec_fastapi import AppStruct
 EvidenceClass = Literal["supported", "unknown", "contradictory"]
 IdentificationOutcome = Literal[
     "identified",
+    "edition_uncertain",
     "no_candidate",
     "ambiguous",
     "contradictory",
@@ -108,6 +109,9 @@ class IdentificationDecision(AppStruct):
     reason_code: str
     selected_candidate_key: str | None = None
     candidates: list[CandidateEvidence] = msgspec.field(default_factory=list)
+    edition_uncertain: bool = False
+    release_group_mbid: str | None = None
+    ranked_edition_keys: list[str] = msgspec.field(default_factory=list)
 
 
 class GroupingTrack(AppStruct):

@@ -113,6 +113,15 @@ def _selected_scopes(
     return scopes
 
 
+IDENTIFICATION_DRAIN_WORK_ITEM_ID = "identification-drain"
+"""Synthetic work-item id for the post-scan identification drain.
+
+Never persisted: scan-run history/detail/failure lookups hit the scan-runs
+tables (get_scan_run raises ResourceNotFoundError for unknown ids), so the
+synthetic id 404s there instead of resolving. Only the activity work_items
+list ever carries it, flagged with synthetic=True.
+"""
+
 @router.get("/activity", response_model=LibraryActivityResponse)
 async def library_activity(
     current_user: CurrentUserDep,
@@ -394,6 +403,44 @@ async def library_activity(
                         failure_at=identification_snapshot["failure_at"],
                     )
                 )
+    if not runs:
+        deferred = int(identification_snapshot["deferred_count"])
+        if waiting + deferred > 0:
+            drain_control_state = identification_snapshot["control_state"]
+            if drain_control_state == "paused" and counts.get("running", 0):
+                drain_state = "pausing"
+            elif drain_control_state == "paused":
+                drain_state = "paused"
+            elif counts.get("running", 0) or identification_snapshot["claimable_count"]:
+                drain_state = "running"
+            else:
+                drain_state = "idle"
+            work_items.append(
+                LibraryWorkItem(
+                    id=IDENTIFICATION_DRAIN_WORK_ITEM_ID,
+                    kind="identification",
+                    state=drain_state,
+                    phase="awaiting_identification",
+                    effect="catalog_only",
+                    processed=0,
+                    total=None,
+                    unit="albums",
+                    indeterminate=True,
+                    remaining_count=waiting,
+                    started_at=identification_snapshot["started_at"],
+                    updated_at=float(
+                        identification_snapshot["updated_at"]
+                        or identification_snapshot["failure_at"]
+                        or 0.0
+                    ),
+                    warning_count=deferred,
+                    failed_count=int(counts.get("failed", 0)),
+                    priority=90,
+                    synthetic=True,
+                    catalog_settled=False,
+                    pending_identification=waiting,
+                )
+            )
     if current_user.role == "admin":
         work_items.extend(await administrative_work.active())
     work_items.sort(key=lambda item: (item.priority, -item.updated_at, item.id))

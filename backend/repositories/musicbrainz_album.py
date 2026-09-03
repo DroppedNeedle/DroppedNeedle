@@ -526,11 +526,17 @@ class MusicBrainzAlbumMixin:
                         break
 
                 advanced_settings = self._preferences_service.get_advanced_settings()
+                # P1-C(d): positive search-id TTL extended; decoded-empty negative
+                # cached short (600s) as a proven-empty lane response only. Keys
+                # already carry namespace+generation via the mb cache fence.
+                # Transient failures never cache (F-MATCH-05: except paths below
+                # return without writing).
+                _search_ttl = advanced_settings.cache_ttl_search * 2 if results else 600
                 await mb_cache_set_if_current(
                     self._cache,
                     cache_key,
                     results,
-                    ttl_seconds=advanced_settings.cache_ttl_search,
+                    ttl_seconds=_search_ttl,
                     context=response_context,
                 )
                 return results
@@ -1471,11 +1477,14 @@ class MusicBrainzAlbumMixin:
                 )
 
             advanced_settings = self._preferences_service.get_advanced_settings()
+            # P1-C(d): same positive-extend / proven-empty-negative policy as the
+            # release-group search lane. Transient failures never cache (F-MATCH-05).
+            _recording_ttl = advanced_settings.cache_ttl_search * 2 if matches else 600
             await mb_cache_set_if_current(
                 self._cache,
                 cache_key,
                 matches,
-                ttl_seconds=advanced_settings.cache_ttl_search,
+                ttl_seconds=_recording_ttl,
                 context=response_context,
             )
             return matches

@@ -327,6 +327,8 @@ export const API = {
 				policy?: string;
 				search?: string;
 				sort?: string;
+				candidateAvailable?: boolean;
+				exclude_active_jobs?: boolean;
 			} = {}
 		) => {
 			const query = new URLSearchParams();
@@ -338,6 +340,8 @@ export const API = {
 			if (params.policy) query.set('policy', params.policy);
 			if (params.search) query.set('search', params.search);
 			if (params.sort) query.set('sort', params.sort);
+			if (params.candidateAvailable) query.set('candidate_available', 'true');
+			if (params.exclude_active_jobs) query.set('exclude_active_jobs', 'true');
 			return `/api/v1/library/reviews${query.size ? `?${query.toString()}` : ''}`;
 		},
 		review: (reviewId: string) => `/api/v1/library/reviews/${reviewId}`,

@@ -54,7 +54,6 @@ class AlbumCandidateService:
             exact.source_kinds = ["administrator_exact_release"]
             return [exact]
 
-        ids: list[tuple[str, str]] = []
         embedded_groups = {
             track.release_group_mbid for track in tracks if track.release_group_mbid
         }
@@ -104,6 +103,12 @@ class AlbumCandidateService:
             or not artist
             or len({identifier for identifier, source in ids if source != "cached_fingerprint"}) < 2
         ):
+            # P1-C(c): shrink the recording-search sample to 2 only when album
+            # and artist are present with >=2 distinct non-fingerprint ids.
+            # Sparse (album/artist empty) and compilation-shaped recall keep the
+            # full sample since the recording lane is the only VA lane.
+            _distinct_non_fp = len({identifier for identifier, source in ids if source != "cached_fingerprint"})
+            _sample_limit = 2 if (album and artist and _distinct_non_fp >= 2) else TRACK_SAMPLE_LIMIT
             samples = sorted(
                 (track for track in tracks if track.title),
                 key=lambda track: (
@@ -111,7 +116,7 @@ class AlbumCandidateService:
                     track.track_number,
                     track.local_track_id,
                 ),
-            )[:TRACK_SAMPLE_LIMIT]
+            )[:_sample_limit]
             for track in samples:
                 if checkpoint is not None and not await checkpoint():
                     return []

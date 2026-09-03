@@ -10,7 +10,9 @@ import msgspec
 from infrastructure.msgspec_fastapi import AppStruct
 from models.identification import CandidateEvidence, TrackEvidence
 
-ReviewState = Literal["needs_review", "keep_tagged", "excluded", "resolved"]
+ReviewState = Literal[
+    "needs_review", "keep_tagged", "excluded", "resolved", "edition_to_confirm"
+]
 OperationState = Literal[
     "queued",
     "running",
@@ -46,6 +48,8 @@ class ReviewListItem(AppStruct):
     created_at: float = 0.0
     updated_at: float = 0.0
     row_revision: int = 1
+    edition_uncertain: bool = False
+    ranked_edition_keys: list[str] = msgspec.field(default_factory=list)
 
 
 class ReviewListResponse(AppStruct):
@@ -55,6 +59,7 @@ class ReviewListResponse(AppStruct):
     filtered_total: int = 0
     counts_by_state: dict[str, int] = msgspec.field(default_factory=dict)
     counts_by_reason: dict[str, int] = msgspec.field(default_factory=dict)
+    counts_by_reason_filtered: dict[str, int] = msgspec.field(default_factory=dict)
     catalog_revision: int = 0
 
 

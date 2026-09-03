@@ -185,6 +185,9 @@ class LibraryWorkItem(AppStruct):
     priority: int = 100
     failure_event_id: str | None = None
     failure_at: float | None = None
+    synthetic: bool = False
+    catalog_settled: bool | None = None
+    pending_identification: int | None = None
 
 
 class OperationWorkItem(AppStruct):

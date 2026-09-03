@@ -31,6 +31,13 @@ DURATION_GRACE_SECONDS = 10.0
 DURATION_HARD_LIMIT_SECONDS = 30.0
 MAX_CANDIDATES = 10
 
+# P2 RG edition-uncertain tier (plan 6.1): consensus epsilon and score floor
+# for pinning a release GROUP while the exact edition stays unclaimed. The
+# 0.95/0.05 exact-write gate in edition_policy.py is untouched.
+RG_CONSENSUS_EPSILON = 0.10
+EDITION_UNCERTAIN_SCORE_FLOOR = 0.75
+EDITION_UNCERTAIN_REASON = "EDITION_UNCERTAIN"
+
 _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
 # F-059: mirrors musicbrainz_matcher's CJK guard - transliterating CJK/Kana is
 # lossy and hurts matching (D3), so those stay verbatim through the fold.
@@ -181,6 +188,74 @@ def _album_title_class(local: str, candidate: str) -> str:
     return _album_metadata_class(
         strip_edition_suffix(local),
         strip_edition_suffix(candidate),
+    )
+
+
+def _otherwise_supported(
+    local_tracks: list[GroupingTrack], evidence: CandidateEvidence
+) -> bool:
+    """True when evaluate_candidate() would have said SUPPORTED without the release-type gate."""
+    supported = sum(
+        item.classification == "supported" for item in evidence.track_evidence
+    )
+    comparable = sum(
+        item.classification != "unknown" for item in evidence.track_evidence
+    )
+    contradictions = sum(
+        item.classification == "contradictory" for item in evidence.track_evidence
+    )
+    unknown = len(evidence.track_evidence) - comparable
+    unknown_limit = (
+        ORDINARY_UNKNOWN_LIMIT
+        if len(local_tracks) <= ORDINARY_ALBUM_MAX_FILES
+        else LARGE_UNKNOWN_LIMIT
+    )
+    return (
+        evidence.album_title_classification != "contradictory"
+        and evidence.album_artist_classification != "contradictory"
+        and supported > 0
+        and contradictions == 0
+        and unknown <= unknown_limit
+        and comparable > 0
+        and supported == comparable
+        and evidence.score >= 1.0 - ALBUM_DISTANCE_CEILING
+    )
+
+
+def _has_local_track_mbid(local_tracks: list[GroupingTrack]) -> bool:
+    return any(
+        track.recording_mbid or track.release_track_mbid for track in local_tracks
+    )
+
+
+def _tier_is_live_shaped(
+    cohort: list[CandidateEvidence], candidates: list[AlbumCandidate]
+) -> bool:
+    """True when any tier-cohort edition carries a live secondary type."""
+    secondary_by_key: dict[tuple[str, str], set[str]] = {}
+    for candidate in candidates[:MAX_CANDIDATES]:
+        secondary_by_key.setdefault(
+            (candidate.release_group_mbid, (candidate.release_mbid or "").casefold()),
+            {value.casefold() for value in candidate.secondary_types},
+        )
+    return any(
+        "live"
+        in secondary_by_key.get(
+            (item.release_group_mbid, (item.release_mbid or "").casefold()), set()
+        )
+        for item in cohort
+    )
+
+
+def is_edition_uncertain(decision: IdentificationDecision) -> bool:
+    """Tier predicate for the persistence task.
+
+    selected_candidate_key carries RG + best-release as a ranked hint only;
+    it MUST NOT be persisted as the canonical exact release_mbid.
+    """
+    return (
+        decision.outcome == "edition_uncertain"
+        and decision.reason_code == EDITION_UNCERTAIN_REASON
     )
 
 
@@ -539,6 +614,7 @@ class AlbumEvidenceEngine:
         self,
         local_tracks: list[GroupingTrack],
         candidates: list[AlbumCandidate],
+        full_recall: bool = False,
     ) -> IdentificationDecision:
         evidence = [
             self.evaluate_candidate(local_tracks, candidate)
@@ -565,6 +641,11 @@ class AlbumEvidenceEngine:
             elif "UNKNOWN_EXTRAS_EXCEED_LIMIT" in reasons:
                 outcome, reason = "insufficient_evidence", "UNKNOWN_EXTRAS_EXCEED_LIMIT"
             elif "RELEASE_TYPE_REQUIRES_CONFIRMATION" in reasons:
+                tier = self._rg_consensus_tier(
+                    local_tracks, evidence, candidates, full_recall=full_recall
+                )
+                if tier is not None:
+                    return tier
                 outcome, reason = (
                     "insufficient_evidence",
                     "RELEASE_TYPE_REQUIRES_CONFIRMATION",
@@ -580,6 +661,11 @@ class AlbumEvidenceEngine:
         margin = best.score - eligible[1].score if len(eligible) > 1 else 1.0
         best.margin = margin
         if len(eligible) > 1 and margin < CANDIDATE_MARGIN_FLOOR:
+            tier = self._rg_consensus_tier(
+                local_tracks, evidence, candidates, full_recall=full_recall
+            )
+            if tier is not None:
+                return tier
             return IdentificationDecision(
                 outcome="ambiguous",
                 reason_code="MULTIPLE_LIKELY_RELEASES",
@@ -590,4 +676,75 @@ class AlbumEvidenceEngine:
             reason_code="SUPPORTED",
             selected_candidate_key=f"{best.release_group_mbid}:{best.release_mbid or ''}",
             candidates=evidence,
+        )
+
+    def _rg_consensus_tier(
+        self,
+        local_tracks: list[GroupingTrack],
+        evidence: list[CandidateEvidence],
+        candidates: list[AlbumCandidate],
+        full_recall: bool = False,
+    ) -> IdentificationDecision | None:
+        """Pin the release GROUP when same-album editions disagree on pressing.
+
+        Tier pool is SUPPORTED plus RELEASE_TYPE-blocked-but-otherwise-supported
+        (exact-write rule untouched: edition_policy.py keeps 0.95/0.05, reason
+        set, recall_key, and TIE handling). Pins only when every candidate in
+        the top cohort (best score, within RG_CONSENSUS_EPSILON) shares one
+        release group and the best clears EDITION_UNCERTAIN_SCORE_FLOOR; a lone
+        RELEASE_TYPE candidate additionally needs full_recall (partial-recall
+        singletons never pin: vacuous consensus). Cross-RG cohorts, outscored
+        pools, and uncorroborated live shapes return None for existing verdicts.
+        """
+        pool = [
+            item
+            for item in evidence
+            if item.reason_code == "SUPPORTED"
+            or (
+                item.reason_code == "RELEASE_TYPE_REQUIRES_CONFIRMATION"
+                and _otherwise_supported(local_tracks, item)
+            )
+        ]
+        if not pool:
+            return None
+        ranked = sorted(
+            pool,
+            key=lambda item: (
+                -item.score,
+                item.release_group_mbid,
+                item.release_mbid or "",
+            ),
+        )
+        best = ranked[0]
+        if best.score < EDITION_UNCERTAIN_SCORE_FLOOR:
+            return None
+        if any(item.score > best.score for item in evidence):
+            return None
+        cohort = [
+            item for item in ranked if best.score - item.score <= RG_CONSENSUS_EPSILON
+        ]
+        if any(item.release_group_mbid != best.release_group_mbid for item in cohort):
+            return None
+        if len(cohort) < 2:
+            if cohort[0].reason_code != "RELEASE_TYPE_REQUIRES_CONFIRMATION":
+                return None
+            if not full_recall:
+                return None
+        if _tier_is_live_shaped(cohort, candidates) and not (
+            _has_local_track_mbid(local_tracks)
+            or best.score >= EDITION_UNCERTAIN_SCORE_FLOOR
+        ):
+            return None
+        release_group_mbid = best.release_group_mbid
+        return IdentificationDecision(
+            outcome="edition_uncertain",
+            reason_code=EDITION_UNCERTAIN_REASON,
+            selected_candidate_key=f"{release_group_mbid}:{best.release_mbid or ''}",
+            candidates=evidence,
+            edition_uncertain=True,
+            release_group_mbid=release_group_mbid,
+            ranked_edition_keys=[
+                f"{item.release_group_mbid}:{item.release_mbid or ''}"
+                for item in cohort
+            ],
         )
