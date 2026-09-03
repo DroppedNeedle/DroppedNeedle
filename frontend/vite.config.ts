@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vitest/config';
+import { playwright } from '@vitest/browser-playwright';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vitest/config';
 
 // `$env/dynamic/public` reads an SSR-injected global absent in the chromium test env and throws on import; alias to an empty-env stub so component tests can load
 const envPublicStub = fileURLToPath(new URL('./src/lib/test/env-public-stub.ts', import.meta.url));
@@ -21,11 +22,10 @@ export default defineConfig({
 					// layout-dependent assertions (GH-281 sidebar scrolling); other
 					// CSS stays stubbed to keep unstyled-DOM specs unchanged
 					css: { include: [/src[/\\]app\.css$/] },
-					environment: 'browser',
 					browser: {
 						enabled: true,
 						headless: true,
-						provider: 'playwright',
+						provider: playwright(),
 						instances: [{ browser: 'chromium' }],
 						// GH runners see the default bind as internet-exposed, which disables
 						// CDP/exec + failure screenshots; loopback avoids that, and the

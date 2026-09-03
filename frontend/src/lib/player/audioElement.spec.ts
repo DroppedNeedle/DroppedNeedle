@@ -8,7 +8,7 @@ const mockEngine = vi.hoisted(() => ({
 }));
 
 vi.mock('./audioEngine', () => {
-	const MockAudioEngine = vi.fn().mockImplementation(() => mockEngine);
+	const MockAudioEngine = vi.fn().mockImplementation(function () { return mockEngine; });
 	return { AudioEngine: MockAudioEngine };
 });
 
