@@ -23,8 +23,8 @@ class RequestAcceptedResponse(AppStruct):
 
 class BatchAlbumItem(AppStruct):
     musicbrainz_id: str
-    artist_name: str = "Unknown"
-    album_title: str = "Unknown"
+    artist_name: str | None = None
+    album_title: str | None = None
     year: int | None = None
     artist_mbid: str | None = None
 

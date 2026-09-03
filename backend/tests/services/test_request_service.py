@@ -155,7 +155,9 @@ async def test_newly_learned_alias_is_migrated_before_request_deduplication():
     service._album_service = album_service
     service._mbid_store = mbid_store
 
-    response = await service.request_album("release-edition", user_role="admin")
+    response = await service.request_album(
+        "release-edition", artist="Artist", album="Album", user_role="admin"
+    )
 
     assert response.status == "awaiting_approval"
     mbid_store.save_mbid_resolution_map.assert_awaited_once_with(
@@ -172,7 +174,9 @@ async def test_newly_learned_alias_is_migrated_before_request_deduplication():
 async def test_request_album_user_role_awaits_approval_without_dispatch():
     service, request_history, download_service = _make_service()
 
-    response = await service.request_album("rg-123", user_role="user")
+    response = await service.request_album(
+        "rg-123", artist="Artist", album="Album", user_role="user"
+    )
 
     assert response.status == "awaiting_approval"
     download_service.request_album.assert_not_awaited()
@@ -184,7 +188,9 @@ async def test_request_album_already_in_library_not_linked_as_task_id():
     service, request_history, download_service = _make_service()
     download_service.request_album = AsyncMock(return_value="already_in_library")
 
-    response = await service.request_album("rg-123", user_role="admin")
+    response = await service.request_album(
+        "rg-123", artist="Artist", album="Album", user_role="admin"
+    )
 
     assert response.success is True
     assert response.message == "Album is already in the library"
@@ -200,7 +206,9 @@ async def test_request_album_wraps_errors():
     download_service.request_album = AsyncMock(side_effect=RuntimeError("boom"))
 
     with pytest.raises(ExternalServiceError):
-        await service.request_album("rg-123", user_role="admin")
+        await service.request_album(
+            "rg-123", artist="Artist", album="Album", user_role="admin"
+        )
 
     status_call = request_history.async_update_status.await_args
     assert status_call.args[:2] == ("rg-123", "failed")
@@ -258,8 +266,8 @@ async def test_request_batch_canonicalizes_aliases_and_keeps_the_source_release(
 
     response = await service.request_batch(
         [
-            {"musicbrainz_id": "release-alias", "artist_name": "A"},
-            {"musicbrainz_id": "canonical-2", "artist_name": "B"},
+            {"musicbrainz_id": "release-alias", "artist_name": "A", "album_title": "B"},
+            {"musicbrainz_id": "canonical-2", "artist_name": "C", "album_title": "D"},
         ],
         user_role="admin",
         user_id="u1",
@@ -299,8 +307,8 @@ async def test_request_batch_deduplicates_aliases_for_the_same_release_group():
 
     response = await service.request_batch(
         [
-            {"musicbrainz_id": "release-1", "artist_name": "A"},
-            {"musicbrainz_id": "release-2", "artist_name": "A"},
+            {"musicbrainz_id": "release-1", "artist_name": "A", "album_title": "B"},
+            {"musicbrainz_id": "release-2", "artist_name": "A", "album_title": "B"},
         ],
         user_role="admin",
         user_id="u1",
@@ -326,7 +334,14 @@ async def test_request_batch_uses_one_durable_alias_lookup_for_the_maximum_batch
     service._mbid_store = mbid_store
 
     response = await service.request_batch(
-        [{"musicbrainz_id": f"release-{index}"} for index in range(500)],
+        [
+            {
+                "musicbrainz_id": f"release-{index}",
+                "artist_name": f"Artist {index}",
+                "album_title": f"Album {index}",
+            }
+            for index in range(500)
+        ],
         user_role="user",
         user_id="u1",
     )
@@ -524,7 +539,9 @@ async def test_request_album_over_quota_rejected_before_recording():
     )
 
     with pytest.raises(ValidationError):
-        await service.request_album("rg-1", user_id="u1", user_role="user")
+        await service.request_album(
+            "rg-1", artist="Artist", album="Album", user_id="u1", user_role="user"
+        )
 
     request_history.async_record_request.assert_not_awaited()
     quota.check_request_quota.assert_awaited_once_with("u1", "user")
@@ -537,9 +554,9 @@ async def test_request_batch_counts_n_and_rejects_whole_batch():
     service, request_history, _dl, quota = _make_service_with_quota()
     quota.check_request_quota.side_effect = ValidationError("Request limit reached")
     items = [
-        {"musicbrainz_id": "rg-1"},
-        {"musicbrainz_id": "rg-2"},
-        {"musicbrainz_id": "rg-3"},
+        {"musicbrainz_id": "rg-1", "artist_name": "A", "album_title": "B"},
+        {"musicbrainz_id": "rg-2", "artist_name": "C", "album_title": "D"},
+        {"musicbrainz_id": "rg-3", "artist_name": "E", "album_title": "F"},
     ]
 
     with pytest.raises(ValidationError):
@@ -554,7 +571,10 @@ async def test_request_batch_quota_counts_only_new_items():
     service, request_history, _dl, quota = _make_service_with_quota()
     # rg-1 is already active -> only 1 NEW ask is counted against the quota
     request_history.async_get_requested_mbids = AsyncMock(return_value={"rg-1"})
-    items = [{"musicbrainz_id": "RG-1"}, {"musicbrainz_id": "rg-2", "artist_name": "A"}]
+    items = [
+        {"musicbrainz_id": "RG-1", "artist_name": "A", "album_title": "B"},
+        {"musicbrainz_id": "rg-2", "artist_name": "A", "album_title": "B"},
+    ]
 
     response = await service.request_batch(items, user_id="u1", user_role="user")
 
@@ -574,7 +594,9 @@ async def test_request_album_over_storage_cap_rejected_at_submit():
     )
 
     with pytest.raises(ValidationError):
-        await service.request_album("rg-1", user_id="u1", user_role="user")
+        await service.request_album(
+            "rg-1", artist="Artist", album="Album", user_id="u1", user_role="user"
+        )
 
     request_history.async_record_request.assert_not_awaited()
     quota.check_storage_admission.assert_awaited_once_with("u1", "user")
@@ -608,9 +630,9 @@ async def test_request_album_resolves_download_service_per_dispatch():
         acquisition=make_builtin_dispatcher(get_ds),
     )
 
-    await service.request_album("rg-A", user_role="admin")
+    await service.request_album("rg-A", artist="A", album="B", user_role="admin")
     current["ds"] = ds_b  # a policy save rebuilt the DownloadService singleton
-    await service.request_album("rg-B", user_role="admin")
+    await service.request_album("rg-B", artist="C", album="D", user_role="admin")
 
     ds_a.request_album.assert_awaited_once()  # first dispatch used the original engine
     ds_b.request_album.assert_awaited_once()  # second used the NEW one (fails if captured)
@@ -733,6 +755,8 @@ async def test_existing_album_attaches_listener_without_redispatch():
 
     response = await service.request_album(
         "release-group-shared",
+        artist="Artist",
+        album="Album",
         user_id="listener-2",
         user_role="user",
         requested_by_name="Second listener",
@@ -752,8 +776,8 @@ async def test_batch_duplicate_attaches_listener_and_reports_authoritative_statu
 
     response = await service.request_batch(
         [
-            {"musicbrainz_id": "rg-existing"},
-            {"musicbrainz_id": "rg-new", "artist_name": "Artist"},
+            {"musicbrainz_id": "rg-existing", "artist_name": "A", "album_title": "B"},
+            {"musicbrainz_id": "rg-new", "artist_name": "Artist", "album_title": "Album"},
         ],
         user_id="listener-2",
         user_role="user",
@@ -783,6 +807,8 @@ async def test_new_album_generation_persists_dispatch_authorization(
 
     response = await service.request_album(
         f"release-group-{user_role}",
+        artist="Artist",
+        album="Album",
         user_id=f"user-{user_role}",
         user_role=user_role,
     )
@@ -936,6 +962,8 @@ async def test_terminal_reactivation_starts_private_generation_without_old_liste
 
     response = await service.request_album(
         "release-group-private",
+        artist="Artist",
+        album="Album",
         user_id="new-owner",
         user_role="user",
         requested_by_name="New owner",
@@ -1001,6 +1029,8 @@ async def test_stale_dispatch_generation_cancels_orphan_after_reactivation():
     old_request = asyncio.create_task(
         service.request_album(
             "rg-race",
+            artist="Race Artist",
+            album="Race Album",
             user_id="old-owner",
             user_role="trusted",
         )
@@ -1014,6 +1044,8 @@ async def test_stale_dispatch_generation_cancels_orphan_after_reactivation():
 
     successor = await service.request_album(
         "rg-race",
+        artist="Race Artist",
+        album="Race Album",
         user_id="new-owner",
         user_role="trusted",
     )
@@ -1033,8 +1065,8 @@ async def test_stale_dispatch_generation_cancels_orphan_after_reactivation():
 async def test_overlapping_batches_dispatch_only_their_exact_winners():
     service, history, download_service = _make_service()
     items = [
-        {"musicbrainz_id": "rg-a", "artist_name": "A"},
-        {"musicbrainz_id": "rg-b", "artist_name": "B"},
+        {"musicbrainz_id": "rg-a", "artist_name": "A", "album_title": "B"},
+        {"musicbrainz_id": "rg-b", "artist_name": "C", "album_title": "D"},
     ]
     history.async_get_requested_mbids = AsyncMock(
         side_effect=[set(), set()]
@@ -1068,3 +1100,138 @@ async def test_overlapping_batches_dispatch_only_their_exact_winners():
         call.kwargs["expected_generation"]
         for call in history.async_update_download_task_id.await_args_list
     ] == [1, 1]
+
+@pytest.mark.asyncio
+async def test_request_album_resolves_missing_names_from_musicbrainz():
+    service, request_history, download_service = _make_service()
+    album_service = MagicMock()
+    album_service.resolve_album_identity = AsyncMock(
+        return_value=("rg-mbid-only", None)
+    )
+    album_service.get_album_basic_info = AsyncMock(
+        return_value=SimpleNamespace(artist_name="MB Artist", title="MB Album")
+    )
+    service._album_service = album_service
+
+    response = await service.request_album("rg-mbid-only", user_role="admin")
+
+    assert response.success is True
+    history_kwargs = request_history.async_record_request.await_args.kwargs
+    assert history_kwargs["artist_name"] == "MB Artist"
+    assert history_kwargs["album_title"] == "MB Album"
+    assert "Unknown" not in (history_kwargs["artist_name"], history_kwargs["album_title"])
+    dispatch_kwargs = download_service.request_album.await_args.kwargs
+    assert dispatch_kwargs["artist_name"] == "MB Artist"
+    assert dispatch_kwargs["album_title"] == "MB Album"
+
+
+@pytest.mark.asyncio
+async def test_request_album_mbid_only_with_failed_lookup_raises_and_records_nothing():
+    service, request_history, download_service = _make_service()
+    album_service = MagicMock()
+    album_service.resolve_album_identity = AsyncMock(
+        return_value=("rg-unresolvable", None)
+    )
+    album_service.get_album_basic_info = AsyncMock(side_effect=Exception("mb down"))
+    service._album_service = album_service
+
+    with pytest.raises(ValidationError) as exc_info:
+        await service.request_album("rg-unresolvable", user_role="admin")
+
+    assert "rg-unresolvable" in str(exc_info.value)
+    request_history.async_record_request.assert_not_awaited()
+    download_service.request_album.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_request_album_supplied_names_skip_musicbrainz_lookup():
+    service, request_history, download_service = _make_service()
+    album_service = MagicMock()
+    album_service.resolve_album_identity = AsyncMock(
+        return_value=("rg-given", None)
+    )
+    album_service.get_album_basic_info = AsyncMock()
+    service._album_service = album_service
+
+    response = await service.request_album(
+        "rg-given", artist="Given Artist", album="Given Album", user_role="admin"
+    )
+
+    assert response.success is True
+    album_service.get_album_basic_info.assert_not_awaited()
+    history_kwargs = request_history.async_record_request.await_args.kwargs
+    assert history_kwargs["artist_name"] == "Given Artist"
+    assert history_kwargs["album_title"] == "Given Album"
+    dispatch_kwargs = download_service.request_album.await_args.kwargs
+    assert dispatch_kwargs["artist_name"] == "Given Artist"
+    assert dispatch_kwargs["album_title"] == "Given Album"
+
+
+@pytest.mark.asyncio
+async def test_request_batch_resolves_one_and_fails_one_individually():
+    service, request_history, download_service = _make_service()
+    album_service = MagicMock()
+    album_service.resolve_album_identity = AsyncMock(
+        side_effect=[("rg-good", None), ("rg-bad", None)]
+    )
+
+    async def _basic(mbid: str):
+        if mbid == "rg-good":
+            return SimpleNamespace(artist_name="Good Artist", title="Good Album")
+        raise Exception("not found")
+
+    album_service.get_album_basic_info = AsyncMock(side_effect=_basic)
+    service._album_service = album_service
+    download_service.request_album = AsyncMock(return_value="task-good")
+
+    response = await service.request_batch(
+        [{"musicbrainz_id": "rg-good"}, {"musicbrainz_id": "rg-bad"}],
+        user_role="admin",
+        user_id="u1",
+    )
+
+    assert response.requested == 1
+    assert response.skipped == 1
+    recorded = request_history.async_bulk_record_requests.await_args.args[0]
+    assert [item["musicbrainz_id"] for item in recorded] == ["rg-good"]
+    assert recorded[0]["artist_name"] == "Good Artist"
+    assert recorded[0]["album_title"] == "Good Album"
+    download_service.request_album.assert_awaited_once()
+    dispatch_kwargs = download_service.request_album.await_args.kwargs
+    assert dispatch_kwargs["release_group_mbid"] == "rg-good"
+    assert dispatch_kwargs["artist_name"] == "Good Artist"
+    assert dispatch_kwargs["album_title"] == "Good Album"
+
+
+@pytest.mark.asyncio
+async def test_request_batch_treats_literal_unknown_as_missing():
+    # The playlist missing-tracks flow sends literal "Unknown" placeholders;
+    # the central guard must resolve them, never store or dispatch them.
+    service, request_history, download_service = _make_service()
+    album_service = MagicMock()
+    album_service.resolve_album_identity = AsyncMock(return_value=("rg-pl", None))
+    album_service.get_album_basic_info = AsyncMock(
+        return_value=SimpleNamespace(artist_name="Real Artist", title="Real Album")
+    )
+    service._album_service = album_service
+    download_service.request_album = AsyncMock(return_value="task-pl")
+
+    response = await service.request_batch(
+        [
+            {
+                "musicbrainz_id": "rg-pl",
+                "artist_name": "Unknown",
+                "album_title": "  ",
+            }
+        ],
+        user_role="admin",
+        user_id="u1",
+    )
+
+    assert response.requested == 1
+    recorded = request_history.async_bulk_record_requests.await_args.args[0]
+    assert recorded[0]["artist_name"] == "Real Artist"
+    assert recorded[0]["album_title"] == "Real Album"
+    dispatch_kwargs = download_service.request_album.await_args.kwargs
+    assert dispatch_kwargs["artist_name"] == "Real Artist"
+    assert dispatch_kwargs["album_title"] == "Real Album"

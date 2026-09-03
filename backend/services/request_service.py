@@ -44,6 +44,16 @@ def _mutation_won(value: object) -> bool:
     return value is not False
 
 
+def _meaningful_name(value: str | None) -> str | None:
+    """None for absent, blank, or literal-"Unknown" names; else the stripped value."""
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped or stripped.casefold() == "unknown":
+        return None
+    return stripped
+
+
 def _request_begin_won(value: object | None) -> bool:
     return value is not None and value is not False
 
@@ -131,6 +141,38 @@ class RequestService:
             value["release_mbid"] = release_mbid
             normalized.append(value)
         return normalized
+
+    async def _resolve_request_names(
+        self,
+        musicbrainz_id: str,
+        artist: str | None,
+        album: str | None,
+    ) -> tuple[str | None, str | None]:
+        # Literal placeholders from older callers (e.g. the playlist
+        # missing-tracks flow) are missing values, not real names.
+        artist = _meaningful_name(artist)
+        album = _meaningful_name(album)
+        if artist and album:
+            return artist, album
+        if self._album_service is not None:
+            try:
+                info = await self._album_service.get_album_basic_info(musicbrainz_id)
+            except Exception as error:  # noqa: BLE001 - MB/network/degraded falls through to ValidationError
+                logger.warning(
+                    "Could not resolve names for %s: %s", musicbrainz_id, error
+                )
+                info = None
+            if info is not None:
+                if not artist:
+                    artist = _meaningful_name(getattr(info, "artist_name", None))
+                if not album:
+                    album = _meaningful_name(getattr(info, "title", None))
+        if not artist or not album:
+            raise ValidationError(
+                f"Could not resolve artist and album for MBID {musicbrainz_id}: "
+                "artist and album are required when MusicBrainz resolution fails"
+            )
+        return artist, album
 
     async def _begin_request(
         self,
@@ -233,12 +275,15 @@ class RequestService:
         musicbrainz_id, release_mbid = await self._resolve_album_identity(
             musicbrainz_id
         )
+        artist_name, album_title = await self._resolve_request_names(
+            musicbrainz_id, artist, album
+        )
         needs_approval = user_role not in ("trusted", "admin")
         initial_status = "awaiting_approval" if needs_approval else "pending"
         request_kwargs: dict[str, object] = {
             "musicbrainz_id": musicbrainz_id,
-            "artist_name": artist or "Unknown",
-            "album_title": album or "Unknown",
+            "artist_name": artist_name,
+            "album_title": album_title,
             "year": year,
             "artist_mbid": artist_mbid,
             "monitor_artist": monitor_artist,
@@ -368,8 +413,8 @@ class RequestService:
             task_id = await self._acquisition.request_album(
                 user_id=user_id or "",
                 release_group_mbid=musicbrainz_id,
-                artist_name=artist or "Unknown",
-                album_title=album or "Unknown",
+                artist_name=artist_name,
+                album_title=album_title,
                 year=year,
                 artist_mbid=artist_mbid,
                 origin="user",
@@ -706,6 +751,32 @@ class RequestService:
                 )
                 await self._quota.check_storage_admission(user_id or "", "user")
 
+            resolvable: list[dict] = []
+            for item in new_items:
+                mbid = str(item["musicbrainz_id"])
+                try:
+                    artist_name, album_title = await self._resolve_request_names(
+                        mbid,
+                        item.get("artist_name") or None,
+                        item.get("album_title") or None,
+                    )
+                except ValidationError as error:
+                    logger.warning("Skipping batch item %s: %s", mbid, error)
+                    skipped += 1
+                    continue
+                item["artist_name"] = artist_name
+                item["album_title"] = album_title
+                resolvable.append(item)
+            new_items = resolvable
+            if not new_items:
+                return BatchRequestResponse(
+                    success=False,
+                    message="Batch request could not be recorded",
+                    requested=0,
+                    skipped=skipped,
+                    status="failed",
+                )
+
             bulk_result = await self._request_history.async_bulk_record_requests(
                 new_items,
                 monitor_artist=monitor_artist,
@@ -814,8 +885,8 @@ class RequestService:
                     task_id = await self._acquisition.request_album(
                         user_id=user_id or "",
                         release_group_mbid=mbid,
-                        artist_name=item.get("artist_name") or "Unknown",
-                        album_title=item.get("album_title") or "Unknown",
+                        artist_name=item["artist_name"],
+                        album_title=item["album_title"],
                         year=item.get("year"),
                         artist_mbid=item.get("artist_mbid"),
                         origin="user",

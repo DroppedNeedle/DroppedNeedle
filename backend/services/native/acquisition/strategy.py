@@ -877,7 +877,7 @@ class UsenetStrategy:
             task, self._album_service, self._store
         )
         if not expected_tracks:
-            raise OrchestrationError("could not resolve the album tracklist")
+            raise OrchestrationError(f"could not resolve the album tracklist for {task.release_group_mbid}")
         # Unique per failover candidate: failover reuses the same task object (only
         # candidate_index advances), so a constant name collides with the prior attempt's
         # not-yet-deleted SABnzbd job and SAB appends .1/.2, orphaning unpacked folders on the
