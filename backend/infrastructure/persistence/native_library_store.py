@@ -3789,8 +3789,9 @@ class NativeLibraryStore(PersistenceBase):
     ) -> tuple[set[str], set[str]]:
         """ST1: provider ids a committed album contributes to catalog-scope
         invalidation - (release-group mbids, artist mbids). The album identity
-        row supplies the RG; artist mbids come from the indexed tracks'
-        musicbrainz identities. Empty sets are valid (nothing to delete)."""
+        row supplies the RG; artist mbids come from the album's and its
+        tracks' credited artists' musicbrainz identities. Empty sets are
+        valid (nothing to delete)."""
 
         def operation(
             connection: sqlite3.Connection,
@@ -3804,12 +3805,18 @@ class NativeLibraryStore(PersistenceBase):
                 {str(rg_row["release_group_mbid"])} if rg_row is not None else set()
             )
             artist_rows = connection.execute(
-                "SELECT DISTINCT te.provider_artist_id FROM "
-                "local_track_external_identities te "
-                "JOIN local_tracks t ON t.id = te.local_track_id "
-                "WHERE t.local_album_id = ? AND te.provider = 'musicbrainz' "
-                "AND te.provider_artist_id IS NOT NULL",
-                (local_album_id,),
+                "SELECT DISTINCT identity.provider_artist_id "
+                "FROM local_artist_external_identities identity "
+                "WHERE identity.provider = 'musicbrainz' "
+                "AND identity.provider_artist_id IS NOT NULL "
+                "AND (EXISTS (SELECT 1 FROM local_album_artists credit "
+                "WHERE credit.local_album_id = ? "
+                "AND credit.local_artist_id = identity.local_artist_id) "
+                "OR EXISTS (SELECT 1 FROM local_track_artists credit "
+                "JOIN local_tracks track ON track.id = credit.local_track_id "
+                "WHERE track.local_album_id = ? "
+                "AND credit.local_artist_id = identity.local_artist_id))",
+                (local_album_id, local_album_id),
             ).fetchall()
             artist_ids = {str(row["provider_artist_id"]) for row in artist_rows}
             return rg_ids, artist_ids
