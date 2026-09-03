@@ -1966,7 +1966,10 @@ class DownloadOrchestrator:
                 and result.management_hold_reason_code is None
             ):
                 try:
-                    asked = len(self._read_manifest(task.id).target_files)
+                    manifest = self._read_manifest(task.id)
+                    # NZBs are opaque: Usenet manifests carry no target_files, so
+                    # fall back to the exact-edition tracklist for the asked count.
+                    asked = len(manifest.target_files) or len(manifest.expected_tracks)
                 except OrchestrationError:
                     asked = None
                 rows = []

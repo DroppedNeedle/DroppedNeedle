@@ -3989,3 +3989,70 @@ async def test_failover_requests_only_missing_tracks_from_next_peer(tmp_path: Pa
     assert second_files == ["p2/02.flac"]
     final = await store.get_task(task.id)
     assert final.status == "completed"
+
+
+def _write_completion_manifest(orch, task_id, *, target_count, expected_count):
+    """Manifest writer for the delivery-trust gate: Usenet enqueues carry no
+    target_files (opaque NZB), only the exact-edition tracklist."""
+    manifest = DownloadManifest(
+        task_id=task_id,
+        release_group_mbid="rg-1",
+        artist_name="A",
+        album_title="B",
+        naming_template=_TEMPLATE,
+        target_files=[
+            ExpectedFile(filename=f"peer/{i:02d}.flac", size=1)
+            for i in range(1, target_count + 1)
+        ],
+        expected_tracks=[
+            ExpectedTrack(
+                track_number=i,
+                disc_number=1,
+                duration_seconds=200.0,
+                recording_mbid=f"rec-{i}",
+                title=f"Track {i}",
+            )
+            for i in range(1, expected_count + 1)
+        ],
+    )
+    d = orch._staging / task_id
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "manifest.json").write_bytes(orch._manifest_codec.encode(manifest))
+
+
+@pytest.mark.asyncio
+async def test_usenet_full_delivery_completes_without_target_files(tmp_path: Path):
+    """Usenet manifests carry target_files=[] (opaque NZB): a clean full delivery
+    of the exact edition still fires the delivery-trust exception."""
+    store, orch, _fp, _lib = _build(tmp_path, imported_rows=[])
+    task = await _new_task(store, track_count=2)
+    _write_completion_manifest(orch, task.id, target_count=0, expected_count=2)
+    orch._coverage = AsyncMock(return_value=(0, 2, []))
+    result = ProcessResult(succeeded=["/lib/01.flac", "/lib/02.flac"], failed=[])
+
+    assert await orch._download_is_complete(task, True, result) is True
+
+
+@pytest.mark.asyncio
+async def test_usenet_short_delivery_does_not_complete(tmp_path: Path):
+    """A Usenet delivery shorter than the exact edition keeps failing over."""
+    store, orch, _fp, _lib = _build(tmp_path, imported_rows=[])
+    task = await _new_task(store, track_count=2)
+    _write_completion_manifest(orch, task.id, target_count=0, expected_count=2)
+    orch._coverage = AsyncMock(return_value=(0, 2, []))
+    result = ProcessResult(succeeded=["/lib/01.flac"], failed=[])
+
+    assert await orch._download_is_complete(task, True, result) is False
+
+
+@pytest.mark.asyncio
+async def test_soulseek_short_manifest_still_fails_over(tmp_path: Path):
+    """Soulseek path unchanged: a clean delivery of a short manifest still trips
+    the whole-album-repull veto when target_files < track_count."""
+    store, orch, _fp, _lib = _build(tmp_path, imported_rows=[])
+    task = await _new_task(store, track_count=2)
+    _write_completion_manifest(orch, task.id, target_count=1, expected_count=2)
+    orch._coverage = AsyncMock(return_value=(0, 2, []))
+    result = ProcessResult(succeeded=["/lib/01.flac"], failed=[])
+
+    assert await orch._download_is_complete(task, True, result) is False
