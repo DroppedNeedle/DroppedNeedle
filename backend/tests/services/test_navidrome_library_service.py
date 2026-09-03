@@ -562,3 +562,34 @@ class TestHubFavoritesExpansion:
         assert hub.favorites == []
         assert hub.favorite_artists == []
         assert hub.favorite_tracks == []
+
+
+class TestGetStatsStableAcrossRefreshes:
+    @pytest.mark.asyncio
+    async def test_repeated_calls_return_stable_counts(self):
+        # Regression test for issue #371: with 500+ albums, get_stats() grew
+        # the cached first page in place, so every refresh reported more
+        # albums/tracks. The stub below returns the SAME list objects on
+        # every call, exactly like the real cache-backed repository.
+        service, repo = _make_service()
+        page0 = [_album(id=f"a-{i}", song_count=10) for i in range(500)]
+        page1 = [_album(id=f"b-{i}", song_count=10) for i in range(100)]
+
+        async def _album_list(type="alphabeticalByName", size=20, offset=0, **kwargs):
+            if size == 1 and offset == 0:
+                return [page0[0]]
+            if offset == 0:
+                return page0
+            if offset == 500:
+                return page1
+            return []
+
+        repo.get_album_list = AsyncMock(side_effect=_album_list)
+        repo.get_artists = AsyncMock(
+            return_value=[_artist(id=f"ar-{i}") for i in range(5)]
+        )
+        first = await service.get_stats()
+        second = await service.get_stats()
+        assert (first.total_albums, first.total_tracks, first.total_artists) == (600, 6000, 5)
+        assert (second.total_albums, second.total_tracks, second.total_artists) == (600, 6000, 5)
+        assert len(page0) == 500

@@ -590,11 +590,16 @@ class NavidromeLibraryService:
         total_albums = 0
         all_albums: list = []
         if first_page:
-            all_albums = await self._navidrome.get_album_list(
-                type="alphabeticalByName",
-                size=500,
-                offset=0,
-                music_folder_ids=music_folder_ids,
+            # Copy: the repository may hand back its cached list object, so
+            # extending in place below would corrupt the cache entry and grow
+            # every subsequent call (issue #371).
+            all_albums = list(
+                await self._navidrome.get_album_list(
+                    type="alphabeticalByName",
+                    size=500,
+                    offset=0,
+                    music_folder_ids=music_folder_ids,
+                )
             )
             total_albums = len(all_albums)
             if total_albums >= 500:

@@ -308,7 +308,7 @@ class NavidromeRepository:
         cache_key = f"{NAVIDROME_PREFIX}albums:scope:{scope}:{type}:{size}:{offset}:{genre or ''}:{from_year}:{to_year}"
         cached = await self._cache.get(cache_key)
         if cached is not None:
-            return cached
+            return list(cached)
 
         params: dict[str, Any] = {"type": type, "size": size, "offset": offset}
         if genre and type == "byGenre":
@@ -325,7 +325,7 @@ class NavidromeRepository:
         raw = resp.get("albumList2", {}).get("album", [])
         albums = [parse_album(a) for a in raw]
         await self._cache.set(cache_key, albums, self._ttl_list)
-        return albums
+        return list(albums)
 
     async def get_album(self, id: str) -> SubsonicAlbum:
         cache_key = f"{NAVIDROME_PREFIX}album:{id}"
@@ -345,7 +345,7 @@ class NavidromeRepository:
         cache_key = f"{NAVIDROME_PREFIX}artists:scope:{scope}"
         cached = await self._cache.get(cache_key)
         if cached is not None:
-            return cached
+            return list(cached)
 
         params: dict[str, Any] = {}
         if not self._add_scope(params, music_folder_ids):
@@ -356,7 +356,7 @@ class NavidromeRepository:
             for a in index.get("artist", []):
                 artists.append(parse_artist(a))
         await self._cache.set(cache_key, artists, self._ttl_list)
-        return artists
+        return list(artists)
 
     async def get_artist(self, id: str) -> SubsonicArtist:
         cache_key = f"{NAVIDROME_PREFIX}artist:{id}"
