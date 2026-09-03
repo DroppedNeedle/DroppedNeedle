@@ -191,6 +191,109 @@ def _wait_for_content(
     return False
 
 
+def _sha256_of_fd(descriptor: int) -> str:
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: os.read(descriptor, 1024 * 1024), b""):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _settle_probe(
+    path: Path, expected_sha256: str, expected_size: int | None
+) -> bool | None:
+    """One path-view probe: True on match, False when present-but-mismatched,
+    None when unreadable. A size mismatch short-circuits the hash so torn
+    reads skip the expensive digest and just keep polling. Never raises."""
+    try:
+        if expected_size is not None and path.stat().st_size != expected_size:
+            return False
+        try:
+            current = _sha256(path)
+        except OSError:
+            # Defense-in-depth (_sha256 already swallows OSError): a transient
+            # read failure is unreadable, not mismatched.
+            return None
+    except OSError:
+        return None
+    if current is None:
+        return None
+    return current == expected_sha256
+
+
+def _handle_first_check_matches(
+    path: Path, expected_sha256: str, expected_size: int | None
+) -> bool | None:
+    """Handle-verified first look after os.replace. Opens the destination once
+    (os.open + best-effort fsync of the fd) and hashes the open handle, then
+    confirms the path view agrees so a bind-mount serving stale bytes to
+    either view keeps polling. Never sleeps, never raises."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return None
+    try:
+        try:
+            os.fsync(descriptor)
+        except OSError:
+            pass
+        if expected_size is not None:
+            try:
+                if os.fstat(descriptor).st_size != expected_size:
+                    return False
+            except OSError:
+                return None
+        try:
+            if _sha256_of_fd(descriptor) != expected_sha256:
+                return False
+        except OSError:
+            return None
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+    return _settle_probe(path, expected_sha256, expected_size)
+
+
+def _settle_after_publish(
+    path: Path,
+    expected_sha256: str | None,
+    expected_size: int | None = None,
+    attempts: int | None = None,
+    interval: float | None = None,
+) -> bool:
+    """Post-rename settle: handle-verified first check, then path re-opens.
+
+    A base window that exhausts with every read present-but-mismatched (never
+    unreadable) logs automatic_upgrade.publish_settle_extended and earns
+    exactly one extra window of the same length; any unreadable read fails
+    closed after the base window. An immediate match adds zero sleeps."""
+    if expected_sha256 is None:
+        return False
+    if attempts is None:
+        attempts = _PUBLISH_SETTLE_ATTEMPTS
+    if interval is None:
+        interval = _PUBLISH_SETTLE_INTERVAL_SECONDS
+    first = _handle_first_check_matches(path, expected_sha256, expected_size)
+    if first is True:
+        return True
+    saw_unreadable = first is None
+    for window in range(2):
+        for attempt in range(attempts):
+            probe = _settle_probe(path, expected_sha256, expected_size)
+            if probe is None:
+                saw_unreadable = True
+            elif probe:
+                return True
+            if attempt + 1 < attempts:
+                time.sleep(interval)
+        if saw_unreadable:
+            return False
+        if window == 0:
+            logger.warning("automatic_upgrade.publish_settle_extended")
+    return False
+
+
 def _database_has_marker(database: Path) -> bool:
     if not database.is_file():
         return False
@@ -387,6 +490,131 @@ def _is_fresh_failure(settings: Settings, payload: object) -> bool:
     except AutomaticUpgradeError:
         return False
     return not backup.database_existed
+
+
+def _is_fresh_bootstrap_volume(
+    settings: Settings, state: dict[str, Any] | None
+) -> bool:
+    """Fresh-volume gate: no live database and no upgrade state to resume.
+
+    Pure (read-only): true only when the live ``library.db`` is absent, no
+    upgrade state file exists, and a safety-backup capture now would therefore
+    record ``database_existed=False``. Any state payload (completed, failed,
+    or interrupted) or an existing live database keeps the
+    copy-migrate-promote path.
+    """
+    if state is not None:
+        return False
+    if settings.library_db_path.is_file():
+        return False
+    state_path = settings.cache_dir / f"automatic-upgrade-{UPGRADE_ID}.json"
+    if state_path.is_file():
+        return False
+    return True
+
+
+def _bootstrap_fresh_volume(
+    settings: Settings,
+    *,
+    state_path: Path,
+    image_version: str,
+    require_target_admission: bool = False,
+) -> str:
+    """Initialize a fresh volume's live database in place, without staging.
+
+    No working copy, no ``os.replace`` publish, and no publish settle loop:
+    the live database is created by the same store/migration path the working
+    copy uses, then the normal completed state is recorded. Failures record
+    the normal failed state so the fresh retry budget still applies on retry.
+    """
+    database = settings.library_db_path
+    config = settings.config_file_path
+    print(
+        "[upgrade] Initializing the library database for this DroppedNeedle "
+        "version.",
+        flush=True,
+    )
+    try:
+        database.parent.mkdir(parents=True, exist_ok=True)
+        backup = capture_upgrade_backup(settings)
+    except (OSError, sqlite3.Error) as error:
+        raise AutomaticUpgradeError(
+            "DroppedNeedle could not create the safety backup. Check that the config "
+            "and cache volumes are writable and have enough free space. No data was changed."
+        ) from error
+    try:
+        evidence = asyncio.run(_perform_target_migration())
+        completed = {
+            "format_version": 2,
+            "upgrade_id": UPGRADE_ID,
+            "stage": (
+                "promoted_pending_startup" if require_target_admission else "completed"
+            ),
+            "image_version": image_version,
+            "backup_directory": str(backup.directory),
+            "failure_count": 0,
+            "evidence": evidence,
+        }
+        _write_state(state_path, completed)
+    except Exception as error:  # noqa: BLE001 - all failures must leave source safe
+        try:
+            restored_signature: dict[str, Any] = {
+                **_current_signature(database, config),
+                "database_absent_before": True,
+            }
+        except OSError:
+            # Defense-in-depth (_sha256 already swallows OSError): the live files
+            # may vanish mid-failure on a flapping bind-mount; that must not mask
+            # the original error or skip the state write.
+            logger.warning("automatic_upgrade.failure_signature_unavailable")
+            restored_signature = {
+                "database_sha256": None,
+                "config_sha256": None,
+                "database_presence": "unreadable",
+                "config_presence": "unreadable",
+                "database_absent_before": True,
+            }
+        failure = {
+            "format_version": 2,
+            "upgrade_id": UPGRADE_ID,
+            "stage": "failed",
+            "image_version": image_version,
+            "backup_directory": str(backup.directory),
+            "error_type": type(error).__name__,
+            "error_message": str(error),
+            "restored_signature": restored_signature,
+            "failure_count": 1,
+            "preserved_promoted_database": None,
+        }
+        failure_evidence = getattr(error, "evidence", None)
+        if not isinstance(failure_evidence, dict):
+            # Failures without their own evidence still record why.
+            failure_evidence = {
+                "reason": "unhandled_exception",
+                "error_type": type(error).__name__,
+            }
+        failure["failure_evidence"] = failure_evidence
+        try:
+            _write_state(state_path, failure)
+        except OSError:
+            logger.error("automatic_upgrade.failure_state_write_failed")
+        logger.error(
+            "automatic_upgrade.failed error_type=%s error_message=%s",
+            type(error).__name__,
+            str(error),
+        )
+        raise AutomaticUpgradeError(
+            "The library upgrade could not be completed. Your previous database and "
+            "settings remain in place. Your music files were not changed."
+        ) from error
+    if require_target_admission:
+        print(
+            "[upgrade] Checked library upgrade installed. Verifying DroppedNeedle startup.",
+            flush=True,
+        )
+    else:
+        print("[upgrade] Library upgrade complete.", flush=True)
+    return "upgraded"
 
 
 def _fresh_retry_budget_exhausted(payload: dict[str, Any]) -> bool:
@@ -641,15 +869,20 @@ def _replace_file(source: Path, destination: Path) -> None:
             logger.warning("automatic_upgrade.staging_copystat_unavailable")
         expected = _sha256(temporary)
         try:
+            expected_size: int | None = temporary.stat().st_size
+        except OSError:
+            expected_size = None
+        try:
             os.replace(temporary, destination)
         except OSError:
             logger.warning("automatic_upgrade.file_rename_failed_using_copy_fallback")
             replace_ok = False
         else:
             _fsync_directory(destination.parent)
-            if expected is not None and _wait_for_content(
+            if expected is not None and _settle_after_publish(
                 destination,
                 expected,
+                expected_size,
                 _PUBLISH_SETTLE_ATTEMPTS,
                 _PUBLISH_SETTLE_INTERVAL_SECONDS,
             ):
@@ -665,9 +898,14 @@ def _replace_file(source: Path, destination: Path) -> None:
                 # readable moments earlier, so re-anchor verification to it
                 # and give the renamed bytes one settle window to appear.
                 expected = _sha256(source)
-                if expected is not None and _wait_for_content(
+                try:
+                    expected_size = source.stat().st_size
+                except OSError:
+                    expected_size = None
+                if expected is not None and _settle_after_publish(
                     destination,
                     expected,
+                    expected_size,
                     _PUBLISH_SETTLE_ATTEMPTS,
                     _PUBLISH_SETTLE_INTERVAL_SECONDS,
                 ):
@@ -726,6 +964,61 @@ def _replace_file(source: Path, destination: Path) -> None:
             logger.warning("automatic_upgrade.publish_temp_cleanup_unavailable")
 
 
+def _journal_mode(path: Path) -> str | None:
+    """Best-effort read-only probe of a database journal mode. Never raises,
+    never writes: a read-only connection cannot create sidecars."""
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
+            row = connection.execute("PRAGMA journal_mode").fetchone()
+    except (sqlite3.Error, OSError):
+        return None
+    if not row or not isinstance(row[0], str):
+        return None
+    return row[0].lower()
+
+
+def _quiesce_staged_database(path: Path) -> None:
+    """Best-effort WAL-quiet staging for the rename-published bytes. Forces
+    the staged temporary to journal_mode=DELETE + synchronous=FULL so no
+    -wal/-shm materializes beside the new database during the settle window.
+    The staging backup connections and fsync handle are already closed by
+    their context managers; this opens and closes its own connection before
+    os.replace, so no handle owned by this process is open at the swap.
+    Never raises: a fresh backup file already defaults to DELETE mode."""
+    try:
+        with sqlite3.connect(path) as connection:
+            connection.execute("PRAGMA journal_mode=DELETE")
+            connection.execute("PRAGMA synchronous=FULL")
+            try:
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.Error:
+                pass
+            connection.commit()
+    except (sqlite3.Error, OSError):
+        logger.warning("automatic_upgrade.staging_journal_quiesce_unavailable")
+        return
+    try:
+        with path.open("rb") as handle:
+            os.fsync(handle.fileno())
+    except OSError:
+        logger.warning("automatic_upgrade.backup_durability_fsync_unavailable")
+
+
+def _restore_live_wal_defaults(path: Path) -> None:
+    """Best-effort restore of the runtime WAL defaults on the live database
+    after a verified rename publish. Runs after the settle window and the
+    live-sidecar check, so it cannot materialize a sidecar mid-verification.
+    Never raises: the bytes are already verified, only the mode is at stake
+    (runtime connections re-establish WAL on first open regardless)."""
+    try:
+        with sqlite3.connect(path) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=NORMAL")
+            connection.commit()
+    except (sqlite3.Error, OSError):
+        logger.warning("automatic_upgrade.live_wal_restore_unavailable")
+
+
 def _replace_database(source: Path, destination: Path) -> None:
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -762,7 +1055,22 @@ def _replace_database(source: Path, destination: Path) -> None:
             raise OSError(
                 "The upgraded library database could not be verified after installation."
             )
+        # WAL-quiet publish window: when the staged content carries WAL mode,
+        # force the temporary to journal_mode=DELETE + synchronous=FULL before
+        # the swap, so the renamed database cannot sprout -wal/-shm beside
+        # itself while the settle window reads it. Conditional because the
+        # restore path reuses this function and its readability gate demands
+        # byte-identity with the backup: a DELETE temporary is published
+        # untouched and needs no WAL restore afterwards. Best-effort either
+        # way; verification stays authoritative.
+        staged_wal = _journal_mode(temporary) == "wal"
+        if staged_wal:
+            _quiesce_staged_database(temporary)
         expected = _sha256(temporary)
+        try:
+            expected_size: int | None = temporary.stat().st_size
+        except OSError:
+            expected_size = None
         # From stage `promoting` onward the manifest-verified backup is
         # authoritative: these sidecars are quarantined rather than destroyed
         # so a crash in this window leaves the previous WAL recoverable by
@@ -775,9 +1083,10 @@ def _replace_database(source: Path, destination: Path) -> None:
             replace_ok = False
         else:
             _fsync_directory(destination.parent)
-            if expected is not None and _wait_for_content(
+            if expected is not None and _settle_after_publish(
                 destination,
                 expected,
+                expected_size,
                 _PUBLISH_SETTLE_ATTEMPTS,
                 _PUBLISH_SETTLE_INTERVAL_SECONDS,
             ):
@@ -787,6 +1096,8 @@ def _replace_database(source: Path, destination: Path) -> None:
                         "after installation."
                     )
                 _sweep_quarantined_best_effort(quarantined)
+                if staged_wal:
+                    _restore_live_wal_defaults(destination)
                 logger.info("automatic_upgrade.database_publish_settled")
                 return
             # Stale after a successful rename: the new bytes are already
@@ -797,9 +1108,14 @@ def _replace_database(source: Path, destination: Path) -> None:
             )
             if expected is None:
                 expected = _sha256(source)
-                if expected is not None and _wait_for_content(
+                try:
+                    expected_size = source.stat().st_size
+                except OSError:
+                    expected_size = None
+                if expected is not None and _settle_after_publish(
                     destination,
                     expected,
+                    expected_size,
                     _PUBLISH_SETTLE_ATTEMPTS,
                     _PUBLISH_SETTLE_INTERVAL_SECONDS,
                 ):
@@ -809,6 +1125,8 @@ def _replace_database(source: Path, destination: Path) -> None:
                             "after installation."
                         )
                     _sweep_quarantined_best_effort(quarantined)
+                    if staged_wal:
+                        _restore_live_wal_defaults(destination)
                     logger.info("automatic_upgrade.database_publish_settled")
                     return
             raise OSError(
@@ -1563,6 +1881,18 @@ def run_automatic_copy_upgrade(
     state_path = settings.cache_dir / f"automatic-upgrade-{UPGRADE_ID}.json"
     image_version = _image_version()
     state = _read_state(state_path)
+    if runner is _run_working_migration and _is_fresh_bootstrap_volume(
+        settings, state
+    ):
+        # A caller-supplied runner replaces the working-copy migration step, so
+        # it stays on the copy path; the in-place bootstrap applies to the
+        # default production runner only.
+        return _bootstrap_fresh_volume(
+            settings,
+            state_path=state_path,
+            image_version=image_version,
+            require_target_admission=require_target_admission,
+        )
     marker_present = _await_marker(database)
     if (
         state is not None
@@ -2415,10 +2745,13 @@ def main() -> int:
         return 2
     try:
         state = _read_state(settings.cache_dir / f"automatic-upgrade-{UPGRADE_ID}.json")
-        needs_upgrade = not _await_marker(settings.library_db_path) or (
-            state is not None
-            and state.get("stage")
-            in {"running", "migrating", "promoting", "promoted_pending_startup"}
+        needs_upgrade = _is_fresh_bootstrap_volume(settings, state) or (
+            not _await_marker(settings.library_db_path)
+            or (
+                state is not None
+                and state.get("stage")
+                in {"running", "migrating", "promoting", "promoted_pending_startup"}
+            )
         )
         if needs_upgrade:
             with _upgrade_health_server(
