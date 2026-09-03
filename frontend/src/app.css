@@ -1650,6 +1650,7 @@ details[open] > summary .management-editor-chevron {
 
 .edition-finder-search {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: end;
 	gap: 0.5rem;
 	margin-top: 0.85rem;
