@@ -4,5 +4,5 @@ pytest==8.4.2
 pytest-asyncio==1.4.0
 ruff==0.16.5
 testcontainers==4.15.0
-types-PyYAML==6.0.12.20250915
+types-PyYAML==6.0.12.20260815
 watchfiles==1.2.0
