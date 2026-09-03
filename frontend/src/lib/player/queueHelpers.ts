@@ -210,7 +210,7 @@ export function buildQueueItemsFromLocal(tracks: LocalTrackInfo[], meta: TrackMe
 		albumId: meta.albumId,
 		albumName: meta.albumName,
 		coverUrl: normalizedCoverUrl,
-		coverRemoteUrl: meta.coverUrl,
+		coverRemoteUrl: meta.coverUrl?.startsWith('http') ? meta.coverUrl : null,
 		sourceType: 'local' as const,
 		artistId: meta.artistId,
 		streamUrl: API.stream.local(t.track_file_id),

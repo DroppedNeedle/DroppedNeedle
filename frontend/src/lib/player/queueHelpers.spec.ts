@@ -313,6 +313,21 @@ describe('buildQueueItemsFromLocal', () => {
 		const items = buildQueueItemsFromLocal([track], baseMeta);
 		expect(items[0].duration).toBeUndefined();
 	});
+	it('nulls coverRemoteUrl for local proxy paths', () => {
+		expect.assertions(1);
+		const items = buildQueueItemsFromLocal([localTrack], {
+			...baseMeta,
+			coverUrl: '/api/v1/covers/release-group/album-1?size=250'
+		});
+		expect(items[0].coverRemoteUrl).toBeNull();
+	});
+
+	it('preserves coverRemoteUrl for https remote covers', () => {
+		expect.assertions(1);
+		const remoteCover = 'https://r2.theaudiodb.com/images/media/album/thumb/abc123.jpg';
+		const items = buildQueueItemsFromLocal([localTrack], { ...baseMeta, coverUrl: remoteCover });
+		expect(items[0].coverRemoteUrl).toBe(remoteCover);
+	});
 });
 
 describe('buildDiscoveryQueueFromLocal', () => {

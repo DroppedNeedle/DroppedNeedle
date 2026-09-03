@@ -4485,11 +4485,11 @@ textarea {
 
 .tonearm {
 	transform-origin: 88% 12%;
-	transform: rotate(-3deg);
+	transform: rotate(-148deg);
 	transition: transform 0.9s var(--ease-overshoot);
 }
 .tonearm.is-playing {
-	transform: rotate(-31deg);
+	transform: rotate(-117deg);
 }
 
 .deck-halo {

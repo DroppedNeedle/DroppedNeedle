@@ -70,6 +70,30 @@ describe('launchLocalPlayback', () => {
 		expect(items[0].coverUrl).toBeTruthy();
 		expect(typeof items[0].coverUrl).toBe('string');
 	});
+	it('nulls coverRemoteUrl for local proxy paths but keeps the proxied coverUrl', () => {
+		const tracks: LocalTrackInfo[] = [
+			{ track_file_id: '1', title: 'A', track_number: 1, format: 'flac', size_bytes: 1000 }
+		];
+		const proxyCover = '/api/v1/covers/release-group/album-1?size=250';
+
+		launchLocalPlayback(tracks, 0, false, { ...meta, coverUrl: proxyCover });
+
+		const items: QueueItem[] = vi.mocked(playerStore.playQueue).mock.calls[0][0];
+		expect(items[0].coverRemoteUrl).toBeNull();
+		expect(items[0].coverUrl).toBeTruthy();
+	});
+
+	it('preserves coverRemoteUrl for https remote covers', () => {
+		const tracks: LocalTrackInfo[] = [
+			{ track_file_id: '1', title: 'A', track_number: 1, format: 'flac', size_bytes: 1000 }
+		];
+		const remoteCover = 'https://r2.theaudiodb.com/images/media/album/thumb/abc123.jpg';
+
+		launchLocalPlayback(tracks, 0, false, { ...meta, coverUrl: remoteCover });
+
+		const items: QueueItem[] = vi.mocked(playerStore.playQueue).mock.calls[0][0];
+		expect(items[0].coverRemoteUrl).toBe(remoteCover);
+	});
 
 	it('passes startIndex and shuffle through to playerStore', () => {
 		const tracks: LocalTrackInfo[] = [

@@ -96,3 +96,53 @@ describe('Turntable lyrics', () => {
 		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
 	});
 });
+
+describe('Turntable deck cover', () => {
+	const deckMbid = 'b1392450-e666-3926-a536-22c65f834433';
+	const proxyCover = `/api/v1/covers/release-group/${deckMbid}?size=250`;
+	const remoteCover = 'https://r2.theaudiodb.com/images/media/album/thumb/abc123.jpg';
+
+	function playDeckTrack(overrides: { coverUrl?: string | null; coverRemoteUrl?: string | null }) {
+		playerStore.playQueue([
+			{
+				trackSourceId: 'file-9',
+				trackName: 'Deck Song',
+				artistName: 'Deck Artist',
+				trackNumber: 1,
+				albumId: deckMbid,
+				albumName: 'Guard Album',
+				coverUrl: proxyCover,
+				coverRemoteUrl: null,
+				sourceType: 'local',
+				streamUrl: '/api/v1/stream/local/file-9',
+				...overrides
+			}
+		]);
+	}
+
+	beforeEach(() => {
+		playerStore.stop();
+		mockQueryState = {
+			isSuccess: true,
+			isError: false,
+			isFetching: false,
+			data: { text: 'First line\nSecond line', is_synced: false, lines: [] }
+		};
+	});
+
+	it('renders the covers proxy when the queued remote cover is a local path', async () => {
+		playDeckTrack({ coverRemoteUrl: proxyCover });
+		render(Turntable, callbacks);
+
+		await expect.element(page.getByAltText('Guard Album')).toHaveAttribute('src', proxyCover);
+	});
+
+	it('renders the remote branch for https covers', async () => {
+		playDeckTrack({ coverUrl: remoteCover, coverRemoteUrl: remoteCover });
+		render(Turntable, callbacks);
+
+		await expect
+			.element(page.getByAltText('Guard Album'))
+			.toHaveAttribute('src', `${remoteCover}/small`);
+	});
+});

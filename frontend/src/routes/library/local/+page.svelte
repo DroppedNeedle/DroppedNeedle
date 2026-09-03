@@ -84,7 +84,7 @@
 			albumId: t.album_mbid ?? '',
 			albumName: t.album_name,
 			coverUrl: getCoverUrl(t.cover_url, t.album_mbid ?? ''),
-			coverRemoteUrl: t.cover_url ?? null,
+			coverRemoteUrl: t.cover_url?.startsWith('http') ? t.cover_url : null,
 			sourceType: 'local',
 			streamUrl: API.stream.local(t.track_file_id),
 			format: (t.format ?? '').toLowerCase()
