@@ -9,7 +9,9 @@ import sys
 import asyncio
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
+from typing import Any
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError
@@ -283,6 +285,14 @@ def test_failed_fresh_install_removes_partially_created_files(
 
     assert not settings.library_db_path.exists()
     assert not settings.config_file_path.exists()
+
+    # Fresh failures carry no user bytes, so the same image retries instead
+    # of refusing; see test_fresh_failure_retries_same_image_while_upgrade_refuses.
+    assert (
+        run_automatic_copy_upgrade(settings, runner=_fresh_migrating_runner("fixed"))
+        == "upgraded"
+    )
+    assert _source_value(settings.library_db_path) == "fixed"
 
 
 def test_completed_installation_skips_migration(tmp_path: Path) -> None:
@@ -2017,6 +2027,9 @@ def test_failure_state_written_when_live_signatures_unavailable(
     assert state["restored_signature"] == {
         "database_sha256": None,
         "config_sha256": None,
+        "database_presence": "unreadable",
+        "config_presence": "unreadable",
+        "database_absent_before": False,
     }
 
 
@@ -2554,7 +2567,7 @@ def test_unrestorable_promotion_failure_is_recorded_truthfully(
     def broken_promote(_settings: Settings, _working: Path) -> None:
         raise RuntimeError("simulated promotion crash")
 
-    def broken_restore(_settings: Settings, _backup: object) -> None:
+    def broken_restore(_settings: Settings, _backup: object, **_kwargs: object) -> None:
         raise OSError("restore volume unavailable")
 
     monkeypatch.setattr(automatic_upgrade, "promote_working_copy", broken_promote)
@@ -2635,3 +2648,952 @@ async def test_success_evidence_carries_breakdowns_timings_and_identities(
     )
     assert evidence["image_version"] == "evidence-test"
     assert evidence["invariants"] == {}
+
+
+def _patch_publish_intervals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zero both publish verification budgets so the matrix never sleeps."""
+    monkeypatch.setattr(automatic_upgrade, "_PUBLISH_VERIFY_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(automatic_upgrade, "_PUBLISH_SETTLE_INTERVAL_SECONDS", 0)
+
+
+def _upgrade_migrating_runner(
+    value: str = "migrated",
+) -> Callable[[Path], dict[str, object]]:
+    """Upgrade-case runner: the working copy already holds a seeded database."""
+
+    def migrate(working: Path) -> dict[str, object]:
+        working_database = working / "cache" / "library.db"
+        with sqlite3.connect(working_database) as connection:
+            connection.execute("UPDATE source_value SET value = ?", (value,))
+        _mark_migrated(working_database)
+        (working / "config" / "config.json").write_text(
+            '{"name":"after"}', encoding="utf-8"
+        )
+        return {"passed": True}
+
+    return migrate
+
+
+def _fresh_migrating_runner(
+    value: str = "migrated",
+) -> Callable[[Path], dict[str, object]]:
+    """Fresh-install runner: the working copy starts without a database."""
+
+    def migrate(working: Path) -> dict[str, object]:
+        working_database = working / "cache" / "library.db"
+        _write_unmigrated_database(working_database, value)
+        _mark_migrated(working_database)
+        (working / "config" / "config.json").write_text(
+            '{"name":"after"}', encoding="utf-8"
+        )
+        return {"passed": True}
+
+    return migrate
+
+
+def _read_upgrade_state(settings: Settings) -> Any:
+    return json.loads(
+        (settings.cache_dir / f"automatic-upgrade-{UPGRADE_ID}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+
+def test_replace_database_stale_after_successful_rename_never_copies_and_preserves_installed_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P1*: the rename lands but reads stale past the settle budget. The
+    engine raises verifiable without ever copying; the installed bytes are
+    the NEW database and the quarantined WAL is retained.
+
+    Branch pin vs test_replace_database_raises_when_hashes_never_recover:
+    there the rename never lands so the destination keeps OLD bytes; here
+    the rename lands so the destination keeps NEW bytes plus its marker.
+    """
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    _write_unmigrated_database(source)
+    _mark_migrated(source)
+    _write_multi_page_database(destination, value="outdated")
+    live_wal = Path(f"{destination}-wal")
+    live_wal.write_bytes(b"previous-wal-frames")
+    _patch_publish_intervals(monkeypatch)
+    real_sha256 = automatic_upgrade._sha256
+
+    def always_stale_destination(path: Path) -> str | None:
+        if Path(path) == destination:
+            return "stale-bytes"
+        return real_sha256(path)
+
+    monkeypatch.setattr(automatic_upgrade, "_sha256", always_stale_destination)
+    copy_calls: list[tuple[str, str]] = []
+
+    def counting_copy_database(source_path: Path, destination_path: Path) -> None:
+        copy_calls.append((str(source_path), str(destination_path)))
+        raise AssertionError("stale-after-success must never copy")
+
+    def counting_overwrite(source_path: Path, destination_path: Path) -> None:
+        copy_calls.append((str(source_path), str(destination_path)))
+        raise AssertionError("stale-after-success must never copy")
+
+    monkeypatch.setattr(
+        automatic_upgrade, "_copy_database_bytes_in_place", counting_copy_database
+    )
+    monkeypatch.setattr(
+        automatic_upgrade, "_overwrite_bytes_in_place", counting_overwrite
+    )
+
+    with pytest.raises(OSError, match="could not be verified") as exc_info:
+        automatic_upgrade._replace_database(source, destination)
+
+    assert not isinstance(exc_info.value, FileNotFoundError)
+    assert copy_calls == []
+    assert _source_value(destination) == "original"
+    assert automatic_upgrade._database_has_marker(destination)
+    assert destination.stat().st_size > 0
+    assert not live_wal.exists()
+    assert list(
+        destination.parent.glob(f".{destination.name}-wal.upgrade-*.quarantine")
+    )
+
+
+def test_replace_database_fallback_never_leaves_zero_byte_live_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P2a: the copy fallback flaps mid-stream; the live file keeps its old
+    size (opened for overwrite, never truncated) and stays markerless."""
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    _write_unmigrated_database(source)
+    _mark_migrated(source)
+    _write_multi_page_database(destination, value="outdated")
+    before_size = destination.stat().st_size
+    assert before_size > 0
+    _patch_publish_intervals(monkeypatch)
+    monkeypatch.setattr(automatic_upgrade.os, "replace", _failed_replace)
+    real_copyfileobj = shutil.copyfileobj
+
+    def flap_after_first_page(fsrc: Any, fdst: Any, length: int = 0) -> None:
+        if Path(str(getattr(fdst, "name", ""))) == destination:
+            chunk = fsrc.read(512)
+            if chunk:
+                fdst.write(chunk)
+            raise OSError("injected copy flap")
+        return real_copyfileobj(fsrc, fdst, length=length)
+
+    monkeypatch.setattr(automatic_upgrade.shutil, "copyfileobj", flap_after_first_page)
+
+    with pytest.raises(OSError, match="could not be verified") as exc_info:
+        automatic_upgrade._replace_database(source, destination)
+
+    assert not isinstance(exc_info.value, FileNotFoundError)
+    assert destination.stat().st_size == before_size
+    assert destination.stat().st_size > 0
+    assert not automatic_upgrade._database_has_marker(destination)
+
+
+def test_replace_file_copy_fallback_never_truncates_before_first_byte(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P2b (file companion): the file copy fallback flaps after the first
+    byte; the destination keeps its old size with only the flap-point byte
+    overwritten, proving no truncate-before-write happened."""
+    source = tmp_path / "source.txt"
+    destination = tmp_path / "destination.txt"
+    source.write_bytes(b"published-content-new")
+    destination.write_bytes(b"old-content")
+    _patch_publish_intervals(monkeypatch)
+    monkeypatch.setattr(automatic_upgrade.os, "replace", _failed_replace)
+    real_copyfileobj = shutil.copyfileobj
+
+    def flap_after_first_byte(fsrc: Any, fdst: Any, length: int = 0) -> None:
+        if Path(str(getattr(fdst, "name", ""))) == destination:
+            chunk = fsrc.read(1)
+            if chunk:
+                fdst.write(chunk)
+                fdst.flush()
+            raise OSError("injected file copy flap")
+        return real_copyfileobj(fsrc, fdst, length=length)
+
+    monkeypatch.setattr(automatic_upgrade.shutil, "copyfileobj", flap_after_first_byte)
+
+    with pytest.raises(OSError, match="could not be verified"):
+        automatic_upgrade._replace_file(source, destination)
+
+    assert destination.stat().st_size == len(b"old-content")
+    assert destination.read_bytes() != b"published-content-new"
+
+
+def test_sqlite_backup_wraps_sqlite_error_as_verifiable_oserror_without_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P3: a sqlite driver failure inside the backup becomes exactly the DB
+    fixed string with the driver error chained, never interpolated."""
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    _write_unmigrated_database(source)
+
+    def failing_connect(*args: object, **kwargs: object) -> object:
+        raise sqlite3.OperationalError("injected driver detail")
+
+    monkeypatch.setattr(automatic_upgrade.sqlite3, "connect", failing_connect)
+
+    with pytest.raises(OSError) as exc_info:
+        automatic_upgrade._sqlite_backup(source, destination)
+
+    error = exc_info.value
+    assert type(error) is OSError
+    assert (
+        str(error)
+        == "The upgraded library database could not be verified after installation."
+    )
+    assert isinstance(error.__cause__, sqlite3.OperationalError)
+    assert "injected" not in str(error)
+    assert str(tmp_path) not in str(error)
+
+
+def test_quarantine_retains_locked_sidecar_and_discard_defers_locked_sibling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P4: a locked WAL/SHM is left beside the database (never destroyed) and
+    a locked quarantine sibling defers its sweep. Quarantine success is
+    retention, never claimed "fails closed via verify": the marker/hash
+    verify is WAL-blind.
+
+    Branch pin vs
+    test_replace_database_success_with_locked_wal_does_not_silently_succeed:
+    here the helpers retain/defer without failing; there the publish path
+    fails closed on the retained sidecar.
+    """
+    destination = tmp_path / "destination.db"
+    _write_unmigrated_database(destination)
+    live_wal = Path(f"{destination}-wal")
+    live_shm = Path(f"{destination}-shm")
+    live_wal.write_bytes(b"wal-frames")
+    live_shm.write_bytes(b"shm-frames")
+
+    def locked_replace(source: object, dest: object, **kwargs: object) -> None:
+        raise PermissionError(errno.EACCES, "file locked")
+
+    monkeypatch.setattr(automatic_upgrade.os, "replace", locked_replace)
+
+    assert automatic_upgrade._quarantine_database_sidecars(destination) == []
+    assert live_wal.read_bytes() == b"wal-frames"
+    assert live_shm.read_bytes() == b"shm-frames"
+    assert list(destination.parent.glob("*.quarantine")) == []
+
+    sibling = destination.with_name(
+        f".{destination.name}-wal.upgrade-deadbeef.quarantine"
+    )
+    sibling.write_bytes(b"stale-quarantine")
+    real_unlink = Path.unlink
+
+    def locked_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self.name.endswith(".quarantine"):
+            raise PermissionError(errno.EACCES, "file locked", str(self))
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", locked_unlink)
+
+    assert automatic_upgrade._discard_quarantined_sidecars(destination) is None
+    assert sibling.is_file()
+
+
+def test_replace_succeeds_when_copystat_chmod_raise_eperm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P5: metadata-only EPERM (copystat/chmod) never burns the data budget:
+    the fallback copies once and verifies (only settle polls on the miss)."""
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    _write_unmigrated_database(source)
+    _mark_migrated(source)
+    _write_unmigrated_database(destination, value="outdated")
+    _patch_publish_intervals(monkeypatch)
+    monkeypatch.setattr(automatic_upgrade.os, "replace", _failed_replace)
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(automatic_upgrade.time, "sleep", sleep_calls.append)
+    copystat_calls: list[tuple[str, str]] = []
+
+    def flaky_copystat(source_path: object, destination_path: object) -> None:
+        copystat_calls.append((str(source_path), str(destination_path)))
+        raise PermissionError(errno.EPERM, "metadata unavailable")
+
+    monkeypatch.setattr(automatic_upgrade.shutil, "copystat", flaky_copystat)
+
+    def flaky_chmod(self: Path, *args: object, **kwargs: object) -> None:
+        raise PermissionError(errno.EPERM, "mode unavailable")
+
+    monkeypatch.setattr(Path, "chmod", flaky_chmod)
+    copy_calls: list[tuple[str, str]] = []
+    real_copy_database = automatic_upgrade._copy_database_bytes_in_place
+
+    def counting_copy(source_path: Path, destination_path: Path) -> None:
+        copy_calls.append((str(source_path), str(destination_path)))
+        real_copy_database(source_path, destination_path)
+
+    monkeypatch.setattr(
+        automatic_upgrade, "_copy_database_bytes_in_place", counting_copy
+    )
+
+    automatic_upgrade._replace_database(source, destination)
+
+    assert automatic_upgrade._database_has_marker(destination)
+    assert _source_value(destination) == "original"
+    # The fallback stages via the SQLite backup API, which is logically but
+    # not byte-identical to the source, so identity is pinned against an
+    # independent backup of the same source rather than the source itself.
+    reference = tmp_path / "reference.db"
+    automatic_upgrade._sqlite_backup(source, reference)
+    assert automatic_upgrade._sha256(destination) == automatic_upgrade._sha256(reference)
+    assert len(copy_calls) == 1
+    assert copystat_calls != []
+    # The only sleeps are the settle polls on the expected double-apply miss
+    # (stale "outdated" bytes vs staged hash); neither staging loop burned a
+    # data-budget retry, which would exceed one settle window of polls.
+    assert len(sleep_calls) <= automatic_upgrade._PUBLISH_SETTLE_ATTEMPTS - 1
+
+
+def test_post_promote_marker_flap_retries_to_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T1: the post-promote completion gate flaps twice on an installed live
+    database, then the same run settles to upgraded/completed.
+
+    Branch pin vs test_promote_succeeds_when_live_destination_reads_flap:
+    that test flaps file opens under the publish copy; this one flaps the
+    gate itself after a full upgrade run.
+    """
+    settings = _settings(tmp_path)
+    _write_unmigrated_database(settings.library_db_path)
+    settings.config_file_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.config_file_path.write_text('{"name":"before"}', encoding="utf-8")
+    monkeypatch.setenv("COMMIT_TAG", "marker-flap-version")
+    _patch_publish_intervals(monkeypatch)
+    real_has_marker = automatic_upgrade._database_has_marker
+    live_gate_reads = 0
+
+    def flaky_has_marker(database: Path) -> bool:
+        # Flap the single-shot probe, not the retry wrapper: _await_marker's
+        # internal budget absorbs the flap and the gate still succeeds.
+        nonlocal live_gate_reads
+        if Path(database) == settings.library_db_path and real_has_marker(
+            Path(database)
+        ):
+            live_gate_reads += 1
+            if live_gate_reads <= 2:
+                return False
+        return real_has_marker(database)
+
+    monkeypatch.setattr(automatic_upgrade, "_database_has_marker", flaky_has_marker)
+
+    assert (
+        run_automatic_copy_upgrade(settings, runner=_upgrade_migrating_runner())
+        == "upgraded"
+    )
+
+    assert live_gate_reads >= 2
+    assert _read_upgrade_state(settings)["stage"] == "completed"
+
+
+def test_post_promote_marker_never_appearing_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T1 deterministic companion: a live database that never gains its
+    completion marker fires the post-promote gate (unchanged text pinned in
+    state); the failure handler reports the generic message and the
+    pre-promotion backup is restored, never silently deleted."""
+    settings = _settings(tmp_path)
+    _write_unmigrated_database(settings.library_db_path)
+    settings.config_file_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.config_file_path.write_text('{"name":"before"}', encoding="utf-8")
+    monkeypatch.setenv("COMMIT_TAG", "marker-absent-version")
+    _patch_publish_intervals(monkeypatch)
+    real_has_marker = automatic_upgrade._database_has_marker
+    real_await_marker = automatic_upgrade._await_marker
+
+    def never_live_marker(
+        database: Path, *args: object, **kwargs: object
+    ) -> bool:
+        if Path(database) == settings.library_db_path and real_has_marker(
+            Path(database)
+        ):
+            return False
+        return bool(real_await_marker(database, *args, **kwargs))
+
+    monkeypatch.setattr(automatic_upgrade, "_await_marker", never_live_marker)
+
+    with pytest.raises(AutomaticUpgradeError, match="could not be completed"):
+        run_automatic_copy_upgrade(settings, runner=_upgrade_migrating_runner())
+    state = _read_upgrade_state(settings)
+    assert state["stage"] == "failed"
+    assert "not installed completely" in state["error_message"]
+    assert state.get("preserved_promoted_database") is None
+    assert _source_value(settings.library_db_path) == "original"
+
+
+def test_fresh_post_promote_failure_preserves_installed_database_aside(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T2: a fresh install whose promoted database verifies is preserved
+    aside (never unlinked); the state field holds the aside path while the
+    user message stays generic.
+
+    Branch pin vs test_restored_database_reverified_before_remain_in_place:
+    there the leftover bytes mismatch and the failure goes loud; here the
+    promoted bytes verify so the record stays plain failed.
+    (Fails on the pre-fix tree at the unconditional fresh-delete branch.)
+    """
+    settings = _settings(tmp_path)
+    monkeypatch.setenv("COMMIT_TAG", "fresh-preserve-version")
+    _patch_publish_intervals(monkeypatch)
+    real_await_marker = automatic_upgrade._await_marker
+
+    def fail_only_the_post_promote_gate(
+        database: Path, *args: object, **kwargs: object
+    ) -> bool:
+        if Path(database) == settings.library_db_path:
+            return False
+        return bool(real_await_marker(database, *args, **kwargs))
+
+    monkeypatch.setattr(
+        automatic_upgrade, "_await_marker", fail_only_the_post_promote_gate
+    )
+
+    with pytest.raises(AutomaticUpgradeError) as exc_info:
+        run_automatic_copy_upgrade(settings, runner=_fresh_migrating_runner())
+
+    message = str(exc_info.value)
+    assert "remain in place" in message
+    state = _read_upgrade_state(settings)
+    assert state["stage"] == "failed"
+    aside = state.get("preserved_promoted_database")
+    assert isinstance(aside, str) and aside
+    assert aside not in message
+    assert state["restored_signature"]["database_presence"] == "present"
+    aside_path = Path(aside)
+    assert aside_path.is_file()
+    assert automatic_upgrade._database_has_marker(aside_path)
+
+
+def test_fresh_failure_retries_same_image_while_upgrade_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T3: fresh pre-promotion failure retries the same image to upgraded
+    (carrying failure_count); seeded upgrade failure refuses it."""
+    monkeypatch.setenv("COMMIT_TAG", "retry-gate-version")
+    _patch_publish_intervals(monkeypatch)
+
+    fresh_settings = _settings(tmp_path / "fresh")
+    failures = {"count": 0}
+
+    def fail_once_then_migrate(working: Path) -> dict[str, object]:
+        if failures["count"] == 0:
+            failures["count"] += 1
+            raise RuntimeError("simulated fresh failure")
+        return _fresh_migrating_runner()(working)
+
+    with pytest.raises(AutomaticUpgradeError, match="remain in place"):
+        run_automatic_copy_upgrade(fresh_settings, runner=fail_once_then_migrate)
+    assert not fresh_settings.library_db_path.exists()
+
+    assert (
+        run_automatic_copy_upgrade(fresh_settings, runner=fail_once_then_migrate)
+        == "upgraded"
+    )
+    completed = _read_upgrade_state(fresh_settings)
+    assert completed["stage"] == "completed"
+    assert completed.get("failure_count", 0) >= 1
+
+    upgrade_settings = _settings(tmp_path / "upgrade")
+    _write_unmigrated_database(upgrade_settings.library_db_path)
+    upgrade_settings.config_file_path.parent.mkdir(parents=True, exist_ok=True)
+    upgrade_settings.config_file_path.write_text('{"name":"before"}', encoding="utf-8")
+    upgrade_attempts = {"failures": 0}
+    fixed_runs = {"count": 0}
+
+    def fail(_working: Path) -> dict[str, object]:
+        upgrade_attempts["failures"] += 1
+        raise RuntimeError("simulated upgrade failure")
+
+    def fixed(working: Path) -> dict[str, object]:
+        fixed_runs["count"] += 1
+        return _upgrade_migrating_runner()(working)
+
+    with pytest.raises(AutomaticUpgradeError, match="remain in place"):
+        run_automatic_copy_upgrade(upgrade_settings, runner=fail)
+    with pytest.raises(AutomaticUpgradeError, match="previous attempt"):
+        run_automatic_copy_upgrade(upgrade_settings, runner=fixed)
+    assert upgrade_attempts["failures"] == 1
+    assert fixed_runs["count"] == 0
+
+
+def test_failed_attempt_never_matches_unverifiable_signatures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T4: unreadable live hashes never refuse the same image, and a v1
+    record of bare Nones never matches verifiable present bytes."""
+    settings = _settings(tmp_path)
+    _write_unmigrated_database(settings.library_db_path)
+    settings.config_file_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.config_file_path.write_text('{"name":"before"}', encoding="utf-8")
+    monkeypatch.setenv("COMMIT_TAG", "unverifiable-version")
+    _patch_publish_intervals(monkeypatch)
+
+    def fail(_working: Path) -> dict[str, object]:
+        raise RuntimeError("simulated failure")
+
+    with pytest.raises(AutomaticUpgradeError, match="remain in place"):
+        run_automatic_copy_upgrade(settings, runner=fail)
+    state_path = settings.cache_dir / f"automatic-upgrade-{UPGRADE_ID}.json"
+
+    monkeypatch.setattr(automatic_upgrade, "_sha256", lambda _path: None)
+    assert (
+        automatic_upgrade._failed_attempt_matches(
+            state_path,
+            database=settings.library_db_path,
+            config=settings.config_file_path,
+            image_version="unverifiable-version",
+        )
+        is False
+    )
+
+    assert (
+        automatic_upgrade._signatures_verifiably_equal(
+            {"database_sha256": None, "config_sha256": None},
+            {"database_sha256": "abc", "config_sha256": "def"},
+        )
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_provenance_tail_failure_leaves_typed_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E1: a failing provenance-counts tail leaves typed evidence (reason +
+    driver type + batch/path legs) with no driver text or paths, and the
+    generic backstop does not overwrite it."""
+    from types import SimpleNamespace
+
+    from models.library_migration import MigrationDryRunReport
+    from services.native.bounded_legacy_catalog_migrator import (
+        BoundedMigrationOutcome,
+    )
+    from services.native.target_startup_validator import TargetStartupValidator
+
+    settings, database = _forbidden_work_settings(tmp_path)
+    test_store = _stub_child_providers(monkeypatch, settings, database)
+
+    class FakeCleanMigrator:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def progress_snapshot(self) -> dict[str, object]:
+            return {"completed_batches": 3}
+
+        async def migrate(
+            self, migration_id: str, now: float | None = None
+        ) -> object:
+            report = MigrationDryRunReport(
+                migration_id=migration_id,
+                source_revision="src",
+                root_revision="root",
+                state="applied",
+                identified_albums=0,
+                local_only_albums=0,
+                identified_tracks=0,
+                local_only_tracks=0,
+                artists=0,
+                reference_counts=[],
+                network_calls=0,
+                tag_reads=0,
+                fingerprints=0,
+                embedded_art_reads=0,
+            )
+            return BoundedMigrationOutcome(report=report, blocker_count=0)
+
+    class FakeReconciler:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def reconcile(self, emit_progress: object = None) -> object:
+            result = SimpleNamespace(
+                mode="missing",
+                root_retargets={},
+                library_file_count=0,
+                review_row_count=0,
+            )
+            result.evidence = lambda: {"mode": "missing", "unresolved": 0}  # type: ignore[attr-defined]
+            return result
+
+        async def aclose(self) -> None:
+            pass
+
+        def evidence(self) -> dict[str, object]:
+            return {"mode": "missing", "unresolved": 0}
+
+    monkeypatch.setattr(
+        "services.native.bounded_legacy_catalog_migrator.BoundedLegacyCatalogMigrator",
+        FakeCleanMigrator,
+    )
+    monkeypatch.setattr(
+        "services.native.legacy_path_reconciler.LegacyPathReconciler",
+        FakeReconciler,
+    )
+    monkeypatch.setattr(
+        TargetStartupValidator,
+        "validate",
+        AsyncMock(return_value={"invariants": {}}),
+    )
+    monkeypatch.setenv("COMMIT_TAG", "provenance-test")
+
+    async def failing_counts(_migration_id: str) -> object:
+        raise sqlite3.OperationalError("injected driver detail")
+
+    monkeypatch.setattr(test_store, "get_migration_provenance_counts", failing_counts)
+
+    with pytest.raises(AutomaticUpgradeError, match="did not pass") as exc_info:
+        await automatic_upgrade._perform_target_migration()
+
+    evidence = getattr(exc_info.value, "evidence", None)
+    assert isinstance(evidence, dict)
+    assert evidence["reason"] == "provenance_unavailable"
+    assert evidence["error_type"] == "OperationalError"
+    assert evidence["batch_progress"] == {"completed_batches": 3}
+    assert evidence["path_reconciliation"] == {"mode": "missing", "unresolved": 0}
+    serialized = json.dumps(evidence)
+    assert "injected" not in serialized
+    assert str(tmp_path) not in serialized
+
+
+def test_write_state_fsync_flap_never_leaks_filenotfounderror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E2: a transient state-file read flap still writes verifiably; a
+    permanent flap raises exactly the state fixed string, never
+    FileNotFoundError (prefix match: no path suffix)."""
+    path = tmp_path / "state.json"
+    payload = {"stage": "completed", "attempt": 1}
+    _patch_publish_intervals(monkeypatch)
+    real_open = Path.open
+    reads = {"count": 0}
+
+    def flap_first_read(self: Path, mode: str = "r", *args: object, **kwargs: object):
+        if Path(self) == path and isinstance(mode, str) and "r" in mode:
+            reads["count"] += 1
+            if reads["count"] == 1:
+                raise FileNotFoundError(errno.ENOENT, "state flap", str(self))
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", flap_first_read)
+    automatic_upgrade._write_state(path, payload)
+    assert automatic_upgrade._read_state(path) == payload
+
+    def flap_every_read(self: Path, mode: str = "r", *args: object, **kwargs: object):
+        if Path(self) == path and isinstance(mode, str) and "r" in mode:
+            raise FileNotFoundError(errno.ENOENT, "state flap", str(self))
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", flap_every_read)
+    with pytest.raises(OSError) as exc_info:
+        automatic_upgrade._write_state(path, {"stage": "migrating", "attempt": 2})
+    assert type(exc_info.value) is OSError
+    assert str(exc_info.value).startswith(
+        "The upgrade state file could not be verified after writing."
+    )
+    assert str(exc_info.value) == (
+        "The upgrade state file could not be verified after writing."
+    )
+
+
+def test_prepare_working_copy_recovers_stale_tree_and_verifies_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E3: a stale working tree is swept and rebuilt byte-identical; an
+    unreadable backup fails with the working-copy fixed string, no paths."""
+    settings = _settings(tmp_path)
+    _write_unmigrated_database(settings.library_db_path)
+    settings.config_file_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.config_file_path.write_bytes(b'{"name":"before"}')
+    backup = automatic_upgrade.capture_upgrade_backup(settings)
+    assert backup.database is not None
+    stale_tree = backup.directory / "working"
+    (stale_tree / "cache").mkdir(parents=True)
+    (stale_tree / "cache" / "junk.db").write_bytes(b"stale")
+    (stale_tree / "config").mkdir(parents=True)
+
+    working = automatic_upgrade.prepare_working_copy(settings, backup)
+
+    assert not (working / "cache" / "junk.db").exists()
+    assert automatic_upgrade._sha256(
+        working / "cache" / "library.db"
+    ) == automatic_upgrade._sha256(backup.database)
+    assert (working / "config" / "config.json").read_bytes() == b'{"name":"before"}'
+
+    def locked_copy(
+        _source: object, _destination: object, *args: object, **kwargs: object
+    ) -> None:
+        raise PermissionError(errno.EACCES, "copy unavailable")
+
+    monkeypatch.setattr(automatic_upgrade.shutil, "copy2", locked_copy)
+    with pytest.raises(OSError) as exc_info:
+        automatic_upgrade.prepare_working_copy(settings, backup)
+    assert (
+        str(exc_info.value) == "The upgrade working copy could not be prepared."
+    )
+    assert str(tmp_path) not in str(exc_info.value)
+
+
+def test_restored_database_reverified_before_remain_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E4: a restore that claims success but leaves foreign bytes behind goes
+    loud (promoting/restore_failed/RestoreUnverifiable), never "remain in
+    place".
+
+    Branch pin vs
+    test_fresh_post_promote_failure_preserves_installed_database_aside: there
+    the leftover bytes verify and are preserved aside; here they mismatch.
+    """
+    settings = _settings(tmp_path)
+    _write_unmigrated_database(settings.library_db_path)
+    settings.config_file_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.config_file_path.write_text('{"name":"before"}', encoding="utf-8")
+    monkeypatch.setenv("COMMIT_TAG", "restore-gate-version")
+    _patch_publish_intervals(monkeypatch)
+
+    def crashing_promote(target: Settings, working: Path) -> None:
+        automatic_upgrade.promote_working_copy(target, working)
+        raise RuntimeError("simulated post-promote crash")
+
+    def noop_restore(*args: object, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(automatic_upgrade, "promote_working_copy", crashing_promote)
+    monkeypatch.setattr(automatic_upgrade, "restore_upgrade_backup", noop_restore)
+
+    with pytest.raises(AutomaticUpgradeError, match="could not be restored") as exc_info:
+        run_automatic_copy_upgrade(settings, runner=_upgrade_migrating_runner())
+
+    assert "Do not start" in str(exc_info.value)
+    state = _read_upgrade_state(settings)
+    assert state["stage"] == "promoting"
+    assert state["restore_failed"] is True
+    assert state["restore_error_type"] == "RestoreUnverifiable"
+
+
+def test_successful_restore_still_reports_remain_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E5: a healthy restore after a pre-install crash stays a plain failed
+    record (no restore_failed) with v2 signatures equal to the manifest."""
+    settings = _settings(tmp_path)
+    _write_unmigrated_database(settings.library_db_path)
+    settings.config_file_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.config_file_path.write_text('{"name":"before"}', encoding="utf-8")
+    monkeypatch.setenv("COMMIT_TAG", "healthy-restore-version")
+    _patch_publish_intervals(monkeypatch)
+
+    def broken_promote(_target: Settings, _working: Path) -> None:
+        raise RuntimeError("simulated promotion crash")
+
+    monkeypatch.setattr(automatic_upgrade, "promote_working_copy", broken_promote)
+
+    with pytest.raises(AutomaticUpgradeError, match="remain in place"):
+        run_automatic_copy_upgrade(settings, runner=_upgrade_migrating_runner())
+
+    state = _read_upgrade_state(settings)
+    assert state["stage"] == "failed"
+    assert "restore_failed" not in state
+    manifest = json.loads(
+        (Path(str(state["backup_directory"])) / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    signature = state["restored_signature"]
+    assert signature["database_sha256"] == manifest["database_sha256"]
+    assert signature["config_sha256"] == manifest["config_sha256"]
+    assert signature["database_presence"] == "present"
+    assert signature["config_presence"] == "present"
+
+
+def test_replace_database_double_apply_reports_success_without_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R1: the rename lands but reports failure (9p double-apply); the
+    settle re-check sees the installed bytes and reports success with no
+    fallback copy."""
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    _write_unmigrated_database(source)
+    _mark_migrated(source)
+    _write_unmigrated_database(destination, value="outdated")
+    _patch_publish_intervals(monkeypatch)
+    real_replace = os.replace
+    real_sha256 = automatic_upgrade._sha256
+    destination_reads = 0
+
+    def rename_then_raise(
+        source_path: object, destination_path: object, **kwargs: object
+    ) -> None:
+        real_replace(source_path, destination_path)
+        if Path(str(destination_path)) == destination:
+            raise OSError("injected raised-but-landed rename")
+
+    def settling_destination_hash(path: Path) -> str | None:
+        nonlocal destination_reads
+        if Path(path) == destination:
+            destination_reads += 1
+            if destination_reads <= 2:
+                return "stale-bytes"
+        return real_sha256(path)
+
+    copy_calls: list[tuple[str, str]] = []
+
+    def counting_copy(source_path: Path, destination_path: Path) -> None:
+        copy_calls.append((str(source_path), str(destination_path)))
+
+    monkeypatch.setattr(automatic_upgrade.os, "replace", rename_then_raise)
+    monkeypatch.setattr(automatic_upgrade, "_sha256", settling_destination_hash)
+    monkeypatch.setattr(
+        automatic_upgrade, "_copy_database_bytes_in_place", counting_copy
+    )
+
+    automatic_upgrade._replace_database(source, destination)
+
+    assert copy_calls == []
+    assert destination_reads > 2
+    assert automatic_upgrade._database_has_marker(destination)
+    assert _source_value(destination) == "original"
+
+
+def test_replace_database_success_with_locked_wal_does_not_silently_succeed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R3: the bytes verify but the live WAL cannot be quarantined, so the
+    publish fails closed instead of reporting success with a stale WAL
+    beside the new database.
+
+    Branch pin vs
+    test_quarantine_retains_locked_sidecar_and_discard_defers_locked_sibling:
+    there the helpers retain/defer; here the publish path fails closed.
+    """
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    _write_unmigrated_database(source)
+    _mark_migrated(source)
+    _write_unmigrated_database(destination, value="outdated")
+    live_wal = Path(f"{destination}-wal")
+    live_wal.write_bytes(b"locked-wal-frames")
+    _patch_publish_intervals(monkeypatch)
+    real_replace = os.replace
+
+    def locked_sidecar_replace(
+        source_path: object, destination_path: object, **kwargs: object
+    ) -> None:
+        if str(source_path).endswith(("-wal", "-shm")):
+            raise PermissionError(errno.EACCES, "file locked", str(source_path))
+        return real_replace(source_path, destination_path)
+
+    monkeypatch.setattr(automatic_upgrade.os, "replace", locked_sidecar_replace)
+
+    with pytest.raises(OSError, match="could not be verified") as exc_info:
+        automatic_upgrade._replace_database(source, destination)
+
+    assert not isinstance(exc_info.value, FileNotFoundError)
+    assert live_wal.is_file()
+
+
+def test_replace_refuses_empty_source_without_truncating_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """N1: a zero-byte source fails closed before any destination mutation."""
+    source = tmp_path / "source.txt"
+    destination = tmp_path / "destination.txt"
+    source.write_bytes(b"")
+    destination.write_bytes(b"installed-content")
+    _patch_publish_intervals(monkeypatch)
+    monkeypatch.setattr(automatic_upgrade.os, "replace", _failed_replace)
+
+    with pytest.raises(OSError, match="could not be verified"):
+        automatic_upgrade._replace_file(source, destination)
+
+    assert destination.read_bytes() == b"installed-content"
+
+
+def test_replace_preserves_mode_bits_when_copystat_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """N2: the copy fallback carries the source mode bits to the destination."""
+    source = tmp_path / "source.txt"
+    destination = tmp_path / "destination.txt"
+    source.write_bytes(b"published-content")
+    source.chmod(0o640)
+    destination.write_bytes(b"old-content")
+    destination.chmod(0o600)
+    _patch_publish_intervals(monkeypatch)
+    monkeypatch.setattr(automatic_upgrade.os, "replace", _failed_replace)
+    copystat_calls: list[tuple[str, str]] = []
+    real_copystat = shutil.copystat
+
+    def counting_copystat(source_path: object, destination_path: object) -> None:
+        copystat_calls.append((str(source_path), str(destination_path)))
+        real_copystat(source_path, destination_path)
+
+    monkeypatch.setattr(automatic_upgrade.shutil, "copystat", counting_copystat)
+
+    automatic_upgrade._replace_file(source, destination)
+
+    assert destination.read_bytes() == b"published-content"
+    assert (destination.stat().st_mode & 0o777) == 0o640
+    assert (destination.stat().st_mode & 0o777) == (source.stat().st_mode & 0o777)
+    assert copystat_calls != []
+
+
+def test_fresh_retry_budget_exhausts_with_fresh_refusal_and_sweeps_prior_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """N3: three fresh failures retry; the fourth refuses with a
+    fresh-specific message (never "switch back to previous image") while
+    prior backup orphans are swept."""
+    settings = _settings(tmp_path)
+    monkeypatch.setenv("COMMIT_TAG", "fresh-budget-version")
+    _patch_publish_intervals(monkeypatch)
+
+    def fail(_working: Path) -> dict[str, object]:
+        raise RuntimeError("simulated fresh failure")
+
+    for _ in range(3):
+        with pytest.raises(AutomaticUpgradeError, match="remain in place"):
+            run_automatic_copy_upgrade(settings, runner=fail)
+
+    with pytest.raises(AutomaticUpgradeError) as exc_info:
+        run_automatic_copy_upgrade(settings, runner=fail)
+    assert "Switch back to your previous image" not in str(exc_info.value)
+    state = _read_upgrade_state(settings)
+    assert state["stage"] == "failed"
+    assert state.get("failure_count", 0) >= 3
+    backup_root = settings.cache_dir / "upgrade-backups"
+    orphans = list(backup_root.iterdir()) if backup_root.is_dir() else []
+    assert len(orphans) <= 1
+
+
+def test_posix_publish_adds_zero_sleeps_on_immediate_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """N4: the POSIX fast path (attempt-0 verify hit) performs no sleeps."""
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    _write_unmigrated_database(source)
+    _mark_migrated(source)
+    _write_unmigrated_database(destination, value="outdated")
+    _patch_publish_intervals(monkeypatch)
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(automatic_upgrade.time, "sleep", sleep_calls.append)
+
+    automatic_upgrade._replace_database(source, destination)
+
+    assert automatic_upgrade._database_has_marker(destination)
+    assert _source_value(destination) == "original"
+    assert sleep_calls == []

@@ -33,6 +33,8 @@ UPGRADE_ID = "feedback-fixes-v1"
 MIGRATION_ID = "automatic-feedback-fixes-v1"
 _PUBLISH_VERIFY_ATTEMPTS = 10
 _PUBLISH_VERIFY_INTERVAL_SECONDS = 0.25
+_PUBLISH_SETTLE_ATTEMPTS = 24
+_PUBLISH_SETTLE_INTERVAL_SECONDS = 0.25
 _MARKER = "legacy_catalog_import_complete"
 _SOURCE_REVISION_PATH = Path("/app/.droppedneedle-source-revision")
 _ADMISSION_TOKEN_ENV = "DROPPEDNEEDLE_TARGET_ADMISSION_TOKEN"
@@ -124,12 +126,58 @@ def _sha256(path: Path) -> str | None:
     return digest.hexdigest()
 
 
-def _wait_for_content(path: Path, expected_sha256: str | None) -> bool:
+def _presence_of(path: Path) -> str:
+    try:
+        if not path.is_file():
+            return "absent"
+    except OSError:
+        return "unreadable"
+    try:
+        if path.stat().st_size == 0:
+            return "empty"
+    except OSError:
+        return "unreadable"
+    if _sha256(path) is None:
+        return "unreadable"
+    return "present"
+
+
+def _signatures_verifiably_equal(
+    first: dict[str, Any], second: dict[str, Any]
+) -> bool:
+    for key in ("database_sha256", "config_sha256"):
+        first_hash = first.get(key)
+        second_hash = second.get(key)
+        if not isinstance(first_hash, str) or not isinstance(second_hash, str):
+            return False
+        if first_hash != second_hash:
+            return False
+    for key in ("database_presence", "config_presence"):
+        if key in first or key in second:
+            first_presence = first.get(key)
+            second_presence = second.get(key)
+            if first_presence != "present" or second_presence != "present":
+                return False
+            if first_presence != second_presence:
+                return False
+    return True
+
+
+def _wait_for_content(
+    path: Path,
+    expected_sha256: str | None,
+    attempts: int | None = None,
+    interval: float | None = None,
+) -> bool:
     if expected_sha256 is None:
         # Fail-closed by design: an unverifiable expectation must never match,
         # not even an equally unreadable destination.
         return False
-    for attempt in range(_PUBLISH_VERIFY_ATTEMPTS):
+    if attempts is None:
+        attempts = _PUBLISH_VERIFY_ATTEMPTS
+    if interval is None:
+        interval = _PUBLISH_VERIFY_INTERVAL_SECONDS
+    for attempt in range(attempts):
         try:
             if _sha256(path) == expected_sha256:
                 return True
@@ -138,8 +186,8 @@ def _wait_for_content(path: Path, expected_sha256: str | None) -> bool:
             # OSError): a transient read failure is a missed attempt, not an
             # abort of the verification budget.
             pass
-        if attempt + 1 < _PUBLISH_VERIFY_ATTEMPTS:
-            time.sleep(_PUBLISH_VERIFY_INTERVAL_SECONDS)
+        if attempt + 1 < attempts:
+            time.sleep(interval)
     return False
 
 
@@ -179,15 +227,56 @@ def _quick_check_failure(database: Path) -> str | None:
     return problems[0]
 
 
+def _await_marker(database: Path) -> bool:
+    for attempt in range(_PUBLISH_VERIFY_ATTEMPTS):
+        if _database_has_marker(database):
+            return True
+        if attempt + 1 < _PUBLISH_VERIFY_ATTEMPTS:
+            time.sleep(_PUBLISH_VERIFY_INTERVAL_SECONDS)
+    return False
+
+
+def _await_quick_check_healthy(database: Path) -> str | None:
+    failure: str | None = None
+    for attempt in range(_PUBLISH_VERIFY_ATTEMPTS):
+        failure = _quick_check_failure(database)
+        if failure is None:
+            return None
+        if attempt + 1 < _PUBLISH_VERIFY_ATTEMPTS:
+            time.sleep(_PUBLISH_VERIFY_INTERVAL_SECONDS)
+    return failure
+
+
+def _live_database_verifies(database: Path) -> bool:
+    if not _database_has_marker(database):
+        return False
+    if _quick_check_failure(database) is not None:
+        return False
+    for suffix in ("-wal", "-shm"):
+        if Path(f"{database}{suffix}").exists():
+            return False
+    return True
+
+
 def _sqlite_backup(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with (
-        sqlite3.connect(f"file:{source}?mode=ro", uri=True) as source_connection,
-        sqlite3.connect(destination) as destination_connection,
-    ):
-        source_connection.backup(destination_connection)
+    try:
+        with (
+            sqlite3.connect(f"file:{source}?mode=ro", uri=True) as source_connection,
+            sqlite3.connect(destination) as destination_connection,
+        ):
+            source_connection.backup(destination_connection)
+    except (sqlite3.Error, OSError) as error:
+        # Single sqlite3.Error->OSError site: driver text stays in the cause,
+        # the raised message is the fixed verifiable string with no paths.
+        raise OSError(
+            "The upgraded library database could not be verified after installation."
+        ) from error
     try:
         destination.chmod(source.stat().st_mode & 0o777)
+    except OSError:
+        logger.warning("automatic_upgrade.backup_chmod_unavailable")
+    try:
         with destination.open("rb") as handle:
             os.fsync(handle.fileno())
     except OSError:
@@ -197,31 +286,55 @@ def _sqlite_backup(source: Path, destination: Path) -> None:
         logger.warning("automatic_upgrade.backup_durability_fsync_unavailable")
 
 
+def _fsync_state_file_best_effort(path: Path) -> None:
+    try:
+        with path.open("rb") as handle:
+            os.fsync(handle.fileno())
+    except OSError:
+        logger.warning("automatic_upgrade.state_fsync_unavailable")
+
+
 def _write_state(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise OSError(
+            "The upgrade state file could not be verified after writing."
+        ) from error
     try:
         atomic_write_json(path, payload)
     except OSError:
         logger.warning("automatic_upgrade.state_rename_failed_using_direct_write")
-        _write_state_direct(path, payload)
-    with path.open("rb") as handle:
-        os.fsync(handle.fileno())
+        try:
+            _write_state_direct(path, payload)
+        except OSError as error:
+            raise OSError(
+                "The upgrade state file could not be verified after writing."
+            ) from error
+    _fsync_state_file_best_effort(path)
     _fsync_directory(path.parent)
     if _wait_for_state(path, payload):
         return
     logger.warning("automatic_upgrade.state_write_result_stale_using_direct_write")
-    _write_state_direct(path, payload)
-    with path.open("rb") as handle:
-        os.fsync(handle.fileno())
+    try:
+        _write_state_direct(path, payload)
+    except OSError as error:
+        raise OSError(
+            "The upgrade state file could not be verified after writing."
+        ) from error
+    _fsync_state_file_best_effort(path)
     _fsync_directory(path.parent)
     if not _wait_for_state(path, payload):
         raise OSError(
-            "The upgrade state file could not be verified after writing: " + str(path)
+            "The upgrade state file could not be verified after writing."
         )
 
 
 def _write_state_direct(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
+    _fsync_state_file_best_effort(path)
+    _fsync_directory(path.parent)
 
 
 def _wait_for_state(path: Path, payload: dict[str, Any]) -> bool:
@@ -247,6 +360,8 @@ def _current_signature(database: Path, config: Path) -> dict[str, str | None]:
     return {
         "database_sha256": _sha256(database),
         "config_sha256": _sha256(config),
+        "database_presence": _presence_of(database),
+        "config_presence": _presence_of(config),
     }
 
 
@@ -261,6 +376,39 @@ def _image_version() -> str:
     return baked or os.getenv("COMMIT_TAG", "unknown")
 
 
+_FRESH_RETRY_BUDGET = 3
+
+
+def _is_fresh_failure(settings: Settings, payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    try:
+        backup = _load_upgrade_backup(settings, payload.get("backup_directory"))
+    except AutomaticUpgradeError:
+        return False
+    return not backup.database_existed
+
+
+def _fresh_retry_budget_exhausted(payload: dict[str, Any]) -> bool:
+    try:
+        return int(payload.get("failure_count", 0)) >= _FRESH_RETRY_BUDGET
+    except (TypeError, ValueError):
+        return True
+
+
+def _fresh_retry_refuses(settings: Settings, state_path: Path, image_version: str) -> bool:
+    payload = _read_state(state_path)
+    if (
+        not isinstance(payload, dict)
+        or payload.get("stage") != "failed"
+        or payload.get("image_version") != image_version
+    ):
+        return False
+    return _is_fresh_failure(settings, payload) and _fresh_retry_budget_exhausted(
+        payload
+    )
+
+
 def _failed_attempt_matches(
     state_path: Path,
     *,
@@ -271,10 +419,16 @@ def _failed_attempt_matches(
     payload = _read_state(state_path)
     if payload is None:
         return False
-    return (
-        payload.get("stage") == "failed"
-        and payload.get("image_version") == image_version
-        and payload.get("restored_signature") == _current_signature(database, config)
+    if (
+        payload.get("stage") != "failed"
+        or payload.get("image_version") != image_version
+    ):
+        return False
+    restored = payload.get("restored_signature")
+    if not isinstance(restored, dict):
+        return False
+    return _signatures_verifiably_equal(
+        restored, _current_signature(database, config)
     )
 
 
@@ -287,10 +441,10 @@ def _completed_install_is_verified_rollback(
         return False
     if not backup.database_existed or backup.database is None:
         return False
-    expected = {
-        "database_sha256": _sha256(backup.database),
-        "config_sha256": _sha256(backup.config) if backup.config is not None else None,
-    }
+    expected_config = (
+        backup.config if backup.config is not None else backup.directory / "config.json"
+    )
+    expected = _current_signature(backup.database, expected_config)
     return expected == _current_signature(
         settings.library_db_path, settings.config_file_path
     )
@@ -317,16 +471,23 @@ def capture_upgrade_backup(settings: Settings) -> UpgradeBackup:
     _write_state(
         directory / "manifest.json",
         {
-            "format_version": 1,
+            "format_version": 2,
             "upgrade_id": UPGRADE_ID,
             "database_existed": database_existed,
             "config_existed": config_existed,
+            "database_absent_before": not database_existed,
             "database_sha256": _sha256(backup_database)
             if backup_database is not None
             else None,
             "config_sha256": _sha256(backup_config)
             if backup_config is not None
             else None,
+            "database_presence": _presence_of(backup_database)
+            if backup_database is not None
+            else "absent",
+            "config_presence": _presence_of(backup_config)
+            if backup_config is not None
+            else "absent",
         },
     )
     return UpgradeBackup(
@@ -357,6 +518,11 @@ def _load_upgrade_backup(settings: Settings, directory_value: object) -> Upgrade
     config_existed = manifest.get("config_existed") is True
     database = directory / "library.db" if database_existed else None
     config = directory / "config.json" if config_existed else None
+    if "database_presence" in manifest or "config_presence" in manifest:
+        if database_existed and manifest.get("database_presence") != "present":
+            raise AutomaticUpgradeError("The interrupted database backup is incomplete.")
+        if config_existed and manifest.get("config_presence") != "present":
+            raise AutomaticUpgradeError("The interrupted settings backup is incomplete.")
     if database is not None and _sha256(database) != manifest.get("database_sha256"):
         raise AutomaticUpgradeError("The interrupted database backup is incomplete.")
     if config is not None and _sha256(config) != manifest.get("config_sha256"):
@@ -380,18 +546,42 @@ def _fsync_directory(directory: Path) -> None:
     except OSError:
         logger.warning("automatic_upgrade.directory_fsync_unavailable")
     finally:
-        os.close(descriptor)
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+
+def _overwrite_bytes_in_place(source: Path, destination: Path) -> None:
+    # Non-truncating engine: the destination is never truncated before the
+    # first durable byte. Existing destinations open r+b (no pre-truncate);
+    # ftruncate-to-size runs only after copy+flush+fsync, so a crash or flap
+    # mid-copy leaves the previous bytes in place, never a 0-byte live file.
+    src_size = source.stat().st_size
+    if src_size == 0:
+        raise OSError("source is empty")
+    with source.open("rb") as source_handle:
+        try:
+            target_handle = destination.open("r+b")
+        except FileNotFoundError:
+            target_handle = destination.open("wb")
+        with target_handle:
+            shutil.copyfileobj(source_handle, target_handle, length=1024 * 1024)
+            target_handle.flush()
+            os.fsync(target_handle.fileno())
+            target_handle.truncate(src_size)
+            target_handle.flush()
+            os.fsync(target_handle.fileno())
+    try:
+        shutil.copystat(source, destination)
+    except OSError:
+        logger.warning("automatic_upgrade.copy_metadata_unavailable")
+    _fsync_directory(destination.parent)
 
 
 def _copy_file_in_place(source: Path, destination: Path) -> None:
     try:
-        with source.open("rb") as source_handle, destination.open(
-            "wb"
-        ) as target_handle:
-            shutil.copyfileobj(source_handle, target_handle, length=1024 * 1024)
-            target_handle.flush()
-            os.fsync(target_handle.fileno())
-        shutil.copystat(source, destination)
+        _overwrite_bytes_in_place(source, destination)
     except OSError as error:
         # A bind-mount flap mid-copy must surface as the verifiable install
         # failure, never as a bare FileNotFoundError from the copy itself.
@@ -399,11 +589,25 @@ def _copy_file_in_place(source: Path, destination: Path) -> None:
             "The upgraded file could not be verified after installation: "
             + str(destination)
         ) from error
-    _fsync_directory(destination.parent)
+
+
+def _copy_database_bytes_in_place(source: Path, destination: Path) -> None:
+    try:
+        _overwrite_bytes_in_place(source, destination)
+    except OSError as error:
+        raise OSError(
+            "The upgraded library database could not be verified after installation."
+        ) from error
 
 
 def _replace_file(source: Path, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise OSError(
+            "The upgraded file could not be verified after installation: "
+            + str(destination)
+        ) from error
     temporary = destination.with_name(
         f".{destination.name}.upgrade-{uuid.uuid4().hex}.tmp"
     )
@@ -417,7 +621,6 @@ def _replace_file(source: Path, destination: Path) -> None:
                     shutil.copyfileobj(source_handle, target_handle, length=1024 * 1024)
                     target_handle.flush()
                     os.fsync(target_handle.fileno())
-                shutil.copystat(source, temporary)
                 staged = True
                 break
             except OSError:
@@ -430,50 +633,135 @@ def _replace_file(source: Path, destination: Path) -> None:
                 "The upgraded file could not be verified after installation: "
                 + str(destination)
             )
+        # Staging copystat stays outside the retry budget: metadata never burns
+        # data attempts, and EPERM is ignored best-effort.
+        try:
+            shutil.copystat(source, temporary)
+        except OSError:
+            logger.warning("automatic_upgrade.staging_copystat_unavailable")
         expected = _sha256(temporary)
         try:
             os.replace(temporary, destination)
         except OSError:
             logger.warning("automatic_upgrade.file_rename_failed_using_copy_fallback")
-            renamed = False
+            replace_ok = False
         else:
             _fsync_directory(destination.parent)
-            renamed = _wait_for_content(destination, expected)
-            if not renamed:
-                logger.warning(
-                    "automatic_upgrade.file_rename_result_stale_using_copy_fallback"
-                )
-        if not renamed:
+            if expected is not None and _wait_for_content(
+                destination,
+                expected,
+                _PUBLISH_SETTLE_ATTEMPTS,
+                _PUBLISH_SETTLE_INTERVAL_SECONDS,
+            ):
+                logger.info("automatic_upgrade.file_publish_settled")
+                return
+            # Stale after a successful rename: the new bytes are already
+            # installed, so NEVER copy here; copying would truncate live data.
+            logger.warning(
+                "automatic_upgrade.file_rename_result_stale_using_copy_fallback"
+            )
             if expected is None:
                 # The staged temporary flapped while hashing; the source was
-                # readable moments earlier, so re-anchor verification to it.
+                # readable moments earlier, so re-anchor verification to it
+                # and give the renamed bytes one settle window to appear.
                 expected = _sha256(source)
+                if expected is not None and _wait_for_content(
+                    destination,
+                    expected,
+                    _PUBLISH_SETTLE_ATTEMPTS,
+                    _PUBLISH_SETTLE_INTERVAL_SECONDS,
+                ):
+                    logger.info("automatic_upgrade.file_publish_settled")
+                    return
+            raise OSError(
+                "The upgraded file could not be verified after installation: "
+                + str(destination)
+            )
+        # Rename raised: the temporary is intact and the destination is
+        # untouched, so check for a 9p double-apply (rename landed despite the
+        # error) before falling back to a copy. No copy on a match.
+        if expected is not None and _wait_for_content(
+            destination,
+            expected,
+            _PUBLISH_SETTLE_ATTEMPTS,
+            _PUBLISH_SETTLE_INTERVAL_SECONDS,
+        ):
+            logger.info("automatic_upgrade.file_publish_settled")
+            return
+        if expected is None:
+            # Re-anchor-or-raise-without-touching: verification could never
+            # succeed, so fail without touching the destination further.
+            expected = _sha256(source)
             if expected is None:
-                # Still unverifiable: verification could never succeed, so fail
-                # without touching the destination further.
                 raise OSError(
                     "The upgraded file could not be verified after installation: "
                     + str(destination)
                 )
+            if _wait_for_content(
+                destination,
+                expected,
+                _PUBLISH_SETTLE_ATTEMPTS,
+                _PUBLISH_SETTLE_INTERVAL_SECONDS,
+            ):
+                logger.info("automatic_upgrade.file_publish_settled")
+                return
+        try:
             _copy_file_in_place(source, destination)
-            if not _wait_for_content(destination, expected):
-                raise OSError(
-                    "The upgraded file could not be verified after installation: "
-                    + str(destination)
-                )
+        except OSError:
+            # Last-look before raising: the bytes may have landed despite the
+            # copy error, which converts a spurious failure into success.
+            if _wait_for_content(destination, expected):
+                logger.info("automatic_upgrade.file_publish_settled")
+                return
+            raise
+        if not _wait_for_content(destination, expected):
+            raise OSError(
+                "The upgraded file could not be verified after installation: "
+                + str(destination)
+            )
     finally:
-        temporary.unlink(missing_ok=True)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("automatic_upgrade.publish_temp_cleanup_unavailable")
 
 
 def _replace_database(source: Path, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise OSError(
+            "The upgraded library database could not be verified after installation."
+        ) from error
     temporary = destination.with_name(
         f".{destination.name}.upgrade-{uuid.uuid4().hex}.tmp"
     )
+    fallback_temporary = destination.with_name(
+        f".{destination.name}.upgrade-{uuid.uuid4().hex}.tmp"
+    )
     try:
-        _sqlite_backup(source, temporary)
-        with temporary.open("rb") as handle:
-            os.fsync(handle.fileno())
+        staged = False
+        stage_error: OSError | None = None
+        for attempt in range(_PUBLISH_VERIFY_ATTEMPTS):
+            try:
+                _sqlite_backup(source, temporary)
+                with temporary.open("rb") as handle:
+                    os.fsync(handle.fileno())
+                staged = True
+                break
+            except OSError as error:
+                stage_error = error
+                if attempt + 1 < _PUBLISH_VERIFY_ATTEMPTS:
+                    time.sleep(_PUBLISH_VERIFY_INTERVAL_SECONDS)
+        if not staged:
+            if stage_error is not None:
+                raise OSError(
+                    "The upgraded library database could not be verified "
+                    "after installation."
+                ) from stage_error
+            raise OSError(
+                "The upgraded library database could not be verified after installation."
+            )
         expected = _sha256(temporary)
         # From stage `promoting` onward the manifest-verified backup is
         # authoritative: these sidecars are quarantined rather than destroyed
@@ -484,61 +772,173 @@ def _replace_database(source: Path, destination: Path) -> None:
             os.replace(temporary, destination)
         except OSError:
             logger.warning("automatic_upgrade.file_rename_failed_using_copy_fallback")
-            renamed = False
+            replace_ok = False
         else:
             _fsync_directory(destination.parent)
-            renamed = _wait_for_content(destination, expected)
-            if not renamed:
-                logger.warning(
-                    "automatic_upgrade.file_rename_result_stale_using_copy_fallback"
-                )
-        if not renamed:
+            if expected is not None and _wait_for_content(
+                destination,
+                expected,
+                _PUBLISH_SETTLE_ATTEMPTS,
+                _PUBLISH_SETTLE_INTERVAL_SECONDS,
+            ):
+                if _live_sidecars_present(destination):
+                    raise OSError(
+                        "The upgraded library database could not be verified "
+                        "after installation."
+                    )
+                _sweep_quarantined_best_effort(quarantined)
+                logger.info("automatic_upgrade.database_publish_settled")
+                return
+            # Stale after a successful rename: the new bytes are already
+            # installed, so NEVER copy or backup-onto-live here; that would
+            # truncate the verified replacement. Retain quarantine and fail.
+            logger.warning(
+                "automatic_upgrade.file_rename_result_stale_using_copy_fallback"
+            )
             if expected is None:
-                # The staged temporary flapped while hashing; the source was
-                # readable moments earlier, so re-anchor verification to it.
                 expected = _sha256(source)
+                if expected is not None and _wait_for_content(
+                    destination,
+                    expected,
+                    _PUBLISH_SETTLE_ATTEMPTS,
+                    _PUBLISH_SETTLE_INTERVAL_SECONDS,
+                ):
+                    if _live_sidecars_present(destination):
+                        raise OSError(
+                            "The upgraded library database could not be verified "
+                            "after installation."
+                        )
+                    _sweep_quarantined_best_effort(quarantined)
+                    logger.info("automatic_upgrade.database_publish_settled")
+                    return
+            raise OSError(
+                "The upgraded library database could not be verified after installation."
+            )
+        # Rename raised: the temporary is intact and the destination is
+        # untouched, so check for a 9p double-apply (rename landed despite the
+        # error) before falling back to a copy. No copy on a match.
+        if expected is not None and _wait_for_content(
+            destination,
+            expected,
+            _PUBLISH_SETTLE_ATTEMPTS,
+            _PUBLISH_SETTLE_INTERVAL_SECONDS,
+        ):
+            if _live_sidecars_present(destination):
+                raise OSError(
+                    "The upgraded library database could not be verified "
+                    "after installation."
+                )
+            _sweep_quarantined_best_effort(quarantined)
+            logger.info("automatic_upgrade.database_publish_settled")
+            return
+        if expected is None:
+            # Re-anchor-or-raise-without-touching: verification could never
+            # succeed, so restore the quarantined sidecars and fail without
+            # touching the destination further.
+            expected = _sha256(source)
             if expected is None:
-                # Still unverifiable: verification could never succeed, so fail
-                # without touching the destination further.
+                _restore_quarantined_best_effort(destination, quarantined)
                 raise OSError(
                     "The upgraded library database could not be verified "
                     "after installation."
                 )
-            # truncate first: a backup onto an existing database rewrites header
-            # counters, so it would never hash-match the temporary
+            if _wait_for_content(
+                destination,
+                expected,
+                _PUBLISH_SETTLE_ATTEMPTS,
+                _PUBLISH_SETTLE_INTERVAL_SECONDS,
+            ):
+                if _live_sidecars_present(destination):
+                    raise OSError(
+                        "The upgraded library database could not be verified "
+                        "after installation."
+                    )
+                _sweep_quarantined_best_effort(quarantined)
+                logger.info("automatic_upgrade.database_publish_settled")
+                return
+        # Rename-unavailable fallback WITHOUT truncate: stage a second backup
+        # copy, then byte-overwrite the destination (never truncate-first,
+        # never backup-onto-live) so a flap never leaves a 0-byte live file.
+        staged_fallback = False
+        fallback_error: OSError | None = None
+        for attempt in range(_PUBLISH_VERIFY_ATTEMPTS):
             try:
-                with destination.open("wb") as destination_handle:
-                    destination_handle.truncate(0)
-                    destination_handle.flush()
-                    os.fsync(destination_handle.fileno())
-                _sqlite_backup(source, destination)
+                _sqlite_backup(source, fallback_temporary)
+                staged_fallback = True
+                break
             except OSError as error:
-                # A bind-mount flap here must surface as the verifiable install
-                # failure, never as a bare FileNotFoundError from the copy.
+                fallback_error = error
+                if attempt + 1 < _PUBLISH_VERIFY_ATTEMPTS:
+                    time.sleep(_PUBLISH_VERIFY_INTERVAL_SECONDS)
+        if not staged_fallback:
+            _restore_quarantined_best_effort(destination, quarantined)
+            if fallback_error is not None:
                 raise OSError(
                     "The upgraded library database could not be verified "
                     "after installation."
-                ) from error
-            _fsync_directory(destination.parent)
-            if not _wait_for_content(destination, expected):
+                ) from fallback_error
+            raise OSError(
+                "The upgraded library database could not be verified after installation."
+            )
+        expected_fallback = _sha256(fallback_temporary)
+        if expected_fallback is None:
+            expected_fallback = _sha256(source)
+            if expected_fallback is None:
+                _restore_quarantined_best_effort(destination, quarantined)
                 raise OSError(
                     "The upgraded library database could not be verified "
                     "after installation."
                 )
-        for sibling in quarantined:
-            sibling.unlink(missing_ok=True)
+        try:
+            _copy_database_bytes_in_place(fallback_temporary, destination)
+        except OSError:
+            # Last-look before raising: the bytes may have landed despite the
+            # copy error, which converts a spurious failure into success.
+            if _wait_for_content(destination, expected_fallback):
+                if _live_sidecars_present(destination):
+                    raise OSError(
+                        "The upgraded library database could not be verified "
+                        "after installation."
+                    )
+                _sweep_quarantined_best_effort(quarantined)
+                logger.info("automatic_upgrade.database_publish_settled")
+                return
+            _restore_quarantined_best_effort(destination, quarantined)
+            raise
+        if _wait_for_content(destination, expected_fallback):
+            if _live_sidecars_present(destination):
+                raise OSError(
+                    "The upgraded library database could not be verified "
+                    "after installation."
+                )
+            _sweep_quarantined_best_effort(quarantined)
+            logger.info("automatic_upgrade.database_publish_settled")
+            return
+        _restore_quarantined_best_effort(destination, quarantined)
+        raise OSError(
+            "The upgraded library database could not be verified after installation."
+        )
     finally:
-        temporary.unlink(missing_ok=True)
+        for leftover in (temporary, fallback_temporary):
+            try:
+                leftover.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("automatic_upgrade.publish_temp_cleanup_unavailable")
 
 
 def _quarantine_database_sidecars(destination: Path) -> list[Path]:
     """Rename live -wal/-shm sidecars to sibling quarantine names instead of
     destroying them, so a crash before the swap preserves the previous WAL.
-    Filesystems without atomic rename keep the legacy unlink behavior."""
+    Never deletes: a locked sidecar stays live in place and is reported by
+    omission, letting the caller fail closed rather than claim a clean swap."""
     quarantined: list[Path] = []
     for suffix in ("-wal", "-shm"):
         sidecar = Path(f"{destination}{suffix}")
-        if not sidecar.exists():
+        try:
+            if not sidecar.exists():
+                continue
+        except OSError:
+            logger.warning("automatic_upgrade.database_sidecar_quarantine_unavailable")
             continue
         sibling = destination.with_name(
             f".{destination.name}{suffix}.upgrade-{uuid.uuid4().hex}.quarantine"
@@ -547,7 +947,6 @@ def _quarantine_database_sidecars(destination: Path) -> list[Path]:
             os.replace(sidecar, sibling)
         except OSError:
             logger.warning("automatic_upgrade.database_sidecar_quarantine_unavailable")
-            sidecar.unlink(missing_ok=True)
         else:
             quarantined.append(sibling)
     return quarantined
@@ -555,21 +954,91 @@ def _quarantine_database_sidecars(destination: Path) -> list[Path]:
 
 def _discard_quarantined_sidecars(destination: Path) -> None:
     """Sweep superseded quarantine siblings once a replacement or restored
-    database is verified in place; leftovers from crashed windows die here."""
-    for suffix in ("-wal", "-shm"):
-        for sibling in destination.parent.glob(
-            f".{destination.name}{suffix}.upgrade-*.quarantine"
-        ):
+    database is verified in place; leftovers from crashed windows die here.
+    Never raises: a locked sibling is deferred to the next boot."""
+    try:
+        siblings: list[Path] = []
+        for suffix in ("-wal", "-shm"):
+            siblings.extend(
+                destination.parent.glob(
+                    f".{destination.name}{suffix}.upgrade-*.quarantine"
+                )
+            )
+    except OSError:
+        logger.warning("automatic_upgrade.discard_scan_unavailable")
+        return
+    for sibling in siblings:
+        try:
             sibling.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("automatic_upgrade.discard_deferred")
 
 
-def restore_upgrade_backup(settings: Settings, backup: UpgradeBackup) -> None:
+def _live_sidecars_present(destination: Path) -> bool:
+    # Marker/hash verification is WAL-blind: a stale -wal beside a new database
+    # is invisible to content checks, so success must independently confirm no
+    # live sidecar remains. Fail closed on an unreadable probe.
+    for suffix in ("-wal", "-shm"):
+        try:
+            if Path(f"{destination}{suffix}").exists():
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def _sweep_quarantined_best_effort(quarantined: list[Path]) -> None:
+    for sibling in quarantined:
+        try:
+            sibling.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("automatic_upgrade.discard_deferred")
+
+
+def _restore_quarantined_best_effort(
+    destination: Path, quarantined: list[Path]
+) -> None:
+    # Fallback-failure path only: the live database still carries the old
+    # bytes (or a torn copy of them), so move quarantined WAL frames back
+    # beside it best-effort. A stale-after-success raise must NOT restore:
+    # the old WAL salt mismatches the newly installed database.
+    for sibling in quarantined:
+        name = sibling.name
+        if f"{destination.name}-wal" in name:
+            suffix = "-wal"
+        elif f"{destination.name}-shm" in name:
+            suffix = "-shm"
+        else:
+            continue
+        try:
+            os.replace(sibling, Path(f"{destination}{suffix}"))
+        except OSError:
+            logger.warning("automatic_upgrade.quarantine_restore_unavailable")
+
+
+def restore_upgrade_backup(
+    settings: Settings, backup: UpgradeBackup, *, promoted: bool = False
+) -> str | None:
     database = settings.library_db_path
     config = settings.config_file_path
+    preserved: str | None = None
     if backup.database_existed:
         if backup.database is None or not backup.database.is_file():
             raise AutomaticUpgradeError("The database upgrade backup is incomplete.")
         _replace_database(backup.database, database)
+    elif promoted and _live_database_verifies(database):
+        aside = backup.directory / "preserved-promoted-library.db"
+        try:
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(f"{database}{suffix}")
+                if sidecar.exists():
+                    os.replace(sidecar, Path(f"{aside}{suffix}"))
+            os.replace(database, aside)
+        except OSError:
+            logger.warning("automatic_upgrade.promoted_preserve_failed")
+        else:
+            _fsync_directory(backup.directory)
+            preserved = str(aside)
     else:
         for suffix in ("-wal", "-shm"):
             Path(f"{database}{suffix}").unlink(missing_ok=True)
@@ -581,21 +1050,55 @@ def restore_upgrade_backup(settings: Settings, backup: UpgradeBackup) -> None:
     else:
         config.unlink(missing_ok=True)
     _discard_quarantined_sidecars(database)
+    return preserved
+
+
+def _working_copy_unpreparable(cause: BaseException | None = None) -> OSError:
+    error = OSError("The upgrade working copy could not be prepared.")
+    error.evidence = {
+        "reason": "working_copy_unpreparable",
+        "error_type": type(cause).__name__ if cause is not None else "OSError",
+    }
+    return error
 
 
 def prepare_working_copy(settings: Settings, backup: UpgradeBackup) -> Path:
     working = backup.directory / "working"
+    if working.exists():
+        shutil.rmtree(working, ignore_errors=True)
     working_cache = working / "cache"
     working_config = working / "config"
-    working_cache.mkdir(parents=True, exist_ok=False)
-    working_config.mkdir(parents=True, exist_ok=False)
-    if backup.database is not None:
-        shutil.copy2(backup.database, working_cache / "library.db")
-    if backup.config is not None:
-        shutil.copy2(backup.config, working_config / "config.json")
-    environment_file = settings.config_file_path.parent / ".env"
-    if environment_file.is_file():
-        shutil.copy2(environment_file, working_config / ".env")
+    created = False
+    for attempt in range(_PUBLISH_VERIFY_ATTEMPTS):
+        try:
+            working_cache.mkdir(parents=True, exist_ok=False)
+            working_config.mkdir(parents=True, exist_ok=False)
+            created = True
+            break
+        except FileExistsError as error:
+            # A stale tree from a crashed boot races the fresh mkdir; sweep it
+            # and retry within the verification budget.
+            shutil.rmtree(working, ignore_errors=True)
+            if attempt + 1 < _PUBLISH_VERIFY_ATTEMPTS:
+                time.sleep(_PUBLISH_VERIFY_INTERVAL_SECONDS)
+            else:
+                raise _working_copy_unpreparable(error) from error
+        except OSError as error:
+            raise _working_copy_unpreparable(error) from error
+    if not created:
+        raise _working_copy_unpreparable()
+    try:
+        if backup.database is not None:
+            shutil.copy2(backup.database, working_cache / "library.db")
+        if backup.config is not None:
+            shutil.copy2(backup.config, working_config / "config.json")
+        environment_file = settings.config_file_path.parent / ".env"
+        if environment_file.is_file():
+            shutil.copy2(environment_file, working_config / ".env")
+    except OSError as error:
+        raise _working_copy_unpreparable(error) from error
+    if backup.database is not None and not (working_cache / "library.db").is_file():
+        raise _working_copy_unpreparable()
     return working
 
 
@@ -611,11 +1114,11 @@ def _remove_working_copy(backup: UpgradeBackup) -> None:
 def promote_working_copy(settings: Settings, working: Path) -> None:
     working_database = working / "cache" / "library.db"
     working_config = working / "config" / "config.json"
-    if not working_database.is_file() or not _database_has_marker(working_database):
+    if not working_database.is_file() or not _await_marker(working_database):
         raise AutomaticUpgradeError(
             "The checked library upgrade is missing its completion marker."
         )
-    quick_check = _quick_check_failure(working_database)
+    quick_check = _await_quick_check_healthy(working_database)
     if quick_check is not None:
         raise AutomaticUpgradeError(
             "The upgraded library database failed its PRAGMA quick_check "
@@ -638,9 +1141,11 @@ def _restore_interrupted_upgrade(settings: Settings, state_path: Path) -> None:
     source_unchanged = state.get("stage") == "migrating" and state.get(
         "source_signature"
     ) == _current_signature(settings.library_db_path, settings.config_file_path)
+    promoted = state.get("stage") in {"promoting", "promoted_pending_startup"}
+    preserved: str | None = None
     if not source_unchanged:
         try:
-            restore_upgrade_backup(settings, backup)
+            preserved = restore_upgrade_backup(settings, backup, promoted=promoted)
         except (OSError, sqlite3.Error, AutomaticUpgradeError) as error:
             raise AutomaticUpgradeError(
                 "DroppedNeedle found an interrupted library upgrade but could not "
@@ -648,20 +1153,23 @@ def _restore_interrupted_upgrade(settings: Settings, state_path: Path) -> None:
                 "database."
             ) from error
     _remove_working_copy(backup)
-    _write_state(
-        state_path,
-        {
-            "format_version": 1,
-            "upgrade_id": UPGRADE_ID,
-            "stage": (
-                "interrupted_unchanged" if source_unchanged else "interrupted_restored"
-            ),
-            "backup_directory": str(backup.directory),
-            "restored_signature": _current_signature(
+    interrupted: dict[str, Any] = {
+        "format_version": 2,
+        "upgrade_id": UPGRADE_ID,
+        "stage": (
+            "interrupted_unchanged" if source_unchanged else "interrupted_restored"
+        ),
+        "backup_directory": str(backup.directory),
+        "restored_signature": {
+            **_current_signature(
                 settings.library_db_path, settings.config_file_path
             ),
+            "database_absent_before": not backup.database_existed,
         },
-    )
+    }
+    if preserved is not None:
+        interrupted["preserved_promoted_database"] = preserved
+    _write_state(state_path, interrupted)
     if source_unchanged:
         message = (
             "[upgrade] Found an interrupted upgrade; the original data is unchanged."
@@ -703,38 +1211,75 @@ def _run_working_migration(working: Path) -> dict[str, Any]:
     try:
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError) as error:
-        raise AutomaticUpgradeError(
+        unreadable = AutomaticUpgradeError(
             "The copied library database did not produce its upgrade report."
-        ) from error
+        )
+        unreadable.evidence = {
+            "reason": "evidence_unreadable",
+            "error_type": type(error).__name__,
+        }
+        raise unreadable from error
     if not isinstance(evidence, dict):
-        raise AutomaticUpgradeError("The library upgrade report is invalid.")
+        invalid = AutomaticUpgradeError("The library upgrade report is invalid.")
+        invalid.evidence = {
+            "reason": "evidence_unreadable",
+            "error_type": type(evidence).__name__,
+        }
+        raise invalid
     return evidence
 
+
+
+def _reconciliation_evidence(reconciliation: Any) -> dict[str, Any] | None:
+    """Best-effort reconciliation evidence for failure records. Tolerates the
+    live result object (callable .evidence), evidence-shaped dicts, and stubs
+    without an evidence accessor (returns None instead of raising). Never
+    raises and never interpolates error text or paths."""
+    if reconciliation is None:
+        return None
+    if isinstance(reconciliation, dict):
+        nested = reconciliation.get("evidence")
+        if isinstance(nested, dict):
+            return dict(nested)
+        return dict(reconciliation) if reconciliation else None
+    evidence_source = getattr(reconciliation, "evidence", None)
+    if not callable(evidence_source):
+        return None
+    try:
+        result = evidence_source()
+    except Exception:  # noqa: BLE001 - evidence helper never raises
+        return None
+    return dict(result) if isinstance(result, dict) else None
 
 
 def _write_unexpected_child_failure(
     error_type: str,
     reconciliation: Any,
     migrator: Any,
-) -> None:
+    *,
+    reason: str = "migration_failed",
+) -> dict[str, Any]:
     """F3/F4: unexpected child failures leave sanitized evidence carrying the
     last batch cursor and the reconciliation outcome."""
     failure: dict[str, Any] = {
-        "reason": "migration_failed",
+        "reason": reason,
         "error_type": error_type,
     }
     snapshot_source = getattr(migrator, "progress_snapshot", None)
-    snapshot = snapshot_source() if callable(snapshot_source) else None
+    try:
+        snapshot = snapshot_source() if callable(snapshot_source) else None
+    except Exception:  # noqa: BLE001 - failure writer never raises
+        snapshot = None
     if snapshot is not None:
         failure["batch_progress"] = snapshot
-    if reconciliation is not None:
-        reconciliation_evidence = reconciliation.evidence()
-        if reconciliation_evidence is not None:
-            failure["path_reconciliation"] = reconciliation_evidence
+    reconciliation_evidence = _reconciliation_evidence(reconciliation)
+    if reconciliation_evidence is not None:
+        failure["path_reconciliation"] = reconciliation_evidence
     try:
         _write_state(get_settings().cache_dir / _FAILURE_EVIDENCE_FILE, failure)
     except OSError:
         logger.error("automatic_upgrade.failure_state_write_failed")
+    return failure
 
 
 
@@ -820,7 +1365,7 @@ async def _perform_target_migration() -> dict[str, Any]:
             }
             if outcome.blocker_details:
                 failure_evidence["details"] = outcome.blocker_details
-            reconciliation_evidence = reconciliation.evidence()
+            reconciliation_evidence = _reconciliation_evidence(reconciliation)
             if reconciliation_evidence is not None:
                 failure_evidence["path_reconciliation"] = reconciliation_evidence
             _write_state(
@@ -871,7 +1416,7 @@ async def _perform_target_migration() -> dict[str, Any]:
                 "fingerprints": report.fingerprints,
                 "embedded_art_reads": report.embedded_art_reads,
             }
-            reconciliation_evidence = reconciliation.evidence()
+            reconciliation_evidence = _reconciliation_evidence(reconciliation)
             if reconciliation_evidence is not None:
                 forbidden_failure["path_reconciliation"] = reconciliation_evidence
             _write_state(
@@ -889,36 +1434,122 @@ async def _perform_target_migration() -> dict[str, Any]:
             lambda: {root.id for root in resolver.settings.library_roots},
             emit_progress=lambda message: print(f"[upgrade] {message}", flush=True),
         ).validate("cutover")
+        print("[upgrade] Working-copy migration checks passed.", flush=True)
+        settings = get_settings()
+        try:
+            provenance_counts = await store.get_migration_provenance_counts(
+                MIGRATION_ID
+            )
+        except Exception as error:
+            failure = _write_unexpected_child_failure(
+                type(error).__name__,
+                reconciliation,
+                migrator,
+                reason="provenance_unavailable",
+            )
+            provenance_error = AutomaticUpgradeError(
+                "The copied library database did not pass its upgrade checks."
+            )
+            provenance_error.evidence = failure
+            raise provenance_error from error
+        try:
+            evidence: dict[str, Any] = {
+                "source_revision": report.source_revision,
+                "root_revision": report.root_revision,
+                "reference_counts": dict(sorted(provenance_counts.items())),
+                "invariants": validation["invariants"],
+                "network_calls": report.network_calls,
+                "tag_reads": report.tag_reads,
+                "fingerprints": report.fingerprints,
+                "embedded_art_reads": report.embedded_art_reads,
+                "source_sha256": _sha256(settings.library_db_path),
+                "config_sha256": _sha256(settings.config_file_path),
+                "image_version": _image_version(),
+            }
+            if outcome.phase_timings_ms:
+                evidence["phase_timings_ms"] = outcome.phase_timings_ms
+            reconciliation_evidence = _reconciliation_evidence(reconciliation)
+            if reconciliation_evidence is not None:
+                evidence["path_reconciliation"] = reconciliation_evidence
+            if outcome.skipped_counts:
+                evidence["skipped"] = dict(outcome.skipped_counts)
+        except Exception as error:
+            failure = _write_unexpected_child_failure(
+                type(error).__name__,
+                reconciliation,
+                migrator,
+                reason="evidence_build_failed",
+            )
+            evidence_error = AutomaticUpgradeError(
+                "The copied library database did not pass its upgrade checks."
+            )
+            evidence_error.evidence = failure
+            raise evidence_error from error
+        return evidence
     except Exception as error:  # noqa: BLE001 - every child failure leaves evidence
         if not isinstance(getattr(error, "evidence", None), dict):
             _write_unexpected_child_failure(
                 type(error).__name__, reconciliation, migrator
             )
         raise
-    print("[upgrade] Working-copy migration checks passed.", flush=True)
-    settings = get_settings()
-    provenance_counts = await store.get_migration_provenance_counts(MIGRATION_ID)
-    evidence = {
-        "source_revision": report.source_revision,
-        "root_revision": report.root_revision,
-        "reference_counts": dict(sorted(provenance_counts.items())),
-        "invariants": validation["invariants"],
-        "network_calls": report.network_calls,
-        "tag_reads": report.tag_reads,
-        "fingerprints": report.fingerprints,
-        "embedded_art_reads": report.embedded_art_reads,
-        "source_sha256": _sha256(settings.library_db_path),
-        "config_sha256": _sha256(settings.config_file_path),
-        "image_version": _image_version(),
-    }
-    if outcome.phase_timings_ms:
-        evidence["phase_timings_ms"] = outcome.phase_timings_ms
-    reconciliation_evidence = reconciliation.evidence()
-    if reconciliation_evidence is not None:
-        evidence["path_reconciliation"] = reconciliation_evidence
-    if outcome.skipped_counts:
-        evidence["skipped"] = dict(outcome.skipped_counts)
-    return evidence
+
+
+def _restored_backup_is_readable(settings: Settings, backup: UpgradeBackup) -> bool:
+    """Post-restore readability gate: a restore that did not raise only counts
+    as safe when the live files verifiably match the backup (presence, marker,
+    hash, sidecar absence). No quick_check (cost/lock) and no extra sleep (the
+    file layer already spent its verification budget); None hashes mismatch."""
+    database = settings.library_db_path
+    if not backup.database_existed:
+        if _presence_of(database) != "absent":
+            return False
+        for suffix in ("-wal", "-shm"):
+            if Path(f"{database}{suffix}").exists():
+                return False
+        return True
+    if backup.database is None:
+        return False
+    if _presence_of(database) != "present":
+        return False
+    if _presence_of(backup.database) != "present":
+        return False
+    live_hash = _sha256(database)
+    backup_hash = _sha256(backup.database)
+    if live_hash is None or live_hash != backup_hash:
+        return False
+    if _database_has_marker(backup.database) and not _database_has_marker(database):
+        return False
+    for suffix in ("-wal", "-shm"):
+        if Path(f"{database}{suffix}").exists():
+            return False
+    return True
+
+
+def _write_unrestorable_state(
+    state_path: Path,
+    *,
+    image_version: str,
+    backup: UpgradeBackup,
+    restore_error_type: str,
+) -> None:
+    # F3/H3c: never leave a bare `promoting` record behind - the
+    # next boot must see that this install could not be restored.
+    try:
+        _write_state(
+            state_path,
+            {
+                "format_version": 2,
+                "upgrade_id": UPGRADE_ID,
+                "stage": "promoting",
+                "image_version": image_version,
+                "backup_directory": str(backup.directory),
+                "restore_failed": True,
+                "restore_error_type": restore_error_type,
+            },
+        )
+    except OSError:
+        logger.error("automatic_upgrade.failure_state_write_failed")
+
 
 
 def run_automatic_copy_upgrade(
@@ -932,7 +1563,7 @@ def run_automatic_copy_upgrade(
     state_path = settings.cache_dir / f"automatic-upgrade-{UPGRADE_ID}.json"
     image_version = _image_version()
     state = _read_state(state_path)
-    marker_present = _database_has_marker(database)
+    marker_present = _await_marker(database)
     if (
         state is not None
         and state.get("stage") == "completed"
@@ -945,14 +1576,14 @@ def run_automatic_copy_upgrade(
             "starting DroppedNeedle."
         )
     _restore_interrupted_upgrade(settings, state_path)
-    if _database_has_marker(database):
+    if _await_marker(database):
         return "ready"
     if _failed_attempt_matches(
         state_path,
         database=database,
         config=config,
         image_version=image_version,
-    ):
+    ) or _fresh_retry_refuses(settings, state_path, image_version):
         failure_evidence = (
             state.get("failure_evidence") if isinstance(state, dict) else None
         )
@@ -962,19 +1593,52 @@ def run_automatic_copy_upgrade(
             and failure_evidence.get("reason") is not None
             else None
         )
-        parts = [
-            "A previous attempt by this image to upgrade the library failed. "
-            "Your database and settings are unchanged."
-        ]
-        if reason is not None:
-            parts.append(f"Failure reason: {reason}.")
-        parts.append(f"More detail: {state_path}.")
-        parts.append(
-            "Switch back to your previous image to keep running, or install a "
-            "corrected image, which retries the upgrade on startup. Fixing the "
-            "failing data yourself and restarting also retries it."
-        )
-        raise AutomaticUpgradeError(" ".join(parts))
+        if (
+            isinstance(state, dict)
+            and _is_fresh_failure(settings, state)
+            and not _fresh_retry_budget_exhausted(state)
+        ):
+            # Fresh install within budget: fall through and retry the upgrade;
+            # the superseded backup below is swept to bound orphans.
+            pass
+        elif isinstance(state, dict) and _is_fresh_failure(settings, state):
+            try:
+                failure_count = int(state.get("failure_count", 0))
+            except (TypeError, ValueError):
+                failure_count = 0
+            parts = [
+                f"This image failed {failure_count} times to install its library "
+                "upgrade on a fresh install. There is no previous database to "
+                "switch back to."
+            ]
+            if reason is not None:
+                parts.append(f"Failure reason: {reason}.")
+            parts.append(f"More detail: {state_path}.")
+            parts.append(
+                "Install a corrected image, which retries the install on startup."
+            )
+            raise AutomaticUpgradeError(" ".join(parts))
+        else:
+            parts = [
+                "A previous attempt by this image to upgrade the library failed. "
+                "Your database and settings are unchanged."
+            ]
+            if reason is not None:
+                parts.append(f"Failure reason: {reason}.")
+            parts.append(f"More detail: {state_path}.")
+            parts.append(
+                "Switch back to your previous image to keep running, or install a "
+                "corrected image, which retries the upgrade on startup. Fixing the "
+                "failing data yourself and restarting also retries it."
+            )
+            raise AutomaticUpgradeError(" ".join(parts))
+    if isinstance(state, dict) and state.get("stage") == "failed":
+        try:
+            superseded = _load_upgrade_backup(settings, state.get("backup_directory"))
+        except AutomaticUpgradeError:
+            superseded = None
+        if superseded is not None and not superseded.database_existed:
+            shutil.rmtree(superseded.directory, ignore_errors=True)
 
     print(
         "[upgrade] Preparing the library for this DroppedNeedle version. "
@@ -983,18 +1647,29 @@ def run_automatic_copy_upgrade(
         flush=True,
     )
     backup: UpgradeBackup | None = None
+    prior_failures = 0
     try:
         backup = capture_upgrade_backup(settings)
         working = prepare_working_copy(settings, backup)
+        if (
+            isinstance(state, dict)
+            and state.get("stage") == "failed"
+            and state.get("image_version") == image_version
+        ):
+            try:
+                prior_failures = int(state.get("failure_count", 0))
+            except (TypeError, ValueError):
+                prior_failures = 0
         _write_state(
             state_path,
             {
-                "format_version": 1,
+                "format_version": 2,
                 "upgrade_id": UPGRADE_ID,
                 "stage": "migrating",
                 "image_version": image_version,
                 "backup_directory": str(backup.directory),
                 "source_signature": _current_signature(database, config),
+                "failure_count": prior_failures,
             },
         )
     except (OSError, sqlite3.Error) as error:
@@ -1012,70 +1687,105 @@ def run_automatic_copy_upgrade(
         _write_state(
             state_path,
             {
-                "format_version": 1,
+                "format_version": 2,
                 "upgrade_id": UPGRADE_ID,
                 "stage": "promoting",
                 "image_version": image_version,
                 "backup_directory": str(backup.directory),
+                "failure_count": prior_failures,
             },
         )
         promotion_started = True
         promote_working_copy(settings, working)
-        if not _database_has_marker(database):
+        if not _await_marker(database):
             raise AutomaticUpgradeError(
                 "The upgraded library was not installed completely."
             )
+        live_quick_check = _await_quick_check_healthy(database)
+        if live_quick_check is not None:
+            raise _WorkingMigrationError(
+                "The upgraded library database failed its PRAGMA quick_check "
+                f"integrity gate: {live_quick_check}",
+                {
+                    "reason": "live_quick_check_failed",
+                    "error_type": "_WorkingMigrationError",
+                },
+            )
         completed = {
-            "format_version": 1,
+            "format_version": 2,
             "upgrade_id": UPGRADE_ID,
             "stage": (
                 "promoted_pending_startup" if require_target_admission else "completed"
             ),
             "image_version": image_version,
             "backup_directory": str(backup.directory),
+            "failure_count": prior_failures,
             "evidence": evidence,
         }
         _write_state(state_path, completed)
     except Exception as error:  # noqa: BLE001 - all failures must leave source safe
+        preserved_promoted: str | None = None
         if promotion_started:
             try:
-                restore_upgrade_backup(settings, backup)
-            except (OSError, sqlite3.Error, AutomaticUpgradeError) as restore_error:
+                preserved_promoted = restore_upgrade_backup(
+                    settings, backup, promoted=promotion_started
+                )
+            except Exception as restore_error:  # noqa: BLE001 - every restore failure goes loud
                 logger.critical(
                     "automatic_upgrade.restore_failed",
                     extra={"error_type": type(restore_error).__name__},
                 )
-                # F3/H3c: never leave a bare `promoting` record behind - the
-                # next boot must see that this install could not be restored.
-                try:
-                    _write_state(
-                        state_path,
-                        {
-                            "format_version": 1,
-                            "upgrade_id": UPGRADE_ID,
-                            "stage": "promoting",
-                            "image_version": image_version,
-                            "backup_directory": str(backup.directory),
-                            "restore_failed": True,
-                            "restore_error_type": type(restore_error).__name__,
-                        },
-                    )
-                except OSError:
-                    logger.error("automatic_upgrade.failure_state_write_failed")
+                _write_unrestorable_state(
+                    state_path,
+                    image_version=image_version,
+                    backup=backup,
+                    restore_error_type=type(restore_error).__name__,
+                )
                 raise AutomaticUpgradeError(
                     "The library upgrade failed and its backup could not be restored. "
                     "Do not start an older image against this database."
                 ) from restore_error
+            if preserved_promoted is None and not _restored_backup_is_readable(
+                settings, backup
+            ):
+                logger.critical(
+                    "automatic_upgrade.restore_failed",
+                    extra={"error_type": "RestoreUnverifiable"},
+                )
+                _write_unrestorable_state(
+                    state_path,
+                    image_version=image_version,
+                    backup=backup,
+                    restore_error_type="RestoreUnverifiable",
+                )
+                raise AutomaticUpgradeError(
+                    "The library upgrade failed and its backup could not be restored. "
+                    "Do not start an older image against this database."
+                ) from error
         try:
-            restored_signature = _current_signature(database, config)
+            signature_database = (
+                Path(preserved_promoted)
+                if preserved_promoted is not None
+                else database
+            )
+            restored_signature = {
+                **_current_signature(signature_database, config),
+                "database_absent_before": not backup.database_existed,
+            }
         except OSError:
             # Defense-in-depth (_sha256 already swallows OSError): the live files
             # may vanish mid-failure on a flapping bind-mount; that must not mask
             # the original error or skip the state write.
             logger.warning("automatic_upgrade.failure_signature_unavailable")
-            restored_signature = {"database_sha256": None, "config_sha256": None}
+            restored_signature = {
+                "database_sha256": None,
+                "config_sha256": None,
+                "database_presence": "unreadable",
+                "config_presence": "unreadable",
+                "database_absent_before": not backup.database_existed,
+            }
         failure = {
-            "format_version": 1,
+            "format_version": 2,
             "upgrade_id": UPGRADE_ID,
             "stage": "failed",
             "image_version": image_version,
@@ -1083,6 +1793,8 @@ def run_automatic_copy_upgrade(
             "error_type": type(error).__name__,
             "error_message": str(error),
             "restored_signature": restored_signature,
+            "failure_count": prior_failures + 1,
+            "preserved_promoted_database": preserved_promoted,
         }
         failure_evidence = getattr(error, "evidence", None)
         if not isinstance(failure_evidence, dict):
@@ -1092,6 +1804,8 @@ def run_automatic_copy_upgrade(
                 "error_type": type(error).__name__,
             }
         failure["failure_evidence"] = failure_evidence
+        if preserved_promoted is not None:
+            failure["preserved_promoted_database"] = preserved_promoted
         _remove_working_copy(backup)
         try:
             _write_state(state_path, failure)
@@ -1102,6 +1816,12 @@ def run_automatic_copy_upgrade(
             type(error).__name__,
             str(error),
         )
+        if preserved_promoted is not None:
+            raise AutomaticUpgradeError(
+                "The library upgrade could not be completed. Your previous database and "
+                "settings remain in place. Your music files were not changed. The "
+                "installed database was preserved for inspection, see state."
+            ) from error
         raise AutomaticUpgradeError(
             "The library upgrade could not be completed. Your previous database and "
             "settings remain in place. Your music files were not changed."
@@ -1312,18 +2032,22 @@ def _restore_after_target_startup_failure(
     if state is None or state.get("stage") != "promoted_pending_startup":
         return
     backup = _load_upgrade_backup(settings, state.get("backup_directory"))
-    restore_upgrade_backup(settings, backup)
+    preserved = restore_upgrade_backup(settings, backup, promoted=True)
     _remove_working_copy(backup)
     failure = {
-        "format_version": 1,
+        "format_version": 2,
         "upgrade_id": UPGRADE_ID,
         "stage": "failed",
         "image_version": _image_version(),
         "backup_directory": str(backup.directory),
         "error_type": error_type,
-        "restored_signature": _current_signature(
-            settings.library_db_path, settings.config_file_path
-        ),
+        "restored_signature": {
+            **_current_signature(
+                settings.library_db_path, settings.config_file_path
+            ),
+            "database_absent_before": not backup.database_existed,
+        },
+        "preserved_promoted_database": preserved,
     }
     if failure_evidence:
         failure["failure_evidence"] = failure_evidence
@@ -1691,7 +2415,7 @@ def main() -> int:
         return 2
     try:
         state = _read_state(settings.cache_dir / f"automatic-upgrade-{UPGRADE_ID}.json")
-        needs_upgrade = not _database_has_marker(settings.library_db_path) or (
+        needs_upgrade = not _await_marker(settings.library_db_path) or (
             state is not None
             and state.get("stage")
             in {"running", "migrating", "promoting", "promoted_pending_startup"}

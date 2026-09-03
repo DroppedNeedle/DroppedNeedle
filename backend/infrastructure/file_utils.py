@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,28 @@ import aiofiles.os
 import msgspec
 
 logger = logging.getLogger(__name__)
+
+
+def _fsync_file_contents(path: Path) -> None:
+    with open(path, "rb") as handle:
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory_best_effort(directory: Path) -> None:
+    try:
+        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
 
 _file_locks: dict[str, threading.Lock] = {}
 _locks_lock = threading.Lock()
@@ -42,8 +65,10 @@ def atomic_write_json(file_path: Path, data: Any, indent: int = 2) -> None:
             with open(tmp_path, 'wb') as f:
                 f.write(msgspec.json.encode(data))
                 f.flush()
-            
+                os.fsync(f.fileno())
+
             tmp_path.replace(file_path)
+            _fsync_directory_best_effort(file_path.parent)
             logger.debug(f"Atomically wrote JSON to {file_path}")
             
         except Exception as e:
@@ -68,8 +93,11 @@ async def atomic_write_json_async(file_path: Path, data: Any, indent: int = 2) -
             content = msgspec.json.encode(data)
             async with aiofiles.open(tmp_path, 'wb') as f:
                 await f.write(content)
-            
+                await f.flush()
+            await asyncio.to_thread(_fsync_file_contents, tmp_path)
+
             await asyncio.to_thread(tmp_path.replace, file_path)
+            await asyncio.to_thread(_fsync_directory_best_effort, file_path.parent)
             logger.debug(f"Atomically wrote JSON to {file_path}")
             
         except Exception as e:
