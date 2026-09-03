@@ -245,6 +245,80 @@ def test_album_query_ladder_skips_wildcards_for_unwildcardable_artist():
     assert ladder == ["U2 Pop 1997", "U2 Pop", "U2"]
 
 
+def test_primary_artist_takes_first_comma_segment():
+    assert SlskdRepository._primary_artist("YELLOW MAGIC ORCHESTRA, 吉沢典夫") == (
+        "YELLOW MAGIC ORCHESTRA"
+    )
+    assert SlskdRepository._primary_artist("Artist") == "Artist"
+    assert SlskdRepository._primary_artist("  spaced  , other") == "spaced"
+    # empty first segment falls back to the full credit rather than blanking queries.
+    assert SlskdRepository._primary_artist(", other") == ", other"
+
+
+def test_stripped_album_title_drops_edition_and_subtitle():
+    assert (
+        SlskdRepository._stripped_album_title("Euphoria (International Edition)")
+        == "Euphoria"
+    )
+    assert (
+        SlskdRepository._stripped_album_title(
+            "Devil May Cry: Season 2 (Soundtrack from the Netflix Series)"
+        )
+        == "Devil May Cry"
+    )
+    assert SlskdRepository._stripped_album_title("Solid State Survivor") == (
+        "Solid State Survivor"
+    )
+    assert SlskdRepository._stripped_album_title("(Bonus)") == ""
+
+
+def test_album_query_ladder_queries_primary_artist_only():
+    # issue #373: the full comma-joined credit AND-zeroes the search on Soulseek.
+    ladder = SlskdRepository._album_query_ladder(
+        "YELLOW MAGIC ORCHESTRA, 吉沢典夫", "Solid State Survivor", 1979
+    )
+    assert ladder == [
+        "YELLOW MAGIC ORCHESTRA Solid State Survivor 1979",
+        "*ELLOW *AGIC *RCHESTRA Solid State Survivor 1979",
+        "YELLOW MAGIC ORCHESTRA Solid State Survivor",
+        "*ELLOW *AGIC *RCHESTRA Solid State Survivor",
+        "YELLOW MAGIC ORCHESTRA",
+        "*ELLOW *AGIC *RCHESTRA",
+    ]
+    assert all("吉沢典夫" not in query for query in ladder)
+
+
+def test_album_query_ladder_appends_edition_stripped_rungs_last():
+    ladder = SlskdRepository._album_query_ladder(
+        "Papa Roach", "Devil May Cry: Season 2 (Soundtrack from the Netflix Series)", None
+    )
+    assert ladder == [
+        "Papa Roach Devil May Cry: Season 2 Soundtrack from the Netflix Series",
+        "*apa *oach Devil May Cry: Season 2 Soundtrack from the Netflix Series",
+        "Papa Roach Devil May Cry",
+        "*apa *oach Devil May Cry",
+        "Papa Roach",
+        "*apa *oach",
+    ]
+
+
+def test_track_query_ladder_queries_primary_artist_only():
+    ladder = SlskdRepository._track_query_ladder("Artist, Featured", "Track", "Album")
+    assert ladder[0] == "Artist Track Album"
+    assert all("Featured" not in query for query in ladder)
+
+
+@pytest.mark.asyncio
+async def test_search_album_issues_primary_artist_query_first():
+    fake = _LadderFake({})
+    repo = SlskdRepository(
+        client=fake, url="u", api_key="k", downloads_mount=Path("/dl")
+    )
+    assert await repo.search_album("Artist, Featured", "Album", 2000) == []
+    assert fake.queries[0] == "Artist Album 2000"
+    assert all("Featured" not in query for query in fake.queries)
+
+
 @pytest.mark.asyncio
 async def test_search_album_stops_at_first_nonempty():
     q0 = SlskdRepository._build_album_query("Artist", "Album", 2000)

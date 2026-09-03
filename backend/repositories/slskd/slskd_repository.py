@@ -1060,9 +1060,37 @@ class SlskdRepository:
         return SlskdRepository._sanitize_query(" - ".join(parts))
 
     @staticmethod
+    def _primary_artist(artist: str) -> str:
+        """First credited artist of a joined credit string.
+
+        MusicBrainz joins multi-artist credits (``"YMO, 吉沢典夫"``) but
+        Soulseek ANDs every query word, so each extra credit is another term
+        no peer path contains. Query rungs use only the primary artist - the
+        scorer still receives the full credit, so the remote-path artist
+        auto-accept gate is unaffected."""
+        first = artist.split(",", 1)[0].strip()
+        return first if first else artist
+
+    @staticmethod
+    def _stripped_album_title(album: str) -> str:
+        """Album title without edition parentheticals or a subtitle tail.
+
+        ``Euphoria (International Edition)`` -> ``Euphoria``;
+        ``Devil May Cry: Season 2 (Soundtrack from the Netflix Series)`` ->
+        ``Devil May Cry``. Last-resort rungs only: the scorer still narrows
+        the broader result set back down."""
+        stripped = re.sub(r"\([^()]*\)", " ", album)
+        stripped = re.sub(r"\[[^\[\]]*\]", " ", stripped)
+        stripped = stripped.split(":", 1)[0]
+        return " ".join(stripped.split())
+
+    @staticmethod
     def _album_query_ladder(artist: str, album: str, year: int | None) -> list[str]:
         """Most-specific-first album queries: artist+album+year -> artist+album
-        -> artist. The broadest rung relies on the preflight scorer to narrow the
+        -> edition-stripped title rungs -> artist. Every rung queries the
+        primary credited artist only: Soulseek ANDs all terms, so a full
+        multi-artist credit zeroes albums the network holds (issue #373).
+        The broadest rungs rely on the preflight scorer to narrow the
         larger result set back down - by containment title matching, and auto-accept
         additionally requires the artist to be named in a candidate's remote path
         (title tokens alone are NOT enough: a broad rung once matched a wrong-artist
@@ -1073,29 +1101,46 @@ class SlskdRepository:
         because wildcards degrade matching on some clients; the wildcard
         sibling comes before broadening so a blocked artist still gets the
         most specific query that can return anything."""
-        wc = SlskdRepository._wildcard_artist(SlskdRepository._sanitize_query(artist))
-        return SlskdRepository._dedupe_queries(
+        primary = SlskdRepository._primary_artist(artist)
+        wc = SlskdRepository._wildcard_artist(SlskdRepository._sanitize_query(primary))
+        queries = [
+            SlskdRepository._build_album_query(primary, album, year),
+            SlskdRepository._build_album_query(wc, album, year),
+            SlskdRepository._build_album_query(primary, album, None),
+            SlskdRepository._build_album_query(wc, album, None),
+        ]
+        stripped = SlskdRepository._stripped_album_title(album)
+        if stripped and stripped != " ".join(album.split()):
+            queries.extend(
+                [
+                    SlskdRepository._build_album_query(primary, stripped, year),
+                    SlskdRepository._build_album_query(wc, stripped, year),
+                    SlskdRepository._build_album_query(primary, stripped, None),
+                    SlskdRepository._build_album_query(wc, stripped, None),
+                ]
+            )
+        queries.extend(
             [
-                SlskdRepository._build_album_query(artist, album, year),
-                SlskdRepository._build_album_query(wc, album, year),
-                SlskdRepository._build_album_query(artist, album, None),
-                SlskdRepository._build_album_query(wc, album, None),
-                SlskdRepository._sanitize_query(artist),
+                SlskdRepository._sanitize_query(primary),
                 wc,
             ]
         )
+        return SlskdRepository._dedupe_queries(queries)
 
     @staticmethod
     def _track_query_ladder(artist: str, track: str, album: str | None) -> list[str]:
         """Most-specific-first track queries: artist+track+album -> artist+track.
         Keeps the track title at every rung so the TrackMatcher can match.
+        Queries the primary credited artist only (same AND-zeroing defect as
+        ``_album_query_ladder``, issue #373).
         Wildcard blocked-artist variants interleave as in ``_album_query_ladder``."""
-        wc = SlskdRepository._wildcard_artist(SlskdRepository._sanitize_query(artist))
+        primary = SlskdRepository._primary_artist(artist)
+        wc = SlskdRepository._wildcard_artist(SlskdRepository._sanitize_query(primary))
         return SlskdRepository._dedupe_queries(
             [
-                SlskdRepository._build_track_query(artist, track, album),
+                SlskdRepository._build_track_query(primary, track, album),
                 SlskdRepository._build_track_query(wc, track, album),
-                SlskdRepository._build_track_query(artist, track, None),
+                SlskdRepository._build_track_query(primary, track, None),
                 SlskdRepository._build_track_query(wc, track, None),
             ]
         )
