@@ -643,6 +643,71 @@ def test_status_single_record_per_file_behaviour_unchanged():
     assert status.bytes_total == 100
 
 
+def test_status_truncated_succeeded_is_not_completed():
+    # #122 part 2: slskd flags a truncated transfer succeeded; a short
+    # succeeded record (25% of size) must never count as completed or land in
+    # succeeded_filenames. Terminal short -> failed so it fails over/retries.
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=Path("/dl"))
+    handle = _h("alice", ["dir/1.flac"])
+    transfers = [
+        SlskdTransfer(
+            id="1",
+            username="alice",
+            filename="dir/1.flac",
+            state="Completed, Succeeded",
+            size=100,
+            bytes_transferred=25,
+        ),
+    ]
+
+    status = repo._aggregate_status(handle, transfers)
+
+    assert status.files_completed == 0
+    assert status.succeeded_filenames == []
+    assert status.files_failed == 1
+    assert status.status == "failed"
+    # Byte totals stay sum-over-all-records even for the stub.
+    assert status.bytes_total == 100
+    assert status.bytes_downloaded == 25
+
+
+def test_status_full_bytes_succeeded_still_completes():
+    # bytes_transferred == size keeps the pre-fix verdict.
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=Path("/dl"))
+    handle = _h("alice", ["dir/1.flac"])
+    transfers = [
+        SlskdTransfer(
+            id="1",
+            username="alice",
+            filename="dir/1.flac",
+            state="Completed, Succeeded",
+            size=100,
+            bytes_transferred=100,
+        ),
+    ]
+
+    status = repo._aggregate_status(handle, transfers)
+
+    assert status.files_completed == 1
+    assert status.succeeded_filenames == ["dir/1.flac"]
+    assert status.files_failed == 0
+    assert status.status == "completed"
+
+
+def test_status_unknown_size_succeeded_fails_open():
+    # Size unknown (default 0) keeps the pre-fix verdict: flag alone decides.
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=Path("/dl"))
+    handle = _h("alice", ["dir/1.flac"])
+    transfers = [_attempt("a", "dir/1.flac", "Completed, Succeeded")]
+
+    status = repo._aggregate_status(handle, transfers)
+
+    assert status.files_completed == 1
+    assert status.succeeded_filenames == ["dir/1.flac"]
+    assert status.files_failed == 0
+    assert status.status == "completed"
+
+
 @pytest.mark.asyncio
 async def test_discard_client_artifacts_removes_matching_transfers(mock_repo):
     ref = await mock_repo.enqueue(

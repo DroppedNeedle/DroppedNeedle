@@ -1113,17 +1113,30 @@ def _build_file_processor(
     from services.native.file_processor import FileProcessor
     from services.native.recycle_bin import resolve_bin_path
 
-    from .repo_providers import get_download_client_repository, get_download_store
+    from .repo_providers import (
+        _mount_with_subpath,
+        get_download_client_repository,
+        get_download_store,
+    )
 
     policy = get_preferences_service().get_download_policy()
     settings = get_settings()
+    # Prune and locate must agree on the effective downloads root: when the mount
+    # points at a parent (e.g. the whole media share), the repository confines
+    # lookups to mount + downloads_subpath, so the importer must prune only up to
+    # that same root - never the subpath dir itself (the Unraid completed/ layout).
+    # An empty subpath resolves to the raw mount, exactly as before.
+    downloads_root = _mount_with_subpath(
+        settings.slskd_downloads_path,
+        get_preferences_service().get_download_client_settings_raw().downloads_subpath,
+    )
     return FileProcessor(
         get_audio_tagger(),
         naming_engine=get_naming_template_engine(),
         library_manager=library_manager,
         library_paths=[Path(path) for path in library_paths],
         client=get_download_client_repository(),
-        slskd_downloads_path=Path(settings.slskd_downloads_path),
+        slskd_downloads_path=downloads_root,
         fingerprinter=get_audio_fingerprinter(),
         verify_downloads=policy.verify_downloads,
         download_store=get_download_store(),

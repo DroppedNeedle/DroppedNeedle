@@ -74,6 +74,12 @@ WRONG_TRACK = "wrong_track"
 # downloads-mount path mismatch). The peer delivered fine; the fault is local, so
 # failing over to another peer hits the same wall - never blacklist the source.
 SOURCE_FILE_MISSING = "downloaded file not found on the downloads mount"
+# not a quarantine reason: the bytes on disk don't match the size slskd advertised.
+# The cheap locate paths ignore size and mutagen's MP3 duration reads the Xing
+# header (truncation-invariant), so a short file otherwise imports as if whole.
+# The shortfall is local (a partial write / stale copy), never proof the peer is
+# bad - so it must fail without blacklisting the source.
+SIZE_MISMATCH = "size_mismatch"
 
 
 class VerifyStatus:
@@ -143,7 +149,12 @@ class ProcessResult(AppStruct):
 
 
 def _workspace_disposition(failures: list[FileFailure]) -> str:
-    local_faults = {DOWNLOADS_MOUNT_UNAVAILABLE, IMPORT_FAILED, SOURCE_FILE_MISSING}
+    local_faults = {
+        DOWNLOADS_MOUNT_UNAVAILABLE,
+        IMPORT_FAILED,
+        SOURCE_FILE_MISSING,
+        SIZE_MISMATCH,
+    }
     return (
         "preserve"
         if any(value.reason in local_faults for value in failures)
@@ -1930,6 +1941,31 @@ class FileProcessor:
                 reason=SOURCE_FILE_MISSING,
                 filename=expected.filename,
             )
+        # Size gate, before the tag read: the cheap locate paths ignore size and
+        # mutagen's MP3 duration reads the Xing header (truncation-invariant), so a
+        # short file otherwise imports as if whole. A mismatch is a LOCAL fault -
+        # never quarantine the peer for our truncated copy. Fail open when the
+        # expected size is unknown (None/<=0) or the file can't be stat'ed.
+        if expected.size is not None and expected.size > 0:
+            try:
+                actual_size = source.stat().st_size
+            except OSError:
+                logger.warning(
+                    "process.size_unreadable",
+                    extra={
+                        "task_id": manifest.task_id,
+                        "file": _basename(expected.filename),
+                    },
+                )
+            else:
+                if actual_size != expected.size:
+                    raise VerificationFailed(
+                        f"Size mismatch for {expected.filename} "
+                        f"({actual_size} bytes on disk, "
+                        f"expected {expected.size})",
+                        reason=SIZE_MISMATCH,
+                        filename=expected.filename,
+                    )
 
         # mutagen is sync; wrap in to_thread, mirroring the scanner
         try:
@@ -2228,9 +2264,11 @@ class FileProcessor:
 
     def _prune_empty_source_dirs(self, source: Path) -> None:
         """Remove the now-empty folders slskd left behind after a file is moved out of
-        the downloads dir, walking up to but not including the mount root. ``rmdir``
-        only deletes empty dirs, so a half-imported album (siblings still present) is
-        left alone. Best-effort: never fails the import."""
+        the downloads dir, walking up to but not including the downloads root. The root
+        is the effective downloads dir (mount + downloads_subpath), so a subpath layout
+        (e.g. .../completed) keeps its own dir while empty album subdirs still prune.
+        ``rmdir`` only deletes empty dirs, so a half-imported album (siblings still
+        present) is left alone. Best-effort: never fails the import."""
         mount = self._slskd_downloads_path
         if mount is None:
             return

@@ -892,7 +892,11 @@ class SlskdRepository:
         """Per-file status from matched transfer records. File-level verdicts
         (completed/failed counts, succeeded_filenames, terminal states) judge
         each file ONLY by its LATEST attempt; byte totals deliberately stay
-        sum-over-all-records so cumulative progress keeps counting prior attempts."""
+        sum-over-all-records so cumulative progress keeps counting prior attempts.
+        A "succeeded" flag only counts when the transfer moved at least ``size``
+        bytes (size known positive); a short succeeded record is a truncated stub
+        (#122): failed when terminal, non-terminal when still active. Unknown or
+        non-positive sizes fail open to the flag verdict."""
         files_total = len(handle.filenames)
         # Byte totals stay sum-over-all-records (see docstring): each attempt's bytes
         # count toward cumulative progress, sizes likewise sum across retry attempts.
@@ -911,8 +915,20 @@ class SlskdRepository:
             if transfer.place_in_queue is not None and transfer.place_in_queue >= 0:
                 queue_positions.append(transfer.place_in_queue)
             if "succeeded" in flags:
-                completed += 1
-                succeeded_filenames.append(transfer.filename)
+                size = transfer.size
+                size_known = isinstance(size, (int, float)) and size > 0
+                moved = transfer.bytes_transferred
+                moved_value = moved if isinstance(moved, (int, float)) else 0
+                if size_known and moved_value < size:
+                    # Truncated stub flagged succeeded: never importable. Still
+                    # active -> stay non-terminal; terminal -> fail over/retries.
+                    if flags & {"inprogress", "initializing"}:
+                        has_active_transfer = True
+                    else:
+                        failed += 1
+                else:
+                    completed += 1
+                    succeeded_filenames.append(transfer.filename)
             elif flags & {
                 "errored",
                 "cancelled",
@@ -927,7 +943,6 @@ class SlskdRepository:
                 failed += 1
             elif flags & {"inprogress", "initializing"}:
                 has_active_transfer = True
-
         progress = (bytes_downloaded / bytes_total * 100.0) if bytes_total else 0.0
 
         # Terminal only once every enqueued file has a terminal matched transfer,

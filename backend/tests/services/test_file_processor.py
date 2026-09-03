@@ -107,6 +107,16 @@ def _place(downloads: Path, rel: str) -> None:
     shutil.copy(_FLAC, dest)
 
 
+def _sized(downloads: Path, rel: str, **kwargs) -> ExpectedFile:
+    """ExpectedFile with the real on-disk size of an already-placed stub.
+
+    The importer's size gate rejects anything else, so place (and retag) first,
+    then build the manifest with this helper. Files that are never placed keep a
+    dummy size - the gate never runs for a missing source.
+    """
+    return ExpectedFile(filename=rel, size=(downloads / rel).stat().st_size, **kwargs)
+
+
 def _write_fixture_tag(path: Path, tag: AudioTag) -> None:
     """Seed FLAC tags with raw mutagen, independent of DroppedNeedle's writer."""
     from mutagen.flac import FLAC
@@ -214,7 +224,7 @@ async def test_edition_conversion_requires_recording_fingerprint_proof(
     )
     _place(downloads, "A/track.flac")
     manifest = _manifest(
-        ExpectedFile(filename="A/track.flac", size=1),
+        _sized(downloads, "A/track.flac"),
         release_mbid="release-1",
         is_track=True,
         expected_tracks=[
@@ -267,9 +277,11 @@ def _make_processor(
     return fp, manager, client, library, downloads
 
 
-def _conversion_manifest(filename: str = "A/track.flac") -> DownloadManifest:
+def _conversion_manifest(
+    filename: str = "A/track.flac", *, size: int = 1
+) -> DownloadManifest:
     return _manifest(
-        ExpectedFile(filename=filename, size=1),
+        ExpectedFile(filename=filename, size=size),
         release_mbid="release-1",
         is_track=True,
         expected_tracks=[
@@ -305,7 +317,9 @@ async def test_process_one_conversion_accepts_later_recording_candidate(
         tmp_path, fingerprinter=fingerprinter, verify=False
     )
     _place(downloads, "A/track.flac")
-    manifest = _conversion_manifest()
+    manifest = _conversion_manifest(
+        size=(downloads / "A/track.flac").stat().st_size
+    )
 
     planned = await fp._process_one(manifest.target_files[0], manifest, set())
 
@@ -327,7 +341,9 @@ async def test_place_matched_file_conversion_accepts_later_recording_candidate(
     source = downloads / "A/track.flac"
     tag, info = AudioTagger().read_tags(source)
     candidate = _FolderCandidate(path=source, tag=tag, info=info)
-    manifest = _conversion_manifest()
+    manifest = _conversion_manifest(
+        size=(downloads / "A/track.flac").stat().st_size
+    )
 
     planned = await fp._place_matched_file(
         manifest, candidate, manifest.expected_tracks[0]
@@ -377,7 +393,9 @@ async def test_process_one_conversion_rejects_without_positive_recording_proof(
         tmp_path, fingerprinter=fingerprinter, verify=False
     )
     _place(downloads, "A/track.flac")
-    manifest = _conversion_manifest()
+    manifest = _conversion_manifest(
+        size=(downloads / "A/track.flac").stat().st_size
+    )
 
     from services.native.file_processor import VerificationFailed
 
@@ -419,8 +437,8 @@ async def test_shared_publisher_receives_complete_slskd_album_bundle(tmp_path: P
             ),
         )
     manifest = _manifest(
-        ExpectedFile(filename="A/one.flac", size=1),
-        ExpectedFile(filename="A/two.flac", size=1),
+        _sized(downloads, "A/one.flac"),
+        _sized(downloads, "A/two.flac"),
         release_mbid="release-1",
         expected_tracks=(
             ExpectedTrack(
@@ -520,7 +538,7 @@ async def test_process_downloaded_imports_and_moves(tmp_path: Path):
     fp, manager, client, library, downloads = _make_processor(tmp_path)
     _place(downloads, "Radiohead - OK Computer/01 Airbag.flac")
     manifest = _manifest(
-        ExpectedFile(filename="Radiohead - OK Computer/01 Airbag.flac", size=1)
+        _sized(downloads, "Radiohead - OK Computer/01 Airbag.flac")
     )
 
     result = await fp.process_downloaded(manifest)
@@ -545,7 +563,7 @@ async def test_process_downloaded_duration_mismatch_quarantines(tmp_path: Path):
     fp, _manager, _client, _library, downloads = _make_processor(tmp_path, verify=False)
     _place(downloads, "A/track.flac")
     # expected 500s but the fixture is a few seconds -> mismatch
-    manifest = _manifest(ExpectedFile(filename="A/track.flac", size=1, duration=500.0))
+    manifest = _manifest(_sized(downloads, "A/track.flac", duration=500.0))
 
     result = await fp.process_downloaded(manifest)
 
@@ -564,7 +582,7 @@ async def test_process_downloaded_track_duration_mismatch_is_wrong_track_not_qua
     fp, _manager, _client, _library, downloads = _make_processor(tmp_path, verify=False)
     _place(downloads, "A/track.flac")
     manifest = _manifest(
-        ExpectedFile(filename="A/track.flac", size=1, duration=500.0), is_track=True
+        _sized(downloads, "A/track.flac", duration=500.0), is_track=True
     )
 
     result = await fp.process_downloaded(manifest)
@@ -582,8 +600,8 @@ async def test_process_downloaded_only_filenames_imports_subset(tmp_path: Path):
     _place(downloads, "A/one.flac")
     _place(downloads, "A/two.flac")
     manifest = _manifest(
-        ExpectedFile(filename="A/one.flac", size=1),
-        ExpectedFile(filename="A/two.flac", size=1),
+        _sized(downloads, "A/one.flac"),
+        _sized(downloads, "A/two.flac"),
     )
 
     result = await fp.process_downloaded(manifest, only_filenames={"A/one.flac"})
@@ -598,7 +616,7 @@ async def test_process_downloaded_continue_on_failure(tmp_path: Path):
     fp, _manager, _client, library, downloads = _make_processor(tmp_path, verify=False)
     _place(downloads, "A/good.flac")
     manifest = _manifest(
-        ExpectedFile(filename="A/good.flac", size=1),
+        _sized(downloads, "A/good.flac"),
         ExpectedFile(filename="A/missing.flac", size=1),  # never placed
     )
 
@@ -632,8 +650,8 @@ async def test_process_downloaded_publication_error_fails_the_whole_unit(
     fp._publish_import_bundle = AsyncMock(side_effect=OSError("disk full"))
 
     manifest = _manifest(
-        ExpectedFile(filename="A/good.flac", size=1),
-        ExpectedFile(filename="A/bad.flac", size=1),
+        _sized(downloads, "A/good.flac"),
+        _sized(downloads, "A/bad.flac"),
     )
 
     result = await fp.process_downloaded(manifest)
@@ -678,7 +696,7 @@ async def test_process_downloaded_cross_mount_copies(tmp_path: Path, monkeypatch
 
     monkeypatch.setattr(_os, "replace", fake_replace)
 
-    manifest = _manifest(ExpectedFile(filename="A/track.flac", size=1))
+    manifest = _manifest(_sized(downloads, "A/track.flac"))
     result = await fp.process_downloaded(manifest)
 
     assert len(result.succeeded) == 1
@@ -719,7 +737,7 @@ async def test_process_downloaded_cross_mount_survives_metadata_rejection(
 
     monkeypatch.setattr(shutil, "copystat", reject_metadata)
 
-    manifest = _manifest(ExpectedFile(filename="A/track.flac", size=1))
+    manifest = _manifest(_sized(downloads, "A/track.flac"))
     result = await fp.process_downloaded(manifest)
 
     assert len(result.succeeded) == 1
@@ -734,7 +752,7 @@ async def test_process_downloaded_prunes_empty_leftover_dirs(tmp_path: Path):
     walking up nested dirs - but never the downloads mount root itself."""
     fp, _manager, _client, _library, downloads = _make_processor(tmp_path, verify=False)
     _place(downloads, "Artist - Album/CD1/track.flac")
-    manifest = _manifest(ExpectedFile(filename="Artist - Album/CD1/track.flac", size=1))
+    manifest = _manifest(_sized(downloads, "Artist - Album/CD1/track.flac"))
 
     result = await fp.process_downloaded(manifest)
 
@@ -751,7 +769,7 @@ async def test_process_downloaded_keeps_dir_with_remaining_sibling(tmp_path: Pat
     fp, _manager, _client, _library, downloads = _make_processor(tmp_path, verify=False)
     _place(downloads, "A/good.flac")
     (downloads / "A" / "cover.jpg").write_bytes(b"jpg")  # keeps the dir non-empty
-    manifest = _manifest(ExpectedFile(filename="A/good.flac", size=1))
+    manifest = _manifest(_sized(downloads, "A/good.flac"))
 
     result = await fp.process_downloaded(manifest)
 
@@ -789,7 +807,7 @@ async def test_process_downloaded_fingerprint_mismatch_on_wrong_artist(tmp_path:
         tmp_path, fingerprinter=fingerprinter, verify=True
     )
     _place(downloads, "A/track.flac")
-    manifest = _manifest(ExpectedFile(filename="A/track.flac", size=1), rg="rg-1")
+    manifest = _manifest(_sized(downloads, "A/track.flac"), rg="rg-1")
 
     result = await fp.process_downloaded(manifest)
 
@@ -816,7 +834,7 @@ async def test_process_downloaded_fingerprint_title_check_armed_for_single(
     )
     _place(downloads, "A/track.flac")
     manifest = _manifest(
-        ExpectedFile(filename="A/track.flac", size=1),
+        _sized(downloads, "A/track.flac"),
         expected_tracks=[ExpectedTrack(track_number=1, title="Airbag")],
     )
 
@@ -842,7 +860,7 @@ async def test_process_downloaded_fingerprint_title_check_skipped_without_expect
         tmp_path, fingerprinter=fingerprinter, verify=True
     )
     _place(downloads, "A/track.flac")
-    manifest = _manifest(ExpectedFile(filename="A/track.flac", size=1))
+    manifest = _manifest(_sized(downloads, "A/track.flac"))
 
     result = await fp.process_downloaded(manifest)
 
@@ -870,7 +888,7 @@ async def test_process_downloaded_fingerprint_accepts_right_artist_other_release
         tmp_path, fingerprinter=fingerprinter, verify=True
     )
     _place(downloads, "A/track.flac")
-    manifest = _manifest(ExpectedFile(filename="A/track.flac", size=1), rg="rg-1")
+    manifest = _manifest(_sized(downloads, "A/track.flac"), rg="rg-1")
 
     result = await fp.process_downloaded(manifest)
 
@@ -890,7 +908,7 @@ async def test_process_downloaded_fingerprint_failopen_when_disabled(tmp_path: P
         tmp_path, fingerprinter=fingerprinter, verify=True
     )
     _place(downloads, "A/track.flac")
-    manifest = _manifest(ExpectedFile(filename="A/track.flac", size=1))
+    manifest = _manifest(_sized(downloads, "A/track.flac"))
 
     result = await fp.process_downloaded(manifest)
 
@@ -937,12 +955,12 @@ async def test_process_downloaded_skips_duplicate_track_position(tmp_path: Path)
         )
 
     r1 = await fp.process_downloaded(
-        _manifest(ExpectedFile(filename="A/first.flac", size=1))
+        _manifest(_sized(downloads, "A/first.flac"))
     )
     assert len(r1.succeeded) == 1
 
     r2 = await fp.process_downloaded(
-        _manifest(ExpectedFile(filename="B/second.flac", size=1), task_id="t2")
+        _manifest(_sized(downloads, "B/second.flac"), task_id="t2")
     )
 
     # the duplicate position counts a success (already present) but isn't re-written
@@ -1730,7 +1748,7 @@ async def test_fingerprint_mismatch_holds_file_for_review(tmp_path: Path):
     )
     _place(downloads, "A/track.flac")
     manifest = _manifest(
-        ExpectedFile(filename="A/track.flac", size=1), task_id=task.id, rg="rg-1"
+        _sized(downloads, "A/track.flac"), task_id=task.id, rg="rg-1"
     )
 
     result = await fp.process_downloaded(manifest)
@@ -1901,6 +1919,7 @@ def _held_wired_processor(
 def _single_manifest(
     task_id,
     *,
+    file_size: int = 1,
     expected_duration=None,
     hold_on_wrong_track=False,
     canonical=None,
@@ -1918,7 +1937,7 @@ def _single_manifest(
         album_title="the arrival",
         naming_template=_TEMPLATE,
         target_files=[
-            ExpectedFile(filename="A/track.flac", size=1, duration=expected_duration)
+            ExpectedFile(filename="A/track.flac", size=file_size, duration=expected_duration)
         ],
         year=2026,
         is_track=expected_duration is not None,
@@ -1956,7 +1975,11 @@ async def test_tagged_wrong_file_held_without_acoustid(tmp_path: Path):
         album="A Knight of the Seven Kingdoms (Season 1)",
     )
 
-    result = await fp.process_downloaded(_single_manifest(task.id))
+    result = await fp.process_downloaded(
+        _single_manifest(
+            task.id, file_size=(downloads / "A/track.flac").stat().st_size
+        )
+    )
 
     assert result.succeeded == []
     assert result.failed[0].reason == "tag_mismatch"
@@ -1993,7 +2016,11 @@ async def test_automatic_management_failure_holds_acquisition_source_for_retry(
     _place(downloads, "A/track.flac")
     source = downloads / "A/track.flac"
 
-    result = await fp.process_downloaded(_single_manifest(task.id))
+    result = await fp.process_downloaded(
+        _single_manifest(
+            task.id, file_size=(downloads / "A/track.flac").stat().st_size
+        )
+    )
 
     held = await store.list_held_imports("user-a", "user")
     assert result.succeeded == []
@@ -2041,7 +2068,11 @@ async def test_management_hold_storage_failure_preserves_source_and_stops_failov
         AsyncMock(side_effect=OSError("database unavailable")),
     )
 
-    result = await fp.process_downloaded(_single_manifest(task.id))
+    result = await fp.process_downloaded(
+        _single_manifest(
+            task.id, file_size=(downloads / "A/track.flac").stat().st_size
+        )
+    )
 
     assert result.succeeded == []
     assert result.failed[0].reason == IMPORT_FAILED
@@ -2083,6 +2114,7 @@ async def test_management_hold_retry_republishes_the_secured_unit_once(
     await fp.process_downloaded(
         _single_manifest(
             task.id,
+            file_size=(downloads / "A/track.flac").stat().st_size,
             release_mbid="release-1",
             release_track_mbid="release-track-1",
         )
@@ -2123,7 +2155,7 @@ async def test_feat_credit_artist_tag_imports(tmp_path: Path):
     )
     _place(downloads, "A/track.flac")
     _retag(downloads, "A/track.flac", artist="Radiohead feat. Someone Else")
-    manifest = _manifest(ExpectedFile(filename="A/track.flac", size=1))
+    manifest = _manifest(_sized(downloads, "A/track.flac"))
 
     result = await fp.process_downloaded(manifest)
 
@@ -2156,7 +2188,7 @@ async def test_classical_composer_tag_imports(tmp_path: Path):
         artist_name="Berliner Philharmoniker",
         album_title="Beethoven: Symphony No. 9",
         naming_template=_TEMPLATE,
-        target_files=[ExpectedFile(filename="A/track.flac", size=1)],
+        target_files=[_sized(downloads, "A/track.flac")],
         expected_tracks=[
             ExpectedTrack(track_number=1, title="Symphony No. 9 in D minor, Op. 125")
         ],
@@ -2186,7 +2218,11 @@ async def test_untagged_file_never_tag_held(tmp_path: Path):
     audio.delete()
     audio.save()
 
-    result = await fp.process_downloaded(_single_manifest(task.id))
+    result = await fp.process_downloaded(
+        _single_manifest(
+            task.id, file_size=(downloads / "A/track.flac").stat().st_size
+        )
+    )
 
     assert len(result.succeeded) == 1
 
@@ -2218,7 +2254,7 @@ async def test_degraded_manifest_album_tag_conflict_held(tmp_path: Path):
         artist_name="Yan Qing",
         album_title="the arrival",
         naming_template=_TEMPLATE,
-        target_files=[ExpectedFile(filename="A/track.flac", size=1)],
+        target_files=[_sized(downloads, "A/track.flac")],
     )
 
     result = await fp.process_downloaded(manifest)
@@ -2240,7 +2276,11 @@ async def test_verify_off_skips_tag_check(tmp_path: Path):
     _place(downloads, "A/track.flac")
     _retag(downloads, "A/track.flac", title="Arrival in Ashford", artist="Dan Romer")
 
-    result = await fp.process_downloaded(_single_manifest(task.id))
+    result = await fp.process_downloaded(
+        _single_manifest(
+            task.id, file_size=(downloads / "A/track.flac").stat().st_size
+        )
+    )
 
     assert len(result.succeeded) == 1  # verification is the owner's existing toggle
 
@@ -2262,6 +2302,7 @@ async def test_repull_duration_mismatch_holds_for_review(tmp_path: Path):
     result = await fp.process_downloaded(
         _single_manifest(
             task.id,
+            file_size=(downloads / "A/track.flac").stat().st_size,
             expected_duration=155.556,
             canonical=155.556,
             hold_on_wrong_track=True,
@@ -2379,7 +2420,12 @@ async def test_ordinary_wrong_track_failover_does_not_hold(tmp_path: Path):
     _place(downloads, "A/track.flac")
 
     result = await fp.process_downloaded(
-        _single_manifest(task.id, expected_duration=155.556, canonical=155.556)
+        _single_manifest(
+            task.id,
+            file_size=(downloads / "A/track.flac").stat().st_size,
+            expected_duration=155.556,
+            canonical=155.556,
+        )
     )
 
     assert result.failed and result.failed[0].reason == WRONG_TRACK
@@ -2511,7 +2557,7 @@ async def test_wrong_squatter_does_not_swallow_correct_import(tmp_path: Path):
         artist_name="Radiohead",
         album_title="the arrival",
         naming_template=_TEMPLATE,
-        target_files=[ExpectedFile(filename="A/track.flac", size=1)],
+        target_files=[_sized(downloads, "A/track.flac")],
         expected_tracks=[ExpectedTrack(track_number=1, title="Airbag")],
     )
 
@@ -2556,7 +2602,7 @@ async def test_covering_occupant_still_dedupes(tmp_path: Path):
         artist_name="Radiohead",
         album_title="the arrival",
         naming_template=_TEMPLATE,
-        target_files=[ExpectedFile(filename="A/track.flac", size=1)],
+        target_files=[_sized(downloads, "A/track.flac")],
         expected_tracks=[
             ExpectedTrack(track_number=1, title="Airbag", duration_seconds=0.3)
         ],
@@ -2602,7 +2648,7 @@ async def test_confidence_1_0_when_recording_tag_confirms(tmp_path: Path):
         artist_name="Radiohead",
         album_title="OK Computer",
         naming_template=_TEMPLATE,
-        target_files=[ExpectedFile(filename="A/track.flac", size=1)],
+        target_files=[_sized(downloads, "A/track.flac")],
         expected_tracks=[
             ExpectedTrack(
                 track_number=1, title="Airbag", recording_mbid="rec-airbag-0001"
@@ -2634,7 +2680,7 @@ async def test_confidence_0_9_when_canonical_duration_validated(tmp_path: Path):
         album_title="the arrival",
         naming_template=_TEMPLATE,
         is_track=True,  # strict gate armed: duration IS the canonical length
-        target_files=[ExpectedFile(filename="A/track.flac", size=1, duration=0.3)],
+        target_files=[_sized(downloads, "A/track.flac", duration=0.3)],
         expected_tracks=[
             # no title (unknown) and a NON-matching recording MBID, so neither the
             # 1.0 nor the 0.8 tier can fire - the canonical duration is the evidence
@@ -2670,9 +2716,7 @@ async def test_confidence_0_8_when_title_only_agrees(tmp_path: Path):
         artist_name="Radiohead",
         album_title="OK Computer",
         naming_template=_TEMPLATE,
-        target_files=[
-            ExpectedFile(filename="A/track.flac", size=1)
-        ],  # no canonical duration
+        target_files=[_sized(downloads, "A/track.flac")],  # no canonical duration
         expected_tracks=[
             ExpectedTrack(
                 track_number=1, title="Airbag", recording_mbid="rec-a-different-one"
@@ -2705,7 +2749,7 @@ async def test_confidence_0_6_when_uncorroborated(tmp_path: Path):
         artist_name="Radiohead",
         album_title="OK Computer",
         naming_template=_TEMPLATE,
-        target_files=[ExpectedFile(filename="A/track.flac", size=1)],
+        target_files=[_sized(downloads, "A/track.flac")],
     )
 
     result = await fp.process_downloaded(manifest)
@@ -2746,3 +2790,168 @@ async def test_import_anyway_stays_full_confidence(tmp_path: Path):
     await fp.place_held_file(held)
 
     assert _row_confidence(tmp_path / "library.db", "rg-c5") == pytest.approx(1.0)
+
+
+# -- #122: truncated-import size gate + downloads-subpath prune root --
+
+
+def _place_bytes(downloads: Path, rel: str, data: bytes) -> Path:
+    dest = downloads / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    return dest
+
+
+@pytest.mark.asyncio
+async def test_truncated_file_rejected_by_size_gate(tmp_path: Path):
+    """#122: a 25%-truncated file must not import. The duration metadata lives in
+    the file header (truncation-invariant for MP3's Xing header and FLAC's
+    streaminfo) and the cheap locate paths ignore size, so the byte-size gate is
+    the backstop: correct expected.size + short file rejects with SIZE_MISMATCH,
+    which quarantines nothing and preserves the workspace."""
+    from services.native.file_processor import SIZE_MISMATCH
+
+    fp, _manager, _client, _library, downloads = _make_processor(tmp_path, verify=False)
+    full = _FLAC.read_bytes()
+    _place_bytes(downloads, "A/song.flac", full[: len(full) // 4])
+    manifest = _manifest(ExpectedFile(filename="A/song.flac", size=len(full)))
+
+    result = await fp.process_downloaded(manifest)
+
+    assert result.succeeded == []
+    assert len(result.failed) == 1
+    assert result.failed[0].reason == SIZE_MISMATCH
+    assert SIZE_MISMATCH not in QUARANTINE_REASONS  # never blacklist the peer
+    assert result.workspace_disposition == "preserve"
+    assert (downloads / "A/song.flac").exists()  # failed imports keep the source
+
+
+@pytest.mark.asyncio
+async def test_full_size_file_passes_size_gate(tmp_path: Path):
+    fp, manager, _client, _library, downloads = _make_processor(tmp_path, verify=False)
+    full = _FLAC.read_bytes()
+    _place_bytes(downloads, "A/song.flac", full)
+    manifest = _manifest(ExpectedFile(filename="A/song.flac", size=len(full)))
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1
+    assert result.failed == []
+    assert await manager.has_album("rg-1") is True
+
+
+@pytest.mark.asyncio
+async def test_size_gate_fails_open_on_unknown_size(tmp_path: Path):
+    """size<=0 means 'unknown' (older manifests): the gate is skipped, import proceeds."""
+    fp, manager, _client, _library, downloads = _make_processor(tmp_path, verify=False)
+    full = _FLAC.read_bytes()
+    _place_bytes(downloads, "A/song.flac", full)
+    manifest = _manifest(ExpectedFile(filename="A/song.flac", size=0))
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1
+    assert result.failed == []
+
+
+@pytest.mark.asyncio
+async def test_size_gate_fails_open_when_stat_fails(tmp_path: Path, monkeypatch):
+    """A transient stat error must not fail the import - log and carry on."""
+    fp, manager, _client, _library, downloads = _make_processor(tmp_path, verify=False)
+    full = _FLAC.read_bytes()
+    target = _place_bytes(downloads, "A/song.flac", full)
+    manifest = _manifest(ExpectedFile(filename="A/song.flac", size=len(full)))
+
+    real_stat = Path.stat
+    calls = {"n": 0}
+
+    def _flaky_stat(self, *args, **kwargs):
+        # only the gate's bare source.stat() fails, once: exists()/is_dir() probe
+        # via stat(follow_symlinks=...) and the tagger's own bare stat() (for
+        # file_size_bytes) must keep working, as in production. The gate runs
+        # before the tag read, so the first bare stat is always the gate's.
+        if self == target and "follow_symlinks" not in kwargs and calls["n"] == 0:
+            calls["n"] += 1
+            raise OSError("transient IO error")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _flaky_stat)
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1
+    assert result.failed == []
+
+
+@pytest.mark.asyncio
+async def test_prune_preserves_downloads_subpath_root(tmp_path: Path):
+    """#122 Unraid layout: mount=media/, slskd writes into media/completed/. Once the
+    album folder empties, the empty album dirs still prune but completed/ itself -
+    the effective downloads root - must survive."""
+    effective = tmp_path / "media" / "completed"
+    fp, _manager, _client, _library, downloads = _make_processor(
+        tmp_path, downloads=effective, verify=False
+    )
+    assert downloads == effective
+    _place(downloads, "Album/track.flac")
+    manifest = _manifest(_sized(downloads, "Album/track.flac"))
+
+    result = await fp.process_downloaded(manifest)
+
+    assert len(result.succeeded) == 1
+    assert not (effective / "Album").exists()  # empty album dir still prunes
+    assert effective.exists()  # ...but the subpath root itself survives
+    assert (tmp_path / "media").exists()
+
+
+def test_build_file_processor_resolves_downloads_subpath(tmp_path, monkeypatch):
+    """#122: the importer must prune under the same effective root the repository
+    uses (mount + downloads_subpath), not the raw mount - otherwise an emptied
+    completed/ dir is itself removed. Empty subpath keeps the raw mount."""
+    import core.config as _config
+    import core.dependencies.repo_providers as _repos
+    import core.dependencies.service_providers as _providers
+    from types import SimpleNamespace
+
+    from api.v1.schemas.settings import (
+        DownloadClientConnectionSettings,
+        DownloadPolicySettings,
+    )
+
+    mount = tmp_path / "media"
+    mount.mkdir()
+    prefs = MagicMock()
+    prefs.get_download_policy.return_value = DownloadPolicySettings()
+    prefs.get_download_client_settings_raw.return_value = (
+        DownloadClientConnectionSettings(downloads_subpath="completed")
+    )
+    settings = SimpleNamespace(
+        slskd_downloads_path=mount, cache_dir=tmp_path / "cache"
+    )
+    monkeypatch.setattr(_providers, "get_audio_tagger", lambda: MagicMock())
+    monkeypatch.setattr(_providers, "get_audio_fingerprinter", lambda: MagicMock())
+    monkeypatch.setattr(_repos, "get_download_client_repository", lambda: MagicMock())
+    monkeypatch.setattr(_repos, "get_download_store", lambda: MagicMock())
+    monkeypatch.setattr(_providers, "get_preferences_service", lambda: prefs)
+    monkeypatch.setattr(_config, "get_settings", lambda: settings)
+
+    fp = _providers._build_file_processor(MagicMock(), [tmp_path / "lib"])
+
+    assert fp._slskd_downloads_path == mount / "completed"
+
+    prefs.get_download_client_settings_raw.return_value = (
+        DownloadClientConnectionSettings(downloads_subpath="")
+    )
+
+    fp = _providers._build_file_processor(MagicMock(), [tmp_path / "lib"])
+
+    assert fp._slskd_downloads_path == mount
+
+    # defence in depth: ".." components can never escape the mount
+    prefs.get_download_client_settings_raw.return_value = (
+        DownloadClientConnectionSettings(downloads_subpath="../../etc")
+    )
+
+    fp = _providers._build_file_processor(MagicMock(), [tmp_path / "lib"])
+
+    assert fp._slskd_downloads_path == mount / "etc"
