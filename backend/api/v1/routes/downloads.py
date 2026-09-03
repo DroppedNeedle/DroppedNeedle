@@ -32,9 +32,13 @@ from api.v1.schemas.download import (
     DownloadListResponse,
     DownloadTaskResponse,
     HeldActionResponse,
+    HeldBulkReverifyItem,
+    HeldBulkReverifyRequest,
+    HeldBulkReverifyResponse,
     HeldImportResponse,
     HeldListResponse,
     HeldManagementActionResponse,
+    HeldReverifyResponse,
     NextSourceRequest,
     NextSourceResponse,
     ReimportDownloadResponse,
@@ -391,6 +395,7 @@ def _held_to_response(held) -> HeldImportResponse:  # noqa: ANN001 - HeldImport
         original_filename=held.original_filename,
         file_format=held.file_format,
         duration_seconds=held.duration_seconds,
+        expected_duration_seconds=held.expected_duration_seconds,
         reason=held.reason,
         reason_detail=held.reason_detail,
         source=held.source,
@@ -539,6 +544,34 @@ async def discard_held(
     """Delete a held track's file and let the album's auto-retry resume."""
     await service.discard_held(held_id, current_user.id, current_user.role)
     return HeldActionResponse(status="discarded")
+
+
+@router.post("/held/reverify", response_model=HeldBulkReverifyResponse)
+async def reverify_held_bulk(
+    current_user: CurrentUserDep,
+    body: HeldBulkReverifyRequest = MsgSpecBody(HeldBulkReverifyRequest),
+    service=Depends(get_download_service),
+):
+    """Re-run the fingerprint identity check over held tracks (admin/owner-scoped,
+    capped): confirmed tracks import through the same path as "import anyway",
+    the rest stay held. One id's failure never stops the sweep."""
+    results = await service.reverify_held_bulk(
+        current_user.id, current_user.role, body.held_ids
+    )
+    return HeldBulkReverifyResponse(
+        results=[HeldBulkReverifyItem(**item) for item in results]
+    )
+
+
+@router.post("/held/{held_id}/reverify", response_model=HeldReverifyResponse)
+async def reverify_held(
+    held_id: int, current_user: CurrentUserDep, service=Depends(get_download_service)
+):
+    """Re-run the fingerprint identity check on one held file (admin/owner)."""
+    status, final_path = await service.reverify_held(
+        held_id, current_user.id, current_user.role
+    )
+    return HeldReverifyResponse(status=status, final_path=final_path)
 
 
 _AUDIO_MEDIA_TYPES = {

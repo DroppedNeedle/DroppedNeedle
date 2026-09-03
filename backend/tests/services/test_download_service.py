@@ -1091,6 +1091,7 @@ async def _record_held(
     store,
     path,
     *,
+    user_id="user-a",
     task_id="t-1",
     reason="fingerprint_mismatch",
     origin="user",
@@ -1102,7 +1103,7 @@ async def _record_held(
     management_next_retry_at=None,
 ):
     return await store.record_held_import(
-        user_id="user-a",
+        user_id=user_id,
         held_path=str(path),
         reason=reason,
         origin=origin,
@@ -1187,6 +1188,383 @@ async def test_import_held_places_and_resolves(tmp_path):
     assert await store.has_unresolved_held_for_task("t-1") is False
     # the source task is re-measured so a completed album stops showing a phantom retry
     svc._orchestrator.settle_after_manual_import.assert_awaited_once_with("t-1")
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_confirmed_imports_through_settle_path(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    held_file = tmp_path / "held" / "x.flac"
+    held_file.parent.mkdir()
+    held_file.write_bytes(b"audio")
+    hid = await _record_held(store, held_file)
+    fp = MagicMock()
+    fp.reverify_held_file = AsyncMock(return_value="confirmed")
+    fp.place_held_file = AsyncMock(
+        return_value=Path("/music/Led Zeppelin/03 You Shook Me.flac")
+    )
+    reconciler = MagicMock()
+    reconciler.reconcile_with_filesystem = AsyncMock()
+    svc = _held_service(store, fp, reconciler)
+
+    status, final_path = await svc.reverify_held(hid, "user-a", "user")
+
+    assert status == "imported"
+    assert final_path.endswith("03 You Shook Me.flac")
+    fp.reverify_held_file.assert_awaited_once()
+    fp.place_held_file.assert_awaited_once()
+    reconciler.reconcile_with_filesystem.assert_awaited_once_with(
+        targets=[Path("/music/Led Zeppelin")]
+    )
+    svc._orchestrator.settle_after_manual_import.assert_awaited_once_with("t-1")
+    assert await store.list_held_imports("user-a", "user") == []
+    assert _ordinary_held_action_locks == {}
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_still_held_keeps_row_and_file(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    held_file = tmp_path / "held" / "x.flac"
+    held_file.parent.mkdir()
+    held_file.write_bytes(b"audio")
+    hid = await _record_held(store, held_file)
+    fp = MagicMock()
+    fp.reverify_held_file = AsyncMock(return_value="still_held")
+    svc = _held_service(store, fp)
+
+    assert await svc.reverify_held(hid, "user-a", "user") == ("still_held", None)
+
+    fp.place_held_file.assert_not_called()
+    assert held_file.exists()
+    held = await store.get_held_import(hid, "user-a", "user")
+    assert held is not None and held.status == "held"
+    assert _ordinary_held_action_locks == {}
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_missing_file_discards_row(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    held_file = tmp_path / "held" / "x.flac"
+    held_file.parent.mkdir()
+    held_file.write_bytes(b"audio")
+    hid = await _record_held(store, held_file)
+    fp = MagicMock()
+    fp.reverify_held_file = AsyncMock(side_effect=FileNotFoundError(str(held_file)))
+    svc = _held_service(store, fp)
+
+    with pytest.raises(ValidationError, match="no longer available"):
+        await svc.reverify_held(hid, "user-a", "user")
+
+    assert await store.list_held_imports("user-a", "user") == []
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_owner_admin_matrix(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    held_file = tmp_path / "held" / "x.flac"
+    held_file.parent.mkdir()
+    held_file.write_bytes(b"audio")
+    hid = await _record_held(store, held_file)
+    fp = MagicMock()
+    fp.reverify_held_file = AsyncMock(return_value="still_held")
+    svc = _held_service(store, fp)
+
+    with pytest.raises(ResourceNotFoundError):
+        await svc.reverify_held(hid, "user-b", "user")
+    assert await svc.reverify_held(hid, "user-a", "user") == ("still_held", None)
+    assert await svc.reverify_held(hid, "admin-1", "admin") == ("still_held", None)
+    assert fp.reverify_held_file.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_only_verifies_fingerprint_holds(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    held_file = tmp_path / "held" / "x.flac"
+    held_file.parent.mkdir()
+    held_file.write_bytes(b"audio")
+    management_id = await _record_held(
+        store, held_file, reason="management:PROFILE_CHANGED", track_number=4
+    )
+    assert management_id is not None
+    tag_path = tmp_path / "held" / "tag.flac"
+    tag_path.write_bytes(b"audio")
+    tag_id = await _record_held(store, tag_path, reason="tag_mismatch", track_number=6)
+    assert tag_id is not None
+    wrong_path = tmp_path / "held" / "wrong.flac"
+    wrong_path.write_bytes(b"audio")
+    wrong_id = await _record_held(
+        store, wrong_path, reason="wrong_track", track_number=7
+    )
+    assert wrong_id is not None
+    conversion_path = tmp_path / "held" / "y.flac"
+    conversion_path.write_bytes(b"audio")
+    conversion_id = await _record_held(
+        store, conversion_path, origin="edition_conversion", track_number=5
+    )
+    assert conversion_id is not None
+    fp = MagicMock()
+    svc = _held_service(store, fp)
+
+    # a tag-vetoed file whose AcoustID agrees must NOT import here: the normal
+    # path would still reject it on the tag veto, so reverify refuses outright.
+    with pytest.raises(ValidationError, match="Only fingerprint-held tracks"):
+        await svc.reverify_held(management_id, "user-a", "user")
+    with pytest.raises(ValidationError, match="Only fingerprint-held tracks"):
+        await svc.reverify_held(tag_id, "user-a", "user")
+    with pytest.raises(ValidationError, match="Only fingerprint-held tracks"):
+        await svc.reverify_held(wrong_id, "user-a", "user")
+    with pytest.raises(ValidationError, match="dedicated edition conversion workflow"):
+        await svc.reverify_held(conversion_id, "user-a", "user")
+    fp.reverify_held_file.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_without_processor_is_503_safe(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    held_file = tmp_path / "held" / "x.flac"
+    held_file.parent.mkdir()
+    held_file.write_bytes(b"audio")
+    hid = await _record_held(store, held_file)
+    svc = _held_service(store, None)
+
+    with pytest.raises(ConfigurationError, match="unavailable"):
+        await svc.reverify_held(hid, "user-a", "user")
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_bulk_reports_per_id_results(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    (tmp_path / "held").mkdir()
+    first = tmp_path / "held" / "a.flac"
+    first.write_bytes(b"audio")
+    first_id = await _record_held(store, first, track_number=1)
+    second = tmp_path / "held" / "b.flac"
+    second.write_bytes(b"audio")
+    second_id = await _record_held(store, second, track_number=2)
+    third = tmp_path / "held" / "c.flac"
+    third.write_bytes(b"audio")
+    third_id = await _record_held(
+        store, third, track_number=3, reason="management:PROFILE_CHANGED"
+    )
+    fp = MagicMock()
+    fp.reverify_held_file = AsyncMock(return_value="still_held")
+    fp.place_held_file = AsyncMock(return_value=Path("/music/x.flac"))
+    svc = _held_service(store, fp)
+
+    results = await svc.reverify_held_bulk("user-a", "user")
+
+    by_id = {item["held_id"]: item for item in results}
+    assert by_id[first_id]["status"] == "still_held"
+    assert by_id[second_id]["status"] == "still_held"
+    assert by_id[third_id]["status"] == "skipped"
+
+    scoped = await svc.reverify_held_bulk("user-a", "user", held_ids=[first_id])
+    assert [item["held_id"] for item in scoped] == [first_id]
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_bulk_skips_tag_mismatch_hold(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    (tmp_path / "held").mkdir()
+    fingerprinted = tmp_path / "held" / "a.flac"
+    fingerprinted.write_bytes(b"audio")
+    fingerprinted_id = await _record_held(store, fingerprinted, track_number=1)
+    tagged = tmp_path / "held" / "b.flac"
+    tagged.write_bytes(b"audio")
+    tagged_id = await _record_held(
+        store, tagged, track_number=2, reason="tag_mismatch"
+    )
+    fp = MagicMock()
+    fp.reverify_held_file = AsyncMock(return_value="still_held")
+    svc = _held_service(store, fp)
+
+    results = await svc.reverify_held_bulk("user-a", "user")
+
+    by_id = {item["held_id"]: item for item in results}
+    assert by_id[fingerprinted_id]["status"] == "still_held"
+    assert by_id[tagged_id]["status"] == "skipped"
+    assert fp.reverify_held_file.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_bulk_reports_single_error_row_on_unexpected_failure(
+    tmp_path,
+):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    (tmp_path / "held").mkdir()
+    ids = []
+    for index in range(3):
+        path = tmp_path / "held" / f"{index}.flac"
+        path.write_bytes(b"audio")
+        ids.append(await _record_held(store, path, track_number=10 + index))
+    svc = _held_service(store, MagicMock())
+
+    async def _boom(held_id, user_id, user_role):
+        if held_id == ids[1]:
+            raise RuntimeError("boom")
+        return ("still_held", None)
+
+    svc.reverify_held = AsyncMock(side_effect=_boom)
+
+    results = await svc.reverify_held_bulk("user-a", "user", held_ids=ids)
+
+    # exactly one row per requested id, in request order - the bad id reports a
+    # single error row (no fall-through second row reusing stale values).
+    assert [item["held_id"] for item in results] == ids
+    assert results[0]["status"] == "still_held"
+    assert results[2]["status"] == "still_held"
+    assert results[1] == {
+        "held_id": ids[1],
+        "status": "error",
+        "final_path": None,
+        "release_group_mbid": "rg-1",
+        "message": "Re-check failed",
+    }
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_bulk_scopes_to_caller(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    (tmp_path / "held").mkdir()
+    mine = tmp_path / "held" / "mine.flac"
+    mine.write_bytes(b"audio")
+    mine_id = await _record_held(store, mine, track_number=1, user_id="user-b")
+    theirs = tmp_path / "held" / "theirs.flac"
+    theirs.write_bytes(b"audio")
+    await _record_held(store, theirs, track_number=2, user_id="user-a")
+    fp = MagicMock()
+    fp.reverify_held_file = AsyncMock(return_value="still_held")
+    svc = _held_service(store, fp)
+
+    results = await svc.reverify_held_bulk("user-b", "user")
+
+    assert [item["held_id"] for item in results] == [mine_id]
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_bulk_is_capped(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+    from services.native.download_service import HELD_REVERIFY_BULK_LIMIT
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    (tmp_path / "held").mkdir()
+    for index in range(HELD_REVERIFY_BULK_LIMIT + 5):
+        path = tmp_path / "held" / f"{index}.flac"
+        path.write_bytes(b"audio")
+        await _record_held(store, path, track_number=100 + index)
+    fp = MagicMock()
+    fp.reverify_held_file = AsyncMock(return_value="still_held")
+    svc = _held_service(store, fp)
+
+    results = await svc.reverify_held_bulk("user-a", "user")
+
+    assert len(results) == HELD_REVERIFY_BULK_LIMIT
+    assert fp.reverify_held_file.await_count == HELD_REVERIFY_BULK_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_bulk_skips_do_not_consume_cap(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+    from services.native.download_service import HELD_REVERIFY_BULK_LIMIT
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    (tmp_path / "held").mkdir()
+    for index in range(HELD_REVERIFY_BULK_LIMIT + 5):
+        path = tmp_path / "held" / f"{index}.flac"
+        path.write_bytes(b"audio")
+        await _record_held(store, path, track_number=100 + index)
+    # skipped rows sort newest-first ahead of the checks below: they report
+    # without consuming the sweep budget, then the cap still allows 25 checks.
+    for index in range(5):
+        path = tmp_path / "held" / f"mgmt-{index}.flac"
+        path.write_bytes(b"audio")
+        await _record_held(
+            store, path, track_number=200 + index, reason="management:PROFILE_CHANGED"
+        )
+    fp = MagicMock()
+    fp.reverify_held_file = AsyncMock(return_value="still_held")
+    svc = _held_service(store, fp)
+
+    results = await svc.reverify_held_bulk("user-a", "user")
+
+    statuses = [item["status"] for item in results]
+    assert statuses.count("skipped") == 5
+    assert fp.reverify_held_file.await_count == HELD_REVERIFY_BULK_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_bulk_continues_past_single_failure(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    (tmp_path / "held").mkdir()
+    gone = tmp_path / "held" / "gone.flac"
+    gone.write_bytes(b"audio")
+    gone_id = await _record_held(store, gone, track_number=1)
+    gone.unlink()
+    kept = tmp_path / "held" / "kept.flac"
+    kept.write_bytes(b"audio")
+    kept_id = await _record_held(store, kept, track_number=2)
+    fp = MagicMock()
+
+    async def _verdict(held):
+        if held.id == gone_id:
+            raise FileNotFoundError(held.held_path)
+        return "still_held"
+
+    fp.reverify_held_file = AsyncMock(side_effect=_verdict)
+    svc = _held_service(store, fp)
+
+    results = await svc.reverify_held_bulk("user-a", "user")
+
+    by_id = {item["held_id"]: item for item in results}
+    assert by_id[gone_id]["status"] == "error"
+    assert by_id[kept_id]["status"] == "still_held"
 
 
 @pytest.mark.asyncio

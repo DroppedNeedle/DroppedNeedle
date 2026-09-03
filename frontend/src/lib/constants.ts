@@ -830,6 +830,8 @@ export const API = {
 		},
 		heldImport: (id: number) => `/api/v1/downloads/held/${id}/import`,
 		heldDiscard: (id: number) => `/api/v1/downloads/held/${id}/discard`,
+		heldReverify: (id: number) => `/api/v1/downloads/held/${id}/reverify`,
+		heldReverifyBulk: () => '/api/v1/downloads/held/reverify',
 		heldManagementRetry: (taskId: string) => `/api/v1/downloads/held/management/${taskId}/retry`,
 		heldManagementDiscard: (taskId: string) =>
 			`/api/v1/downloads/held/management/${taskId}/discard`,

@@ -9,35 +9,43 @@
 </script>
 
 <script lang="ts">
-	import { Check, Pause, Play, X } from 'lucide-svelte';
+	import { Check, Pause, Play, RotateCcw, X } from 'lucide-svelte';
 
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { API } from '$lib/constants';
 	import {
 		discardHeldTrack,
-		importHeldTrack
+		importHeldTrack,
+		reverifyHeldTrack,
+		type HeldReverifyResponse
 	} from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { formatCountdown } from '$lib/queries/downloads/downloadStatus';
 	import type { HeldImport } from '$lib/types';
 
-	let { held }: { held: HeldImport } = $props();
+	interface Props {
+		held: HeldImport;
+	}
+
+	let { held }: Props = $props();
 
 	const importMut = importHeldTrack();
 	const discardMut = discardHeldTrack();
+	const reverifyMut = reverifyHeldTrack();
 	// latch once resolved: the card stays mounted until the held query refetches, so
 	// without this a fast second click re-POSTs an already-consumed held id
 	let done = $state(false);
-	const busy = $derived(importMut.isPending || discardMut.isPending || done);
+	const busy = $derived(
+		importMut.isPending || discardMut.isPending || reverifyMut.isPending || done
+	);
 	// server-side failure reason (e.g. no library root configured) shown inline so the
 	// review card itself says what to fix - the toast alone disappears too fast
 	const actionError = $derived.by(() => {
-		const err = importMut.error ?? discardMut.error;
+		const err = importMut.error ?? discardMut.error ?? reverifyMut.error;
 		if (!err) return null;
 		return typeof err === 'object' && 'message' in err && typeof err.message === 'string'
 			? err.message
 			: null;
 	});
-
 	// what the rejecting check SAW - the reason we couldn't auto-confirm it, so the human
 	// decides informed. The evidence source depends on the hold reason: AcoustID's
 	// identification (fingerprint_mismatch), the file's own tags (tag_mismatch), or the
@@ -66,6 +74,8 @@
 	let mediaDuration = $state(0); // the audio element's real duration, once it loads
 	// show the metadata duration up front, swap to the media's own once known
 	const total = $derived(mediaDuration || held.duration_seconds || 0);
+	// expected recording length for the file-vs-expected comparison (null on legacy rows)
+	const expectedLength = $derived(held.expected_duration_seconds);
 	let failed = $state(false);
 
 	function ensureSource(): void {
@@ -95,6 +105,12 @@
 	}
 
 	const fmt = (s: number) => formatCountdown(Number.isFinite(s) ? s : 0);
+
+	// a confident re-check imports through the same settle path as "import anyway",
+	// consuming the row - latch it so a fast second click can't re-POST the id
+	function handleReverifySuccess(data: HeldReverifyResponse): void {
+		if (data.status === 'imported') done = true;
+	}
 </script>
 
 <div class="space-y-2">
@@ -102,6 +118,11 @@
 		Downloaded, but couldn't confirm it's the right recording.{#if evidence}
 			{evidence}.{/if}
 	</p>
+	{#if expectedLength != null && total > 0}
+		<p class="text-[11px] tabular-nums text-base-content/50">
+			File length {fmt(total)} · expected {fmt(expectedLength)}
+		</p>
+	{/if}
 
 	<div class="flex items-center gap-2">
 		<button
@@ -174,6 +195,22 @@
 			title="Delete this file and keep looking"
 		>
 			<X class="h-3.5 w-3.5" /> Discard
+		</button>
+		<button
+			class="btn btn-ghost btn-xs"
+			onclick={() =>
+				reverifyMut.mutate(
+					{ id: held.id, release_group_mbid: held.release_group_mbid },
+					{ onSuccess: handleReverifySuccess }
+				)}
+			disabled={busy}
+			title="Run the fingerprint check again. Confident matches import automatically"
+		>
+			{#if reverifyMut.isPending}
+				<span class="loading loading-spinner loading-xs" aria-hidden="true"></span> Checking...
+			{:else}
+				<RotateCcw class="h-3.5 w-3.5" /> Re-check
+			{/if}
 		</button>
 	</div>
 	{#if actionError}

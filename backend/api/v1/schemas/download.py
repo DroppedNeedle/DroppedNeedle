@@ -276,6 +276,7 @@ class HeldImportResponse(AppStruct):
     evidence_score: float | None = None
     management_retry_count: int = 0
     management_next_retry_at: float | None = None
+    expected_duration_seconds: float | None = None
 
 
 class HeldListResponse(AppStruct):
@@ -290,6 +291,37 @@ class HeldActionResponse(AppStruct):
 class HeldManagementActionResponse(AppStruct):
     status: str
     files: int
+
+
+class HeldReverifyResponse(AppStruct):
+    """Result of re-running the fingerprint identity check on one held file: a
+    confident result that no longer disagrees imports through the same
+    settle/reconcile path as "import anyway", anything else stays held."""
+
+    status: Literal["imported", "still_held"]
+    final_path: str | None = None
+
+
+class HeldBulkReverifyRequest(AppStruct):
+    """Re-check held tracks in bulk. ``held_ids`` scopes the run (in request
+    order); omitted means every held track the caller may see, newest first.
+    Either way at most 25 ids run per request."""
+
+    held_ids: list[int] | None = None
+
+
+class HeldBulkReverifyItem(AppStruct):
+    """Per-id bulk outcome: "imported" | "still_held" | "skipped" | "error"."""
+
+    held_id: int
+    status: Literal["imported", "still_held", "skipped", "error"]
+    final_path: str | None = None
+    release_group_mbid: str | None = None
+    message: str | None = None
+
+
+class HeldBulkReverifyResponse(AppStruct):
+    results: list[HeldBulkReverifyItem]
 
 
 class DownloadListResponse(AppStruct):

@@ -8,7 +8,9 @@ const h = vi.hoisted(() => ({
 	items: [] as DownloadTask[],
 	quarantine: [] as unknown[],
 	held: [] as unknown[],
-	isAdmin: false
+	isAdmin: false,
+	reverifySingleMut: vi.fn(),
+	reverifyBulkMut: vi.fn()
 }));
 
 vi.mock('$lib/queries/downloads/HeldQueries.svelte', () => ({
@@ -51,6 +53,8 @@ vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 	retryAllFailed: () => ({ mutate: vi.fn(), isPending: false }),
 	importHeldTrack: () => ({ mutate: vi.fn(), isPending: false }),
 	discardHeldTrack: () => ({ mutate: vi.fn(), isPending: false }),
+	reverifyHeldTrack: () => ({ mutate: h.reverifySingleMut, isPending: false }),
+	reverifyHeldBulk: () => ({ mutate: h.reverifyBulkMut, isPending: false }),
 	retryHeldManagementUnit: () => ({ mutate: vi.fn(), isPending: false }),
 	discardHeldManagementUnit: () => ({ mutate: vi.fn(), isPending: false }),
 	reimportDownload: () => ({ mutate: vi.fn(), isPending: false }),
@@ -66,6 +70,7 @@ vi.mock('$lib/queries/downloads/DownloadSSE.svelte', () => ({
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
+	LAST_USER_ID_KEY: 'test:last-user',
 	authStore: {
 		get isAdmin() {
 			return h.isAdmin;
@@ -148,6 +153,8 @@ describe('DownloadQueue.svelte', () => {
 		h.quarantine = [];
 		h.held = [];
 		h.isAdmin = false;
+		h.reverifySingleMut.mockReset();
+		h.reverifyBulkMut.mockReset();
 	});
 
 	it('shows the empty turntable state when there are no downloads', async () => {
@@ -245,6 +252,7 @@ describe('DownloadQueue.svelte', () => {
 				original_filename: 'x.flac',
 				file_format: 'flac',
 				duration_seconds: 388,
+				expected_duration_seconds: 390,
 				reason: 'fingerprint_mismatch',
 				reason_detail: null,
 				source: 'usenet',
@@ -290,6 +298,7 @@ describe('DownloadQueue.svelte', () => {
 			original_filename: `${track}.flac`,
 			file_format: 'flac',
 			duration_seconds: 200,
+			expected_duration_seconds: null,
 			reason: 'management:PROFILE_CHANGED',
 			reason_detail: 'The active profile changed during preparation.',
 			source: 'soulseek',
@@ -315,5 +324,108 @@ describe('DownloadQueue.svelte', () => {
 		await expect
 			.element(page.getByRole('button', { name: 'Retry download' }))
 			.not.toBeInTheDocument();
+	});
+
+	it('re-checks every visible verification hold on "Re-check all"', async () => {
+		h.held = [
+			{
+				id: 1,
+				release_group_mbid: 'rg-1',
+				release_mbid: null,
+				release_track_mbid: null,
+				recording_mbid: 'rec-3',
+				track_number: 3,
+				disc_number: 1,
+				track_title: 'You Shook Me',
+				artist_name: 'Led Zeppelin',
+				album_title: 'Led Zeppelin',
+				year: 1969,
+				original_filename: 'x.flac',
+				file_format: 'flac',
+				duration_seconds: 388,
+				expected_duration_seconds: 390,
+				reason: 'fingerprint_mismatch',
+				reason_detail: null,
+				source: 'usenet',
+				source_task_id: 't',
+				created_at: 0,
+				evidence_title: "Nobody's Fault but Mine",
+				evidence_artist: 'Led Zeppelin',
+				evidence_score: 0.99,
+				management_retry_count: 0,
+				management_next_retry_at: null
+			},
+			{
+				id: 2,
+				release_group_mbid: 'rg',
+				release_mbid: null,
+				release_track_mbid: null,
+				recording_mbid: 'rec-2',
+				track_number: 2,
+				disc_number: 1,
+				track_title: 'Track 2',
+				artist_name: 'Radiohead',
+				album_title: 'OK Computer',
+				year: 1997,
+				original_filename: '2.flac',
+				file_format: 'flac',
+				duration_seconds: 200,
+				expected_duration_seconds: null,
+				reason: 'management:PROFILE_CHANGED',
+				reason_detail: 'The active profile changed during preparation.',
+				source: 'soulseek',
+				source_task_id: 'managed-task',
+				created_at: 2,
+				evidence_title: null,
+				evidence_artist: null,
+				evidence_score: null,
+				management_retry_count: 0,
+				management_next_retry_at: null
+			}
+		];
+		render(DownloadQueue);
+		await page.getByRole('button', { name: 'Re-check all' }).click();
+		// only the verification hold is swept; the organizer hold keeps its own retry path
+		expect(h.reverifyBulkMut).toHaveBeenCalledWith({ held_ids: [1] });
+		expect(h.reverifySingleMut).not.toHaveBeenCalled();
+	});
+
+	it('re-checks one hold from its card without sweeping the queue', async () => {
+		h.held = [
+			{
+				id: 1,
+				release_group_mbid: 'rg-1',
+				release_mbid: null,
+				release_track_mbid: null,
+				recording_mbid: 'rec-3',
+				track_number: 3,
+				disc_number: 1,
+				track_title: 'You Shook Me',
+				artist_name: 'Led Zeppelin',
+				album_title: 'Led Zeppelin',
+				year: 1969,
+				original_filename: 'x.flac',
+				file_format: 'flac',
+				duration_seconds: 388,
+				expected_duration_seconds: 390,
+				reason: 'fingerprint_mismatch',
+				reason_detail: null,
+				source: 'usenet',
+				source_task_id: 't',
+				created_at: 0,
+				evidence_title: "Nobody's Fault but Mine",
+				evidence_artist: 'Led Zeppelin',
+				evidence_score: 0.99,
+				management_retry_count: 0,
+				management_next_retry_at: null
+			}
+		];
+		render(DownloadQueue);
+		await page.getByRole('button', { name: 'Re-check', exact: true }).click();
+		expect(h.reverifySingleMut).toHaveBeenCalledWith(
+			{ id: 1, release_group_mbid: 'rg-1' },
+			expect.objectContaining({ onSuccess: expect.any(Function) })
+		);
+		expect(h.reverifyBulkMut).not.toHaveBeenCalled();
 	});
 });

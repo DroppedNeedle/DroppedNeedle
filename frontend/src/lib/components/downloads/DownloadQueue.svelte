@@ -6,6 +6,7 @@
 	import {
 		clearFinished,
 		retryAllFailed,
+		reverifyHeldBulk,
 		stopAllRetries
 	} from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { getDownloadsQuery } from '$lib/queries/downloads/DownloadQueries.svelte';
@@ -28,6 +29,7 @@
 	const held = $derived(heldQuery.data?.items ?? []);
 	const managementHeld = $derived(held.filter((item) => item.reason.startsWith('management:')));
 	const verificationHeld = $derived(held.filter((item) => !item.reason.startsWith('management:')));
+	const verificationHeldIds = $derived(verificationHeld.map((item) => item.id));
 	const managementGroups = $derived.by(() => {
 		const groups = new SvelteMap<string, typeof managementHeld>();
 		for (const item of managementHeld) {
@@ -44,6 +46,7 @@
 	const clear = clearFinished();
 	const stopAll = stopAllRetries();
 	const retryAll = retryAllFailed();
+	const reverifyBulk = reverifyHeldBulk();
 
 	// collapse auto-retry chains so each album is one row (latest attempt), then group into
 	// the dashboard's stacked sections
@@ -175,14 +178,26 @@
 				</div>
 			</section>
 		{/if}
-
-		<!-- COULDN'T VERIFY (held for "import anyway" review) -->
 		{#if verificationHeld.length > 0}
 			<section class="space-y-3">
-				<h2 class="dl-eyebrow">
-					Couldn't verify <span class="text-base-content/35">· your call</span>
-					<span class="dl-count">{verificationHeld.length}</span>
-				</h2>
+				<div class="flex items-center justify-between gap-2">
+					<h2 class="dl-eyebrow">
+						Couldn't verify <span class="text-base-content/35">· your call</span>
+						<span class="dl-count">{verificationHeld.length}</span>
+					</h2>
+					<button
+						class="btn btn-ghost btn-primary btn-xs"
+						onclick={() => reverifyBulk.mutate({ held_ids: verificationHeldIds })}
+						disabled={reverifyBulk.isPending}
+						title="Run the fingerprint check again on these tracks. Confident matches import automatically"
+					>
+						{#if reverifyBulk.isPending}
+							<span class="loading loading-spinner loading-xs" aria-hidden="true"></span> Checking...
+						{:else}
+							<RotateCcw class="h-3.5 w-3.5" /> Re-check all
+						{/if}
+					</button>
+				</div>
 				<div class="space-y-3">
 					{#each verificationHeld as item (item.id)}
 						<HeldTrackCard held={item} />

@@ -7,7 +7,8 @@ const downloadMutations = vi.hoisted(() => ({ requestMutate: vi.fn() }));
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 	requestTrack: () => ({ mutate: downloadMutations.requestMutate, isPending: false }),
 	importHeldTrack: () => ({ mutate: vi.fn(), isPending: false }),
-	discardHeldTrack: () => ({ mutate: vi.fn(), isPending: false })
+	discardHeldTrack: () => ({ mutate: vi.fn(), isPending: false }),
+	reverifyHeldTrack: () => ({ mutate: vi.fn(), isPending: false })
 }));
 
 // the per-track upgrade affordance's mutation hook (QueryClient-dependent)
@@ -18,6 +19,7 @@ vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
 // role gates the upgrade affordance (admin/trusted curators only, D18)
 const auth = vi.hoisted(() => ({ role: 'user' }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
+	LAST_USER_ID_KEY: 'test:last-user',
 	authStore: {
 		get isAdmin() {
 			return auth.role === 'admin';
@@ -81,6 +83,7 @@ function heldFor(recording_mbid: string): HeldImport {
 		original_filename: 'x.flac',
 		file_format: 'flac',
 		duration_seconds: 100,
+		expected_duration_seconds: 100,
 		reason: 'fingerprint_mismatch',
 		reason_detail: null,
 		source: 'usenet',

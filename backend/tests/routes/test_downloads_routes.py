@@ -511,6 +511,110 @@ def test_list_held_returns_durable_management_retry_schedule():
     assert response.json()["items"][0]["management_next_retry_at"] == 1234.0
 
 
+def test_list_held_exposes_expected_duration():
+    service = AsyncMock()
+    item = msgspec.structs.replace(_held("/held/track.flac"), expected_duration_seconds=390.0)
+    service.list_held.return_value = [item]
+
+    response = build_test_client(_app(service)).get("/downloads/held")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["expected_duration_seconds"] == 390.0
+
+
+def test_list_held_exposes_null_expected_duration_for_legacy_rows():
+    service = AsyncMock()
+    service.list_held.return_value = [_held("/held/track.flac")]
+
+    response = build_test_client(_app(service)).get("/downloads/held")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["expected_duration_seconds"] is None
+
+
+def test_reverify_held_imports_through_service_verdict():
+    service = AsyncMock()
+    service.reverify_held.return_value = ("imported", "/music/track.flac")
+
+    response = build_test_client(_app(service)).post("/downloads/held/1/reverify")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "imported", "final_path": "/music/track.flac"}
+    service.reverify_held.assert_awaited_once_with(1, "u1", "user")
+
+
+def test_reverify_held_reports_still_held():
+    service = AsyncMock()
+    service.reverify_held.return_value = ("still_held", None)
+
+    response = build_test_client(_app(service)).post("/downloads/held/1/reverify")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "still_held", "final_path": None}
+
+
+def test_reverify_held_unknown_id_is_404():
+    service = AsyncMock()
+    service.reverify_held.side_effect = ResourceNotFoundError("Held track not found")
+
+    response = build_test_client(_app(service)).post("/downloads/held/1/reverify")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_reverify_held_management_hold_is_400():
+    service = AsyncMock()
+    service.reverify_held.side_effect = ValidationError(
+        "Library Management holds must be retried as one complete acquisition unit"
+    )
+
+    response = build_test_client(_app(service)).post("/downloads/held/1/reverify")
+
+    assert response.status_code == 400
+
+
+def test_reverify_held_bulk_returns_per_id_results():
+    service = AsyncMock()
+    service.reverify_held_bulk.return_value = [
+        {"held_id": 1, "status": "imported", "final_path": "/music/a.flac", "message": None},
+        {"held_id": 2, "status": "still_held", "final_path": None, "message": None},
+        {
+            "held_id": 3,
+            "status": "skipped",
+            "final_path": None,
+            "message": "Only fingerprint-held tracks can be re-checked",
+        },
+    ]
+
+    response = build_test_client(_app(service)).post(
+        "/downloads/held/reverify", json={}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["held_id"] for item in body["results"]] == [1, 2, 3]
+    assert [item["status"] for item in body["results"]] == [
+        "imported",
+        "still_held",
+        "skipped",
+    ]
+    service.reverify_held_bulk.assert_awaited_once_with("u1", "user", None)
+
+
+def test_reverify_held_bulk_forwards_held_ids():
+    service = AsyncMock()
+    service.reverify_held_bulk.return_value = []
+
+    response = build_test_client(_app(service)).post(
+        "/downloads/held/reverify", json={"held_ids": [1, 2]}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"results": []}
+    service.reverify_held_bulk.assert_awaited_once_with("u1", "user", [1, 2])
+
+
 def test_retry_management_hold_returns_album_level_result():
     service = AsyncMock()
     service.retry_management_hold.return_value = ["/music/a.flac", "/music/b.flac"]

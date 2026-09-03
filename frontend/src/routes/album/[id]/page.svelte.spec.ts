@@ -157,6 +157,7 @@ vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 	requestTrack: () => ({ mutate: vi.fn(), isPending: false }),
 	importHeldTrack: () => ({ mutate: vi.fn(), isPending: false }),
 	discardHeldTrack: () => ({ mutate: vi.fn(), isPending: false }),
+	reverifyHeldTrack: () => ({ mutate: vi.fn(), isPending: false }),
 	requestAlbum: () => ({
 		mutateAsync: vi.fn().mockResolvedValue({ success: true }),
 		isPending: false
@@ -796,6 +797,7 @@ describe('album detail page track rendering', () => {
 				original_filename: `${track}.flac`,
 				file_format: 'flac',
 				duration_seconds: 200,
+				expected_duration_seconds: null,
 				reason: 'management:BUNDLE_BLOCKED',
 				reason_detail:
 					'The durable publication evidence no longer agrees with its journal. Nothing was overwritten.',

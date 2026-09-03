@@ -1271,6 +1271,317 @@ def test_fingerprint_title_veto_precedes_exact_recording_match():
     assert _fingerprint_disagrees(fp, track, "Requested Artist")
 
 
+def test_fingerprint_conflict_passes_when_lengths_agree():
+    # Slice 2: a length-consistent file (the max(15s, 10%) gate) with a
+    # conflicting AcoustID mapping is NOT held on the fingerprint alone.
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+
+    track = ExpectedTrack(
+        track_number=9, title="How Many More Times", duration_seconds=508.0
+    )
+    fp = _fp(title="Kashmir", artist="Led Zeppelin")
+    assert (
+        _fingerprint_disagrees(
+            fp,
+            track,
+            "Led Zeppelin",
+            file_duration_seconds=510.0,
+            expected_duration_seconds=508.0,
+        )
+        is False
+    )
+
+
+def test_fingerprint_conflict_holds_when_lengths_diverge():
+    # Slice 2: length-divergent + fingerprint-conflicting still holds.
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+
+    track = ExpectedTrack(
+        track_number=9, title="How Many More Times", duration_seconds=508.0
+    )
+    fp = _fp(title="Kashmir", artist="Led Zeppelin")
+    assert (
+        _fingerprint_disagrees(
+            fp,
+            track,
+            "Led Zeppelin",
+            file_duration_seconds=200.0,
+            expected_duration_seconds=508.0,
+        )
+        is True
+    )
+
+
+def test_fingerprint_non_pass_stays_fail_open_with_divergent_lengths():
+    # Slice 2: a non-pass result never rejects, even when the lengths disagree.
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+
+    track = ExpectedTrack(track_number=1, title="Anything", duration_seconds=300.0)
+    assert (
+        _fingerprint_disagrees(
+            _fp(status="error"),
+            track,
+            "Artist",
+            file_duration_seconds=60.0,
+            expected_duration_seconds=300.0,
+        )
+        is False
+    )
+
+
+def test_fingerprint_candidate_accept_survives_divergent_lengths():
+    # Slice 2: candidate-set accept is preserved regardless of the lengths.
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+
+    track = ExpectedTrack(
+        track_number=1,
+        title="Compilation Song",
+        recording_mbid="recording-wanted",
+        duration_seconds=300.0,
+    )
+    fp = _fp(
+        title="Compilation Song",
+        artist="Different Display Artist",
+        recording_id="recording-other",
+        recording_ids=["recording-other", "recording-wanted"],
+    )
+    assert (
+        _fingerprint_disagrees(
+            fp,
+            track,
+            "Requested Artist",
+            file_duration_seconds=60.0,
+            expected_duration_seconds=300.0,
+        )
+        is False
+    )
+
+
+def test_fingerprint_recording_mismatch_weighed_by_length():
+    # Slice 2: an absent expected recording rejects only when the lengths diverge.
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+
+    track = ExpectedTrack(
+        track_number=1,
+        title="Compilation Song",
+        recording_mbid="recording-wanted",
+        duration_seconds=300.0,
+    )
+    fp = _fp(
+        title="Compilation Song",
+        artist="Specific Band",
+        recording_id="recording-other",
+        recording_ids=["recording-other"],
+    )
+    assert (
+        _fingerprint_disagrees(
+            fp,
+            track,
+            "Various Artists",
+            file_duration_seconds=60.0,
+            expected_duration_seconds=300.0,
+        )
+        is True
+    )
+    assert (
+        _fingerprint_disagrees(
+            fp,
+            track,
+            "Various Artists",
+            file_duration_seconds=298.0,
+            expected_duration_seconds=300.0,
+        )
+        is False
+    )
+
+
+def test_fingerprint_unknown_lengths_keep_legacy_rule():
+    # Slice 2: without lengths on both sides the pre-existing rule stands.
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+
+    track = ExpectedTrack(track_number=9, title="How Many More Times")
+    assert _fingerprint_disagrees(
+        _fp(title="Kashmir", artist="Led Zeppelin"), track, "Led Zeppelin"
+    )
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("KASHMIR", "Kashmir"),  # case fold
+        ("Don't Stop!", "dont stop"),  # punctuation fold
+        ("[Explicit] Song", "Song"),  # bracketed prefix
+        ("(Bonus) Song", "Song"),  # bracketed prefix
+        ("Song (feat. Guest)", "Song"),  # featuring credit
+        ("Mötley Crüe", "Motley Crue"),  # accent fold
+    ],
+)
+def test_recording_title_normaliser_folds_same_recording(first, second):
+    from services.native.title_match import normalize_recording_title
+
+    assert normalize_recording_title(first) == normalize_recording_title(second)
+
+
+def test_recording_title_normaliser_keeps_remix_marker():
+    from services.native.title_match import normalize_recording_title
+
+    assert "remix" in normalize_recording_title("Higher Love (Kygo Remix)")
+
+
+def test_fingerprint_passes_censored_spelling_variant():
+    # Slice 3: a censored AcoustID spelling of the same recording never vetoes.
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+
+    track = ExpectedTrack(track_number=1, title="Fuck You")
+    fp = _fp(title="F**k You", artist="CeeLo Green")
+    assert _fingerprint_disagrees(fp, track, "CeeLo Green") is False
+
+
+def test_fingerprint_passes_bracketed_prefix_variant():
+    # Slice 3: a leading bracketed marker on the AcoustID side never vetoes.
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+
+    track = ExpectedTrack(track_number=1, title="Song Title")
+    fp = _fp(title="[Explicit] Song Title", artist="Some Artist")
+    assert _fingerprint_disagrees(fp, track, "Some Artist") is False
+
+
+def test_fingerprint_artist_check_is_case_insensitive():
+    # Slice 3: the artist gate compares the normalized form.
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+
+    track = ExpectedTrack(track_number=1, title="Kashmir")
+    fp = _fp(title="Kashmir", artist="LED ZEPPELIN")
+    assert _fingerprint_disagrees(fp, track, "Led Zeppelin") is False
+
+
+def test_fingerprint_still_holds_wrong_song_and_artist():
+    # Slice 3: no regression - a genuinely different song/artist still holds.
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+
+    track = ExpectedTrack(track_number=9, title="How Many More Times")
+    assert _fingerprint_disagrees(
+        _fp(title="Kashmir", artist="Led Zeppelin"), track, "Led Zeppelin"
+    )
+    assert _fingerprint_disagrees(
+        _fp(title="How Many More Times", artist="Someone Else"),
+        track,
+        "Led Zeppelin",
+    )
+
+
+def test_title_vetoes_pin_boundary_score_50(tmp_path):
+    # The <= 50 re-pin is load-bearing: normalisation lands "Clearly Different
+    # Song" vs "Requested Song" on exactly 50.0 (raw scored 44.4), and all three
+    # title vetoes must still fire there.
+    from types import SimpleNamespace
+
+    from rapidfuzz import fuzz
+
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import (
+        _fingerprint_disagrees,
+        _tag_conflict_reason,
+        _title_conflicts,
+    )
+    from services.native.title_match import normalize_recording_title
+
+    assert (
+        fuzz.token_set_ratio(
+            normalize_recording_title("Clearly Different Song"),
+            normalize_recording_title("Requested Song"),
+        )
+        == 50.0
+    )
+    track = ExpectedTrack(track_number=1, title="Requested Song")
+    assert (
+        _fingerprint_disagrees(
+            _fp(title="Clearly Different Song", artist="Requested Artist"),
+            track,
+            "Requested Artist",
+        )
+        is True
+    )
+    cand = _cand(
+        tmp_path, filename="01.flac", title="Clearly Different Song", dur=200.0
+    )
+    assert _title_conflicts(cand, track) is True
+    manifest = SimpleNamespace(artist_name="Led Zeppelin", album_title="Led Zeppelin")
+    assert (
+        _tag_conflict_reason(
+            cand.tag,
+            cand.info,
+            manifest,
+            ExpectedTrack(
+                track_number=1, title="Requested Song", duration_seconds=200.0
+            ),
+        )
+        == "tag_mismatch"
+    )
+
+
+def test_artist_gate_pins_boundary_score_55():
+    # The artist gate stays strict-< 55: a pair scoring exactly 55.0 (constructed
+    # boundary pair - token_set_ratio lands on 55.0) does NOT veto, while a
+    # below-55 pair still does. Titles agree throughout to isolate the gate.
+    from rapidfuzz import fuzz
+
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _fingerprint_disagrees
+    from services.native.title_match import normalize_recording_title
+
+    assert (
+        fuzz.token_set_ratio(
+            normalize_recording_title("abcdefghijklmnopqrst"),
+            normalize_recording_title("abcdefghijkzzzzzzzzz"),
+        )
+        == 55.0
+    )
+    track = ExpectedTrack(track_number=1, title="Same Song")
+    assert (
+        _fingerprint_disagrees(
+            _fp(title="Same Song", artist="abcdefghijklmnopqrst"),
+            track,
+            "abcdefghijkzzzzzzzzz",
+        )
+        is False
+    )
+    assert (
+        _fingerprint_disagrees(
+            _fp(title="Same Song", artist="zepp"),
+            ExpectedTrack(track_number=1, title="Same Song"),
+            "Led Zeppelin",
+        )
+        is True
+    )
+
+
+def test_tag_veto_ignores_bracket_only_title(tmp_path):
+    # A TITLE tag holding only a content marker ("[Explicit]") names nothing -
+    # it must not veto, mirroring the folder path's untagged bail-out.
+    from types import SimpleNamespace
+
+    from models.download_manifest import ExpectedTrack
+    from services.native.file_processor import _tag_conflict_reason
+
+    cand = _cand(tmp_path, filename="01.flac", title="[Explicit]", dur=200.0)
+    manifest = SimpleNamespace(artist_name="Led Zeppelin", album_title="Led Zeppelin")
+    track = ExpectedTrack(
+        track_number=1, title="Requested Song", duration_seconds=200.0
+    )
+    assert _tag_conflict_reason(cand.tag, cand.info, manifest, track) is None
+
+
 @pytest.mark.parametrize(
     ("fingerprint_recording_id", "expected_recording_id"),
     [
@@ -1964,6 +2275,94 @@ async def test_repull_duration_mismatch_holds_for_review(tmp_path: Path):
     assert held[0].reason == WRONG_TRACK
     assert held[0].track_title == "the arrival"
     assert held[0].recording_mbid == "rec-180ceef5"
+    assert held[0].expected_duration_seconds == 155.556
+
+
+def _held_row(held_path: Path, **overrides):
+    from models.held_import import HeldImport
+
+    base = dict(
+        id=1,
+        user_id="user-a",
+        held_path=str(held_path),
+        reason="fingerprint_mismatch",
+        source="usenet",
+        status="held",
+        created_at=0.0,
+        track_title="Airbag",
+        artist_name="Radiohead",
+        track_number=1,
+        disc_number=1,
+    )
+    base.update(overrides)
+    return HeldImport(**base)
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_file_confirms_agreeing_result(tmp_path: Path):
+    from models.audio import FingerprintResult
+
+    fingerprinter = MagicMock()
+    fingerprinter.fingerprint = AsyncMock(
+        return_value=FingerprintResult(
+            status="pass", score=0.95, artist="Radiohead", title="Airbag"
+        )
+    )
+    fp, _store, _manager, _downloads = _held_wired_processor(
+        tmp_path, fingerprinter=fingerprinter
+    )
+    held_path = tmp_path / "held" / "x.flac"
+    held_path.parent.mkdir()
+    shutil.copy(_FLAC, held_path)
+
+    assert await fp.reverify_held_file(_held_row(held_path)) == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_file_holds_disagreeing_result(tmp_path: Path):
+    from models.audio import FingerprintResult
+
+    fingerprinter = MagicMock()
+    fingerprinter.fingerprint = AsyncMock(
+        return_value=FingerprintResult(
+            status="pass", score=0.99, artist="Coldplay", title="Yellow"
+        )
+    )
+    fp, _store, _manager, _downloads = _held_wired_processor(
+        tmp_path, fingerprinter=fingerprinter
+    )
+    held_path = tmp_path / "held" / "x.flac"
+    held_path.parent.mkdir()
+    shutil.copy(_FLAC, held_path)
+
+    assert await fp.reverify_held_file(_held_row(held_path)) == "still_held"
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_file_stays_held_without_verdict(tmp_path: Path):
+    from models.audio import FingerprintResult
+
+    fingerprinter = MagicMock()
+    fingerprinter.fingerprint = AsyncMock(return_value=FingerprintResult(status="error"))
+    fp, _store, _manager, _downloads = _held_wired_processor(
+        tmp_path, fingerprinter=fingerprinter
+    )
+    held_path = tmp_path / "held" / "x.flac"
+    held_path.parent.mkdir()
+    shutil.copy(_FLAC, held_path)
+    # an inconclusive result is not a confirmation - the file stays in review
+    assert await fp.reverify_held_file(_held_row(held_path)) == "still_held"
+    # without a fingerprinter wired there is no verdict either
+    fp._fingerprinter = None
+    assert await fp.reverify_held_file(_held_row(held_path)) == "still_held"
+
+
+@pytest.mark.asyncio
+async def test_reverify_held_file_missing_copy_raises(tmp_path: Path):
+    fp, _store, _manager, _downloads = _held_wired_processor(tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        await fp.reverify_held_file(_held_row(tmp_path / "held" / "gone.flac"))
 
 
 @pytest.mark.asyncio

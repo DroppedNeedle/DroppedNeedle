@@ -79,6 +79,7 @@ def test_migration_is_idempotent(tmp_path: Path):
         "management_retry_count",
         "management_next_retry_at",
         "file_cleanup_completed_at",
+        "expected_duration_seconds",
     } <= held_columns
     assert activity_tables == {
         "download_activity_global_revision",
@@ -945,6 +946,24 @@ async def test_held_import_record_list_get_ownership(store):
     assert (
         await store.list_held_imports("user-a", "user", release_group_mbid="rg-x") == []
     )
+
+
+@pytest.mark.asyncio
+async def test_held_import_expected_duration_round_trips(store):
+    hid = await store.record_held_import(
+        **_held_kwargs(expected_duration_seconds=390.0)
+    )
+    got = await store.get_held_import(hid, "user-a", "user")
+    assert got is not None and got.expected_duration_seconds == 390.0
+    listed = await store.list_held_imports("user-a", "user")
+    assert listed[0].expected_duration_seconds == 390.0
+
+
+@pytest.mark.asyncio
+async def test_held_import_expected_duration_defaults_null_for_legacy(store):
+    hid = await store.record_held_import(**_held_kwargs())
+    got = await store.get_held_import(hid, "user-a", "user")
+    assert got is not None and got.expected_duration_seconds is None
 
 
 @pytest.mark.asyncio

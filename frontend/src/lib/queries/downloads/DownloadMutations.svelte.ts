@@ -408,6 +408,92 @@ export function discardHeldTrack() {
 	}));
 }
 
+// Re-run the fingerprint identity check on one held file. A confident result that no
+// longer disagrees imports through the same settle path as "import anyway"; anything
+// else stays held. invalidateTasks covers the held prefix nested under tasks; only an
+// import places a track, so the album key refreshes solely on 'imported'.
+export interface HeldReverifyResponse {
+	status: 'imported' | 'still_held';
+	final_path: string | null;
+}
+
+export function reverifyHeldTrack() {
+	return createMutation(() => ({
+		mutationFn: (input: HeldActionInput) =>
+			api.global.post<HeldReverifyResponse>(API.downloads.heldReverify(input.id), {}),
+		onSuccess: (data: HeldReverifyResponse, input: HeldActionInput) => {
+			if (data.status === 'imported') {
+				toastStore.show({ message: 'Re-check confirmed it: imported', type: 'success' });
+				invalidateAlbum(input.release_group_mbid);
+			} else {
+				toastStore.show({ message: 'Still held after re-check', type: 'info' });
+			}
+			void invalidateTasks();
+			void invalidateQueriesWithPersister({
+				queryKey: DownloadQueryKeyFactory.heldPrefix(authStore.user?.id)
+			});
+		},
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'Failed to re-check track'), type: 'error' })
+	}));
+}
+
+export interface HeldBulkReverifyItem {
+	held_id: number;
+	status: 'imported' | 'still_held' | 'skipped' | 'error';
+	final_path: string | null;
+	release_group_mbid: string | null;
+	message: string | null;
+}
+
+export interface HeldBulkReverifyResponse {
+	results: HeldBulkReverifyItem[];
+}
+
+export interface HeldBulkReverifyInput {
+	held_ids?: number[] | null;
+}
+
+// Re-check held tracks in bulk. held_ids scopes the run (omitted sweeps everything the
+// caller may see); the 25-id cap is enforced server-side, so ids pass through untouched.
+export function reverifyHeldBulk() {
+	return createMutation(() => ({
+		mutationFn: (input: HeldBulkReverifyInput) =>
+			api.global.post<HeldBulkReverifyResponse>(API.downloads.heldReverifyBulk(), {
+				held_ids: input.held_ids ?? null
+			}),
+		onSuccess: (data: HeldBulkReverifyResponse) => {
+			const imported = data.results.filter((r) => r.status === 'imported');
+			const stillHeld = data.results.filter((r) => r.status === 'still_held').length;
+			const skipped = data.results.filter((r) => r.status === 'skipped').length;
+			const failed = data.results.length - imported.length - stillHeld - skipped;
+			if (data.results.length === 0) {
+				toastStore.show({ message: 'Nothing to re-check', type: 'info' });
+			} else {
+				const parts = [
+					imported.length > 0 ? `${imported.length} imported` : null,
+					stillHeld > 0 ? `${stillHeld} still held` : null,
+					skipped > 0 ? `${skipped} skipped` : null,
+					failed > 0 ? `${failed} failed` : null
+				].filter((p): p is string => p !== null);
+				toastStore.show({
+					message: `Re-checked ${data.results.length}: ${parts.join(', ')}`,
+					type: imported.length > 0 ? 'success' : 'info'
+				});
+			}
+			void invalidateTasks();
+			void invalidateQueriesWithPersister({
+				queryKey: DownloadQueryKeyFactory.heldPrefix(authStore.user?.id)
+			});
+			for (const item of imported) {
+				invalidateAlbum(item.release_group_mbid);
+			}
+		},
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'Failed to re-check tracks'), type: 'error' })
+	}));
+}
+
 interface HeldManagementActionInput {
 	taskId: string;
 	releaseGroupMbid?: string | null;

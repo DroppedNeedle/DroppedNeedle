@@ -74,6 +74,9 @@ _EDITION_CONVERSION_HELD_ACTION_MESSAGE = (
     "dedicated edition conversion workflow."
 )
 
+# A bulk held re-check never sweeps more than this many ids in one request.
+HELD_REVERIFY_BULK_LIMIT = 25
+
 _LOSSLESS = {"flac", "alac", "wav", "ape", "wv"}
 
 # Provider rebuilds create new DownloadService instances, so ordinary held actions
@@ -1606,6 +1609,123 @@ class DownloadService:
             "download.held_discarded",
             extra={"held_id": held_id, "release_group_mbid": held.release_group_mbid},
         )
+
+    async def reverify_held(
+        self, held_id: int, user_id: str, user_role: str
+    ) -> tuple[str, str | None]:
+        """Re-run the fingerprint identity check on one fingerprint-held file, under
+        its per-id action lock. Returns ``(status, final_path)``: ``"imported"``
+        (with the placed path) when a confident result no longer disagrees -
+        through the same settle/reconcile path as "import anyway" - else
+        ``"still_held"``. Non-fingerprint holds are rejected outright: only a
+        ``fingerprint_mismatch`` hold can be fingerprint-verified."""
+        async with self._held_action(held_id):
+            return await self._reverify_held_locked(held_id, user_id, user_role)
+
+    async def _reverify_held_locked(
+        self, held_id: int, user_id: str, user_role: str
+    ) -> tuple[str, str | None]:
+        held = await self._store.get_held_import(held_id, user_id, user_role)
+        if held is None:
+            raise ResourceNotFoundError("Held track not found")
+        if held.origin == "edition_conversion":
+            raise ValidationError(_EDITION_CONVERSION_HELD_ACTION_MESSAGE)
+        if held.reason != "fingerprint_mismatch":
+            raise ValidationError("Only fingerprint-held tracks can be re-checked")
+        if self._file_processor is None:
+            raise ConfigurationError("Import is unavailable right now")
+        try:
+            verdict = await self._file_processor.reverify_held_file(held)
+        except FileNotFoundError as exc:
+            # its copy is gone (shouldn't happen - it lives in our held area); tidy the row
+            await self._store.resolve_held_import(held_id, "discarded")
+            raise ValidationError(
+                "The held file is no longer available - discard it and re-download the album"
+            ) from exc
+        if verdict != "confirmed":
+            return ("still_held", None)
+        final_path = await self._import_held_locked(held_id, user_id, user_role)
+        return ("imported", final_path)
+
+    async def reverify_held_bulk(
+        self, user_id: str, user_role: str, held_ids: list[int] | None = None
+    ) -> list[dict]:
+        """Re-check fingerprint-held tracks in bulk: owner/admin scoping comes from the
+        held list itself, each id runs under its per-id action lock, and one id's
+        failure never stops the sweep. Only ``fingerprint_mismatch`` holds can be
+        fingerprint-verified - every other reason reports "skipped". An explicit
+        id list runs in request order (deduped); an omitted list runs newest
+        first. Either way at most ``HELD_REVERIFY_BULK_LIMIT`` fingerprint checks
+        run per request (skipped rows are free).
+        """
+        held_rows = await self._store.list_held_imports(user_id, user_role)
+        if held_ids is None:
+            candidates = held_rows
+        else:
+            by_id = {held.id: held for held in held_rows}
+            candidates = [
+                by_id[held_id] for held_id in dict.fromkeys(held_ids) if held_id in by_id
+            ]
+        results: list[dict] = []
+        # The cap slices AFTER the skip filter below: unscannable rows report
+        # "skipped" without consuming the sweep budget, so management rows can
+        # never starve fingerprint holds. Truncation is silent by design.
+        checked = 0
+        for held in candidates:
+            if (
+                held.origin == "edition_conversion"
+                or held.reason != "fingerprint_mismatch"
+            ):
+                results.append(
+                    {
+                        "held_id": held.id,
+                        "status": "skipped",
+                        "final_path": None,
+                        "release_group_mbid": held.release_group_mbid,
+                        "message": "Only fingerprint-held tracks can be re-checked",
+                    }
+                )
+                continue
+            if checked >= HELD_REVERIFY_BULK_LIMIT:
+                break
+            checked += 1
+            try:
+                status, final_path = await self.reverify_held(
+                    held.id, user_id, user_role
+                )
+            except (ResourceNotFoundError, ValidationError, ConfigurationError) as exc:
+                results.append(
+                    {
+                        "held_id": held.id,
+                        "status": "error",
+                        "final_path": None,
+                        "release_group_mbid": held.release_group_mbid,
+                        "message": str(exc),
+                    }
+                )
+                continue
+            except Exception:  # noqa: BLE001 - one held id must not stop the sweep
+                logger.exception("Held re-check failed unexpectedly for %s", held.id)
+                results.append(
+                    {
+                        "held_id": held.id,
+                        "status": "error",
+                        "final_path": None,
+                        "release_group_mbid": held.release_group_mbid,
+                        "message": "Re-check failed",
+                    }
+                )
+                continue
+            results.append(
+                {
+                    "held_id": held.id,
+                    "status": status,
+                    "final_path": final_path,
+                    "release_group_mbid": held.release_group_mbid,
+                    "message": None,
+                }
+            )
+        return results
 
     async def retry_management_hold(
         self, source_task_id: str, user_id: str, user_role: str

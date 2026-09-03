@@ -63,6 +63,8 @@ const COVERAGE: Array<[string, string, string]> = [
 		API.downloads.heldManagementDiscard('T1'),
 		'/api/v1/downloads/held/management/T1/discard'
 	],
+	['held single reverify', API.downloads.heldReverify(7), '/api/v1/downloads/held/7/reverify'],
+	['held bulk reverify', API.downloads.heldReverifyBulk(), '/api/v1/downloads/held/reverify'],
 	// search (user-scoped)
 	['search album', API.downloads.searchAlbum(), '/api/v1/downloads/search/album'],
 	['search job', API.downloads.searchJob('J1'), '/api/v1/downloads/search/J1'],

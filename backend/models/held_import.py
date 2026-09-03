@@ -30,6 +30,9 @@ class HeldImport(AppStruct):
     original_filename: str | None = None
     file_format: str | None = None
     duration_seconds: float | None = None
+    # Canonical MusicBrainz length (seconds) at hold time: the file-length vs
+    # expected-length comparison on the review card. Nullable for legacy rows.
+    expected_duration_seconds: float | None = None
     # What AcoustID confidently identified the audio as (the reason we held it) - shown to
     # the human so "import anyway" is an informed call, not a blind trust.
     evidence_title: str | None = None

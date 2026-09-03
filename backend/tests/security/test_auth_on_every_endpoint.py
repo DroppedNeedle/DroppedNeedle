@@ -869,6 +869,8 @@ _USER_ENDPOINTS = [
     ),
     ("POST", "/api/v1/downloads/task-1/retry", None),
     ("GET", "/api/v1/downloads/task-1", None),
+    ("POST", "/api/v1/downloads/held/1/reverify", None),
+    ("POST", "/api/v1/downloads/held/reverify", {}),
     (
         "POST",
         "/api/v1/downloads/search/album",

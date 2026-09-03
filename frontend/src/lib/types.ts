@@ -2510,6 +2510,7 @@ export interface HeldImport {
 	original_filename: string | null;
 	file_format: string | null;
 	duration_seconds: number | null;
+	expected_duration_seconds: number | null;
 	reason: string;
 	reason_detail: string | null;
 	source: string;

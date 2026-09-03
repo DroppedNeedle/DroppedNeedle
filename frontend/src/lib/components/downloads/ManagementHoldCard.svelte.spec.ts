@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
+	LAST_USER_ID_KEY: 'test:last-user',
 	authStore: {
 		get isAdmin() {
 			return h.isAdmin;
@@ -49,6 +50,7 @@ function held(track: number): HeldImport {
 		original_filename: `${track}.flac`,
 		file_format: 'flac',
 		duration_seconds: 180,
+		expected_duration_seconds: null,
 		reason: 'management:PROFILE_CHANGED',
 		reason_detail: 'The selected profile changed while this album was being prepared.',
 		source: 'soulseek',

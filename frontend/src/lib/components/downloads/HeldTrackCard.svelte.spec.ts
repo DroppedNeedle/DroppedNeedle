@@ -7,8 +7,10 @@ import type { HeldImport } from '$lib/types';
 const h = vi.hoisted(() => ({
 	importMut: vi.fn(),
 	discardMut: vi.fn(),
+	reverifyMut: vi.fn(),
 	importError: null as { message: string } | null,
-	discardError: null as { message: string } | null
+	discardError: null as { message: string } | null,
+	reverifyError: null as { message: string } | null
 }));
 
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
@@ -24,6 +26,13 @@ vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 		isPending: false,
 		get error() {
 			return h.discardError;
+		}
+	}),
+	reverifyHeldTrack: () => ({
+		mutate: h.reverifyMut,
+		isPending: false,
+		get error() {
+			return h.reverifyError;
 		}
 	})
 }));
@@ -51,6 +60,7 @@ function held(overrides: Partial<HeldImport> = {}): HeldImport {
 		original_filename: '103.flac',
 		file_format: 'flac',
 		duration_seconds: 388,
+		expected_duration_seconds: 390,
 		reason: 'fingerprint_mismatch',
 		reason_detail: null,
 		source: 'usenet',
@@ -69,8 +79,10 @@ describe('HeldTrackCard', () => {
 	beforeEach(() => {
 		h.importMut.mockReset();
 		h.discardMut.mockReset();
+		h.reverifyMut.mockReset();
 		h.importError = null;
 		h.discardError = null;
+		h.reverifyError = null;
 	});
 
 	it('shows the track, the couldn’t-verify state, and the AcoustID evidence', async () => {
@@ -153,5 +165,32 @@ describe('HeldTrackCard', () => {
 		);
 		await expect.element(page.getByText(/wrong length/i)).toBeVisible();
 		await expect.element(page.getByText(/closest copy/i)).toBeVisible();
+	});
+
+	it('shows the file length against the expected length', async () => {
+		renderCard(held());
+		await expect.element(page.getByText(/File length 6:28/)).toBeVisible();
+		await expect.element(page.getByText(/expected 6:30/)).toBeVisible();
+	});
+
+	it('hides the length comparison when the expected length is unknown', async () => {
+		renderCard(held({ expected_duration_seconds: null }));
+		await expect.element(page.getByText(/File length/)).not.toBeInTheDocument();
+	});
+
+	it('hides the length comparison when the file duration is unknown', async () => {
+		renderCard(held({ duration_seconds: null, expected_duration_seconds: 390 }));
+		await expect.element(page.getByText(/File length/)).not.toBeInTheDocument();
+	});
+
+	it('re-checks the held track on "Re-check"', async () => {
+		renderCard(held());
+		await page.getByRole('button', { name: 'Re-check' }).click();
+		expect(h.reverifyMut).toHaveBeenCalledWith(
+			{ id: 7, release_group_mbid: 'rg-1' },
+			expect.objectContaining({ onSuccess: expect.any(Function) })
+		);
+		expect(h.importMut).not.toHaveBeenCalled();
+		expect(h.discardMut).not.toHaveBeenCalled();
 	});
 });

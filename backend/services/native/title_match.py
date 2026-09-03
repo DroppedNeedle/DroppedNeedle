@@ -83,6 +83,41 @@ def fold(text: str) -> str:
 def strip_featuring(text: str) -> str:
     return _FEAT_RE.sub("", text or "").strip()
 
+
+# A leading bracketed tag: ``[Explicit] Song`` / ``(Bonus) Song`` - a content or
+# source marker AcoustID/file tags prepend, not part of the recording identity.
+# Only LEADING groups fold: a trailing ``(Kygo Remix)`` denotes a different
+# recording and must keep mismatching.
+_LEADING_BRACKET_RE = re.compile(r"^\s*[\(\[\{][^\)\]\}]*[\)\]\}]\s*")
+
+
+def normalize_recording_title(value: str | None) -> str:
+    """Fold two spellings of the SAME recording to one string for mismatch checks.
+
+    Pure function shared by the fingerprint title veto and the tag-conflict paths:
+    case/accent folds (``KASHMIR`` == ``Kashmir``), punctuation folds (``Don't Stop!``
+    == ``dont stop``), censored masks (``F**k`` == ``Fuck`` at the fuzzy gate - the
+    ``*`` carries no identity), leading bracketed markers (``[Explicit] Song`` ==
+    ``Song``), and trailing featuring credits (``Song (feat. X)`` == ``Song``).
+    Trailing edition markers (``(Kygo Remix)``) are preserved - they name a
+    different recording.
+    """
+    if not value:
+        return ""
+    text = fold(value)
+    while True:
+        stripped = _LEADING_BRACKET_RE.sub("", text)
+        if stripped == text:
+            break
+        text = stripped
+    text = strip_featuring(text)
+    text = _APOS_RE.sub("", text)
+    text = text.replace("*", "")
+    text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
+    text = text.replace("_", " ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
 # Tokens that begin the format/source/quality run: the album name ends before the first of
 # these. Codecs, media, and online sources - none of which are album-name words. Bit-depth /
 # sample-rate / year / catalog tokens carry a digit and are caught generically (see below).

@@ -38,7 +38,11 @@ from models.library_management import (
     LibraryManagementImportResult,
 )
 from services.native.quality_tiers import tier_for, tier_rank
-from services.native.title_match import names_different_album, title_containment_score
+from services.native.title_match import (
+    names_different_album,
+    normalize_recording_title,
+    title_containment_score,
+)
 
 if TYPE_CHECKING:
     from infrastructure.audio.fingerprinter import AudioFingerprinter
@@ -260,7 +264,7 @@ def _slskd_expected_track(
     return track, authoritative, None
 
 
-_TITLE_CONFLICT_RATIO = 50  # below this, a real title tag names a different track
+_TITLE_CONFLICT_RATIO = 50  # at or below this, a real title tag names a different track
 
 
 def _title_conflicts(candidate: _FolderCandidate, track: ExpectedTrack) -> bool:
@@ -271,10 +275,13 @@ def _title_conflicts(candidate: _FolderCandidate, track: ExpectedTrack) -> bool:
     blocks a genuinely-untagged correct file (the D18 case)."""
     if not track.title:
         return False
-    tag_title = (candidate.tag.title or "").strip()
+    tag_title = normalize_recording_title(candidate.tag.title)
     if not tag_title:
         return False  # untagged -> trust duration/filename, don't reject on title
-    return fuzz.token_set_ratio(tag_title, track.title) < _TITLE_CONFLICT_RATIO
+    return (
+        fuzz.token_set_ratio(tag_title, normalize_recording_title(track.title))
+        <= _TITLE_CONFLICT_RATIO
+    )
 
 
 def _fingerprint_recording_proof(fp, expected_recording_id: str | None) -> bool | None:  # noqa: ANN001
@@ -401,18 +408,26 @@ def _tag_conflict_reason(tag, info, manifest, expected_track) -> str | None:  # 
         tag_artist
         and expected_artist
         and "various" not in expected_artist.lower()
-        and fuzz.token_set_ratio(tag_artist, expected_artist)
+        and fuzz.token_set_ratio(
+            normalize_recording_title(tag_artist),
+            normalize_recording_title(expected_artist),
+        )
         < _TAG_ARTIST_CONFLICT_RATIO
     )
-    tag_title = (tag.title or "").strip()
+    tag_title = normalize_recording_title(tag.title)
 
     if expected_track is not None and expected_track.title:
         # A real title tag naming a clearly different SONG rejects on its own
-        # (same rule as the folder path's _title_conflicts).
+        # (same rule as the folder path's _title_conflicts). Compared on the
+        # normalized form so same-recording spelling variants - and bracket-only
+        # markers like "[Explicit]" - never reject.
         if (
             tag_title
-            and fuzz.token_set_ratio(tag_title, expected_track.title)
-            < _TITLE_CONFLICT_RATIO
+            and fuzz.token_set_ratio(
+                tag_title,
+                normalize_recording_title(expected_track.title),
+            )
+            <= _TITLE_CONFLICT_RATIO
         ):
             return "tag_mismatch"
         if artist_conflict:
@@ -444,7 +459,27 @@ def _tag_conflict_reason(tag, info, manifest, expected_track) -> str | None:  # 
     return None
 
 
-def _fingerprint_disagrees(fp, expected_track, expected_artist: str | None) -> bool:
+def _lengths_agree(
+    file_duration_seconds: float | None, expected_duration_seconds: float | None
+) -> bool | None:
+    """Whether the file length corroborates the expected recording under the existing
+    ``max(15s, 10%)`` gate, or ``None`` when either side is unknown (legacy rows and
+    duration-less manifests fall back to the pre-existing fingerprint-only rule)."""
+    if not file_duration_seconds or not expected_duration_seconds:
+        return None
+    return abs(file_duration_seconds - expected_duration_seconds) <= max(
+        15.0, 0.10 * expected_duration_seconds
+    )
+
+
+def _fingerprint_disagrees(
+    fp,
+    expected_track,
+    expected_artist: str | None,
+    *,
+    file_duration_seconds: float | None = None,
+    expected_duration_seconds: float | None = None,
+) -> bool:
     """True only when AcoustID CONFIDENTLY (status=pass) identified the audio as a clearly
     different SONG, or a clearly different ARTIST, than expected. Release-group/edition is
     deliberately NOT checked: AcoustID's RG coverage is incomplete and one recording appears
@@ -455,22 +490,31 @@ def _fingerprint_disagrees(fp, expected_track, expected_artist: str | None) -> b
     slskd path has no per-file title), in which case only the artist is checked.
     When a confident result provides candidate recording IDs, membership in that set
     rejects before artist allowances and a matching candidate permits display-credit
-    differences after the title veto. Without candidate IDs, the singular recording ID
     fallback (for legacy/manual results) and existing conservative artist gate remain.
+    Both sides are compared on their normalized recording-title form (censored
+    spellings, bracketed prefixes, case/punctuation folds) so same-recording spelling
+    variants never veto. A length-consistent file (the existing ``max(15s, 10%)``
+    gate) is never held on the fingerprint alone: duration corroboration outranks
+    a conflicting mapping; a length-divergent conflict still holds.
     """
     if getattr(fp, "status", None) != "pass":
         return False
-    fp_title = (getattr(fp, "title", None) or "").strip()
-    fp_artist = (getattr(fp, "artist", None) or "").strip()
+    fp_title = normalize_recording_title(getattr(fp, "title", None))
+    fp_artist = normalize_recording_title(getattr(fp, "artist", None))
     expected_title = (
-        getattr(expected_track, "title", None) if expected_track is not None else None
+        normalize_recording_title(getattr(expected_track, "title", None))
+        if expected_track is not None
+        else ""
     )
+    length_ok = _lengths_agree(file_duration_seconds, expected_duration_seconds)
     if (
         fp_title
         and expected_title
-        and fuzz.token_set_ratio(fp_title, expected_title) < 50
+        and fuzz.token_set_ratio(fp_title, expected_title) <= 50
     ):
-        return True  # clearly the wrong song
+        # Clearly the wrong song - unless the length corroborates the expected
+        # recording (AcoustID metadata disagreements lose to a matching length).
+        return length_ok is not True
 
     recording_proof = _fingerprint_recording_proof(
         fp,
@@ -479,13 +523,18 @@ def _fingerprint_disagrees(fp, expected_track, expected_artist: str | None) -> b
         else None,
     )
     if recording_proof is not None:
-        return not recording_proof
+        if recording_proof:
+            return False
+        return length_ok is not True
 
     # Wrong artist - but skip for various-artists compilations, where the album artist
     # legitimately differs from a track's performing artist.
     if fp_artist and expected_artist and "various" not in expected_artist.lower():
-        if fuzz.token_set_ratio(fp_artist, expected_artist) < 55:
-            return True
+        if (
+            fuzz.token_set_ratio(fp_artist, normalize_recording_title(expected_artist))
+            < 55
+        ):
+            return length_ok is not True
     return False
 
 
@@ -1332,7 +1381,13 @@ class FileProcessor:
             self._verify_downloads or conversion_verification
         ) and self._fingerprinter is not None:
             fp = await self._fingerprinter.fingerprint(source)
-            if _fingerprint_disagrees(fp, track, manifest.artist_name):
+            if _fingerprint_disagrees(
+                fp,
+                track,
+                manifest.artist_name,
+                file_duration_seconds=info.duration_seconds,
+                expected_duration_seconds=track.duration_seconds,
+            ):
                 await self._hold_for_review(
                     source=source,
                     manifest=manifest,
@@ -1345,6 +1400,7 @@ class FileProcessor:
                     track_title=track.title,
                     recording_mbid=track.recording_mbid,
                     duration_seconds=info.duration_seconds,
+                    expected_duration_seconds=track.duration_seconds,
                     file_format=info.file_format,
                 )
                 raise VerificationFailed(
@@ -1452,6 +1508,7 @@ class FileProcessor:
         duration_seconds: float | None,
         file_format: str | None,
         reason_detail: str | None = None,
+        expected_duration_seconds: float | None = None,
     ) -> bool:
         """Copy a verify-rejected file into the held area and record it for an "import anyway"
         review. The verifier said the audio/tags aren't the expected recording, but that's
@@ -1491,6 +1548,7 @@ class FileProcessor:
                 original_filename=source.name,
                 file_format=file_format,
                 duration_seconds=duration_seconds,
+                expected_duration_seconds=expected_duration_seconds,
                 evidence_title=evidence_title,
                 evidence_artist=evidence_artist,
                 evidence_score=evidence_score,
@@ -1740,6 +1798,46 @@ class FileProcessor:
         )
         return Path(published.paths[0])
 
+    async def reverify_held_file(self, held: "HeldImport") -> str:
+        """Re-run the fingerprint identity check on the stored held file.
+
+        Returns ``"confirmed"`` when a confident AcoustID result no longer
+        disagrees with the held identity (the caller imports through the same
+        path as "import anyway"), else ``"still_held"`` - including when no
+        fingerprinter is wired or the result is inconclusive (fail-open: an
+        unverifiable file stays in review, it is never auto-imported).
+        Raises ``FileNotFoundError`` when the held copy is gone.
+        """
+        source = Path(held.held_path)
+        if not source.exists():
+            raise FileNotFoundError(held.held_path)
+        if self._fingerprinter is None:
+            return "still_held"
+        fp = await self._fingerprinter.fingerprint(source)
+        if getattr(fp, "status", None) != "pass":
+            return "still_held"
+        try:
+            _tag, info = await asyncio.to_thread(self._tagger.read_tags, source)
+        except Exception:  # noqa: BLE001 - unreadable copy stays in review
+            logger.warning("Could not re-read held file %s", source.name)
+            return "still_held"
+        expected = ExpectedTrack(
+            track_number=held.track_number or 0,
+            disc_number=held.disc_number or 1,
+            duration_seconds=held.expected_duration_seconds,
+            recording_mbid=held.recording_mbid,
+            title=held.track_title,
+        )
+        if _fingerprint_disagrees(
+            fp,
+            expected,
+            held.artist_name,
+            file_duration_seconds=info.duration_seconds,
+            expected_duration_seconds=held.expected_duration_seconds,
+        ):
+            return "still_held"
+        return "confirmed"
+
     @staticmethod
     def _build_folder_target_tag(
         manifest: DownloadManifest, track: "ExpectedTrack", file_tag: AudioTag
@@ -1965,6 +2063,7 @@ class FileProcessor:
                         else tag.musicbrainz_recording_id
                     ),
                     duration_seconds=info.duration_seconds,
+                    expected_duration_seconds=expected.duration,
                     file_format=info.file_format,
                 )
             raise VerificationFailed(
@@ -1996,6 +2095,11 @@ class FileProcessor:
                     else tag.musicbrainz_recording_id
                 ),
                 duration_seconds=info.duration_seconds,
+                expected_duration_seconds=(
+                    expected_track.duration_seconds
+                    if expected_track is not None
+                    else expected.duration
+                ),
                 file_format=info.file_format,
             )
             raise VerificationFailed(
@@ -2021,7 +2125,17 @@ class FileProcessor:
             self._verify_downloads or conversion_verification
         ) and self._fingerprinter is not None:
             fp = await self._fingerprinter.fingerprint(source)
-            if _fingerprint_disagrees(fp, expected_track, manifest.artist_name):
+            if _fingerprint_disagrees(
+                fp,
+                expected_track,
+                manifest.artist_name,
+                file_duration_seconds=info.duration_seconds,
+                expected_duration_seconds=(
+                    expected_track.duration_seconds
+                    if expected_track is not None
+                    else expected.duration
+                ),
+            ):
                 await self._hold_for_review(
                     source=source,
                     manifest=manifest,
@@ -2034,6 +2148,11 @@ class FileProcessor:
                     track_title=tag.title,
                     recording_mbid=tag.musicbrainz_recording_id,
                     duration_seconds=info.duration_seconds,
+                    expected_duration_seconds=(
+                        expected_track.duration_seconds
+                        if expected_track is not None
+                        else expected.duration
+                    ),
                     file_format=info.file_format,
                 )
                 raise VerificationFailed(

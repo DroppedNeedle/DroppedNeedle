@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS held_imports (
     original_filename TEXT,
     file_format TEXT,
     duration_seconds REAL,
+    expected_duration_seconds REAL,
     reason TEXT NOT NULL,
     reason_detail TEXT,
     evidence_title TEXT,
@@ -657,6 +658,10 @@ class DownloadStore(PersistenceBase):
                 conn,
                 "ALTER TABLE download_attempts ADD COLUMN materialized_fingerprints_json "
                 "TEXT NOT NULL DEFAULT '{}'",
+            )
+            _safe_alter(
+                conn,
+                "ALTER TABLE held_imports ADD COLUMN expected_duration_seconds REAL",
             )
             for column, ddl in (
                 ("artist_mbid", "TEXT"),
@@ -2184,6 +2189,7 @@ class DownloadStore(PersistenceBase):
         origin: str = "user",
         management_retry_count: int = 0,
         management_next_retry_at: float | None = None,
+        expected_duration_seconds: float | None = None,
     ) -> int | None:
         """Hold a verify-rejected file for review. De-duped on (album, disc, track): if that
         track is already held, returns None so the caller can drop its extra copy instead of
@@ -2217,12 +2223,12 @@ class DownloadStore(PersistenceBase):
                    (user_id, release_group_mbid, release_mbid, release_track_mbid,
                     recording_mbid, track_number,
                     disc_number, track_title, artist_name, artist_mbid, album_title, year,
-                    held_path, original_filename, file_format, duration_seconds, reason,
-                    reason_detail,
+                    held_path, original_filename, file_format, duration_seconds,
+                    expected_duration_seconds, reason, reason_detail,
                     evidence_title, evidence_artist, evidence_score, source, source_task_id,
                     origin, naming_template, management_retry_count,
                     management_next_retry_at, status, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'held',?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'held',?)""",
                 (
                     user_id,
                     release_group_mbid,
@@ -2240,6 +2246,7 @@ class DownloadStore(PersistenceBase):
                     original_filename,
                     file_format,
                     duration_seconds,
+                    expected_duration_seconds,
                     reason,
                     reason_detail,
                     evidence_title,
@@ -2309,11 +2316,12 @@ class DownloadStore(PersistenceBase):
                         recording_mbid,
                         track_number, disc_number, track_title, artist_name, artist_mbid,
                         album_title, year, held_path, original_filename, file_format,
-                        duration_seconds, reason, reason_detail, evidence_title,
-                        evidence_artist, evidence_score, source, source_task_id, origin,
+                        duration_seconds, expected_duration_seconds, reason, reason_detail,
+                        evidence_title, evidence_artist, evidence_score, source,
+                        source_task_id, origin,
                         naming_template, management_retry_count,
                         management_next_retry_at, status, created_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'held',?)""",
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'held',?)""",
                     (
                         value.user_id,
                         value.release_group_mbid,
@@ -2331,6 +2339,7 @@ class DownloadStore(PersistenceBase):
                         value.original_filename,
                         value.file_format,
                         value.duration_seconds,
+                        value.expected_duration_seconds,
                         value.reason,
                         value.reason_detail,
                         value.evidence_title,
