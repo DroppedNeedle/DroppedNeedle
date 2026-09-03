@@ -952,7 +952,10 @@ class FileProcessor:
         for expected in targets:
             try:
                 target = await self._process_one(
-                    expected, manifest, used_expected_positions
+                    expected,
+                    manifest,
+                    used_expected_positions,
+                    consult_partial=only_filenames is not None,
                 )
                 if isinstance(target, _PlannedImport):
                     planned.append(target)
@@ -1948,11 +1951,29 @@ class FileProcessor:
             compilation=file_tag.compilation,
         )
 
+    async def _locate_partial(
+        self, manifest: DownloadManifest, expected: ExpectedFile
+    ) -> Path | None:
+        """Best-effort incomplete-mount probe for the retry signal; never raises.
+
+        Duck-typed: only the slskd repository offers ``locate_partial`` (a
+        separate method so ``get_file_path`` stays byte-identical); other
+        clients simply have no partial fallback.
+        """
+        locate = getattr(self._client, "locate_partial", None)
+        if locate is None:
+            return None
+        try:
+            return await locate(manifest.handle, expected.filename, expected.size)
+        except Exception:  # noqa: BLE001 - a probe must never fail the import
+            return None
+
     async def _process_one(
         self,
         expected: ExpectedFile,
         manifest: DownloadManifest,
         used_expected_positions: set[tuple[int, int]] | None = None,
+        consult_partial: bool = False,
     ) -> Path | _PlannedImport:
         """Verify and plan one file for the shared bundle publisher. Raises ``VerificationFailed``
         (per-file) or ``AlreadyImported`` (crash-idempotency)."""
@@ -2008,6 +2029,19 @@ class FileProcessor:
                 )
             # (c) mount healthy but the file isn't where we look -> a local locate
             # failure, not the peer's fault (SOURCE_FILE_MISSING is non-quarantine)
+            # Subset imports (per-file failover) may still hold the file's partial
+            # bytes in slskd's incomplete dir: surface those as the same retry
+            # signal WITHOUT a tag read or import (import still requires full byte
+            # size via the gate below). Full-manifest imports (only=None) never
+            # consult partials.
+            if consult_partial and await self._locate_partial(manifest, expected):
+                logger.info(
+                    "process.partial_retry",
+                    extra={
+                        "task_id": manifest.task_id,
+                        "file": _basename(expected.filename),
+                    },
+                )
             raise VerificationFailed(
                 f"Missing file: {expected.filename}",
                 reason=SOURCE_FILE_MISSING,

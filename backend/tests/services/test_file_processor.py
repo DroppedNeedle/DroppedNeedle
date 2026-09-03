@@ -3051,3 +3051,134 @@ def test_target_location_two_matches_logs_count_and_keeps_message(
     assert resolution[0].root_count == 2
     assert resolution[0].target == "track.flac"
     assert str(tmp_path) not in resolution[0].getMessage()
+
+
+class _RepoClient:
+    """Stub client delegating location to a real SlskdRepository, counting
+    partial consults so the tests prove which import mode consults them."""
+
+    def __init__(self, repo) -> None:  # noqa: ANN001
+        self._repo = repo
+        self.partial_calls = 0
+
+    async def get_file_path(
+        self, handle, remote_filename: str, size: int | None = None
+    ):
+        return await self._repo.get_file_path(handle, remote_filename, size)
+
+    async def locate_partial(
+        self, handle, remote_filename: str, size: int | None = None
+    ):
+        self.partial_calls += 1
+        return await self._repo.locate_partial(handle, remote_filename, size)
+
+
+def _partial_processor(tmp_path: Path, *, incomplete: Path | None):
+    """FileProcessor wired to a real SlskdRepository over split tmp mounts."""
+    from repositories.slskd.slskd_repository import SlskdRepository
+
+    complete = tmp_path / "complete"
+    complete.mkdir(parents=True, exist_ok=True)
+    library = tmp_path / "library"
+    library.mkdir(parents=True, exist_ok=True)
+    manager = LibraryManager(
+        LibraryDB(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    )
+    repo = SlskdRepository(
+        client=None,
+        url="",
+        api_key="",
+        downloads_mount=complete,
+        incomplete_mount=incomplete,
+    )
+    client = _RepoClient(repo)
+    fp = FileProcessor(
+        AudioTagger(),
+        naming_engine=NamingTemplateEngine(),
+        library_manager=manager,
+        library_paths=[library],
+        client=client,
+        slskd_downloads_path=complete,
+        verify_downloads=False,
+        library_root_ids=["root-a"],
+        publish_import_bundle=_test_publisher(manager, library),
+        policy_revision_getter=lambda: "policy-1",
+    )
+    return fp, client, complete
+
+
+@pytest.mark.asyncio
+async def test_subset_import_partial_hit_emits_retry_signal_without_import(
+    tmp_path: Path,
+) -> None:
+    """An Errored file's stranded bytes resolve via locate_partial while
+    get_file_path stays None: the subset import must emit the per-file retry
+    signal (SOURCE_FILE_MISSING, non-quarantine, workspace preserved) WITHOUT
+    a tag read or import. The staged bytes are deliberately not valid audio,
+    so any tag-read attempt would fail "corrupt" instead."""
+    from services.native.file_processor import SOURCE_FILE_MISSING
+
+    incomplete = tmp_path / "incomplete"
+    album = incomplete / "Album"
+    album.mkdir(parents=True)
+    (album / "01 - Track.flac").write_bytes(b"not audio, just stranded bytes")
+    fp, client, _complete = _partial_processor(tmp_path, incomplete=incomplete)
+    manifest = _manifest(ExpectedFile(filename="Album/01 - Track.flac", size=50000))
+
+    result = await fp.process_downloaded(
+        manifest, only_filenames={"Album/01 - Track.flac"}
+    )
+
+    assert client.partial_calls == 1
+    assert result.succeeded == []
+    assert len(result.failed) == 1
+    assert result.failed[0].reason == SOURCE_FILE_MISSING
+    assert SOURCE_FILE_MISSING not in QUARANTINE_REASONS
+    assert result.workspace_disposition == "preserve"
+
+
+@pytest.mark.asyncio
+async def test_full_manifest_import_never_consults_partial(tmp_path: Path) -> None:
+    """Full-manifest import (only=None, the completed-status shape) must never
+    consult the partial path: a synthetic completed-status import with a short
+    staged file still fails closed with SOURCE_FILE_MISSING."""
+    from services.native.file_processor import SOURCE_FILE_MISSING
+
+    incomplete = tmp_path / "incomplete"
+    album = incomplete / "Album"
+    album.mkdir(parents=True)
+    (album / "01 - Track.flac").write_bytes(b"not audio, just stranded bytes")
+    fp, client, _complete = _partial_processor(tmp_path, incomplete=incomplete)
+    manifest = _manifest(ExpectedFile(filename="Album/01 - Track.flac", size=50000))
+
+    result = await fp.process_downloaded(manifest)
+
+    assert client.partial_calls == 0
+    assert result.succeeded == []
+    assert len(result.failed) == 1
+    assert result.failed[0].reason == SOURCE_FILE_MISSING
+
+
+@pytest.mark.asyncio
+async def test_subset_import_empty_setting_emits_no_partial_signal(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Empty setting = byte-identical behaviour: the repo declines silently, so
+    no partial_retry signal fires and the missing file fails exactly as before."""
+    from services.native.file_processor import SOURCE_FILE_MISSING
+
+    fp, _client, _complete = _partial_processor(tmp_path, incomplete=None)
+    manifest = _manifest(ExpectedFile(filename="Album/01 - Track.flac", size=50000))
+
+    with caplog.at_level("INFO", logger="services.native.file_processor"):
+        result = await fp.process_downloaded(
+            manifest, only_filenames={"Album/01 - Track.flac"}
+        )
+
+    assert result.succeeded == []
+    assert len(result.failed) == 1
+    assert result.failed[0].reason == SOURCE_FILE_MISSING
+    assert not [
+        r for r in caplog.records if r.getMessage() == "process.partial_retry"
+    ]

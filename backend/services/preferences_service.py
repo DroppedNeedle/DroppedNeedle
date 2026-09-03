@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 import uuid
 from pathlib import Path
@@ -327,6 +328,7 @@ class PreferencesService:
                 "quality_max": settings.quality_max,
                 "flac_mp3_only": settings.flac_mp3_only,
                 "downloads_subpath": settings.downloads_subpath,
+                "slskd_incomplete_mount": settings.slskd_incomplete_mount,
                 "preflight_score_auto_accept": settings.preflight_score_auto_accept,
                 "preflight_score_manual_min": settings.preflight_score_manual_min,
                 "download_stall_timeout_minutes": settings.download_stall_timeout_minutes,
@@ -340,6 +342,24 @@ class PreferencesService:
         except Exception as e:  # noqa: BLE001
             logger.error("Failed to save download client settings: %s", e)
             raise ConfigurationError(f"Failed to save download client settings: {e}")
+
+    def get_slskd_incomplete_mount(self) -> Path | None:
+        """Resolved slskd incomplete-downloads dir, or None when unset/unusable.
+
+        Fail-closed: empty, unresolvable, non-dir, or unreadable all yield None,
+        and the repository then skips the incomplete fallback entirely
+        (byte-identical behaviour to before the knob existed).
+        """
+        raw = self.get_download_client_settings_raw().slskd_incomplete_mount
+        if not raw:
+            return None
+        try:
+            resolved = Path(raw).resolve()
+        except (OSError, RuntimeError):
+            return None
+        if not resolved.is_dir() or not os.access(resolved, os.R_OK):
+            return None
+        return resolved
 
     def _decode_download_policy(self, data: object) -> DownloadPolicySettings:
         """Decode policy while preserving invalid recipe status.

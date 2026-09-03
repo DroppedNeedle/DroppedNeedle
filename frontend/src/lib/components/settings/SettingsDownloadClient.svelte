@@ -29,6 +29,7 @@
 	let apiKey = $state('');
 	let showKey = $state(false);
 	let downloadsSubpath = $state('');
+	let incompleteMount = $state('');
 	// Quality/verification/resilience now live in the shared Download policy block, but the
 	// slskd config struct still carries them, so seed + round-trip them on save to avoid
 	// resetting the stored values (the orchestrator reads them from download_policy).
@@ -43,6 +44,7 @@
 			url = d.url;
 			apiKey = d.api_key;
 			downloadsSubpath = d.downloads_subpath ?? '';
+			incompleteMount = d.slskd_incomplete_mount ?? '';
 			policyFields = {
 				verify_downloads: d.verify_downloads,
 				quality_min: d.quality_min,
@@ -89,7 +91,8 @@
 			enabled,
 			url,
 			api_key: apiKey,
-			downloads_subpath: downloadsSubpath
+			downloads_subpath: downloadsSubpath,
+			slskd_incomplete_mount: incompleteMount
 		};
 	}
 
@@ -313,6 +316,27 @@
 					</div>
 				</div>
 			{/if}
+		</section>
+
+		<section class="space-y-1.5 rounded-box border border-base-content/10 bg-base-200/40 p-3">
+			<label class="text-sm font-medium" for="incomplete-mount">Incomplete folder (optional)</label>
+			<p class="text-xs text-base-content/60">
+				The absolute container path where slskd keeps unfinished downloads. When set,
+				DroppedNeedle spots stranded partial bytes there and retries the missing file
+				instead of reporting it lost. Leave empty to disable.
+			</p>
+			<div class="flex flex-wrap items-center gap-2">
+				<input
+					id="incomplete-mount"
+					type="text"
+					class="input input-sm input-bordered flex-1 font-mono"
+					placeholder="e.g. /data/slskd/incomplete"
+					bind:value={incompleteMount}
+				/>
+				<button class="btn btn-sm btn-primary" onclick={handleSave} disabled={save.isPending}>
+					{save.isPending ? 'Checking…' : 'Save & re-check'}
+				</button>
+			</div>
 		</section>
 
 		<div class="flex justify-end">

@@ -118,6 +118,79 @@ def test_downloads_subpath_sanitised_and_round_trips(prefs):
     )
 
 
+def test_incomplete_mount_sanitised_and_round_trips(prefs, tmp_path):
+    # Absolute container paths are kept (traversal components dropped); a
+    # relative value or bare "/" has no safe meaning here, so it becomes "".
+    assert DownloadClientConnectionSettings(
+        slskd_incomplete_mount="/data/slskd/incomplete/"
+    ).slskd_incomplete_mount == "/data/slskd/incomplete"
+    assert (
+        DownloadClientConnectionSettings(
+            slskd_incomplete_mount="/data/../data/slskd/./incomplete"
+        ).slskd_incomplete_mount
+        == "/data/data/slskd/incomplete"
+    )
+    assert (
+        DownloadClientConnectionSettings(
+            slskd_incomplete_mount="relative/path"
+        ).slskd_incomplete_mount
+        == ""
+    )
+    assert (
+        DownloadClientConnectionSettings(slskd_incomplete_mount="/").slskd_incomplete_mount
+        == ""
+    )
+    assert DownloadClientConnectionSettings().slskd_incomplete_mount == ""
+    target = tmp_path / "incomplete"
+    target.mkdir()
+    prefs.save_download_client_settings(
+        DownloadClientConnectionSettings(
+            url="http://a:5030", slskd_incomplete_mount=str(target)
+        )
+    )
+    assert (
+        prefs.get_download_client_settings().slskd_incomplete_mount == str(target)
+    )
+    assert prefs.get_slskd_incomplete_mount() == target.resolve()
+
+
+def test_incomplete_mount_getter_fails_closed(prefs, tmp_path):
+    # Empty, missing, and non-dir values all yield None (fallback skipped).
+    assert prefs.get_slskd_incomplete_mount() is None
+    prefs.save_download_client_settings(
+        DownloadClientConnectionSettings(
+            url="http://a:5030",
+            slskd_incomplete_mount=str(tmp_path / "no-such-dir"),
+        )
+    )
+    assert prefs.get_slskd_incomplete_mount() is None
+    staged = tmp_path / "not-a-dir"
+    staged.write_bytes(b"x")
+    prefs.save_download_client_settings(
+        DownloadClientConnectionSettings(
+            url="http://a:5030", slskd_incomplete_mount=str(staged)
+        )
+    )
+    assert prefs.get_slskd_incomplete_mount() is None
+
+
+def test_save_preserves_flac_mp3_only_alongside_incomplete_mount(prefs, tmp_path):
+    # Regression: adding slskd_incomplete_mount to the save allowlist must not
+    # drop flac_mp3_only (a save with it False reloaded as default True).
+    target = tmp_path / "incomplete"
+    target.mkdir()
+    prefs.save_download_client_settings(
+        DownloadClientConnectionSettings(
+            url="http://a:5030",
+            flac_mp3_only=False,
+            slskd_incomplete_mount=str(target),
+        )
+    )
+    reloaded = prefs.get_download_client_settings()
+    assert reloaded.flac_mp3_only is False
+    assert reloaded.slskd_incomplete_mount == str(target)
+
+
 def test_auto_retry_fields_default_and_validate():
     d = DownloadClientConnectionSettings()
     assert d.auto_retry_enabled is True

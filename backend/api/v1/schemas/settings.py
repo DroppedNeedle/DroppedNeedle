@@ -96,6 +96,11 @@ class DownloadClientConnectionSettings(AppStruct):
     # for when the mount points at a parent (e.g. the whole media share). Relative, never
     # escapes the mount (sanitised below + confined again at use).
     downloads_subpath: str = ""
+    # Optional ABSOLUTE container path of slskd's incomplete-downloads dir, for the
+    # partial-bytes fallback (#292). Absolute only: a relative value cannot be resolved
+    # against the complete mount safely, so it is dropped (sanitised below). Empty
+    # disables the fallback entirely (today's behaviour). A plain path, not a secret.
+    slskd_incomplete_mount: str = ""
     preflight_score_auto_accept: float = 0.70
     preflight_score_manual_min: float = 0.50
     # Download resilience (minutes-scale; user-tunable). A transfer actively
@@ -163,6 +168,20 @@ class DownloadClientConnectionSettings(AppStruct):
             p
             for p in re.split(r"[\\/]", self.downloads_subpath.strip())
             if p and p not in (".", "..")
+        )
+        # same component hygiene for the incomplete mount, but absoluteness is kept:
+        # drop "", ".", ".." so ".." can never escape, then re-anchor at root. A
+        # relative input (or bare "/") has no safe meaning here, so it becomes "".
+        raw_incomplete = self.slskd_incomplete_mount.strip()
+        incomplete_parts = [
+            p
+            for p in re.split(r"[\\/]", raw_incomplete)
+            if p and p not in (".", "..")
+        ]
+        self.slskd_incomplete_mount = (
+            "/" + "/".join(incomplete_parts)
+            if raw_incomplete.startswith("/") and incomplete_parts
+            else ""
         )
 
 

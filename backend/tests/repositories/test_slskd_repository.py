@@ -1427,3 +1427,170 @@ def test_wildcard_artist_first_letter_and_apostrophe_absorption():
 def test_build_album_query_joins_with_separator():
     query = SlskdRepository._build_album_query("Radiohead", "OK Computer", 1997)
     assert query == "Radiohead OK Computer 1997"
+
+
+def _partial_repo(
+    complete: Path, incomplete: Path | None = None
+) -> SlskdRepository:
+    """Repo with separate complete/incomplete mounts for the #292 fallback tests."""
+    return SlskdRepository(
+        client=None,
+        url="",
+        api_key="",
+        downloads_mount=complete,
+        incomplete_mount=incomplete,
+    )
+
+
+@pytest.mark.asyncio
+async def test_locate_partial_resolves_short_album_file_get_file_path_stays_none(
+    tmp_path,
+):
+    # The stranded-bytes case: 7 bytes on disk against a 12345-byte expectation.
+    # No equality gate may veto it (partials are short by definition).
+    complete = tmp_path / "complete"
+    complete.mkdir()
+    album = tmp_path / "incomplete" / "4x4=12 (2010)"
+    album.mkdir(parents=True)
+    partial = album / "02-06 - Everything Before.flac"
+    partial.write_bytes(b"partial")
+    repo = _partial_repo(complete, tmp_path / "incomplete")
+    remote = "GunplaGuy\\edm_music\\deadmau5\\02-06 - Everything Before.flac"
+    assert await repo.get_file_path(_h("GunplaGuy"), remote, size=12345) is None
+    assert await repo.locate_partial(_h("GunplaGuy"), remote, size=12345) == (
+        partial.resolve()
+    )
+
+
+@pytest.mark.asyncio
+async def test_locate_partial_truly_absent_returns_none(tmp_path):
+    complete = tmp_path / "complete"
+    complete.mkdir()
+    incomplete = tmp_path / "incomplete"
+    incomplete.mkdir()
+    repo = _partial_repo(complete, incomplete)
+    assert await repo.locate_partial(_h("peer"), "A\\missing.flac", size=10) is None
+    assert await repo.get_file_path(_h("peer"), "A\\missing.flac", size=10) is None
+
+
+@pytest.mark.asyncio
+async def test_locate_partial_ambiguous_fails_closed(tmp_path, caplog):
+    # Same basename stranded under two album dirs (retry generations): refuse
+    # to guess, and log the count rather than either path.
+    complete = tmp_path / "complete"
+    complete.mkdir()
+    for folder_name in ("AlbumA", "AlbumB"):
+        folder = tmp_path / "incomplete" / folder_name
+        folder.mkdir(parents=True)
+        (folder / "01 - Track.flac").write_bytes(b"short")
+    repo = _partial_repo(complete, tmp_path / "incomplete")
+    with caplog.at_level(
+        logging.WARNING, logger="repositories.slskd.slskd_repository"
+    ):
+        assert (
+            await repo.locate_partial(_h("peer"), "Share\\01 - Track.flac", size=999)
+            is None
+        )
+    assert "ambiguous=2" in caplog.text
+    assert "AlbumA" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_locate_partial_unset_mount_skips_fallback(tmp_path):
+    # No new config = byte-identical behaviour: the fallback never runs even
+    # when partial bytes sit where the mount would point.
+    complete = tmp_path / "complete"
+    complete.mkdir()
+    album = tmp_path / "incomplete" / "Album"
+    album.mkdir(parents=True)
+    (album / "01 - Track.flac").write_bytes(b"short")
+    repo = _partial_repo(complete)
+    assert (
+        await repo.locate_partial(_h("peer"), "Share\\01 - Track.flac", size=999)
+        is None
+    )
+    assert (
+        await repo.get_file_path(_h("peer"), "Share\\01 - Track.flac", size=999)
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_locate_partial_unusable_mount_fails_closed(tmp_path):
+    # A missing dir, or a file where the dir should be, disables the fallback.
+    complete = tmp_path / "complete"
+    complete.mkdir()
+    (tmp_path / "not-a-dir").write_bytes(b"x")
+    for bad in (tmp_path / "no-such-dir", tmp_path / "not-a-dir"):
+        repo = _partial_repo(complete, bad)
+        assert (
+            await repo.locate_partial(_h("peer"), "Share\\01 - Track.flac", size=999)
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_locate_partial_unknown_size_skips_recursive_sweep(tmp_path):
+    # Direct probes work without a known size; a file nested deeper than one
+    # level stays invisible until the size is known.
+    complete = tmp_path / "complete"
+    complete.mkdir()
+    deep = tmp_path / "incomplete" / "nested" / "Album"
+    deep.mkdir(parents=True)
+    target = deep / "01 - Deep.flac"
+    target.write_bytes(b"short")
+    repo = _partial_repo(complete, tmp_path / "incomplete")
+    remote = "Share\\Album\\01 - Deep.flac"
+    assert await repo.locate_partial(_h("peer"), remote) is None
+    assert await repo.locate_partial(_h("peer"), remote, size=999) == target.resolve()
+
+
+@pytest.mark.asyncio
+async def test_locate_partial_nfc_alias_resolves_without_size_gate(tmp_path):
+    visible_name = "01 - Héroes.flac"
+    remote_name = unicodedata.normalize("NFC", visible_name)
+    disk_name = unicodedata.normalize("NFD", visible_name)
+    complete = tmp_path / "complete"
+    complete.mkdir()
+    album = tmp_path / "incomplete" / "Album"
+    album.mkdir(parents=True)
+    target = album / disk_name
+    target.write_bytes(b"short")
+    repo = _partial_repo(complete, tmp_path / "incomplete")
+    assert await repo.locate_partial(
+        _h("peer"), f"Share\\Album\\{remote_name}", size=999
+    ) == target.resolve()
+
+
+@pytest.mark.asyncio
+async def test_locate_partial_rejects_traversal_and_has_no_size_only_phase(tmp_path):
+    # ".." never resolves, and a same-size file under a DIFFERENT basename is
+    # not a hit (no phase-5-style size matching under incomplete).
+    complete = tmp_path / "complete"
+    complete.mkdir()
+    album = tmp_path / "incomplete" / "Album"
+    album.mkdir(parents=True)
+    (album / "other.flac").write_bytes(b"0123456789")
+    repo = _partial_repo(complete, tmp_path / "incomplete")
+    assert await repo.locate_partial(_h("peer"), "../../etc/passwd", size=999) is None
+    assert (
+        await repo.locate_partial(_h("peer"), "Share\\wanted.flac", size=10) is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_locate_partial_skips_outside_symlink(tmp_path):
+    # A partial outside the incomplete mount, linked in, stays invisible.
+    complete = tmp_path / "complete"
+    complete.mkdir()
+    incomplete = tmp_path / "incomplete"
+    incomplete.mkdir()
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    (outside / "01 - Track.flac").write_bytes(b"short")
+    (incomplete / "escaped").symlink_to(outside, target_is_directory=True)
+    repo = _partial_repo(complete, incomplete)
+    assert (
+        await repo.locate_partial(_h("peer"), "Share\\01 - Track.flac", size=999)
+        is None
+    )

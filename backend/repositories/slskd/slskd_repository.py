@@ -16,6 +16,7 @@ stay structurally identical to the protocol for the conformance contract test.
 
 import asyncio
 import logging
+import os
 import re
 import unicodedata
 from datetime import datetime, timezone
@@ -161,11 +162,17 @@ class SlskdRepository:
         downloads_mount: Path,
         concurrent_searches: int = 1,
         concurrent_enqueues: int = 1,
+        incomplete_mount: Path | None = None,
     ):
         self._client = client
         self._url = url
         self._api_key = api_key
         self._downloads_mount = Path(downloads_mount)
+        # Optional second mount for slskd's incomplete dir (#292). None disables the
+        # partial fallback entirely; never consulted by get_file_path, only by
+        # locate_partial. Stored unresolved; each lookup resolves it fresh so a
+        # symlinked root cannot escape confinement (escape-in).
+        self._incomplete_mount = Path(incomplete_mount) if incomplete_mount else None
         self._search_semaphore = asyncio.Semaphore(concurrent_searches)
         self._enqueue_semaphore = asyncio.Semaphore(concurrent_enqueues)
 
@@ -690,6 +697,179 @@ class SlskdRepository:
                 return None
 
         _log_unlocatable("none")
+        return None
+
+    async def locate_partial(
+        self, handle: TaskHandle, remote_filename: str, size: int | None = None
+    ) -> Path | None:
+        """Basename-keyed partial fallback confined to the incomplete mount, OFF the
+        event loop.
+
+        Never called by ``get_file_path`` (which stays byte-identical): only the
+        verifier's retry-signal path consults it, and only for subset imports.
+        Returns the single matching partial file, or None when the mount is
+        unset/unusable, the name is absent, or several same-named partials exist.
+        """
+        return await asyncio.to_thread(
+            self._locate_partial, handle.username, remote_filename, size
+        )
+
+    def _locate_partial(
+        self, username: str, remote_filename: str, size: int | None = None
+    ) -> Path | None:
+        """Find stranded partial bytes by exact basename (then NFC alias at most).
+
+        ``username`` is intentionally ignored: slskd's incomplete layout
+        (``incomplete/<album>/<file>``) is not username-scoped, so the safe key
+        is the basename plus exactly-one confinement. No fuzzy phase, no
+        size-only phase. The expected size is recorded for the log line only:
+        partial files are short by definition, so an equality gate would never
+        hit. An unknown size still allows the direct probes but skips the
+        recursive sweep (the phase-9 require_size discipline).
+        """
+        root_setting = self._incomplete_mount
+        if root_setting is None:
+            return None
+        raw_parts = re.split(r"[\\/]", remote_filename)
+        if any(part == ".." for part in raw_parts):
+            return None
+        parts = [part for part in raw_parts if part and part != "."]
+        if not parts:
+            return None
+        try:
+            incomplete = root_setting.resolve()
+        except (OSError, RuntimeError):
+            return None
+        if not incomplete.is_dir() or not os.access(incomplete, os.R_OK):
+            return None
+        basename = parts[-1]
+        normalised_basename = _normalised_filename(basename)
+        size_label = size if size else "unknown"
+
+        def _within_incomplete(candidate: Path) -> Path | None:
+            try:
+                resolved = candidate.resolve()
+            except (OSError, RuntimeError):
+                return None
+            if not resolved.is_relative_to(incomplete):
+                logger.warning(
+                    "slskd path escapes the incomplete mount: %r", basename
+                )
+                return None
+            return resolved
+
+        def _log_partial(kind: str, count: int = 0) -> None:
+            """Fail-closed log with the minimal shape: basename, size (or
+            "unknown"), and the observed candidate count. Never paths,
+            usernames, hosts, secrets, or exception text."""
+            if kind == "ambiguous":
+                logger.warning(
+                    "slskd partial file not usable from the incomplete mount: %s "
+                    "(%s bytes) - ambiguous=%d, refusing to guess",
+                    basename,
+                    size_label,
+                    count,
+                )
+            elif kind == "budget":
+                logger.warning(
+                    "slskd partial file not usable from the incomplete mount: %s "
+                    "(%s bytes) - entry budget exhausted, refusing to guess",
+                    basename,
+                    size_label,
+                )
+
+        def _log_hit(path: Path) -> Path:
+            try:
+                on_disk = path.stat().st_size
+            except OSError:
+                on_disk = size_label
+            logger.info(
+                "slskd partial bytes found in the incomplete mount: %s (%s bytes)",
+                basename,
+                on_disk,
+            )
+            return path
+
+        # Direct probes: the flat file and the one-level album-dir layout
+        # (incomplete/<album>/<file>) slskd most commonly produces.
+        direct: set[Path] = set()
+        flat = _within_incomplete(incomplete / basename)
+        if flat is not None and flat.is_file():
+            direct.add(flat)
+        try:
+            children = sorted(incomplete.iterdir(), key=lambda path: path.name)
+        except (OSError, RuntimeError):
+            children = []
+        for child in children:
+            child_root = _within_incomplete(child)
+            if child_root is None or not child_root.is_dir():
+                continue
+            cand = _within_incomplete(child_root / basename)
+            if cand is not None and cand.is_file():
+                direct.add(cand)
+        if len(direct) > 1:
+            _log_partial("ambiguous", len(direct))
+            return None
+        if direct:
+            return _log_hit(next(iter(direct)))
+
+        if size is None or size <= 0:
+            logger.debug(
+                "slskd partial file not in the incomplete mount: %s (%s bytes)",
+                basename,
+                size_label,
+            )
+            return None
+
+        # Recursive exact-then-NFC sweep with its own budget (never shared with
+        # the complete-mount phases, which may already be exhausted). Exactly
+        # one basename match resolves; several fail closed as ambiguous.
+        budget = _EntryBudget(_MAX_WALK_ENTRIES)
+        exact: set[Path] = set()
+        aliased: set[Path] = set()
+        stack = [incomplete]
+        seen_dirs: set[Path] = set()
+        while stack:
+            current = stack.pop()
+            current = _within_incomplete(current)
+            if current is None or not current.is_dir() or current in seen_dirs:
+                continue
+            seen_dirs.add(current)
+            try:
+                entries = current.iterdir()
+                for entry in entries:
+                    if not budget.take():
+                        _log_partial("budget")
+                        return None
+                    resolved = _within_incomplete(entry)
+                    if resolved is None:
+                        continue
+                    if resolved.is_dir():
+                        stack.append(resolved)
+                        continue
+                    if not resolved.is_file():
+                        continue
+                    if entry.name == basename:
+                        exact.add(resolved)
+                        if len(exact) > 1:
+                            _log_partial("ambiguous", len(exact))
+                            return None
+                    elif _normalised_filename(entry.name) == normalised_basename:
+                        aliased.add(resolved)
+            except (OSError, RuntimeError):
+                continue
+        if exact:
+            return _log_hit(next(iter(exact)))
+        if len(aliased) > 1:
+            _log_partial("ambiguous", len(aliased))
+            return None
+        if aliased:
+            return _log_hit(next(iter(aliased)))
+        logger.debug(
+            "slskd partial file not in the incomplete mount: %s (%s bytes)",
+            basename,
+            size_label,
+        )
         return None
 
     @staticmethod

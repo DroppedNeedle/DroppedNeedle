@@ -655,7 +655,8 @@ def get_slskd_repository() -> "SlskdRepository":
     from repositories.slskd.slskd_repository import SlskdRepository
 
     settings = get_settings()
-    dc = get_preferences_service().get_download_client_settings_raw()
+    prefs = get_preferences_service()
+    dc = prefs.get_download_client_settings_raw()
     return SlskdRepository(
         client=get_slskd_client(),
         url=dc.url,
@@ -665,6 +666,7 @@ def get_slskd_repository() -> "SlskdRepository":
         ),
         concurrent_searches=settings.download_client_concurrent_searches,
         concurrent_enqueues=settings.download_client_concurrent_enqueues,
+        incomplete_mount=prefs.get_slskd_incomplete_mount(),
     )
 
 
@@ -724,13 +726,14 @@ def build_newznab_client(url: str, api_key: str) -> "NewznabClient":
     )
     return NewznabClient(http, url, api_key, indexer_name=url)
 
-
 def build_slskd_repository(url: str, api_key: str) -> "SlskdRepository":
     """Transient (not cached) repo from caller-supplied credentials.
 
     Test-connection validates what the admin typed before saving, so it needs a
     one-off repo from the submitted url/key, not the stored config. Distinct httpx
-    client name so it never shares the live config.
+    client name so it never shares the live config. The incomplete fallback stays
+    off here (incomplete_mount=None): test-connection checks reachability, never
+    file locations.
     """
     from pathlib import Path
 

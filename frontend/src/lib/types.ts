@@ -2103,6 +2103,7 @@ export interface DownloadClientConfig {
 	quality_max: string;
 	flac_mp3_only: boolean;
 	downloads_subpath: string;
+	slskd_incomplete_mount: string;
 	preflight_score_auto_accept: number;
 	preflight_score_manual_min: number;
 	download_stall_timeout_minutes: number;

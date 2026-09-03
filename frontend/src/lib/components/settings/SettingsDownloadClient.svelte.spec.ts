@@ -2,6 +2,8 @@ import { page } from '@vitest/browser/context';
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
+const saveMutate = vi.fn().mockResolvedValue({});
+
 const testMutate = vi.fn().mockResolvedValue({
 	valid: true,
 	version: '0.25.1.0',
@@ -32,7 +34,7 @@ vi.mock('$lib/queries/downloads/DownloadClientQueries.svelte', () => ({
 		}
 	}),
 	saveDownloadClientConfig: () => ({
-		mutateAsync: vi.fn().mockResolvedValue({}),
+		mutateAsync: saveMutate,
 		isPending: false
 	}),
 	testDownloadClient: () => ({ mutateAsync: testMutate, isPending: false })
@@ -65,5 +67,17 @@ describe('SettingsDownloadClient.svelte', () => {
 			expect.objectContaining({ url: 'http://slskd:5030', api_key: 'slskd****' })
 		);
 		await expect.element(page.getByText(/Connected/)).toBeInTheDocument();
+	});
+
+	it('reveals the incomplete-folder input and sends it on save', async () => {
+		render(SettingsDownloadClient);
+		await page.getByRole('button', { name: 'Expand' }).click();
+		const input = page.getByPlaceholder('e.g. /data/slskd/incomplete');
+		await expect.element(input).toBeInTheDocument();
+		await input.fill('/data/slskd/incomplete');
+		await page.getByRole('button', { name: 'Save settings' }).click();
+		expect(saveMutate).toHaveBeenCalledWith(
+			expect.objectContaining({ slskd_incomplete_mount: '/data/slskd/incomplete' })
+		);
 	});
 });
