@@ -83,21 +83,26 @@
 					: 'loading'
 	);
 
+	const needsDecision = $derived(stillMatching === 0 && libUnmatched > 0);
+	const canReview = $derived(needsDecision && authStore.isAdmin);
 	const musicFooter = $derived(
 		stillMatching > 0 && libUnmatched > 0
 			? `${stillMatching.toLocaleString()} still matching — ${libUnmatched.toLocaleString()} need a decision`
 			: stillMatching > 0
 				? `${stillMatching.toLocaleString()} still matching`
 				: libUnmatched > 0
-					? `${libUnmatched} album${libUnmatched === 1 ? '' : 's'} need review`
+					? `${libUnmatched.toLocaleString()} need review`
 					: localStats && localStats.total_tracks > 0
 						? `${localStats.total_size_human}${localFormats ? ' · ' + localFormats : ''}`
 						: libLastScan
 							? `Scanned ${formatLastUpdated(libLastScan)}`
 							: 'Not scanned yet'
 	);
+	const musicHref = $derived(
+		canReview ? '/library/review' : localEnabled ? '/library/local' : '/library'
+	);
 	const musicCard: EntryCard = $derived({
-		href: localEnabled ? '/library/local' : '/library',
+		href: musicHref,
 		icon: Headphones,
 		title: 'Your Music',
 		subtitle: 'Listen, browse & organise',
@@ -110,9 +115,15 @@
 				]
 			: [],
 		footer: musicFooter,
-		footerWarning: stillMatching === 0 && libUnmatched > 0,
+		footerWarning: needsDecision,
 		ctaLabel:
-			musicState === 'prompt' ? 'Open library' : localEnabled ? 'Enter the room' : 'Manage library',
+			musicState === 'prompt'
+				? 'Open library'
+				: canReview
+					? 'Review queue'
+					: localEnabled
+						? 'Enter the room'
+						: 'Manage library',
 		promptText: authStore.isAdmin
 			? 'Add a library path and run a scan to fill your library.'
 			: 'Your library is being prepared by an admin.',
