@@ -245,7 +245,15 @@ class BoundedLegacyCatalogMigrator:
             created_at=migrated_at,
         )
         await self._store.prepare_bounded_legacy_migration()
-
+        if self._migrated_source_keys is not None:
+            # A retried pending run skips already-provenanced keys, so seed the
+            # in-memory expectation with this run's durable counts.
+            durable = await self._store.get_migration_provenance_counts(migration_id)
+            for kind in REFERENCE_KINDS:
+                count = self._counts[(kind, None)]
+                prior = int(durable.get(kind, 0))
+                count.source = prior
+                count.mapped = prior
         preflight = await self._preflight_catalog(totals["library_files"])
         await self._preflight_review_paths(totals["manual_review_queue"])
         if self._blocker_count:

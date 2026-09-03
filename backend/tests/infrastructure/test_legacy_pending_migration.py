@@ -1398,3 +1398,68 @@ async def test_reference_batch_skips_verification_parse_error(tmp_path: Path) ->
             ).fetchone()[0]
             == 0
         )
+
+
+@pytest.mark.asyncio
+async def test_pending_migration_resume_counts_prior_provenance(
+    tmp_path: Path,
+) -> None:
+    """GH-308: a resumed pending run validates prior plus new provenance.
+
+    A retried pending run skips already-provenanced keys, so the in-memory
+    expectation must be seeded with this run's durable counts; otherwise
+    the final reference-count validation sees prior rows as
+    durable-but-uncounted and fails.
+    """
+    historical_root = tmp_path / "Historical" / "Music"
+    _write_catalog_files(historical_root)
+    database = tmp_path / "library.db"
+    _create_source(database, historical_root)
+    store = _store(database)
+
+    first = await BoundedLegacyCatalogMigrator(
+        store,
+        _resolver(("root", tmp_path / "Missing" / "Music")),
+        emit_progress=lambda _message: None,
+        batch_size=1,
+        skip_unmappable_paths=True,
+    ).migrate("lenient-migration", now=100)
+    assert first.report.state == "applied"
+
+    resolver = _resolver(("root", historical_root))
+    pending_run_id = f"legacy-pending-{resolver.policy_revision}"
+    # Simulate a pending run that wrote one provenance row then stopped
+    # before completion: attribute it to the pending run id so the resume
+    # skips it while validation still expects it.
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE library_migration_provenance SET migration_run_id = ? "
+            "WHERE source_kind = 'compat_play_queue' AND source_key = 'alice'",
+            (pending_run_id,),
+        )
+        connection.commit()
+
+    resumed = await BoundedLegacyCatalogMigrator(
+        store,
+        resolver,
+        emit_progress=lambda _message: None,
+        batch_size=1,
+        skip_unmappable_paths=True,
+    ).migrate_pending(pending_run_id, now=200)
+
+    assert resumed.blocker_count == 0
+    assert resumed.report.state == "applied"
+    durable = await store.get_migration_provenance_counts(pending_run_id)
+    assert durable["compat_play_queue"] == 1
+    by_kind = {
+        count.kind: count
+        for count in resumed.report.reference_counts
+        if count.user_id is None
+    }
+    for kind, total in durable.items():
+        assert by_kind[kind].mapped == total
+    assert by_kind["compat_play_queue"].source == durable["compat_play_queue"]
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM local_tracks").fetchone() == (
+            4,
+        )
