@@ -14,6 +14,7 @@ from core.exceptions import (
     ServiceDisabledUpstreamError,
 )
 from infrastructure.degradation import try_get_degradation_context
+from infrastructure.resilience.retry import CircuitOpenError
 from infrastructure.integration_result import IntegrationResult
 from models.library_management_canonical import CanonicalReleaseDocument
 from models.library_management_genres import GenreCandidate, GenreProjection
@@ -77,6 +78,7 @@ class GenreProjectionService:
                         if not settings.listenbrainz_curated_only or candidate.curated
                     )
                 except (
+                    CircuitOpenError,
                     ConfigurationError,
                     ExternalServiceError,
                     RateLimitedError,
@@ -107,7 +109,12 @@ class GenreProjectionService:
                         if value.weight is None
                         or value.weight >= settings.lastfm_minimum_weight
                     )
-                except (ConfigurationError, ExternalServiceError, RateLimitedError):
+                except (
+                    CircuitOpenError,
+                    ConfigurationError,
+                    ExternalServiceError,
+                    RateLimitedError,
+                ):
                     self._record_deferred("lastfm")
                     deferred.append("lastfm")
 

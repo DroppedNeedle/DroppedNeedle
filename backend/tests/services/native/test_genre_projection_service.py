@@ -9,6 +9,7 @@ from api.v1.schemas.library_management import (
     GenreManagementSettings,
 )
 from core.exceptions import ConfigurationError, ExternalServiceError, RateLimitedError
+from infrastructure.resilience.retry import CircuitOpenError
 from models.library_management_canonical import (
     CanonicalArtistCredit,
     CanonicalDate,
@@ -328,3 +329,37 @@ async def test_all_enabled_remote_outage_preserves_existing_and_marks_deferred()
     assert projection.names == ("Existing Genre",)
     assert projection.preserved_existing is True
     assert projection.deferred_sources == ("listenbrainz",)
+
+@pytest.mark.asyncio
+async def test_listenbrainz_open_breaker_marks_source_deferred() -> None:
+    listenbrainz = AsyncMock()
+    listenbrainz.get_release_group_genres_batch.side_effect = CircuitOpenError(
+        "Circuit breaker 'listenbrainz' is OPEN"
+    )
+    settings = GenreManagementSettings(sources=["listenbrainz"], mode="replace")
+    projection = await GenreProjectionService(
+        GenreNormalizer(), listenbrainz=listenbrainz
+    ).project(
+        settings=settings,
+        canonical_release=_release(),
+        existing_genres=["Existing Genre"],
+    )
+    assert projection.names == ("Existing Genre",)
+    assert projection.preserved_existing is True
+    assert projection.deferred_sources == ("listenbrainz",)
+
+
+@pytest.mark.asyncio
+async def test_lastfm_open_breaker_marks_source_deferred() -> None:
+    lastfm = AsyncMock()
+    lastfm.get_album_top_genres.side_effect = CircuitOpenError(
+        "Circuit breaker 'lastfm' is OPEN"
+    )
+    projection = await GenreProjectionService(GenreNormalizer(), lastfm=lastfm).project(
+        settings=GenreManagementSettings(sources=["lastfm"], mode="replace"),
+        canonical_release=_release(),
+        existing_genres=["Existing Genre"],
+    )
+    assert projection.names == ("Existing Genre",)
+    assert projection.preserved_existing is True
+    assert projection.deferred_sources == ("lastfm",)
