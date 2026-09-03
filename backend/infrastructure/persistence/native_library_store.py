@@ -2062,6 +2062,35 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def find_import_reuse_album_id(self, release_group_mbid: str) -> str | None:
+        """Issue #301: oldest active owner of a provider release group.
+
+        Import-only reuse differs from the canonical resolver on purpose:
+        zero owners -> None (caller mints via the grouping key), one owner
+        -> that album, and several active owners -> the oldest (min
+        created_at, tie-break by id) instead of staying unresolved. Active
+        means non-retired with at least one indexed track. Pin get/set
+        semantics in ``_resolve_target_album_pin_id`` are untouched.
+        """
+
+        def operation(connection: sqlite3.Connection) -> str | None:
+            row = connection.execute(
+                "SELECT album.id AS id FROM local_albums album "
+                "JOIN local_album_external_identities identity "
+                "ON identity.local_album_id = album.id "
+                "WHERE identity.provider = 'musicbrainz' "
+                "AND LOWER(identity.release_group_mbid) = LOWER(?) "
+                "AND album.retired_into_album_id IS NULL "
+                "AND EXISTS (SELECT 1 FROM local_tracks active_track "
+                "WHERE active_track.local_album_id = album.id "
+                "AND active_track.availability = 'indexed') "
+                "ORDER BY album.created_at ASC, album.id ASC LIMIT 1",
+                (release_group_mbid,),
+            ).fetchone()
+            return str(row["id"]) if row is not None else None
+
+        return await self._read(operation)
+
     @classmethod
     def _resolve_unique_target_subject_id(
         cls, connection: sqlite3.Connection, *, kind: str, identifier: str

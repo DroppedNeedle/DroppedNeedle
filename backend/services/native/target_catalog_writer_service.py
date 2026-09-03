@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 import time
 from collections.abc import Callable
@@ -15,6 +16,9 @@ from models.audio import AudioTag
 from services.local_files_service import LocalFilesService
 from services.native.target_native_library_service import TargetNativeLibraryService
 from services.native.recycle_bin import recycle
+
+
+logger = logging.getLogger(__name__)
 
 
 class TargetCatalogWriterService:
@@ -76,7 +80,22 @@ class TargetCatalogWriterService:
     ) -> list[str]:
         rows = await self._store.get_target_album_tracks(album_id)
         if not rows:
-            raise ResourceNotFoundError("Library album not found.")
+            # Issue #301: an album whose files already vanished has no indexed
+            # rows left, but the album itself still exists. Only an album with
+            # no rows at all is a 404; ghost editions must still clean up.
+            rows = await self._store.get_target_album_tracks(
+                album_id, include_unavailable=True
+            )
+            if not rows:
+                raise ResourceNotFoundError("Library album not found.")
+            if recycle_files:
+                # Nothing remains on disk to recycle; drop the catalog rows.
+                return await self._store.mark_target_tracks_missing(
+                    [str(row["id"]) for row in rows],
+                    actor_user_id=actor_user_id,
+                    reason_code="CATALOG_REMOVAL",
+                    missing_at=time.time(),
+                )
         if recycle_files:
             return await self._recycle_album(rows, actor_user_id)
         removed: list[str] = []
@@ -86,7 +105,15 @@ class TargetCatalogWriterService:
                 track_id = str(row["id"])
                 try:
                     path = await self._removal_target(track_id)
-                    if path is not None:
+                    if path is None:
+                        # Issue #301: bytes already gone from disk are not a
+                        # failure. Log the basename only, never the full path.
+                        logger.warning(
+                            "Target album file already absent; removing catalog "
+                            "entry for %s",
+                            Path(str(row.get("file_path") or track_id)).name,
+                        )
+                    else:
                         await asyncio.to_thread(path.unlink)
                 except FileNotFoundError:
                     pass  # ENOENT race: already absent is still safe to mark

@@ -273,6 +273,19 @@ class TargetImportLibraryService:
                         raise
             raise AssertionError("Policy retry loop did not return")
 
+    async def _import_reuse_album_id(
+        self, release_group_mbid: str | None
+    ) -> str | None:
+        """Issue #301: reuse the owning album for a provider release group.
+
+        Returns the oldest active owner, or None when nothing owns the RG
+        yet (caller falls back to the grouping-key album id). Never raises
+        on multiple owners — ambiguity resolves to the oldest, never a mint.
+        """
+        if not release_group_mbid:
+            return None
+        return await self._store.find_import_reuse_album_id(release_group_mbid)
+
     async def _upsert_file_once(
         self,
         audio_path: Path,
@@ -306,10 +319,8 @@ class TargetImportLibraryService:
             f"{root.id}:{directory}:{normalize_group_value(album_title)}:"
             f"{normalize_group_value(album_artist)}"
         )
-        album_id = (
-            await self._store.resolve_target_id("album", release_group_mbid)
-            if release_group_mbid
-            else None
+        album_id = await self._import_reuse_album_id(
+            release_group_mbid
         ) or grouping_album_id(grouping_key)
         existing = await self._store.get_target_track_by_path(str(audio_path))
         track_id = (
@@ -592,10 +603,8 @@ class TargetImportLibraryService:
             f"{root.id}:{directory}:{normalize_group_value(album_title)}:"
             f"{normalize_group_value(album_artist)}"
         )
-        album_id = (
-            await self._store.resolve_target_id("album", release_group_mbid)
-            if release_group_mbid
-            else None
+        album_id = await self._import_reuse_album_id(
+            release_group_mbid
         ) or grouping_album_id(grouping_key)
         existing = await self._store.get_target_track_by_path(str(audio_path))
         track_id = (
