@@ -87,6 +87,7 @@ from models.release_type_policy import normalize_release_type_filters
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=msgspec.Struct)
+SPOTIFY_CALLBACK_PATH = "/api/v1/me/connections/spotify/auth/callback"
 
 _RELEASE_TYPE_POLICY_REVISION_KEY = "release_type_policy_revision"
 
