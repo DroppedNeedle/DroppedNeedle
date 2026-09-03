@@ -4,7 +4,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
-from core.exceptions import ExternalServiceError, ValidationError
+from core.exceptions import ExternalServiceError, ResourceNotFoundError, ValidationError
 from infrastructure.persistence.request_history import (
     RequestBeginResult,
     RequesterCancelDecision,
@@ -1132,7 +1132,9 @@ async def test_request_album_mbid_only_with_failed_lookup_raises_and_records_not
     album_service.resolve_album_identity = AsyncMock(
         return_value=("rg-unresolvable", None)
     )
-    album_service.get_album_basic_info = AsyncMock(side_effect=Exception("mb down"))
+    album_service.get_album_basic_info = AsyncMock(
+        side_effect=ResourceNotFoundError("Release group rg-unresolvable not found")
+    )
     service._album_service = album_service
 
     with pytest.raises(ValidationError) as exc_info:
@@ -1178,7 +1180,7 @@ async def test_request_batch_resolves_one_and_fails_one_individually():
     async def _basic(mbid: str):
         if mbid == "rg-good":
             return SimpleNamespace(artist_name="Good Artist", title="Good Album")
-        raise Exception("not found")
+        raise ResourceNotFoundError("Release group rg-bad not found")
 
     album_service.get_album_basic_info = AsyncMock(side_effect=_basic)
     service._album_service = album_service
@@ -1235,3 +1237,20 @@ async def test_request_batch_treats_literal_unknown_as_missing():
     dispatch_kwargs = download_service.request_album.await_args.kwargs
     assert dispatch_kwargs["artist_name"] == "Real Artist"
     assert dispatch_kwargs["album_title"] == "Real Album"
+
+
+@pytest.mark.asyncio
+async def test_request_album_unexpected_lookup_error_propagates_not_400():
+    # Only a lookup miss becomes ValidationError; anything else (a bug, an
+    # outage surfacing unexpectedly) must not be misreported as a bad request.
+    service, request_history, download_service = _make_service()
+    album_service = MagicMock()
+    album_service.resolve_album_identity = AsyncMock(return_value=("rg-x", None))
+    album_service.get_album_basic_info = AsyncMock(side_effect=RuntimeError("db gone"))
+    service._album_service = album_service
+
+    with pytest.raises(RuntimeError, match="db gone"):
+        await service.request_album("rg-x", user_role="admin")
+
+    request_history.async_record_request.assert_not_awaited()
+    download_service.request_album.assert_not_awaited()

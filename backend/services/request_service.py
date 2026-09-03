@@ -10,7 +10,7 @@ from api.v1.schemas.request import (
     BatchRequestResponse,
     RequestAcceptedResponse,
 )
-from core.exceptions import ExternalServiceError, ValidationError
+from core.exceptions import ExternalServiceError, ResourceNotFoundError, ValidationError
 from infrastructure.persistence.request_history import RequestHistoryStore
 from infrastructure.queue.priority_queue import RequestPriority
 from services.native.download_service import ALREADY_IN_LIBRARY
@@ -157,7 +157,10 @@ class RequestService:
         if self._album_service is not None:
             try:
                 info = await self._album_service.get_album_basic_info(musicbrainz_id)
-            except Exception as error:  # noqa: BLE001 - MB/network/degraded falls through to ValidationError
+            except (ResourceNotFoundError, ValueError) as error:
+                # Lookup miss only: unknown MBID or degraded MusicBrainz with no
+                # local fallback. Anything else (bugs, outages surfacing as
+                # unexpected errors) propagates instead of becoming a 400.
                 logger.warning(
                     "Could not resolve names for %s: %s", musicbrainz_id, error
                 )
