@@ -1480,14 +1480,31 @@ class DownloadOrchestrator:
         disposition: str,
         publisher_bundle_ids: list[str] | None = None,
     ) -> str | None:  # noqa: ANN001 - DownloadTask
-        manifest = (
-            manifest_override
-            if manifest_override is not None
-            else self._read_manifest(task.id)
-        )
-        attempt = await self._attempt_for_manifest(task, manifest)
-        if attempt is None:
-            return None
+        if manifest_override is not None:
+            manifest = manifest_override
+        else:
+            try:
+                manifest = self._read_manifest(task.id)
+            except OrchestrationError:
+                manifest = None
+        if manifest is None:
+            # #285: the enqueue failed before the manifest was written, so there
+            # is no manifest to resolve - fall back to the task's live attempt.
+            attempts = await self._store.list_download_attempts(task.id)
+            attempt = next(
+                (
+                    value
+                    for value in reversed(attempts)
+                    if value.state in {"acquiring", "in_use"}
+                ),
+                None,
+            )
+            if attempt is None:
+                return None
+        else:
+            attempt = await self._attempt_for_manifest(task, manifest)
+            if attempt is None:
+                return None
         scheduled = await self._store.schedule_download_attempt_cleanup(
             attempt.id,
             disposition=disposition,

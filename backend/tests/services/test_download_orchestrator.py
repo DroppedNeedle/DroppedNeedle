@@ -4056,3 +4056,78 @@ async def test_soulseek_short_manifest_still_fails_over(tmp_path: Path):
     result = ProcessResult(succeeded=["/lib/01.flac"], failed=[])
 
     assert await orch._download_is_complete(task, True, result) is False
+
+
+@pytest.mark.asyncio
+async def test_schedule_attempt_cleanup_without_manifest_or_attempts_returns_none(
+    tmp_path: Path,
+):
+    """#285: no manifest (enqueue failed before the write) and no live attempt
+    returns None instead of raising "manifest missing"."""
+    store, orch, *_ = _build(tmp_path)
+    task = await _new_task(store)
+
+    assert (
+        await orch._schedule_attempt_cleanup(task, disposition="discard")
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_schedule_attempt_cleanup_without_manifest_schedules_live_attempt(
+    tmp_path: Path,
+):
+    """#285: no manifest but a live acquiring attempt schedules cleanup for it."""
+    store, orch, *_ = _build(tmp_path)
+    task = await _new_task(store)
+    attempt = await store.create_download_attempt(
+        task_id=task.id,
+        source="soulseek",
+        candidate_index=0,
+        job_name="",
+        handle=TaskHandle(
+            source="soulseek", username="peer", filenames=["peer/01.flac"]
+        ),
+    )
+
+    scheduled_id = await orch._schedule_attempt_cleanup(task, disposition="discard")
+
+    assert scheduled_id == attempt.id
+    refreshed = await store.get_download_attempt(attempt.id)
+    assert refreshed.state == "cleanup_pending"
+
+
+@pytest.mark.asyncio
+async def test_failover_after_failed_enqueue_without_manifest_completes(
+    tmp_path: Path,
+):
+    """#285: an enqueue failure before the manifest write with a remaining
+    candidate fails over instead of failing the task with "manifest missing"."""
+    store, orch, fp, lib = _build(
+        tmp_path,
+        scorer_result=[
+            _candidate(0.9, files=2, username="deadpeer"),
+            _candidate(0.85, files=2, username="goodpeer"),
+        ],
+        max_failover=3,
+    )
+    _coupled_fp(fp, lib)
+    orig_enqueue = orch._strategies["soulseek"].enqueue
+    calls = 0
+
+    async def _flaky_enqueue(task_arg, candidate, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OrchestrationError("boom-before-manifest")
+        return await orig_enqueue(task_arg, candidate, **kwargs)
+
+    orch._strategies["soulseek"].enqueue = _flaky_enqueue
+    task = await _new_task(store, track_count=2)
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert calls == 2
+    assert final.status == "completed"
+    assert final.source_username == "goodpeer"
+    assert (final.error_message or "") != "manifest missing"
