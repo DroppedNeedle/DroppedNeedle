@@ -1,6 +1,6 @@
 aiofiles==24.1.0
 bcrypt>=5.0.0
-cryptography>=48.0
+cryptography>=50.0.1
 fastapi==0.118.3
 h2>=4.1,<5
 httpx[h2]==0.28.1
