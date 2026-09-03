@@ -270,11 +270,15 @@ class LegacyCatalogImporter:
                 tombstones=plan.tombstones[start : start + 500],
             )
         for start in range(0, len(plan.reference_provenance), 500):
-            await self._store.apply_reference_provenance_batch(
+            reference_result = await self._store.apply_reference_provenance_batch(
                 plan.reference_provenance[start : start + 500],
                 migration_run_id=migration_id,
                 source_revision=current_revision,
             )
+            if reference_result.skipped:
+                raise ValidationError(
+                    "The legacy import has unmaterialized references."
+                )
         invariant_counts = await self._store.validate_migrated_catalog()
         if any(invariant_counts.values()):
             raise ValidationError("The imported catalog failed its target invariants.")

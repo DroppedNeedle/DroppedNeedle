@@ -1,4 +1,5 @@
-
+import hashlib
+import logging
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable
@@ -9,7 +10,10 @@ from typing import Any
 import msgspec
 
 from core.exceptions import StaleRevisionError, ValidationError
-from infrastructure.persistence.native_library_store import NativeLibraryStore
+from infrastructure.persistence.native_library_store import (
+    NativeLibraryStore,
+    ReferenceProvenanceSkip,
+)
 from models.library_migration import (
     LegacyCatalogImportBundle,
     LegacyCatalogImportPlan,
@@ -37,6 +41,21 @@ from services.native.library_policy_resolver import LibraryPolicyResolver
 BATCH_SIZE = 500
 MAX_REPORTED_BLOCKERS = 100
 MIN_SQLITE_ROWID = -9_223_372_036_854_775_808
+
+logger = logging.getLogger(__name__)
+
+
+def _redacted_reference(source_kind: str, source_key: str) -> str:
+    """Shareable skip locator: kind plus a truncated hash, never raw keys.
+
+    Reference source keys embed user ids (``favorite`` is
+    ``user_id:item_kind:item_id``; ``compat_*`` keys start with ``user_id``),
+    so per-skip warnings must not log them verbatim.
+    """
+    digest = hashlib.sha256(
+        f"{source_kind}:{source_key}".encode("utf-8")
+    ).hexdigest()
+    return f"{source_kind}#{digest[:16]}"
 
 
 @dataclass(frozen=True)
@@ -160,7 +179,14 @@ class BoundedLegacyCatalogMigrator:
     async def migrate_pending(
         self, migration_id: str, *, now: float | None = None
     ) -> BoundedMigrationOutcome:
-        """Re-run the bounded migration over rows that have no provenance yet."""
+        """Re-run the bounded migration over rows that have no provenance yet.
+
+        Reference skips are terminal for the input revision (GH-367): a run
+        with skips still completes and records its completion marker, with
+        the skips surfaced in ``outcome.skipped_counts`` and the persisted
+        report. The completed run id (policy plus source revision) then
+        suppresses rescheduling until legacy input or policy changes.
+        """
         self._copy_playlists = False
         self._migrated_source_keys = await self._store.get_migrated_legacy_source_keys(
             {
@@ -503,11 +529,13 @@ class BoundedLegacyCatalogMigrator:
                     imported_at=migrated_at,
                 )
             )
-        await self._apply_references(
+        skipped = await self._apply_references(
             rows,
             migration_id=migration_id,
             source_revision=source_revision,
         )
+        for skip in skipped:
+            self._unmap_reference_skip(skip.source_kind, skip.source_key, skip.reason)
 
     async def _migrate_identified_catalog(
         self,
@@ -660,11 +688,13 @@ class BoundedLegacyCatalogMigrator:
         if first_segment:
             self._identified_albums += 1
         self._identified_tracks += len(bundle.membership.tracks)
-        await self._apply_references(
+        skipped = await self._apply_references(
             self._derived_bundle_provenance(bundle, migrated_at),
             migration_id=migration_id,
             source_revision=source_revision,
         )
+        for skip in skipped:
+            self._unmap_reference_skip(skip.source_kind, skip.source_key, skip.reason)
 
     async def _migrate_local_only_catalog(
         self,
@@ -778,11 +808,13 @@ class BoundedLegacyCatalogMigrator:
         if first_segment:
             self._local_only_albums += 1
         self._local_only_tracks += len(bundle.membership.tracks)
-        await self._apply_references(
+        skipped = await self._apply_references(
             self._derived_bundle_provenance(bundle, migrated_at),
             migration_id=migration_id,
             source_revision=source_revision,
         )
+        for skip in skipped:
+            self._unmap_reference_skip(skip.source_kind, skip.source_key, skip.reason)
 
     async def _migrate_review_catalog(
         self,
@@ -857,11 +889,15 @@ class BoundedLegacyCatalogMigrator:
                 await self._store.stage_bounded_legacy_review_groups(staged)
             if linked_reviews:
                 await self._store.apply_bounded_legacy_reviews(linked_reviews)
-                await self._apply_references(
+                skipped = await self._apply_references(
                     linked_provenance,
                     migration_id=migration_id,
                     source_revision=source_revision,
                 )
+                for skip in skipped:
+                    self._unmap_reference_skip(
+                        skip.source_kind, skip.source_key, skip.reason
+                    )
             processed += len(batch)
             self._progress.update(phase, processed, total)
 
@@ -970,11 +1006,15 @@ class BoundedLegacyCatalogMigrator:
                     )
                 )
                 self._increment("manual_decision", mapped=True)
-            await self._apply_references(
+            skipped = await self._apply_references(
                 provenance,
                 migration_id=migration_id,
                 source_revision=source_revision,
             )
+            for skip in skipped:
+                self._unmap_reference_skip(
+                    skip.source_kind, skip.source_key, skip.reason
+                )
 
     async def _migrate_references(
         self,
@@ -1024,6 +1064,10 @@ class BoundedLegacyCatalogMigrator:
                 provenance: list[MigrationProvenance] = []
                 tombstones: list[MigrationTombstone] = []
                 unlinked_history: list[dict[str, Any]] = []
+                # Rows queued for provenance apply. Counting is deferred until
+                # the store reports per-row disposition (GH-367): a skipped row
+                # must not be counted as mapped, or final validation fails.
+                pending: list[tuple[str, str | None, bool, bool]] = []
                 for row, target in zip(rows, targets, strict=True):
                     source_key, user_id = self._reference_key(kind, row)
                     if source_key in migrated_ids:
@@ -1045,28 +1089,15 @@ class BoundedLegacyCatalogMigrator:
                         tombstone = self._tombstone(kind, source_key, row, migrated_at)
                         tombstones.append(tombstone)
                         target = "reference_tombstone", tombstone.id
+                        pending.append(
+                            (source_key, user_id, True, kind == "jellyfin_id_map")
+                        )
+                    elif target is None:
                         self._increment(
                             kind,
-                            mapped=True,
+                            mapped=False,
                             user_id=user_id,
-                            retained=kind == "jellyfin_id_map",
-                            tombstoned=True,
                         )
-                    else:
-                        retained = target is not None and kind in {
-                            "playlist_track",
-                            "compat_bookmark",
-                            "compat_play_queue",
-                            "compat_play_queue_item",
-                            "jellyfin_id_map",
-                        }
-                        self._increment(
-                            kind,
-                            mapped=target is not None,
-                            user_id=user_id,
-                            retained=retained,
-                        )
-                    if target is None:
                         if self._skip_unmappable:
                             self._skipped[kind] += 1
                             continue
@@ -1076,6 +1107,15 @@ class BoundedLegacyCatalogMigrator:
                             detail=self._blocker_locator(kind, row),
                         )
                         continue
+                    else:
+                        retained = kind in {
+                            "playlist_track",
+                            "compat_bookmark",
+                            "compat_play_queue",
+                            "compat_play_queue_item",
+                            "jellyfin_id_map",
+                        }
+                        pending.append((source_key, user_id, False, retained))
                     provenance.append(
                         self._provenance(
                             kind,
@@ -1085,12 +1125,32 @@ class BoundedLegacyCatalogMigrator:
                             migrated_at,
                         )
                     )
-                await self._apply_references(
+                skipped = await self._apply_references(
                     provenance,
                     tombstones=tombstones,
                     migration_id=migration_id,
                     source_revision=source_revision,
                 )
+                skipped_by_key = {
+                    (skip.source_kind, skip.source_key): skip for skip in skipped
+                }
+                for source_key, user_id, tombstoned, retained in pending:
+                    skip = skipped_by_key.get((kind, source_key))
+                    if skip is not None:
+                        self._record_reference_skip(
+                            kind,
+                            source_key,
+                            skip.reason,
+                            user_id=user_id,
+                        )
+                    else:
+                        self._increment(
+                            kind,
+                            mapped=True,
+                            user_id=user_id,
+                            retained=retained,
+                            tombstoned=tombstoned,
+                        )
                 await self._store.materialize_unlinked_history_batch(
                     unlinked_history,
                     migration_run_id=migration_id,
@@ -1239,18 +1299,28 @@ class BoundedLegacyCatalogMigrator:
         migration_id: str,
         source_revision: str,
         tombstones: list[MigrationTombstone] | None = None,
-    ) -> None:
+    ) -> list[ReferenceProvenanceSkip]:
+        """Apply reference batches and return rows the store skipped.
+
+        Skips are terminal for the input revision (GH-367): skipped rows
+        record no provenance, so callers must count them as
+        seen-but-unresolved rather than mapped. Every caller reconciles the
+        returned skips before final reference-count validation.
+        """
         pending_tombstones = tombstones or []
+        skipped: list[ReferenceProvenanceSkip] = []
         for start in range(
             0, max(len(rows), len(pending_tombstones)), self._batch_size
         ):
-            await self._store.apply_reference_provenance_batch(
+            result = await self._store.apply_reference_provenance_batch(
                 rows[start : start + self._batch_size],
                 migration_run_id=migration_id,
                 source_revision=source_revision,
                 tombstones=pending_tombstones[start : start + self._batch_size],
                 copy_playlists=False,
             )
+            skipped.extend(result.skipped)
+        return skipped
 
     def _reference_key(self, kind: str, row: dict[str, Any]) -> tuple[str, str | None]:
         if kind == "favorite":
@@ -1351,6 +1421,57 @@ class BoundedLegacyCatalogMigrator:
             user_id=user_id,
             retained=retained,
             tombstoned=tombstoned,
+        )
+
+    def _record_reference_skip(
+        self,
+        kind: str,
+        source_key: str,
+        reason: str,
+        *,
+        user_id: str | None = None,
+    ) -> None:
+        """Account a reference the batch apply skipped (GH-367).
+
+        Skipped rows record no provenance, so ``mapped`` must not count them
+        otherwise the final reference-count validation fails. Counting them
+        as seen-but-unresolved matches the existing convention for
+        unresolvable rows and surfaces them in ``skipped_counts`` and the
+        persisted report. Skips are terminal for the input revision: the run
+        still completes, and the completed run id suppresses rescheduling
+        under the same policy and source revision.
+        """
+        self._increment(kind, mapped=False, user_id=user_id)
+        self._skipped[kind] += 1
+        logger.warning(
+            "legacy reference skipped kind=%s ref=%s reason=%s",
+            kind,
+            _redacted_reference(kind, source_key),
+            reason,
+        )
+
+    def _unmap_reference_skip(
+        self, kind: str, source_key: str, reason: str
+    ) -> None:
+        """Reconcile a skip for a row already counted as mapped (GH-367).
+
+        Used at apply sites where ``_increment(kind, mapped=True)`` runs
+        before the store call (roots, derived bundle rows, review rows).
+        ``mapped`` drops back out so it matches durable provenance at final
+        validation; ``source`` is untouched because the row was seen. Derived
+        alias/artwork kinds are validation-overwritten, so only the
+        ``unresolved`` bump and ``skipped`` entry survive for them.
+        """
+        count = self._counts.get((kind, None))
+        if count is not None and count.mapped > 0:
+            count.mapped -= 1
+            count.unresolved += 1
+        self._skipped[kind] += 1
+        logger.warning(
+            "legacy reference skipped kind=%s ref=%s reason=%s",
+            kind,
+            _redacted_reference(kind, source_key),
+            reason,
         )
 
     def _merge_counts(

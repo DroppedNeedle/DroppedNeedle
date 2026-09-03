@@ -1,15 +1,18 @@
 import asyncio
+import logging
 import shutil
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 import pytest
 
-from core.exceptions import StaleRevisionError
+from core.exceptions import StaleRevisionError, ValidationError
 
 from api.v1.schemas.library_policies import LibraryRootSettings, TypedLibrarySettings
 from infrastructure.persistence.native_library_store import NativeLibraryStore
+from models.library_work import MigrationProvenance
 from services.native.bounded_legacy_catalog_migrator import (
     BoundedLegacyCatalogMigrator,
 )
@@ -916,3 +919,482 @@ async def test_policy_revision_change_during_pending_run_fails_closed(
     assert counts["library_file"] == 0
     assert review_provenance == 4  # imported exactly once, under P2
     assert await service.schedule() is False
+
+
+async def _seed_skip_run(
+    store: NativeLibraryStore, run_id: str, revision: str = "rev1"
+) -> None:
+    await store.save_migration_dry_run(
+        run_id,
+        source_revision=revision,
+        root_revision="root1",
+        report_json="{}",
+        created_at=100.0,
+    )
+
+
+def _provenance(
+    kind: str, key: str, target_kind: str, target_id: str, revision: str = "rev1"
+) -> MigrationProvenance:
+    return MigrationProvenance(
+        source_kind=kind,
+        source_key=key,
+        target_kind=target_kind,
+        target_id=target_id,
+        source_revision=revision,
+        imported_at=100.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reference_batch_skips_poison_row_and_commits_healthy(
+    tmp_path: Path,
+) -> None:
+    """GH-367: one unmaterializable reference must not abort its batch.
+
+    The healthy compat queue row commits with provenance while the favorite
+    whose target vanished is reported as skipped with no residue.
+    """
+    database = tmp_path / "library.db"
+    _create_source(database, tmp_path / "Historical" / "Music")
+    store = _store(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO user_favorites VALUES ('alice','track','ghost-track-1',1.0)"
+        )
+        connection.execute(
+            "INSERT INTO library_compat_play_queues "
+            "(user_id, current_index, position_ms, updated_at, changed_by_client) "
+            "VALUES ('alice',0,0,1.0,'t')"
+        )
+        connection.commit()
+    run_id = "test-skip-run"
+    await _seed_skip_run(store, run_id)
+    good = _provenance("compat_play_queue", "alice", "compat_play_queue", "alice")
+    bad = _provenance("favorite", "alice:track:ghost-track-1", "local_track", "ghost-track-1")
+    result = await store.apply_reference_provenance_batch(
+        [good, bad],
+        migration_run_id=run_id,
+        source_revision="rev1",
+        copy_playlists=False,
+    )
+    assert result.inserted == 1
+    assert int(result) == 1
+    assert [(skip.source_kind, skip.source_key, skip.reason) for skip in result.skipped] == [
+        ("favorite", "alice:track:ghost-track-1", "not_materialized")
+    ]
+    with sqlite3.connect(database) as connection:
+        provenance = {
+            (row[0], row[1])
+            for row in connection.execute(
+                "SELECT source_kind, source_key FROM library_migration_provenance"
+            ).fetchall()
+        }
+        assert provenance == {("compat_play_queue", "alice")}
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = ?",
+                ("ghost-track-1",),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_compat_play_queues WHERE user_id = 'alice'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.asyncio
+async def test_reference_batch_skips_poison_shapes(tmp_path: Path) -> None:
+    """GH-367/F2: every poison shape skips instead of aborting the batch.
+
+    Malformed favorite keys raise before any write (``invalid_key``); rows
+    whose inserts violate target constraints raise from the insert
+    (``integrity_error``); rows gated on a vanished target insert nothing
+    and fail verification (``not_materialized``).
+    """
+    database = tmp_path / "library.db"
+    _create_source(database, tmp_path / "Historical" / "Music")
+    store = _store(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO play_history VALUES "
+            "('hist-null','alice',NULL,'Ghost Artist','Ghost Album',"
+            "NULL,NULL,180000,'local','2026-07-01T12:00:00Z')"
+        )
+        connection.executemany(
+            "INSERT INTO playlist_tracks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [
+                (
+                    "pt-poison",
+                    "ghost-playlist",
+                    0,
+                    "Ghost",
+                    "Ghost Artist",
+                    "Ghost Album",
+                    None,
+                    None,
+                    None,
+                    None,
+                    "local",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "a",
+                    None,
+                    None,
+                ),
+            ],
+        )
+        connection.commit()
+    run_id = "test-skip-shapes"
+    await _seed_skip_run(store, run_id)
+    malformed = _provenance("favorite", "nocolon", "local_track", "ghost-track-1")
+    null_column = _provenance("history", "hist-null", "local_track", "ghost-track-1")
+    missing_parent = _provenance(
+        "playlist_track", "pt-poison", "local_track", "ghost-track-9"
+    )
+    missing_queue = _provenance(
+        "compat_play_queue_item", "alice:9", "local_track", "ghost-track-9"
+    )
+    result = await store.apply_reference_provenance_batch(
+        [malformed, null_column, missing_parent, missing_queue],
+        migration_run_id=run_id,
+        source_revision="rev1",
+        copy_playlists=False,
+    )
+    assert result.inserted == 0
+    assert [(skip.source_kind, skip.reason) for skip in result.skipped] == [
+        ("favorite", "invalid_key"),
+        ("history", "integrity_error"),
+        ("playlist_track", "integrity_error"),
+        ("compat_play_queue_item", "not_materialized"),
+    ]
+    with sqlite3.connect(database) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_migration_provenance"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_play_history WHERE id = 'hist-null'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_playlist_tracks WHERE id = 'pt-poison'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_compat_play_queue_items "
+                "WHERE user_id = 'alice' AND item_index = 9"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_reference_batch_skip_leaves_no_library_residue(tmp_path: Path) -> None:
+    """GH-367/F3: a skipped row's partial materialization rolls back."""
+    database = tmp_path / "library.db"
+    _create_source(database, tmp_path / "Historical" / "Music")
+    store = _store(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO play_history VALUES "
+            "('hist-poison','alice','Ghost','Ghost Artist','Ghost Album',"
+            "NULL,NULL,180000,'local','2026-07-01T12:00:00Z')"
+        )
+        connection.execute(
+            "INSERT INTO album_release_pins VALUES ('rg-poison','rel-poison','a','t')"
+        )
+        connection.execute(
+            "INSERT INTO library_playlists "
+            "(id, name, cover_image_path, created_at, updated_at, source_ref, "
+            "user_id, is_public) VALUES ('playlist-1','Mix',NULL,'a','b',NULL,NULL,0)"
+        )
+        connection.executemany(
+            "INSERT INTO playlist_tracks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [
+                (
+                    "pt-orphan",
+                    "playlist-1",
+                    0,
+                    "Ghost",
+                    "Ghost Artist",
+                    "Ghost Album",
+                    None,
+                    None,
+                    None,
+                    None,
+                    "local",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "a",
+                    None,
+                    None,
+                ),
+            ],
+        )
+        connection.commit()
+    run_id = "test-skip-residue"
+    await _seed_skip_run(store, run_id)
+    result = await store.apply_reference_provenance_batch(
+        [
+            _provenance("history", "hist-poison", "local_track", "ghost-track-1"),
+            _provenance("album_release_pin", "rg-poison", "local_album", "ghost-album"),
+            _provenance("playlist_track", "pt-orphan", "local_track", "ghost-track-1"),
+        ],
+        migration_run_id=run_id,
+        source_revision="rev1",
+        copy_playlists=False,
+    )
+    assert result.inserted == 0
+    assert len(result.skipped) == 3
+    with sqlite3.connect(database) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_play_history WHERE id = 'hist-poison'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_album_release_pins "
+                "WHERE release_group_mbid = 'rg-poison'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_playlist_tracks WHERE id = 'pt-orphan'"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_pending_migration_completes_with_poison_reference_and_reports_skip(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """GH-367 end to end: a poison reference completes the run as a skip.
+
+    Counts reconcile so reference validation passes, the skip surfaces in
+    ``skipped_counts``, and the completed run id suppresses rescheduling
+    under the same revision (terminal skip, F4).
+    """
+    historical_root = tmp_path / "Historical" / "Music"
+    (historical_root / "Compilation").mkdir(parents=True)
+    (historical_root / "Compilation" / "01.flac").write_bytes(b"a" * 100)
+    (historical_root / "Compilation" / "02.flac").write_bytes(b"b" * 200)
+    database = tmp_path / "library.db"
+    _create_source(database, historical_root)
+    store = _store(database)
+    await BoundedLegacyCatalogMigrator(
+        store,
+        _resolver(("root", tmp_path / "Missing" / "Music")),
+        emit_progress=lambda _message: None,
+        batch_size=1,
+        skip_unmappable_paths=True,
+    ).migrate("lenient-migration", now=100)
+
+    resolver = _resolver(("root", historical_root))
+    revision = await store.get_bounded_legacy_source_revision()
+    run_id = pending_run_id(resolver.policy_revision, revision)
+
+    original_resolve = store.resolve_bounded_legacy_references
+    poisoned = {"done": False}
+
+    async def poisoned_resolve(
+        kind: str, rows: list[dict]
+    ) -> list[tuple[str, str] | None]:
+        targets = await original_resolve(kind, rows)
+        if kind == "favorite" and not poisoned["done"]:
+            poisoned_targets = list(targets)
+            for index, target in enumerate(poisoned_targets):
+                if target is not None:
+                    poisoned_targets[index] = ("local_track", "ghost-track-1")
+                    poisoned["done"] = True
+                    break
+            return poisoned_targets
+        return targets
+
+    store.resolve_bounded_legacy_references = poisoned_resolve  # type: ignore[method-assign]
+    with caplog.at_level(logging.WARNING):
+        outcome = await BoundedLegacyCatalogMigrator(
+            store,
+            resolver,
+            emit_progress=lambda _message: None,
+            batch_size=1,
+            skip_unmappable_paths=True,
+        ).migrate_pending(run_id, now=200)
+    assert poisoned["done"] is True
+    assert outcome.blocker_count == 0
+    assert outcome.skipped_counts.get("favorite", 0) == 1
+    assert outcome.report.state == "applied"
+    skip_records = [
+        record for record in caplog.records if "legacy reference skipped" in record.getMessage()
+    ]
+    assert len(skip_records) == 1
+    assert "kind=favorite" in skip_records[0].getMessage()
+    assert "alice" not in skip_records[0].getMessage()
+    with sqlite3.connect(database) as connection:
+        assert (
+            connection.execute(
+                "SELECT state FROM library_migration_runs WHERE id = ?", (run_id,)
+            ).fetchone()[0]
+            == "completed"
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = ?",
+                ("ghost-track-1",),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute("SELECT COUNT(*) FROM library_user_favorites").fetchone()[0]
+            == 2
+        )
+    counts = await store.get_pending_legacy_counts()
+    assert counts["favorite"] > 0
+    service = LegacyPendingMigrationService(store, lambda: resolver)
+    assert await service.schedule() is False
+
+
+@pytest.mark.asyncio
+async def test_reference_batch_skips_gated_branches_with_live_target(
+    tmp_path: Path,
+) -> None:
+    """GH-367/F2: gated branches skip on live targets too.
+
+    A compat queue item whose parent queue vanished raises from its insert
+    (``integrity_error``); a compat bookmark with a malformed key raises
+    from key parsing (``invalid_key``). Both need a real target track, so
+    this runs a genuine cutover first instead of hand-seeding catalog rows.
+    """
+    historical_root = tmp_path / "Historical" / "Music"
+    (historical_root / "Compilation").mkdir(parents=True)
+    (historical_root / "Compilation" / "01.flac").write_bytes(b"a" * 100)
+    (historical_root / "Compilation" / "02.flac").write_bytes(b"b" * 200)
+    database = tmp_path / "library.db"
+    _create_source(database, historical_root)
+    store = _store(database)
+    outcome = await BoundedLegacyCatalogMigrator(
+        store,
+        _resolver(("root", historical_root)),
+        emit_progress=lambda _message: None,
+        batch_size=1,
+        skip_unmappable_paths=True,
+    ).migrate("cutover-live-target", now=100)
+    assert outcome.blocker_count == 0
+    with sqlite3.connect(database) as connection:
+        track_id = connection.execute("SELECT id FROM local_tracks LIMIT 1").fetchone()[0]
+        connection.execute("DELETE FROM library_compat_play_queues WHERE user_id='alice'")
+        connection.commit()
+    run_id = "test-live-target"
+    await _seed_skip_run(store, run_id)
+    result = await store.apply_reference_provenance_batch(
+        [
+            _provenance("compat_play_queue_item", "alice:7", "local_track", track_id),
+            _provenance("compat_bookmark", "nocolon", "local_track", track_id),
+        ],
+        migration_run_id=run_id,
+        source_revision="rev1",
+        copy_playlists=False,
+    )
+    assert result.inserted == 0
+    assert [(skip.source_kind, skip.reason) for skip in result.skipped] == [
+        ("compat_play_queue_item", "integrity_error"),
+        ("compat_bookmark", "invalid_key"),
+    ]
+    with sqlite3.connect(database) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_compat_play_queue_items "
+                "WHERE user_id = 'alice' AND item_index = 7"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_compat_bookmarks "
+                "WHERE user_id = 'nocolon'"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_reference_batch_skips_verification_parse_error(tmp_path: Path) -> None:
+    """GH-367 re-review: verification-time key parsing must skip, not abort.
+
+    A compat queue item whose target exists but is not a consumable track
+    no-ops in materialize (track_id gate) and reaches verification, where
+    the malformed item_index key raises. That ValueError must record an
+    invalid_key skip while co-batched healthy rows commit; a malformed key
+    with a missing track target fails verification as not_materialized.
+    """
+    database = tmp_path / "library.db"
+    _create_source(database, tmp_path / "Historical" / "Music")
+    store = _store(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO library_compat_play_queues "
+            "(user_id, current_index, position_ms, updated_at, changed_by_client) "
+            "VALUES ('alice',0,0,1.0,'t')"
+        )
+        connection.execute(
+            "INSERT INTO library_playlists "
+            "(id, name, cover_image_path, created_at, updated_at, source_ref, "
+            "user_id, is_public) VALUES ('playlist-1','Mix',NULL,'a','b',NULL,NULL,0)"
+        )
+        connection.commit()
+    run_id = "test-skip-verify-parse"
+    await _seed_skip_run(store, run_id)
+    good = _provenance("compat_play_queue", "alice", "compat_play_queue", "alice")
+    verify_parse = _provenance(
+        "compat_play_queue_item", "alice:xyz", "playlist", "playlist-1"
+    )
+    dead_target = _provenance(
+        "compat_play_queue_item", "nocolon", "local_track", "ghost-track-1"
+    )
+    result = await store.apply_reference_provenance_batch(
+        [good, verify_parse, dead_target],
+        migration_run_id=run_id,
+        source_revision="rev1",
+        copy_playlists=False,
+    )
+    assert result.inserted == 1
+    assert [
+        (skip.source_kind, skip.source_key, skip.reason) for skip in result.skipped
+    ] == [
+        ("compat_play_queue_item", "alice:xyz", "invalid_key"),
+        ("compat_play_queue_item", "nocolon", "not_materialized"),
+    ]
+    with sqlite3.connect(database) as connection:
+        provenance = {
+            (row[0], row[1])
+            for row in connection.execute(
+                "SELECT source_kind, source_key FROM library_migration_provenance"
+            ).fetchall()
+        }
+        assert provenance == {("compat_play_queue", "alice")}
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_compat_play_queue_items"
+            ).fetchone()[0]
+            == 0
+        )

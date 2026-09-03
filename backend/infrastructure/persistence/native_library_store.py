@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path, PurePosixPath
 import threading
 import time
-from typing import Any, TypeVar
+from typing import Any, NamedTuple, TypeVar
 
 import msgspec
 
@@ -694,6 +694,38 @@ def _bulk_preview_ineligibility(
         ):
             return "IDENTITY_CONFLICT"
     return None
+
+
+class ReferenceProvenanceSkip(NamedTuple):
+    """One legacy reference the batch apply could not materialize.
+
+    A skip means the row's source or target vanished between reference
+    resolution (a separate ``_read``) and this write transaction, or the
+    persisted key/parentage is malformed. Skipped rows record no provenance
+    and leave no ``library_*`` residue, so pending-count math still treats
+    them as pending. ``reason`` is one of ``not_materialized``,
+    ``invalid_key``, or ``integrity_error``.
+    """
+
+    source_kind: str
+    source_key: str
+    target_kind: str
+    target_id: str
+    reason: str
+
+
+class ReferenceProvenanceBatchResult(NamedTuple):
+    """Outcome of ``apply_reference_provenance_batch``.
+
+    ``int(result)`` is the inserted count for backward compatibility with
+    callers that ignore per-row disposition.
+    """
+
+    inserted: int
+    skipped: tuple[ReferenceProvenanceSkip, ...] = ()
+
+    def __int__(self) -> int:
+        return self.inserted
 
 
 class NativeLibraryStore(PersistenceBase):
@@ -31576,8 +31608,18 @@ class NativeLibraryStore(PersistenceBase):
         source_revision: str,
         tombstones: list[MigrationTombstone] | None = None,
         copy_playlists: bool = True,
-    ) -> int:
-        def operation(connection: sqlite3.Connection) -> int:
+    ) -> ReferenceProvenanceBatchResult:
+        """Materialize one batch of legacy references and record provenance.
+
+        One ``_write`` closure is still one transaction. Each row applies
+        under its own savepoint: a row whose source or target vanished after
+        resolution, whose persisted key is malformed, or whose parent rows
+        are missing is recorded in ``result.skipped`` and rolled back to its
+        savepoint, while materializable rows commit. The migration-run
+        revision guard and the provenance-divergence guard still raise
+        ``StaleRevisionError`` and abort the batch.
+        """
+        def operation(connection: sqlite3.Connection) -> ReferenceProvenanceBatchResult:
             def row_value(row: sqlite3.Row, key: str) -> Any:
                 return row[key] if key in row.keys() else None
 
@@ -31788,6 +31830,21 @@ class NativeLibraryStore(PersistenceBase):
                     "FROM playlists"
                 )
             inserted = 0
+            skipped: list[ReferenceProvenanceSkip] = []
+
+            def _record_skip(provenance: MigrationProvenance, reason: str) -> None:
+                skipped.append(
+                    ReferenceProvenanceSkip(
+                        provenance.source_kind,
+                        provenance.source_key,
+                        provenance.target_kind,
+                        provenance.target_id,
+                        reason,
+                    )
+                )
+                connection.execute("ROLLBACK TO SAVEPOINT dn_reference_row")
+                connection.execute("RELEASE dn_reference_row")
+
             for tombstone in tombstones or []:
                 connection.execute(
                     "INSERT INTO library_reference_tombstones "
@@ -31807,11 +31864,21 @@ class NativeLibraryStore(PersistenceBase):
                     ),
                 )
             for provenance in provenance_rows:
-                materialize_reference(provenance)
-                if not self._migration_reference_matches(connection, provenance):
-                    raise StaleRevisionError(
-                        "A persisted legacy reference was not materialized as planned."
+                connection.execute("SAVEPOINT dn_reference_row")
+                try:
+                    materialize_reference(provenance)
+                    materialized = self._migration_reference_matches(
+                        connection, provenance
                     )
+                except ValueError:
+                    _record_skip(provenance, "invalid_key")
+                    continue
+                except sqlite3.IntegrityError:
+                    _record_skip(provenance, "integrity_error")
+                    continue
+                if not materialized:
+                    _record_skip(provenance, "not_materialized")
+                    continue
                 existing = connection.execute(
                     "SELECT target_kind, target_id, source_revision "
                     "FROM library_migration_provenance "
@@ -31827,6 +31894,7 @@ class NativeLibraryStore(PersistenceBase):
                         raise StaleRevisionError(
                             "A persisted legacy reference changed after it was imported."
                         )
+                    connection.execute("RELEASE dn_reference_row")
                     continue
                 connection.execute(
                     "INSERT INTO library_migration_provenance "
@@ -31843,7 +31911,8 @@ class NativeLibraryStore(PersistenceBase):
                     ),
                 )
                 inserted += 1
-            return inserted
+                connection.execute("RELEASE dn_reference_row")
+            return ReferenceProvenanceBatchResult(inserted, tuple(skipped))
 
         return await self._write(operation)
 

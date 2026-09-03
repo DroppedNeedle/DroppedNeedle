@@ -1727,3 +1727,40 @@ def test_importer_provider_is_singleton_and_only_builds_in_isolated_composition(
     assert first._resolver is resolver
     assert first._cover_reader is cover_reader
     service_providers.get_legacy_catalog_importer.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_apply_fails_closed_when_reference_cannot_materialize(
+    tmp_path: Path,
+) -> None:
+    """GH-367/F6: the cutover caller converts store skips to ValidationError."""
+    root = tmp_path / "Music"
+    root.mkdir()
+    database = tmp_path / "library.db"
+    _create_source(database, root)
+    store, importer = _importer(database, root)
+    plan, _report = await importer.prepare("cutover-poison", now=100)
+
+    original_matches = store._migration_reference_matches
+    poisoned = {"done": False}
+
+    def poisoned_matches(connection: sqlite3.Connection, provenance) -> bool:
+        if provenance.source_kind == "favorite" and not poisoned["done"]:
+            poisoned["done"] = True
+            return False
+        return original_matches(connection, provenance)
+
+    store._migration_reference_matches = poisoned_matches  # type: ignore[method-assign]
+    with pytest.raises(ValidationError, match="unmaterialized"):
+        await importer.apply(
+            "cutover-poison",
+            expected_source_revision=plan.source_revision,
+            now=101,
+        )
+    assert poisoned["done"] is True
+    with sqlite3.connect(database) as connection:
+        state = connection.execute(
+            "SELECT state FROM library_migration_runs WHERE id = ?",
+            ("cutover-poison",),
+        ).fetchone()[0]
+    assert state != "completed"
