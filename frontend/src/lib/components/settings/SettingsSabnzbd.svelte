@@ -3,6 +3,7 @@
 
 	import {
 		getSabnzbdConfigQuery,
+		getSabnzbdStatusQuery,
 		saveSabnzbdConfig,
 		testSabnzbd
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
@@ -14,6 +15,7 @@
 	import DownloadClientCard from './DownloadClientCard.svelte';
 
 	const configQuery = getSabnzbdConfigQuery();
+	const statusQuery = getSabnzbdStatusQuery();
 	const indexersQuery = getIndexersQuery();
 	const save = saveSabnzbdConfig();
 	const test = testSabnzbd();
@@ -46,15 +48,27 @@
 		}
 	});
 
-	const connected = $derived(testResult?.valid === true);
+	const connected = $derived(
+		testResult ? testResult.valid === true : statusQuery.data?.valid === true
+	);
 	const statusText = $derived(
-		connected
-			? `Connected${testResult?.version ? ` · v${testResult.version}` : ''}`
-			: enabled
-				? url
-					? 'Run Test to check the connection'
-					: 'Not configured'
-				: 'Disabled'
+		testResult
+			? testResult.valid === true
+				? `Connected${testResult.version ? ` · v${testResult.version}` : ''}`
+				: enabled
+					? url
+						? 'Run Test to check the connection'
+						: 'Not configured'
+					: 'Disabled'
+			: statusQuery.data?.valid === true
+				? `Connected${statusQuery.data.version ? ` · v${statusQuery.data.version}` : ''}`
+				: statusQuery.data
+					? statusQuery.data.message
+					: enabled
+						? url
+							? 'Run Test to check the connection'
+							: 'Not configured'
+						: 'Disabled'
 	);
 
 	function current(): SabnzbdConnectionSettings {

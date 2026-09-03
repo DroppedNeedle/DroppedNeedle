@@ -26,6 +26,10 @@ vi.mock('$lib/queries/downloads/DownloadClientsQueries.svelte', () => ({
 		isLoading: false,
 		isError: false
 	}),
+	getSabnzbdStatusQuery: () => ({
+		data: { valid: true, version: '5.0.4', message: 'SABnzbd 5.0.4' },
+		isLoading: false
+	}),
 	saveSabnzbdConfig: () => ({ mutateAsync: saveMutate, isPending: false }),
 	testSabnzbd: () => ({ mutateAsync: testMutate, isPending: false })
 }));
@@ -72,5 +76,12 @@ describe('SettingsSabnzbd.svelte', () => {
 		expect(saveMutate).toHaveBeenCalledWith(expect.objectContaining({ enabled: true }));
 		// With no indexers, an enabled SABnzbd is inert - the card must say so.
 		await expect.element(page.getByText('No indexers configured.')).toBeInTheDocument();
+	});
+
+	it('shows live Connected status from the status query without running Test', async () => {
+		testMutate.mockClear();
+		render(SettingsSabnzbd);
+		await expect.element(page.getByText(/Connected/).first()).toBeInTheDocument();
+		expect(testMutate).not.toHaveBeenCalled();
 	});
 });

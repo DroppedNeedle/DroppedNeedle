@@ -784,6 +784,7 @@ export const API = {
 	downloadClients: {
 		sabnzbd: () => '/api/v1/download-clients/sabnzbd',
 		sabnzbdTest: () => '/api/v1/download-clients/sabnzbd/test',
+		sabnzbdStatus: () => '/api/v1/download-clients/sabnzbd/status',
 		policy: () => '/api/v1/download-clients/policy',
 		policySave: () => '/api/v1/download-clients/policy',
 		policySummary: () => '/api/v1/download-clients/policy-summary',

@@ -140,6 +140,34 @@ async def test_sabnzbd(
     )
 
 
+@router.get("/sabnzbd/status", response_model=SabnzbdTestResponse)
+async def get_sabnzbd_status(
+    _: CurrentAdminDep, preferences=Depends(get_preferences_service)
+):
+    """Live per-client status checked against the SAVED config (not submitted values)."""
+    raw = preferences.get_sabnzbd_connection_raw()
+    if not raw.url.strip():
+        return SabnzbdTestResponse(valid=False, message="Not configured")
+    client = build_sabnzbd_download_client(raw.url, raw.api_key, raw.downloads_mount)
+    try:
+        status = await client.health_check()
+        if status.status != "ok":
+            return SabnzbdTestResponse(
+                valid=False, message=status.message or "SABnzbd unreachable"
+            )
+        cats = await client.get_categories()
+        complete_dir = await client.get_complete_dir()
+    except ExternalServiceError as exc:
+        return SabnzbdTestResponse(valid=False, message=str(exc))
+    return SabnzbdTestResponse(
+        valid=True,
+        version=status.version,
+        message=f"SABnzbd {status.version}",
+        categories=cats,
+        complete_dir=complete_dir or None,
+    )
+
+
 @router.get("/source-priority", response_model=SourcePriority)
 async def get_source_priority(
     _: CurrentAdminDep, preferences=Depends(get_preferences_service)

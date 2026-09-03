@@ -45,6 +45,16 @@ const sabnzbdOptions = () =>
 
 export const getSabnzbdConfigQuery = () => createQuery(() => sabnzbdOptions());
 
+const sabnzbdStatusOptions = () =>
+	queryOptions({
+		staleTime: CACHE_TTL.LIBRARY_NATIVE,
+		queryKey: DownloadQueryKeyFactory.sabnzbdStatus(),
+		queryFn: ({ signal }) =>
+			api.global.get<SabnzbdTestResult>(API.downloadClients.sabnzbdStatus(), { signal })
+	});
+
+export const getSabnzbdStatusQuery = () => createQuery(() => sabnzbdStatusOptions());
+
 const policyOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
@@ -60,6 +70,7 @@ export const getDownloadPolicyQuery = (getEnabled: () => boolean = () => true) =
 
 async function invalidateClients() {
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbd() });
+	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbdStatus() });
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientStatus() });
 	await invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix });
 }

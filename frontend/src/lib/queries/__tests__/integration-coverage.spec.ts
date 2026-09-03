@@ -52,6 +52,11 @@ const COVERAGE: Array<[string, string, string]> = [
 		API.downloadClients.policyImpact(),
 		'/api/v1/download-clients/policy/impact'
 	],
+	[
+		'download-clients sabnzbd status',
+		API.downloadClients.sabnzbdStatus(),
+		'/api/v1/download-clients/sabnzbd/status'
+	],
 
 	[
 		'management hold retry',

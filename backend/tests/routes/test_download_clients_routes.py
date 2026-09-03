@@ -223,6 +223,74 @@ def test_test_sabnzbd_flags_unresolvable_mount(monkeypatch):
     assert "/wrong/mount" in (body["mount_message"] or "")
 
 
+def test_get_sabnzbd_status_reports_version_and_categories(monkeypatch):
+    fake_client = MagicMock()
+    fake_client.health_check = AsyncMock(
+        return_value=ServiceStatus(status="ok", version="5.0.4")
+    )
+    fake_client.get_categories = AsyncMock(return_value=["*", "audio"])
+    fake_client.get_complete_dir = AsyncMock(return_value="/data/Downloads/complete")
+    monkeypatch.setattr(
+        download_clients,
+        "build_sabnzbd_download_client",
+        lambda url, key, mount="/tmp": fake_client,
+    )
+
+    app = _app()
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    resp = build_test_client(app).get("/download-clients/sabnzbd/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["valid"] is True
+    assert body["version"] == "5.0.4"
+    assert "audio" in body["categories"]
+    assert body["complete_dir"] == "/data/Downloads/complete"
+
+
+def test_get_sabnzbd_status_unreachable_is_valid_false(monkeypatch):
+    from core.exceptions import ExternalServiceError
+
+    fake_client = MagicMock()
+    fake_client.health_check = AsyncMock(
+        side_effect=ExternalServiceError("connection refused")
+    )
+    monkeypatch.setattr(
+        download_clients,
+        "build_sabnzbd_download_client",
+        lambda url, key, mount="/tmp": fake_client,
+    )
+
+    app = _app()
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    resp = build_test_client(app).get("/download-clients/sabnzbd/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["valid"] is False
+    assert body["message"] == "connection refused"
+
+
+def test_get_sabnzbd_status_unconfigured_makes_no_network_call(monkeypatch):
+    prefs = _prefs()
+    prefs.get_sabnzbd_connection_raw.return_value = SabnzbdConnectionSettings(
+        enabled=False, url="", api_key=""
+    )
+
+    def _fail_on_call(url, key, mount="/tmp"):
+        raise AssertionError("factory must not be called when unconfigured")
+
+    monkeypatch.setattr(
+        download_clients, "build_sabnzbd_download_client", _fail_on_call
+    )
+
+    app = _app(prefs)
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    resp = build_test_client(app).get("/download-clients/sabnzbd/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["valid"] is False
+    assert body["message"] == "Not configured"
+
+
 # --- Acquisition-quality policy routes
 
 
