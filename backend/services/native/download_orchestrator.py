@@ -823,6 +823,42 @@ class DownloadOrchestrator:
         """The download client that owns this task's source (D2/D3)."""
         return self._strategy(task.source).client
 
+    async def _disk_present_filenames(self, task, manifest) -> set[str]:  # noqa: ANN001
+        """Filenames from ``manifest.target_files`` already complete on disk (#131).
+
+        slskd transfer records can vanish (pruned after completion, no-show,
+        stall/queued/deadline with an empty matched set) while every expected
+        file sits complete in the completed dir. Resolving via the owning
+        client's ``get_file_path`` lets the import proceed from disk instead of
+        starving on an empty succeeded set and re-downloading forever.
+        """
+        if task.source != "soulseek":
+            return set()
+        client = self._download_client_for(task)
+        handle = getattr(manifest, "handle", None)
+        present: set[str] = set()
+        for target in manifest.target_files or []:
+            try:
+                resolved = await client.get_file_path(
+                    handle, target.filename, getattr(target, "size", None)
+                )
+            except Exception:  # noqa: BLE001 - one bad file must not sink the album
+                continue
+            if resolved is not None:
+                present.add(target.filename)
+        return present
+
+    async def _only_with_disk_fallback(self, task, only):  # noqa: ANN001, ANN201
+        """Replace an empty soulseek ``only`` set with on-disk files when any (#131)."""
+        if only is None or only or task.source != "soulseek":
+            return only
+        try:
+            manifest = self._read_manifest(task.id)
+        except OrchestrationError:
+            return only
+        present = await self._disk_present_filenames(task, manifest)
+        return present or only
+
     async def _enqueue(  # noqa: ANN001 - DownloadTask
         self,
         task,
@@ -1136,6 +1172,7 @@ class DownloadOrchestrator:
                     only = None
                 else:
                     only = set(status.succeeded_filenames)
+                    only = await self._only_with_disk_fallback(task, only)
                 result, enumerated = await self._import_files(
                     task, only_filenames=only, completed=outcome == _OUT_COMPLETED
                 )
@@ -1431,6 +1468,7 @@ class DownloadOrchestrator:
             if outcome in (_OUT_COMPLETED, _OUT_TERMINAL)
             else set(status.succeeded_filenames)
         )
+        only = await self._only_with_disk_fallback(task, only)
         result, _enumerated = await self._import_files(
             task, only_filenames=only, completed=outcome == _OUT_COMPLETED
         )

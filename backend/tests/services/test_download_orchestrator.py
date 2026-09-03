@@ -4131,3 +4131,121 @@ async def test_failover_after_failed_enqueue_without_manifest_completes(
     assert final.status == "completed"
     assert final.source_username == "goodpeer"
     assert (final.error_message or "") != "manifest missing"
+
+
+@pytest.mark.asyncio
+async def test_disk_present_filenames_returns_on_disk_subset_131(tmp_path: Path):
+    """#131: the helper resolves each manifest target via get_file_path - a path
+    reads as present, None/exception as absent; non-soulseek returns empty."""
+    _store, orch, _fp, _lib = _build(tmp_path)
+    seen: list[tuple] = []
+
+    async def _resolve(handle, remote_filename, size=None):
+        seen.append((remote_filename, size))
+        if remote_filename == "peer/02.flac":
+            return None
+        if remote_filename == "peer/03.flac":
+            raise RuntimeError("boom")
+        return Path("/completed") / remote_filename
+
+    orch._strategies["soulseek"].client.get_file_path = AsyncMock(
+        side_effect=_resolve
+    )
+    manifest = DownloadManifest(
+        task_id="t-disk-a",
+        source_username="peer",
+        handle=TaskHandle(
+            source="soulseek",
+            username="peer",
+            filenames=["peer/01.flac", "peer/02.flac", "peer/03.flac"],
+        ),
+        release_group_mbid="rg-1",
+        artist_name="A",
+        album_title="B",
+        naming_template=_TEMPLATE,
+        target_files=[
+            ExpectedFile(filename="peer/01.flac", size=100),
+            ExpectedFile(filename="peer/02.flac", size=100),
+            ExpectedFile(filename="peer/03.flac", size=100),
+        ],
+    )
+    soulseek_task = SimpleNamespace(source="soulseek", id="t-disk-a")
+
+    assert await orch._disk_present_filenames(soulseek_task, manifest) == {
+        "peer/01.flac"
+    }
+    assert {name for name, _size in seen} == {
+        "peer/01.flac",
+        "peer/02.flac",
+        "peer/03.flac",
+    }
+    assert {size for _name, size in seen} == {100}
+
+    usenet_task = SimpleNamespace(source="usenet", id="t-disk-a")
+    assert await orch._disk_present_filenames(usenet_task, manifest) == set()
+
+
+@pytest.mark.asyncio
+async def test_empty_transfer_state_with_files_on_disk_imports_and_completes_131(
+    tmp_path: Path,
+):
+    """#131: slskd reports terminal with zero succeeded, but every expected file
+    is complete on disk -> import from disk and complete with a single enqueue
+    instead of looping whole-album re-downloads to exhaustion."""
+    empty = _status(
+        "failed", succeeded=[], files_total=2, files_completed=0, matched=2
+    )
+    client = _StubClient()
+    client.get_status = AsyncMock(side_effect=[empty, empty])
+    store, orch, fp, lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[
+            _candidate(0.9, files=2, username="p1"),
+            _candidate(0.85, files=2, username="p2"),
+        ],
+    )
+    _coupled_fp(fp, lib)
+    task = await _new_task(store, track_count=2)
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "completed"
+    assert client.enqueue.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_empty_transfer_state_with_empty_disk_keeps_failover_131(
+    tmp_path: Path,
+):
+    """#131: nothing on disk either -> prior behavior stands: zero import, fail
+    over to the next peer, and no mount-blaming message."""
+    empty = _status(
+        "failed", succeeded=[], files_total=2, files_completed=0, matched=2
+    )
+    client = _StubClient()
+    client.get_status = AsyncMock(side_effect=[empty, empty])
+    client.get_file_path = AsyncMock(return_value=None)
+    store, orch, fp, lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[
+            _candidate(0.9, files=2, username="p1"),
+            _candidate(0.85, files=2, username="p2"),
+        ],
+    )
+    _coupled_fp(fp, lib)
+    task = await _new_task(store, track_count=2)
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status != "completed"
+    assert client.enqueue.await_count == 2
+    assert fp.process_downloaded.await_count == 2
+    assert lib.rows == []
+    for call in fp.process_downloaded.await_args_list:
+        assert call.kwargs["only_filenames"] == set()
+    assert "No working source" in (final.error_message or "")
+    assert "slskd downloads" not in (final.error_message or "")
