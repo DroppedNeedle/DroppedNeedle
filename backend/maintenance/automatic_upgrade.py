@@ -113,16 +113,31 @@ def _sha256(path: Path) -> str | None:
     if not path.is_file():
         return None
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        # Docker Desktop Windows bind-mounts can flap with transient ENOENT
+        # right after a rename; treat as not-yet-verified so the caller retries.
+        return None
     return digest.hexdigest()
 
 
-def _wait_for_content(path: Path, expected_sha256: str) -> bool:
+def _wait_for_content(path: Path, expected_sha256: str | None) -> bool:
+    if expected_sha256 is None:
+        # Fail-closed by design: an unverifiable expectation must never match,
+        # not even an equally unreadable destination.
+        return False
     for attempt in range(_PUBLISH_VERIFY_ATTEMPTS):
-        if _sha256(path) == expected_sha256:
-            return True
+        try:
+            if _sha256(path) == expected_sha256:
+                return True
+        except OSError:
+            # Defense-in-depth (belt-and-braces: _sha256 already swallows
+            # OSError): a transient read failure is a missed attempt, not an
+            # abort of the verification budget.
+            pass
         if attempt + 1 < _PUBLISH_VERIFY_ATTEMPTS:
             time.sleep(_PUBLISH_VERIFY_INTERVAL_SECONDS)
     return False
@@ -171,9 +186,15 @@ def _sqlite_backup(source: Path, destination: Path) -> None:
         sqlite3.connect(destination) as destination_connection,
     ):
         source_connection.backup(destination_connection)
-    destination.chmod(source.stat().st_mode & 0o777)
-    with destination.open("rb") as handle:
-        os.fsync(handle.fileno())
+    try:
+        destination.chmod(source.stat().st_mode & 0o777)
+        with destination.open("rb") as handle:
+            os.fsync(handle.fileno())
+    except OSError:
+        # A bind-mount flap here must not leak FileNotFoundError: the content
+        # verification in _replace_database stays authoritative and raises the
+        # verifiable OSError if the bytes never settle.
+        logger.warning("automatic_upgrade.backup_durability_fsync_unavailable")
 
 
 def _write_state(path: Path, payload: dict[str, Any]) -> None:
@@ -363,11 +384,21 @@ def _fsync_directory(directory: Path) -> None:
 
 
 def _copy_file_in_place(source: Path, destination: Path) -> None:
-    with source.open("rb") as source_handle, destination.open("wb") as target_handle:
-        shutil.copyfileobj(source_handle, target_handle, length=1024 * 1024)
-        target_handle.flush()
-        os.fsync(target_handle.fileno())
-    shutil.copystat(source, destination)
+    try:
+        with source.open("rb") as source_handle, destination.open(
+            "wb"
+        ) as target_handle:
+            shutil.copyfileobj(source_handle, target_handle, length=1024 * 1024)
+            target_handle.flush()
+            os.fsync(target_handle.fileno())
+        shutil.copystat(source, destination)
+    except OSError as error:
+        # A bind-mount flap mid-copy must surface as the verifiable install
+        # failure, never as a bare FileNotFoundError from the copy itself.
+        raise OSError(
+            "The upgraded file could not be verified after installation: "
+            + str(destination)
+        ) from error
     _fsync_directory(destination.parent)
 
 
@@ -377,11 +408,28 @@ def _replace_file(source: Path, destination: Path) -> None:
         f".{destination.name}.upgrade-{uuid.uuid4().hex}.tmp"
     )
     try:
-        with source.open("rb") as source_handle, temporary.open("wb") as target_handle:
-            shutil.copyfileobj(source_handle, target_handle, length=1024 * 1024)
-            target_handle.flush()
-            os.fsync(target_handle.fileno())
-        shutil.copystat(source, temporary)
+        staged = False
+        for attempt in range(_PUBLISH_VERIFY_ATTEMPTS):
+            try:
+                with source.open("rb") as source_handle, temporary.open(
+                    "wb"
+                ) as target_handle:
+                    shutil.copyfileobj(source_handle, target_handle, length=1024 * 1024)
+                    target_handle.flush()
+                    os.fsync(target_handle.fileno())
+                shutil.copystat(source, temporary)
+                staged = True
+                break
+            except OSError:
+                # A source/temp-side flap retries within the verification budget;
+                # exhaustion below surfaces as the verifiable install failure.
+                if attempt + 1 < _PUBLISH_VERIFY_ATTEMPTS:
+                    time.sleep(_PUBLISH_VERIFY_INTERVAL_SECONDS)
+        if not staged:
+            raise OSError(
+                "The upgraded file could not be verified after installation: "
+                + str(destination)
+            )
         expected = _sha256(temporary)
         try:
             os.replace(temporary, destination)
@@ -396,6 +444,17 @@ def _replace_file(source: Path, destination: Path) -> None:
                     "automatic_upgrade.file_rename_result_stale_using_copy_fallback"
                 )
         if not renamed:
+            if expected is None:
+                # The staged temporary flapped while hashing; the source was
+                # readable moments earlier, so re-anchor verification to it.
+                expected = _sha256(source)
+            if expected is None:
+                # Still unverifiable: verification could never succeed, so fail
+                # without touching the destination further.
+                raise OSError(
+                    "The upgraded file could not be verified after installation: "
+                    + str(destination)
+                )
             _copy_file_in_place(source, destination)
             if not _wait_for_content(destination, expected):
                 raise OSError(
@@ -434,13 +493,32 @@ def _replace_database(source: Path, destination: Path) -> None:
                     "automatic_upgrade.file_rename_result_stale_using_copy_fallback"
                 )
         if not renamed:
+            if expected is None:
+                # The staged temporary flapped while hashing; the source was
+                # readable moments earlier, so re-anchor verification to it.
+                expected = _sha256(source)
+            if expected is None:
+                # Still unverifiable: verification could never succeed, so fail
+                # without touching the destination further.
+                raise OSError(
+                    "The upgraded library database could not be verified "
+                    "after installation."
+                )
             # truncate first: a backup onto an existing database rewrites header
             # counters, so it would never hash-match the temporary
-            with destination.open("wb") as destination_handle:
-                destination_handle.truncate(0)
-                destination_handle.flush()
-                os.fsync(destination_handle.fileno())
-            _sqlite_backup(source, destination)
+            try:
+                with destination.open("wb") as destination_handle:
+                    destination_handle.truncate(0)
+                    destination_handle.flush()
+                    os.fsync(destination_handle.fileno())
+                _sqlite_backup(source, destination)
+            except OSError as error:
+                # A bind-mount flap here must surface as the verifiable install
+                # failure, never as a bare FileNotFoundError from the copy.
+                raise OSError(
+                    "The upgraded library database could not be verified "
+                    "after installation."
+                ) from error
             _fsync_directory(destination.parent)
             if not _wait_for_content(destination, expected):
                 raise OSError(
@@ -988,6 +1066,14 @@ def run_automatic_copy_upgrade(
                     "The library upgrade failed and its backup could not be restored. "
                     "Do not start an older image against this database."
                 ) from restore_error
+        try:
+            restored_signature = _current_signature(database, config)
+        except OSError:
+            # Defense-in-depth (_sha256 already swallows OSError): the live files
+            # may vanish mid-failure on a flapping bind-mount; that must not mask
+            # the original error or skip the state write.
+            logger.warning("automatic_upgrade.failure_signature_unavailable")
+            restored_signature = {"database_sha256": None, "config_sha256": None}
         failure = {
             "format_version": 1,
             "upgrade_id": UPGRADE_ID,
@@ -996,7 +1082,7 @@ def run_automatic_copy_upgrade(
             "backup_directory": str(backup.directory),
             "error_type": type(error).__name__,
             "error_message": str(error),
-            "restored_signature": _current_signature(database, config),
+            "restored_signature": restored_signature,
         }
         failure_evidence = getattr(error, "evidence", None)
         if not isinstance(failure_evidence, dict):

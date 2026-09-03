@@ -1,3 +1,4 @@
+import errno
 import json
 import os
 import shutil
@@ -1798,6 +1799,306 @@ def test_replace_database_raises_when_content_never_verifies(
     assert automatic_upgrade._database_has_marker(destination)
     assert _source_value(destination) == "original"
 
+
+def test_replace_file_retries_transient_missing_destination_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.txt"
+    destination = tmp_path / "destination.txt"
+    source.write_bytes(b"published-content")
+    real_sha256 = automatic_upgrade._sha256
+    destination_reads = 0
+
+    def flaky_sha256(path: Path) -> str | None:
+        nonlocal destination_reads
+        if Path(path) == destination:
+            destination_reads += 1
+            if destination_reads <= 2:
+                raise FileNotFoundError(
+                    errno.ENOENT, "bind-mount flap", str(path)
+                )
+        return real_sha256(path)
+
+    monkeypatch.setattr(automatic_upgrade, "_sha256", flaky_sha256)
+    monkeypatch.setattr(automatic_upgrade, "_PUBLISH_VERIFY_INTERVAL_SECONDS", 0)
+
+    automatic_upgrade._replace_file(source, destination)
+
+    assert destination.read_bytes() == b"published-content"
+    assert destination_reads > 2
+
+
+def test_replace_database_retries_transient_missing_destination_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    _write_unmigrated_database(source)
+    _mark_migrated(source)
+    _write_unmigrated_database(destination, value="outdated")
+    real_sha256 = automatic_upgrade._sha256
+    destination_reads = 0
+
+    def flaky_sha256(path: Path) -> str | None:
+        nonlocal destination_reads
+        if Path(path) == destination:
+            destination_reads += 1
+            if destination_reads <= 2:
+                raise FileNotFoundError(
+                    errno.ENOENT, "bind-mount flap", str(path)
+                )
+        return real_sha256(path)
+
+    monkeypatch.setattr(automatic_upgrade, "_sha256", flaky_sha256)
+    monkeypatch.setattr(automatic_upgrade, "_PUBLISH_VERIFY_INTERVAL_SECONDS", 0)
+
+    automatic_upgrade._replace_database(source, destination)
+
+    assert automatic_upgrade._database_has_marker(destination)
+    assert _source_value(destination) == "original"
+    assert destination_reads > 2
+
+
+def test_replace_file_recovers_when_destination_open_flaps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.txt"
+    destination = tmp_path / "destination.txt"
+    source.write_bytes(b"published-content")
+    real_open = Path.open
+    flap_count = 0
+
+    def flappy_open(self: Path, mode: str = "r", *args: object, **kwargs: object):
+        nonlocal flap_count
+        if (
+            Path(self) == destination
+            and isinstance(mode, str)
+            and mode.startswith("r")
+            and flap_count < 3
+        ):
+            flap_count += 1
+            raise FileNotFoundError(errno.ENOENT, "bind-mount flap", str(self))
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", flappy_open)
+    monkeypatch.setattr(automatic_upgrade, "_PUBLISH_VERIFY_INTERVAL_SECONDS", 0)
+
+    automatic_upgrade._replace_file(source, destination)
+
+    assert destination.read_bytes() == b"published-content"
+    assert flap_count == 3
+
+
+def test_replace_file_raises_verifiable_error_when_destination_never_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.txt"
+    destination = tmp_path / "destination.txt"
+    source.write_bytes(b"published-content")
+    real_sha256 = automatic_upgrade._sha256
+
+    def always_missing(path: Path) -> str | None:
+        if Path(path) == destination:
+            raise FileNotFoundError(errno.ENOENT, "bind-mount flap", str(path))
+        return real_sha256(path)
+
+    monkeypatch.setattr(automatic_upgrade, "_sha256", always_missing)
+    monkeypatch.setattr(automatic_upgrade, "_PUBLISH_VERIFY_INTERVAL_SECONDS", 0)
+
+    with pytest.raises(OSError, match="could not be verified") as exc_info:
+        automatic_upgrade._replace_file(source, destination)
+
+    assert not isinstance(exc_info.value, FileNotFoundError)
+
+
+def test_replace_database_raises_verifiable_error_when_destination_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    _write_unmigrated_database(source)
+    _mark_migrated(source)
+    _write_unmigrated_database(destination, value="outdated")
+    real_open = Path.open
+
+    def missing_destination_open(
+        self: Path, mode: str = "r", *args: object, **kwargs: object
+    ):
+        if Path(self) == destination:
+            raise FileNotFoundError(errno.ENOENT, "bind-mount flap", str(self))
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", missing_destination_open)
+    monkeypatch.setattr(automatic_upgrade, "_PUBLISH_VERIFY_INTERVAL_SECONDS", 0)
+
+    with pytest.raises(OSError, match="could not be verified") as exc_info:
+        automatic_upgrade._replace_database(source, destination)
+
+    assert not isinstance(exc_info.value, FileNotFoundError)
+
+
+def test_promote_succeeds_when_live_destination_reads_flap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    _write_unmigrated_database(settings.library_db_path)
+    settings.config_file_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.config_file_path.write_text('{"name":"before"}', encoding="utf-8")
+    backup = automatic_upgrade.capture_upgrade_backup(settings)
+    working = automatic_upgrade.prepare_working_copy(settings, backup)
+    working_database = working / "cache" / "library.db"
+    with sqlite3.connect(working_database) as connection:
+        connection.execute("UPDATE source_value SET value = 'migrated'")
+    _mark_migrated(working_database)
+    (working / "config" / "config.json").write_text(
+        '{"name":"migrated"}', encoding="utf-8"
+    )
+    live = {settings.library_db_path, settings.config_file_path}
+    real_open = Path.open
+    flap_count = 0
+
+    def flappy_open(self: Path, mode: str = "r", *args: object, **kwargs: object):
+        nonlocal flap_count
+        if (
+            Path(self) in live
+            and isinstance(mode, str)
+            and mode.startswith("r")
+            and flap_count < 4
+        ):
+            flap_count += 1
+            raise FileNotFoundError(errno.ENOENT, "bind-mount flap", str(self))
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", flappy_open)
+    monkeypatch.setattr(automatic_upgrade, "_PUBLISH_VERIFY_INTERVAL_SECONDS", 0)
+
+    automatic_upgrade.promote_working_copy(settings, working)
+
+    assert automatic_upgrade._database_has_marker(settings.library_db_path)
+    assert _source_value(settings.library_db_path) == "migrated"
+    assert settings.config_file_path.read_text(encoding="utf-8") == '{"name":"migrated"}'
+    assert flap_count == 4
+
+
+def test_failure_state_written_when_live_signatures_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    _write_unmigrated_database(settings.library_db_path)
+    settings.config_file_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.config_file_path.write_text('{"name":"before"}', encoding="utf-8")
+    monkeypatch.setenv("COMMIT_TAG", "signature-flap-version")
+    failure_phase = {"armed": False}
+    real_current_signature = automatic_upgrade._current_signature
+
+    def vanishing_signature(
+        database: Path, config: Path
+    ) -> dict[str, str | None]:
+        if failure_phase["armed"]:
+            raise FileNotFoundError(errno.ENOENT, "live file vanished mid-failure")
+        return real_current_signature(database, config)
+
+    def fail(_working: Path) -> dict[str, object]:
+        failure_phase["armed"] = True
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(automatic_upgrade, "_current_signature", vanishing_signature)
+
+    with pytest.raises(AutomaticUpgradeError, match="previous database"):
+        run_automatic_copy_upgrade(settings, runner=fail)
+    state = json.loads(
+        (settings.cache_dir / f"automatic-upgrade-{UPGRADE_ID}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert state["stage"] == "failed"
+    assert state["error_type"] == "RuntimeError"
+    assert state["error_message"] == "simulated failure"
+    assert state["restored_signature"] == {
+        "database_sha256": None,
+        "config_sha256": None,
+    }
+
+
+def test_replace_file_recovers_when_temp_hash_flaps_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.txt"
+    destination = tmp_path / "destination.txt"
+    source.write_bytes(b"published-content")
+    real_sha256 = automatic_upgrade._sha256
+    flapped = False
+
+    def flaky_sha256(path: Path) -> str | None:
+        nonlocal flapped
+        if ".upgrade-" in Path(path).name and not flapped:
+            flapped = True
+            return None
+        return real_sha256(path)
+
+    monkeypatch.setattr(automatic_upgrade, "_sha256", flaky_sha256)
+    monkeypatch.setattr(automatic_upgrade, "_PUBLISH_VERIFY_INTERVAL_SECONDS", 0)
+
+    automatic_upgrade._replace_file(source, destination)
+
+    assert flapped
+    assert destination.read_bytes() == b"published-content"
+
+
+def test_replace_database_raises_when_hashes_never_recover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    _write_unmigrated_database(source)
+    _mark_migrated(source)
+    _write_unmigrated_database(destination, value="outdated")
+
+    def always_unreadable(path: Path) -> str | None:
+        return None
+
+    monkeypatch.setattr(automatic_upgrade, "_sha256", always_unreadable)
+    monkeypatch.setattr(automatic_upgrade, "_PUBLISH_VERIFY_INTERVAL_SECONDS", 0)
+    # Force the copy fallback: with rename succeeding the bytes would already
+    # be installed before verification fails, so only the fallback path can
+    # prove the destination is left untouched.
+    monkeypatch.setattr(automatic_upgrade.os, "replace", _failed_replace)
+    with pytest.raises(OSError, match="could not be verified") as exc_info:
+        automatic_upgrade._replace_database(source, destination)
+
+    assert not isinstance(exc_info.value, FileNotFoundError)
+    assert _source_value(destination) == "outdated"
+    assert not automatic_upgrade._database_has_marker(destination)
+
+
+def test_replace_file_retries_transient_staging_flap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.txt"
+    destination = tmp_path / "destination.txt"
+    source.write_bytes(b"published-content")
+    real_open = Path.open
+    flap_count = 0
+
+    def flappy_open(self: Path, mode: str = "r", *args: object, **kwargs: object):
+        nonlocal flap_count
+        if (
+            Path(self) == source
+            and isinstance(mode, str)
+            and mode.startswith("r")
+            and flap_count < 1
+        ):
+            flap_count += 1
+            raise FileNotFoundError(errno.ENOENT, "bind-mount flap", str(self))
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", flappy_open)
+    monkeypatch.setattr(automatic_upgrade, "_PUBLISH_VERIFY_INTERVAL_SECONDS", 0)
+
+    automatic_upgrade._replace_file(source, destination)
+
+    assert flap_count == 1
+    assert destination.read_bytes() == b"published-content"
 
 
 def _write_multi_page_database(path: Path, value: str = "original") -> None:
