@@ -3941,6 +3941,11 @@ class LibraryManagementPublisher:
             raise ValidationError("A management path is not a safe relative path.")
         current = root
         if stat.S_ISLNK(current.lstat().st_mode):
+            logger.warning(
+                "Library Management rejected symlink library root (code=%s): %s",
+                "SYMLINK_ROOT",
+                root.name,
+            )
             raise ValidationError("A library root cannot be a symlink.")
         for part in pure.parts[:-1]:
             current = current / part
@@ -3952,6 +3957,13 @@ class LibraryManagementPublisher:
                 current.mkdir()
                 metadata = current.lstat()
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                logger.warning(
+                    "Library Management rejected unsafe management path (code=%s): %s",
+                    "SYMLINK_COMPONENT"
+                    if stat.S_ISLNK(metadata.st_mode)
+                    else "NOT_A_DIRECTORY",
+                    current.name,
+                )
                 raise ValidationError("A management path contains a symlink.")
         return root.joinpath(*pure.parts)
 
@@ -3973,6 +3985,13 @@ class LibraryManagementPublisher:
                 current.mkdir()
                 metadata = current.lstat()
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                logger.warning(
+                    "Library Management rejected unsafe sidecar path (code=%s): %s",
+                    "SYMLINK_COMPONENT"
+                    if stat.S_ISLNK(metadata.st_mode)
+                    else "NOT_A_DIRECTORY",
+                    current.name,
+                )
                 raise ValidationError("A sidecar path contains a symlink.")
         return parent.joinpath(*pure.parts)
 
@@ -4038,7 +4057,23 @@ class LibraryManagementPublisher:
         temporary.parent.mkdir(parents=True, exist_ok=True)
         temporary.unlink(missing_ok=True)
         shutil.copyfile(source, temporary)
-        shutil.copystat(source, temporary)
+        try:
+            shutil.copystat(source, temporary)
+        except OSError as error:
+            # Issue #185: Docker/Unraid/TrueNAS mounts (ACLs, noexec, user
+            # mapping) commonly reject copystat's ownership/timestamp
+            # preservation with EPERM/EACCES/ENOTSUP while copyfile succeeds;
+            # plain `cp` (no copystat) succeeds there too, so keep the staged
+            # bytes (copyfile parity) instead of failing the whole import.
+            # copyfile stays strict and the fsync below stays strict (durability).
+            logger.warning(
+                "Library Management staging copystat fell back to copyfile bytes "
+                "(errno=%s): %s -> %s",
+                error.errno,
+                source.name,
+                temporary.name,
+                exc_info=True,
+            )
         with temporary.open("rb") as handle:
             os.fsync(handle.fileno())
 

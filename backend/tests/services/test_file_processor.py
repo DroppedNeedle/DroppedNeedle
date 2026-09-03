@@ -2955,3 +2955,99 @@ def test_build_file_processor_resolves_downloads_subpath(tmp_path, monkeypatch):
     fp = _providers._build_file_processor(MagicMock(), [tmp_path / "lib"])
 
     assert fp._slskd_downloads_path == mount / "etc"
+
+
+@pytest.mark.asyncio
+async def test_shared_publication_enospc_logs_errno_and_keeps_generic_reason(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#185 part A: an ENOSPC publisher failure must log errno/exc-type context to
+    the server log only, while the user-facing reason stays the fixed generic
+    string."""
+    import errno
+    import logging
+
+    from services.native.file_processor import IMPORT_FAILED
+
+    fp, _manager, _client, _library, downloads = _make_processor(
+        tmp_path, verify=False
+    )
+    _place(downloads, "A/good.flac")
+    fp._publish_import_bundle = AsyncMock(
+        side_effect=OSError(errno.ENOSPC, "No space left on device")
+    )
+    manifest = _manifest(_sized(downloads, "A/good.flac"))
+
+    with caplog.at_level(logging.DEBUG, logger="services.native.file_processor"):
+        result = await fp.process_downloaded(manifest)
+
+    assert len(result.failed) == 1
+    assert result.failed[0].reason == IMPORT_FAILED
+    assert (
+        result.failed[0].reason
+        == "import failed - could not write the file into the library"
+    )
+    errno_records = [
+        record for record in caplog.records if getattr(record, "errno", None) == errno.ENOSPC
+    ]
+    assert errno_records, "expected a log record carrying errno=ENOSPC (28)"
+    assert any(getattr(record, "exc_type", None) == "OSError" for record in errno_records)
+    assert any("good.flac" in record.getMessage() for record in errno_records)
+    assert any("acquisition:t1:files" in record.getMessage() for record in errno_records)
+
+
+def test_target_location_zero_matches_logs_count_and_keeps_message(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#185 part A: a 0-root resolution logs count/roots/basename and raises with
+    the unchanged message."""
+    import logging
+
+    fp = FileProcessor(
+        AudioTagger(),
+        library_paths=[tmp_path / "lib"],
+        library_root_ids=["root-a"],
+    )
+    outside = tmp_path / "elsewhere" / "track.flac"
+
+    with caplog.at_level(logging.DEBUG, logger="services.native.file_processor"):
+        with pytest.raises(RuntimeError) as excinfo:
+            fp._target_location(outside)
+
+    assert str(excinfo.value) == "Import target does not resolve to one library root."
+    resolution = [
+        record for record in caplog.records if getattr(record, "match_count", None) == 0
+    ]
+    assert resolution, "expected a log record with match_count=0"
+    assert resolution[0].root_count == 1
+    assert resolution[0].target == "track.flac"
+    assert str(tmp_path) not in resolution[0].getMessage()
+
+
+def test_target_location_two_matches_logs_count_and_keeps_message(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#185 part A: a 2-root resolution (nested roots) logs count/roots/basename
+    and raises with the unchanged message."""
+    import logging
+
+    outer = tmp_path / "lib"
+    inner = outer / "sub"
+    fp = FileProcessor(
+        AudioTagger(),
+        library_paths=[outer, inner],
+        library_root_ids=["root-a", "root-b"],
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="services.native.file_processor"):
+        with pytest.raises(RuntimeError) as excinfo:
+            fp._target_location(inner / "track.flac")
+
+    assert str(excinfo.value) == "Import target does not resolve to one library root."
+    resolution = [
+        record for record in caplog.records if getattr(record, "match_count", None) == 2
+    ]
+    assert resolution, "expected a log record with match_count=2"
+    assert resolution[0].root_count == 2
+    assert resolution[0].target == "track.flac"
+    assert str(tmp_path) not in resolution[0].getMessage()

@@ -687,6 +687,43 @@ def _basename(filename: str) -> str:
     return filename.replace("\\", "/").rsplit("/", 1)[-1]
 
 
+def _log_import_failure(
+    message: str,
+    exc: BaseException,
+    *,
+    task_id: str,
+    bundle: str,
+    planned: list[_PlannedImport],
+) -> None:
+    """Log one sanitized line for an IMPORT_FAILED bundle outcome (#185 part A).
+
+    The user-facing ``FileFailure`` keeps the fixed generic reason string; all
+    diagnosis (errno, exception type, basenames, bundle identity) goes to the
+    server log only via ``logger.exception`` (traceback included). Basenames via
+    :func:`_basename` - never absolute paths, hosts, or tokens.
+    """
+    files = [_basename(value.source.name) for value in planned]
+    exc_type = type(exc).__name__
+    errno = getattr(exc, "errno", None)
+    logger.exception(
+        "%s for task %s: %s errno=%s files=%s bundle=%s",
+        message,
+        task_id,
+        exc_type,
+        errno,
+        files,
+        bundle,
+        extra={
+            "task_id": task_id,
+            "exc_type": exc_type,
+            "errno": errno,
+            "files": files,
+            "file_count": len(files),
+            "bundle": bundle,
+        },
+    )
+
+
 def _row_tier(row: dict) -> str:
     """A library_files row's quality tier, judged exactly like the scanner/gate."""
     return tier_for(
@@ -760,6 +797,22 @@ class FileProcessor:
                 continue
             matches.append((root_id, relative.as_posix()))
         if len(matches) != 1:
+            # Sanitized diagnosability (#185 part A): counts + target basename only,
+            # never the absolute path. Task/bundle context rides on the caller's
+            # bundle-outcome log; this message string itself is unchanged.
+            target_name = _basename(resolved.name)
+            logger.warning(
+                "Import target resolves to %s library roots (expected exactly 1): "
+                "target=%s roots=%s",
+                len(matches),
+                target_name,
+                len(self._library_paths),
+                extra={
+                    "match_count": len(matches),
+                    "target": target_name,
+                    "root_count": len(self._library_paths),
+                },
+            )
             raise RuntimeError("Import target does not resolve to one library root.")
         return matches[0]
 
@@ -931,10 +984,13 @@ class FileProcessor:
                     succeeded.extend(
                         await self._hold_conversion_bundle(planned, manifest)
                     )
-                except Exception:  # noqa: BLE001 - an undurable hold preserves source
-                    logger.exception(
-                        "Could not durably hold conversion audio for task %s",
-                        manifest.task_id,
+                except Exception as exc:  # noqa: BLE001 - an undurable hold preserves source
+                    _log_import_failure(
+                        "Could not durably hold conversion audio",
+                        exc,
+                        task_id=manifest.task_id,
+                        bundle=f"acquisition:{manifest.task_id}:files",
+                        planned=planned,
                     )
                     failed.extend(
                         FileFailure(filename=value.source.name, reason=IMPORT_FAILED)
@@ -954,10 +1010,13 @@ class FileProcessor:
                 management_hold_message = str(hold)
                 try:
                     await self._hold_management_bundle(planned, manifest, hold)
-                except Exception:  # noqa: BLE001 - an undurable hold preserves source
-                    logger.exception(
-                        "Could not durably hold import bundle for task %s",
-                        manifest.task_id,
+                except Exception as exc:  # noqa: BLE001 - an undurable hold preserves source
+                    _log_import_failure(
+                        "Could not durably hold import bundle",
+                        exc,
+                        task_id=manifest.task_id,
+                        bundle=f"acquisition:{manifest.task_id}:files",
+                        planned=planned,
                     )
                     failed.extend(
                         FileFailure(filename=value.source.name, reason=IMPORT_FAILED)
@@ -969,9 +1028,13 @@ class FileProcessor:
                         FileFailure(filename=value.source.name, reason=MANAGEMENT_HELD)
                         for value in planned
                     )
-            except Exception:  # noqa: BLE001 - one bundle has one failure outcome
-                logger.exception(
-                    "Shared import publication failed for task %s", manifest.task_id
+            except Exception as exc:  # noqa: BLE001 - one bundle has one failure outcome
+                _log_import_failure(
+                    "Shared import publication failed",
+                    exc,
+                    task_id=manifest.task_id,
+                    bundle=f"acquisition:{manifest.task_id}:files",
+                    planned=planned,
                 )
                 failed.extend(
                     FileFailure(filename=value.source.name, reason=IMPORT_FAILED)
@@ -1109,10 +1172,13 @@ class FileProcessor:
                     succeeded.extend(
                         await self._hold_conversion_bundle(planned, manifest)
                     )
-                except Exception:  # noqa: BLE001 - an undurable hold preserves source
-                    logger.exception(
-                        "Could not durably hold conversion folder for task %s",
-                        manifest.task_id,
+                except Exception as exc:  # noqa: BLE001 - an undurable hold preserves source
+                    _log_import_failure(
+                        "Could not durably hold conversion folder",
+                        exc,
+                        task_id=manifest.task_id,
+                        bundle=f"acquisition:{manifest.task_id}:folder",
+                        planned=planned,
                     )
                     failed.extend(
                         FileFailure(filename=value.source.name, reason=IMPORT_FAILED)
@@ -1132,10 +1198,13 @@ class FileProcessor:
                 management_hold_message = str(hold)
                 try:
                     await self._hold_management_bundle(planned, manifest, hold)
-                except Exception:  # noqa: BLE001 - an undurable hold preserves source
-                    logger.exception(
-                        "Could not durably hold folder import for task %s",
-                        manifest.task_id,
+                except Exception as exc:  # noqa: BLE001 - an undurable hold preserves source
+                    _log_import_failure(
+                        "Could not durably hold folder import",
+                        exc,
+                        task_id=manifest.task_id,
+                        bundle=f"acquisition:{manifest.task_id}:folder",
+                        planned=planned,
                     )
                     failed.extend(
                         FileFailure(filename=value.source.name, reason=IMPORT_FAILED)
@@ -1147,10 +1216,13 @@ class FileProcessor:
                         FileFailure(filename=value.source.name, reason=MANAGEMENT_HELD)
                         for value in planned
                     )
-            except Exception:  # noqa: BLE001 - one bundle has one failure outcome
-                logger.exception(
-                    "Shared folder import publication failed for task %s",
-                    manifest.task_id,
+            except Exception as exc:  # noqa: BLE001 - one bundle has one failure outcome
+                _log_import_failure(
+                    "Shared folder import publication failed",
+                    exc,
+                    task_id=manifest.task_id,
+                    bundle=f"acquisition:{manifest.task_id}:folder",
+                    planned=planned,
                 )
                 failed.extend(
                     FileFailure(filename=value.source.name, reason=IMPORT_FAILED)

@@ -796,6 +796,79 @@ def test_m4a_staging_mutates_a_local_scratch_copy(
     assert audio.read(temporary).metadata.value_for("title") == "Changed title"
 
 
+def test_copy_temp_survives_copystat_eperm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Issue #185: Docker/Unraid/TrueNAS mounts reject copystat (EPERM) while
+    # copyfile succeeds; staging must keep the copyfile bytes (cp parity).
+    source = tmp_path / "source.flac"
+    source.write_bytes(b"audio-bytes-185")
+    temporary = tmp_path / "staging" / "temporary.flac"
+
+    def fail_copystat(_source: Path, _destination: Path) -> None:
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(shutil, "copystat", fail_copystat)
+
+    LibraryManagementPublisher._copy_temp(source, temporary)
+
+    assert temporary.read_bytes() == b"audio-bytes-185"
+
+
+def test_copy_temp_copystat_failure_logs_errno_and_basenames(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = tmp_path / "source.flac"
+    source.write_bytes(b"audio-bytes-185")
+    temporary = tmp_path / "staging" / "temporary.flac"
+
+    def fail_copystat(_source: Path, _destination: Path) -> None:
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(shutil, "copystat", fail_copystat)
+
+    with caplog.at_level(logging.WARNING):
+        LibraryManagementPublisher._copy_temp(source, temporary)
+
+    records = [record for record in caplog.records if "copystat" in record.getMessage()]
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert str(errno.EPERM) in message
+    assert "source.flac" in message
+    assert "temporary.flac" in message
+    assert str(tmp_path) not in message
+
+
+def test_copy_temp_fsync_failure_still_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Durability: only copystat is best-effort; an fsync failure must still fail.
+    source = tmp_path / "source.flac"
+    source.write_bytes(b"audio-bytes-185")
+    temporary = tmp_path / "staging" / "temporary.flac"
+
+    def fail_fsync(_fileno: int) -> None:
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(os, "fsync", fail_fsync)
+
+    with pytest.raises(OSError, match="Input/output error"):
+        LibraryManagementPublisher._copy_temp(source, temporary)
+
+
+def test_safe_child_create_parent_stats_new_directory(tmp_path: Path) -> None:
+    # Guards the lstat refresh after mkdir: a missing intermediate component
+    # created on demand must be validated, not reuse stale/missing metadata.
+    parent = tmp_path / "parent"
+    parent.mkdir()
+
+    result = LibraryManagementPublisher._safe_child(
+        parent, "newdir/cover.jpg", create_parent=True
+    )
+
+    assert result == parent / "newdir" / "cover.jpg"
+    assert (parent / "newdir").is_dir()
+
 @pytest.mark.asyncio
 async def test_import_bundle_publishes_once_and_commits_catalog_atomically(
     tmp_path: Path,
