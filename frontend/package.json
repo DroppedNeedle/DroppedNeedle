@@ -45,7 +45,7 @@
 		"eslint": "^9.36.0",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-svelte": "^3.12.4",
-		"globals": "^16.4.0",
+		"globals": "^17.11.0",
 		"playwright": "^1.55.1",
 		"postcss": "^8.5.23",
 		"prettier": "^3.6.2",
