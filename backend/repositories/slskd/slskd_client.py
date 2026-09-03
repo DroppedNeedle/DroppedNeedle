@@ -13,7 +13,12 @@ from typing import Any
 import httpx
 import msgspec
 
-from core.exceptions import ExternalServiceError, RateLimitedError, SlskdApiError
+from core.exceptions import (
+    ExternalServiceError,
+    RateLimitedError,
+    SlskdApiError,
+    SlskdAuthError,
+)
 from infrastructure.resilience.retry import CircuitBreaker, with_retry
 
 from .slskd_models import (
@@ -27,8 +32,20 @@ from .slskd_models import (
 logger = logging.getLogger(__name__)
 
 _slskd_circuit_breaker = CircuitBreaker(name="slskd")
+_slskd_verify_circuit_breaker = CircuitBreaker(name="slskd-verify")
 _RETRIABLE = (httpx.HTTPError, ExternalServiceError)
-_NON_BREAKING = (RateLimitedError,)
+_NON_BREAKING = (RateLimitedError, SlskdAuthError)
+_NON_RETRIABLE = (SlskdAuthError,)
+
+
+def _slskd_breaker_for_call(client: Any, *args: Any, **kwargs: Any) -> CircuitBreaker:
+    """Breaker-factory for ``health_check``: the Test-connection path binds the
+    isolated ``slskd-verify`` breaker so a bad key never poisons live ``slskd``
+    status traffic (and vice versa). The decorator binds at class-definition
+    time, so the per-call choice reads the instance flag instead."""
+    if getattr(client, "_use_verify_breaker", False):
+        return _slskd_verify_circuit_breaker
+    return _slskd_circuit_breaker
 
 
 def _flatten_transfers(payload: Any) -> list[dict[str, Any]]:
@@ -53,10 +70,20 @@ def _flatten_transfers(payload: Any) -> list[dict[str, Any]]:
 
 
 class SlskdClient:
-    def __init__(self, http: httpx.AsyncClient, base_url: str, api_key: str):
+    def __init__(
+        self,
+        http: httpx.AsyncClient,
+        base_url: str,
+        api_key: str,
+        *,
+        use_verify_breaker: bool = False,
+    ):
         self._http = http
         self._base_url = base_url.rstrip("/")
         self._headers = {"X-API-Key": api_key}
+        # Test-connection clients bind the isolated ``slskd-verify`` breaker
+        # (see ``_slskd_breaker_for_call``); live clients keep ``slskd``.
+        self._use_verify_breaker = use_verify_breaker
 
     def _url(self, path: str) -> str:
         return f"{self._base_url}/api/v0{path}"
@@ -65,6 +92,12 @@ class SlskdClient:
     def _check(response: httpx.Response) -> None:
         if response.status_code == 429:
             raise RateLimitedError("slskd: only one concurrent operation is permitted")
+        if response.status_code in (401, 403):
+            raise SlskdAuthError(
+                f"slskd returned HTTP {response.status_code}",
+                details=response.text[:200],
+                code=response.status_code,
+            )
         if response.status_code >= 400:
             raise SlskdApiError(
                 f"slskd returned HTTP {response.status_code}",
@@ -73,9 +106,10 @@ class SlskdClient:
             )
 
     @with_retry(
-        circuit_breaker=_slskd_circuit_breaker,
+        circuit_breaker=_slskd_breaker_for_call,
         retriable_exceptions=_RETRIABLE,
         non_breaking_exceptions=_NON_BREAKING,
+        non_retriable_exceptions=_NON_RETRIABLE,
     )
     async def health_check(self) -> dict[str, Any]:
         # GET /api/v0/application; returns raw JSON (version/server state).
@@ -90,6 +124,7 @@ class SlskdClient:
         circuit_breaker=_slskd_circuit_breaker,
         retriable_exceptions=_RETRIABLE,
         non_breaking_exceptions=_NON_BREAKING,
+        non_retriable_exceptions=_NON_RETRIABLE,
     )
     async def get_options(self) -> SlskdOptions:
         # GET /api/v0/options; we read directories.downloads to tell the user the exact
@@ -105,6 +140,7 @@ class SlskdClient:
         circuit_breaker=_slskd_circuit_breaker,
         retriable_exceptions=_RETRIABLE,
         non_breaking_exceptions=_NON_BREAKING,
+        non_retriable_exceptions=_NON_RETRIABLE,
     )
     async def enqueue(self, username: str, files: list[dict[str, Any]]) -> SlskdEnqueueResponse:
         """POST /api/v0/transfers/downloads/{username}.
@@ -129,6 +165,7 @@ class SlskdClient:
         circuit_breaker=_slskd_circuit_breaker,
         retriable_exceptions=_RETRIABLE,
         non_breaking_exceptions=_NON_BREAKING,
+        non_retriable_exceptions=_NON_RETRIABLE,
     )
     async def get_downloads(self, username: str) -> list[SlskdTransfer]:
         # GET /api/v0/transfers/downloads/{username}, flattened to transfers.
@@ -150,6 +187,7 @@ class SlskdClient:
         circuit_breaker=_slskd_circuit_breaker,
         retriable_exceptions=_RETRIABLE,
         non_breaking_exceptions=_NON_BREAKING,
+        non_retriable_exceptions=_NON_RETRIABLE,
     )
     async def get_all_downloads(self) -> list[SlskdTransfer]:
         # GET /api/v0/transfers/downloads (every peer), username preserved per transfer
@@ -177,6 +215,7 @@ class SlskdClient:
         circuit_breaker=_slskd_circuit_breaker,
         retriable_exceptions=_RETRIABLE,
         non_breaking_exceptions=_NON_BREAKING,
+        non_retriable_exceptions=_NON_RETRIABLE,
     )
     async def cancel_transfer(self, username: str, transfer_id: str) -> bool:
         """DELETE /api/v0/transfers/downloads/{username}/{id}?remove=true.

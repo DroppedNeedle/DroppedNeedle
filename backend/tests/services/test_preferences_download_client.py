@@ -313,3 +313,65 @@ def test_invalid_stored_recipe_is_reported_without_healing_config(prefs):
     assert loaded.quality_recipe == []
     assert loaded.quality_recipe_error
     assert prefs._config_path.read_text() == before
+
+
+def test_save_strips_whitespace_key_round_trip(prefs):
+    # Issue #193: a pasted key saves stripped and reads back stripped. Assign
+    # post-construction to isolate the save-layer strip from the schema strip.
+    settings = DownloadClientConnectionSettings(
+        url="http://slskd:5030", api_key="secret-key"
+    )
+    settings.api_key = "secret-key  \n"
+    prefs.save_download_client_settings(settings)
+    assert prefs.get_download_client_settings_raw().api_key == "secret-key"
+
+
+def test_whitespace_only_key_clears_without_encrypting(prefs):
+    # Stripped-empty must store "" (cleared), never encrypt whitespace.
+    prefs.save_download_client_settings(
+        DownloadClientConnectionSettings(url="http://slskd:5030", api_key="secret-key")
+    )
+    clearing = DownloadClientConnectionSettings(url="http://slskd:5030", api_key="")
+    clearing.api_key = "   "
+    prefs.save_download_client_settings(clearing)
+    stored = json.loads(prefs._config_path.read_text())["download_client"]["api_key"]
+    assert stored == ""
+    assert prefs.get_download_client_settings_raw().api_key == ""
+
+
+def test_mask_with_whitespace_still_preserves_existing_key(prefs):
+    # Strip-then-compare at save: a padded sentinel preserves the stored key.
+    prefs.save_download_client_settings(
+        DownloadClientConnectionSettings(url="http://a:5030", api_key="secret-key")
+    )
+    resave = DownloadClientConnectionSettings(
+        url="http://b:5030", api_key=DOWNLOAD_CLIENT_API_KEY_MASK
+    )
+    resave.api_key = f"{DOWNLOAD_CLIENT_API_KEY_MASK} "
+    prefs.save_download_client_settings(resave)
+    assert prefs.get_download_client_settings_raw().api_key == "secret-key"
+
+
+def test_legacy_whitespace_key_stripped_on_raw_read(prefs):
+    # A key saved before the fix (whitespace in ciphertext) authenticates.
+    from infrastructure.crypto import encrypt
+
+    prefs.save_download_client_settings(
+        DownloadClientConnectionSettings(url="http://slskd:5030", api_key="secret-key")
+    )
+    config = json.loads(prefs._config_path.read_text())
+    config["download_client"]["api_key"] = encrypt("  spaced-key  ")
+    prefs._save_config(config)
+    assert prefs.get_download_client_settings_raw().api_key == "spaced-key"
+
+
+def test_schema_strips_api_key_but_keeps_mask_identity():
+    assert (
+        DownloadClientConnectionSettings(api_key="  k  ").api_key == "k"
+    )
+    assert (
+        DownloadClientConnectionSettings(
+            api_key=f"  {DOWNLOAD_CLIENT_API_KEY_MASK}  "
+        ).api_key
+        == DOWNLOAD_CLIENT_API_KEY_MASK
+    )

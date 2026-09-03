@@ -302,6 +302,10 @@ class PreferencesService:
         settings.api_key = self._read_secret(
             ("download_client", "api_key"), data.get("api_key", "")
         )
+        # Strip paste whitespace post-decrypt so a key saved before the fix
+        # still authenticates (SABnzbd raw-getter precedent).
+        if settings.api_key:
+            settings.api_key = settings.api_key.strip()
         return settings
 
     def save_download_client_settings(
@@ -310,7 +314,7 @@ class PreferencesService:
         try:
             config = self._load_config().copy()
             current = config.get("download_client", {})
-            api_key = settings.api_key
+            api_key = settings.api_key.strip() if settings.api_key else ""
             if api_key == DOWNLOAD_CLIENT_API_KEY_MASK:
                 api_key = current.get(
                     "api_key", ""

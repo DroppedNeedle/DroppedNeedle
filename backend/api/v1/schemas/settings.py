@@ -116,6 +116,9 @@ class DownloadClientConnectionSettings(AppStruct):
     auto_retry_base_interval_minutes: int = 15
 
     def __post_init__(self) -> None:
+        # Strip paste whitespace from the key (the "slskd****" mask is
+        # strip-identity, so sentinel comparison is unaffected).
+        self.api_key = self.api_key.strip() if self.api_key else ""
         # normalise a bare host (e.g. "slskd:5030") to a full URL; httpx rejects a
         # schemeless URL
         self.url = self.url.strip()

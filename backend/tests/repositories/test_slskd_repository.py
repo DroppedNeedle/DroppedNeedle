@@ -1594,3 +1594,139 @@ async def test_locate_partial_skips_outside_symlink(tmp_path):
         await repo.locate_partial(_h("peer"), "Share\\01 - Track.flac", size=999)
         is None
     )
+
+
+AUTH_MESSAGE_401 = (
+    "Authentication rejected (401) — check the API key and slskd's CIDR allowlist"
+)
+
+
+def _auth_repo(client_health_check, tmp_path) -> SlskdRepository:
+    client = AsyncMock()
+    client.health_check = client_health_check
+    return SlskdRepository(
+        client=client, url="http://slskd.example.com", api_key="k", downloads_mount=tmp_path
+    )
+
+
+@pytest.mark.asyncio
+async def test_health_check_auth_error_uses_fixed_template(tmp_path):
+    from core.exceptions import SlskdAuthError
+
+    repo = _auth_repo(
+        AsyncMock(
+            side_effect=SlskdAuthError(
+                "slskd returned HTTP 401", details="", code=401
+            )
+        ),
+        tmp_path,
+    )
+    status = await repo.health_check()
+    assert status.status == "error"
+    assert status.message == AUTH_MESSAGE_401
+
+
+@pytest.mark.asyncio
+async def test_health_check_cidr_401_renders_like_wrong_key(tmp_path):
+    # Wrong key and key-CIDR deny are both 401 server-side: no per-cause split.
+    from core.exceptions import SlskdAuthError
+
+    wrong = await _auth_repo(
+        AsyncMock(
+            side_effect=SlskdAuthError(
+                "slskd returned HTTP 401", details="", code=401
+            )
+        ),
+        tmp_path,
+    ).health_check()
+    cidr = await _auth_repo(
+        AsyncMock(
+            side_effect=SlskdAuthError(
+                "slskd returned HTTP 401", details="", code=401
+            )
+        ),
+        tmp_path,
+    ).health_check()
+    assert wrong.message == cidr.message == AUTH_MESSAGE_401
+
+
+@pytest.mark.asyncio
+async def test_health_check_auth_403_uses_same_template_shape(tmp_path):
+    from core.exceptions import SlskdAuthError
+
+    repo = _auth_repo(
+        AsyncMock(
+            side_effect=SlskdAuthError(
+                "slskd returned HTTP 403", details="", code=403
+            )
+        ),
+        tmp_path,
+    )
+    status = await repo.health_check()
+    assert status.message == AUTH_MESSAGE_401.replace("(401)", "(403)")
+
+
+@pytest.mark.asyncio
+async def test_health_check_auth_body_snippet_single_line_truncated(tmp_path):
+    from core.exceptions import SlskdAuthError
+
+    repo = _auth_repo(
+        AsyncMock(
+            side_effect=SlskdAuthError(
+                "slskd returned HTTP 401",
+                details="  proxy says\nno   second line  ",
+                code=401,
+            )
+        ),
+        tmp_path,
+    )
+    status = await repo.health_check()
+    assert status.message == f"{AUTH_MESSAGE_401}: proxy says no second line"
+    assert "\n" not in status.message
+    assert "http://slskd.example.com" not in status.message
+
+    long_repo = _auth_repo(
+        AsyncMock(
+            side_effect=SlskdAuthError(
+                "slskd returned HTTP 401", details="x" * 300, code=401
+            )
+        ),
+        tmp_path,
+    )
+    long_status = await long_repo.health_check()
+    assert long_status.message == f"{AUTH_MESSAGE_401}: {'x' * 200}"
+
+
+@pytest.mark.asyncio
+async def test_health_check_401_end_to_end_renders_auth_template():
+    # Full chain: strict mock 401 -> SlskdAuthError -> fixed template, and the
+    # shared live breaker stays CLOSED.
+    from repositories.slskd.slskd_client import (
+        SlskdClient,
+        _slskd_circuit_breaker,
+        _slskd_verify_circuit_breaker,
+    )
+
+    slskd_mock.reset_state()
+    slskd_mock.set_expected_api_key("real-key")
+    _slskd_circuit_breaker.reset()
+    _slskd_verify_circuit_breaker.reset()
+    try:
+        transport = httpx.ASGITransport(app=slskd_mock.app)
+        http = httpx.AsyncClient(transport=transport)
+        repo = SlskdRepository(
+            client=SlskdClient(http, "http://slskd", "wrong-key"),
+            url="http://slskd",
+            api_key="wrong-key",
+            downloads_mount=Path("/dl"),
+        )
+        status = await repo.health_check()
+        assert status.status == "error"
+        assert status.message.startswith(AUTH_MESSAGE_401)
+        assert not _slskd_circuit_breaker.is_open()
+        assert _slskd_circuit_breaker.failure_count == 0
+        await http.aclose()
+    finally:
+        slskd_mock.reset_state()
+        _slskd_circuit_breaker.reset()
+        _slskd_verify_circuit_breaker.reset()

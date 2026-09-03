@@ -18,10 +18,24 @@ app = FastAPI(title="slskd-mock")
 _SEARCHES: dict[str, list[dict[str, Any]]] = {}
 _TRANSFERS: dict[str, list[dict[str, Any]]] = {}
 
+# Optional strict mode for auth tests (issue #193): when set, any non-empty key
+# that is not an exact match 401s like a wrong key or a key-CIDR deny (slskd
+# returns 401 for both). Unset (None) preserves the legacy behaviour where any
+# non-empty key passes.
+_EXPECTED_API_KEY: str | None = None
+
+
+def set_expected_api_key(key: str | None) -> None:
+    """Pin the key the mock accepts; None restores accept-any-non-empty."""
+    global _EXPECTED_API_KEY
+    _EXPECTED_API_KEY = key
+
 
 def _require_api_key(x_api_key: str | None = Header(default=None)) -> None:
     if not x_api_key:
         raise HTTPException(status_code=401, detail="X-API-Key header required")
+    if _EXPECTED_API_KEY is not None and x_api_key != _EXPECTED_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 def _file(filename: str, size: int, *, ext: str, bitrate: int | None,
@@ -216,3 +230,4 @@ def reset_state() -> None:
     """Clear in-memory state between tests."""
     _SEARCHES.clear()
     _TRANSFERS.clear()
+    set_expected_api_key(None)

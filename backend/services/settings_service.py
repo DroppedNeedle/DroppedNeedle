@@ -587,7 +587,9 @@ class SettingsService:
 
             validate_service_url(settings.url, label="Download client URL")
 
-            api_key = settings.api_key
+            # Strip paste whitespace before the mask comparison (the mask itself
+            # is strip-identity) so a pasted key verifies as typed.
+            api_key = settings.api_key.strip() if settings.api_key else ""
             if api_key == DOWNLOAD_CLIENT_API_KEY_MASK:
                 api_key = (
                     self._preferences_service.get_download_client_settings_raw().api_key

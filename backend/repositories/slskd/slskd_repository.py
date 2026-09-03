@@ -32,6 +32,8 @@ from repositories.protocols.download_client import (
     TaskHandle,
 )
 
+from core.exceptions import SlskdAuthError
+
 from .slskd_client import SlskdClient
 from .slskd_models import SlskdEnqueueResponse, SlskdTransfer, SlskdUserSearchResponse
 
@@ -186,6 +188,21 @@ class SlskdRepository:
     async def health_check(self) -> ServiceStatus:
         try:
             info = await self._client.health_check()
+        except SlskdAuthError as exc:
+            # Wrong key and key-CIDR deny are both 401 server-side: one uniform
+            # message, never the URL/host/key/headers. The slskd body (usually
+            # empty) is appended only as a stripped single-line snippet.
+            code = exc.code if exc.code in (401, 403) else 401
+            message = (
+                "Authentication rejected "
+                f"({code}) — check the API key and slskd's CIDR allowlist"
+            )
+            snippet = str(exc.details).strip() if exc.details else ""
+            if snippet:
+                snippet = " ".join(snippet.split())[:200]
+            if snippet:
+                message = f"{message}: {snippet}"
+            return ServiceStatus(status="error", message=message)
         except Exception as exc:  # noqa: BLE001 - health check never raises
             return ServiceStatus(status="error", message=str(exc))
         version_block = info.get("version") if isinstance(info, dict) else None

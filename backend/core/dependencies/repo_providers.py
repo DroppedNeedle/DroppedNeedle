@@ -745,7 +745,7 @@ def build_slskd_repository(url: str, api_key: str) -> "SlskdRepository":
         name="slskd-verify", timeout=30.0, connect_timeout=5.0
     )
     return SlskdRepository(
-        client=SlskdClient(http, url, api_key),
+        client=SlskdClient(http, url, api_key, use_verify_breaker=True),
         url=url,
         api_key=api_key,
         downloads_mount=Path(settings.slskd_downloads_path),

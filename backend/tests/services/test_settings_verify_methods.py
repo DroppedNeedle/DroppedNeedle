@@ -546,3 +546,103 @@ async def test_quarantined_alternate_probe_rejects_settings_change_during_wire(
         )
 
     assert result.valid is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pasted", ["typed-key ", "typed-key\n", "  typed-key  "])
+async def test_verify_download_client_strips_whitespace_key(pasted):
+    # Issue #193: copy-paste whitespace must not 401 the Test button. The
+    # schema already strips, so bypass it post-construction to isolate the
+    # verify-layer strip.
+    from models.common import ServiceStatus
+    from api.v1.schemas.settings import DownloadClientConnectionSettings
+
+    service = _make_service()
+    settings = DownloadClientConnectionSettings(
+        url="https://slskd.example.com", api_key="typed-key"
+    )
+    settings.api_key = pasted
+
+    repo = MagicMock()
+    repo.health_check = AsyncMock(
+        return_value=ServiceStatus(status="ok", version="1", message="ok")
+    )
+    with patch("core.dependencies.build_slskd_repository", return_value=repo) as build:
+        result = await service.verify_download_client(settings)
+
+    assert result.status == "ok"
+    build.assert_called_once_with("https://slskd.example.com", "typed-key")
+
+
+@pytest.mark.asyncio
+async def test_verify_download_client_masked_sentinel_with_whitespace_falls_back():
+    # Strip-then-compare: a padded mask still resolves to the stored key.
+    from models.common import ServiceStatus
+    from api.v1.schemas.settings import (
+        DownloadClientConnectionSettings,
+        DOWNLOAD_CLIENT_API_KEY_MASK,
+    )
+
+    prefs = MagicMock()
+    prefs.get_download_client_settings_raw = MagicMock(
+        return_value=MagicMock(api_key="real-stored-key")
+    )
+    service = _make_service(preferences=prefs)
+    settings = DownloadClientConnectionSettings(
+        url="https://slskd.example.com", api_key=DOWNLOAD_CLIENT_API_KEY_MASK
+    )
+    settings.api_key = f"{DOWNLOAD_CLIENT_API_KEY_MASK} "
+
+    repo = MagicMock()
+    repo.health_check = AsyncMock(
+        return_value=ServiceStatus(status="ok", version="1", message="ok")
+    )
+    with patch("core.dependencies.build_slskd_repository", return_value=repo) as build:
+        result = await service.verify_download_client(settings)
+
+    assert result.status == "ok"
+    build.assert_called_once_with("https://slskd.example.com", "real-stored-key")
+
+
+@pytest.mark.asyncio
+async def test_verify_whitespace_key_succeeds_against_strict_mock():
+    # End to end through the real strip + strict mock: "real-key " verifies.
+    import httpx
+    from pathlib import Path
+
+    from api.v1.schemas.settings import DownloadClientConnectionSettings
+    from repositories.slskd.slskd_client import SlskdClient
+    from repositories.slskd.slskd_repository import SlskdRepository
+    from tests.mocks import slskd_mock
+
+    slskd_mock.reset_state()
+    slskd_mock.set_expected_api_key("real-key")
+    seen: dict = {}
+    try:
+        transport = httpx.ASGITransport(app=slskd_mock.app)
+        http = httpx.AsyncClient(transport=transport)
+
+        def fake_build(url, api_key):
+            seen["api_key"] = api_key
+            return SlskdRepository(
+                client=SlskdClient(http, url, api_key, use_verify_breaker=True),
+                url=url,
+                api_key=api_key,
+                downloads_mount=Path("/dl"),
+            )
+
+        service = _make_service()
+        settings = DownloadClientConnectionSettings(
+            url="http://slskd", api_key="real-key"
+        )
+        settings.api_key = "real-key "
+        with patch(
+            "core.dependencies.build_slskd_repository", side_effect=fake_build
+        ):
+            result = await service.verify_download_client(settings)
+
+        assert seen["api_key"] == "real-key"
+        assert result.status == "ok"
+        await http.aclose()
+    finally:
+        slskd_mock.reset_state()

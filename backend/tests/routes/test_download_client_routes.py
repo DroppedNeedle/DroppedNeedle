@@ -266,3 +266,24 @@ def test_status_no_advisory_when_downloads_visible(tmp_path, monkeypatch):
 
     body = build_test_client(app).get("/download-client/status").json()
     assert body["mount_advisory"] is None
+
+
+def test_test_connection_surfaces_auth_message():
+    # Issue #193: a rejected key reaches the admin as the fixed auth message.
+    message = (
+        "Authentication rejected (401) — check the API key and slskd's CIDR allowlist"
+    )
+    svc = MagicMock()
+    svc.verify_download_client = AsyncMock(
+        return_value=ServiceStatus(status="error", version=None, message=message)
+    )
+    app = _app(settings_service=svc)
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    response = build_test_client(app).post(
+        "/download-client/test",
+        json={"url": "https://slskd.example.com", "api_key": "wrong-key"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is False
+    assert body["message"] == message

@@ -2,6 +2,7 @@
 MockTransport checks for body shape (searchTimeout ms, plain-array enqueue),
 404/429 handling, and the AUD-10 error convention."""
 
+import asyncio
 import json
 
 import httpx
@@ -154,3 +155,148 @@ async def test_get_downloads_404_returns_empty():
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     client = SlskdClient(http, "http://slskd", "k")
     assert await client.get_downloads("ghost") == []
+
+
+def _reset_slskd_breakers() -> None:
+    from repositories.slskd.slskd_client import (
+        _slskd_circuit_breaker,
+        _slskd_verify_circuit_breaker,
+    )
+
+    _slskd_circuit_breaker.reset()
+    _slskd_verify_circuit_breaker.reset()
+
+
+@pytest.mark.asyncio
+async def test_401_raises_auth_error_single_attempt_breaker_closed():
+    # Issue #193: a wrong key is deterministic misconfig, not an outage: one
+    # attempt, auth-flagged, invisible to both breakers.
+    from core.exceptions import SlskdAuthError
+    from repositories.slskd.slskd_client import (
+        _slskd_circuit_breaker,
+        _slskd_verify_circuit_breaker,
+    )
+
+    _reset_slskd_breakers()
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(401)
+
+    try:
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = SlskdClient(http, "http://slskd", "wrong-key")
+        with pytest.raises(SlskdAuthError) as exc_info:
+            await client.health_check()
+        assert exc_info.value.auth is True
+        assert exc_info.value.code == 401
+        assert calls == 1
+        assert not _slskd_circuit_breaker.is_open()
+        assert _slskd_circuit_breaker.failure_count == 0
+        assert _slskd_verify_circuit_breaker.failure_count == 0
+    finally:
+        _reset_slskd_breakers()
+
+
+@pytest.mark.asyncio
+async def test_403_raises_auth_error_single_attempt():
+    # CIDR-shaped denies share the auth path: same single-attempt behaviour.
+    from core.exceptions import SlskdAuthError
+
+    _reset_slskd_breakers()
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(403, text="forbidden")
+
+    try:
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = SlskdClient(http, "http://slskd", "cidr-denied-key")
+        with pytest.raises(SlskdAuthError) as exc_info:
+            await client.health_check()
+        assert exc_info.value.auth is True
+        assert exc_info.value.code == 403
+        assert calls == 1
+    finally:
+        _reset_slskd_breakers()
+
+
+@pytest.mark.asyncio
+async def test_500_still_retries_and_records_breaker_failure(monkeypatch):
+    # Scope pin: only 401/403 are auth; other >=400 keep retry + breaker.
+    from core.exceptions import SlskdApiError, SlskdAuthError
+    from repositories.slskd.slskd_client import _slskd_circuit_breaker
+
+    async def no_sleep(delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("asyncio.sleep", no_sleep)
+    _reset_slskd_breakers()
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(500, text="boom")
+
+    try:
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = SlskdClient(http, "http://slskd", "k")
+        with pytest.raises(SlskdApiError) as exc_info:
+            await client.health_check()
+        assert not isinstance(exc_info.value, SlskdAuthError)
+        assert calls == 3
+        assert _slskd_circuit_breaker.failure_count == 1
+    finally:
+        _reset_slskd_breakers()
+
+
+@pytest.mark.asyncio
+async def test_verify_client_binds_isolated_breaker():
+    # A poisoned live breaker must not block Test-connection traffic and a
+    # poisoned verify breaker must not block live traffic.
+    from repositories.slskd.slskd_client import (
+        _slskd_circuit_breaker,
+        _slskd_verify_circuit_breaker,
+    )
+
+    def ok(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"version": {"current": "0.25.1.0"}})
+
+    _reset_slskd_breakers()
+    try:
+        for _ in range(5):
+            _slskd_circuit_breaker.record_failure()
+        assert _slskd_circuit_breaker.is_open()
+        verify_http = httpx.AsyncClient(transport=httpx.MockTransport(ok))
+        verify = SlskdClient(
+            verify_http, "http://slskd", "k", use_verify_breaker=True
+        )
+        info = await verify.health_check()
+        assert info["version"]["current"] == "0.25.1.0"
+
+        _slskd_circuit_breaker.reset()
+        for _ in range(5):
+            _slskd_verify_circuit_breaker.record_failure()
+        assert _slskd_verify_circuit_breaker.is_open()
+        live_http = httpx.AsyncClient(transport=httpx.MockTransport(ok))
+        live = SlskdClient(live_http, "http://slskd", "k")
+        info = await live.health_check()
+        assert info["version"]["current"] == "0.25.1.0"
+    finally:
+        _reset_slskd_breakers()
+
+
+def test_build_slskd_repository_binds_verify_breaker():
+    from core.dependencies.repo_providers import build_slskd_repository
+    from infrastructure.http.client import HttpClientFactory
+
+    try:
+        repo = build_slskd_repository("http://slskd:5030", "k")
+        assert repo._client._use_verify_breaker is True
+    finally:
+        HttpClientFactory.reset_for_tests()

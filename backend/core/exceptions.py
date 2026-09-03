@@ -307,6 +307,28 @@ class SlskdApiError(ExternalServiceError):
         self.code = code
 
 
+class SlskdAuthError(SlskdApiError):
+    """slskd 401/403: wrong API key or key CIDR deny (issue #193).
+
+    Deterministic misconfiguration, not an outage: excluded from retry
+    (``non_retriable_exceptions``) and breaker accounting
+    (``non_breaking_exceptions``) on every retry-wrapped ``SlskdClient``
+    call, so Test-connection fails fast without poisoning live traffic.
+    ``auth`` mirrors ``LidarrImportError``; 401 and 403 share one message.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        details: Any = None,
+        code: int | None = None,
+        *,
+        auth: bool = True,
+    ):
+        super().__init__(message, details, code)
+        self.auth = auth
+
+
 class NewznabApiError(ExternalServiceError):
     """Transport/HTTP/feed error talking to a Newznab indexer.
 
