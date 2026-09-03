@@ -40,7 +40,7 @@
 		"@tailwindcss/postcss": "^4.1.14",
 		"@tailwindcss/typography": "^0.5.19",
 		"@types/node": "^22",
-		"@vitest/browser": "^3.2.7",
+		"@vitest/browser": "^4.1.11",
 		"daisyui": "^5.3.1",
 		"eslint": "^9.36.0",
 		"eslint-config-prettier": "^10.1.8",
@@ -56,7 +56,7 @@
 		"typescript": "^5.9.2",
 		"typescript-eslint": "^8.44.1",
 		"vite": "^7.3.5",
-		"vitest": "^3.2.7",
+		"vitest": "^4.1.11",
 		"vitest-browser-svelte": "^1.1.0"
 	},
 	"dependencies": {
