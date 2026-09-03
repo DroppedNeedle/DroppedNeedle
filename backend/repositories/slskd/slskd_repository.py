@@ -56,6 +56,74 @@ def _normalised_path(value: str) -> str:
     """Canonical comparison key for a path reported by slskd."""
     return _normalised_filename(_exact_transfer_path(value))
 
+_FUZZY_DASH_SPLIT = re.compile(r"\s*[-\u2013\u2014_]\s*")
+_FUZZY_TRACK_FIND = re.compile(r"\b(\d{1,3})\b")
+_FUZZY_LEADING_TRACK = re.compile(r"^(\d{1,3})\b[.\-_\s]*")
+
+
+def _fuzzy_file_key(basename: str) -> tuple[int | None, str, str]:
+    """Split a download basename into (track_number, title_core, extension).
+
+    Local fallback for ``_locate_file`` steps 8-9 (issue #229): peers advertise a
+    flat ``Artist - Album - NN - Title`` name while slskd files the download as
+    ``NN. Title`` inside an album folder. The name is NFC-normalised then
+    casefolded; an ``Artist - Album`` prefix is stripped up to a standalone
+    track-number segment (falling back to the first ``NN`` token); a leading
+    track token (``^\\d{1,3}\\b`` over ``[.-_\\s]*`` separators) is split off and
+    compared numerically; the title core drops every non-alphanumeric so only
+    separator/punctuation drift remains invisible.
+    """
+    normalised = unicodedata.normalize("NFC", basename).casefold()
+    stem, dot, ext = normalised.rpartition(".")
+    if not dot or not stem:
+        stem, ext = normalised, ""
+    remainder = stem
+    segments = _FUZZY_DASH_SPLIT.split(stem)
+    for index, segment in enumerate(segments):
+        if re.fullmatch(r"\d{1,3}\.?", segment.strip()):
+            remainder = " - ".join(segments[index:])
+            break
+    else:
+        found = _FUZZY_TRACK_FIND.search(stem)
+        if found:
+            remainder = stem[found.start(1):]
+    remainder = remainder.strip()
+    track: int | None = None
+    title_part = remainder
+    leading = _FUZZY_LEADING_TRACK.match(remainder)
+    if leading:
+        track = int(leading.group(1))
+        title_part = remainder[leading.end():]
+    core = "".join(ch for ch in title_part if ch.isalnum())
+    return track, core, ext
+
+
+def _fuzzy_keys_match(
+    expected: tuple[int | None, str, str], candidate_name: str
+) -> bool:
+    """Return True when an on-disk basename names the expected download fuzzily.
+
+    Track tokens must agree when both sides carry one, the extensions must be
+    equal, both title cores must be non-trivial, and the shorter core must be
+    contained in the longer one (either direction).
+    """
+    expected_track, expected_core, expected_ext = expected
+    candidate_track, candidate_core, candidate_ext = _fuzzy_file_key(candidate_name)
+    if expected_ext != candidate_ext:
+        return False
+    if (
+        expected_track is not None
+        and candidate_track is not None
+        and expected_track != candidate_track
+    ):
+        return False
+    if not expected_core or not candidate_core:
+        return False
+    short, long = sorted((expected_core, candidate_core), key=len)
+    if len(short) < 2:
+        return False
+    return short in long
+
 
 class _EntryBudget:
     """Shared cap for all normalized fallback directory entries."""
@@ -268,7 +336,8 @@ class SlskdRepository:
     ) -> Path | None:
         """Resolve a finished transfer inside the mounted slskd downloads directory.
 
-        Exact spelling is always tried before a normalized alias.  Alias lookup is
+        Exact spelling is always tried before a normalized alias, and a fuzzy
+        track-number/title fallback (steps 8-9) runs last.  Alias lookup is
         deliberately bounded and fail-closed: it is confined to the resolved mount,
         accepts regular files only, checks a positive expected size, and returns a
         path only when exactly one matching on-disk file exists.
@@ -470,6 +539,79 @@ class SlskdRepository:
             return hit
         if blocked:
             return None
+        # 8-9. Fuzzy basename fallback for peers that advertise a flat
+        # "Artist - Album - NN - Title" name while slskd files the download as
+        # "NN. Title" inside an album folder (issue #229). Fail-closed like the
+        # NFC phases: confined to the mount, regular files only, sharing the
+        # same budget, and a hit only when exactly one candidate matches
+        # (ambiguity or budget exhaustion returns None). The peer scope runs
+        # first so a same-titled file from another peer cannot shadow it; the
+        # mount-wide sweep stays behind a mandatory exact byte-size gate.
+        expected_fuzzy_key = _fuzzy_file_key(basename)
+
+        def _walk_find_fuzzy(
+            root: Path, require_size: bool
+        ) -> tuple[Path | None, bool]:
+            """Collect fuzzy basename matches under root, confined and loop-safe."""
+            resolved_root = _within_mount(root)
+            if resolved_root is None or not resolved_root.is_dir():
+                return None, False
+            stack = [resolved_root]
+            seen_dirs: set[Path] = set()
+            matches: set[Path] = set()
+            while stack:
+                current = stack.pop()
+                current = _within_mount(current)
+                if current is None or not current.is_dir() or current in seen_dirs:
+                    continue
+                seen_dirs.add(current)
+                try:
+                    entries = current.iterdir()
+                    for entry in entries:
+                        if not budget.take():
+                            return None, True
+                        resolved = _within_mount(entry)
+                        if resolved is None:
+                            continue
+                        if resolved.is_dir():
+                            stack.append(resolved)
+                            continue
+                        if not resolved.is_file():
+                            continue
+                        if not _fuzzy_keys_match(expected_fuzzy_key, entry.name):
+                            continue
+                        if expected_size is not None:
+                            try:
+                                if resolved.stat().st_size != expected_size:
+                                    continue
+                            except OSError:
+                                continue
+                        elif require_size:
+                            continue
+                        matches.add(resolved)
+                        if len(matches) > 1:
+                            return None, True
+                except (OSError, RuntimeError):
+                    continue
+            return (next(iter(matches)) if matches else None), False
+
+        # 8. Peer-scoped fuzzy: size gates only when the expected size is known.
+        if user_root is not None and user_root.is_dir():
+            hit, blocked = _walk_find_fuzzy(user_root, require_size=False)
+            if hit is not None:
+                return hit
+            if blocked:
+                return None
+
+        # 9. Mount-wide fuzzy: meaningless without a size gate, so skipped
+        # entirely when the expected size is unknown.
+        if expected_size is not None:
+            hit, blocked = _walk_find_fuzzy(mount, require_size=True)
+            if hit is not None:
+                return hit
+            if blocked:
+                return None
+
 
         try:
             top_level = sum(1 for _ in mount.iterdir())

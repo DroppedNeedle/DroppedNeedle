@@ -971,6 +971,197 @@ async def test_get_file_path_whole_mount_fallback_disambiguates_by_size(tmp_path
     )
     assert path == right.resolve()
 
+@pytest.mark.asyncio
+async def test_get_file_path_fuzzy_resolves_album_folder_track_prefixed_punctuation_variant(
+    tmp_path,
+):
+    # Issue #229: the peer advertises a flat "Artist - Album - NN - Title.mp3"
+    # name but slskd files the download as "NN. Title.mp3" inside an album
+    # folder with no username dir, so every exact/NFC step misses.
+    folder = tmp_path / "Hollywood Vampires - Rise"
+    folder.mkdir()
+    disk = folder / "01. I Want My Now.mp3"
+    disk.write_bytes(b"x" * 12345)
+
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    path = await repo.get_file_path(
+        _h("somepeer"),
+        "PeerShare\\Hollywood Vampires - Rise - 01 - I Want My Now.mp3",
+        size=12345,
+    )
+
+    assert path == disk.resolve()
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_fuzzy_peer_scoped_resolves_with_size(tmp_path):
+    # Same divergence filed under the peer's folder: the pre-existing peer
+    # size fallback already recovers the lone same-size file; the fuzzy step
+    # must agree with it rather than shadow or contradict it.
+    folder = tmp_path / "peer1" / "Some Album"
+    folder.mkdir(parents=True)
+    disk = folder / "01. Title Here.mp3"
+    disk.write_bytes(b"y" * 200)
+
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    path = await repo.get_file_path(
+        _h("peer1"), "Share\\Artist - Album - 01 - Title Here.mp3", size=200
+    )
+
+    assert path == disk.resolve()
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_fuzzy_peer_scoped_unique_resolves_without_size(tmp_path):
+    # Size unknown skips the peer size fallback entirely; a unique fuzzy match
+    # under the peer's folder still resolves.
+    folder = tmp_path / "peer1" / "Some Album"
+    folder.mkdir(parents=True)
+    disk = folder / "01. Title Here.mp3"
+    disk.write_bytes(b"y" * 200)
+
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    path = await repo.get_file_path(
+        _h("peer1"), "Share\\Artist - Album - 01 - Title Here.mp3"
+    )
+
+    assert path == disk.resolve()
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_fuzzy_mount_wide_requires_size(tmp_path):
+    # No peer dir: without a known size the mount-wide fuzzy sweep is skipped
+    # (no size gate to keep it honest); with the size it resolves, and a
+    # wrong size still misses.
+    folder = tmp_path / "Some Album"
+    folder.mkdir()
+    disk = folder / "01. Title Here.mp3"
+    disk.write_bytes(b"z" * 300)
+
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    remote = "Share\\Artist - Album - 01 - Title Here.mp3"
+    assert await repo.get_file_path(_h("peer9"), remote) is None
+    assert await repo.get_file_path(_h("peer9"), remote, size=301) is None
+    assert await repo.get_file_path(_h("peer9"), remote, size=300) == disk.resolve()
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_fuzzy_ambiguity_fails_closed(tmp_path):
+    # Two same-titled fuzzy candidates must not resolve to either one: the
+    # mount-wide sweep (same size, no peer dir) and the peer-scoped sweep
+    # (unique names aside, size unknown) both fail closed.
+    for folder_name in ("AlbumA", "AlbumB"):
+        folder = tmp_path / folder_name
+        folder.mkdir()
+        (folder / "01. Title Here.mp3").write_bytes(b"w" * 400)
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    assert (
+        await repo.get_file_path(
+            _h("peer9"), "Share\\Artist - Album - 01 - Title Here.mp3", size=400
+        )
+        is None
+    )
+
+    for folder_name in ("peer2/AlbumA", "peer2/AlbumB"):
+        folder = tmp_path / folder_name
+        folder.mkdir(parents=True)
+        (folder / "02. Other Title.mp3").write_bytes(b"v" * 150)
+    assert (
+        await repo.get_file_path(
+            _h("peer2"), "Share\\Artist - Album - 02 - Other Title.mp3"
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_fuzzy_ignores_cross_peer_same_size_decoy(tmp_path):
+    # A same-size same-titled file under another peer must not shadow the
+    # requesting peer's own folder: the peer-scoped attempt runs first.
+    peer_folder = tmp_path / "peer1" / "Album"
+    peer_folder.mkdir(parents=True)
+    peer_disk = peer_folder / "01. Title Here.mp3"
+    peer_disk.write_bytes(b"u" * 500)
+    decoy_folder = tmp_path / "other" / "Album"
+    decoy_folder.mkdir(parents=True)
+    (decoy_folder / "01. Title Here.mp3").write_bytes(b"u" * 500)
+
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    path = await repo.get_file_path(
+        _h("peer1"), "Share\\Artist - Album - 01 - Title Here.mp3", size=500
+    )
+
+    assert path == peer_disk.resolve()
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_fuzzy_extension_mismatch_returns_none(tmp_path):
+    # Same track number and title core but a different container is a
+    # different artifact, never a fuzzy hit.
+    folder = tmp_path / "Some Album"
+    folder.mkdir()
+    (folder / "01. Title Here.flac").write_bytes(b"t" * 600)
+
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    assert (
+        await repo.get_file_path(
+            _h("peer9"), "Share\\Artist - Album - 01 - Title Here.mp3", size=600
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_fuzzy_truly_absent_still_returns_none(tmp_path):
+    # A genuinely missing download still yields None (SOURCE_FILE_MISSING),
+    # even when the remote name has the fuzzy-shaped prefix.
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    assert (
+        await repo.get_file_path(
+            _h("peer9"), "Share\\Artist - Album - 01 - Title Here.mp3", size=700
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_fuzzy_skips_outside_symlink(tmp_path):
+    # A fuzzy-named file outside the mount, linked in, must stay invisible.
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    (outside / "01. Title Here.mp3").write_bytes(b"q" * 800)
+    (tmp_path / "peer1").mkdir()
+    (tmp_path / "peer1" / "escaped").symlink_to(outside, target_is_directory=True)
+
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    assert (
+        await repo.get_file_path(
+            _h("peer1"), "Share\\Artist - Album - 01 - Title Here.mp3", size=800
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_fuzzy_shares_entry_budget(tmp_path, monkeypatch):
+    # The fuzzy sweeps share the NFC phases' entry budget: exhaustion anywhere
+    # fails closed instead of falling through to a guess.
+    import repositories.slskd.slskd_repository as slskd_repository
+
+    monkeypatch.setattr(slskd_repository, "_MAX_WALK_ENTRIES", 2)
+    folder = tmp_path / "Some Album"
+    folder.mkdir()
+    (folder / "01. Title Here.mp3").write_bytes(b"s" * 900)
+
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    assert (
+        await repo.get_file_path(
+            _h("peer9"), "Share\\Artist - Album - 01 - Title Here.mp3", size=900
+        )
+        is None
+    )
+
+
 
 def _completed(filename, username="peer"):
     return SlskdTransfer(
