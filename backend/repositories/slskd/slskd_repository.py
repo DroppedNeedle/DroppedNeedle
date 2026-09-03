@@ -340,7 +340,9 @@ class SlskdRepository:
         track-number/title fallback (steps 8-9) runs last.  Alias lookup is
         deliberately bounded and fail-closed: it is confined to the resolved mount,
         accepts regular files only, checks a positive expected size, and returns a
-        path only when exactly one matching on-disk file exists.
+        path only when exactly one matching on-disk file exists. A single
+        normalized alias still resolves when the expected size mismatches; size
+        rejection belongs to the verifier (SIZE_MISMATCH), not the locator.
         """
         raw_parts = re.split(r"[\\/]", remote_filename)
         if any(part == ".." for part in raw_parts):
@@ -443,16 +445,21 @@ class SlskdRepository:
 
         def _find_normalised_in_directory(
             directory: Path,
-        ) -> tuple[Path | None, bool]:
-            """Return one immediate normalized alias, or ambiguity/exhaustion."""
+        ) -> tuple[Path | None, str | None, int]:
+            """Return one immediate normalized alias, or ambiguity/exhaustion.
+
+            Returns (hit, fail_kind, fail_count): fail_kind is None to keep
+            looking, "ambiguous" (fail_count = observed alias count) or
+            "budget" (fail_count unused).
+            """
             root = _within_mount(directory)
             if root is None or not root.is_dir():
-                return None, False
+                return None, None, 0
             matches: set[Path] = set()
             try:
                 for entry in root.iterdir():
                     if not budget.take():
-                        return None, True
+                        return None, "budget", 0
                     resolved = _within_mount(entry)
                     if resolved is None or not resolved.is_file():
                         continue
@@ -466,19 +473,30 @@ class SlskdRepository:
                             continue
                     matches.add(resolved)
                     if len(matches) > 1:
-                        return None, True
+                        return None, "ambiguous", len(matches)
             except (OSError, RuntimeError):
-                return None, False
-            return (next(iter(matches)) if matches else None), False
+                return None, None, 0
+            return (next(iter(matches)) if matches else None), None, 0
 
-        def _walk_find_normalised(root: Path) -> tuple[Path | None, bool]:
-            """Find one normalized alias under root, confined and loop-safe."""
+        def _walk_find_normalised(root: Path) -> tuple[Path | None, str | None, int]:
+            """Find one normalized alias under root, confined and loop-safe.
+
+            Returns (hit, fail_kind, fail_count) like
+            `_find_normalised_in_directory`. When the size-gated set is empty
+            but the expected size is known, the already-collected in-memory
+            alias set is retried without the size gate: exactly one alias
+            resolves (size rejection is then the verifier's job), zero stays
+            not-found, several fail closed as ambiguous. No new walks, no
+            extra budget entries. Every candidate stays `_within_mount` +
+            regular-file gated.
+            """
             resolved_root = _within_mount(root)
             if resolved_root is None or not resolved_root.is_dir():
-                return None, False
+                return None, None, 0
             stack = [resolved_root]
             seen_dirs: set[Path] = set()
             matches: set[Path] = set()
+            ungated: set[Path] = set()
             while stack:
                 current = stack.pop()
                 current = _within_mount(current)
@@ -489,7 +507,7 @@ class SlskdRepository:
                     entries = current.iterdir()
                     for entry in entries:
                         if not budget.take():
-                            return None, True
+                            return None, "budget", 0
                         resolved = _within_mount(entry)
                         if resolved is None:
                             continue
@@ -500,44 +518,97 @@ class SlskdRepository:
                             continue
                         if _normalised_filename(entry.name) != normalised_basename:
                             continue
-                        if expected_size is not None:
+                        if expected_size is None:
+                            matches.add(resolved)
+                        else:
+                            ungated.add(resolved)
                             try:
                                 if resolved.stat().st_size != expected_size:
                                     continue
                             except OSError:
                                 continue
-                        matches.add(resolved)
+                            matches.add(resolved)
                         if len(matches) > 1:
-                            return None, True
+                            return None, "ambiguous", len(matches)
                 except (OSError, RuntimeError):
                     continue
-            return (next(iter(matches)) if matches else None), False
+            if matches:
+                return next(iter(matches)), None, 0
+            if expected_size is not None:
+                if len(ungated) == 1:
+                    return next(iter(ungated)), None, 0
+                if len(ungated) > 1:
+                    return None, "ambiguous", len(ungated)
+            return None, None, 0
+
+        def _log_unlocatable(kind: str, count: int = 0) -> None:
+            """Log a fail-closed miss with the minimal shape: basename, size (or
+            "unknown"), and the top-level entry count only. Ambiguity adds the
+            observed candidate count; budget exhaustion adds a flag. Never
+            candidate paths, usernames, hosts, secrets, remote full paths, or
+            exception text."""
+            try:
+                top_level = sum(1 for _ in mount.iterdir())
+            except (OSError, RuntimeError):
+                top_level = -1
+            if kind == "budget":
+                logger.warning(
+                    "slskd file not locatable on the downloads mount: %s (%s bytes); "
+                    "%d top-level entries under the mount - entry budget exhausted, "
+                    "refusing to guess",
+                    basename,
+                    size if size else "unknown",
+                    top_level,
+                )
+            elif kind == "ambiguous":
+                logger.warning(
+                    "slskd file not locatable on the downloads mount: %s (%s bytes); "
+                    "%d top-level entries under the mount - ambiguous=%d, "
+                    "refusing to guess",
+                    basename,
+                    size if size else "unknown",
+                    top_level,
+                    count,
+                )
+            else:
+                logger.warning(
+                    "slskd file not locatable on the downloads mount: %s (%s bytes); "
+                    "%d top-level entries under the mount - the on-disk layout may nest deeper "
+                    "or sanitise names beyond what get_file_path handles",
+                    basename,
+                    size if size else "unknown",
+                    top_level,
+                )
 
         # Keep direct-directory aliases ahead of recursive fallback; these are the
         # layouts slskd most commonly produces.
         if len(parts) >= 2:
-            hit, blocked = _find_normalised_in_directory(mount / parts[-2])
+            hit, fail_kind, fail_count = _find_normalised_in_directory(mount / parts[-2])
             if hit is not None:
                 return hit
-            if blocked:
+            if fail_kind is not None:
+                _log_unlocatable(fail_kind, fail_count)
                 return None
-        hit, blocked = _find_normalised_in_directory(mount)
+        hit, fail_kind, fail_count = _find_normalised_in_directory(mount)
         if hit is not None:
             return hit
-        if blocked:
+        if fail_kind is not None:
+            _log_unlocatable(fail_kind, fail_count)
             return None
 
         if user_root is not None and user_root.is_dir():
-            hit, blocked = _walk_find_normalised(user_root)
+            hit, fail_kind, fail_count = _walk_find_normalised(user_root)
             if hit is not None:
                 return hit
-            if blocked:
+            if fail_kind is not None:
+                _log_unlocatable(fail_kind, fail_count)
                 return None
 
-        hit, blocked = _walk_find_normalised(mount)
+        hit, fail_kind, fail_count = _walk_find_normalised(mount)
         if hit is not None:
             return hit
-        if blocked:
+        if fail_kind is not None:
+            _log_unlocatable(fail_kind, fail_count)
             return None
         # 8-9. Fuzzy basename fallback for peers that advertise a flat
         # "Artist - Album - NN - Title" name while slskd files the download as
@@ -551,11 +622,15 @@ class SlskdRepository:
 
         def _walk_find_fuzzy(
             root: Path, require_size: bool
-        ) -> tuple[Path | None, bool]:
-            """Collect fuzzy basename matches under root, confined and loop-safe."""
+        ) -> tuple[Path | None, str | None, int]:
+            """Collect fuzzy basename matches under root, confined and loop-safe.
+
+            Returns (hit, fail_kind, fail_count) like
+            `_find_normalised_in_directory`.
+            """
             resolved_root = _within_mount(root)
             if resolved_root is None or not resolved_root.is_dir():
-                return None, False
+                return None, None, 0
             stack = [resolved_root]
             seen_dirs: set[Path] = set()
             matches: set[Path] = set()
@@ -569,7 +644,7 @@ class SlskdRepository:
                     entries = current.iterdir()
                     for entry in entries:
                         if not budget.take():
-                            return None, True
+                            return None, "budget", 0
                         resolved = _within_mount(entry)
                         if resolved is None:
                             continue
@@ -590,41 +665,31 @@ class SlskdRepository:
                             continue
                         matches.add(resolved)
                         if len(matches) > 1:
-                            return None, True
+                            return None, "ambiguous", len(matches)
                 except (OSError, RuntimeError):
                     continue
-            return (next(iter(matches)) if matches else None), False
+            return (next(iter(matches)) if matches else None), None, 0
 
         # 8. Peer-scoped fuzzy: size gates only when the expected size is known.
         if user_root is not None and user_root.is_dir():
-            hit, blocked = _walk_find_fuzzy(user_root, require_size=False)
+            hit, fail_kind, fail_count = _walk_find_fuzzy(user_root, require_size=False)
             if hit is not None:
                 return hit
-            if blocked:
+            if fail_kind is not None:
+                _log_unlocatable(fail_kind, fail_count)
                 return None
 
         # 9. Mount-wide fuzzy: meaningless without a size gate, so skipped
         # entirely when the expected size is unknown.
         if expected_size is not None:
-            hit, blocked = _walk_find_fuzzy(mount, require_size=True)
+            hit, fail_kind, fail_count = _walk_find_fuzzy(mount, require_size=True)
             if hit is not None:
                 return hit
-            if blocked:
+            if fail_kind is not None:
+                _log_unlocatable(fail_kind, fail_count)
                 return None
 
-
-        try:
-            top_level = sum(1 for _ in mount.iterdir())
-        except (OSError, RuntimeError):
-            top_level = -1
-        logger.warning(
-            "slskd file not locatable on the downloads mount: %s (%s bytes); "
-            "%d top-level entries under the mount - the on-disk layout may nest deeper "
-            "or sanitise names beyond what get_file_path handles",
-            basename,
-            size if size else "unknown",
-            top_level,
-        )
+        _log_unlocatable("none")
         return None
 
     @staticmethod

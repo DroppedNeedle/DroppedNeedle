@@ -3,6 +3,7 @@ slskd JSON -> DownloadSearchResult translation, query building, path parsing,
 and (username, filenames) status/cancel correlation."""
 
 import asyncio
+import logging
 import threading
 import unicodedata
 from pathlib import Path
@@ -866,6 +867,33 @@ async def test_get_file_path_normalised_nested_alias_returns_real_path(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("remote_form", "disk_form"),
+    [("NFC", "NFD"), ("NFD", "NFC")],
+)
+async def test_get_file_path_normalised_nested_alias_wrong_size_still_resolves(
+    tmp_path, remote_form, disk_form
+):
+    # A wrong search-advertised size must not veto the alias: the locator
+    # returns the single normalized match and the verifier (not the locator)
+    # owns the SIZE_MISMATCH rejection.
+    visible_name = "05 - Héroes Del Sábado.flac"
+    remote_name = unicodedata.normalize(remote_form, visible_name)
+    disk_name = unicodedata.normalize(disk_form, visible_name)
+    folder = tmp_path / "Artist" / "Album"
+    folder.mkdir(parents=True)
+    file_path = folder / disk_name
+    file_path.write_bytes(b"abcdefghij")  # 10 bytes on disk, 999 advertised
+
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    path = await repo.get_file_path(
+        _h("peer1"), f"@@peer\\Music\\Album\\{remote_name}", size=999
+    )
+
+    assert path == file_path.resolve()
+
+
+@pytest.mark.asyncio
 async def test_get_file_path_normalised_alias_ambiguity_fails_closed(tmp_path):
     visible_name = "01 - Héroes.flac"
     remote_name = unicodedata.normalize("NFC", visible_name)
@@ -879,6 +907,72 @@ async def test_get_file_path_normalised_alias_ambiguity_fails_closed(tmp_path):
     assert (
         await repo.get_file_path(_h("peer1"), f"Music/{remote_name}", size=10) is None
     )
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_normalised_alias_ambiguity_logs_count(tmp_path, caplog):
+    # Two same-size normalized aliases fail closed and log the candidate
+    # count instead of the generic not-found message; no username leaks.
+    visible_name = "01 - Héroes.flac"
+    remote_name = unicodedata.normalize("NFC", visible_name)
+    disk_name = unicodedata.normalize("NFD", visible_name)
+    for folder_name in ("Artist A", "Artist B"):
+        folder = tmp_path / folder_name
+        folder.mkdir()
+        (folder / disk_name).write_bytes(b"abcdefghij")
+
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    with caplog.at_level(
+        logging.WARNING, logger="repositories.slskd.slskd_repository"
+    ):
+        assert (
+            await repo.get_file_path(_h("peer1"), f"Music/{remote_name}", size=10)
+            is None
+        )
+    assert "ambiguous=2" in caplog.text
+    assert "budget exhausted" not in caplog.text
+    assert "peer1" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_get_file_path_normalised_fallback_budget_exhaustion_logs_budget(
+    tmp_path, monkeypatch, caplog
+):
+    # An exhausted entry budget fails closed with the budget message instead
+    # of the generic not-found message.
+    import repositories.slskd.slskd_repository as slskd_repository
+
+    monkeypatch.setattr(slskd_repository, "_MAX_WALK_ENTRIES", 1)
+    folder = tmp_path / "peer1"
+    folder.mkdir()
+    (folder / "noise.txt").write_bytes(b"x")
+    alias = unicodedata.normalize("NFD", "01 - Héroes.flac")
+    (folder / alias).write_bytes(b"abcdefghij")
+
+    original_iterdir = Path.iterdir
+
+    def _iterdir_in_test_order(path):
+        entries = list(original_iterdir(path))
+        if path == folder:
+            entries.sort(key=lambda entry: entry.name != "noise.txt")
+        return iter(entries)
+
+    monkeypatch.setattr(Path, "iterdir", _iterdir_in_test_order)
+
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    with caplog.at_level(
+        logging.WARNING, logger="repositories.slskd.slskd_repository"
+    ):
+        assert (
+            await repo.get_file_path(
+                _h("peer1"),
+                "peer1/01 - Héroes.flac",
+            )
+            is None
+        )
+    assert "budget exhausted" in caplog.text
+    assert "ambiguous=" not in caplog.text
+    assert "peer1" not in caplog.text
 
 
 @pytest.mark.asyncio
