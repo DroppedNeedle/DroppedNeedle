@@ -553,7 +553,7 @@ def get_target_album_identification_service() -> "AlbumIdentificationService":
         resolved_any = False
         for local_album_id in local_album_ids or ():
             try:
-                rg_scope, artist_scope = store.album_catalog_scope_ids(
+                rg_scope, artist_scope = await store.album_catalog_scope_ids(
                     str(local_album_id)
                 )
             except Exception:  # noqa: BLE001 - resolution failure falls back to bulk sweep
