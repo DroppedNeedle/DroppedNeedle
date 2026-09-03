@@ -68,6 +68,7 @@ from models.audio_metadata import (
     AudioWritePolicy,
     DesiredAudioDocument,
     DesiredAudioField,
+    EmbeddedArtworkDescriptor,
     SemanticTagSnapshot,
 )
 from models.library_management import (
@@ -233,6 +234,70 @@ def test_restoration_catalog_projection_prefers_explicit_native_defaults() -> No
     assert projected.album_artist == "Album Artist"
     assert projected.disc_number == 2
     assert projected.compilation is False
+
+
+@pytest.mark.asyncio
+async def test_desired_document_merges_embedded_artwork_choices() -> None:
+    """Embedded artwork choices must merge into the desired document's artwork.
+
+    Regression for the missing merge_embedded_artwork import: the embedded
+    branch previously raised NameError instead of merging.
+    """
+    from types import SimpleNamespace
+
+    content = b"fake-image-bytes"
+    sha256 = hashlib.sha256(content).hexdigest()
+    desired = DesiredAudioDocument(
+        fields=(DesiredAudioField(name="title", action="set", value="Managed"),)
+    )
+    item = SimpleNamespace(
+        desired_document_json=msgspec.json.encode(desired).decode(),
+        artwork_choices_json=json.dumps(
+            [
+                {
+                    "output_kind": "embedded",
+                    "blob_sha256": sha256,
+                    "image_type": "front",
+                    "mime_type": "image/jpeg",
+                    "description": "",
+                    "width": 100,
+                    "height": 100,
+                }
+            ]
+        ),
+    )
+    publisher = LibraryManagementPublisher.__new__(LibraryManagementPublisher)
+    publisher._blobs = SimpleNamespace(read_bytes=AsyncMock(return_value=content))
+
+    result = await publisher._desired_document(item, ())
+
+    assert result.artwork is not None
+    assert len(result.artwork) == 1
+    merged = result.artwork[0]
+    assert isinstance(merged, EmbeddedArtworkDescriptor)
+    assert merged.sha256 == sha256
+    assert merged.content == content
+    assert merged.image_type == "front"
+
+
+@pytest.mark.asyncio
+async def test_desired_document_without_embedded_choices_keeps_pinned_artwork() -> None:
+    """Without embedded choices the pinned artwork must pass through untouched."""
+    from types import SimpleNamespace
+
+    desired = DesiredAudioDocument(
+        fields=(DesiredAudioField(name="title", action="set", value="Managed"),)
+    )
+    item = SimpleNamespace(
+        desired_document_json=msgspec.json.encode(desired).decode(),
+        artwork_choices_json=json.dumps([]),
+    )
+    publisher = LibraryManagementPublisher.__new__(LibraryManagementPublisher)
+    publisher._blobs = SimpleNamespace(read_bytes=AsyncMock())
+
+    result = await publisher._desired_document(item, ())
+
+    assert result.artwork == desired.artwork
 
 
 def _import_file(

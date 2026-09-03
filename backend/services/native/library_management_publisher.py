@@ -67,6 +67,7 @@ from models.library_management_planning import (
     naming_policy_revision,
     pin_library_management_profile,
 )
+from services.native.artwork_projection_service import merge_embedded_artwork
 from services.native.audio_write_planning_service import AudioWritePlanningService
 from services.native.file_revision import revision_from_stat
 from services.native.library_management_profile_service import (
