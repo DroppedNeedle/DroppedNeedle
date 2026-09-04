@@ -387,4 +387,96 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 		await page.getByRole('button', { name: 'Discard' }).click();
 		expect(rows(container)).toHaveLength(2);
 	});
+
+	it('heals a stale preference order when removing the FLAC entry narrows the range', async () => {
+		h.policy = {
+			...structuredClone(basePolicy),
+			quality_min: 'low',
+			quality_max: 'lossless',
+			quality_recipe: [
+				{ format: 'flac', quality: 'cd' },
+				{
+					format: 'mp3',
+					quality: '320_plus',
+					min_bitrate_kbps: 320,
+					target_bitrate_kbps: 320,
+					max_bitrate_kbps: null
+				},
+				{
+					format: 'mp3',
+					quality: '256_319',
+					min_bitrate_kbps: 256,
+					target_bitrate_kbps: 256,
+					max_bitrate_kbps: 319
+				},
+				{
+					format: 'mp3',
+					quality: '192_255',
+					min_bitrate_kbps: 192,
+					target_bitrate_kbps: 192,
+					max_bitrate_kbps: 255
+				},
+				{
+					format: 'mp3',
+					quality: 'below_192',
+					min_bitrate_kbps: 16,
+					target_bitrate_kbps: 128,
+					max_bitrate_kbps: 191
+				}
+			],
+			quality_preference_order: ['lossless', 'mp3_320', 'mp3_256', 'mp3_192', 'low']
+		};
+		const { container } = render(SettingsDownloadPolicy);
+		expect(rows(container)).toHaveLength(5);
+		await page.getByRole('button', { name: 'Remove FLAC · CD quality' }).click();
+		expect(rows(container)).toHaveLength(4);
+		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
+
+		expect(h.mutateAsync).toHaveBeenCalledTimes(1);
+		const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
+		expect(saved.quality_min).toBe('low');
+		expect(saved.quality_max).toBe('mp3_320');
+		expect(saved.quality_cutoff).toBe('mp3_320');
+		const order = saved.quality_preference_order as string[];
+		const expected = ['mp3_320', 'mp3_256', 'mp3_192', 'low'];
+		expect(order.length === 0 || [...order].sort().join() === [...expected].sort().join()).toBe(
+			true
+		);
+		expect(order).not.toEqual(['lossless', 'mp3_320', 'mp3_256', 'mp3_192', 'low']);
+	});
+
+	it('heals a stale preference order when adding an entry widens the range', async () => {
+		const { container } = render(SettingsDownloadPolicy);
+		expect(rows(container)).toHaveLength(2);
+		await page.getByRole('radio', { name: 'Below 192' }).click();
+		await page.getByRole('button', { name: 'Add MP3 recipe entry' }).click();
+		expect(rows(container)).toHaveLength(3);
+		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
+
+		expect(h.mutateAsync).toHaveBeenCalledTimes(1);
+		const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
+		expect(saved.quality_min).toBe('low');
+		expect(saved.quality_max).toBe('lossless');
+		const order = saved.quality_preference_order as string[];
+		const expected = ['lossless', 'mp3_320', 'mp3_256', 'mp3_192', 'low'];
+		expect(order.length === 0 || [...order].sort().join() === [...expected].sort().join()).toBe(
+			true
+		);
+		expect(order).not.toEqual(['lossless', 'mp3_320']);
+	});
+
+	it('preserves the stored preference-order permutation when the range is unchanged', async () => {
+		h.policy = {
+			...structuredClone(basePolicy),
+			quality_preference_order: ['mp3_320', 'lossless']
+		};
+		render(SettingsDownloadPolicy);
+		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
+
+		expect(h.mutateAsync).toHaveBeenCalledTimes(1);
+		const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
+		expect(saved.quality_min).toBe('mp3_320');
+		expect(saved.quality_max).toBe('lossless');
+		expect(saved.quality_preference_order).toEqual(['mp3_320', 'lossless']);
+	});
 });

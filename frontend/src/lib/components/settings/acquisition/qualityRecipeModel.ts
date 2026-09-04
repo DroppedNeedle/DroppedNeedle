@@ -665,6 +665,52 @@ export function legacyRangeFromRecipe(
 	return { quality_min: minimum, quality_max: maximum };
 }
 
+/**
+ * Canonical legacy tiers, best-first. Mirrors backend derive_default_order in
+ * backend/services/native/acquisition/quality.py: slicing from quality_max
+ * down to quality_min yields the exact accepted tier set for a range.
+ */
+export const LEGACY_TIERS_BEST_FIRST = [
+	'lossless',
+	'mp3_320',
+	'mp3_256',
+	'mp3_192',
+	'low'
+] as const;
+
+export function deriveDefaultOrder(qualityMin: string, qualityMax: string): string[] {
+	const lo = LEGACY_TIERS_BEST_FIRST.indexOf(
+		qualityMax as (typeof LEGACY_TIERS_BEST_FIRST)[number]
+	);
+	const hi = LEGACY_TIERS_BEST_FIRST.indexOf(
+		qualityMin as (typeof LEGACY_TIERS_BEST_FIRST)[number]
+	);
+	if (lo === -1 || hi === -1 || lo > hi) return [];
+	return [...LEGACY_TIERS_BEST_FIRST.slice(lo, hi + 1)];
+}
+
+/**
+ * Keep the stored preference order only when it contains exactly the tiers
+ * accepted for the new range (any permutation, mirroring backend
+ * normalize_order). Otherwise return [] so the backend derives/heals the
+ * default instead of rejecting the save with a 400.
+ */
+export function resolvePreferenceOrderForRange(
+	stored: readonly string[] | null | undefined,
+	qualityMin: string,
+	qualityMax: string
+): string[] {
+	const expected = deriveDefaultOrder(qualityMin, qualityMax);
+	const current = stored ?? [];
+	if (
+		current.length === expected.length &&
+		[...current].sort().join(',') === [...expected].sort().join(',')
+	) {
+		return [...current];
+	}
+	return [];
+}
+
 export function isRecipeMigrationStatus(
 	value: string | null | undefined
 ): value is RecipeMigrationStatus {
