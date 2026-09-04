@@ -6,12 +6,12 @@ target application instead:
 
     uvicorn target_main:app --host 0.0.0.0 --port 8688
 
-See CONTRIBUTING.md for local development and the project README for the
-official Docker/supervisor launch path.
+See CONTRIBUTING.md for local development and the Docker image supervisor
+launch path for ``target_main:app``.
 """
 
 raise SystemExit(
     "Unsupported installation: main:app was removed in the F-NL-03 scan "
-    "cutover. Launch target_main:app instead - see CONTRIBUTING.md and the "
-    "README upgrade notes."
+    "cutover. Launch target_main:app instead - see CONTRIBUTING.md for local "
+    "development and the Docker image supervisor launch path."
 )

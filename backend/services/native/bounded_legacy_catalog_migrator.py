@@ -401,6 +401,11 @@ class BoundedLegacyCatalogMigrator:
         migrated_ids = (
             self._migrated_source_keys.get("library_file", set()) if pending else set()
         )
+        provenanced_ids: set[str] = set()
+        if not pending:
+            provenanced_ids = (
+                await self._store.get_migrated_legacy_source_keys({"library_file"})
+            ).get("library_file", set())
         while True:
             batch = await self._store.get_bounded_legacy_library_file_preflight_batch(
                 after_id=after_id,
@@ -411,18 +416,18 @@ class BoundedLegacyCatalogMigrator:
             staged: list[
                 tuple[str, str, str, str, str, str, str, int, str]
             ] = []
-            existing_paths: set[str] = set()
-            if pending:
-                target_paths = [
-                    self._target_path(row.get("file_path")) for row in batch
-                ]
-                existing_paths = await self._store.get_existing_local_track_paths(
-                    target_paths
-                )
+            target_paths = [
+                self._target_path(row.get("file_path")) for row in batch
+            ]
+            existing_paths = await self._store.get_existing_local_track_paths(
+                target_paths
+            )
             for row in batch:
                 after_id = str(row.get("id") or "")
                 file_id = str(row.get("id") or "")
                 if pending and file_id in migrated_ids:
+                    continue
+                if file_id in provenanced_ids:
                     continue
                 target_path = self._target_path(row.get("file_path"))
                 if target_path in existing_paths:

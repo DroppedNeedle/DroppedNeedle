@@ -2724,16 +2724,22 @@ def main() -> int:
             failure_path = settings.cache_dir / _FAILURE_EVIDENCE_FILE
             if _read_state(failure_path) is None:
                 try:
-                    _write_state(
-                        failure_path,
-                        {
-                            "reason": "working_migration_error",
-                            "error_type": type(error).__name__,
-                        },
-                    )
+                    failure_evidence: dict[str, Any] = {
+                        "reason": "working_migration_error",
+                        "error_type": type(error).__name__,
+                    }
+                    # Sanitized detail for operators: only sqlite IntegrityError
+                    # text (table+constraint) is safe to persist. Other str(error)
+                    # values may carry paths/secrets, so they stay out of the
+                    # evidence JSON (see sanitized-exception-type test).
+                    if isinstance(error, sqlite3.IntegrityError):
+                        detail = str(error)[:500]
+                        if detail:
+                            failure_evidence["error_detail"] = detail
+                    _write_state(failure_path, failure_evidence)
                 except OSError:
                     logger.error("automatic_upgrade.failure_state_write_failed")
-            logger.error(
+            logger.exception(
                 "automatic_upgrade.working_copy_failed error_type=%s",
                 type(error).__name__,
             )
