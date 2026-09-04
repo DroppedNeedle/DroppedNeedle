@@ -9,20 +9,6 @@ from repositories.github_repository import GitHubRepository
 logger = logging.getLogger(__name__)
 
 
-def legacy_image_notice(version: str) -> str | None:
-    normalized = version.strip()
-    if normalized[:1] in ("v", "V"):
-        normalized = normalized[1:]
-    if not normalized.startswith("2.11."):
-        return None
-    return (
-        "legacy image names retired: installs still on habirabbu/* stop receiving updates "
-        "after v2.11.x - if this is you, switch the compose image to "
-        "droppedneedle/droppedneedle (or ghcr.io/droppedneedle/droppedneedle), then pull "
-        "and restart"
-    )
-
-
 class VersionService:
     def __init__(self, github_repo: GitHubRepository):
         self._github_repo = github_repo
