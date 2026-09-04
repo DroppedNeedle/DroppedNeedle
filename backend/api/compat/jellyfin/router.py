@@ -196,6 +196,10 @@ def _user_dto(user) -> jm.UserDto:
         Policy={
             # Without EnableAllFolders strict clients (Manet) conclude "no libraries"
             # and never call /UserViews; rest are permissive defaults.
+            # Finamp hard-casts UserPolicy fields (non-nullable required bool/int/String
+            # in Finamp main lib/models/jellyfin_models.dart UserPolicy); a missing bool
+            # crashes login with "type 'Null' is not a subtype of type 'bool'"
+            # (issue 376; same null-bool crash shape as #144).
             "IsAdministrator": user.role == "admin",
             "IsHidden": False,
             "IsDisabled": False,
@@ -214,8 +218,15 @@ def _user_dto(user) -> jm.UserDto:
             "EnableSyncTranscoding": True,
             "EnableUserPreferenceAccess": True,
             "EnableLiveTvAccess": False,
+            "EnableLiveTvManagement": False,
+            "EnableContentDeletion": False,
+            "EnableMediaConversion": False,
+            "EnablePublicSharing": False,
             "EnableRemoteControlOfOtherUsers": False,
             "EnableSharedDeviceControl": False,
+            "InvalidLoginAttemptCount": 0,
+            "RemoteClientBitrateLimit": 0,
+            "SyncPlayAccess": "CreateAndJoinGroups",
             "BlockedTags": [],
             "AllowedTags": [],
             "AccessSchedules": [],

@@ -54,6 +54,15 @@ _FINAMP_REQUIRED_SESSION = {
     "UserId": str, "LastActivityDate": str, "SupportsRemoteControl": bool,
     "IsActive": bool, "SupportsMediaControl": bool, "HasCustomDeviceName": bool,
 }
+# Finamp hard-casts UserDto.Policy (non-nullable required bool/int/String in
+# Finamp main lib/models/jellyfin_models.dart UserPolicy); a missing bool crashes
+# login with "type 'Null' is not a subtype of type 'bool'" (issue 376).
+_FINAMP_REQUIRED_POLICY = {
+    "EnableLiveTvManagement": bool, "EnableContentDeletion": bool,
+    "EnableMediaConversion": bool, "EnablePublicSharing": bool,
+    "InvalidLoginAttemptCount": int, "RemoteClientBitrateLimit": int,
+    "SyncPlayAccess": str,
+}
 
 
 async def test_authenticate_response_survives_finamp_parsing(compat_env):
@@ -137,6 +146,24 @@ async def test_user_policy_grants_library_access(compat_env):
     assert me["Policy"]["EnableAllFolders"] is True
     assert me["Policy"]["EnabledFolders"] == []
     assert me["Policy"]["EnableMediaPlayback"] is True
+
+
+async def test_authenticate_policy_survives_finamp_parsing(compat_env):
+    # Strict-client simulation: Finamp json_serializable hard-casts these Policy
+    # fields, so a missing key (KeyError/None here) is the login crash (issue 376).
+    r = compat_env.client.post(
+        "/jellyfin/Users/AuthenticateByName",
+        json={"Username": "alice", "Pw": compat_env.secret},
+        headers={"Authorization": 'MediaBrowser Client="Finamp", Device="iPhone", '
+                                  'DeviceId="dev-1", Version="0.6.25"'},
+    )
+    assert r.status_code == 200
+    policy = _jbody(r)["User"]["Policy"]
+    for field, typ in _FINAMP_REQUIRED_POLICY.items():
+        assert isinstance(policy.get(field), typ), field
+    me = _jbody(compat_env.client.get("/jellyfin/Users/Me", headers=_auth_header(compat_env.secret)))
+    for field, typ in _FINAMP_REQUIRED_POLICY.items():
+        assert isinstance(me["Policy"].get(field), typ), field
 
 
 async def test_token_via_x_emby_and_apikey_query(compat_env):
