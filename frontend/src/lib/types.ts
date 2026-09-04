@@ -2018,6 +2018,10 @@ export interface AlbumEditionsResponse {
 	selected_release_mbid: string | null;
 }
 
+export interface EditionPinResponse {
+	pinned_release_mbid: string | null;
+}
+
 export interface EditionAcquireResponse {
 	release_mbid: string;
 	total_tracks: number;

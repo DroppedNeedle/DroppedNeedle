@@ -9,12 +9,16 @@ import type {
 	LibraryAlbumDetail,
 	LibraryAlbumSummary
 } from '$lib/types';
+import { ApiError } from '$lib/api/client';
+import { toastStore } from '$lib/stores/toast';
 
 const h = vi.hoisted(() => ({
 	editions: undefined as AlbumEditionsResponse | undefined,
 	setPin: vi.fn(),
 	clearPin: vi.fn(),
-	acquire: vi.fn()
+	acquire: vi.fn(),
+	setLocalPin: vi.fn(),
+	clearLocalPin: vi.fn()
 }));
 
 vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
@@ -25,7 +29,9 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	}),
 	setEditionPin: () => ({ mutateAsync: h.setPin, isPending: false }),
 	clearEditionPin: () => ({ mutateAsync: h.clearPin, isPending: false }),
-	acquireEdition: () => ({ mutateAsync: h.acquire, isPending: false })
+	acquireEdition: () => ({ mutateAsync: h.acquire, isPending: false }),
+	setLocalAlbumEditionPin: () => ({ mutateAsync: h.setLocalPin, isPending: false }),
+	clearLocalAlbumEditionPin: () => ({ mutateAsync: h.clearLocalPin, isPending: false })
 }));
 
 vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({
@@ -205,10 +211,23 @@ function renderHeader({
 	return onrefresh;
 }
 
+// Native <dialog> content leaves the accessibility tree when closed, so a
+// getByRole locator never resolves there. Assert on the open property instead.
+async function expectConflictDialogClosed(): Promise<void> {
+	await vi.waitFor(() => {
+		const conflict = [...document.querySelectorAll('dialog')].find((dialog) =>
+			dialog.textContent?.includes('Which copy should this edition apply to?')
+		);
+		expect(conflict?.open).toBe(false);
+	});
+}
+
 describe('AlbumHeader automatic edition selection', () => {
 	beforeEach(() => {
 		h.setPin.mockReset().mockResolvedValue(undefined);
 		h.clearPin.mockReset().mockResolvedValue(undefined);
+		h.setLocalPin.mockReset().mockResolvedValue(undefined);
+		h.clearLocalPin.mockReset().mockResolvedValue(undefined);
 		h.acquire.mockReset().mockResolvedValue({
 			release_mbid: 'release-20',
 			total_tracks: 20,
@@ -325,5 +344,69 @@ describe('AlbumHeader automatic edition selection', () => {
 		await trigger.click();
 		await expect.element(page.getByRole('heading', { name: 'Identify Avalon' })).toBeVisible();
 		await expect.element(page.getByText('This screen never writes music files.')).toBeVisible();
+	});
+
+	it('opens the copy picker when the shared pin conflicts', async () => {
+		h.setPin.mockRejectedValue(new ApiError(409, 'Multiple albums match', 'CONFLICT'));
+		renderHeader({ localCopies: [localAlbum] });
+
+		await page.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' }).click();
+		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
+		await expect
+			.element(page.getByRole('heading', { name: 'Which copy should this edition apply to?' }))
+			.toBeVisible();
+		expect(h.setPin).toHaveBeenCalledOnce();
+	});
+
+	it('pins the chosen copy through the local URL, then refreshes and closes', async () => {
+		h.setPin.mockRejectedValue(new ApiError(409, 'Multiple albums match', 'CONFLICT'));
+		const onrefresh = renderHeader({ localCopies: [localAlbum] });
+
+		await page.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' }).click();
+		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
+		await expect
+			.element(page.getByRole('heading', { name: 'Which copy should this edition apply to?' }))
+			.toBeVisible();
+
+		await page.getByRole('button', { name: /Avalon/ }).click();
+		await vi.waitFor(() => {
+			expect(h.setLocalPin).toHaveBeenCalledWith(
+				expect.objectContaining({ localId: 'local-album-1', releaseMbid: 'release-11' })
+			);
+			expect(onrefresh).toHaveBeenCalledOnce();
+		});
+		await expectConflictDialogClosed();
+	});
+
+	it('toasts instead of opening the picker when a non-conflict pin fails', async () => {
+		h.setPin.mockRejectedValue(new ApiError(500, 'Server broke', 'INTERNAL'));
+		const show = vi.mocked(toastStore.show);
+		show.mockClear();
+		renderHeader({ localCopies: [localAlbum] });
+
+		await page.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' }).click();
+		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
+		await vi.waitFor(() => {
+			expect(show).toHaveBeenCalledWith(
+				expect.objectContaining({ message: 'Server broke', type: 'error' })
+			);
+		});
+		await expectConflictDialogClosed();
+	});
+
+	it('falls back to a toast on conflict when no local copies are known', async () => {
+		h.setPin.mockRejectedValue(new ApiError(409, 'Multiple albums match', 'CONFLICT'));
+		const show = vi.mocked(toastStore.show);
+		show.mockClear();
+		renderHeader({ localCopies: [] });
+
+		await page.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' }).click();
+		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
+		await vi.waitFor(() => {
+			expect(show).toHaveBeenCalledWith(
+				expect.objectContaining({ message: 'Multiple albums match', type: 'error' })
+			);
+		});
+		await expectConflictDialogClosed();
 	});
 });

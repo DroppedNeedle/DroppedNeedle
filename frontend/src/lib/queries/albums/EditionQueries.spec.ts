@@ -40,13 +40,18 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	authStore: { user: { id: 'user-a' } }
 }));
 
-import {
-	acquireEdition,
-	clearEditionPin,
-	editionsKey,
-	getAlbumEditionsQuery,
-	setEditionPin
-} from './EditionQueries.svelte';
+	import {
+		acquireEdition,
+		clearEditionPin,
+		clearLocalAlbumEditionPin,
+		editionsKey,
+		getAlbumEditionsQuery,
+		getLocalAlbumEditionPinQuery,
+		localAlbumEditionPinKey,
+		localAlbumEditionPinUrl,
+		setEditionPin,
+		setLocalAlbumEditionPin
+	} from './EditionQueries.svelte';
 
 type EditionQueryOptions = {
 	queryKey: readonly unknown[];
@@ -139,3 +144,71 @@ it('keeps acquire invalidation scoped to the authenticated download queue', asyn
 
 	expect(h.post).toHaveBeenCalledWith('/api/v1/albums/release-group/edition/acquire', {});
 });
+
+	it('addresses per-copy pins by local id and scopes the key by user', () => {
+		expect(localAlbumEditionPinUrl('local-album-1')).toBe(
+			'/api/v1/library/albums/local-album-1/edition'
+		);
+		expect(localAlbumEditionPinUrl('a/b')).toBe('/api/v1/library/albums/a%2Fb/edition');
+
+		expect(localAlbumEditionPinKey('user-a', 'local-1')).toEqual([
+			'albums',
+			'edition-pin',
+			'user-a',
+			'local-1'
+		]);
+		expect(localAlbumEditionPinKey(undefined, 'local-1')).toEqual([
+			'albums',
+			'edition-pin',
+			null,
+			'local-1'
+		]);
+		expect(localAlbumEditionPinKey('user-a', 'local-1')).not.toEqual(
+			localAlbumEditionPinKey('user-b', 'local-1')
+		);
+	});
+
+	it('forwards the abort signal on the local pin read', async () => {
+		const query = getLocalAlbumEditionPinQuery(
+			() => 'user-a',
+			() => 'local-1',
+			() => true
+		) as unknown as EditionQueryOptions;
+		expect(query.queryKey).toEqual(localAlbumEditionPinKey('user-a', 'local-1'));
+		expect(query.enabled).toBe(true);
+
+		const signal = new AbortController().signal;
+		await query.queryFn({ signal });
+		expect(h.get).toHaveBeenCalledWith('/api/v1/library/albums/local-1/edition', { signal });
+	});
+
+	it('pins and clears through the local URL and invalidates pin, editions, and detail keys', async () => {
+		const pin = setLocalAlbumEditionPin() as unknown as EditionMutationOptions;
+		const clear = clearLocalAlbumEditionPin() as unknown as EditionMutationOptions;
+		const pinVariables = {
+			userId: 'user-a',
+			localId: 'local-1',
+			rgMbid: 'release-group',
+			releaseMbid: 'release'
+		};
+		const clearVariables = { userId: 'user-a', localId: 'local-1', rgMbid: 'release-group' };
+
+		await pin.mutationFn(pinVariables);
+		await pin.onSuccess(undefined, pinVariables);
+		await clear.mutationFn(clearVariables);
+		await clear.onSuccess(undefined, clearVariables);
+
+		expect(h.put).toHaveBeenCalledWith('/api/v1/library/albums/local-1/edition', {
+			release_mbid: 'release'
+		});
+		expect(h.delete).toHaveBeenCalledWith('/api/v1/library/albums/local-1/edition');
+		expect(h.invalidate).toHaveBeenCalledWith({
+			queryKey: localAlbumEditionPinKey('user-a', 'local-1')
+		});
+		expect(h.invalidate).toHaveBeenCalledWith({
+			queryKey: editionsKey('user-a', 'release-group')
+		});
+		expect(h.invalidate).toHaveBeenCalledWith({
+			queryKey: ['library', 'album-detail', 'local-1']
+		});
+	});

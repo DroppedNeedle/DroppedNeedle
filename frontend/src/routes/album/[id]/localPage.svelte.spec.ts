@@ -3,27 +3,64 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import type { LibraryAlbumDetail, NativeTrackListItem } from '$lib/types';
 
-const h = vi.hoisted(() => ({
-	playQueue: vi.fn(),
-	goto: vi.fn(),
-	isAdmin: false
-}));
-
-vi.mock('$app/state', () => ({ page: { params: { id: 'local-album-1' } } }));
-vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => h.goto(...args) }));
-vi.mock('$lib/stores/authStore.svelte', () => ({
-	authStore: {
-		get isAdmin() {
-			return h.isAdmin;
-		},
+	const h = vi.hoisted(() => ({
+		playQueue: vi.fn(),
+		goto: vi.fn(),
+		isAdmin: false,
 		isTrusted: false,
-		user: { id: 'user-1' }
-	},
-	LAST_USER_ID_KEY: 'test:last-user'
-}));
-vi.mock('$lib/stores/player.svelte', () => ({
-	playerStore: { playQueue: (...args: unknown[]) => h.playQueue(...args) }
-}));
+		editions: undefined as
+			| {
+					items: Array<{
+						release_mbid: string;
+						track_count: number;
+						title: string | null;
+						disambiguation: string | null;
+						date: string | null;
+						country: string | null;
+						packaging: string | null;
+						status: string | null;
+						is_owned: boolean;
+						is_pinned: boolean;
+					}>;
+					pinned_release_mbid: string | null;
+					owned_release_mbid: string | null;
+					selected_release_mbid: string | null;
+				}
+			| undefined,
+		localPin: { pinned_release_mbid: null as string | null },
+		setLocalPin: vi.fn(),
+		clearLocalPin: vi.fn(),
+		toast: vi.fn()
+	}));
+
+	vi.mock('$app/state', () => ({ page: { params: { id: 'local-album-1' } } }));
+	vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => h.goto(...args) }));
+	vi.mock('$lib/stores/authStore.svelte', () => ({
+		authStore: {
+			get isAdmin() {
+				return h.isAdmin;
+			},
+			get isTrusted() {
+				return h.isTrusted;
+			},
+			user: { id: 'user-1' }
+		},
+		LAST_USER_ID_KEY: 'test:last-user'
+	}));
+	vi.mock('$lib/stores/player.svelte', () => ({
+		playerStore: { playQueue: (...args: unknown[]) => h.playQueue(...args) }
+	}));
+	vi.mock('$lib/stores/integration', () => ({
+		integrationStore: {
+			subscribe: (cb: (value: unknown) => void) => {
+				cb({ download_client: true });
+				return () => {};
+			}
+		}
+	}));
+	vi.mock('$lib/stores/toast', () => ({
+		toastStore: { show: (...args: unknown[]) => h.toast(...args) }
+	}));
 
 const album: LibraryAlbumDetail = {
 	id: 'local-album-1',
@@ -110,9 +147,24 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	})
 }));
 
-vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
-	getAlbumEditionsQuery: () => ({ data: undefined, isLoading: false, isError: false })
-}));
+	vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
+		getAlbumEditionsQuery: () => ({
+			get data() {
+				return h.editions;
+			},
+			isLoading: false,
+			isError: false
+		}),
+		getLocalAlbumEditionPinQuery: () => ({
+			get data() {
+				return h.localPin;
+			},
+			isLoading: false,
+			isError: false
+		}),
+		setLocalAlbumEditionPin: () => ({ mutateAsync: h.setLocalPin, isPending: false }),
+		clearLocalAlbumEditionPin: () => ({ mutateAsync: h.clearLocalPin, isPending: false })
+	}));
 
 vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
 	getLibraryOperationQuery: () => ({ data: undefined, isError: false })
@@ -174,12 +226,19 @@ vi.mock('$lib/queries/libraryContributions/LibraryContributionMutations.svelte',
 
 import LocalAlbumPage from './LocalAlbumPage.svelte';
 
-beforeEach(() => {
-	vi.clearAllMocks();
-	h.isAdmin = false;
-	album.management_identity_readiness = 'exact_release_required';
-	album.identification_status = 'local_metadata';
-});
+	beforeEach(() => {
+		vi.clearAllMocks();
+		h.isAdmin = false;
+		h.isTrusted = false;
+		h.editions = undefined;
+		h.localPin = { pinned_release_mbid: null };
+		h.setLocalPin.mockResolvedValue(undefined);
+		h.clearLocalPin.mockResolvedValue(undefined);
+		album.management_identity_readiness = 'exact_release_required';
+		album.identification_status = 'local_metadata';
+		album.musicbrainz_release_group_id = null;
+		album.musicbrainz_release_id = null;
+	});
 
 describe('local-only album page', () => {
 	it('plays stable local tracks and presents local identity separately', async () => {
@@ -239,5 +298,102 @@ describe('local-only album page', () => {
 		await expect
 			.element(page.getByRole('button', { name: 'Re-identify…' }))
 			.not.toHaveClass(/identification-trigger-warning/);
+	});
+
+	it('pins an edition through the per-copy local URL', async () => {
+		h.isTrusted = true;
+		album.musicbrainz_release_group_id = 'rg-1';
+		h.editions = {
+			items: [
+				{
+					release_mbid: 'release-11',
+					track_count: 11,
+					title: 'Local Only Album',
+					disambiguation: null,
+					date: '2008-08-04',
+					country: 'XW',
+					packaging: null,
+					status: 'Official',
+					is_owned: false,
+					is_pinned: false
+				},
+				{
+					release_mbid: 'release-20',
+					track_count: 20,
+					title: 'Local Only Album',
+					disambiguation: null,
+					date: '2008-08-05',
+					country: 'US',
+					packaging: null,
+					status: 'Official',
+					is_owned: false,
+					is_pinned: false
+				}
+			],
+			pinned_release_mbid: null,
+			owned_release_mbid: null,
+			selected_release_mbid: 'release-20'
+		};
+		render(LocalAlbumPage, {
+			props: { albumId: album.id }
+		} as unknown as Parameters<typeof render>[1]);
+
+		await page
+			.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' })
+			.click();
+		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
+		await vi.waitFor(() => {
+			expect(h.setLocalPin).toHaveBeenCalledWith({
+				userId: 'user-1',
+				localId: 'local-album-1',
+				rgMbid: 'rg-1',
+				releaseMbid: 'release-11'
+			});
+		});
+	});
+
+	it('marks the pinned copy edition once the local pin is set', async () => {
+		h.isTrusted = true;
+		album.musicbrainz_release_group_id = 'rg-1';
+		h.localPin = { pinned_release_mbid: 'release-11' };
+		h.editions = {
+			items: [
+				{
+					release_mbid: 'release-11',
+					track_count: 11,
+					title: 'Local Only Album',
+					disambiguation: null,
+					date: '2008-08-04',
+					country: 'XW',
+					packaging: null,
+					status: 'Official',
+					is_owned: false,
+					is_pinned: false
+				}
+			],
+			pinned_release_mbid: null,
+			owned_release_mbid: null,
+			selected_release_mbid: null
+		};
+		render(LocalAlbumPage, {
+			props: { albumId: album.id }
+		} as unknown as Parameters<typeof render>[1]);
+
+		await expect
+			.element(page.getByRole('button', { name: /Edition: 2008 · XW · 11 tracks/ }))
+			.toBeVisible();
+		await expect.element(page.getByText('pinned', { exact: true })).toBeVisible();
+	});
+
+	it('shows no picker for an unidentified album without a release group', async () => {
+		h.isTrusted = true;
+		render(LocalAlbumPage, {
+			props: { albumId: album.id }
+		} as unknown as Parameters<typeof render>[1]);
+
+		await expect
+			.element(page.getByText('Link a MusicBrainz release group to compare editions.'))
+			.toBeVisible();
+		await expect.element(page.getByRole('button', { name: /Edition: / })).not.toBeInTheDocument();
 	});
 });

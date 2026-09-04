@@ -375,8 +375,13 @@ async def test_effective_selection_propagates_pin_and_library_lookup_failures(
         get=AsyncMock(side_effect=ConflictError("multiple active albums"))
     )
 
-    with pytest.raises(ConflictError, match="multiple active albums"):
-        await service._effective_release_id(RG, _avalon_payload())
+    # Ambiguous pin reads degrade to unpinned so shared-RG pages still resolve;
+    # only real lookup failures propagate.
+    selected, _owned, pinned = await service._effective_release_id(
+        RG, _avalon_payload()
+    )
+    assert pinned is None
+    assert selected == REL_AUTO_11
 
     service._release_pins = None
     service._library_db.get_library_files_for_album = AsyncMock(

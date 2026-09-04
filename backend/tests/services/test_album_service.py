@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.exceptions import ExternalServiceError, ResourceNotFoundError
+from core.exceptions import ConflictError, ExternalServiceError, ResourceNotFoundError
 from infrastructure.queue.priority_queue import RequestPriority
 from models.album import AlbumInfo
 from services.album_service import AlbumService
@@ -841,3 +841,165 @@ async def test_resolve_album_identity_preserves_release_alias_as_edition():
 
     assert release_group_mbid == _RESOLVED_RG
     assert release_mbid == _RELEASE_ALIAS
+
+
+_PIN_RG = "11111111-1111-4111-8111-111111111111"
+_PIN_REL_A = "22222222-2222-4222-8222-222222222222"
+_PIN_REL_B = "33333333-3333-4333-8333-333333333333"
+_PIN_FOREIGN = "44444444-4444-4444-8444-444444444444"
+
+
+def _pin_rg_payload() -> dict:
+    return {
+        "id": _PIN_RG,
+        "releases": [
+            {
+                "id": _PIN_REL_A,
+                "title": "Album",
+                "status": "Official",
+                "media": [{"track-count": 10}],
+            },
+            {
+                "id": _PIN_REL_B,
+                "title": "Album",
+                "status": "Official",
+                "media": [{"track-count": 12}],
+            },
+        ],
+    }
+
+
+def _attach_pin_store(service, *, rg=_PIN_RG, pin=None, context=None):
+    store = MagicMock()
+    store.target_album_provider_identity = AsyncMock(return_value=rg)
+    store.get_target_album_release_pin = AsyncMock(return_value=pin)
+    store.set_target_album_release_pin = AsyncMock()
+    store.clear_target_album_release_pin = AsyncMock(return_value=True)
+    store.get_album_identification_context = AsyncMock(return_value=context)
+    service._native_library_store = store
+    return store
+
+
+@pytest.mark.asyncio
+async def test_pinned_release_id_degrades_to_none_on_conflict():
+    service, _, _ = _make_service()
+    service._release_pins = SimpleNamespace(
+        get=AsyncMock(side_effect=ConflictError("multiple local albums"))
+    )
+    assert await service._pinned_release_id(_PIN_RG) is None
+
+
+@pytest.mark.asyncio
+async def test_pinned_release_id_still_reports_single_match_pin():
+    service, _, _ = _make_service()
+    service._release_pins = SimpleNamespace(
+        get=AsyncMock(return_value=_PIN_REL_A)
+    )
+    assert await service._pinned_release_id(_PIN_RG) == _PIN_REL_A
+
+
+@pytest.mark.asyncio
+async def test_list_editions_reports_null_pin_on_ambiguous_rg():
+    service, _, _ = _make_service()
+    service._release_pins = SimpleNamespace(
+        get=AsyncMock(side_effect=ConflictError("multiple local albums"))
+    )
+    service._fetch_release_group = AsyncMock(return_value=_pin_rg_payload())
+
+    data = await service.list_editions(_PIN_RG)
+
+    assert data["pinned_release_mbid"] is None
+    assert {item["release_mbid"] for item in data["items"]} == {
+        _PIN_REL_A,
+        _PIN_REL_B,
+    }
+    assert all(item["is_pinned"] is False for item in data["items"])
+
+
+@pytest.mark.asyncio
+async def test_get_edition_pin_for_local_album_reads_direct_path():
+    service, _, _ = _make_service()
+    store = _attach_pin_store(service, pin=_PIN_REL_A)
+
+    assert await service.get_edition_pin_for_local_album("album-1") == _PIN_REL_A
+    store.get_target_album_release_pin.assert_awaited_once_with("album-1")
+
+
+@pytest.mark.asyncio
+async def test_set_edition_pin_for_local_album_validates_and_busts():
+    service, _, _ = _make_service()
+    store = _attach_pin_store(service)
+    service.list_editions = AsyncMock(
+        return_value={"items": [{"release_mbid": _PIN_REL_A}, {"release_mbid": _PIN_REL_B}]}
+    )
+    service._bust_album_caches = AsyncMock()
+
+    await service.set_edition_pin_for_local_album("album-1", _PIN_REL_B, "cur-1")
+
+    service.list_editions.assert_awaited_once_with(_PIN_RG)
+    args = store.set_target_album_release_pin.await_args.args
+    assert args[:3] == ("album-1", _PIN_REL_B, "cur-1")
+    assert isinstance(args[3], str) and args[3]
+    service._bust_album_caches.assert_awaited_once_with(_PIN_RG)
+
+
+@pytest.mark.asyncio
+async def test_set_edition_pin_for_local_album_rejects_foreign_release():
+    service, _, _ = _make_service()
+    store = _attach_pin_store(service)
+    service.list_editions = AsyncMock(
+        return_value={"items": [{"release_mbid": _PIN_REL_A}]}
+    )
+    service._bust_album_caches = AsyncMock()
+
+    with pytest.raises(ResourceNotFoundError, match="does not belong"):
+        await service.set_edition_pin_for_local_album("album-1", _PIN_FOREIGN, "cur-1")
+    store.set_target_album_release_pin.assert_not_awaited()
+    service._bust_album_caches.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_local_album_pin_methods_require_native_store():
+    service, _, _ = _make_service()
+    assert service._native_library_store is None
+
+    with pytest.raises(ResourceNotFoundError, match="unavailable here"):
+        await service.get_edition_pin_for_local_album("album-1")
+    with pytest.raises(ResourceNotFoundError, match="unavailable here"):
+        await service.set_edition_pin_for_local_album("album-1", _PIN_REL_A, "cur-1")
+    with pytest.raises(ResourceNotFoundError, match="unavailable here"):
+        await service.clear_edition_pin_for_local_album("album-1")
+
+
+@pytest.mark.asyncio
+async def test_get_edition_pin_for_local_album_unknown_album():
+    service, _, _ = _make_service()
+    _attach_pin_store(service, rg=None, context=None)
+
+    with pytest.raises(ResourceNotFoundError, match="not in the local library"):
+        await service.get_edition_pin_for_local_album("ghost")
+
+
+@pytest.mark.asyncio
+async def test_get_edition_pin_for_local_album_rgless_album():
+    service, _, _ = _make_service()
+    _attach_pin_store(service, rg=None, context={"identity": None})
+
+    with pytest.raises(ResourceNotFoundError, match="no MusicBrainz identity"):
+        await service.get_edition_pin_for_local_album("album-naked")
+
+
+@pytest.mark.asyncio
+async def test_clear_edition_pin_for_local_album_busts_only_on_success():
+    service, _, _ = _make_service()
+    store = _attach_pin_store(service)
+    service._bust_album_caches = AsyncMock()
+
+    assert await service.clear_edition_pin_for_local_album("album-1") is True
+    store.clear_target_album_release_pin.assert_awaited_once_with("album-1")
+    service._bust_album_caches.assert_awaited_once_with(_PIN_RG)
+
+    store.clear_target_album_release_pin.return_value = False
+    service._bust_album_caches.reset_mock()
+    assert await service.clear_edition_pin_for_local_album("album-1") is False
+    service._bust_album_caches.assert_not_awaited()

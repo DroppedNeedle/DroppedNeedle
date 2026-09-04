@@ -34,10 +34,12 @@
 		setEditionPin
 	} from '$lib/queries/albums/EditionQueries.svelte';
 	import type { AlbumEditionItem } from '$lib/types';
+	import { ApiError } from '$lib/api/client';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { deckSampler } from '$lib/stores/deckSampler.svelte';
 	import LocalAlbumIdentificationControl from './LocalAlbumIdentificationControl.svelte';
+	import EditionPinConflictDialog from './EditionPinConflictDialog.svelte';
 
 	interface Props {
 		album: AlbumBasicInfo;
@@ -220,6 +222,11 @@
 		return bits.join(' · ') || e.release_mbid.slice(0, 8);
 	}
 
+	// 409 means this release group matches several local albums: the RG-keyed
+	// pin cannot address one copy, so the pending intent moves to the picker
+	let conflictDialog = $state<{ showModal: () => void } | null>(null);
+	let pendingIntent = $state<string | null | undefined>(undefined);
+
 	async function handlePickEdition(releaseMbid: string | null) {
 		// the DaisyUI dropdown is focus-driven: blur the trigger so the menu
 		// closes on selection instead of hanging over the refreshed page
@@ -241,6 +248,11 @@
 			}
 			onrefresh(); // the pin changes the served tracklist - refetch the page
 		} catch (e) {
+			if (e instanceof ApiError && e.status === 409 && localCopies.length > 0) {
+				pendingIntent = releaseMbid;
+				conflictDialog?.showModal();
+				return;
+			}
 			toastStore.show({
 				message: e instanceof Error ? e.message : 'Could not change the edition',
 				type: 'error'
@@ -616,6 +628,13 @@
 		</div>
 	</div>
 </div>
+	<EditionPinConflictDialog
+		bind:this={conflictDialog}
+		releaseMbid={pendingIntent ?? null}
+		{localCopies}
+		{onrefresh}
+		onclose={() => (pendingIntent = undefined)}
+	/>
 
 <style>
 	.album-hero {

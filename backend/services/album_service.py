@@ -4,6 +4,7 @@ import logging
 import asyncio
 import math
 import time
+from datetime import datetime, timezone
 from typing import Optional, TYPE_CHECKING
 import msgspec
 from api.v1.schemas.album import AlbumInfo, AlbumBasicInfo, AlbumTracksInfo, Track
@@ -32,7 +33,7 @@ from infrastructure.cache.disk_cache import DiskMetadataCache
 from infrastructure.validators import validate_mbid
 from infrastructure.degradation import try_get_degradation_context
 from infrastructure.queue.priority_queue import RequestPriority
-from core.exceptions import ExternalServiceError, ResourceNotFoundError
+from core.exceptions import ConflictError, ExternalServiceError, ResourceNotFoundError
 from services.audiodb_image_service import AudioDBImageService
 from repositories.audiodb_models import AudioDBAlbumImages
 
@@ -1205,7 +1206,11 @@ class AlbumService:
     async def _pinned_release_id(self, release_group_id: str) -> str | None:
         if self._release_pins is None:
             return None
-        return await self._release_pins.get(release_group_id)
+        try:
+            return await self._release_pins.get(release_group_id)
+        except ConflictError:
+            # Reads degrade so shared-RG pages still list editions; writes stay strict.
+            return None
 
     async def resolve_edition(self, release_group_id: str) -> str | None:
         release_group_id = await self._provider_album_id(release_group_id)
@@ -1287,6 +1292,63 @@ class AlbumService:
         if self._release_pins is None:
             return False
         cleared = await self._release_pins.clear(release_group_id)
+        if cleared:
+            await self._bust_album_caches(release_group_id)
+        return cleared
+
+    async def _local_album_release_group_id(self, local_album_id: str) -> str:
+        """Resolve one local copy to its provider release group, direct-id only.
+
+        The RG-keyed pin store raises ConflictError on shared groups; the per-album
+        routes ride the store's direct local-id path instead, so this helper must
+        never resolve through an ambiguous provider identity.
+        """
+        store = self._native_library_store
+        if store is None:
+            raise ResourceNotFoundError("Edition pinning by album is unavailable here")
+        release_group_id = await store.target_album_provider_identity(local_album_id)
+        if release_group_id:
+            return str(release_group_id)
+        context = await store.get_album_identification_context(local_album_id)
+        if context is None:
+            raise ResourceNotFoundError(f"Album {local_album_id} is not in the local library")
+        identity = context.get("identity") or {}
+        release_group_id = identity.get("release_group_mbid")
+        if not release_group_id:
+            raise ResourceNotFoundError(f"Album {local_album_id} has no MusicBrainz identity")
+        return str(release_group_id)
+
+    async def get_edition_pin_for_local_album(self, local_album_id: str) -> str | None:
+        """Read one copy's pin via the direct local-id path (never ambiguous)."""
+        store = self._native_library_store
+        if store is None:
+            raise ResourceNotFoundError("Edition pinning by album is unavailable here")
+        await self._local_album_release_group_id(local_album_id)
+        return await store.get_target_album_release_pin(local_album_id)
+
+    async def set_edition_pin_for_local_album(
+        self, local_album_id: str, release_mbid: str, user_id: str | None
+    ) -> None:
+        """Pin one copy's edition after validating the release belongs to its group."""
+        store = self._native_library_store
+        if store is None:
+            raise ResourceNotFoundError("Edition pinning by album is unavailable here")
+        release_group_id = await self._local_album_release_group_id(local_album_id)
+        editions = await self.list_editions(release_group_id)
+        if not any(item["release_mbid"] == release_mbid for item in editions["items"]):
+            raise ResourceNotFoundError("That edition does not belong to this album")
+        await store.set_target_album_release_pin(
+            local_album_id, release_mbid, user_id, datetime.now(timezone.utc).isoformat()
+        )
+        await self._bust_album_caches(release_group_id)
+
+    async def clear_edition_pin_for_local_album(self, local_album_id: str) -> bool:
+        """Clear one copy's pin, busting the shared group caches on success."""
+        store = self._native_library_store
+        if store is None:
+            raise ResourceNotFoundError("Edition pinning by album is unavailable here")
+        release_group_id = await self._local_album_release_group_id(local_album_id)
+        cleared = await store.clear_target_album_release_pin(local_album_id)
         if cleared:
             await self._bust_album_caches(release_group_id)
         return cleared

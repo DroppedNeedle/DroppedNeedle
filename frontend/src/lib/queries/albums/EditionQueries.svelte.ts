@@ -4,10 +4,15 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { CACHE_TTL } from '$lib/constants';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
+import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { AlbumEditionsResponse, EditionAcquireResponse } from '$lib/types';
+import type {
+	AlbumEditionsResponse,
+	EditionAcquireResponse,
+	EditionPinResponse
+} from '$lib/types';
 
 // CollectionManagement Feature E: the picker is an admin/trusted surface,
 // viewing the list is open to any authenticated user.
@@ -78,5 +83,79 @@ export function acquireEdition() {
 			invalidateQueriesWithPersister({
 				queryKey: DownloadQueryKeyFactory.tasks(authStore.user?.id)
 			})
+	}));
+}
+
+// Per-album edition pins (#382): one MusicBrainz release group can match
+// several local albums, so the RG-keyed pin above 409s on those. These
+// local-id routes address a single copy and never conflict.
+export const localAlbumEditionPinUrl = (localAlbumId: string) =>
+	`/api/v1/library/albums/${encodeURIComponent(localAlbumId)}/edition`;
+
+export const localAlbumEditionPinKey = (
+	userId: EditionUserId,
+	localAlbumId: string
+) => ['albums', 'edition-pin', userId ?? null, localAlbumId] as const;
+
+export const getLocalAlbumEditionPinQuery = (
+	getUserId: Getter<EditionUserId>,
+	getLocalId: Getter<string>,
+	getEnabled: Getter<boolean>
+) =>
+	createQuery(() => ({
+		queryKey: localAlbumEditionPinKey(getUserId(), getLocalId()),
+		enabled: getEnabled() && !!getUserId() && !!getLocalId(),
+		staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
+		queryFn: ({ signal }) =>
+			api.global.get<EditionPinResponse>(localAlbumEditionPinUrl(getLocalId()), { signal })
+	}));
+
+type LocalEditionPinVariables = {
+	userId: EditionUserId;
+	localId: string;
+	rgMbid: string;
+	releaseMbid: string;
+};
+
+type LocalEditionClearVariables = {
+	userId: EditionUserId;
+	localId: string;
+	rgMbid: string;
+};
+
+function invalidateLocalPinScope(variables: {
+	userId: EditionUserId;
+	localId: string;
+	rgMbid: string;
+}) {
+	const invalidations = [
+		invalidateQueriesWithPersister({
+			queryKey: localAlbumEditionPinKey(variables.userId, variables.localId)
+		}),
+		invalidateQueriesWithPersister({
+			queryKey: editionsKey(variables.userId, variables.rgMbid)
+		}),
+		invalidateQueriesWithPersister({
+			queryKey: LibraryQueryKeyFactory.albumDetail(variables.localId)
+		})
+	];
+	return Promise.all(invalidations);
+}
+
+export function setLocalAlbumEditionPin() {
+	return createMutation(() => ({
+		mutationFn: ({ localId, releaseMbid }: LocalEditionPinVariables) =>
+			api.global.put<EditionPinResponse>(localAlbumEditionPinUrl(localId), {
+				release_mbid: releaseMbid
+			}),
+		onSuccess: (_d, variables) => invalidateLocalPinScope(variables)
+	}));
+}
+
+export function clearLocalAlbumEditionPin() {
+	return createMutation(() => ({
+		mutationFn: ({ localId }: LocalEditionClearVariables) =>
+			api.global.delete<EditionPinResponse>(localAlbumEditionPinUrl(localId)),
+		onSuccess: (_d, variables) => invalidateLocalPinScope(variables)
 	}));
 }

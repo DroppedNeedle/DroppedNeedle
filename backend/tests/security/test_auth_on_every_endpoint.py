@@ -401,6 +401,8 @@ _ADMIN_ENDPOINTS = [
     ("POST", "/api/v1/downloads/task-1/reimport", None),
     ("GET", "/api/v1/library/tracks/file-1/tags", None),
     ("POST", "/api/v1/library/albums/rg-1/rescan", None),
+    ("PUT", "/api/v1/library/albums/album-1/edition", {"release_mbid": "11111111-1111-4111-8111-111111111111"}),
+    ("DELETE", "/api/v1/library/albums/album-1/edition", None),
     # Spotify app credentials + home settings (admin-gated at the /settings router level).
     ("GET", "/api/v1/settings/spotify", None),
     ("PUT", "/api/v1/settings/spotify", {}),
@@ -899,6 +901,7 @@ _USER_ENDPOINTS = [
     ("GET", "/api/v1/library/artists/artist-1/appearances", None),
     ("GET", "/api/v1/library/albums/album-1", None),
     ("GET", "/api/v1/library/albums/album-1/artwork/cached?v=1", None),
+    ("GET", "/api/v1/library/albums/album-1/edition", None),
     ("POST", "/api/v1/library/resolve-tracks", {"items": []}),
     ("GET", "/api/v1/library/activity", None),
     ("GET", "/api/v1/library/activity/stream", None),
