@@ -273,7 +273,7 @@
 				>
 					<div class="relative h-12 w-12 shrink-0">
 						<AlbumImage
-							mbid={track.album_id}
+							mbid={track.musicbrainz_release_group_id ?? ''}
 							source="local"
 							available={track.cover_available}
 							alt={track.album_title}
