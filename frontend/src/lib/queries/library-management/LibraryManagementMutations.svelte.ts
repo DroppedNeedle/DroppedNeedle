@@ -20,6 +20,7 @@ import type {
 	LibraryManagementPreviewCreateRequest,
 	LibraryManagementPreviewCreatedResponse,
 	LibraryManagementPreviewDetailResponse,
+	LibraryManagementPreviewReissueResponse,
 	LibraryManagementProfileCopyRequest,
 	LibraryManagementProfileCreateRequest,
 	LibraryManagementProfileDeleteRequest,
@@ -193,6 +194,15 @@ export const applyLibraryManagementPreviewMutation = () =>
 			),
 		onSuccess: showQueued('Organization work queued'),
 		onError: showActionError('Could not apply this management preview')
+	}));
+
+export const reissueLibraryManagementPreviewMutation = () =>
+	createMutation(() => ({
+		mutationFn: (jobId: string) =>
+			api.global.post<LibraryManagementPreviewReissueResponse>(
+				API.libraryManagement.reissuePreview(jobId)
+			),
+		onError: showActionError('Could not resume this management preview')
 	}));
 
 export const discardLibraryManagementPreviewMutation = () =>

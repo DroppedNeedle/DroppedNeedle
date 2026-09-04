@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import Callable
 import hashlib
 import hmac
 import json
+import logging
 from pathlib import Path, PurePosixPath
 import re
 import stat
@@ -34,6 +36,7 @@ from api.v1.schemas.library_management_preview import (
     LibraryManagementPreviewCreateRequest,
     LibraryManagementPreviewCreatedResponse,
     LibraryManagementPreviewDetailResponse,
+    LibraryManagementPreviewReissueResponse,
     LibraryManagementExternalRefreshResponse,
     LibraryManagementPreviewSummaryResponse,
     LibraryManagementResultItemResponse,
@@ -45,6 +48,7 @@ from api.v1.schemas.library_management_preview import (
 from api.v1.schemas.library_operations import OperationResponse
 from core.exceptions import (
     ConfigurationError,
+    PermissionDeniedError,
     ResourceNotFoundError,
     StaleRevisionError,
     ValidationError,
@@ -91,6 +95,17 @@ def _stable_json(value: object) -> str:
 _ARTWORK_PREVIEW_MIME_TYPES = frozenset(
     {"image/gif", "image/jpeg", "image/png", "image/webp"}
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _sealed_preview_token(job_id: str, idempotency_key: str) -> str:
+    # Mirrors the deterministic preview-token derivation used by the planner
+    # and the undo/baseline/duplicate services: sha256(job_id NUL
+    # idempotency_key), base64url-encoded without padding. Previews created
+    # without an idempotency key use a random token that cannot be re-derived.
+    digest = hashlib.sha256(f"{job_id}\x00{idempotency_key}".encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
 class LibraryManagementPreviewService:
@@ -505,6 +520,73 @@ class LibraryManagementPreviewService:
             current_policy_revision=policy.policy_revision,
         )
         return LibraryOperationService._response(row)
+
+    async def reissue_preview_token(
+        self, job_id: str, admin_id: str
+    ) -> LibraryManagementPreviewReissueResponse:
+        # Browser-restart recovery (issue 291): the sealed preview token lives
+        # only in sessionStorage, so a closed browser orphans an otherwise valid
+        # backend preview. The owner admin session may re-derive the sealed
+        # token here; the token is never stored server-side and never appears
+        # in detail() responses or logs.
+        snapshot = await self._store.get_library_management_job_snapshot(job_id)
+        operation = await self._store.get_operation_job(job_id)
+        if (
+            snapshot is None
+            or operation is None
+            or operation.get("kind") != "library_management"
+        ):
+            raise ResourceNotFoundError("Library Management preview not found.")
+        now = self._clock()
+        if operation.get("requested_by_user_id") != admin_id:
+            logger.warning(
+                "library_management.preview_token_reissue_denied job_id=%s admin_id=%s owner_id=%s at=%s",
+                job_id,
+                admin_id[:8],
+                str(operation.get("requested_by_user_id") or "")[:8],
+                now,
+            )
+            raise PermissionDeniedError(
+                "The Library Management preview belongs to another admin."
+            )
+        if snapshot.proposed_settings_revision is not None:
+            raise ValidationError("An activation preview cannot be applied.")
+        if str(operation.get("state")) != "ready" or snapshot.phase != "ready":
+            raise StaleRevisionError(
+                "The Library Management preview is no longer ready to apply."
+            )
+        if snapshot.preview_expires_at is None or snapshot.preview_expires_at <= now:
+            raise StaleRevisionError("The Library Management preview expired.")
+        stale_reasons = await self._stale_reasons(snapshot)
+        if stale_reasons:
+            raise StaleRevisionError(
+                "The Library Management preview is not current and ready to apply."
+            )
+        idempotency_key = operation.get("idempotency_key")
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            raise ValidationError(
+                "The Library Management preview token cannot be re-issued. "
+                "Generate a fresh preview."
+            )
+        token = _sealed_preview_token(job_id, idempotency_key)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        if not hmac.compare_digest(token_hash, snapshot.preview_token_hash or ""):
+            raise ValidationError(
+                "The Library Management preview token cannot be re-issued. "
+                "Generate a fresh preview."
+            )
+        logger.info(
+            "library_management.preview_token_reissued job_id=%s admin_id=%s at=%s",
+            job_id,
+            admin_id[:8],
+            now,
+        )
+        return LibraryManagementPreviewReissueResponse(
+            job_id=job_id,
+            preview_token=token,
+            created_at=snapshot.preview_created_at or snapshot.created_at,
+            expires_at=snapshot.preview_expires_at or snapshot.created_at,
+        )
 
     async def discard(
         self, job_id: str, request: LibraryManagementDiscardRequest

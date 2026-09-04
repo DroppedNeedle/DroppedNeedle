@@ -37,6 +37,7 @@ import {
 	exportLibraryManagementProfileMutation,
 	importLibraryManagementProfileMutation,
 	previewLibraryManagementProfileImportMutation,
+	reissueLibraryManagementPreviewMutation,
 	updateLibraryManagementSettingsMutation
 } from './LibraryManagementMutations.svelte';
 
@@ -191,6 +192,17 @@ describe('Library Management mutations', () => {
 		expect(api.global.post).toHaveBeenCalledWith(
 			'/api/v1/library/management/previews/preview%2F1/discard',
 			input.request
+		);
+	});
+
+	it('reissues the sealed preview token with a POST and no body', async () => {
+		reissueLibraryManagementPreviewMutation();
+		const mutation = currentMutation<string>();
+
+		await mutation.mutationFn('preview/1');
+
+		expect(api.global.post).toHaveBeenCalledWith(
+			'/api/v1/library/management/previews/preview%2F1/reissue'
 		);
 	});
 });

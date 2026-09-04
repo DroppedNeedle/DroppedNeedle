@@ -28,6 +28,7 @@ from api.v1.schemas.library_management_preview import (
     LibraryManagementPreviewCreateRequest,
     LibraryManagementPreviewCreatedResponse,
     LibraryManagementPreviewDetailResponse,
+    LibraryManagementPreviewReissueResponse,
     LibraryManagementProfileCopyRequest,
     LibraryManagementProfileCreateRequest,
     LibraryManagementProfileDeleteRequest,
@@ -527,6 +528,18 @@ async def apply_library_management_preview(
     if converted is not None:
         return converted
     return await service.apply(job_id, request)
+
+
+@router.post(
+    "/library/management/previews/{job_id}/reissue",
+    response_model=LibraryManagementPreviewReissueResponse,
+)
+async def reissue_library_management_preview_token(
+    job_id: str,
+    admin: CurrentAdminDep,
+    service: LibraryManagementPreviewServiceDep,
+) -> LibraryManagementPreviewReissueResponse:
+    return await service.reissue_preview_token(job_id, admin.id)
 
 
 @router.get(

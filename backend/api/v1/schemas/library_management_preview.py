@@ -66,6 +66,13 @@ class LibraryManagementPreviewCreatedResponse(AppStruct):
     existing: bool = False
 
 
+class LibraryManagementPreviewReissueResponse(AppStruct):
+    job_id: str
+    preview_token: str
+    created_at: float
+    expires_at: float
+
+
 class LibraryManagementTagEditFieldRequest(AppStruct):
     field_name: str
     value: LibraryManagementTagEditValue = None

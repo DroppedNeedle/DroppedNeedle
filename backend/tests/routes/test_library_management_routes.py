@@ -21,6 +21,7 @@ from api.v1.schemas.library_management_preview import (
     LibraryManagementPlanItemPageResponse,
     LibraryManagementPreviewCreatedResponse,
     LibraryManagementPreviewDetailResponse,
+    LibraryManagementPreviewReissueResponse,
     LibraryManagementResultPageResponse,
     LibraryManagementTagEditorContextResponse,
 )
@@ -118,6 +119,14 @@ def route_services(
     preview.history.return_value = LibraryManagementOperationHistoryResponse(items=[])
     preview.apply.return_value = OperationResponse(
         id="job-1", kind="library_management", state="queued"
+    )
+    preview.reissue_preview_token.return_value = (
+        LibraryManagementPreviewReissueResponse(
+            job_id="job-1",
+            preview_token="opaque",
+            created_at=1.0,
+            expires_at=2.0,
+        )
     )
     preview.discard.return_value = _preview_detail()
     preview.confirm_activation.return_value = profile.get_settings()
@@ -559,6 +568,33 @@ def test_discard_preview_route_forwards_exact_operation_revision(
     assert request.expected_operation_row_revision == 7
 
 
+def test_reissue_preview_route_returns_sealed_token_to_owner_admin(
+    app: FastAPI,
+    route_services: tuple[LibraryManagementProfileService, AsyncMock],
+) -> None:
+    _, preview = route_services
+    override_admin_auth(app)
+
+    response = build_test_client(app).post("/library/management/previews/job-1/reissue")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "job_id": "job-1",
+        "preview_token": "opaque",
+        "created_at": 1.0,
+        "expires_at": 2.0,
+    }
+    preview.reissue_preview_token.assert_awaited_once_with("job-1", "test-admin-id")
+
+
+def test_reissue_preview_route_has_no_get_method(app: FastAPI) -> None:
+    override_admin_auth(app)
+
+    response = build_test_client(app).get("/library/management/previews/job-1/reissue")
+
+    assert response.status_code == 405
+
+
 def test_undo_preview_route_forwards_source_revision_and_actor(app: FastAPI) -> None:
     override_admin_auth(app)
     response = build_test_client(app).post(
@@ -751,6 +787,7 @@ def test_management_route_inventory_is_complete() -> None:
             "/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}",
         ),
         ("POST", "/library/management/previews/{job_id}/apply"),
+        ("POST", "/library/management/previews/{job_id}/reissue"),
         ("GET", "/library/management/operations"),
         ("GET", "/library/management/operations/{job_id}"),
         ("GET", "/library/management/operations/{job_id}/results"),

@@ -504,6 +504,8 @@ export const API = {
 		preview: (jobId: string) => `/api/v1/library/management/previews/${encodeURIComponent(jobId)}`,
 		applyPreview: (jobId: string) =>
 			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/apply`,
+		reissuePreview: (jobId: string) =>
+			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/reissue`,
 		discardPreview: (jobId: string) =>
 			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/discard`,
 		operations: (

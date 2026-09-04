@@ -25,7 +25,8 @@
 	import { LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE } from '$lib/queries/library-management/LibraryManagementConfirmation';
 	import {
 		applyLibraryManagementPreviewMutation,
-		createLibraryManagementDuplicateResolutionMutation
+		createLibraryManagementDuplicateResolutionMutation,
+		reissueLibraryManagementPreviewMutation
 	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import {
 		getLibraryManagementPlanItemsQuery,
@@ -100,7 +101,10 @@
 	let collisionClass = $state('');
 	let hasPreservedValue = $state(false);
 	let hasRepresentationLoss = $state(false);
-	let previewToken = $derived(readLibraryManagementPreviewToken(jobId));
+	let reissuedToken = $state<string | null>(null);
+	let reissueAttemptedJobId = $state<string | null>(null);
+	let reissueFailed = $state(false);
+	let previewToken = $derived(reissuedToken ?? readLibraryManagementPreviewToken(jobId));
 	let confirmation = $state('');
 	let applyError = $state('');
 	let applyDialog: HTMLDialogElement;
@@ -144,6 +148,7 @@
 		})
 	);
 	const applyPreview = applyLibraryManagementPreviewMutation();
+	const reissuePreview = reissueLibraryManagementPreviewMutation();
 	const createResolution = createLibraryManagementDuplicateResolutionMutation();
 
 	const preview = $derived(previewQuery.data ?? null);
@@ -242,6 +247,37 @@
 		const events = createLibraryManagementEvents();
 		events.start();
 		return events.stop;
+	});
+
+	$effect(() => {
+		const currentJobId = jobId;
+		if (reissueAttemptedJobId !== null && reissueAttemptedJobId !== currentJobId) {
+			reissuedToken = null;
+			reissueFailed = false;
+			reissueAttemptedJobId = null;
+			return;
+		}
+		const detail = previewQuery.data ?? null;
+		if (
+			detail === null ||
+			reissueAttemptedJobId === currentJobId ||
+			activationPreview ||
+			detail.state !== 'ready' ||
+			detail.expired ||
+			detail.stale ||
+			(reissuedToken ?? readLibraryManagementPreviewToken(currentJobId)) !== null
+		)
+			return;
+		reissueAttemptedJobId = currentJobId;
+		void (async () => {
+			try {
+				const handle = await reissuePreview.mutateAsync(currentJobId);
+				rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
+				if (handle.job_id === jobId) reissuedToken = handle.preview_token;
+			} catch {
+				if (currentJobId === jobId) reissueFailed = true;
+			}
+		})();
 	});
 
 	$effect(() => {
@@ -818,12 +854,17 @@
 							<div>
 								<strong>{applyAction.barTitle}</strong>
 								<p class="text-xs text-base-content/55">{applyAction.barDetail}</p>
-								{#if !previewToken && preview.ready_for_confirmation}<p
-										class="mt-1 text-xs text-warning"
-									>
-										The private apply token is not in this browser session. Generate a fresh preview
-										to apply.
-									</p>{/if}
+								{#if !previewToken && preview.ready_for_confirmation}
+									{#if reissueFailed}<p class="mt-1 text-xs text-warning">
+											The private apply token is not in this browser session. Generate a fresh
+											preview to apply.
+										</p>
+									{:else if reissueAttemptedJobId === jobId}<p
+											class="mt-1 text-xs text-base-content/55"
+										>
+											Resuming your private apply token…
+										</p>{/if}
+								{/if}
 							</div>
 						</div>
 						<div class="flex flex-wrap items-center gap-1">

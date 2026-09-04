@@ -8,11 +8,13 @@ const h = vi.hoisted(() => ({
 	apply: vi.fn(),
 	discard: vi.fn(),
 	resolve: vi.fn(),
+	reissue: vi.fn(),
 	goto: vi.fn()
 }));
 
 vi.mock('$app/navigation', () => ({ goto: h.goto }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
+	LAST_USER_ID_KEY: 'test:last-user',
 	authStore: { isAdmin: true, user: { id: 'admin-1' } }
 }));
 vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({
@@ -45,6 +47,7 @@ vi.mock('$lib/queries/library-management/LibraryManagementQueries.svelte', () =>
 vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
 	applyLibraryManagementPreviewMutation: () => ({ mutateAsync: h.apply, isPending: false }),
 	discardLibraryManagementPreviewMutation: () => ({ mutateAsync: h.discard, isPending: false }),
+	reissueLibraryManagementPreviewMutation: () => ({ mutateAsync: h.reissue, isPending: false }),
 	createLibraryManagementDuplicateResolutionMutation: () => ({
 		mutateAsync: h.resolve,
 		isPending: false
@@ -165,6 +168,12 @@ beforeEach(() => {
 		fetchNextPage: vi.fn()
 	};
 	h.apply.mockResolvedValue({ id: 'preview-1' });
+	h.reissue.mockResolvedValue({
+		job_id: 'preview-1',
+		preview_token: 'resumed-token',
+		created_at: 1_800_000_000,
+		expires_at: 1_900_000_000
+	});
 	h.discard.mockResolvedValue(
 		detail({
 			state: 'cancelled',
@@ -635,6 +644,49 @@ describe('LibraryManagementPreviewPage', () => {
 			jobId: 'resolution-1',
 			request: expect.objectContaining({ preview_token: 'resolution-token' })
 		});
+	});
+
+	it('resumes apply after a browser restart by reissuing the sealed token', async () => {
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect.element(page.getByText('Read-only plan · no files changed')).toBeVisible();
+		await vi.waitFor(() => expect(h.reissue).toHaveBeenCalledWith('preview-1'));
+		await expect
+			.element(page.getByRole('button', { name: /Write tags and organize 1 file/ }))
+			.toBeEnabled();
+		await expect
+			.element(page.getByText('The private apply token is not in this browser session.'))
+			.not.toBeInTheDocument();
+		expect(sessionStorage.getItem('droppedneedle:library-management:preview-token:preview-1')).toBe(
+			'resumed-token'
+		);
+
+		await page.getByRole('button', { name: /Write tags and organize 1 file/ }).click();
+		await page.getByRole('textbox', { name: /CONFIRM/ }).fill('CONFIRM');
+		await page.getByRole('button', { name: 'Apply exact preview' }).click();
+
+		expect(h.apply).toHaveBeenCalledWith({
+			jobId: 'preview-1',
+			request: expect.objectContaining({
+				preview_token: 'resumed-token',
+				expected_operation_row_revision: 7,
+				confirmation: true
+			})
+		});
+	});
+
+	it('keeps apply disabled with the orphan warning when reissue is denied', async () => {
+		h.reissue.mockRejectedValueOnce(new Error('Forbidden'));
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect.element(page.getByText('Read-only plan · no files changed')).toBeVisible();
+		await expect
+			.element(page.getByText('The private apply token is not in this browser session.'))
+			.toBeVisible();
+		expect(h.reissue).toHaveBeenCalledWith('preview-1');
+		await expect
+			.element(page.getByRole('button', { name: /Write tags and organize/ }))
+			.toBeDisabled();
 	});
 
 	it('shows the sealed metadata, artwork, and file-attribute state for recovery previews', async () => {

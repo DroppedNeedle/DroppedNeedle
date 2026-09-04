@@ -567,6 +567,13 @@ export interface LibraryManagementApplyRequest {
 	confirmation?: boolean;
 }
 
+export interface LibraryManagementPreviewReissueResponse {
+	job_id: string;
+	preview_token: string;
+	created_at: number;
+	expires_at: number;
+}
+
 export interface LibraryManagementDiscardRequest {
 	expected_operation_row_revision: number;
 }

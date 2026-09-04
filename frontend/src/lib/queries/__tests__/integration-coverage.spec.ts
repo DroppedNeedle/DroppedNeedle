@@ -387,6 +387,11 @@ const COVERAGE: Array<[string, string, string]> = [
 		'/api/v1/library/management/previews/J1/discard'
 	],
 	[
+		'reissue library management preview token',
+		API.libraryManagement.reissuePreview('J1'),
+		'/api/v1/library/management/previews/J1/reissue'
+	],
+	[
 		'library management operation history',
 		API.libraryManagement.operations(),
 		'/api/v1/library/management/operations'

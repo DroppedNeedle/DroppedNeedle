@@ -1,5 +1,7 @@
+import base64
 import hashlib
 import json
+import logging
 from pathlib import Path
 import sqlite3
 import threading
@@ -26,7 +28,12 @@ from api.v1.schemas.library_management_preview import (
     LibraryManagementTagEditPreviewRequest,
 )
 from core.config import Settings
-from core.exceptions import ResourceNotFoundError, StaleRevisionError, ValidationError
+from core.exceptions import (
+    PermissionDeniedError,
+    ResourceNotFoundError,
+    StaleRevisionError,
+    ValidationError,
+)
 from infrastructure.library_management_blob_store import LibraryManagementBlobStore
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from models.audio_metadata import AudioMetadataDocument, AudioSemanticField
@@ -931,3 +938,126 @@ async def test_activation_confirmation_validates_all_roots_before_saving(
     assert all(
         value.activation_confirmed_at == 100.0 for value in saved.root_assignments
     )
+
+
+def _sealed_token(job_id: str, idempotency_key: str) -> str:
+    digest = hashlib.sha256(f"{job_id}\x00{idempotency_key}".encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def _reissue_fixture(tmp_path: Path, *, idempotency_key: str | None = "preview-once"):
+    service, store, _preferences, snapshot = _service_fixture(tmp_path)
+    token = (
+        _sealed_token("job-1", idempotency_key)
+        if idempotency_key is not None
+        else "activation-token"
+    )
+    snapshot.preview_token_hash = hashlib.sha256(token.encode()).hexdigest()
+    store.get_operation_job.return_value = {
+        **_operation(),
+        "requested_by_user_id": "admin-1",
+        "idempotency_key": idempotency_key,
+    }
+    return service, store, snapshot, token
+
+
+@pytest.mark.asyncio
+async def test_reissue_returns_sealed_token_to_owner_with_matching_hash(
+    tmp_path: Path,
+) -> None:
+    service, _store, snapshot, token = _reissue_fixture(tmp_path)
+
+    handle = await service.reissue_preview_token("job-1", "admin-1")
+
+    assert handle.job_id == "job-1"
+    assert handle.preview_token == token
+    assert (
+        hashlib.sha256(handle.preview_token.encode()).hexdigest()
+        == snapshot.preview_token_hash
+    )
+
+
+@pytest.mark.asyncio
+async def test_reissue_denies_non_owner_admin_and_unknown_preview(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    service, store, _snapshot, token = _reissue_fixture(tmp_path)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(PermissionDeniedError, match="another admin"):
+            await service.reissue_preview_token("job-1", "admin-2")
+
+    denied = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "services.native.library_management_preview_service"
+        and "preview_token_reissue_denied" in record.getMessage()
+    ]
+    assert len(denied) == 1
+    assert "job-1" in denied[0]
+    assert "admin-2" in denied[0]
+    assert token not in caplog.text
+
+    store.get_library_management_job_snapshot.return_value = None
+    with pytest.raises(ResourceNotFoundError, match="preview not found"):
+        await service.reissue_preview_token("job-1", "admin-1")
+
+
+@pytest.mark.asyncio
+async def test_reissue_denies_expired_and_terminal_previews(tmp_path: Path) -> None:
+    service, store, snapshot, _token = _reissue_fixture(tmp_path)
+
+    snapshot.preview_expires_at = 50.0
+    with pytest.raises(StaleRevisionError, match="expired"):
+        await service.reissue_preview_token("job-1", "admin-1")
+    snapshot.preview_expires_at = 200.0
+
+    store.get_operation_job.return_value = {
+        **_operation(state="cancelled"),
+        "requested_by_user_id": "admin-1",
+        "idempotency_key": "preview-once",
+    }
+    with pytest.raises(StaleRevisionError, match="no longer ready"):
+        await service.reissue_preview_token("job-1", "admin-1")
+
+    store.get_operation_job.return_value = {
+        **_operation(),
+        "requested_by_user_id": "admin-1",
+        "idempotency_key": "preview-once",
+    }
+    snapshot.phase = "applying"
+    with pytest.raises(StaleRevisionError, match="no longer ready"):
+        await service.reissue_preview_token("job-1", "admin-1")
+
+
+@pytest.mark.asyncio
+async def test_reissue_denies_stale_activation_and_unsealable_previews(
+    tmp_path: Path,
+) -> None:
+    service, store, snapshot, _token = _reissue_fixture(tmp_path)
+
+    store.get_catalog_revision.return_value = 99
+    with pytest.raises(StaleRevisionError, match="not current"):
+        await service.reissue_preview_token("job-1", "admin-1")
+    store.get_catalog_revision.return_value = 0
+
+    snapshot.proposed_settings_revision = "proposed-1"
+    with pytest.raises(ValidationError, match="activation preview"):
+        await service.reissue_preview_token("job-1", "admin-1")
+    snapshot.proposed_settings_revision = None
+
+    store.get_operation_job.return_value = {
+        **_operation(),
+        "requested_by_user_id": "admin-1",
+        "idempotency_key": None,
+    }
+    with pytest.raises(ValidationError, match="cannot be re-issued"):
+        await service.reissue_preview_token("job-1", "admin-1")
+
+    store.get_operation_job.return_value = {
+        **_operation(),
+        "requested_by_user_id": "admin-1",
+        "idempotency_key": "another-key",
+    }
+    with pytest.raises(ValidationError, match="cannot be re-issued"):
+        await service.reissue_preview_token("job-1", "admin-1")
