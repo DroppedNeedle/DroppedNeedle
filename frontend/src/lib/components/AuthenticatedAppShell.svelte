@@ -38,6 +38,7 @@
 	import { syncStatus } from '$lib/stores/syncStatus.svelte';
 	import SidebarServices from '$lib/components/SidebarServices.svelte';
 	import DegradedBanner from '$lib/components/DegradedBanner.svelte';
+	import LegacyImageBanner from '$lib/components/LegacyImageBanner.svelte';
 	import ServiceHealthIndicator from '$lib/components/ServiceHealthIndicator.svelte';
 	import VersionOverlays from '$lib/components/VersionOverlays.svelte';
 	import SearchSuggestions from '$lib/components/SearchSuggestions.svelte';
@@ -379,6 +380,7 @@
 	</div>
 {/if}
 
+<LegacyImageBanner />
 <DegradedBanner />
 <VersionOverlays bind:updateAvailable={versionUpdateAvailable} />
 
