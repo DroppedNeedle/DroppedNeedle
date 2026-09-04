@@ -13,7 +13,7 @@
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type { SourceType } from '$lib/player/types';
-	import { formatDurationSec } from '$lib/utils/formatting';
+	import { formatDurationSec, isValidMbid } from '$lib/utils/formatting';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
@@ -450,7 +450,7 @@
 					</div>
 
 					<div class="flex-1 min-w-0">
-						{#if track.album_id}
+						{#if isValidMbid(track.album_id)}
 							<a
 								href={withBasePath(`/album/${track.album_id}`)}
 								class="font-medium truncate text-sm block hover:underline {isCurrentlyPlaying
@@ -473,7 +473,7 @@
 							{/if}
 							{#if track.album_name}
 								<span class="text-base-content/30"> · </span>
-								{#if track.album_id}
+								{#if isValidMbid(track.album_id)}
 									<a
 										href={withBasePath(`/album/${track.album_id}`)}
 										class="text-base-content/40 hover:underline">{track.album_name}</a

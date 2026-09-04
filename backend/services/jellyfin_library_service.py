@@ -600,7 +600,8 @@ class JellyfinLibraryService:
 
         # Map each distinct Jellyfin album GUID to its MusicBrainz MBID so the
         # stored album_id can match the MBID-keyed local catalog (#150). One
-        # deduped fetch per album; failures keep the GUID (today's behavior).
+        # deduped fetch per album; unresolvable GUIDs store None (absence) so
+        # the frontend renders plain text instead of a dead /album/<guid> link.
         album_mbids: dict[str, str] = {}
         distinct_album_ids = sorted({t.album_id for t in detail.tracks if t.album_id})
         if distinct_album_ids:
@@ -624,7 +625,7 @@ class JellyfinLibraryService:
                     "duration": t.duration_seconds,
                     "track_source_id": t.id,
                     "source_type": "jellyfin",
-                    "album_id": album_mbids.get(t.album_id) or t.album_id,
+                    "album_id": album_mbids.get(t.album_id) or None,
                     "artist_id": t.artist_id,
                     "track_number": t.track_number,
                     "disc_number": t.disc_number,

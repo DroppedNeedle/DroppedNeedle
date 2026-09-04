@@ -296,7 +296,7 @@ class TestImportPlaylistMapsAlbumMbids:
         assert track_dicts[0]["album_id"] == "rel-456"
 
     @pytest.mark.asyncio
-    async def test_keeps_guid_when_album_detail_missing(self):
+    async def test_stores_none_when_album_detail_missing(self):
         service, repo = _make_service()
         self._wire_playlist(repo, [self._track_item("t1", "guid-a")])
         repo.get_album_detail = AsyncMock(return_value=None)
@@ -305,10 +305,10 @@ class TestImportPlaylistMapsAlbumMbids:
         await service.import_playlist("pl-1", ps, self._requesting())
 
         track_dicts = ps.add_tracks.call_args[0][2]
-        assert track_dicts[0]["album_id"] == "guid-a"
+        assert track_dicts[0]["album_id"] is None
 
     @pytest.mark.asyncio
-    async def test_keeps_guid_when_no_provider_ids(self):
+    async def test_stores_none_when_no_provider_ids(self):
         service, repo = _make_service()
         self._wire_playlist(repo, [self._track_item("t1", "guid-a")])
         repo.get_album_detail = AsyncMock(return_value=_item(id="guid-a"))
@@ -317,7 +317,7 @@ class TestImportPlaylistMapsAlbumMbids:
         await service.import_playlist("pl-1", ps, self._requesting())
 
         track_dicts = ps.add_tracks.call_args[0][2]
-        assert track_dicts[0]["album_id"] == "guid-a"
+        assert track_dicts[0]["album_id"] is None
 
     @pytest.mark.asyncio
     async def test_fetches_each_distinct_album_once(self):
