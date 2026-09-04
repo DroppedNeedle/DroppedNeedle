@@ -16,6 +16,7 @@
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { launchYouTubePlayback } from '$lib/player/launchYouTubePlayback';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
+	import { toastStore } from '$lib/stores/toast';
 	import { scrobbleManager } from '$lib/stores/scrobble.svelte';
 	import { imageSettingsStore } from '$lib/stores/imageSettings';
 	import { serviceStatusStore } from '$lib/stores/serviceStatus';
@@ -62,6 +63,7 @@
 		TriangleAlert,
 		Info,
 		X,
+		Check,
 		UserRound,
 		Inbox,
 		ListMusic,
@@ -956,6 +958,38 @@
 			<button
 				class="btn btn-ghost btn-xs btn-circle"
 				onclick={() => playbackToast.dismiss()}
+				aria-label="Dismiss"
+			>
+				<X class="h-3.5 w-3.5" />
+			</button>
+		</div>
+	</div>
+{/if}
+
+{#if $toastStore}
+	<div
+		class="droppedneedle-playback-toast fixed z-50 left-1/2 -translate-x-1/2"
+		class:droppedneedle-playback-toast--player={playerStore.isPlayerVisible}
+	>
+		<div
+			role="status"
+			class="alert {$toastStore.type === 'error'
+				? 'alert-error'
+				: $toastStore.type === 'success'
+					? 'alert-success'
+					: 'alert-info'} shadow-lg px-4 py-2 min-w-64 max-w-md"
+		>
+			{#if $toastStore.type === 'success'}
+				<Check class="h-5 w-5 shrink-0" />
+			{:else if $toastStore.type === 'error'}
+				<X class="h-5 w-5 shrink-0" />
+			{:else}
+				<Info class="h-5 w-5 shrink-0" />
+			{/if}
+			<span class="text-sm">{$toastStore.message}</span>
+			<button
+				class="btn btn-ghost btn-xs btn-circle"
+				onclick={() => toastStore.hide()}
 				aria-label="Dismiss"
 			>
 				<X class="h-3.5 w-3.5" />

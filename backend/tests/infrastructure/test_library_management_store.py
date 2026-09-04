@@ -13,6 +13,9 @@ from core.exceptions import (
     StaleRevisionError,
     ValidationError,
 )
+from api.v1.schemas.library_management_preview import (
+    LibraryManagementPreviewSummaryResponse,
+)
 from infrastructure.persistence.native_library_store import (
     MANAGEMENT_PERSISTENCE_BATCH_SIZE,
     MAX_REVISION,
@@ -454,6 +457,46 @@ async def test_management_history_filters_source_or_destination_root(
 
     assert [row["id"] for row in source_matches] == ["history-root-match"]
     assert [row["id"] for row in destination_matches] == ["history-root-match"]
+
+@pytest.mark.asyncio
+async def test_management_history_carries_plan_counts_and_preview_expiry(
+    store: NativeLibraryStore,
+) -> None:
+    job_id = "history-counts"
+    await store.create_library_management_job(
+        OperationJob(
+            id=job_id,
+            kind="library_management",
+            requested_by_user_id="admin",
+            input_catalog_revision=0,
+            created_at=10,
+        ),
+        msgspec.structs.replace(
+            _job_snapshot(job_id),
+            preview_expires_at=100,
+        ),
+    )
+    await store.append_library_management_plan_items(
+        job_id,
+        [
+            msgspec.structs.replace(_plan_item(job_id, 0), eligibility="eligible"),
+            msgspec.structs.replace(_plan_item(job_id, 1), eligibility="warning"),
+            msgspec.structs.replace(
+                _plan_item(job_id, 2),
+                eligibility="blocked",
+                reason_code="PATH_COLLISION_DIFFERENT",
+            ),
+        ],
+        expected_snapshot_revision=1,
+    )
+
+    rows = await store.list_library_management_operations(limit=10)
+
+    row = next(value for value in rows if value["id"] == job_id)
+    assert row["management_eligible_count"] == 1
+    assert row["management_warning_count"] == 1
+    assert row["management_blocked_count"] == 1
+    assert row["management_preview_expires_at"] == 100
 
 
 @pytest.mark.asyncio
@@ -2163,3 +2206,79 @@ async def test_management_bundle_commit_requires_every_audio_journal(
         await store.commit_library_management_bundle(
             "management-missing-mutation", 0, "worker-1", [mutation], now=30
         )
+
+
+@pytest.mark.asyncio
+async def test_management_preview_seal_reports_per_source_deferred_breakdown(
+    db_path: Path,
+) -> None:
+    lock = threading.Lock()
+    first = NativeLibraryStore(db_path, lock)
+    second = NativeLibraryStore(db_path, lock)
+    _seed_catalog(db_path)
+    job_id = "management-deferred"
+    await first.create_library_management_job(
+        OperationJob(
+            id=job_id,
+            kind="library_management",
+            input_catalog_revision=0,
+            created_at=10,
+        ),
+        _job_snapshot(job_id),
+    )
+    warning = msgspec.structs.replace(
+        _plan_item(job_id, 0),
+        eligibility="warning",
+        reason_code="OPTIONAL_ENRICHMENT_DEFERRED",
+        diff_json=json.dumps(
+            {
+                "requires_write": True,
+                "deferred_sources": ["genre:listenbrainz", "lyrics:deferred"],
+            }
+        ),
+        capability_json=json.dumps({"audio_format": "flac"}),
+    )
+    other = msgspec.structs.replace(
+        _plan_item(job_id, 1),
+        eligibility="warning",
+        reason_code="OPTIONAL_ENRICHMENT_DEFERRED",
+        diff_json=json.dumps(
+            {
+                "requires_write": True,
+                "deferred_sources": [
+                    "artwork:cover_art_archive_release",
+                    "replaygain:deferred",
+                ],
+            }
+        ),
+        capability_json=json.dumps({"audio_format": "flac"}),
+    )
+    revision = await second.append_library_management_plan_items(
+        job_id, [warning, other], expected_snapshot_revision=1
+    )
+    claimed = await first.claim_operation_job(
+        "worker-1", now=12, lease_seconds=60, kind="library_management"
+    )
+    assert claimed is not None
+
+    snapshot = await second.finalize_library_management_preview(
+        job_id,
+        "worker-1",
+        expected_snapshot_revision=revision,
+        now=13,
+    )
+    summary = json.loads(snapshot.summary_json)
+
+    assert summary["reasons"] == {"OPTIONAL_ENRICHMENT_DEFERRED": 2}
+    assert summary["deferred_sources"] == {
+        "artwork:cover_art_archive_release": 1,
+        "genre:listenbrainz": 1,
+        "lyrics:deferred": 1,
+        "replaygain:deferred": 1,
+    }
+    response = msgspec.convert(
+        summary,
+        type=LibraryManagementPreviewSummaryResponse,
+        strict=False,
+    )
+    assert response.deferred_sources == summary["deferred_sources"]

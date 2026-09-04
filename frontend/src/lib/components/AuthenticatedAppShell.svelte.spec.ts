@@ -163,6 +163,7 @@ import Layout from '../../routes/+layout.svelte';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
 import { discographyDownloadStore } from '$lib/stores/discographyDownload.svelte';
 import { batchDownloadStore } from '$lib/stores/batchDownloadStatus.svelte';
+import { toastStore } from '$lib/stores/toast';
 
 type IntegrationState = {
 	download_client: boolean;
@@ -471,5 +472,64 @@ describe('AuthenticatedAppShell mobile overflow menu (#182)', () => {
 		} finally {
 			integrationState.download_client = true;
 		}
+	});
+});
+
+// N1: toastStore had zero subscribers, so management mutation toasts
+// ("Organization preview queued" et al) never displayed. The shell now
+// renders the store with role=status.
+describe('AuthenticatedAppShell global toast (toastStore)', () => {
+	beforeEach(async () => {
+		vi.clearAllMocks();
+		routeState.pathname = '/';
+		playerState.isPlayerVisible = true;
+		authStore.clear();
+		authStore.setUser(testUser());
+		toastStore.hide();
+		await page.viewport(1280, 720);
+	});
+
+	afterEach(async () => {
+		toastStore.hide();
+		authStore.clear();
+		discographyDownloadStore.close();
+		batchDownloadStore.clear();
+		await page.viewport(1280, 720);
+	});
+
+	function globalToast(): Element | null {
+		return document.querySelector('.droppedneedle-playback-toast div[role="status"]');
+	}
+
+	it('renders a management success toast with role=status', async () => {
+		renderLayout();
+		await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
+
+		toastStore.show({ message: 'Organization preview queued', type: 'success' });
+
+		await vi.waitFor(() => {
+			const toast = globalToast();
+			expect(toast?.textContent).toContain('Organization preview queued');
+		});
+		expect(globalToast()?.className).toContain('alert-success');
+	});
+
+	it('renders error toasts and dismisses them', async () => {
+		renderLayout();
+		await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
+
+		toastStore.show({ message: 'Could not queue the management preview', type: 'error' });
+
+		await vi.waitFor(() => {
+			const toast = globalToast();
+			expect(toast?.textContent).toContain('Could not queue the management preview');
+		});
+		expect(globalToast()?.className).toContain('alert-error');
+
+		toastStore.hide();
+
+		await vi.waitFor(() => {
+			expect(globalToast()).toBeNull();
+		});
 	});
 });

@@ -49,6 +49,7 @@ const h = vi.hoisted(() => ({
 vi.mock('$app/navigation', () => ({ goto: h.goto, replaceState: h.replaceState }));
 vi.mock('$app/state', () => ({ page: h.appPage }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
+	LAST_USER_ID_KEY: 'test:last-user',
 	authStore: { isAdmin: true, user: { id: 'admin-1' } }
 }));
 vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({
@@ -313,5 +314,58 @@ describe('LibraryManagementControlRoom', () => {
 		await expect
 			.element(page.getByRole('link', { name: 'Open details' }))
 			.toHaveAttribute('href', '/library/management/previews/activation-preview-1');
+	});
+	it('shows outcome chips on ready previews and recent work', async () => {
+		h.operations = {
+			data: {
+				pages: [
+					{
+						items: [
+							{
+								operation: {
+									id: 'preview-1',
+									state: 'ready',
+									row_revision: 7,
+									updated_at: 1_800_000_000,
+									succeeded_count: 0,
+									failed_count: 0,
+									skipped_count: 0
+								},
+								profile_name: 'Picard-style Organizer',
+								mode: 'preview',
+								phase: 'ready',
+								eligible_count: 4,
+								warning_count: 2,
+								blocked_count: 1
+							},
+							{
+								operation: {
+									id: 'apply-1',
+									state: 'succeeded',
+									row_revision: 3,
+									updated_at: 1_800_000_000,
+									succeeded_count: 5,
+									failed_count: 1,
+									skipped_count: 2
+								},
+								profile_name: 'Picard-style Organizer',
+								mode: 'apply',
+								phase: 'applying'
+							}
+						]
+					}
+				]
+			},
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryManagementControlRoom);
+
+		await expect.element(page.getByText('4 eligible')).toBeVisible();
+		await expect.element(page.getByText('2 warning')).toBeVisible();
+		await expect.element(page.getByText('1 blocked')).toBeVisible();
+		await expect.element(page.getByText('5 succeeded')).toBeVisible();
+		await expect.element(page.getByText('1 failed')).toBeVisible();
+		await expect.element(page.getByText('2 skipped')).toBeVisible();
 	});
 });

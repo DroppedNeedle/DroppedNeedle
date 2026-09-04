@@ -1027,4 +1027,12 @@ class LibraryManagementPreviewService:
                 row["management_proposed_settings_revision"] is not None
             ),
             selection=selection,
+            eligible_count=int(row.get("management_eligible_count", 0) or 0),
+            warning_count=int(row.get("management_warning_count", 0) or 0),
+            blocked_count=int(row.get("management_blocked_count", 0) or 0),
+            expires_at=(
+                float(row["management_preview_expires_at"])
+                if row.get("management_preview_expires_at") is not None
+                else None
+            ),
         )

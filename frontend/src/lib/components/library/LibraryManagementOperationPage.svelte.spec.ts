@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('$app/navigation', () => ({ goto: h.goto }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
+	LAST_USER_ID_KEY: 'test:last-user',
 	authStore: { isAdmin: true, user: { id: 'admin-1' } }
 }));
 vi.mock('$lib/queries/library-management/LibraryManagementEvents', () => ({

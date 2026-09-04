@@ -58,6 +58,7 @@
 		managementPlanIsExceptional,
 		managementPlanTitle,
 		managementPlanTrackLabel,
+		managementReasonLabel,
 		titleManagementValue,
 		type ManagementCollision
 	} from './LibraryManagementDisplay';
@@ -160,6 +161,41 @@
 	const applyCount = $derived(
 		(preview?.summary.eligible_count ?? 0) + (preview?.summary.warning_count ?? 0)
 	);
+	const activationPreview = $derived(
+		Boolean(preview && preview.proposed_settings_revision !== null)
+	);
+	const zeroAppliable = $derived(
+		Boolean(
+			preview &&
+			preview.state === 'ready' &&
+			!preview.stale &&
+			!preview.expired &&
+			!activationPreview &&
+			applyCount === 0
+		)
+	);
+	const topBlockers = $derived(
+		Object.entries(preview?.summary.reasons ?? {})
+			.sort((left, right) => right[1] - left[1])
+			.slice(0, 3)
+	);
+	const deferredSources = $derived(
+		Object.entries(preview?.summary.deferred_sources ?? {})
+			.sort((left, right) => right[1] - left[1])
+			.slice(0, 3)
+	);
+	const culpritRelease = $derived.by(() => {
+		const top = topBlockers[0]?.[0];
+		if (!top) return null;
+		const item = items.find((candidate) => candidate.reason_code === top);
+		return item ? item.bundle_ordinal + 1 : null;
+	});
+	const sortedRoots = $derived(
+		Object.entries(preview?.summary.roots ?? {}).sort((left, right) => right[1] - left[1])
+	);
+	const sortedFormats = $derived(
+		Object.entries(preview?.summary.formats ?? {}).sort((left, right) => right[1] - left[1])
+	);
 	const applyFileLabel = $derived(`${applyCount} ${applyCount === 1 ? 'file' : 'files'}`);
 	const applyAction = $derived.by<ApplyActionCopy>(() => {
 		switch (preview?.mode) {
@@ -207,9 +243,6 @@
 				};
 		}
 	});
-	const activationPreview = $derived(
-		Boolean(preview && preview.proposed_settings_revision !== null)
-	);
 	const canApply = $derived(
 		Boolean(
 			preview?.ready_for_confirmation &&
@@ -231,6 +264,9 @@
 	const identityBlockerCount = $derived(
 		(preview?.summary.reasons.TRACK_NOT_MAPPED ?? 0) +
 			(preview?.summary.reasons.RELEASE_NOT_SELECTED ?? 0)
+	);
+	const sortedReasons = $derived(
+		Object.entries(preview?.summary.reasons ?? {}).sort((left, right) => right[1] - left[1])
 	);
 	const collisionRequestReady = $derived(
 		Boolean(
@@ -269,15 +305,7 @@
 		)
 			return;
 		reissueAttemptedJobId = currentJobId;
-		void (async () => {
-			try {
-				const handle = await reissuePreview.mutateAsync(currentJobId);
-				rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
-				if (handle.job_id === jobId) reissuedToken = handle.preview_token;
-			} catch {
-				if (currentJobId === jobId) reissueFailed = true;
-			}
-		})();
+		void resumePreviewToken(currentJobId);
 	});
 
 	$effect(() => {
@@ -303,18 +331,6 @@
 
 	function displayPath(root: string | null, relative: string | null): string {
 		return `${rootLabel(root)} · ${relative ?? 'No path'}`;
-	}
-
-	function managementReasonLabel(value: string): string {
-		return (
-			{
-				TRACK_NOT_MAPPED: 'Exact edition selected; track map missing',
-				RELEASE_NOT_SELECTED: 'Exact MusicBrainz edition not chosen',
-				FILE_UNREADABLE: 'File metadata could not be read',
-				PATH_TOO_LONG: 'Planned path exceeds the configured length limit',
-				SCRIPT_VALIDATION_FAILED: 'Profile script could not safely process this file'
-			}[value] ?? titleManagementValue(value)
-		);
 	}
 
 	function eligibilityTone(value: ManagementEligibility): ManagementAuditTone {
@@ -343,6 +359,7 @@
 			status: titleManagementValue(item.eligibility),
 			statusTone: eligibilityTone(item.eligibility),
 			reason: item.reason_code ? managementReasonLabel(item.reason_code) : null,
+			reasonCode: item.reason_code,
 			changes: managementPlanChanges(item),
 			exceptional: managementPlanIsExceptional(item),
 			sourceRoot: rootLabel(item.source_root_id),
@@ -383,6 +400,38 @@
 		albumLabel = label;
 		catalogSearch = '';
 	}
+
+	async function resumePreviewToken(currentJobId: string): Promise<void> {
+		try {
+			const handle = await reissuePreview.mutateAsync(currentJobId);
+			rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
+			if (handle.job_id === jobId) reissuedToken = handle.preview_token;
+		} catch {
+			if (currentJobId === jobId) reissueFailed = true;
+		}
+	}
+
+	function retryTokenResume(): void {
+		if (!preview?.ready_for_confirmation) return;
+		reissueFailed = false;
+		reissueAttemptedJobId = null;
+	}
+
+	const applyDisabledReason = $derived.by((): string | null => {
+		if (canApply || activationPreview || preview?.state !== 'ready') return null;
+		if (preview.stale)
+			return `Apply is disabled: this preview is stale (${preview.stale_reasons.map(titleManagementValue).join(' · ') || 'inputs changed'}). Generate a fresh preview.`;
+		if (preview.expired)
+			return 'Apply is disabled: this preview expired. Generate a fresh preview.';
+		if (!preview.ready_for_confirmation)
+			return 'Apply is disabled: this preview is not awaiting confirmation.';
+		if (applyCount === 0) return 'Apply is disabled: no eligible files and no files with warnings.';
+		if (!previewToken)
+			return reissueFailed
+				? 'Apply is disabled: the private apply token is missing and resuming it failed.'
+				: 'Apply is disabled: resuming your private apply token.';
+		return 'Apply is disabled for this preview.';
+	});
 
 	function openApply(opener: HTMLButtonElement): void {
 		applyOpener = opener;
@@ -498,19 +547,19 @@
 		<BackButton fallback={withBasePath('/library/management?tab=organize')} />
 
 		{#if previewQuery.isLoading || settingsQuery.isLoading || policyQuery.isLoading}
-			<div class="space-y-4">
+			<div class="space-y-4" role="status" aria-label="Loading organization preview">
 				<div class="skeleton h-40 rounded-2xl"></div>
 				<div class="skeleton h-72 rounded-2xl"></div>
 			</div>
 		{:else if previewQuery.isError || settingsQuery.isError || policyQuery.isError}
-			<div class="alert alert-error">Could not load this Organization preview.</div>
+			<div class="alert alert-error" role="alert">Could not load this Organization preview.</div>
 		{:else if preview}
 			<header class="management-control-room p-5 sm:p-7">
 				<div class="flex flex-wrap items-start gap-4">
 					<div class="management-write-mark"><FolderCog class="h-6 w-6" /></div>
 					<div class="min-w-0 flex-1">
 						<p class="management-kicker">
-							<ShieldAlert class="h-3.5 w-3.5" /> Read-only plan · no files changed
+							<ShieldAlert class="h-3.5 w-3.5" /> Applying is the first write action · no files changed
 						</p>
 						<h1 class="mt-1 font-display text-2xl font-bold sm:text-3xl">
 							{previewHeading(preview.mode)}
@@ -577,7 +626,7 @@
 			</header>
 
 			{#if preview.stale || preview.expired}
-				<div class="alert alert-error items-start">
+				<div class="alert alert-error items-start" role="alert">
 					<ShieldAlert class="mt-0.5 h-5 w-5" /><span
 						><strong>This preview cannot be applied.</strong><br />{preview.expired
 							? 'It expired. Generate a fresh preview.'
@@ -611,7 +660,52 @@
 				</div>
 			{/if}
 
-			{#if preview.state === 'ready' && identityBlockerCount > 0}
+			{#if zeroAppliable}
+				<div class="alert alert-warning items-start" role="status">
+					<ShieldAlert class="mt-0.5 h-5 w-5" />
+					<div class="min-w-0 flex-1">
+						<strong>Nothing in this preview can be applied.</strong>
+						{#if topBlockers.length}
+							<p class="mt-1 text-sm">
+								Top blockers: {topBlockers
+									.map(
+										([code, count]) => `${managementReasonLabel(code)} (${count.toLocaleString()})`
+									)
+									.join(' · ')}
+							</p>
+						{/if}
+						{#if culpritRelease !== null && topBlockers[0]}
+							<p class="mt-1 text-sm">
+								Start with Release {culpritRelease}: its blocked rows name the exact cause.
+								<button
+									class="link link-hover"
+									onclick={() => {
+										reasonCode = topBlockers[0][0];
+									}}>Filter to {managementReasonLabel(topBlockers[0][0])}</button
+								>
+							</p>
+						{/if}
+						{#if deferredSources.length}
+							<p class="mt-1 text-sm">
+								Deferred warnings: {deferredSources
+									.map(([source, count]) => `${source} (${count.toLocaleString()})`)
+									.join(' · ')}
+							</p>
+						{/if}
+						{#if identityBlockerCount > 0}
+							<p class="mt-1 text-sm">
+								Selecting a root chooses files; it does not choose each release's exact MusicBrainz
+								edition. Prepare identities first, then generate a fresh management preview.
+							</p>
+							<a
+								class="btn btn-outline btn-sm mt-3"
+								href={withBasePath('/library/management?tab=organize')}
+								>Open identity readiness <ArrowRight class="h-4 w-4" /></a
+							>
+						{/if}
+					</div>
+				</div>
+			{:else if preview.state === 'ready' && identityBlockerCount > 0}
 				<div class="alert alert-warning items-start">
 					<BookOpenCheck class="mt-0.5 h-5 w-5" />
 					<div class="min-w-0 flex-1">
@@ -645,9 +739,15 @@
 						><span>Outcome</span><select
 							class="select select-bordered select-sm bg-base-100"
 							bind:value={eligibility}
-							><option value="">All outcomes</option><option value="eligible">Eligible</option
-							><option value="warning">Warning</option><option value="blocked">Blocked</option
-							><option value="stale">Stale</option></select
+							><option value="">All outcomes</option><option value="eligible"
+								>Eligible ({(preview.summary.eligible_count ?? 0).toLocaleString()})</option
+							><option value="warning"
+								>Warning ({(preview.summary.warning_count ?? 0).toLocaleString()})</option
+							><option value="blocked"
+								>Blocked ({(preview.summary.blocked_count ?? 0).toLocaleString()})</option
+							><option value="stale"
+								>Stale ({(preview.summary.stale_count ?? 0).toLocaleString()})</option
+							></select
 						></label
 					>
 					<label class="grid gap-1 text-xs"
@@ -655,8 +755,8 @@
 							class="select select-bordered select-sm bg-base-100"
 							bind:value={reasonCode}
 							><option value="">All reasons</option
-							>{#each Object.keys(preview.summary.reasons) as reason (reason)}<option value={reason}
-									>{managementReasonLabel(reason)}</option
+							>{#each sortedReasons as [reason, count] (reason)}<option value={reason}
+									>{managementReasonLabel(reason)} ({count.toLocaleString()})</option
 								>{/each}</select
 						></label
 					>
@@ -664,9 +764,8 @@
 						><span>Root</span><select
 							class="select select-bordered select-sm bg-base-100"
 							bind:value={rootId}
-							><option value="">All roots</option
-							>{#each Object.keys(preview.summary.roots) as root (root)}<option value={root}
-									>{rootLabel(root)}</option
+							><option value="">All roots</option>{#each sortedRoots as [root, count] (root)}<option
+									value={root}>{rootLabel(root)} ({count.toLocaleString()})</option
 								>{/each}</select
 						></label
 					>
@@ -675,8 +774,8 @@
 							class="select select-bordered select-sm bg-base-100"
 							bind:value={audioFormat}
 							><option value="">All formats</option
-							>{#each Object.keys(preview.summary.formats) as format (format)}<option value={format}
-									>{format.toUpperCase()}</option
+							>{#each sortedFormats as [format, count] (format)}<option value={format}
+									>{format.toUpperCase()} ({count.toLocaleString()})</option
 								>{/each}</select
 						></label
 					>
@@ -684,10 +783,16 @@
 						><span>Change</span><select
 							class="select select-bordered select-sm bg-base-100"
 							bind:value={changeKind}
-							><option value="">All changes</option><option value="tags">Tags</option><option
-								value="artwork">Artwork</option
-							><option value="path">Path</option><option value="sidecars">Sidecars</option><option
-								value="no_change">No change</option
+							><option value="">All changes</option><option value="tags"
+								>Tags ({preview.summary.tag_change_count.toLocaleString()})</option
+							><option value="artwork"
+								>Artwork ({preview.summary.artwork_change_count.toLocaleString()})</option
+							><option value="path"
+								>Path ({preview.summary.path_change_count.toLocaleString()})</option
+							><option value="sidecars"
+								>Sidecars ({preview.summary.sidecar_change_count.toLocaleString()})</option
+							><option value="no_change"
+								>No change ({preview.summary.no_change_count.toLocaleString()})</option
 							></select
 						></label
 					>
@@ -723,6 +828,8 @@
 							{#if catalogSearch.trim().length >= 2}
 								{#if catalogSearchQuery.isLoading}<div
 										class="skeleton h-16 rounded-xl"
+										role="status"
+										aria-label="Searching artists and releases"
 									></div>{:else if catalogSearchQuery.isError}<div
 										class="alert alert-error py-2 text-xs"
 										role="alert"
@@ -787,17 +894,37 @@
 			</section>
 
 			{#if itemsQuery.isLoading}
-				<div class="space-y-3">
+				<div class="space-y-3" role="status" aria-label="Loading preview files">
 					<div class="skeleton h-28 rounded-xl"></div>
 					<div class="skeleton h-28 rounded-xl"></div>
 				</div>
 			{:else if itemsQuery.isError}
-				<div class="alert alert-error">Could not load preview items.</div>
+				<div class="alert alert-error" role="alert">Could not load preview items.</div>
 			{:else if items.length === 0}
 				<div
 					class="rounded-2xl border border-dashed border-base-content/15 p-8 text-center text-base-content/50"
 				>
 					No files match these filters.
+					<div class="mt-3">
+						<button
+							class="btn btn-ghost btn-sm"
+							onclick={() => {
+								eligibility = '';
+								reasonCode = '';
+								rootId = '';
+								artistId = '';
+								artistLabel = '';
+								albumId = '';
+								albumLabel = '';
+								catalogSearch = '';
+								audioFormat = '';
+								changeKind = '';
+								collisionClass = '';
+								hasPreservedValue = false;
+								hasRepresentationLoss = false;
+							}}>Clear filters</button
+						>
+					</div>
 				</div>
 			{:else}
 				<LibraryManagementAuditDossiers
@@ -854,16 +981,19 @@
 							<div>
 								<strong>{applyAction.barTitle}</strong>
 								<p class="text-xs text-base-content/55">{applyAction.barDetail}</p>
+								{#if applyDisabledReason}
+									<p class="mt-1 text-xs text-warning">{applyDisabledReason}</p>
+								{/if}
 								{#if !previewToken && preview.ready_for_confirmation}
-									{#if reissueFailed}<p class="mt-1 text-xs text-warning">
-											The private apply token is not in this browser session. Generate a fresh
-											preview to apply.
-										</p>
-									{:else if reissueAttemptedJobId === jobId}<p
-											class="mt-1 text-xs text-base-content/55"
-										>
+									{#if reissueFailed}
+										<button class="btn btn-ghost btn-xs mt-1" onclick={retryTokenResume}>
+											Retry token resume
+										</button>
+									{:else if reissueAttemptedJobId === jobId}
+										<p class="mt-1 text-xs text-base-content/55">
 											Resuming your private apply token…
-										</p>{/if}
+										</p>
+									{/if}
 								{/if}
 							</div>
 						</div>

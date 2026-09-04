@@ -1635,30 +1635,41 @@ class LibraryManagementPlanner:
             warnings.append("moved path-bearing sidecars are not rewritten")
         reason_code = source.reason_code
         eligibility = "eligible"
+        # B1: per-source deferred detail mirrors the import lane's
+        # management_warnings tags (automatic_import_management_service).
+        deferred_sources = (
+            *(f"genre:{value}" for value in genre_projection.deferred_sources),
+            *(f"artwork:{value}" for value in artwork_projection.deferred_sources),
+            *(
+                (f"lyrics:{lyrics_projection.status}",)
+                if lyrics_projection.status in {"deferred", "mismatch", "not_found"}
+                else ()
+            ),
+            *(
+                ("replaygain:deferred",)
+                if replaygain_analysis is not None
+                and replaygain_analysis.status == "deferred"
+                else ()
+            ),
+        )
         if blockers:
             eligibility = "blocked"
-            # F-081: rollups must show the real capability blocker (policy or
-            # config causes included), not a blanket format-unsupported code.
-            reason_code = blockers[0] or FIELD_UNSUPPORTED_BY_FORMAT
+            # B1: reason_code keeps the stable capability code; the full
+            # sentences stay in capability.blockers for the inspector.
+            reason_code = FIELD_UNSUPPORTED_BY_FORMAT
         elif collision_reason is not None:
             eligibility = "blocked"
             reason_code = collision_reason
         elif sidecar_reason is not None or external_artwork_reason is not None:
             eligibility = "blocked"
             reason_code = sidecar_reason or external_artwork_reason
-        elif (
-            genre_projection.deferred_sources
-            or artwork_projection.deferred_sources
-            or lyrics_projection.status in {"deferred", "mismatch", "not_found"}
-            or (
-                replaygain_analysis is not None
-                and replaygain_analysis.status == "deferred"
-            )
-        ):
+        elif deferred_sources:
             eligibility = "warning"
             reason_code = OPTIONAL_ENRICHMENT_DEFERRED
         elif warnings:
             eligibility = "warning"
+            # B2: warning rows must carry a stable code, never NULL.
+            reason_code = FIELD_UNSUPPORTED_BY_FORMAT
         identity_track = next(
             value
             for value in identity.tracks
@@ -1739,6 +1750,8 @@ class LibraryManagementPlanner:
                     )
                 }
             ),
+            # B1: per-source deferred detail the header/inspector can read.
+            "deferred_sources": list(deferred_sources),
             "source_relative_path": source.subject.relative_path,
             "destination_relative_path": destination_relative,
             "sidecars": sidecars,

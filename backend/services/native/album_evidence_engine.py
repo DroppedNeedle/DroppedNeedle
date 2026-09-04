@@ -30,6 +30,16 @@ LARGE_UNKNOWN_LIMIT = 2
 DURATION_GRACE_SECONDS = 10.0
 DURATION_HARD_LIMIT_SECONDS = 30.0
 MAX_CANDIDATES = 10
+NEAR_MISS_SUPPORTED_RATIO = 0.80
+NEAR_MISS_MAX_SOFT_CONTRADICTIONS = 2
+HARD_CONFLICT_KINDS = frozenset(
+    {
+        "recording_mbid_conflict",
+        "release_track_mbid_conflict",
+        "duration_conflict",
+        "ambiguous_release_track_identity",
+    }
+)
 
 # P2 RG edition-uncertain tier (plan 6.1): consensus epsilon and score floor
 # for pinning a release GROUP while the exact edition stays unclaimed. The
@@ -220,6 +230,33 @@ def _otherwise_supported(
         and supported == comparable
         and evidence.score >= 1.0 - ALBUM_DISTANCE_CEILING
     )
+
+def _near_miss_supported(
+    *,
+    title_class: str,
+    artist_class: str,
+    supported: int,
+    soft_contradictions: int,
+    total: int,
+    distance: float,
+) -> bool:
+    """D-238: one soft track miss must not veto a high-support album.
+
+    Only descriptive misses (e.g. no_acceptable_candidate_track from a guest
+    suffix or edition bonus-track delta) qualify. Provider-proof conflicts
+    (MBID/duration/ambiguous) never reach here: the caller keeps those on the
+    CONFLICTING_TRACK_EVIDENCE veto. Album title/artist stay hard gates so
+    tribute-album noise (wrong artist) still vetoes above.
+    """
+    if title_class != "supported" or artist_class != "supported":
+        return False
+    if soft_contradictions <= 0 or soft_contradictions > NEAR_MISS_MAX_SOFT_CONTRADICTIONS:
+        return False
+    if total <= 0 or supported <= 0:
+        return False
+    if supported / total < NEAR_MISS_SUPPORTED_RATIO:
+        return False
+    return distance <= ALBUM_DISTANCE_CEILING
 
 
 def _has_local_track_mbid(local_tracks: list[GroupingTrack]) -> bool:
@@ -574,8 +611,15 @@ class AlbumEvidenceEngine:
         mean_pair_cost = sum(pair_costs) / len(pair_costs) if pair_costs else 1.0
         distance = 0.65 * mean_pair_cost + 0.20 * album_costs[0] + 0.15 * album_costs[1]
         reason = "SUPPORTED"
+        hard_contradictions = sum(
+            1
+            for item in track_evidence
+            if item.classification == "contradictory"
+            and any(kind in HARD_CONFLICT_KINDS for kind in item.evidence_kinds)
+        )
+        soft_contradictions = contradictions - hard_contradictions
         if (
-            contradictions
+            hard_contradictions
             or title_class == "contradictory"
             or artist_class == "contradictory"
         ):
@@ -587,7 +631,17 @@ class AlbumEvidenceEngine:
         elif release_type_requires_confirmation and not exact_release_track_proof:
             reason = "RELEASE_TYPE_REQUIRES_CONFIRMATION"
         elif comparable == 0 or supported != comparable:
-            reason = "INSUFFICIENT_METADATA"
+            if _near_miss_supported(
+                title_class=title_class,
+                artist_class=artist_class,
+                supported=supported,
+                soft_contradictions=soft_contradictions,
+                total=len(track_evidence),
+                distance=distance,
+            ):
+                reason = "SUPPORTED"
+            else:
+                reason = "INSUFFICIENT_METADATA"
         elif distance > ALBUM_DISTANCE_CEILING:
             reason = "INSUFFICIENT_METADATA"
 

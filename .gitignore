@@ -31,7 +31,7 @@ frontend/.svelte-kit/
 frontend/build/
 frontend/dist/
 frontend/.vite/
-.vite/
+frontend/.vitest-attachments/
 
 # Local config
 docker-compose.yml

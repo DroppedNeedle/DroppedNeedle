@@ -91,20 +91,9 @@ export interface GenreManagementSettings {
 }
 
 export type ArtworkProvider =
-	| 'cover_art_archive_release'
-	| 'cover_art_archive_release_group'
-	| 'local_files'
-	| 'embedded';
+	'cover_art_archive_release' | 'cover_art_archive_release_group' | 'local_files' | 'embedded';
 export type ArtworkImageType =
-	| 'front'
-	| 'back'
-	| 'booklet'
-	| 'medium'
-	| 'tray'
-	| 'obi'
-	| 'spine'
-	| 'track'
-	| 'other';
+	'front' | 'back' | 'booklet' | 'medium' | 'tray' | 'obi' | 'spine' | 'track' | 'other';
 
 export interface ArtworkManagementSettings {
 	embedded_enabled: boolean;
@@ -365,6 +354,7 @@ export interface LibraryManagementPreviewSummary {
 	reasons: Record<string, number>;
 	roots: Record<string, number>;
 	formats: Record<string, number>;
+	deferred_sources: Record<string, number>;
 	metadata_snapshot_ids: string[];
 }
 
@@ -654,6 +644,10 @@ export interface LibraryManagementOperationHistoryItem {
 	target_root_id: string | null;
 	activation_preview: boolean;
 	selection: Record<string, unknown>;
+	eligible_count: number;
+	warning_count: number;
+	blocked_count: number;
+	expires_at: number | null;
 }
 
 export interface LibraryManagementOperationHistoryResponse {

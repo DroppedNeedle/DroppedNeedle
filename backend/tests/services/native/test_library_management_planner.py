@@ -65,6 +65,9 @@ from services.native.genre_normalizer import GenreNormalizer
 from services.native.genre_projection_service import GenreProjectionService
 from services.native.library_management_planner import LibraryManagementPlanner
 import services.native.library_management_planner as planner_module
+from services.native.library_management_preview_service import (
+    LibraryManagementPreviewService,
+)
 from services.native.library_management_publisher import LibraryManagementPublisher
 from services.native.library_management_worker import LibraryManagementWorker
 from services.native.library_management_undo_service import LibraryManagementUndoService
@@ -1231,6 +1234,11 @@ async def test_preview_falls_back_to_plain_lyrics_when_synced_is_unsupported(
         else []
     )
     assert capability["blockers"] == expected_blockers
+    if audio_format == "m4a":
+        assert item.reason_code == "FIELD_UNSUPPORTED_BY_FORMAT"
+        assert all(
+            blocker != item.reason_code for blocker in capability["blockers"]
+        )
     assert not any("lyrics_synced" in blocker for blocker in capability["blockers"])
     assert replacement.read_bytes() == before
 
@@ -2163,6 +2171,136 @@ async def test_preview_marks_provider_deferral_as_warning(
 
     assert plan[0].eligibility == "warning"
     assert plan[0].reason_code == "OPTIONAL_ENRICHMENT_DEFERRED"
+
+@pytest.mark.asyncio
+async def test_preview_persists_per_source_deferred_detail_with_stable_codes(
+    tmp_path: Path,
+) -> None:
+    (
+        _root,
+        _source,
+        preferences,
+        store,
+        _settings_revision,
+        policy_revision,
+    ) = _configured(tmp_path)
+    current = preferences.get_library_management_settings()
+    settings = preferences.get_library_management_settings_raw()
+    profile = next(
+        value for value in settings.profiles if value.id == PICARD_ORGANIZER_PROFILE_ID
+    )
+    profile.genres.sources = ["musicbrainz", "listenbrainz"]
+    profile.enrichment.lyrics.enabled = True
+    profile.enrichment.replaygain.enabled = True
+    profile.enrichment.replaygain.mode = "replace"
+    profile.artwork.external_enabled = True
+    saved = preferences.save_library_management_settings_if_current(
+        settings, expected_settings_revision=current.settings_revision
+    )
+    lyrics = AsyncMock()
+    lyrics.project.return_value = LyricsProjection(
+        status="deferred", reason="The lyrics provider is not available."
+    )
+    artwork_repository = AsyncMock()
+    artwork_repository.list_management_artwork.side_effect = ExternalServiceError(
+        "artwork provider down"
+    )
+    planner = _planner(
+        tmp_path,
+        store,
+        preferences,
+        artwork_repository=artwork_repository,
+        lyrics=lyrics,
+    )
+    handle = await planner.create_preview(
+        selection=LibraryManagementSelection(kind="tracks", ids=("track-1",)),
+        profile_id=PICARD_ORGANIZER_PROFILE_ID,
+        expected_settings_revision=saved.settings_revision,
+        expected_policy_revision=policy_revision,
+        actor_user_id="admin",
+        idempotency_key=None,
+    )
+    claimed = await store.claim_operation_job(
+        "worker-1", now=100, lease_seconds=60, kind="library_management"
+    )
+    assert claimed is not None
+
+    await planner.run_claimed_preview(claimed, "worker-1")
+    plan = await store.list_library_management_plan_items(handle.job_id)
+
+    assert plan[0].eligibility == "warning"
+    assert plan[0].reason_code == "OPTIONAL_ENRICHMENT_DEFERRED"
+    diff = json.loads(plan[0].diff_json)
+    capability = json.loads(plan[0].capability_json)
+    deferred = diff["deferred_sources"]
+    assert "genre:listenbrainz" in deferred
+    assert any(value.startswith("artwork:") for value in deferred)
+    assert "lyrics:deferred" in deferred
+    assert "replaygain:deferred" in deferred
+    assert capability["blockers"] == []
+    mapped = LibraryManagementPreviewService._item(plan[0])
+    assert mapped.diff["deferred_sources"] == deferred
+    assert mapped.reason_code == "OPTIONAL_ENRICHMENT_DEFERRED"
+    snapshot = await store.get_library_management_job_snapshot(handle.job_id)
+    assert snapshot is not None
+    summary = json.loads(snapshot.summary_json)
+    assert summary["reasons"] == {"OPTIONAL_ENRICHMENT_DEFERRED": 1}
+    assert summary["deferred_sources"]["genre:listenbrainz"] == 1
+    assert summary["deferred_sources"]["lyrics:deferred"] == 1
+    assert summary["deferred_sources"]["replaygain:deferred"] == 1
+    assert (
+        sum(
+            1
+            for key in summary["deferred_sources"]
+            if key.startswith("artwork:")
+        )
+        >= 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_preview_warning_without_deferral_keeps_a_stable_reason_code(
+    tmp_path: Path,
+) -> None:
+    (
+        root,
+        _source,
+        preferences,
+        store,
+        _settings_revision,
+        policy_revision,
+    ) = _configured(tmp_path)
+    (root / "notes.cue").write_bytes(b"cue")
+    current = preferences.get_library_management_settings()
+    settings = preferences.get_library_management_settings_raw()
+    profile = next(
+        value for value in settings.profiles if value.id == PICARD_ORGANIZER_PROFILE_ID
+    )
+    profile.organization.move_sidecars = True
+    saved = preferences.save_library_management_settings_if_current(
+        settings, expected_settings_revision=current.settings_revision
+    )
+    planner = _planner(tmp_path, store, preferences)
+    handle = await planner.create_preview(
+        selection=LibraryManagementSelection(kind="tracks", ids=("track-1",)),
+        profile_id=PICARD_ORGANIZER_PROFILE_ID,
+        expected_settings_revision=saved.settings_revision,
+        expected_policy_revision=policy_revision,
+        actor_user_id="admin",
+        idempotency_key=None,
+    )
+    claimed = await store.claim_operation_job(
+        "worker-1", now=100, lease_seconds=60, kind="library_management"
+    )
+    assert claimed is not None
+
+    await planner.run_claimed_preview(claimed, "worker-1")
+    item = (await store.list_library_management_plan_items(handle.job_id))[0]
+    capability = json.loads(item.capability_json)
+
+    assert item.eligibility == "warning"
+    assert item.reason_code == "FIELD_UNSUPPORTED_BY_FORMAT"
+    assert "moved path-bearing sidecars are not rewritten" in capability["warnings"]
 
 
 @pytest.mark.asyncio

@@ -521,7 +521,11 @@
 						>
 						{#if searchTerm.trim().length < 2}<p class="text-sm text-base-content/45">
 								Type at least two characters, then select one or more results.
-							</p>{:else if searchQuery.isLoading}<div class="space-y-2">
+							</p>{:else if searchQuery.isLoading}<div
+								class="space-y-2"
+								role="status"
+								aria-label="Searching the library"
+							>
 								<div class="skeleton h-14"></div>
 								<div class="skeleton h-14"></div>
 							</div>{:else if searchQuery.isError}<div
@@ -678,8 +682,8 @@
 							>
 						</div>{/if}
 					<p class="text-sm text-base-content/55">
-						Before you can apply anything, the next page lists every file marked eligible, warning,
-						blocked, preserved, or unchanged.
+						Applying is the first write action: the next page lists every file marked eligible,
+						warning, blocked, stale, preserved, or unchanged.
 					</p>
 				</section>
 			{/if}

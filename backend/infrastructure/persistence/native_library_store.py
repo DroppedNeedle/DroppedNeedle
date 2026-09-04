@@ -21983,6 +21983,19 @@ class NativeLibraryStore(PersistenceBase):
                     (job_id,),
                 ).fetchall()
             }
+            # B1: per-source deferred breakdown for the preview header; the
+            # subquery keeps json_each off rows without the deferred key.
+            deferred_sources = {
+                str(row["source"]): int(row["count"])
+                for row in connection.execute(
+                    "SELECT deferred.value AS source, COUNT(*) AS count FROM "
+                    "(SELECT diff_json FROM library_management_plan_items "
+                    "WHERE job_id = ? AND json_valid(diff_json)) AS item, "
+                    "json_each(item.diff_json, '$.deferred_sources') AS deferred "
+                    "GROUP BY deferred.value ORDER BY deferred.value",
+                    (job_id,),
+                ).fetchall()
+            }
             roots = {
                 str(row["expected_root_id"]): int(row["count"])
                 for row in connection.execute(
@@ -22039,6 +22052,7 @@ class NativeLibraryStore(PersistenceBase):
                 "reasons": reasons,
                 "roots": roots,
                 "formats": formats,
+                "deferred_sources": deferred_sources,
                 "metadata_snapshot_ids": pinned,
             }
             updated = connection.execute(
@@ -22456,6 +22470,7 @@ class NativeLibraryStore(PersistenceBase):
                 "snapshot.profile_revision management_profile_revision, "
                 "snapshot.profile_snapshot_json management_profile_snapshot_json, "
                 "snapshot.target_root_id management_target_root_id, "
+                "snapshot.preview_expires_at management_preview_expires_at, "
                 "snapshot.proposed_settings_revision "
                 "management_proposed_settings_revision "
                 "FROM library_operation_jobs job JOIN "
@@ -22465,8 +22480,27 @@ class NativeLibraryStore(PersistenceBase):
                 + " ORDER BY job.created_at DESC,job.id DESC LIMIT ?",
                 (*parameters, min(max(limit, 1), 51)),
             ).fetchall()
-            return [dict(row) for row in rows]
-
+            results = [dict(row) for row in rows]
+            job_ids = [row["id"] for row in results]
+            if job_ids:
+                placeholders = ",".join("?" for _ in job_ids)
+                counts = {
+                    str(count_row["job_id"]): dict(count_row)
+                    for count_row in connection.execute(
+                        "SELECT job_id, COALESCE(SUM(eligibility='eligible'), 0) "
+                        "eligible_count, COALESCE(SUM(eligibility='warning'), 0) "
+                        "warning_count, COALESCE(SUM(eligibility='blocked'), 0) "
+                        "blocked_count FROM library_management_plan_items "
+                        f"WHERE job_id IN ({placeholders}) GROUP BY job_id",
+                        tuple(job_ids),
+                    ).fetchall()
+                }
+                for row in results:
+                    count_row = counts.get(str(row["id"]), {})
+                    row["management_eligible_count"] = int(count_row.get("eligible_count", 0) or 0)
+                    row["management_warning_count"] = int(count_row.get("warning_count", 0) or 0)
+                    row["management_blocked_count"] = int(count_row.get("blocked_count", 0) or 0)
+            return results
         return await self._read(operation)
 
     async def get_library_management_bundle_plan_items(

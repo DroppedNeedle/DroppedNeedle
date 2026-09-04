@@ -196,6 +196,7 @@ class LibraryManagementPreviewSummaryResponse(AppStruct):
     reasons: dict[str, int] = msgspec.field(default_factory=dict)
     roots: dict[str, int] = msgspec.field(default_factory=dict)
     formats: dict[str, int] = msgspec.field(default_factory=dict)
+    deferred_sources: dict[str, int] = msgspec.field(default_factory=dict)
     metadata_snapshot_ids: list[str] = msgspec.field(default_factory=list)
 
 
@@ -312,6 +313,10 @@ class LibraryManagementOperationHistoryItemResponse(AppStruct):
     target_root_id: str | None = None
     activation_preview: bool = False
     selection: dict = msgspec.field(default_factory=dict)
+    eligible_count: int = 0
+    warning_count: int = 0
+    blocked_count: int = 0
+    expires_at: float | None = None
 
 
 class LibraryManagementOperationHistoryResponse(AppStruct):

@@ -17,6 +17,7 @@ export interface ManagementAuditEntry {
 	status: string;
 	statusTone: ManagementAuditTone;
 	reason: string | null;
+	reasonCode: string | null;
 	changes: ManagementAuditChangeKind[];
 	exceptional: boolean;
 	sourceRoot: string;

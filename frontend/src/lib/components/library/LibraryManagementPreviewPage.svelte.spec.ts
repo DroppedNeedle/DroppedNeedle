@@ -285,6 +285,175 @@ describe('LibraryManagementPreviewPage', () => {
 			.toHaveAttribute('data-src', '/api/v1/library/albums/album-1/artwork/cached?v=7');
 		await expect.element(page.getByText('No root · No path')).not.toBeInTheDocument();
 	});
+	it('lists reasons with human labels and counts, most frequent first', async () => {
+		h.preview = {
+			data: detail({
+				summary: {
+					...(detail().summary as Record<string, unknown>),
+					reasons: { RELEASE_NOT_SELECTED: 4, PATH_COLLISION_DIFFERENT: 12 }
+				}
+			}),
+			isLoading: false,
+			isError: false
+		};
+		const { container } = render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+		await expect.element(page.getByText('Files and changes')).toBeVisible();
+		const reasonSelect = [...container.querySelectorAll('select')].find((select) =>
+			select.textContent?.includes('All reasons')
+		);
+		expect([...(reasonSelect?.options ?? [])].map((option) => option.textContent?.trim())).toEqual([
+			'All reasons',
+			'Different file already at the destination (12)',
+			'Exact MusicBrainz edition not chosen (4)'
+		]);
+	});
+	it('heads each dossier with its top reason and reveals row reasons on selection', async () => {
+		h.items = {
+			...h.items,
+			data: {
+				pages: [
+					{
+						items: [
+							{
+								...collisionItem,
+								eligibility: 'eligible',
+								reason_code: null,
+								collisions: []
+							},
+							{
+								...collisionItem,
+								ordinal: 1,
+								local_track_id: 'track-2',
+								source_relative_path: 'Incoming/track-two.flac',
+								destination_relative_path: 'Artist/Album/02 Track Two.flac',
+								desired_document: {
+									fields: [
+										{ name: 'title', value: 'Track Two' },
+										{ name: 'artist', value: ['Artist'] },
+										{ name: 'album', value: 'Album' }
+									]
+								},
+								collisions: []
+							}
+						],
+						has_more: false,
+						next_after_ordinal: null
+					}
+				]
+			}
+		};
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+		await expect
+			.element(page.getByText('Top reason: Different file already at the destination (1)'))
+			.toBeVisible();
+		await expect
+			.element(
+				page
+					.getByRole('button', { name: 'Inspect exact diff for Track Two' })
+					.getByText('Different file already at the destination')
+			)
+			.not.toBeInTheDocument();
+		await page.getByRole('button', { name: 'Inspect exact diff for Track Two' }).click();
+		await expect
+			.element(
+				page
+					.getByRole('button', { name: 'Inspect exact diff for Track Two' })
+					.getByText('Different file already at the destination')
+			)
+			.toBeVisible();
+		const trackButton = page.getByRole('button', { name: 'Inspect exact diff for Track Two' });
+		await expect.element(trackButton).toHaveAttribute('aria-controls', 'management-inspector');
+		await expect.element(trackButton).toHaveAttribute('aria-expanded', 'true');
+		const inspector = page.getByTestId('management-audit-inspector');
+		await expect.element(inspector).toHaveAttribute('aria-live', 'polite');
+		(document.activeElement as HTMLElement | null)?.blur?.();
+		inspector
+			.element()
+			.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		await expect.element(trackButton).toHaveFocus();
+	});
+
+	it('counts outcomes, roots, formats, and changes in every summary-backed filter', async () => {
+		const { container } = render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+		await expect.element(page.getByText('Files and changes')).toBeVisible();
+		const options = (label: string) =>
+			[
+				...([...container.querySelectorAll('select')].find((select) =>
+					select.textContent?.includes(label)
+				)?.options ?? [])
+			].map((option) => option.textContent?.trim());
+		expect(options('All outcomes')).toEqual([
+			'All outcomes',
+			'Eligible (1)',
+			'Warning (0)',
+			'Blocked (1)',
+			'Stale (0)'
+		]);
+		expect(options('All roots')).toEqual(['All roots', 'Archive (2)']);
+		expect(options('All formats')).toEqual(['All formats', 'FLAC (2)']);
+		expect(options('All changes')).toEqual([
+			'All changes',
+			'Tags (1)',
+			'Artwork (0)',
+			'Path (1)',
+			'Sidecars (0)',
+			'No change (0)'
+		]);
+	});
+
+	it('diagnoses a zero-appliable preview with top blockers, culprit release, and identity path', async () => {
+		h.preview = {
+			data: detail({
+				summary: {
+					...(detail().summary as Record<string, unknown>),
+					eligible_count: 0,
+					warning_count: 0,
+					blocked_count: 16,
+					reasons: { TRACK_NOT_MAPPED: 12, RELEASE_NOT_SELECTED: 4 },
+					deferred_sources: { lrclib: 3 }
+				}
+			}),
+			isLoading: false,
+			isError: false
+		};
+		h.items = {
+			...h.items,
+			data: {
+				pages: [
+					{
+						items: [
+							{
+								...collisionItem,
+								ordinal: 5,
+								bundle_ordinal: 2,
+								reason_code: 'TRACK_NOT_MAPPED',
+								collisions: []
+							}
+						],
+						has_more: false,
+						next_after_ordinal: null
+					}
+				]
+			}
+		};
+		const { container } = render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+		await expect.element(page.getByText('Nothing in this preview can be applied.')).toBeVisible();
+		await expect.element(page.getByText(/Top blockers:/)).toBeVisible();
+		await expect.element(page.getByText(/Start with Release 3/)).toBeVisible();
+		await expect.element(page.getByText(/Deferred warnings:/)).toBeVisible();
+		await expect.element(page.getByRole('link', { name: 'Open identity readiness' })).toBeVisible();
+		await expect
+			.element(page.getByText('16 files need identity preparation.'))
+			.not.toBeInTheDocument();
+		await page.getByRole('button', { name: /Filter to Exact edition/ }).click();
+		await expect
+			.element(page.getByText('Apply is disabled: no eligible files and no files with warnings.'))
+			.toBeVisible();
+		const reasonSelect = [...container.querySelectorAll('select')].find((select) =>
+			select.textContent?.includes('All reasons')
+		);
+		expect(reasonSelect?.value).toBe('TRACK_NOT_MAPPED');
+	});
 
 	it('groups release files into compact dossiers with persistent inspection controls', async () => {
 		const secondItem = {
@@ -581,7 +750,9 @@ describe('LibraryManagementPreviewPage', () => {
 		);
 		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
 
-		await expect.element(page.getByText('Read-only plan · no files changed')).toBeVisible();
+		await expect
+			.element(page.getByText('Applying is the first write action · no files changed'))
+			.toBeVisible();
 		await expect.element(page.getByRole('heading', { name: 'Organization preview' })).toBeVisible();
 		await expect.element(page.getByText('1 tag change', { exact: true })).toBeVisible();
 		await expect.element(page.getByText('1 path change', { exact: true })).toBeVisible();
@@ -634,7 +805,9 @@ describe('LibraryManagementPreviewPage', () => {
 		);
 		const view = render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
 
-		await expect.element(page.getByText('Read-only plan · no files changed')).toBeVisible();
+		await expect
+			.element(page.getByText('Applying is the first write action · no files changed'))
+			.toBeVisible();
 		await view.rerender({ jobId: 'resolution-1' });
 		await page.getByRole('button', { name: /Write tags and organize 1 file/ }).click();
 		await page.getByRole('textbox', { name: /CONFIRM/ }).fill('CONFIRM');
@@ -649,7 +822,9 @@ describe('LibraryManagementPreviewPage', () => {
 	it('resumes apply after a browser restart by reissuing the sealed token', async () => {
 		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
 
-		await expect.element(page.getByText('Read-only plan · no files changed')).toBeVisible();
+		await expect
+			.element(page.getByText('Applying is the first write action · no files changed'))
+			.toBeVisible();
 		await vi.waitFor(() => expect(h.reissue).toHaveBeenCalledWith('preview-1'));
 		await expect
 			.element(page.getByRole('button', { name: /Write tags and organize 1 file/ }))
@@ -675,18 +850,22 @@ describe('LibraryManagementPreviewPage', () => {
 		});
 	});
 
-	it('keeps apply disabled with the orphan warning when reissue is denied', async () => {
+	it('keeps apply disabled with a clause-specific reason and a token retry when reissue is denied', async () => {
 		h.reissue.mockRejectedValueOnce(new Error('Forbidden'));
 		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
 
-		await expect.element(page.getByText('Read-only plan · no files changed')).toBeVisible();
 		await expect
-			.element(page.getByText('The private apply token is not in this browser session.'))
+			.element(page.getByText('Applying is the first write action · no files changed'))
+			.toBeVisible();
+		await expect
+			.element(page.getByText(/Apply is disabled: the private apply token is missing/))
 			.toBeVisible();
 		expect(h.reissue).toHaveBeenCalledWith('preview-1');
 		await expect
 			.element(page.getByRole('button', { name: /Write tags and organize/ }))
 			.toBeDisabled();
+		await page.getByRole('button', { name: 'Retry token resume' }).click();
+		await vi.waitFor(() => expect(h.reissue).toHaveBeenCalledTimes(2));
 	});
 
 	it('shows the sealed metadata, artwork, and file-attribute state for recovery previews', async () => {

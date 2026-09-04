@@ -440,3 +440,53 @@ export function formatManagementValue(value: unknown): string {
 export function titleManagementValue(value: string): string {
 	return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
+
+/**
+ * Human copy for every stable management reason code. Wording stays neutral
+ * about loss: warnings-only rows reuse these labels while the inspector's
+ * Warnings section carries the detail.
+ */
+export const MANAGEMENT_REASON_LABELS: Record<string, string> = {
+	MANAGEMENT_DISABLED: 'File organization is turned off',
+	IDENTITY_NOT_ACCEPTED: 'Identity needs review before organizing',
+	RELEASE_NOT_SELECTED: 'Exact MusicBrainz edition not chosen',
+	TRACK_NOT_MAPPED: 'Exact edition selected; track map missing',
+	METADATA_UNAVAILABLE: 'Required metadata unavailable',
+	OPTIONAL_ENRICHMENT_DEFERRED: 'Optional enrichment deferred',
+	FORMAT_UNSUPPORTED: 'File format cannot be organized',
+	FIELD_UNSUPPORTED_BY_FORMAT: 'Some fields cannot be stored in this format',
+	FILE_UNREADABLE: 'File metadata could not be read',
+	FILE_CHANGED: 'File changed after this preview was planned',
+	PROFILE_CHANGED: 'Profile changed after this preview was planned',
+	POLICY_CHANGED: 'Library policy changed after this preview was planned',
+	OVERRIDE_CHANGED: 'Root override changed after this preview was planned',
+	ROOT_UNAVAILABLE: 'Source root unavailable',
+	ROOT_READ_ONLY: 'Destination root is read-only',
+	OUT_OF_ROOT: 'File sits outside the configured roots',
+	SYMLINK_UNSUPPORTED: 'Symbolic links cannot be organized',
+	PATH_COLLISION_IDENTICAL: 'Identical file already at the destination',
+	PATH_COLLISION_DIFFERENT: 'Different file already at the destination',
+	POSITION_COLLISION: 'Two files claim the same release position',
+	SIDECAR_COLLISION: 'Sidecar file already at the destination',
+	PATH_TOO_LONG: 'Planned path exceeds the configured length limit',
+	SCRIPT_VALIDATION_FAILED: 'Profile script could not safely process this file',
+	INSUFFICIENT_SPACE: 'Not enough temporary disk space',
+	BASELINE_UNAVAILABLE: 'Original baseline unavailable',
+	BASELINE_SNAPSHOT_MISSING: 'Before-state snapshot missing',
+	BASELINE_SNAPSHOT_CORRUPT: 'Before-state snapshot unreadable',
+	UNDO_EXPIRED: 'Undo snapshot expired',
+	RECOVERY_NEEDS_ATTENTION: 'Recovery needs attention before retrying',
+	BUNDLE_BLOCKED: 'Another file in this release blocks the bundle',
+	BUNDLE_TOO_LARGE: 'Release bundle exceeds the file limit',
+	RECYCLE_UNAVAILABLE: 'Recycle bin unavailable for the displaced file',
+	DUPLICATE_CHANGED: 'Duplicate changed after this preview was planned',
+	EXTERNAL_REFRESH_PROTOCOL_UNAVAILABLE: 'Media-server refresh protocol unavailable',
+	EXTERNAL_REFRESH_NOT_CONFIGURED: 'Media-server refresh not configured',
+	EXTERNAL_REFRESH_AUTH_FAILED: 'Media-server refresh sign-in failed',
+	EXTERNAL_REFRESH_FAILED: 'Media-server refresh failed',
+	EXTERNAL_REFRESH_INTERRUPTED: 'Media-server refresh interrupted'
+};
+
+export function managementReasonLabel(value: string): string {
+	return MANAGEMENT_REASON_LABELS[value] ?? titleManagementValue(value);
+}

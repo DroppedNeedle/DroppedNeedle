@@ -13,7 +13,10 @@
 
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import type { ManagementAuditDossier, ManagementAuditEntry } from './LibraryManagementAuditTypes';
-	import type { ManagementAuditChangeKind } from './LibraryManagementDisplay';
+	import {
+		managementReasonLabel,
+		type ManagementAuditChangeKind
+	} from './LibraryManagementDisplay';
 
 	interface Props {
 		dossiers: ManagementAuditDossier[];
@@ -81,6 +84,20 @@
 		}
 		return Array.from(stats.values());
 	}
+	function topReason(
+		dossier: ManagementAuditDossier
+	): { code: string; label: string; count: number } | null {
+		const counts = new SvelteMap<string, number>();
+		for (const entry of dossier.entries) {
+			if (!entry.reasonCode) continue;
+			counts.set(entry.reasonCode, (counts.get(entry.reasonCode) ?? 0) + 1);
+		}
+		let best: { code: string; label: string; count: number } | null = null;
+		for (const [code, count] of counts) {
+			if (!best || count > best.count) best = { code, label: managementReasonLabel(code), count };
+		}
+		return best;
+	}
 
 	function changeCount(dossier: ManagementAuditDossier, change: ManagementAuditChangeKind) {
 		return dossier.entries.filter((entry) => entry.changes.includes(change)).length;
@@ -124,6 +141,11 @@
 	function collapseAll(): void {
 		for (const dossier of visibleDossiers) collapsedBundles.add(dossier.bundleOrdinal);
 	}
+	function focusSelectedTrack(event: KeyboardEvent): void {
+		if (event.key !== 'Escape' || !selectedEntry) return;
+		event.stopPropagation();
+		document.getElementById(`management-track-${selectedEntry.ordinal}`)?.focus();
+	}
 </script>
 
 <div class="management-audit-toolbar" aria-label="Audit display controls">
@@ -166,6 +188,7 @@
 		<div class="space-y-4">
 			{#each visibleDossiers as dossier (dossier.bundleOrdinal)}
 				{@const collapsed = collapsedBundles.has(dossier.bundleOrdinal)}
+				{@const top = topReason(dossier)}
 				<article class="management-dossier" aria-labelledby={`dossier-${dossier.bundleOrdinal}`}>
 					<header class="management-dossier-header">
 						<div
@@ -226,6 +249,16 @@
 									>
 								{/if}
 							</div>
+							{#if top}
+								<p class="mt-1 text-xs text-base-content/55">
+									{#if top.code === 'BUNDLE_BLOCKED'}
+										Held by a blocked file in this release (Release {dossier.bundleOrdinal + 1}) · {top.label}
+										({top.count.toLocaleString()})
+									{:else}
+										Top reason: {top.label} ({top.count.toLocaleString()})
+									{/if}
+								</p>
+							{/if}
 						</div>
 						<button
 							class="btn btn-ghost btn-sm btn-square shrink-0"
@@ -246,10 +279,13 @@
 							{#each dossier.entries as entry (entry.ordinal)}
 								{@const active = selectedEntry?.ordinal === entry.ordinal}
 								<button
+									id={`management-track-${entry.ordinal}`}
 									class="management-audit-track"
 									data-selected={active}
 									data-tone={entry.statusTone}
 									aria-pressed={active}
+									aria-expanded={active}
+									aria-controls="management-inspector"
 									aria-label={`${detailLabel} for ${entry.title}`}
 									onclick={() => (selectedOrdinal = entry.ordinal)}
 								>
@@ -262,7 +298,7 @@
 										{#if entry.artist && entry.artist !== dossier.artist}
 											<small class="block truncate text-base-content/50">{entry.artist}</small>
 										{/if}
-										{#if entry.reason}
+										{#if entry.reason && active}
 											<small class="block truncate font-semibold text-error">{entry.reason}</small>
 										{/if}
 										{#if pathChanged(entry)}
@@ -312,7 +348,15 @@
 									<ChevronRight class="h-4 w-4 shrink-0 text-base-content/35" />
 								</button>
 								{#if !isWide && active}
-									<div class="management-audit-inline-inspector">
+									<div
+										id="management-inspector"
+										class="management-audit-inline-inspector"
+										role="region"
+										aria-label={`${detailLabel}: ${entry.title}`}
+										aria-live="polite"
+										data-testid="management-audit-inspector"
+										onkeydown={focusSelectedTrack}
+									>
 										{@render inspector(entry.ordinal)}
 									</div>
 								{/if}
@@ -325,9 +369,12 @@
 
 		{#if isWide && selectedEntry}
 			<aside
+				id="management-inspector"
 				class="management-audit-inspector"
 				aria-label={`${detailLabel}: ${selectedEntry.title}`}
+				aria-live="polite"
 				data-testid="management-audit-inspector"
+				onkeydown={focusSelectedTrack}
 			>
 				{@render inspector(selectedEntry.ordinal)}
 			</aside>

@@ -319,7 +319,11 @@ def test_duplicate_local_files_cannot_claim_one_candidate_track_twice() -> None:
     classes = [item.classification for item in decision.candidates[0].track_evidence]
     assert classes.count("supported") == 1
     assert classes.count("contradictory") == 1
-    assert decision.outcome == "contradictory"
+    # D-238: the second copy is a soft descriptive miss at 1/2 support, so the
+    # candidate is rejected as INSUFFICIENT_METADATA (not identified), not via
+    # the provider-conflict veto. Double-claim protection is unchanged.
+    assert decision.outcome == "insufficient_evidence"
+    assert decision.reason_code == "INSUFFICIENT_METADATA"
 
 
 def test_duplicate_recording_position_and_absolute_overlap_is_ambiguous() -> None:
@@ -783,3 +787,156 @@ def test_suffix_normalization_is_symmetric_across_case_and_punctuation(
         == _album_title_class(candidate_title, local_title)
         == "supported"
     )
+
+
+def _thriller_case() -> tuple[list[GroupingTrack], AlbumCandidate]:
+    """D-238 repro: 9-track album, one guest-suffix title miss, rest exact."""
+    local_titles = [
+        "Wanna Be Startin Somethin",
+        "Baby Be Mine",
+        "The Girl Is Mine (with Paul Mccartney)",
+        "Thriller",
+        "Beat It",
+        "Billie Jean",
+        "Human Nature",
+        "P.Y.T. (Pretty Young Thing)",
+        "The Lady In My Life",
+    ]
+    candidate_titles = [
+        "Wanna Be Startin Somethin",
+        "Baby Be Mine",
+        "The Girl Is Mine",
+        "Thriller",
+        "Beat It",
+        "Billie Jean",
+        "Human Nature",
+        "P.Y.T. (Pretty Young Thing)",
+        "The Lady In My Life",
+    ]
+    local = [
+        _track(
+            f"track-{index}",
+            title,
+            number=index + 1,
+            duration=200,
+            album="Thriller",
+            artist="Michael Jackson",
+        )
+        for index, title in enumerate(local_titles)
+    ]
+    candidate = _candidate(
+        "thriller-rg",
+        [
+            _candidate_track(title, index + 1, duration=200)
+            for index, title in enumerate(candidate_titles)
+        ],
+        title="Thriller",
+        artist="Michael Jackson",
+    )
+    return local, candidate
+
+
+def test_single_soft_track_miss_does_not_veto_high_support_album() -> None:
+    """D-238: 8/9 supported with one descriptive miss still identifies; the
+    miss stays contradictory in track evidence (per-track exception: only
+    supported tracks persist identities downstream)."""
+    local, candidate = _thriller_case()
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    assert decision.outcome == "identified"
+    assert decision.reason_code == "SUPPORTED"
+    evidence = decision.candidates[0]
+    assert evidence.reason_code == "SUPPORTED"
+    by_id = {item.local_track_id: item for item in evidence.track_evidence}
+    assert by_id["track-2"].classification == "contradictory"
+    assert by_id["track-2"].evidence_kinds == ["no_acceptable_candidate_track"]
+    assert (
+        sum(item.classification == "supported" for item in evidence.track_evidence)
+        == 8
+    )
+
+
+def test_single_provider_conflict_still_vetoes_high_support_album() -> None:
+    """Provider proof still vetoes: one recording-MBID conflict on an
+    otherwise 8/9 album stays contradictory/CONFLICTING_TRACK_EVIDENCE."""
+    local = [
+        _track(
+            f"track-{index}",
+            title,
+            number=index + 1,
+            duration=200,
+            album="Thriller",
+            artist="Michael Jackson",
+            recording="local-recording" if index == 2 else None,
+        )
+        for index, title in enumerate(
+            [
+                "Wanna Be Startin Somethin",
+                "Baby Be Mine",
+                "The Girl Is Mine",
+                "Thriller",
+                "Beat It",
+                "Billie Jean",
+                "Human Nature",
+                "P.Y.T. (Pretty Young Thing)",
+                "The Lady In My Life",
+            ]
+        )
+    ]
+    candidate = _candidate(
+        "thriller-rg",
+        [
+            _candidate_track(
+                title,
+                index + 1,
+                duration=200,
+                recording="other-recording" if index == 2 else None,
+            )
+            for index, title in enumerate(
+                [
+                    "Wanna Be Startin Somethin",
+                    "Baby Be Mine",
+                    "The Girl Is Mine",
+                    "Thriller",
+                    "Beat It",
+                    "Billie Jean",
+                    "Human Nature",
+                    "P.Y.T. (Pretty Young Thing)",
+                    "The Lady In My Life",
+                ]
+            )
+        ],
+        title="Thriller",
+        artist="Michael Jackson",
+    )
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    assert decision.outcome == "contradictory"
+    assert decision.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
+
+def test_tribute_artist_mismatch_still_vetoes_despite_supported_titles() -> None:
+    """Tribute noise stays rejected: identical track titles under a different
+    album artist trip the hard artist gate, never the near-miss path."""
+    local, _ = _thriller_case()
+    candidate_titles = [
+        "Wanna Be Startin Somethin",
+        "Baby Be Mine",
+        "The Girl Is Mine",
+        "Thriller",
+        "Beat It",
+        "Billie Jean",
+        "Human Nature",
+        "P.Y.T. (Pretty Young Thing)",
+        "The Lady In My Life",
+    ]
+    tribute = _candidate(
+        "tribute-rg",
+        [
+            _candidate_track(title, index + 1, duration=200)
+            for index, title in enumerate(candidate_titles)
+        ],
+        title="Thriller",
+        artist="Tribute Band",
+    )
+    decision = AlbumEvidenceEngine().decide(local, [tribute])
+    assert decision.outcome == "contradictory"
+    assert decision.reason_code == "CONFLICTING_TRACK_EVIDENCE"

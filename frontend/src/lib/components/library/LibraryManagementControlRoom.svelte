@@ -170,12 +170,12 @@
 	</div>
 
 	{#if settingsQuery.isLoading || policyQuery.isLoading || operationsQuery.isLoading || recoveryQuery.isLoading}
-		<div class="space-y-3">
+		<div class="space-y-3" role="status" aria-label="Loading file-organization state">
 			<div class="skeleton h-28 rounded-xl"></div>
 			<div class="skeleton h-44 rounded-xl"></div>
 		</div>
 	{:else if settingsQuery.isError || policyQuery.isError || operationsQuery.isError}
-		<div class="alert alert-error">Could not load file-organization state.</div>
+		<div class="alert alert-error" role="alert">Could not load file-organization state.</div>
 	{:else if settingsQuery.data && policyQuery.data}
 		<div class="space-y-5">
 			<div class="grid gap-3 sm:grid-cols-3">
@@ -264,7 +264,7 @@
 							<p class="management-step">Awaiting review</p>
 							<h3 id="ready-management-previews" class="font-semibold">Ready previews</h3>
 						</div>
-						<span class="text-xs text-base-content/45">Read-only until Apply</span>
+						<span class="text-xs text-base-content/45">Applying is the first write action</span>
 					</div>
 					{#each readyPreviews as item (item.operation.id)}<div class="flex items-stretch gap-1">
 							<a
@@ -279,6 +279,14 @@
 									class="min-w-0 flex-1"
 									><strong>{item.profile_name}</strong><small
 										>{title(item.mode)} · {date(item.operation.updated_at)}</small
+									><span class="mt-1 flex flex-wrap gap-1"
+										>{#if (item.eligible_count ?? 0) > 0}<span class="badge badge-success badge-sm"
+												>{item.eligible_count} eligible</span
+											>{/if}{#if (item.warning_count ?? 0) > 0}<span
+												class="badge badge-warning badge-sm">{item.warning_count} warning</span
+											>{/if}{#if (item.blocked_count ?? 0) > 0}<span
+												class="badge badge-error badge-sm">{item.blocked_count} blocked</span
+											>{/if}</span
 									></span
 								><span class="badge badge-outline badge-sm">Review</span><ArrowRight
 									class="h-4 w-4 shrink-0"
@@ -300,30 +308,37 @@
 						<p class="management-step">Audit trail</p>
 						<h3 id="recent-management-work" class="font-semibold">Recent management work</h3>
 					</div>
-					<a class="link text-xs" href={withBasePath('/library/management/history')}>All history</a>
+					{#if recent}{#each recent as item (item.operation.id)}<a
+								href={operationHref(
+									item.operation.id,
+									item.operation.state,
+									item.operation.terminal_code,
+									item.mode
+								)}
+								class="management-history-row"
+								><History class="h-4 w-4 text-base-content/45" /><span class="min-w-0 flex-1"
+									><strong>{item.profile_name}</strong><small
+										>{title(item.mode)} · {title(item.operation.state)} · {date(
+											item.operation.updated_at
+										)}</small
+									><span class="mt-1 flex flex-wrap gap-1"
+										>{#if item.operation.succeeded_count}<span class="badge badge-success badge-sm"
+												>{item.operation.succeeded_count} succeeded</span
+											>{/if}{#if item.operation.failed_count}<span
+												class="badge badge-error badge-sm"
+												>{item.operation.failed_count} failed</span
+											>{/if}{#if item.operation.skipped_count}<span
+												class="badge badge-warning badge-sm"
+												>{item.operation.skipped_count} skipped</span
+											>{/if}</span
+									></span
+								><ArrowRight class="h-4 w-4" /></a
+							>{/each}{:else}<div
+							class="rounded-xl border border-dashed border-base-content/15 p-4 text-sm text-base-content/45"
+						>
+							No organization work has run yet.
+						</div>{/if}
 				</div>
-				{#if recent.length}{#each recent as item (item.operation.id)}<a
-							href={operationHref(
-								item.operation.id,
-								item.operation.state,
-								item.operation.terminal_code,
-								item.mode
-							)}
-							class="management-history-row"
-							><History class="h-4 w-4 text-base-content/45" /><span class="min-w-0 flex-1"
-								><strong>{item.profile_name}</strong><small
-									>{title(item.mode)} · {title(item.operation.state)} · {date(
-										item.operation.updated_at
-									)}</small
-								></span
-							>{#if item.operation.failed_count}<span class="badge badge-error badge-sm"
-									>{item.operation.failed_count} failed</span
-								>{/if}<ArrowRight class="h-4 w-4" /></a
-						>{/each}{:else}<div
-						class="rounded-xl border border-dashed border-base-content/15 p-4 text-sm text-base-content/45"
-					>
-						No organization work has run yet.
-					</div>{/if}
 			</section>
 
 			{#if recoveryQuery.data && (recoveryQuery.data.needs_attention_count || recoveryQuery.data.cleanup_pending_count)}<div

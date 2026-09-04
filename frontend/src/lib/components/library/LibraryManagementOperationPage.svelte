@@ -41,6 +41,7 @@
 		managementPlanChanges,
 		managementPlanTitle,
 		managementPlanTrackLabel,
+		managementReasonLabel,
 		titleManagementValue
 	} from './LibraryManagementDisplay';
 	import LibraryManagementAuditDossiers from './LibraryManagementAuditDossiers.svelte';
@@ -281,9 +282,12 @@
 			albumMbid: managementDesiredField(item.plan, 'musicbrainz_release_group_id'),
 			albumArtworkVersion: managementAlbumArtworkVersion(item.plan),
 			format: managementAudioFormat(item.plan),
-			status: titleManagementValue(item.failure_code ?? item.work_state),
+			status: item.failure_code
+				? managementReasonLabel(item.failure_code)
+				: titleManagementValue(item.work_state),
 			statusTone: resultTone(item),
-			reason: item.failure_code ? titleManagementValue(item.failure_code) : null,
+			reason: item.failure_code ? managementReasonLabel(item.failure_code) : null,
+			reasonCode: item.failure_code,
 			changes: managementPlanChanges(item.plan),
 			exceptional: Boolean(
 				item.failure_code || !['succeeded', 'completed'].includes(item.work_state)
@@ -314,12 +318,12 @@
 		<BackButton fallback={withBasePath('/library/management?tab=organize')} />
 
 		{#if operationQuery.isLoading || redirectingReadyPreview}
-			<div class="space-y-4">
+			<div class="space-y-4" role="status" aria-label="Loading organization operation">
 				<div class="skeleton h-48 rounded-2xl"></div>
 				<div class="skeleton h-72 rounded-2xl"></div>
 			</div>
 		{:else if operationQuery.isError}
-			<div class="alert alert-error">Could not load this Organization operation.</div>
+			<div class="alert alert-error" role="alert">Could not load this Organization operation.</div>
 		{:else if operation}
 			<header class="management-control-room p-5 sm:p-7">
 				<div class="flex flex-wrap items-start gap-4">
@@ -457,7 +461,7 @@
 									<p class="text-sm text-base-content/65">{refreshStatusCopy(delivery.state)}</p>
 									<p class="mt-0.5 text-xs text-base-content/45">
 										{delivery.attempts} of {delivery.max_attempts} attempts used{#if delivery.failure_code}
-											· {titleManagementValue(delivery.failure_code)}{/if}
+											· {managementReasonLabel(delivery.failure_code)}{/if}
 									</p>
 								</div>
 								<span
@@ -483,10 +487,14 @@
 						><History class="h-4 w-4" /> All history</a
 					>
 				</div>
-				{#if resultsQuery.isLoading}<div class="space-y-2">
+				{#if resultsQuery.isLoading}<div
+						class="space-y-2"
+						role="status"
+						aria-label="Loading file results"
+					>
 						<div class="skeleton h-20"></div>
 						<div class="skeleton h-20"></div>
-					</div>{:else if resultsQuery.isError}<div class="alert alert-error">
+					</div>{:else if resultsQuery.isError}<div class="alert alert-error" role="alert">
 						Could not load operation results.
 					</div>{:else if results.length === 0}<div
 						class="rounded-xl border border-dashed border-base-content/15 p-5 text-sm text-base-content/50"
