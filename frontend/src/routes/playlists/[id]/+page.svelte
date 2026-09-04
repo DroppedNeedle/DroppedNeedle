@@ -67,7 +67,12 @@
 		if (!playlist) return 0;
 		const seen = new SvelteSet<string>();
 		for (const t of playlist.tracks) {
-			if (t.album_id && (!t.available_sources || t.available_sources.length === 0)) {
+			// library_file_id means owned locally (request-missing skips these too).
+			if (
+				t.album_id &&
+				!t.library_file_id &&
+				(!t.available_sources || t.available_sources.length === 0)
+			) {
 				seen.add(t.album_id);
 			}
 		}
@@ -132,27 +137,63 @@
 		}
 	}
 
-	function applySourcesMap(sources: Record<string, string[]>) {
+	function applySourcesMap(sources: Record<string, string[]>, onlyMissing = false) {
 		if (!playlist) return;
 		for (const track of playlist.tracks) {
 			const resolved = sources[track.id];
-			if (resolved && resolved.length > 0) {
-				track.available_sources = resolved;
+			if (!resolved || resolved.length === 0) continue;
+			if (onlyMissing) {
+				// Live detailQuery values (clone) win: never let a stale cache entry
+				// overwrite a healed row that already has sources or a local link.
+				const hasLive =
+					(track.available_sources && track.available_sources.length > 0) ||
+					Boolean(track.library_file_id);
+				if (hasLive) continue;
 			}
+			track.available_sources = resolved;
 		}
+	}
+
+	function hasUsableSourcesForPlaylist(
+		sources: Record<string, string[]>,
+		trackIds: Set<string>
+	): boolean {
+		for (const [id, value] of Object.entries(sources)) {
+			if (trackIds.has(id) && Array.isArray(value) && value.length > 0) return true;
+		}
+		return false;
 	}
 
 	async function resolveAndCacheSources(playlistId: string) {
 		const cached = getSourcesFromCache(playlistId);
-		if (cached) {
-			applySourcesMap(cached);
+		if (cached && playlist && playlist.id === playlistId) {
+			const ids = new Set(playlist.tracks.map((t) => t.id));
+			if (hasUsableSourcesForPlaylist(cached, ids)) {
+				// Playlist was just cloned from live detailQuery data, so healed
+				// backend rows are already present; fill gaps from cache only.
+				applySourcesMap(cached, true);
+				return;
+			}
+			// Empty/stale cache is never fresh: drop it and fetch live.
+			invalidateSourcesCache(playlistId);
+		} else if (cached) {
+			applySourcesMap(cached, true);
 			return;
 		}
 		try {
 			const sources = await resolvePlaylistSources(playlistId);
 			if (playlist && playlist.id === playlistId) {
 				applySourcesMap(sources);
-				setSourcesCache(playlistId, sources);
+				// Empty resolve results are not fresh: skip caching when nothing
+				// usable was returned for this playlist's tracks.
+				if (playlist.tracks.length === 0) return;
+				const ids = new Set(playlist.tracks.map((t) => t.id));
+				if (hasUsableSourcesForPlaylist(sources, ids)) {
+					setSourcesCache(playlistId, sources);
+					await invalidateQueriesWithPersister({
+						queryKey: PlaylistQueryKeyFactory.detail(authStore.user?.id, playlistId)
+					});
+				}
 			}
 		} catch {
 			// non-critical - tracks keep their stored available_sources

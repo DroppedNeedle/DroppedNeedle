@@ -546,4 +546,32 @@ describe('playlistTrackToQueueItem', () => {
 		expect(item.sourceType).toBe('jellyfin');
 		expect(item.streamUrl).toBe('/api/v1/stream/jellyfin/jf-123');
 	});
+
+	it('plays linked row with empty track_source_id via library_file_id local fallback', () => {
+		expect.assertions(5);
+		const track: PlaylistTrack = {
+			...basePlaylistTrack,
+			source_type: 'spotify',
+			track_source_id: null,
+			available_sources: ['local'],
+			library_file_id: '42'
+		};
+		const item = playlistTrackToQueueItem(track)!;
+		expect(item).not.toBeNull();
+		expect(item.sourceType).toBe('local');
+		expect(item.trackSourceId).toBe('42');
+		expect(item.streamUrl).toBe('/api/v1/stream/local/42');
+		expect(item.sourceIds).toEqual({ local: '42' });
+	});
+
+	it('returns null for empty row with no track_source_id and no local link', () => {
+		expect.assertions(1);
+		const track: PlaylistTrack = {
+			...basePlaylistTrack,
+			track_source_id: null,
+			available_sources: [],
+			library_file_id: null
+		};
+		expect(playlistTrackToQueueItem(track)).toBeNull();
+	});
 });

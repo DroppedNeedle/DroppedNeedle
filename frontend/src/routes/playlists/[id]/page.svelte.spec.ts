@@ -374,4 +374,52 @@ describe('Playlist detail page', () => {
 		expect(startIdx).toBe(1);
 		expect(shuffle).toBe(false);
 	});
-});
+
+	it('missing banner counts albums without sources but skips library_file_id rows', async () => {
+		detailQuery.data = makePlaylist({
+			tracks: [
+				makeTrack({
+					id: 'trk-missing',
+					track_name: 'Missing Track',
+					album_id: 'alb-missing',
+					available_sources: [],
+					library_file_id: null,
+					track_source_id: null
+				}),
+				makeTrack({
+					id: 'trk-owned',
+					track_name: 'Owned Track',
+					album_id: 'alb-owned',
+					available_sources: [],
+					library_file_id: '42',
+					track_source_id: null
+				})
+			],
+			track_count: 2
+		});
+		renderDetail('pl-1');
+
+		await expect.element(page.getByText('Missing Track')).toBeVisible();
+		// Owned library_file_id rows are skipped, so only 1 album is missing.
+		await expect.element(page.getByText(/not in your library/)).toBeVisible();
+		expect(page.getByText(/albums not in your library/).elements()).toHaveLength(0);
+		await expect.element(page.getByRole('button', { name: 'Request album', exact: true })).toBeVisible();
+	});
+
+	it('does not cache empty resolve results', async () => {
+		detailQuery.data = makePlaylist();
+		mockResolvePlaylistSources.mockResolvedValue({});
+		renderDetail('pl-1');
+
+		await expect
+			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
+			.toBeVisible();
+		await vi.waitFor(() => {
+			expect(mockResolvePlaylistSources).toHaveBeenCalledWith('pl-1');
+		});
+		// Let the resolve promise chain settle, then assert nothing was cached.
+		await new Promise((r) => setTimeout(r, 100));
+		// Empty resolve maps are never fresh, so no per-user cache entry is stored.
+		expect(localStorage.getItem('droppedneedle_playlist_sources_anon_pl-1')).toBeNull();
+	});
+	});

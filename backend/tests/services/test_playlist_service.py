@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from core.exceptions import InvalidPlaylistDataError, PlaylistNotFoundError, SourceResolutionError
-from repositories.playlist_repository import PlaylistRecord, PlaylistTrackRecord
+from repositories.playlist_repository import PlaylistRecord, PlaylistTrackRecord, _UNSET
 from services.playlist_service import PlaylistService
 
 
@@ -485,3 +485,39 @@ class TestResolveNewSourceId:
                 "p-1", _OWNER, "t-1", source_type="jellyfin",
                 jf_service=jf_svc, local_service=local_svc,
             )
+
+
+class TestResolvePromotesUnknownRowsToPlex:
+    """Non-local wins persist their own id shape (#381)."""
+
+    @pytest.mark.asyncio
+    async def test_promotes_empty_row_to_plex_with_rating_key(self, tmp_path):
+        service, repo = _make_service(tmp_path)
+        track = _make_track_with_album(track_name="Song One", source_type="")
+        track.track_source_id = None
+        track.available_sources = []
+        repo.get_tracks = MagicMock(return_value=[track])
+
+        plex_svc = AsyncMock()
+        plex_svc.get_album_match.return_value = SimpleNamespace(
+            found=True,
+            tracks=[
+                SimpleNamespace(
+                    title="Song One", track_number=1, disc_number=1,
+                    part_key="/library/parts/1", plex_id="plex-1",
+                )
+            ],
+        )
+
+        result = await service.resolve_track_sources("p-1", plex_service=plex_svc)
+
+        assert result["t-1"] == ["plex"]
+        repo.update_track_source.assert_called_once()
+        # AsyncPlaylistRepository forwards positionally:
+        # (playlist_id, track_id, source_type, available_sources,
+        #  track_source_id, plex_rating_key, library_file_id).
+        args, _kwargs = repo.update_track_source.call_args
+        assert args[:4] == ("p-1", "t-1", "plex", ["plex"])
+        assert args[4] == "/library/parts/1"
+        assert args[5] == "plex-1"
+        assert args[6] is _UNSET

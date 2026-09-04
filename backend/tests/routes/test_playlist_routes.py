@@ -7,7 +7,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api.v1.routes.playlists import router as playlists_router
-from core.dependencies import get_playlist_service, get_jellyfin_library_service, get_local_files_service, get_navidrome_library_service
+from api.v1.schemas.request import BatchRequestResponse
+from core.dependencies import get_playlist_service, get_jellyfin_library_service, get_local_files_service, get_navidrome_library_service, get_request_service
 from core.exceptions import PlaylistNotFoundError, InvalidPlaylistDataError, ResourceNotFoundError, ValidationError
 from core.exception_handlers import resource_not_found_handler, validation_error_handler, general_exception_handler
 from repositories.playlist_repository import PlaylistRecord, PlaylistSummaryRecord, PlaylistTrackRecord
@@ -390,3 +391,47 @@ class TestUpdateTrackSourceResolution:
         assert data["source_type"] == "jellyfin"
         assert data["track_source_id"] == "jf-resolved-id"
         assert data["available_sources"] == ["jellyfin", "local"]
+
+
+class TestRequestMissingTracks:
+    def _override_requests(self, client, request_service):
+        client.app.dependency_overrides[get_request_service] = lambda: request_service
+
+    def test_skips_tracks_with_library_file_id(self, client, mock_playlist_service):
+        request_service = AsyncMock()
+        self._override_requests(client, request_service)
+        try:
+            owned = _track(id="t-1")
+            owned.album_id = "mbid-owned"
+            owned.available_sources = []
+            owned.library_file_id = "file-1"
+            mock_playlist_service.get_playlist_with_tracks.return_value = (
+                PlaylistDetailView(record=_playlist(), tracks=[owned], is_owner=True)
+            )
+            resp = client.post("/playlists/p-1/request-missing")
+            assert resp.status_code == 202
+            assert resp.json()["message"].startswith("No missing albums")
+            request_service.request_batch.assert_not_called()
+        finally:
+            del client.app.dependency_overrides[get_request_service]
+
+    def test_requests_truly_missing_album(self, client, mock_playlist_service):
+        request_service = AsyncMock()
+        request_service.request_batch.return_value = BatchRequestResponse(
+            success=True, message="requested", requested=1,
+        )
+        self._override_requests(client, request_service)
+        try:
+            missing = _track(id="t-1")
+            missing.album_id = "mbid-missing"
+            missing.available_sources = []
+            mock_playlist_service.get_playlist_with_tracks.return_value = (
+                PlaylistDetailView(record=_playlist(), tracks=[missing], is_owner=True)
+            )
+            resp = client.post("/playlists/p-1/request-missing")
+            assert resp.status_code == 202
+            request_service.request_batch.assert_called_once()
+            items = request_service.request_batch.call_args[1]["items"]
+            assert [i["musicbrainz_id"] for i in items] == ["mbid-missing"]
+        finally:
+            del client.app.dependency_overrides[get_request_service]

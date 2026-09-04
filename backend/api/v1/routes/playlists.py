@@ -452,6 +452,8 @@ async def request_missing_tracks(
         mbid = track.album_id
         if not mbid or mbid in seen:
             continue
+        if track.library_file_id:
+            continue
         if track.available_sources and len(track.available_sources) > 0:
             continue
         seen.add(mbid)
