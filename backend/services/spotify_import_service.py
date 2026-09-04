@@ -52,6 +52,24 @@ def _best_image_url(images: list[dict], min_size: int = 250) -> str | None:
             return img.get("url")
     return sorted_imgs[-1].get("url")
 
+def _playlist_track_count(playlist: dict) -> int:
+    """Track count from a GET /me/playlists playlist item.
+
+    Spotify simplified-playlist shape (served early Sept 2026, DroppedNeedle
+    v2.9.0, issue #353 over 221 playlists): the count lives under ``items``
+    as a dict ``{"href": ..., "total": N}`` with ``tracks`` null/absent. The
+    older shape used ``tracks: {"total": N}``. ``items`` is also the
+    pagination key elsewhere and may arrive as a list, which carries no
+    total, so only dict shapes are read and anything else yields 0.
+    """
+    for key in ("items", "tracks"):
+        val = playlist.get(key)
+        if isinstance(val, dict):
+            total = val.get("total")
+            if isinstance(total, int):
+                return total
+    return 0
+
 
 _SOURCE = "spotify"
 
@@ -173,7 +191,7 @@ class SpotifyImportService:
                     "id": pid,
                     "name": p.get("name") or "",
                     "description": p.get("description") or "",
-                    "track_count": (p.get("tracks") or {}).get("total", 0),
+                    "track_count": _playlist_track_count(p),
                     "cover_url": cover_url,
                     "owner": owner.get("display_name") or "",
                     "imported_playlist_id": imported_mapping.get(pid),

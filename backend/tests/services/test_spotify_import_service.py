@@ -90,6 +90,52 @@ async def test_list_playlists_filters_to_owned_and_marks_imported():
     assert result[0]["track_count"] == 5
     assert result[0]["cover_url"] == "cover-1"
 
+@pytest.mark.asyncio
+async def test_list_playlists_reads_new_shape_items_total():
+    client = AsyncMock()
+    client.spotify_user_id = "spot-me"
+    client.get_user_playlists = AsyncMock(
+        return_value=[
+            {
+                "id": "p9",
+                "name": "New shape",
+                "description": "",
+                "owner": {"id": "spot-me", "display_name": "Me"},
+                "images": [],
+                "items": {"total": 9},
+                "tracks": None,
+            },
+            {
+                "id": "p-list",
+                "name": "List-shaped items",
+                "description": "",
+                "owner": {"id": "spot-me", "display_name": "Me"},
+                "images": [],
+                "items": [{"id": "t1"}],
+                "tracks": None,
+            },
+            {
+                "id": "p-fallback",
+                "name": "Empty items falls back to tracks",
+                "description": "",
+                "owner": {"id": "spot-me", "display_name": "Me"},
+                "images": [],
+                "items": {},
+                "tracks": {"total": 5},
+            },
+        ]
+    )
+    svc = _service(client)
+    svc._async_repo = AsyncMock()
+    svc._async_repo.get_all_playlists = AsyncMock(return_value=[])
+
+    result = await svc.list_playlists("user-1")
+
+    assert [p["id"] for p in result] == ["p9", "p-list", "p-fallback"]
+    assert result[0]["track_count"] == 9
+    assert result[1]["track_count"] == 0
+    assert result[2]["track_count"] == 5
+
 
 @pytest.mark.asyncio
 async def test_populate_playlist_with_no_tracks_writes_empty():
