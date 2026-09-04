@@ -94,6 +94,13 @@
 		scheduleSave();
 	}
 
+	// Mirrors getSettingsLink in ServicePromptCard.svelte: per-user scrobble links live on /profile.
+	function getConnectLink(requires: string): string {
+		if (requires === 'lastfm' || requires === 'listenbrainz')
+			return withBasePath('/profile#scrobbling');
+		return withBasePath(`/settings?tab=${requires}`);
+	}
+
 	onDestroy(() => {
 		if (saveTimer) {
 			clearTimeout(saveTimer);
@@ -176,7 +183,7 @@
 									</div>
 									{#if !section.available && section.requires}
 										<a
-											href={withBasePath('/settings?tab=connect-apps')}
+											href={getConnectLink(section.requires)}
 											class="link flex shrink-0 items-center gap-1 text-xs text-primary/80"
 										>
 											Connect {section.requires === 'listenbrainz'
