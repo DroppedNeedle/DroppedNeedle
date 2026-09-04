@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.exceptions import AuthenticationError
+from core.exceptions import AuthenticationError, PlexApiError
 from services.jellyfin_user_auth_service import JellyfinUserAuthService
 from services.plex_user_auth_service import PlexUserAuthService
 
@@ -176,4 +176,41 @@ async def test_plex_poll_for_link_enforces_server_membership(plex_service):
     svc._get_server_machine_id = AsyncMock(return_value="machine-1")
     svc._check_server_membership = AsyncMock(return_value=False)
     with pytest.raises(AuthenticationError):
+        await svc.poll_for_link(pin_id=1)
+
+@pytest.mark.asyncio
+async def test_plex_transient_resources_surface_verify_worded_errors(plex_service):
+    # A transient/unverifiable /resources body reaches the service as
+    # PlexApiError and must surface as verify-worded errors, never the
+    # "does not have access" accusation.
+    svc, repo, _ = plex_service
+    svc._check_server_membership = PlexUserAuthService._check_server_membership.__get__(svc)
+    svc._get_server_access_token = PlexUserAuthService._get_server_access_token.__get__(svc)
+
+    repo.get_account_server_ids = AsyncMock(
+        side_effect=PlexApiError("Unexpected Plex /resources response shape")
+    )
+    with pytest.raises(AuthenticationError, match="Could not verify server access"):
+        await svc._check_server_membership("tok", "client-1", "machine-1")
+
+    repo.get_server_access_token = AsyncMock(
+        side_effect=PlexApiError("Unexpected Plex /resources response shape")
+    )
+    with pytest.raises(AuthenticationError, match="Could not verify Plex server access"):
+        await svc._get_server_access_token("tok", "client-1", "machine-1")
+
+    repo.get_server_access_token = AsyncMock(return_value=None)
+    with pytest.raises(AuthenticationError) as exc_info:
+        await svc._get_server_access_token("tok", "client-1", "machine-1")
+    assert str(exc_info.value) == "Could not verify Plex server access"
+
+
+@pytest.mark.asyncio
+async def test_plex_genuine_membership_miss_keeps_access_message(plex_service):
+    # A parsed list that genuinely lacks the server still yields the access
+    # message on the membership path.
+    svc, repo, _ = plex_service
+    svc._check_server_membership = PlexUserAuthService._check_server_membership.__get__(svc)
+    repo.get_account_server_ids = AsyncMock(return_value={"other-machine"})
+    with pytest.raises(AuthenticationError, match="does not have access"):
         await svc.poll_for_link(pin_id=1)

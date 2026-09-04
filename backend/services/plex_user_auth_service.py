@@ -164,7 +164,7 @@ class PlexUserAuthService:
             logger.error(f"Failed to resolve Plex server token: {e}")
             raise AuthenticationError("Could not verify Plex server access")
         if not token:
-            raise AuthenticationError("Your Plex account does not have access to this server")
+            raise AuthenticationError("Could not verify Plex server access")
         return token
 
     async def _get_server_machine_id(self) -> str | None:

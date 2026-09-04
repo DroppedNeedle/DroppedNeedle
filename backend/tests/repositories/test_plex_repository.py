@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -712,6 +713,34 @@ class TestAccountAuthCalls:
             MockClient.return_value = _mock_fresh_client(response)
             with pytest.raises(PlexAuthError):
                 await repo.get_account_server_ids("user-token", "client-123")
+
+    @pytest.mark.asyncio
+    async def test_non_list_resources_raises_without_logging_body(self, caplog):
+        # Transient plex.tv body (e.g. dict) must raise, never silently yield
+        # "no servers" - and the warning must not include the body itself,
+        # which carries per-server accessTokens.
+
+        repo, _, _ = _make_repo()
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 200
+        response.json.return_value = {
+            "clientIdentifier": "server-machine-id",
+            "accessToken": "super-secret-token",
+        }
+
+        with patch("httpx.AsyncClient") as MockClient:
+            MockClient.return_value = _mock_fresh_client(response)
+            with caplog.at_level(logging.WARNING, logger="repositories.plex_repository"):
+                with pytest.raises(PlexApiError):
+                    await repo.get_account_server_ids("user-token", "client-123")
+            assert "super-secret-token" not in caplog.text
+
+        with patch("httpx.AsyncClient") as MockClient:
+            MockClient.return_value = _mock_fresh_client(response)
+            with pytest.raises(PlexApiError):
+                await repo.get_server_access_token(
+                    "user-token", "client-123", "server-machine-id"
+                )
 
     @pytest.mark.asyncio
     async def test_resolves_server_specific_access_token(self):
