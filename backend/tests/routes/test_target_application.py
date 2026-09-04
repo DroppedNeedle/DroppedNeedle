@@ -1,4 +1,5 @@
 import ast
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -1094,3 +1095,160 @@ def test_empty_base_path_keeps_today_unprefixed_surface(
     protected = client.get("/api/v1/artists")
     assert protected.status_code == 401
     assert protected.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+_BYPASS_WARNING = (
+    "[upgrade] WARNING: library migration launcher was bypassed - expected "
+    "`python -m maintenance.automatic_upgrade --start-target`; catalog "
+    "migrations did not run. Restore the image CMD."
+)
+
+
+def _bypass_settings(tmp_path: Path, *, root: Path, db_exists: bool) -> SimpleNamespace:
+    database = tmp_path / "library.db"
+    if db_exists:
+        database.write_bytes(b"")
+    return SimpleNamespace(
+        root_app_dir=root,
+        cache_dir=tmp_path,
+        library_db_path=database,
+    )
+
+
+def _patch_bypass_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    automatic_upgrade: object,
+    tmp_path: Path,
+    *,
+    container: bool,
+    token: str | None,
+) -> None:
+    if token is None:
+        monkeypatch.delenv("DROPPEDNEEDLE_TARGET_ADMISSION_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("DROPPEDNEEDLE_TARGET_ADMISSION_TOKEN", token)
+    revision = tmp_path / "source-revision"
+    if container:
+        revision.write_text("rev")
+    monkeypatch.setattr(automatic_upgrade, "_SOURCE_REVISION_PATH", revision)
+
+
+@pytest.mark.parametrize(
+    ("has_marker", "state"),
+    [(False, None), (True, {"stage": "promoted_pending_startup"})],
+)
+def test_launcher_bypass_warns_when_container_db_needs_upgrade(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    has_marker: bool,
+    state: dict[str, str] | None,
+) -> None:
+    import target_application as target_module
+    from maintenance import automatic_upgrade
+
+    _patch_bypass_environment(
+        monkeypatch, automatic_upgrade, tmp_path, container=True, token=None
+    )
+    monkeypatch.setattr(
+        automatic_upgrade, "_database_has_marker", lambda _db: has_marker
+    )
+    monkeypatch.setattr(automatic_upgrade, "_read_state", lambda _path: state)
+    settings = _bypass_settings(tmp_path, root=Path("/app"), db_exists=True)
+
+    assert target_module._launcher_bypassed(settings) is True
+    assert target_module._LAUNCHER_BYPASS_WARNING == _BYPASS_WARNING
+
+    with caplog.at_level(logging.WARNING, logger="target_application"):
+        target_module._emit_launcher_bypass_warning()
+    assert _BYPASS_WARNING in caplog.text
+    assert capsys.readouterr().out.strip() == _BYPASS_WARNING
+
+
+@pytest.mark.parametrize(
+    "state",
+    [None, {"stage": "completed"}],
+)
+def test_launcher_bypass_silent_when_container_db_marked_and_settled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state: dict[str, str] | None,
+) -> None:
+    import target_application as target_module
+    from maintenance import automatic_upgrade
+
+    _patch_bypass_environment(
+        monkeypatch, automatic_upgrade, tmp_path, container=True, token=None
+    )
+    monkeypatch.setattr(automatic_upgrade, "_database_has_marker", lambda _db: True)
+    monkeypatch.setattr(automatic_upgrade, "_read_state", lambda _path: state)
+    settings = _bypass_settings(tmp_path, root=Path("/app"), db_exists=True)
+
+    assert target_module._launcher_bypassed(settings) is False
+
+
+def test_launcher_bypass_silent_on_fresh_volume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import target_application as target_module
+    from maintenance import automatic_upgrade
+
+    _patch_bypass_environment(
+        monkeypatch, automatic_upgrade, tmp_path, container=True, token=None
+    )
+    marker = MagicMock()
+    monkeypatch.setattr(automatic_upgrade, "_database_has_marker", marker)
+    settings = _bypass_settings(tmp_path, root=Path("/app"), db_exists=False)
+
+    assert target_module._launcher_bypassed(settings) is False
+    marker.assert_not_called()
+
+
+def test_launcher_bypass_silent_with_admission_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import target_application as target_module
+    from maintenance import automatic_upgrade
+
+    _patch_bypass_environment(
+        monkeypatch, automatic_upgrade, tmp_path, container=True, token="a" * 32
+    )
+    marker = MagicMock(return_value=False)
+    monkeypatch.setattr(automatic_upgrade, "_database_has_marker", marker)
+    settings = _bypass_settings(tmp_path, root=Path("/app"), db_exists=True)
+
+    assert target_module._launcher_bypassed(settings) is False
+    marker.assert_not_called()
+
+
+def test_launcher_bypass_silent_on_local_dev_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import target_application as target_module
+    from maintenance import automatic_upgrade
+
+    _patch_bypass_environment(
+        monkeypatch, automatic_upgrade, tmp_path, container=False, token=None
+    )
+    marker = MagicMock(return_value=False)
+    monkeypatch.setattr(automatic_upgrade, "_database_has_marker", marker)
+    settings = _bypass_settings(tmp_path, root=tmp_path, db_exists=True)
+
+    assert target_module._launcher_bypassed(settings) is False
+    marker.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_launcher_bypass_warning_never_blocks_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import target_application as target_module
+
+    def _boom(_settings: object) -> bool:
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(target_module, "_launcher_bypassed", _boom)
+    settings = _bypass_settings(tmp_path, root=Path("/app"), db_exists=True)
+
+    assert await target_module._warn_if_launcher_bypassed(settings) is False

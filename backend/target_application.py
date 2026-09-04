@@ -160,7 +160,7 @@ from core.dependencies import (
     get_library_management_recovery_service,
 )
 from core.base_path import BasePathMiddleware
-from core.config import get_settings
+from core.config import Settings, get_settings
 from core.exception_handlers import (
     circuit_open_error_handler,
     client_disconnected_handler,
@@ -519,10 +519,71 @@ def _server_timezone_name() -> str:
     return "UTC"
 
 
+_LAUNCHER_BYPASS_WARNING = (
+    "[upgrade] WARNING: library migration launcher was bypassed - expected "
+    "`python -m maintenance.automatic_upgrade --start-target`; catalog "
+    "migrations did not run. Restore the image CMD."
+)
+
+_UPGRADE_IN_PROGRESS_STAGES = frozenset(
+    {"running", "migrating", "promoting", "promoted_pending_startup"}
+)
+
+
+def _launcher_bypassed(settings: Settings) -> bool:
+    """Detect a container boot that skipped the migration launcher.
+
+    Mirrors the ``needs_upgrade`` decision in
+    ``maintenance.automatic_upgrade.main`` (existing live database without the
+    migration marker, or an interrupted upgrade state), gated on container
+    signals so fresh volumes and local development never match. Read-only and
+    warning-only: any error means "no warning", never an exception.
+    """
+    try:
+        from maintenance.automatic_upgrade import (
+            UPGRADE_ID,
+            _ADMISSION_TOKEN_ENV,
+            _database_has_marker,
+            _read_state,
+            _SOURCE_REVISION_PATH,
+        )
+
+        if os.getenv(_ADMISSION_TOKEN_ENV, "").strip():
+            return False
+        if not _SOURCE_REVISION_PATH.exists() and settings.root_app_dir != Path("/app"):
+            return False
+        if not settings.library_db_path.is_file():
+            return False
+        if not _database_has_marker(settings.library_db_path):
+            return True
+        state = _read_state(
+            settings.cache_dir / f"automatic-upgrade-{UPGRADE_ID}.json"
+        )
+        return state is not None and state.get("stage") in _UPGRADE_IN_PROGRESS_STAGES
+    except Exception:  # noqa: BLE001 - bypass probe must never block startup
+        return False
+
+
+def _emit_launcher_bypass_warning() -> None:
+    logger.warning(_LAUNCHER_BYPASS_WARNING)
+    print(_LAUNCHER_BYPASS_WARNING, flush=True)
+
+
+async def _warn_if_launcher_bypassed(settings: Settings) -> bool:
+    """Emit the bypass warning when the launcher was skipped. Never raises."""
+    try:
+        if await asyncio.to_thread(_launcher_bypassed, settings):
+            _emit_launcher_bypass_warning()
+            return True
+    except Exception:  # noqa: BLE001 - bypass probe must never block startup
+        logger.debug("target_startup.launcher_bypass_probe_suppressed")
+    return False
+
 @asynccontextmanager
 async def production_target_lifespan(app: FastAPI):
     settings = get_settings()
     logging.getLogger().setLevel(getattr(logging, settings.log_level, logging.INFO))
+    await _warn_if_launcher_bypassed(settings)
     from core.config import migrate_legacy_config
     from maintenance.automatic_upgrade import (
         await_target_startup_admission,
