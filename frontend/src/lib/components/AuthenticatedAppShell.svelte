@@ -57,6 +57,7 @@
 		Compass,
 		Menu,
 		Download,
+		Ellipsis,
 		PanelLeft,
 		TriangleAlert,
 		Info,
@@ -366,6 +367,25 @@
 	function isLibraryNavActive(): boolean {
 		return isNavActive('/library') && !isNavActive('/library/management');
 	}
+	function openMoreNav(): void {
+		(document.getElementById('more_nav_sheet') as HTMLDialogElement | null)?.showModal();
+	}
+
+	function closeMoreNav(): void {
+		(document.getElementById('more_nav_sheet') as HTMLDialogElement | null)?.close();
+	}
+
+	// The bottom bar only fits the primary destinations; everything else lives in
+	// the More sheet, so the More tab highlights for any of those paths (#182).
+	function isMoreNavActive(): boolean {
+		return (
+			isNavActive('/downloads') ||
+			isNavActive('/following') ||
+			isNavActive('/playlists') ||
+			isNavActive('/requests') ||
+			isNavActive('/library/management')
+		);
+	}
 
 	const integrations = fromStore(integrationStore);
 	const downloadClientConfigured = $derived(
@@ -668,7 +688,11 @@
 	</div>
 </div>
 
-<nav class="droppedneedle-bottom-nav md:hidden" aria-label="Primary navigation">
+<nav
+	class="droppedneedle-bottom-nav md:hidden"
+	class:droppedneedle-bottom-nav--no-settings={!authStore.isAdmin}
+	aria-label="Primary navigation"
+>
 	<a
 		href={withBasePath('/')}
 		class="droppedneedle-bottom-nav__item"
@@ -709,21 +733,133 @@
 			<span class="droppedneedle-bottom-nav__badge" aria-label="Library sync in progress"></span>
 		{/if}
 	</a>
-	<a
-		href={versionUpdateAvailable ? withBasePath('/settings?tab=about') : withBasePath('/settings')}
+	{#if authStore.isAdmin}
+		<a
+			href={versionUpdateAvailable
+				? withBasePath('/settings?tab=about')
+				: withBasePath('/settings')}
+			class="droppedneedle-bottom-nav__item"
+			class:active={isNavActive('/settings')}
+			aria-current={isNavActive('/settings') ? 'page' : undefined}
+		>
+			<Settings />
+			<span>Settings</span>
+			{#if versionUpdateAvailable}
+				<span class="droppedneedle-bottom-nav__badge" aria-label="Update available">
+					<ArrowUpCircle class="h-3 w-3" />
+				</span>
+			{/if}
+		</a>
+	{/if}
+	<button
+		type="button"
 		class="droppedneedle-bottom-nav__item"
-		class:active={isNavActive('/settings')}
-		aria-current={isNavActive('/settings') ? 'page' : undefined}
+		class:active={isMoreNavActive()}
+		onclick={openMoreNav}
+		aria-label="More navigation options"
+		aria-haspopup="dialog"
 	>
-		<Settings />
-		<span>Settings</span>
-		{#if versionUpdateAvailable}
-			<span class="droppedneedle-bottom-nav__badge" aria-label="Update available">
-				<ArrowUpCircle class="h-3 w-3" />
-			</span>
-		{/if}
-	</a>
+		<Ellipsis />
+		<span>More</span>
+	</button>
 </nav>
+
+<dialog id="more_nav_sheet" class="modal modal-bottom sm:modal-middle" aria-label="More navigation">
+	<div class="modal-box p-2">
+		<form method="dialog">
+			<button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Close"
+				><X class="h-4 w-4" /></button
+			>
+		</form>
+		<h3 class="font-bold text-lg px-2 pt-1 pb-2">More</h3>
+		<ul class="menu w-full">
+			<li>
+				<a
+					href={withBasePath('/downloads')}
+					class:menu-active={isNavActive('/downloads')}
+					aria-current={isNavActive('/downloads') ? 'page' : undefined}
+					onclick={closeMoreNav}
+				>
+					<Download class="h-6 w-6" />
+					Downloads
+				</a>
+			</li>
+			<li>
+				<a
+					href={withBasePath('/following')}
+					class:menu-active={isNavActive('/following')}
+					aria-current={isNavActive('/following') ? 'page' : undefined}
+					onclick={closeMoreNav}
+				>
+					<Heart class="h-6 w-6" />
+					Following
+				</a>
+			</li>
+			{#if downloadClientConfigured}
+				<li>
+					<a
+						href={withBasePath('/playlists')}
+						class:menu-active={isNavActive('/playlists')}
+						aria-current={isNavActive('/playlists') ? 'page' : undefined}
+						onclick={closeMoreNav}
+					>
+						<ListMusic class="h-6 w-6" />
+						Playlists
+					</a>
+				</li>
+				<li>
+					<a
+						href={withBasePath('/requests')}
+						class:menu-active={isNavActive('/requests')}
+						aria-current={isNavActive('/requests') ? 'page' : undefined}
+						onclick={closeMoreNav}
+					>
+						<Inbox class="h-6 w-6" />
+						Requests
+					</a>
+				</li>
+			{/if}
+			{#if authStore.isAdmin}
+				<li>
+					<a
+						href={withBasePath('/library/management')}
+						class:menu-active={isNavActive('/library/management')}
+						aria-current={isNavActive('/library/management') ? 'page' : undefined}
+						aria-label="Library Management"
+						onclick={closeMoreNav}
+					>
+						<span class="relative inline-flex h-6 w-6">
+							<LibraryBig class="h-6 w-6" />
+							<span
+								class="absolute -bottom-1.5 -right-1.5 grid h-4 w-4 place-items-center rounded-full bg-base-200 text-library-manage"
+							>
+								<Cog class="h-3 w-3" />
+							</span>
+						</span>
+						Library Management
+					</a>
+				</li>
+				<li>
+					<a
+						href={withBasePath('/requests?tab=approvals')}
+						class:menu-active={isNavActive('/requests')}
+						aria-current={isNavActive('/requests') ? 'page' : undefined}
+						onclick={closeMoreNav}
+					>
+						<span class="relative inline-flex">
+							<ShieldCheck class="h-6 w-6" />
+							<PendingApprovalNavBadge />
+						</span>
+						Approvals
+					</a>
+				</li>
+			{/if}
+		</ul>
+	</div>
+	<form method="dialog" class="modal-backdrop">
+		<button aria-label="Close more navigation">close</button>
+	</form>
+</dialog>
 
 <dialog id="search_modal" class="modal">
 	<div class="modal-box overflow-visible">
