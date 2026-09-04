@@ -96,6 +96,13 @@ function createPlayerStore() {
 	let shuffleOrder = $state<number[]>([]);
 	let consecutiveErrors = 0;
 	let failedTrackNames: string[] = [];
+	// Per-item error recovery: retry the same item once, then fail over to an
+	// alternate source once, before counting the item failed and skipping on.
+	// loadQueueItem clears both when starting a fresh (non-recovery) item and
+	// the 'playing' handler clears them on success, so recovery never chains.
+	let retriedIndex: number | null = null;
+	let fallbackIndex: number | null = null;
+	let recoveryPending = false;
 	let errorSkipTimeout: ReturnType<typeof setTimeout> | null = null;
 	let lastPersistTime = 0;
 	let beforeUnloadRegistered = false;
@@ -203,6 +210,9 @@ function createPlayerStore() {
 		shuffleEnabled = false;
 		consecutiveErrors = 0;
 		failedTrackNames = [];
+		retriedIndex = null;
+		fallbackIndex = null;
+		recoveryPending = false;
 		progressReporter.stop();
 		unregisterBeforeUnload();
 		storeSessionData(null);
@@ -263,6 +273,15 @@ function createPlayerStore() {
 	async function loadQueueItem(index: number): Promise<void> {
 		const item = queue[index];
 		if (!item) return;
+		// Recovery reloads of the same item preserve the retry/fallback marks so
+		// a failed retry or fallback cannot trigger itself again. Any other load
+		// starts fresh.
+		if (recoveryPending) {
+			recoveryPending = false;
+		} else {
+			retriedIndex = null;
+			fallbackIndex = null;
+		}
 		if (errorSkipTimeout) {
 			clearTimeout(errorSkipTimeout);
 			errorSkipTimeout = null;
@@ -287,8 +306,12 @@ function createPlayerStore() {
 			const r = await resolveSourceForItem(item);
 			source = r.source;
 			resolvedUrl = r.loadUrl;
-		} catch {
-			if (gen === loadGeneration) handleTrackError(gen);
+		} catch (e) {
+			if (gen === loadGeneration)
+				handleTrackError(
+					gen,
+					e instanceof Error ? { code: 'LOAD_ERROR', message: e.message } : undefined
+				);
 			return;
 		}
 		currentSource = source;
@@ -313,16 +336,64 @@ function createPlayerStore() {
 			if (gen === loadGeneration && activeItem.sourceType === 'youtube') {
 				source.play();
 			}
-		} catch {
-			if (gen === loadGeneration) handleTrackError(gen);
+		} catch (e) {
+			if (gen === loadGeneration)
+				handleTrackError(
+					gen,
+					e instanceof Error ? { code: 'LOAD_ERROR', message: e.message } : undefined
+				);
 		}
 	}
 
-	function handleTrackError(gen: number): void {
+	function nextFallbackSource(item: QueueItem): SourceType | null {
+		const alternates = (item.availableSources ?? []).filter(
+			(s) => s !== item.sourceType && item.sourceIds?.[s]
+		);
+		return alternates[0] ?? null;
+	}
+
+	function handleTrackError(gen: number, error?: { code: string; message: string }): void {
 		if (gen !== loadGeneration) return;
+		const index = currentIndex;
+		const item = queue[index];
+		const trackName = nowPlaying?.trackName ?? item?.trackName ?? 'Unknown track';
+		const failedSource = item?.sourceType ?? nowPlaying?.sourceType ?? 'unknown';
+		const detail = error?.message || error?.code || '';
+		const detailSuffix = detail ? ` (${detail})` : '';
+		// Same track may have failed transiently: reload it once with a fresh
+		// resolve+load. The retry keeps its mark in loadQueueItem, so a failed
+		// retry falls through to fallback/skip instead of looping.
+		if (item && retriedIndex !== index) {
+			retriedIndex = index;
+			recoveryPending = true;
+			playbackToast.show(
+				`"${trackName}" failed on ${failedSource}${detailSuffix}, retrying...`,
+				'warning'
+			);
+			void loadQueueItem(index);
+			return;
+		}
+		// Same track playable from another source (e.g. Plex fails but the local
+		// copy works): switch with the existing source machinery before skipping.
+		if (item && fallbackIndex !== index) {
+			const next = nextFallbackSource(item);
+			if (next) {
+				const switched = changeItemSource(queue, index, next);
+				if (!switched.error) {
+					fallbackIndex = index;
+					queue = switched.newQueue;
+					recoveryPending = true;
+					playbackToast.show(
+						`"${trackName}" failed on ${failedSource}, trying ${next}...`,
+						'warning'
+					);
+					void loadQueueItem(index);
+					return;
+				}
+			}
+		}
 		consecutiveErrors++;
 		playbackState = 'error';
-		const trackName = nowPlaying?.trackName ?? 'Unknown track';
 		failedTrackNames.push(trackName);
 		if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
 			const named = failedTrackNames
@@ -337,13 +408,16 @@ function createPlayerStore() {
 		}
 		const nextIdx = getNextIndex();
 		if (nextIdx !== null) {
-			playbackToast.show(`"${trackName}" is unavailable, skipping...`, 'warning');
+			playbackToast.show(
+				`"${trackName}" failed on ${failedSource}${detailSuffix}, skipping...`,
+				'warning'
+			);
 			errorSkipTimeout = setTimeout(() => {
 				errorSkipTimeout = null;
 				if (gen === loadGeneration) void loadQueueItem(nextIdx);
 			}, ERROR_SKIP_DELAY_MS);
 		} else {
-			playbackToast.show(`"${trackName}" unavailable`, 'error');
+			playbackToast.show(`"${trackName}" failed on ${failedSource}${detailSuffix}`, 'error');
 		}
 	}
 
@@ -363,6 +437,8 @@ function createPlayerStore() {
 			if (state === 'playing') {
 				consecutiveErrors = 0;
 				failedTrackNames = [];
+				retriedIndex = null;
+				fallbackIndex = null;
 				if (getJellyfinItem())
 					progressReporter.start(() => ({
 						jellyfinItem: getJellyfinItem(),
@@ -422,9 +498,9 @@ function createPlayerStore() {
 				persist();
 			}
 		});
-		source.onError(() => {
+		source.onError((error) => {
 			if (gen !== loadGeneration) return;
-			handleTrackError(gen);
+			handleTrackError(gen, error);
 		});
 	}
 

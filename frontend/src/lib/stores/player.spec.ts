@@ -1030,14 +1030,35 @@ describe('track failure reporting', () => {
 		capturedErrorCallbacks.forEach((cb) => cb({ code: '4', message: 'stream failed' }));
 	}
 
+	function singleSourceItems(count: number): QueueItem[] {
+		return Array.from({ length: count }, (_, i) => {
+			const id = `vid-${i}`;
+			return makeItem({
+				trackSourceId: id,
+				trackName: `Track ${i + 1}`,
+				trackNumber: i + 1,
+				availableSources: ['local'],
+				sourceIds: { local: id }
+			});
+		});
+	}
+
+	// One failure retries the same item; only the retry failing moves onward.
+	async function failTrackToSkip(): Promise<void> {
+		fireCurrentTrackError();
+		await vi.advanceTimersByTimeAsync(0);
+		fireCurrentTrackError();
+		await vi.advanceTimersByTimeAsync(2100);
+	}
+
 	it('final failure toast names the failed tracks', async () => {
-		playerStore.playQueue(makeItems(3));
+		playerStore.playQueue(singleSourceItems(3));
 		await vi.advanceTimersByTimeAsync(0);
 
+		await failTrackToSkip();
+		await failTrackToSkip();
 		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(2100);
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(2100);
+		await vi.advanceTimersByTimeAsync(0);
 		fireCurrentTrackError();
 		await vi.advanceTimersByTimeAsync(0);
 
@@ -1049,20 +1070,19 @@ describe('track failure reporting', () => {
 	});
 
 	it('failed track names reset after a successful play', async () => {
-		playerStore.playQueue(makeItems(4));
+		playerStore.playQueue(singleSourceItems(4));
 		await vi.advanceTimersByTimeAsync(0);
 
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(2100);
+		await failTrackToSkip();
 
 		// track 2 plays successfully - the failure list resets
 		capturedStateCallbacks.forEach((cb) => cb('playing'));
 		await vi.advanceTimersByTimeAsync(0);
 
+		await failTrackToSkip();
+		await failTrackToSkip();
 		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(2100);
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(2100);
+		await vi.advanceTimersByTimeAsync(0);
 		fireCurrentTrackError();
 		await vi.advanceTimersByTimeAsync(0);
 
@@ -1071,5 +1091,92 @@ describe('track failure reporting', () => {
 			'Several tracks failed: "Track 2", "Track 3", "Track 4" - playback stopped.'
 		);
 		expect(lastCall?.[0]).not.toContain('Track 1');
+	});
+
+	it('retries the same track once before advancing', async () => {
+		playerStore.playQueue(singleSourceItems(2));
+		await vi.advanceTimersByTimeAsync(0);
+
+		fireCurrentTrackError();
+		await vi.advanceTimersByTimeAsync(0);
+
+		// Retry reloads the same track instead of skipping onward.
+		expect(playerStore.currentIndex).toBe(0);
+		expect(playbackToast.show).toHaveBeenLastCalledWith(
+			'"Track 1" failed on local (stream failed), retrying...',
+			'warning'
+		);
+
+		fireCurrentTrackError();
+		await vi.advanceTimersByTimeAsync(2100);
+
+		expect(playerStore.currentIndex).toBe(1);
+		expect(playbackToast.show).toHaveBeenLastCalledWith(
+			'"Track 1" failed on local (stream failed), skipping...',
+			'warning'
+		);
+	});
+
+	it('falls back to the next available source before skipping', async () => {
+		const plexId = 'plex-part-key';
+		const plexItem = makeItem({
+			trackSourceId: plexId,
+			trackName: 'Plex Track',
+			sourceType: 'plex',
+			availableSources: ['plex', 'local'],
+			sourceIds: { plex: plexId, local: 'file-1' }
+		});
+		playerStore.playQueue([
+			plexItem,
+			makeItem({ trackSourceId: 'vid-next', trackName: 'Next Track' })
+		]);
+		await vi.advanceTimersByTimeAsync(0);
+
+		fireCurrentTrackError();
+		await vi.advanceTimersByTimeAsync(0);
+		fireCurrentTrackError();
+		await vi.advanceTimersByTimeAsync(0);
+
+		// Same track now plays from the alternate source instead of skipping.
+		expect(playerStore.currentIndex).toBe(0);
+		expect(playerStore.queue[0].sourceType).toBe('local');
+		expect(playerStore.queue[0].trackSourceId).toBe('file-1');
+		expect(playbackToast.show).toHaveBeenLastCalledWith(
+			'"Plex Track" failed on plex, trying local...',
+			'warning'
+		);
+
+		fireCurrentTrackError();
+		await vi.advanceTimersByTimeAsync(2100);
+
+		expect(playerStore.currentIndex).toBe(1);
+		expect(playbackToast.show).toHaveBeenLastCalledWith(
+			'"Plex Track" failed on local (stream failed), skipping...',
+			'warning'
+		);
+	});
+
+	it('names the failed source and error detail when nothing is next', async () => {
+		const plexId = 'plex-part-key';
+		playerStore.playQueue([
+			makeItem({
+				trackSourceId: plexId,
+				trackName: 'Lone Track',
+				sourceType: 'plex',
+				availableSources: ['plex'],
+				sourceIds: { plex: plexId }
+			})
+		]);
+		await vi.advanceTimersByTimeAsync(0);
+
+		fireCurrentTrackError();
+		await vi.advanceTimersByTimeAsync(0);
+		fireCurrentTrackError();
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(playbackToast.show).toHaveBeenLastCalledWith(
+			'"Lone Track" failed on plex (stream failed)',
+			'error'
+		);
 	});
 });
