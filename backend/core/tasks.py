@@ -124,6 +124,56 @@ async def cleanup_disk_cache_periodically(
             logger.error("Disk cache cleanup task failed: %s", e, exc_info=True)
 
 
+async def export_navidrome_playlists_periodically(
+    interval: int = 300,
+) -> None:
+    """Keep Navidrome's imported playlists in step with DroppedNeedle's.
+
+    Polled rather than hooked into every playlist mutation, so no edit path
+    can be missed. Unchanged files are not rewritten.
+    """
+    from core.dependencies import (
+        get_navidrome_playlist_export_service,
+        get_preferences_service,
+    )
+
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            settings = get_preferences_service().get_navidrome_connection()
+            if not settings.playlist_sync_enabled or not settings.playlist_sync_path:
+                continue
+            result = await get_navidrome_playlist_export_service().sync(
+                target_dir=settings.playlist_sync_path,
+                scope=settings.playlist_sync_scope,
+                remove_deleted=settings.playlist_sync_remove_deleted,
+            )
+            if result.removal_failures:
+                logger.error(
+                    "Navidrome playlist export could not remove %d superseded "
+                    "playlist file(s); they remain visible in Navidrome and will "
+                    "be retried: %s",
+                    result.removal_failures,
+                    result.message,
+                )
+            elif not result.success:
+                logger.warning("Navidrome playlist export: %s", result.message)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(
+                "Navidrome playlist export task failed: %s", e, exc_info=True
+            )
+
+
+def start_navidrome_playlist_export_task(interval: int = 300) -> asyncio.Task:
+    task = asyncio.create_task(
+        export_navidrome_playlists_periodically(interval=interval)
+    )
+    TaskRegistry.get_instance().register("navidrome-playlist-export", task)
+    return task
+
+
 def start_disk_cache_cleanup_task(
     disk_cache: DiskMetadataCache,
     interval: int = 600,

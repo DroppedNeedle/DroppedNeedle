@@ -57,6 +57,7 @@ _FILESYSTEM_ALLOWLIST = {
     "services/native/edition_conversion_service.py",  # edition-conversion bundle staging
     "services/native/file_processor.py",  # slskd download staging before the import lane
     "services/playlist_service.py",  # user-initiated playlist export (writes outside the library)
+    "services/navidrome_playlist_export_service.py",  # .m3u8 export; writes/removes only marker-owned playlist files, never audio
     "services/local_files_service.py",  # album zip export via NamedTemporaryFile outside the library
     "services/cache_service.py",  # disposable cache-dir maintenance
     "services/preferences_service.py",  # config.json persistence

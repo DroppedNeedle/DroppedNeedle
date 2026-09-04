@@ -794,11 +794,30 @@ export type JellyfinTrackPage = {
 	limit: number;
 };
 
+export type NavidromePlaylistSyncScope = 'public' | 'all';
+
 export type NavidromeConnectionSettings = {
 	navidrome_url: string;
 	username: string;
 	password: string;
 	enabled: boolean;
+	playlist_sync_enabled: boolean;
+	playlist_sync_path: string;
+	playlist_sync_scope: NavidromePlaylistSyncScope;
+	playlist_sync_remove_deleted: boolean;
+};
+
+export type NavidromePlaylistSyncResult = {
+	success: boolean;
+	message: string;
+	written: number;
+	unchanged: number;
+	removed: number;
+	removal_failures: number;
+	skipped_empty: number;
+	skipped_not_ours: number;
+	tracks_missing_files: number;
+	tracks_unrepresentable: number;
 };
 
 export type NavidromeTrackInfo = {

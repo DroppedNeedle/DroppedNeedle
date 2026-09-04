@@ -142,6 +142,7 @@ from .service_providers import (  # noqa: F401
     get_edition_conversion_service,
     get_library_contribution_service,
     get_library_contribution_verification_worker,
+    get_navidrome_playlist_export_service,
     get_target_library_repository,
     get_target_genre_index,
     get_target_album_release_pin_store,
