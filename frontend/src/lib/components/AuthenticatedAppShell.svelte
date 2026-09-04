@@ -724,8 +724,8 @@
 	<a
 		href={withBasePath('/library')}
 		class="droppedneedle-bottom-nav__item"
-		class:active={isNavActive('/library')}
-		aria-current={isNavActive('/library') ? 'page' : undefined}
+		class:active={isLibraryNavActive()}
+		aria-current={isLibraryNavActive() ? 'page' : undefined}
 	>
 		<Menu />
 		<span>Library</span>
