@@ -55,6 +55,12 @@ class JellyfinLibraryService:
         self._preferences = preferences_service
         self._client_factory = client_factory
 
+    def is_configured(self) -> bool:
+        try:
+            return bool(self._jellyfin.is_configured())
+        except Exception:  # noqa: BLE001
+            return True
+
     def _get_recently_played_ttl(self) -> int:
         try:
             return self._preferences.get_advanced_settings().cache_ttl_jellyfin_recently_played

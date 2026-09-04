@@ -88,6 +88,12 @@ class LocalFilesService:
         self._preferences = preferences_service
         self._cache = cache
 
+    def is_configured(self) -> bool:
+        try:
+            return bool(self._library_repo.is_configured())
+        except Exception:  # noqa: BLE001
+            return True
+
     def _get_library_roots(self) -> list[Path]:
         """Configured native-library scan roots (Settings -> Library).
 

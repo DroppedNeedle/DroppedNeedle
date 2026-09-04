@@ -134,6 +134,12 @@ class PlexLibraryService:
     def lookup_plex_id(self, mbid: str) -> str | None:
         return self._mbid_to_plex_id.get(mbid)
 
+    def is_configured(self) -> bool:
+        try:
+            return bool(self._plex.is_configured())
+        except Exception:  # noqa: BLE001
+            return True
+
     def _get_configured_section_ids(self) -> list[str]:
         try:
             conn = self._preferences.get_plex_connection_raw()

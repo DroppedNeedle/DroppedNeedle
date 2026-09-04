@@ -13,6 +13,7 @@ from core.exceptions import (
     NavidromeApiError,
     NavidromeAuthError,
     NavidromeSubsonicError,
+    NonRetriableExternalServiceError,
 )
 from repositories.navidrome_repository import _navidrome_circuit_breaker
 from repositories.navidrome_models import (
@@ -480,9 +481,34 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_not_configured_raises(self):
         _navidrome_circuit_breaker.reset()
-        repo, _, _ = _make_repo(configured=False)
-        with pytest.raises(ExternalServiceError, match="not configured"):
-            await repo._request("/rest/ping")
+        repo, client, _ = _make_repo(configured=False)
+        with patch(
+            "infrastructure.resilience.retry.asyncio.sleep", new_callable=AsyncMock
+        ) as mock_sleep:
+            with pytest.raises(ExternalServiceError, match="not configured"):
+                await repo._request("/rest/ping")
+        client.get.assert_not_awaited()
+        mock_sleep.assert_not_awaited()
+        from infrastructure.resilience.retry import CircuitState
+
+        assert _navidrome_circuit_breaker.state == CircuitState.CLOSED
+        assert _navidrome_circuit_breaker.failure_count == 0
+
+    @pytest.mark.asyncio
+    async def test_not_configured_is_non_retriable_subtype(self):
+        _navidrome_circuit_breaker.reset()
+        repo, client, _ = _make_repo(configured=False)
+        with patch(
+            "infrastructure.resilience.retry.asyncio.sleep", new_callable=AsyncMock
+        ) as mock_sleep:
+            with pytest.raises(NonRetriableExternalServiceError, match="not configured"):
+                await repo._request("/rest/ping")
+        client.get.assert_not_awaited()
+        mock_sleep.assert_not_awaited()
+        from infrastructure.resilience.retry import CircuitState
+
+        assert _navidrome_circuit_breaker.state == CircuitState.CLOSED
+        assert _navidrome_circuit_breaker.failure_count == 0
 
 
 class TestCircuitBreakerNonBreaking:

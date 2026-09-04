@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 
 import httpx
 
-from core.exceptions import ExternalServiceError, NavidromeApiError, NavidromeAuthError, NavidromeSubsonicError
+from core.exceptions import ExternalServiceError, NavidromeApiError, NavidromeAuthError, NavidromeSubsonicError, NonRetriableExternalServiceError
 from infrastructure.cache.cache_keys import NAVIDROME_PREFIX
 from infrastructure.cache.memory_cache import CacheInterface
 from infrastructure.resilience.retry import with_retry, CircuitBreaker
@@ -249,7 +249,8 @@ class NavidromeRepository:
         retriable_exceptions=(httpx.HTTPError, ExternalServiceError),
         # auth failures are non-breaking too: with per-user credentials one
         # user's stale password must not open the circuit for everyone
-        non_breaking_exceptions=(NavidromeSubsonicError, NavidromeAuthError),
+        non_breaking_exceptions=(NavidromeSubsonicError, NavidromeAuthError, NonRetriableExternalServiceError),
+        non_retriable_exceptions=(NonRetriableExternalServiceError,),
     )
     async def _request(
         self,
@@ -257,7 +258,7 @@ class NavidromeRepository:
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self._configured:
-            raise ExternalServiceError("Navidrome not configured")
+            raise NonRetriableExternalServiceError("Navidrome not configured")
 
         merged = self._build_auth_params()
         if params:

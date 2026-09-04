@@ -547,3 +547,76 @@ class TestGuidAlbumIdFallback:
 
         jf.resolve_album_mbid.assert_not_called()
         local.match_album_by_mbid.assert_called_once_with("mbid-abc")
+
+
+class TestSkippedBackendsNotCalled:
+    """Unconfigured backends are gated on is_configured() before any call."""
+
+    @pytest.mark.asyncio
+    async def test_resolve_album_sources_skips_unconfigured_backends(self, tmp_path):
+        service, _ = _make_service(tmp_path)
+        jf = AsyncMock()
+        jf.is_configured = MagicMock(return_value=False)
+        local = AsyncMock()
+        local.is_configured = MagicMock(return_value=False)
+        nd = AsyncMock()
+        nd.is_configured = MagicMock(return_value=False)
+        plex = AsyncMock()
+        plex.is_configured = MagicMock(return_value=False)
+
+        jf_out, local_out, nd_out, plex_out = await service._resolve_album_sources(
+            "mbid-abc", jf, local, nd, plex,
+            album_name="Sheet Music", artist_name="10cc",
+        )
+
+        assert (jf_out, local_out, nd_out, plex_out) == ({}, {}, {}, {})
+        jf.match_album_by_mbid.assert_not_called()
+        local.match_album_by_mbid.assert_not_called()
+        nd.get_album_match.assert_not_called()
+        plex.get_album_match.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_configured_backend_still_called_when_others_skipped(self, tmp_path):
+        service, _ = _make_service(tmp_path)
+        jf = AsyncMock()
+        jf.is_configured = MagicMock(return_value=False)
+        local = _make_local_service()
+        local.is_configured = MagicMock(return_value=True)
+        nd = AsyncMock()
+        nd.is_configured = MagicMock(return_value=False)
+
+        _, local_out, nd_out, _ = await service._resolve_album_sources(
+            "mbid-abc", jf, local, nd,
+            album_name="Sheet Music", artist_name="10cc",
+        )
+
+        jf.match_album_by_mbid.assert_not_called()
+        nd.get_album_match.assert_not_called()
+        local.match_album_by_mbid.assert_called_once_with("mbid-abc")
+        assert local_out != {}
+        assert nd_out == {}
+
+    @pytest.mark.asyncio
+    async def test_skipped_backends_record_degradation(self, tmp_path):
+        from infrastructure.degradation import (
+            clear_degradation_context,
+            init_degradation_context,
+            try_get_degradation_context,
+        )
+
+        service, _ = _make_service(tmp_path)
+        jf = AsyncMock()
+        jf.is_configured = MagicMock(return_value=False)
+        nd = AsyncMock()
+        nd.is_configured = MagicMock(return_value=False)
+
+        init_degradation_context()
+        try:
+            await service._resolve_album_sources("mbid-abc", jf, None, nd)
+            ctx = try_get_degradation_context()
+            assert ctx is not None
+            summary = ctx.degraded_summary()
+            assert "jellyfin" in summary
+            assert "navidrome" in summary
+        finally:
+            clear_degradation_context()

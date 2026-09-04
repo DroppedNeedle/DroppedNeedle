@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from core.exceptions import ExternalServiceError, PlexApiError, PlexAuthError
+from core.exceptions import ExternalServiceError, NonRetriableExternalServiceError, PlexApiError, PlexAuthError
 from repositories.plex_models import (
     PlexAlbum,
     PlexArtist,
@@ -880,9 +880,33 @@ class TestCircuitBreaker:
 class TestUnconfigured:
     @pytest.mark.asyncio
     async def test_request_raises_when_not_configured(self):
-        repo, _, _ = _make_repo(configured=False)
-        with pytest.raises(ExternalServiceError, match="not configured"):
-            await repo._request("/test")
+        repo, client, _ = _make_repo(configured=False)
+        with patch(
+            "infrastructure.resilience.retry.asyncio.sleep", new_callable=AsyncMock
+        ) as mock_sleep:
+            with pytest.raises(ExternalServiceError, match="not configured"):
+                await repo._request("/test")
+        client.get.assert_not_awaited()
+        mock_sleep.assert_not_awaited()
+        from infrastructure.resilience.retry import CircuitState
+
+        assert _plex_circuit_breaker.state == CircuitState.CLOSED
+        assert _plex_circuit_breaker.failure_count == 0
+
+    @pytest.mark.asyncio
+    async def test_request_not_configured_is_non_retriable_subtype(self):
+        repo, client, _ = _make_repo(configured=False)
+        with patch(
+            "infrastructure.resilience.retry.asyncio.sleep", new_callable=AsyncMock
+        ) as mock_sleep:
+            with pytest.raises(NonRetriableExternalServiceError, match="not configured"):
+                await repo._request("/test")
+        client.get.assert_not_awaited()
+        mock_sleep.assert_not_awaited()
+        from infrastructure.resilience.retry import CircuitState
+
+        assert _plex_circuit_breaker.state == CircuitState.CLOSED
+        assert _plex_circuit_breaker.failure_count == 0
 
     @pytest.mark.asyncio
     async def test_proxy_head_raises(self):

@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from core.exceptions import ExternalServiceError, PlexApiError, PlexAuthError
+from core.exceptions import ExternalServiceError, NonRetriableExternalServiceError, PlexApiError, PlexAuthError
 from infrastructure.cache.cache_keys import PLEX_PREFIX
 from infrastructure.cache.memory_cache import CacheInterface
 from infrastructure.degradation import try_get_degradation_context
@@ -168,7 +168,8 @@ class PlexRepository:
         max_delay=5.0,
         circuit_breaker=_plex_circuit_breaker,
         retriable_exceptions=(httpx.HTTPError, ExternalServiceError),
-        non_breaking_exceptions=(PlexApiError,),
+        non_breaking_exceptions=(PlexApiError, NonRetriableExternalServiceError),
+        non_retriable_exceptions=(NonRetriableExternalServiceError,),
     )
     async def _request(
         self,
@@ -176,7 +177,7 @@ class PlexRepository:
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self._configured:
-            raise ExternalServiceError("Plex not configured")
+            raise NonRetriableExternalServiceError("Plex not configured")
 
         url = f"{self._url}{endpoint}"
         try:

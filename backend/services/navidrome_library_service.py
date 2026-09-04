@@ -103,6 +103,12 @@ class NavidromeLibraryService:
         self._library_artist_index: dict[str, str] = {}
         self._dirty = False
 
+    def is_configured(self) -> bool:
+        try:
+            return bool(self._navidrome.is_configured())
+        except Exception:  # noqa: BLE001
+            return True
+
     def lookup_navidrome_id(self, mbid: str) -> str | None:
         """Public accessor for the MBID-to-Navidrome album ID reverse index."""
         return self._mbid_to_navidrome_id.get(mbid)

@@ -9,6 +9,7 @@ import msgspec
 from core.exceptions import (
     ExternalServiceError,
     JellyfinAuthError,
+    NonRetriableExternalServiceError,
     PlaybackNotAllowedError,
     ResourceNotFoundError,
 )
@@ -96,13 +97,14 @@ class JellyfinRepository:
         max_delay=5.0,
         circuit_breaker=_jellyfin_circuit_breaker,
         retriable_exceptions=(httpx.HTTPError, ExternalServiceError),
-        non_breaking_exceptions=(JellyfinAuthError,),
+        non_breaking_exceptions=(JellyfinAuthError, NonRetriableExternalServiceError),
+        non_retriable_exceptions=(NonRetriableExternalServiceError,),
     )
     async def refresh_library(self) -> None:
         """Start a global library scan on a verified Jellyfin 10.11 endpoint."""
 
         if not self._base_url or not self._api_key:
-            raise ExternalServiceError("Jellyfin is not configured")
+            raise NonRetriableExternalServiceError("Jellyfin is not configured")
         try:
             response = await self._client.request(
                 "POST",
@@ -142,7 +144,8 @@ class JellyfinRepository:
         max_delay=5.0,
         circuit_breaker=_jellyfin_circuit_breaker,
         retriable_exceptions=(httpx.HTTPError, ExternalServiceError),
-        non_breaking_exceptions=(JellyfinAuthError,),
+        non_breaking_exceptions=(JellyfinAuthError, NonRetriableExternalServiceError),
+        non_retriable_exceptions=(NonRetriableExternalServiceError,),
     )
     async def _request(
         self,
@@ -152,7 +155,7 @@ class JellyfinRepository:
         json_data: dict[str, Any] | None = None,
     ) -> Any:
         if not self._base_url or not self._api_key:
-            raise ExternalServiceError("Jellyfin not configured")
+            raise NonRetriableExternalServiceError("Jellyfin not configured")
 
         url = f"{self._base_url}{endpoint}"
 

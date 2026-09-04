@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import inspect
 import logging
 import re
 from collections import defaultdict
@@ -18,6 +19,8 @@ from core.exceptions import (
 )
 from infrastructure.cache.cache_keys import SOURCE_RESOLUTION_PREFIX
 from infrastructure.cache.memory_cache import CacheInterface
+from infrastructure.degradation import try_get_degradation_context
+from infrastructure.integration_result import IntegrationResult
 from infrastructure.persistence.auth_store import AuthStore, UserRecord
 from repositories.async_playlist_repository import AsyncPlaylistRepository
 from repositories.playlist_repository import (
@@ -134,6 +137,33 @@ def _fuzzy_name_match(name1: str, name2: str) -> bool:
         return True
     return SequenceMatcher(None, n1, n2).ratio() > 0.6
 
+
+async def _is_backend_configured(service: object) -> bool:
+    """Duck-typed configured check; missing/broken checks default to configured."""
+    check = getattr(service, "is_configured", None)
+    if check is None:
+        return True
+    try:
+        result = check()
+    except Exception:  # noqa: BLE001
+        return True
+    if inspect.isawaitable(result):
+        try:
+            result = await result
+        except Exception:  # noqa: BLE001
+            return True
+    return bool(result)
+
+
+def _record_backend_skip(source: str, album_id: str) -> None:
+    ctx = try_get_degradation_context()
+    if ctx is not None:
+        ctx.record(
+            IntegrationResult.error(
+                source=source,
+                msg=f"{source} not configured; skipped album {album_id}",
+            )
+        )
 
 class PlaylistService:
     def __init__(
@@ -806,7 +836,7 @@ class PlaylistService:
         # via the album's provider ids so legacy rows resolve without a
         # migration. The cache key above stays the original album_id.
         match_album_id = album_id
-        if jf_service is not None:
+        if jf_service is not None and await _is_backend_configured(jf_service):
             try:
                 match = await jf_service.match_album_by_mbid(album_id)
                 if not match.found:
@@ -828,8 +858,9 @@ class PlaylistService:
                     album_id,
                     exc_info=True,
                 )
-
-        if local_service is not None:
+        elif jf_service is not None:
+            _record_backend_skip("jellyfin", album_id)
+        if local_service is not None and await _is_backend_configured(local_service):
             try:
                 match = await local_service.match_album_by_mbid(match_album_id)
                 if match.found:
@@ -845,8 +876,10 @@ class PlaylistService:
                     album_id,
                     exc_info=True,
                 )
+        elif local_service is not None:
+            _record_backend_skip("local", album_id)
 
-        if nd_service is not None:
+        if nd_service is not None and await _is_backend_configured(nd_service):
             try:
                 match = await nd_service.get_album_match(
                     album_id=album_id,
@@ -868,8 +901,10 @@ class PlaylistService:
                     album_id,
                     exc_info=True,
                 )
+        elif nd_service is not None:
+            _record_backend_skip("navidrome", album_id)
 
-        if plex_service is not None:
+        if plex_service is not None and await _is_backend_configured(plex_service):
             try:
                 match = await plex_service.get_album_match(
                     album_id=album_id,
@@ -891,6 +926,8 @@ class PlaylistService:
                     album_id,
                     exc_info=True,
                 )
+        elif plex_service is not None:
+            _record_backend_skip("plex", album_id)
 
         resolved = (jf_by_num, local_by_num, nd_by_num, plex_by_num)
         if self._cache:
