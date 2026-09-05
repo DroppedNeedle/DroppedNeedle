@@ -5277,7 +5277,7 @@ class NativeLibraryStore(PersistenceBase):
         def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
             rows = connection.execute(
                 "SELECT pt.position, pt.track_name, pt.artist_name, "
-                "pt.duration, t.file_path, t.relative_path, t.root_id "
+                "pt.duration, t.file_path "
                 "FROM library_playlist_tracks pt "
                 "LEFT JOIN local_tracks t ON t.id = pt.local_track_id "
                 "WHERE pt.playlist_id = ? ORDER BY pt.position",

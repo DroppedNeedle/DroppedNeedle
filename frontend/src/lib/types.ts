@@ -794,6 +794,7 @@ export type JellyfinTrackPage = {
 	limit: number;
 };
 
+// mirrors backend api/v1/schemas/settings.py (NavidromeConnectionSettings, NavidromePlaylistSyncResult)
 export type NavidromePlaylistSyncScope = 'public' | 'all';
 
 export type NavidromeConnectionSettings = {

@@ -32,8 +32,6 @@ def _entry(position: int, path: str | None, *, title: str = "Track") -> dict:
         "artist_name": "Artist",
         "duration": 180,
         "file_path": path,
-        "relative_path": path,
-        "root_id": "root-1",
     }
 
 
