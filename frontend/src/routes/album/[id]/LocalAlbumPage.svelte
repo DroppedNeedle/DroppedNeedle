@@ -133,20 +133,23 @@
 	}
 
 	async function handlePickLocalEdition(releaseMbid: string | null) {
-		if (!album) return;
+		// Per-album pins address one library-local copy: album.id is that id,
+		// never the RG MBID (unowned RGs never reach this page's picker).
+		const localId = album?.id;
+		if (!localId) return;
 		(document.activeElement as HTMLElement | null)?.blur();
 		try {
 			if (releaseMbid === null) {
 				await clearLocalPin.mutateAsync({
 					userId: authStore.user?.id,
-					localId: album.id,
+					localId,
 					rgMbid
 				});
 				toastStore.show({ message: 'Edition back to automatic.', type: 'success' });
 			} else {
 				await setLocalPin.mutateAsync({
 					userId: authStore.user?.id,
-					localId: album.id,
+					localId,
 					rgMbid,
 					releaseMbid
 				});

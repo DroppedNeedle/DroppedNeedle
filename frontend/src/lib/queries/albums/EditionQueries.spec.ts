@@ -212,3 +212,21 @@ it('keeps acquire invalidation scoped to the authenticated download queue', asyn
 			queryKey: ['library', 'album-detail', 'local-1']
 		});
 	});
+
+	it('refuses per-album pins carrying an RG MBID or a missing local id', async () => {
+		const pin = setLocalAlbumEditionPin() as unknown as EditionMutationOptions;
+		const clear = clearLocalAlbumEditionPin() as unknown as EditionMutationOptions;
+		expect(() =>
+			pin.mutationFn({
+				userId: 'user-a',
+				localId: 'release-group',
+				rgMbid: 'release-group',
+				releaseMbid: 'release'
+			})
+		).toThrow('RG MBIDs cannot pin through the per-album edition route.');
+		expect(() =>
+			clear.mutationFn({ userId: 'user-a', localId: '', rgMbid: 'release-group' })
+		).toThrow('Missing local album id for the edition pin.');
+		expect(h.put).not.toHaveBeenCalled();
+		expect(h.delete).not.toHaveBeenCalled();
+	});

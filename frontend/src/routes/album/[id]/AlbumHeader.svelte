@@ -248,7 +248,11 @@
 			}
 			onrefresh(); // the pin changes the served tracklist - refetch the page
 		} catch (e) {
-			if (e instanceof ApiError && e.status === 409 && localCopies.length > 0) {
+			// Per-album pins need a known library-local id: with no addressable
+			// copies (unowned RG) the RG route stays authoritative and the
+			// failure surfaces as a toast, never a per-album call.
+			const actionableCopies = localCopies.filter((copy) => Boolean(copy.id));
+			if (e instanceof ApiError && e.status === 409 && actionableCopies.length > 0) {
 				pendingIntent = releaseMbid;
 				conflictDialog?.showModal();
 				return;

@@ -12,7 +12,7 @@ from core.exception_handlers import (
     revision_overflow_error_handler,
     stale_revision_error_handler,
 )
-from core.exceptions import ConflictError, RevisionOverflowError, StaleRevisionError
+from core.exceptions import ConflictError, ResourceNotFoundError, RevisionOverflowError, StaleRevisionError
 from api.v1.schemas.library_policies import LibraryRootSettings, TypedLibrarySettings
 from infrastructure.persistence.native_library_store import (
     MAX_REVISION,
@@ -1089,6 +1089,28 @@ async def test_target_release_pins_reject_ambiguous_provider_album_identity(
         await store.clear_target_album_release_pin("shared-rg")
 
     assert await store.get_target_album_release_pin("album-pin-a") == "release-a"
+
+@pytest.mark.asyncio
+async def test_target_release_pins_ignore_fileless_provider_ghosts(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.create_catalog_membership(_membership("ghost-a", with_track=False))
+    await store.create_catalog_membership(_membership("ghost-b", with_track=False))
+    with sqlite3.connect(db_path) as connection:
+        connection.executemany(
+            "INSERT INTO local_album_external_identities "
+            "(local_album_id, provider, release_group_mbid, decision_source, selected_at) "
+            "VALUES (?, 'musicbrainz', 'ghost-rg', 'manual', 2)",
+            [("album-ghost-a",), ("album-ghost-b",)],
+        )
+
+    assert await store.get_target_album_release_pin("ghost-rg") is None
+    with pytest.raises(ResourceNotFoundError, match="not in the local library"):
+        await store.set_target_album_release_pin(
+            "ghost-rg", "ghost-release", "admin", "target-time"
+        )
+    assert await store.clear_target_album_release_pin("ghost-rg") is False
+
 
 
 @pytest.mark.asyncio

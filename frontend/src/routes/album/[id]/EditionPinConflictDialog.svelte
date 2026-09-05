@@ -21,6 +21,10 @@
 	let dialogEl = $state<HTMLDialogElement | null>(null);
 	let applyingId = $state<string | null>(null);
 
+	// Per-album pins need a library-local id per row: rows without one carry
+	// no addressable copy, so they never render and never fire a mutation.
+	const validCopies = $derived(localCopies.filter((copy) => Boolean(copy.id)));
+
 	const setPin = setLocalAlbumEditionPin();
 	const clearPin = clearLocalAlbumEditionPin();
 
@@ -38,6 +42,12 @@
 	}
 
 	async function applyToCopy(copy: LibraryAlbumSummary) {
+		// Belt-and-suspenders with the validCopies filter below: an id-less row
+		// must never reach the per-album mutation.
+		if (!copy.id) {
+			toastStore.show({ message: 'That copy is missing its library id.', type: 'error' });
+			return;
+		}
 		applyingId = copy.id;
 		try {
 			const userId = authStore.user?.id;
@@ -69,8 +79,13 @@
 			This MusicBrainz release matches more than one album in your library, so the edition
 			{releaseMbid === null ? 'reset to Automatic' : 'pin'} needs a single copy to land on.
 		</p>
-		<ul class="space-y-2">
-			{#each localCopies as copy (copy.id)}
+		{#if validCopies.length === 0}
+			<p class="rounded-box bg-base-200/60 px-3 py-4 text-sm text-base-content/70">
+				No library copies are available for this pin. It stays on the release-group route.
+			</p>
+		{:else}
+			<ul class="space-y-2">
+				{#each validCopies as copy (copy.id)}
 				<li>
 					<button
 						type="button"
@@ -92,7 +107,8 @@
 					</button>
 				</li>
 			{/each}
-		</ul>
+			</ul>
+		{/if}
 		<div class="modal-action">
 			<form method="dialog">
 				<button class="btn btn-ghost">Cancel</button>

@@ -292,6 +292,24 @@ describe('AlbumHeader automatic edition selection', () => {
 		});
 	});
 
+	it('pins an unowned RG through the RG URL without touching the per-album route', async () => {
+		const onrefresh = renderHeader({ localCopies: [] });
+
+		await page
+			.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' })
+			.click();
+		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
+		await vi.waitFor(() => {
+			expect(h.setPin).toHaveBeenCalledWith({
+				mbid: album.musicbrainz_id,
+				releaseMbid: 'release-11'
+			});
+			expect(onrefresh).toHaveBeenCalledOnce();
+		});
+		expect(h.setLocalPin).not.toHaveBeenCalled();
+		expect(h.clearLocalPin).not.toHaveBeenCalled();
+	});
+
 	it('uses edition resolution when native tracks have no stored release identity', async () => {
 		const editions = h.editions;
 		expect(editions).toBeDefined();

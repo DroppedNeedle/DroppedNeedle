@@ -2200,14 +2200,16 @@ class NativeLibraryStore(PersistenceBase):
             (album_identifier,),
         ).fetchall()
         active_matches = [row for row in matches if row["has_indexed_tracks"]]
-        if len(active_matches) == 1:
-            return str(active_matches[0]["id"])
-        if len(active_matches) > 1 or len(matches) > 1:
+        if len(active_matches) > 1:
             raise ConflictError(
                 "This MusicBrainz release group matches multiple local albums; "
                 "select a local edition before changing its release pin."
             )
-        return str(matches[0]["id"]) if matches else None
+        if len(active_matches) == 1:
+            return str(active_matches[0]["id"])
+        if len(matches) == 1:
+            return str(matches[0]["id"])
+        return None
 
     async def get_target_artists_by_genre(
         self, genre: str, *, limit: int

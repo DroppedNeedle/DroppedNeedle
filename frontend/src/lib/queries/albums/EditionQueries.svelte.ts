@@ -89,6 +89,9 @@ export function acquireEdition() {
 // Per-album edition pins (#382): one MusicBrainz release group can match
 // several local albums, so the RG-keyed pin above 409s on those. These
 // local-id routes address a single copy and never conflict.
+// localAlbumId is a library-local album id (LibraryAlbumSummary.id /
+// LibraryAlbumDetail.id) - never an RG MBID. Unowned RGs (no local copies)
+// stay on the RG-keyed pin above; only a known local id may enter here.
 export const localAlbumEditionPinUrl = (localAlbumId: string) =>
 	`/api/v1/library/albums/${encodeURIComponent(localAlbumId)}/edition`;
 
@@ -142,20 +145,33 @@ function invalidateLocalPinScope(variables: {
 	return Promise.all(invalidations);
 }
 
+// Guards the per-album boundary: the local id must be known, and it must not
+// be the RG MBID itself (an RG id here addresses nothing when unowned and
+// resolves ambiguously when owned - both are RG-route work).
+function assertLocalAlbumId(localId: string, rgMbid: string): void {
+	if (!localId) throw new Error('Missing local album id for the edition pin.');
+	if (rgMbid && localId === rgMbid)
+		throw new Error('RG MBIDs cannot pin through the per-album edition route.');
+}
+
 export function setLocalAlbumEditionPin() {
 	return createMutation(() => ({
-		mutationFn: ({ localId, releaseMbid }: LocalEditionPinVariables) =>
-			api.global.put<EditionPinResponse>(localAlbumEditionPinUrl(localId), {
+		mutationFn: ({ localId, rgMbid, releaseMbid }: LocalEditionPinVariables) => {
+			assertLocalAlbumId(localId, rgMbid);
+			return api.global.put<EditionPinResponse>(localAlbumEditionPinUrl(localId), {
 				release_mbid: releaseMbid
-			}),
+			});
+		},
 		onSuccess: (_d, variables) => invalidateLocalPinScope(variables)
 	}));
 }
 
 export function clearLocalAlbumEditionPin() {
 	return createMutation(() => ({
-		mutationFn: ({ localId }: LocalEditionClearVariables) =>
-			api.global.delete<EditionPinResponse>(localAlbumEditionPinUrl(localId)),
+		mutationFn: ({ localId, rgMbid }: LocalEditionClearVariables) => {
+			assertLocalAlbumId(localId, rgMbid);
+			return api.global.delete<EditionPinResponse>(localAlbumEditionPinUrl(localId));
+		},
 		onSuccess: (_d, variables) => invalidateLocalPinScope(variables)
 	}));
 }

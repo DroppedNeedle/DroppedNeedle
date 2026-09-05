@@ -123,4 +123,54 @@ describe('EditionPinConflictDialog', () => {
 			expect(onrefresh).toHaveBeenCalledOnce();
 		});
 	});
+
+	it('never fires the per-album mutation for a row without a local id', async () => {
+		const onrefresh = vi.fn();
+		const onclose = vi.fn();
+		render(EditionPinConflictDialog, {
+			props: {
+				releaseMbid: 'release-11',
+				localCopies: [
+					{ ...localCopy('local-album-1', 'Avalon'), id: '' },
+					localCopy('local-album-2', 'Avalon Remaster')
+				],
+				onrefresh,
+				onclose
+			}
+		} as unknown as Parameters<typeof render>[1]);
+
+		openDialog();
+		// the id-less row carries no addressable copy, so it never renders
+		await expect
+			.element(page.getByRole('button', { name: 'Avalon Local Artist · 20 tracks' }))
+			.not.toBeInTheDocument();
+		await page.getByRole('button', { name: /Avalon Remaster/ }).click();
+		await vi.waitFor(() => {
+			expect(h.setLocalPin).toHaveBeenCalledWith({
+				userId: 'user-1',
+				localId: 'local-album-2',
+				rgMbid: 'rg-1',
+				releaseMbid: 'release-11'
+			});
+		});
+		expect(h.setLocalPin).toHaveBeenCalledOnce();
+	});
+
+	it('shows an honest empty state instead of an empty picker', async () => {
+		render(EditionPinConflictDialog, {
+			props: {
+				releaseMbid: 'release-11',
+				localCopies: [],
+				onrefresh: vi.fn(),
+				onclose: vi.fn()
+			}
+		} as unknown as Parameters<typeof render>[1]);
+
+		openDialog();
+		await expect
+			.element(page.getByText('No library copies are available for this pin.'))
+			.toBeVisible();
+		expect(h.setLocalPin).not.toHaveBeenCalled();
+		expect(h.clearLocalPin).not.toHaveBeenCalled();
+	});
 });
