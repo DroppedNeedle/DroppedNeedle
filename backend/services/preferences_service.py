@@ -879,6 +879,12 @@ class PreferencesService:
             username=nd_data.get("username", ""),
             password=NAVIDROME_PASSWORD_MASK if password else "",
             enabled=nd_data.get("enabled", False),
+            playlist_sync_enabled=nd_data.get("playlist_sync_enabled", False),
+            playlist_sync_path=nd_data.get("playlist_sync_path", ""),
+            playlist_sync_scope=nd_data.get("playlist_sync_scope", "public"),
+            playlist_sync_remove_deleted=nd_data.get(
+                "playlist_sync_remove_deleted", True
+            ),
         )
 
     def get_navidrome_connection_raw(self) -> NavidromeConnectionSettings:
@@ -892,6 +898,12 @@ class PreferencesService:
             username=nd_data.get("username", ""),
             password=password,
             enabled=nd_data.get("enabled", False),
+            playlist_sync_enabled=nd_data.get("playlist_sync_enabled", False),
+            playlist_sync_path=nd_data.get("playlist_sync_path", ""),
+            playlist_sync_scope=nd_data.get("playlist_sync_scope", "public"),
+            playlist_sync_remove_deleted=nd_data.get(
+                "playlist_sync_remove_deleted", True
+            ),
         )
 
     def save_navidrome_connection(self, settings: NavidromeConnectionSettings) -> None:
@@ -910,6 +922,10 @@ class PreferencesService:
                 "username": settings.username,
                 "password": password,
                 "enabled": settings.enabled,
+                "playlist_sync_enabled": settings.playlist_sync_enabled,
+                "playlist_sync_path": settings.playlist_sync_path,
+                "playlist_sync_scope": settings.playlist_sync_scope,
+                "playlist_sync_remove_deleted": settings.playlist_sync_remove_deleted,
             }
             self._save_config(config)
         except Exception as e:  # noqa: BLE001

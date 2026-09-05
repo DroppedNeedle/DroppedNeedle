@@ -814,6 +814,11 @@ const COVERAGE: Array<[string, string, string]> = [
 	],
 	['get-it settings', API.settingsGetIt(), '/api/v1/settings/get-it'],
 	['free-music settings', API.settingsFreeMusic(), '/api/v1/settings/free-music'],
+	[
+		'navidrome playlist sync',
+		API.settingsNavidromePlaylistSync(),
+		'/api/v1/settings/navidrome/playlist-sync'
+	],
 	// MusicBrainz settings: staged source selection, consent, verification, and activation
 	['MusicBrainz settings', API.settingsMusicbrainz(), '/api/v1/settings/musicbrainz'],
 	[

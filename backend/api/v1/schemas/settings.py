@@ -684,11 +684,36 @@ class NavidromeConnectionSettings(AppStruct):
     username: str = ""
     password: str = ""
     enabled: bool = False
+    # .m3u8 export into a directory Navidrome scans. Off by default.
+    playlist_sync_enabled: bool = False
+    playlist_sync_path: str = ""
+    # Navidrome shows imported playlists to everyone, so "all" is opt-in.
+    playlist_sync_scope: str = "public"
+    # Remove an exported file once its playlist stops qualifying.
+    playlist_sync_remove_deleted: bool = True
 
     def __post_init__(self) -> None:
         self.navidrome_url = (
             self.navidrome_url.rstrip("/") if self.navidrome_url else ""
         )
+        self.playlist_sync_path = (
+            self.playlist_sync_path.strip() if self.playlist_sync_path else ""
+        )
+        if self.playlist_sync_scope not in {"public", "all"}:
+            self.playlist_sync_scope = "public"
+
+
+class NavidromePlaylistSyncResult(AppStruct):
+    success: bool = False
+    message: str = ""
+    written: int = 0
+    unchanged: int = 0
+    removed: int = 0
+    removal_failures: int = 0
+    skipped_empty: int = 0
+    skipped_not_ours: int = 0
+    tracks_missing_files: int = 0
+    tracks_unrepresentable: int = 0
 
 
 class PlexConnectionSettings(AppStruct):

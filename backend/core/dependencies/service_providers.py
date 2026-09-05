@@ -164,6 +164,17 @@ def get_genre_artwork_service() -> "GenreArtworkService":
 
 
 @singleton
+def get_navidrome_playlist_export_service() -> "NavidromePlaylistExportService":
+    from services.navidrome_playlist_export_service import (
+        NavidromePlaylistExportService,
+    )
+
+    from .cache_providers import get_native_library_store
+
+    return NavidromePlaylistExportService(get_native_library_store())
+
+
+@singleton
 def get_target_library_repository() -> "TargetLibraryRepository":
     from services.native.target_library_repository import TargetLibraryRepository
 

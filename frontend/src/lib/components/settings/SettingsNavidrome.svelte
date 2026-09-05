@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { onDestroy } from 'svelte';
-	import type { NavidromeConnectionSettings } from '$lib/types';
+	import { api, ApiError } from '$lib/api/client';
+	import { API } from '$lib/constants';
+	import type { NavidromeConnectionSettings, NavidromePlaylistSyncResult } from '$lib/types';
 
 	type NavidromeTestResult = { valid: boolean; message: string };
 	type NavidromeSettingsForm = ReturnType<
@@ -11,17 +13,50 @@
 	};
 
 	const form = createSettingsForm<NavidromeConnectionSettings>({
-		loadEndpoint: '/api/v1/settings/navidrome',
-		saveEndpoint: '/api/v1/settings/navidrome',
-		testEndpoint: '/api/v1/settings/navidrome/verify',
+		loadEndpoint: API.settingsNavidrome(),
+		saveEndpoint: API.settingsNavidrome(),
+		testEndpoint: API.settingsNavidromeVerify(),
 		enabledField: 'enabled',
 		refreshIntegration: true
 	}) as NavidromeSettingsForm;
 
 	let showPassword = $state(false);
+	let syncing = $state(false);
+	let syncResult = $state<NavidromePlaylistSyncResult | null>(null);
 
 	export async function load() {
 		await form.load();
+	}
+
+	async function syncPlaylists() {
+		syncing = true;
+		syncResult = null;
+		try {
+			// The endpoint reads saved settings, so save first or an edited
+			// path or scope is ignored.
+			await form.save();
+			syncResult = await api.global.post<NavidromePlaylistSyncResult>(
+				API.settingsNavidromePlaylistSync()
+			);
+		} catch (error) {
+			syncResult = {
+				success: false,
+				message:
+					error instanceof ApiError
+						? error.message
+						: 'Playlist sync failed. Check the DroppedNeedle logs.',
+				written: 0,
+				unchanged: 0,
+				removed: 0,
+				removal_failures: 0,
+				skipped_empty: 0,
+				skipped_not_ours: 0,
+				tracks_missing_files: 0,
+				tracks_unrepresentable: 0
+			};
+		} finally {
+			syncing = false;
+		}
 	}
 
 	async function save() {
@@ -130,6 +165,130 @@
 						</div>
 					</label>
 				</div>
+
+				<div class="divider"></div>
+
+				<div>
+					<h3 class="font-medium">Playlist Sync</h3>
+					<p class="text-xs text-base-content/50 mt-1 whitespace-normal">
+						Sync DroppedNeedle playlists to Navidrome - DroppedNeedle writes an
+						<code>.m3u8</code> file per playlist into a folder Navidrome scans, and refreshes them in
+						the background as playlists change.
+					</p>
+				</div>
+
+				<div class="form-control">
+					<label class="label cursor-pointer justify-start gap-4">
+						<input
+							type="checkbox"
+							bind:checked={form.data.playlist_sync_enabled}
+							class="toggle toggle-primary"
+						/>
+						<div class="whitespace-normal">
+							<span class="label-text font-medium">Export playlists to Navidrome</span>
+							<p class="text-xs text-base-content/50">
+								Nothing is written until this is on and the settings are saved
+							</p>
+						</div>
+					</label>
+				</div>
+
+				{#if form.data.playlist_sync_enabled}
+					<div class="form-control w-full">
+						<label class="label" for="navidrome-playlist-path">
+							<span class="label-text">Playlist folder</span>
+						</label>
+						<input
+							id="navidrome-playlist-path"
+							type="text"
+							bind:value={form.data.playlist_sync_path}
+							class="input input-bordered w-full"
+							placeholder="/music/playlists"
+						/>
+						<div class="label whitespace-normal">
+							<span class="label-text-alt text-base-content/50">
+								An absolute path <em>inside the DroppedNeedle container</em> that must sit
+								<strong>inside the same music library tree Navidrome scans</strong> — track paths are
+								written relative to this folder, so both apps have to see the same folder-to-track relationship.
+							</span>
+						</div>
+					</div>
+
+					<div class="form-control w-full">
+						<label class="label" for="navidrome-playlist-scope">
+							<span class="label-text">Which playlists</span>
+						</label>
+						<select
+							id="navidrome-playlist-scope"
+							bind:value={form.data.playlist_sync_scope}
+							class="select select-bordered w-full"
+						>
+							<option value="public">Public playlists only</option>
+							<option value="all">All playlists</option>
+						</select>
+						<div class="label whitespace-normal">
+							<span class="label-text-alt text-base-content/50">
+								Navidrome does not scope an imported playlist to a user, so anything exported is
+								visible to everyone on that server. "All playlists" therefore publishes other users'
+								private playlists too. To have them correctly scoped to a user on Navidrome,
+								imported playlists can be assigned to a user (and made private or public) within the
+								Navidrome dashboard.
+							</span>
+						</div>
+					</div>
+
+					<div class="form-control">
+						<label class="label cursor-pointer justify-start gap-4">
+							<input
+								type="checkbox"
+								bind:checked={form.data.playlist_sync_remove_deleted}
+								class="toggle toggle-primary"
+							/>
+							<div class="whitespace-normal">
+								<span class="label-text font-medium">
+									Remove exported files when a playlist is removed from DroppedNeedle, or when a
+									playlist is made private and only public playlists are exported
+								</span>
+								<p class="text-xs text-base-content/50">
+									Only files exported from DroppedNeedle are ever removed. Other playlists in the
+									same folder are never removed.
+								</p>
+							</div>
+						</label>
+					</div>
+
+					{#if syncResult}
+						<div
+							class="alert"
+							class:alert-success={syncResult.success}
+							class:alert-error={!syncResult.success}
+						>
+							<div class="min-w-0 whitespace-normal break-words">
+								<span>{syncResult.message}</span>
+								{#if syncResult.removal_failures}
+									<p class="text-xs mt-1">
+										Files that could not be removed are still visible in Navidrome. They will be
+										retried on the next sync — check the folder's permissions if this persists.
+									</p>
+								{/if}
+							</div>
+						</div>
+					{/if}
+
+					<div class="flex justify-start">
+						<button
+							type="button"
+							class="btn btn-outline btn-sm"
+							onclick={syncPlaylists}
+							disabled={syncing || form.saving || !form.data.playlist_sync_path}
+						>
+							{#if syncing}
+								<span class="loading loading-spinner loading-sm"></span>
+							{/if}
+							Sync Now
+						</button>
+					</div>
+				{/if}
 
 				{#if form.message}
 					<div

@@ -5265,6 +5265,28 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def list_target_playlist_export_rows(
+        self, playlist_id: str
+    ) -> list[dict[str, Any]]:
+        """Ordered playlist entries joined to the local file each one plays.
+
+        Entries with no local track (Navidrome/Plex/YouTube) return a NULL
+        ``file_path`` rather than being dropped, so the caller can report them.
+        """
+
+        def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+            rows = connection.execute(
+                "SELECT pt.position, pt.track_name, pt.artist_name, "
+                "pt.duration, t.file_path, t.relative_path, t.root_id "
+                "FROM library_playlist_tracks pt "
+                "LEFT JOIN local_tracks t ON t.id = pt.local_track_id "
+                "WHERE pt.playlist_id = ? ORDER BY pt.position",
+                (playlist_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+        return await self._read(operation)
+
     async def get_target_playlist_track(
         self, playlist_id: str, track_id: str
     ) -> dict[str, Any] | None:

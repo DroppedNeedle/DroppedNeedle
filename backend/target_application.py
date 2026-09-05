@@ -197,6 +197,7 @@ from core.task_registry import TaskRegistry
 from core.tasks import (
     start_cache_cleanup_task,
     start_disk_cache_cleanup_task,
+    start_navidrome_playlist_export_task,
     start_memory_maintenance_task,
 )
 from infrastructure.http.compression import CompressibleGZipMiddleware
@@ -659,6 +660,7 @@ async def production_target_lifespan(app: FastAPI):
             interval=advanced.disk_cache_cleanup_interval,
             cover_disk_cache=get_target_consumer_composition().covers.disk_cache,
         )
+        start_navidrome_playlist_export_task()
 
         def root_paths() -> dict[str, Path]:
             return {

@@ -12,6 +12,7 @@ from api.v1.schemas.settings import (
     JellyfinVerifyResponse,
     JellyfinUserInfo,
     NavidromeConnectionSettings,
+    NavidromePlaylistSyncResult,
     ListenBrainzConnectionSettings,
     YouTubeConnectionSettings,
     LastFmConnectionSettings,
@@ -48,6 +49,7 @@ from api.v1.schemas.advanced_settings import (
 )
 from core.dependencies import (
     get_events_watcher_getter,
+    get_navidrome_playlist_export_service,
     get_preferences_service,
     get_settings_service,
     get_oidc_user_auth_service,
@@ -368,6 +370,43 @@ async def update_navidrome_settings(
         raise HTTPException(
             status_code=400, detail="Navidrome settings are incomplete or invalid"
         )
+
+
+@router.post("/navidrome/playlist-sync", response_model=NavidromePlaylistSyncResult)
+async def sync_navidrome_playlists(
+    preferences_service: PreferencesService = Depends(get_preferences_service),
+    export_service: "NavidromePlaylistExportService" = Depends(
+        get_navidrome_playlist_export_service
+    ),
+):
+    """Write DroppedNeedle playlists into the configured directory.
+
+    No request body: the target comes from saved settings, so no caller can
+    name an arbitrary directory to write into.
+    """
+    settings = preferences_service.get_navidrome_connection()
+    if not settings.playlist_sync_enabled:
+        return NavidromePlaylistSyncResult(
+            success=False,
+            message="Playlist sync is turned off. Enable it and save first.",
+        )
+    result = await export_service.sync(
+        target_dir=settings.playlist_sync_path,
+        scope=settings.playlist_sync_scope,
+        remove_deleted=settings.playlist_sync_remove_deleted,
+    )
+    return NavidromePlaylistSyncResult(
+        success=result.success,
+        message=result.message,
+        written=result.written,
+        unchanged=result.unchanged,
+        removed=result.removed,
+        removal_failures=result.removal_failures,
+        skipped_empty=result.skipped_empty,
+        skipped_not_ours=result.skipped_not_ours,
+        tracks_missing_files=result.tracks_missing_files,
+        tracks_unrepresentable=result.tracks_unrepresentable,
+    )
 
 
 @router.post("/navidrome/verify", response_model=VerifyConnectionResponse)

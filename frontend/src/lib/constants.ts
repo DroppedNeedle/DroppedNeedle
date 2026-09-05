@@ -651,6 +651,7 @@ export const API = {
 	settingsPrimarySource: () => '/api/v1/settings/primary-source',
 	settingsNavidrome: () => '/api/v1/settings/navidrome',
 	settingsNavidromeVerify: () => '/api/v1/settings/navidrome/verify',
+	settingsNavidromePlaylistSync: () => '/api/v1/settings/navidrome/playlist-sync',
 	settingsPlex: () => '/api/v1/settings/plex',
 	settingsPlexVerify: () => '/api/v1/settings/plex/verify',
 	settingsPlexLibraries: () => '/api/v1/settings/plex/libraries',
