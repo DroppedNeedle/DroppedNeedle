@@ -29333,6 +29333,33 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def find_active_repair_operation_for_album(
+        self, purpose: str, local_album_id: str
+    ) -> dict[str, Any] | None:
+        """Oldest non-terminal repair job for one (purpose, album) pair, if any.
+
+        (GH-386) Per-album auto-enqueue joins this row instead of minting a new
+        revision-suffixed job on every identification completion. Terminal rows
+        never coalesce: genuinely new work after completion still enqueues.
+        """
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any] | None:
+            return _row(
+                connection.execute(
+                    "SELECT job.* FROM library_operation_jobs job "
+                    "JOIN library_repair_snapshots snap ON snap.job_id = job.id "
+                    "WHERE job.kind = 'repair' "
+                    "AND job.state IN ('queued', 'running', 'paused') "
+                    "AND json_extract(snap.scope_json, '$.purpose') = ? "
+                    "AND EXISTS (SELECT 1 FROM json_each(snap.scope_json, '$.album_ids') "
+                    "WHERE value = ?) "
+                    "ORDER BY job.created_at ASC, job.id ASC LIMIT 1",
+                    (purpose, local_album_id),
+                ).fetchone()
+            )
+
+        return await self._read(operation)
+
     async def create_repair_operation(
         self,
         job: OperationJob,

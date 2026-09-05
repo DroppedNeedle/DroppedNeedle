@@ -1739,3 +1739,62 @@ async def test_stale_proof_row_without_accepted_identity_does_not_retire(
             (source_id,),
         ).fetchone()[0]
     assert retired_into is None
+
+
+@pytest.mark.asyncio
+async def test_album_reenqueue_with_moved_revision_joins_queued_job(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.create_catalog_membership(_membership("1", "Artist"))
+    await _accept_exact_identity(store, "1")
+    provider = AsyncMock()
+    provider.get_canonical_release.return_value = _release()
+    service = ArtistIdentityReconciliationService(store, provider, clock=lambda: 3)
+
+    first = await service.enqueue_album("album-1")
+    assert first is not None
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE local_album_external_identities SET row_revision = row_revision + 1 "
+            "WHERE local_album_id = 'album-1'"
+        )
+    second = await service.enqueue_album("album-1")
+    assert second is not None
+    assert second["id"] == first["id"]
+    with sqlite3.connect(db_path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM library_operation_jobs WHERE kind = 'repair'"
+        ).fetchone()[0]
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_album_reenqueue_after_terminal_state_creates_fresh_job(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.create_catalog_membership(_membership("1", "Artist"))
+    await _accept_exact_identity(store, "1")
+    provider = AsyncMock()
+    provider.get_canonical_release.return_value = _release()
+    service = ArtistIdentityReconciliationService(store, provider, clock=lambda: 3)
+
+    first = await service.enqueue_album("album-1")
+    assert first is not None
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_operation_jobs SET state = 'succeeded', "
+            "terminal_code = 'RECONCILIATION_COMPLETED', terminal_at = 4 WHERE id = ?",
+            (first["id"],),
+        )
+        connection.execute(
+            "UPDATE local_album_external_identities SET row_revision = row_revision + 1 "
+            "WHERE local_album_id = 'album-1'"
+        )
+    second = await service.enqueue_album("album-1")
+    assert second is not None
+    assert second["id"] != first["id"]
+    with sqlite3.connect(db_path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM library_operation_jobs WHERE kind = 'repair'"
+        ).fetchone()[0]
+    assert count == 2

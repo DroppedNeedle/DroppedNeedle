@@ -233,6 +233,11 @@ class ArtistIdentityReconciliationService:
         if context is None or not context["tracks"]:
             return None
         revision = _input_revision(context)
+        existing = await self._store.find_active_repair_operation_for_album(
+            ARTIST_RECONCILIATION_PURPOSE, local_album_id
+        )
+        if existing is not None:
+            return existing
         now = self._clock()
         job = OperationJob(
             id=str(uuid.uuid4()),
