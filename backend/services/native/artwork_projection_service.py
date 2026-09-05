@@ -234,8 +234,8 @@ class ArtworkProjectionService:
         self,
         *,
         settings: ArtworkManagementSettings,
-        release_mbid: str,
-        release_group_mbid: str,
+        release_mbid: str | None,
+        release_group_mbid: str | None,
         album_directory: Path | None,
         existing_embedded: Sequence[ExistingArtworkDescriptor],
         existing_external: Sequence[ExistingArtworkDescriptor],
@@ -290,7 +290,7 @@ class ArtworkProjectionService:
                     priority=priority,
                     pass_cache=pass_cache,
                 )
-            except (ArtworkProcessingError, ExternalServiceError, OSError):
+            except (ArtworkProcessingError, ExternalServiceError, OSError, ValueError):
                 self._defer(provider, deferred, "artwork provider failed")
                 continue
             await self._select_candidates(
@@ -350,13 +350,15 @@ class ArtworkProjectionService:
         *,
         provider: ArtworkSource,
         settings: ArtworkManagementSettings,
-        release_mbid: str,
-        release_group_mbid: str,
+        release_mbid: str | None,
+        release_group_mbid: str | None,
         album_directory: Path | None,
         priority: RequestPriority,
         pass_cache: _LocalArtworkPassCache | None = None,
     ) -> tuple[ArtworkCandidate, ...]:
         if provider == "cover_art_archive_release":
+            if not release_mbid:
+                return ()
             return await self._repository.list_management_artwork(
                 entity_kind="release",
                 mbid=release_mbid,
@@ -364,6 +366,8 @@ class ArtworkProjectionService:
                 priority=priority,
             )
         if provider == "cover_art_archive_release_group":
+            if not release_group_mbid:
+                return ()
             return await self._repository.list_management_artwork(
                 entity_kind="release-group",
                 mbid=release_group_mbid,

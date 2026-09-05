@@ -756,3 +756,96 @@ async def test_cached_candidates_still_respect_symlink_safety(tmp_path: Path) ->
         settings, album, pass_cache=fresh_cache
     )
     assert rows == ()  # symlinked file excluded by the unchanged safety rules
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["", None])
+async def test_missing_release_mbid_falls_through_to_release_group(
+    missing: str | None,
+) -> None:
+    repository = StubArtworkRepository()
+    fallback = _candidate("fallback", source="cover_art_archive_release_group")
+    repository.candidates["release-group"] = (fallback,)
+    repository.content = {fallback.candidate_id: _png(200, 200, (3, 3, 3))}
+
+    projection = await ArtworkProjectionService(repository, ArtworkProcessor()).project(
+        settings=ArtworkManagementSettings(
+            providers=[
+                "cover_art_archive_release",
+                "cover_art_archive_release_group",
+            ],
+            external_enabled=False,
+        ),
+        release_mbid=missing,
+        release_group_mbid=_RG,
+        album_directory=None,
+        existing_embedded=(),
+        existing_external=(),
+        priority=RequestPriority.BACKGROUND_SYNC,
+    )
+
+    assert "release" not in repository.calls
+    assert "release-group" in repository.calls
+    assert [value.source_candidate_id for value in projection.embedded] == ["fallback"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["", None])
+async def test_missing_release_group_mbid_skips_provider(missing: str | None) -> None:
+    repository = StubArtworkRepository()
+
+    projection = await ArtworkProjectionService(repository, ArtworkProcessor()).project(
+        settings=ArtworkManagementSettings(
+            providers=["cover_art_archive_release_group"],
+            external_enabled=False,
+        ),
+        release_mbid=_RELEASE,
+        release_group_mbid=missing,
+        album_directory=None,
+        existing_embedded=(),
+        existing_external=(),
+        priority=RequestPriority.BACKGROUND_SYNC,
+    )
+
+    assert repository.calls == []
+    assert projection.embedded == ()
+
+
+@pytest.mark.asyncio
+async def test_malformed_release_mbid_defers_provider() -> None:
+    repository = StubArtworkRepository()
+    original = repository.list_management_artwork
+
+    async def _reject_invalid_release(
+        *,
+        entity_kind: str,
+        mbid: str,
+        download_size: str,
+        priority: RequestPriority,
+    ) -> tuple[ArtworkCandidate, ...]:
+        if entity_kind == "release":
+            raise ValueError("invalid mbid")
+        return await original(
+            entity_kind=entity_kind,
+            mbid=mbid,
+            download_size=download_size,
+            priority=priority,
+        )
+
+    repository.list_management_artwork = _reject_invalid_release  # type: ignore[method-assign]
+
+    projection = await ArtworkProjectionService(repository, ArtworkProcessor()).project(
+        settings=ArtworkManagementSettings(
+            providers=["cover_art_archive_release"],
+            external_enabled=False,
+        ),
+        release_mbid="not-a-mbid",
+        release_group_mbid=_RG,
+        album_directory=None,
+        existing_embedded=(),
+        existing_external=(),
+        priority=RequestPriority.BACKGROUND_SYNC,
+    )
+
+    assert projection.embedded == ()
+    assert projection.deferred_sources == ("cover_art_archive_release",)
