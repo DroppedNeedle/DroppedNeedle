@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 import msgspec
+from rapidfuzz.fuzz import token_set_ratio
 
 from core.exceptions import (
     ConfigurationError,
@@ -167,6 +168,52 @@ class RecordingMatch(msgspec.Struct):
     release_groups: list[RecordingReleaseGroup]
 
 
+# Artist-preference matching for recording -> release-group resolution
+# (issue #385). Same similarity family as the Tier 2 identification gate:
+# ``rapidfuzz.token_set_ratio`` with the
+# ``MusicBrainzMatcher.ARTIST_MATCH_FLOOR`` value (0.6), so featured/collab
+# credits ("A feat. B") still match the requested artist. Kept local (rather
+# than importing services.native.musicbrainz_matcher) because repositories
+# must not depend on the services layer.
+_ARTIST_MATCH_FLOOR = 0.6
+
+# Mirrors services.native.album_matcher._VA_NAMES: requesting one of these
+# neutralizes the preference so genuine Various Artists imports keep the
+# historical rank-only behavior.
+_VA_NAMES = frozenset({"various artists", "various", "va"})
+
+
+def _normalize_artist_name(text: str) -> str:
+    """Case-/punctuation-fold for artist comparison (contained subset of
+    ``MusicBrainzMatcher._normalize``: no transliteration, CJK untouched)."""
+    return " ".join(
+        "".join(char if char.isalnum() else " " for char in text.casefold()).split()
+    )
+
+
+def _artist_preference_active(artist: str | None) -> bool:
+    """Whether an expected-artist preference applies at all."""
+    if not artist or not artist.strip():
+        return False
+    return artist.strip().casefold() not in _VA_NAMES
+
+
+def _artist_name_matches(expected_artist: str, candidate: str | None) -> bool:
+    """Fuzzy artist-credit check: True when the candidate plausibly credits
+    the expected artist. Missing/blank candidates never match (they stay in
+    the rank-only fallback pool)."""
+    if not candidate or not candidate.strip():
+        return False
+    return (
+        token_set_ratio(
+            _normalize_artist_name(expected_artist),
+            _normalize_artist_name(candidate),
+        )
+        / 100.0
+        >= _ARTIST_MATCH_FLOOR
+    )
+
+
 def _release_rank(release: dict, rg: dict) -> tuple[int, int, int, int, str, str]:
     return recording_release_group_rank(
         release_status=release.get("status"),
@@ -177,8 +224,19 @@ def _release_rank(release: dict, rg: dict) -> tuple[int, int, int, int, str, str
     )
 
 
-def _pick_best_release_group(releases: list[dict]) -> tuple[str, str] | None:
+def _pick_best_release_group(
+    releases: list[dict], expected_artist: str | None = None
+) -> tuple[str, str] | None:
+    """Pick the best release group for a recording's releases.
+
+    When ``expected_artist`` is given (and is not blank/Various Artists),
+    release groups whose artist credit fuzzy-matches it are preferred; the
+    rank tuple stays the tiebreak within the matching partition, and the
+    full pool remains the fallback when nothing matches.
+    """
     candidates: dict[str, tuple[str, str, tuple[int, int, int, int, str, str]]] = {}
+    matched: dict[str, bool] = {}
+    want_artist = _artist_preference_active(expected_artist)
     for release in releases:
         rg = release.get("release-group", {})
         rg_id = rg.get("id")
@@ -189,11 +247,20 @@ def _pick_best_release_group(releases: list[dict]) -> tuple[str, str] | None:
             current = candidates.get(normalized_rg_id)
             if current is None or candidate[2] < current[2]:
                 candidates[normalized_rg_id] = candidate
+            if (
+                want_artist
+                and not matched.get(normalized_rg_id)
+                and _artist_name_matches(
+                    expected_artist or "",
+                    extract_artist_name(rg) or extract_artist_name(release),
+                )
+            ):
+                matched[normalized_rg_id] = True
     if not candidates:
         return None
-    _normalized_id, (rg_id, title, _rank) = min(
-        candidates.items(), key=lambda item: item[1][2]
-    )
+    pool = [key for key in candidates if matched.get(key)] or list(candidates)
+    key = min(pool, key=lambda item: candidates[item][2])
+    rg_id, title, _rank = candidates[key]
     return (rg_id, title)
 
 
@@ -1515,6 +1582,7 @@ class MusicBrainzAlbumMixin:
     async def resolve_recording_to_release_group(
         self,
         recording_mbid: str,
+        expected_artist: str | None = None,
     ) -> str | None:
         """Resolve an AcoustID recording MBID to its best release-group MBID.
 
@@ -1523,6 +1591,11 @@ class MusicBrainzAlbumMixin:
         of the recording's release groups is chosen by the same Album > EP >
         Single deterministic status/type/date heuristic used elsewhere. Tier 3 of the
         scanner's tiered identification (AcoustID -> recording -> release group).
+
+        ``expected_artist`` (issue #385) prefers release groups crediting that
+        artist; blank/Various Artists (or omitted) keeps the historical
+        rank-only pick, and the cache key gains an artist suffix only then so
+        existing rows stay valid.
         """
         clear_mb_response_context()
         source_context = capture_mb_source_context()
@@ -1530,6 +1603,9 @@ class MusicBrainzAlbumMixin:
         if not recording_mbid:
             return None
         cache_key = f"{MB_RECORDING_TO_RG_PREFIX}{recording_mbid}"
+        if _artist_preference_active(expected_artist):
+            artist_key = " ".join((expected_artist or "").split()).casefold()
+            cache_key = f"{cache_key}:artist={artist_key}"
         cached = await mb_cache_get_if_current(self._cache, cache_key, source_context)
         if cached is not None:
             return cached if cached != "" else None
@@ -1538,7 +1614,10 @@ class MusicBrainzAlbumMixin:
         return await mb_deduplicator.dedupe(
             dedupe_key,
             lambda: self._fetch_recording_release_group(
-                recording_mbid, cache_key, source_context=source_context
+                recording_mbid,
+                cache_key,
+                source_context=source_context,
+                expected_artist=expected_artist,
             ),
         )
 
@@ -1548,6 +1627,7 @@ class MusicBrainzAlbumMixin:
         cache_key: str,
         *,
         source_context: MbSourceContext | None = None,
+        expected_artist: str | None = None,
     ) -> str | None:
         source_context = source_context or capture_mb_source_context()
         try:
@@ -1559,7 +1639,7 @@ class MusicBrainzAlbumMixin:
                 source_context=source_context,
             )
             response_context = get_mb_response_context() or source_context
-            best = _pick_best_release_group(result.releases)
+            best = _pick_best_release_group(result.releases, expected_artist)
             rg_id = best[0] if best else None
             await mb_cache_set_if_current(
                 self._cache,

@@ -27,6 +27,8 @@ from services.spotify_import_service import (
     cover_fetcher_for,
     fetch_spotify_playlist_cover,
 )
+import services.spotify_import_service as spotify_module
+
 from tests.mocks.spotify_cdn_mock import (
     COVER_URL,
     JPEG_BYTES,
@@ -167,6 +169,157 @@ async def test_album_fallback_searches_artist_and_release_title_separately():
     svc._mb_repo.search_release_groups.assert_awaited_once_with(
         "Clairo", "Originals", limit=3, include_all_types=False
     )
+
+def _mb_credit(name: str) -> list[dict]:
+    return [{"name": name, "artist": {"name": name}}]
+
+
+_FANCY_MIXTAPE_RELEASE = {
+    "id": "release-fancy-that",
+    "status": "Official",
+    "date": "2025-03-28",
+    "artist-credit": _mb_credit("PinkPantheress"),
+    "release-group": {
+        "id": "rg-fancy-that",
+        "title": "Fancy That",
+        "primary-type": "Album",
+        "secondary-types": ["Mixtape/Street"],
+        "artist-credit": _mb_credit("PinkPantheress"),
+    },
+}
+
+_BRAVO_COMPILATION_RELEASE = {
+    "id": "release-bravo-130",
+    "status": "Official",
+    "date": "2025-04-04",
+    "artist-credit": _mb_credit("Various Artists"),
+    "release-group": {
+        "id": "rg-bravo-130",
+        "title": "Bravo Hits 130",
+        "primary-type": "Album",
+        "secondary-types": ["Compilation"],
+        "artist-credit": _mb_credit("Various Artists"),
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_isrc_pooled_fallback_prefers_requested_artist_over_compilation(
+    monkeypatch,
+):
+    # Issue #385: the artist's mixtape RG must win over an Official VA
+    # compilation containing the same recording, with no extra wire calls.
+    svc = _service(AsyncMock())
+    svc._mb_repo.get_cached_recording_to_release_group = AsyncMock(return_value=None)
+    svc._mb_repo.resolve_recording_to_release_group = AsyncMock(return_value=None)
+    provider = AsyncMock(
+        return_value={
+            "recordings": [
+                {
+                    "id": "rec-fancy",
+                    "artist-credit": _mb_credit("PinkPantheress"),
+                    "releases": [
+                        _BRAVO_COMPILATION_RELEASE,
+                        _FANCY_MIXTAPE_RELEASE,
+                    ],
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(spotify_module, "mb_api_get", provider)
+
+    result = await svc._resolve_mbid("GBABC123", "PinkPantheress", "Fancy That")
+
+    assert result == "rg-fancy-that"
+    assert provider.await_args.args[0] == "/isrc/GBABC123"
+    assert provider.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_isrc_tries_artist_matching_recording_first(monkeypatch):
+    # The compilation recording is listed first by MusicBrainz, but the
+    # artist-credited recording must resolve first.
+    svc = _service(AsyncMock())
+    svc._mb_repo.get_cached_recording_to_release_group = AsyncMock(return_value=None)
+    svc._mb_repo.resolve_recording_to_release_group = AsyncMock(
+        side_effect=lambda rec_id, expected_artist=None: {
+            "rec-pink": "rg-fancy-that"
+        }.get(rec_id)
+    )
+    provider = AsyncMock(
+        return_value={
+            "recordings": [
+                {
+                    "id": "rec-va",
+                    "artist-credit": _mb_credit("Various Artists"),
+                    "releases": [],
+                },
+                {
+                    "id": "rec-pink",
+                    "artist-credit": _mb_credit("PinkPantheress"),
+                    "releases": [],
+                },
+            ]
+        }
+    )
+    monkeypatch.setattr(spotify_module, "mb_api_get", provider)
+
+    result = await svc._resolve_mbid("GBABC123", "PinkPantheress", "Fancy That")
+
+    assert result == "rg-fancy-that"
+    first = svc._mb_repo.resolve_recording_to_release_group.await_args_list[0]
+    assert first.args[0] == "rec-pink"
+    assert first.kwargs["expected_artist"] == "PinkPantheress"
+
+
+@pytest.mark.asyncio
+async def test_isrc_various_artists_request_keeps_compilation_pick(monkeypatch):
+    # Genuine VA-targeted imports neutralize the preference: rank-only pick.
+    svc = _service(AsyncMock())
+    svc._mb_repo.get_cached_recording_to_release_group = AsyncMock(return_value=None)
+    svc._mb_repo.resolve_recording_to_release_group = AsyncMock(return_value=None)
+    provider = AsyncMock(
+        return_value={
+            "recordings": [
+                {
+                    "id": "rec-bravo",
+                    "artist-credit": _mb_credit("Various Artists"),
+                    "releases": [
+                        _FANCY_MIXTAPE_RELEASE,
+                        _BRAVO_COMPILATION_RELEASE,
+                    ],
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(spotify_module, "mb_api_get", provider)
+
+    result = await svc._resolve_mbid("GBXYZ999", "Various Artists", "Bravo Hits 130")
+
+    assert result == "rg-bravo-130"
+
+
+@pytest.mark.asyncio
+async def test_title_fallback_prefers_artist_match_over_first_result():
+    svc = _service(AsyncMock())
+    svc._mb_repo.search_release_groups = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                musicbrainz_id="rg-wrong-artist",
+                title="Fancy That",
+                artist="Cover Band",
+            ),
+            SimpleNamespace(
+                musicbrainz_id="rg-fancy-that",
+                title="Fancy That",
+                artist="PinkPantheress",
+            ),
+        ]
+    )
+
+    result = await svc._resolve_mbid(None, "PinkPantheress", "Fancy That")
+
+    assert result == "rg-fancy-that"
 
 
 def test_best_image_url_prefers_smallest_at_or_above_min():

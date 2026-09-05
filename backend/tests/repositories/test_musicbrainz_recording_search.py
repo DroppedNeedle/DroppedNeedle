@@ -424,6 +424,69 @@ def test_recording_fallback_prefers_official_compilation_over_bootleg_live(
         "Greatest Hits",
     )
 
+def _credit(name: str) -> list[dict]:
+    return [{"name": name, "artist": {"name": name}}]
+
+
+_FANCY_MIXTAPE = {
+    "id": "release-fancy-that",
+    "status": "Official",
+    "date": "2025-03-28",
+    "artist-credit": _credit("PinkPantheress"),
+    "release-group": {
+        "id": "rg-fancy-that",
+        "title": "Fancy That",
+        "primary-type": "Album",
+        "secondary-types": ["Mixtape/Street"],
+        "artist-credit": _credit("PinkPantheress"),
+    },
+}
+
+_BRAVO_COMPILATION = {
+    "id": "release-bravo-130",
+    "status": "Official",
+    "date": "2025-04-04",
+    "artist-credit": _credit("Various Artists"),
+    "release-group": {
+        "id": "rg-bravo-130",
+        "title": "Bravo Hits 130",
+        "primary-type": "Album",
+        "secondary-types": ["Compilation"],
+        "artist-credit": _credit("Various Artists"),
+    },
+}
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_pick_best_release_group_prefers_expected_artist_over_compilation(
+    reverse: bool,
+) -> None:
+    # Issue #385: the artist's mixtape outranks the better-ranked Official
+    # compilation regardless of input order.
+    releases = [_BRAVO_COMPILATION, _FANCY_MIXTAPE]
+    if reverse:
+        releases.reverse()
+
+    assert _pick_best_release_group(
+        releases, expected_artist="PinkPantheress"
+    ) == ("rg-fancy-that", "Fancy That")
+
+
+def test_pick_best_release_group_without_artist_keeps_rank_pick() -> None:
+    # No artist param: historical rank-only behavior is unchanged, so the
+    # Official compilation still beats the mixtape on this shape.
+    releases = [_BRAVO_COMPILATION, _FANCY_MIXTAPE]
+
+    assert _pick_best_release_group(releases) == ("rg-bravo-130", "Bravo Hits 130")
+
+
+def test_pick_best_release_group_various_artists_request_keeps_rank_pick() -> None:
+    releases = [_FANCY_MIXTAPE, _BRAVO_COMPILATION]
+
+    assert _pick_best_release_group(
+        releases, expected_artist="Various Artists"
+    ) == ("rg-bravo-130", "Bravo Hits 130")
+
 
 def test_recording_fallback_keeps_bootleg_live_when_it_is_the_only_choice() -> None:
     release = {

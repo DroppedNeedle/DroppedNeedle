@@ -9,19 +9,27 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from rapidfuzz.fuzz import token_set_ratio
+
 from infrastructure.degradation import try_get_degradation_context
 from infrastructure.http.client import get_spotify_cover_http_client
 from infrastructure.integration_result import IntegrationResult
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.validators import validate_spotify_cover_url
-from repositories.musicbrainz_album import _pick_best_release_group
+from repositories.musicbrainz_album import (
+    _artist_name_matches,
+    _artist_preference_active,
+    _pick_best_release_group,
+)
 from repositories.musicbrainz_base import (
     capture_mb_source_context,
     clear_mb_response_context,
+    extract_artist_name,
     get_mb_response_context,
     is_mb_source_current,
     mb_api_get,
 )
+from services.native.musicbrainz_matcher import MusicBrainzMatcher
 from repositories.async_playlist_repository import AsyncPlaylistRepository
 
 if TYPE_CHECKING:
@@ -131,6 +139,68 @@ def cover_fetcher_for(http_client: httpx.AsyncClient) -> CoverFetcher:
         return await fetch_spotify_playlist_cover(url, http_client)
 
     return _fetch
+
+
+def _prefer_artist_matching_recordings(
+    recordings: list[dict], artist: str
+) -> list[dict]:
+    """Stable artist-first ordering for the ISRC per-recording loop (#385).
+
+    Recordings whose in-hand artist credit fuzzy-matches the expected artist
+    resolve first, so a Various Artists compilation recording sharing the ISRC
+    no longer wins by MusicBrainz response order. Blank/Various Artists
+    requests keep wire order.
+    """
+    if not _artist_preference_active(artist):
+        return recordings
+    return sorted(
+        recordings,
+        key=lambda rec: not _artist_name_matches(
+            artist, extract_artist_name(rec)
+        ),
+    )
+
+
+def _import_artist_floor_ok(target_artist: str, candidate_artist: str | None) -> bool:
+    """Artist-floor gate mirroring MusicBrainzMatcher._artist_floor_ok.
+
+    Local (rather than a Matcher instance) because the import service owns no
+    matcher; the floor constant and normalization are the matcher's own.
+    """
+    if not candidate_artist:
+        return True
+    result_artist = MusicBrainzMatcher._normalize(candidate_artist)
+    if not result_artist:
+        return True
+    return (
+        token_set_ratio(MusicBrainzMatcher._normalize(target_artist), result_artist)
+        / 100.0
+        >= MusicBrainzMatcher.ARTIST_MATCH_FLOOR
+    )
+
+
+def _select_import_search_result(
+    results: list[Any], artist: str, album_name: str
+) -> Any:
+    """Title-search fallback pick (#385): most title-similar result among
+    artist-floor passers instead of blind results[0]; falls back to results[0]
+    when the artist is blank/Various Artists or nothing passes.
+    """
+    if not _artist_preference_active(artist):
+        return results[0]
+    passing = [
+        result
+        for result in results
+        if _import_artist_floor_ok(artist, getattr(result, "artist", None))
+    ]
+    if not passing:
+        return results[0]
+    return max(
+        passing,
+        key=lambda result: MusicBrainzMatcher.title_similarity(
+            album_name, getattr(result, "title", "") or ""
+        ),
+    )
 
 
 class SpotifyImportService:
@@ -407,7 +477,7 @@ class SpotifyImportService:
                         )
                     except Exception:  # noqa: BLE001
                         pass  # write-through must never break the import
-                for rec in recordings:
+                for rec in _prefer_artist_matching_recordings(recordings, artist):
                     if not is_mb_source_current(operation_context):
                         raise RuntimeError(
                             "MusicBrainz source changed during recording resolution"
@@ -416,7 +486,7 @@ class SpotifyImportService:
                     if not rec_id:
                         continue
                     mbid = await self._mb_repo.resolve_recording_to_release_group(
-                        rec_id
+                        rec_id, expected_artist=artist
                     )
                     if mbid:
                         return mbid
@@ -427,7 +497,7 @@ class SpotifyImportService:
                 all_releases: list[dict] = []
                 for rec in recordings:
                     all_releases.extend(rec.get("releases") or [])
-                best = _pick_best_release_group(all_releases)
+                best = _pick_best_release_group(all_releases, expected_artist=artist)
                 if best:
                     return best[0]
             except Exception:  # noqa: BLE001
@@ -442,7 +512,9 @@ class SpotifyImportService:
                     include_all_types=False,
                 )
                 if results:
-                    return results[0].musicbrainz_id
+                    return _select_import_search_result(
+                        results, artist, album_name
+                    ).musicbrainz_id
             except Exception:  # noqa: BLE001
                 pass
 
