@@ -13,6 +13,7 @@ import pytest
 from core.exceptions import ConflictError
 
 from services.native.library_management_recovery_service import (
+    LibraryManagementRecoveryRun,
     LibraryManagementRecoveryService,
     _JournalPaths,
     _RecoveryUncertainError,
@@ -986,9 +987,10 @@ _STUCK_SOURCE_PATH: list[object] = [None]
 _STUCK_IMPORT_TEMPLATE: list[object] = [None]
 
 @pytest.mark.asyncio
-async def test_startup_blocks_when_import_cleanup_never_converges(
+async def test_startup_escalates_stuck_import_cleanup_to_needs_attention(
     tmp_path: Path,
 ) -> None:
+    """Persistent import source-cleanup failures boot instead of bricking (#387)."""
     (
         _root,
         catalog_source,
@@ -1017,19 +1019,72 @@ async def test_startup_blocks_when_import_cleanup_never_converges(
     )
     _seed_stuck_cleanup_imports(store, policy_revision, stuck_source, count=3)
 
-    with pytest.raises(ConflictError, match="safe startup boundary"):
-        await _recovery(publisher, store).recover_startup()
+    result = await _recovery(publisher, store).recover_startup()
 
     remaining = await store.list_recoverable_library_management_import_bundles(
         limit=10, include_committed_cleanup=True
     )
-    assert len(remaining) == 3
+    assert remaining == []
+    assert result.needs_attention_bundles == 3
+    with sqlite3.connect(store.db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        bundle_states = {
+            row["state"]
+            for row in connection.execute(
+                "SELECT state FROM library_management_import_bundles "
+                "WHERE idempotency_key LIKE 'acquisition:stuck:%'"
+            ).fetchall()
+        }
+        journal_states = {
+            (row["state"], row["failure_code"])
+            for row in connection.execute(
+                "SELECT state,failure_code FROM library_management_import_journal "
+                "WHERE bundle_id IN (SELECT id FROM "
+                "library_management_import_bundles WHERE idempotency_key "
+                "LIKE 'acquisition:stuck:%')"
+            ).fetchall()
+        }
+    assert bundle_states == {"needs_attention"}
+    assert journal_states == {("needs_attention", "SOURCE_CLEANUP_FAILED")}
+    # Escalation flags the bundles; it never deletes the retained sources.
+    assert stuck_source.is_file()
 
 
 @pytest.mark.asyncio
-async def test_startup_refuses_more_than_the_recovery_bundle_cap(
+async def test_startup_still_blocks_when_manual_bundles_remain(
     tmp_path: Path,
 ) -> None:
+    """The manual lane keeps the old refuse-to-boot contract (#387)."""
+    (
+        _root,
+        _catalog_source,
+        store,
+        _audio,
+        publisher,
+        _service,
+        _policy_revision,
+    ) = _import_publication_fixture(tmp_path)
+    service = _recovery(publisher, store)
+
+    async def _no_work(**kwargs: object) -> LibraryManagementRecoveryRun:
+        return LibraryManagementRecoveryRun()
+
+    async def _manual_remaining(*, limit: int = 1) -> list[dict[str, object]]:
+        return [{"job_id": "manual-stuck", "bundle_ordinal": 0}]
+
+    service.recover_once = _no_work  # type: ignore[method-assign]
+    store.list_recoverable_management_bundles = (  # type: ignore[method-assign]
+        _manual_remaining
+    )
+    with pytest.raises(ConflictError, match="safe startup boundary"):
+        await service.recover_startup()
+
+
+@pytest.mark.asyncio
+async def test_startup_escalates_a_stuck_import_backlog_past_the_bundle_cap(
+    tmp_path: Path,
+) -> None:
+    """A huge stuck-cleanup backlog boots after one bounded drain pass (#387)."""
     (
         _root,
         catalog_source,
@@ -1058,13 +1113,16 @@ async def test_startup_refuses_more_than_the_recovery_bundle_cap(
     )
     _seed_stuck_cleanup_imports(store, policy_revision, stuck_source, count=501)
 
-    with pytest.raises(ConflictError, match="safe startup boundary"):
-        await _recovery(publisher, store).recover_startup()
+    result = await _recovery(publisher, store).recover_startup()
 
     remaining = await store.list_recoverable_library_management_import_bundles(
         limit=10, include_committed_cleanup=True
     )
-    assert remaining
+    assert remaining == []
+    assert result.needs_attention_bundles == 501
+    # One bounded drain pass ran before escalation; startup never spins to
+    # the cap re-examining the same failing bundles.
+    assert result.examined_bundles == 100
 
 
 @pytest.mark.asyncio
