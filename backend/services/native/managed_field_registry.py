@@ -53,6 +53,7 @@ class ManagedFieldDefinition(msgspec.Struct, frozen=True, kw_only=True):
     allow_preserve: bool
     participates_in_path_rendering: bool
     merge_supported: bool
+    max_unique_values: int = 100
 
 
 def _hooks(name: str, representation: str) -> tuple[FormatAdapterFieldHook, ...]:
@@ -78,6 +79,7 @@ def _field(
     path: bool = False,
     merge: bool | None = None,
     provider: Literal["musicbrainz", "local_verified"] = "musicbrainz",
+    max_values: int = 100,
 ) -> ManagedFieldDefinition:
     return ManagedFieldDefinition(
         name=name,
@@ -95,6 +97,7 @@ def _field(
         allow_preserve=True,
         participates_in_path_rendering=path,
         merge_supported=(cardinality == "ordered_strings" if merge is None else merge),
+        max_unique_values=max_values,
     )
 
 
@@ -366,6 +369,7 @@ _FIELDS = (
         includes=("recording-level-rels",),
         representation="relationship",
         merge=True,
+        max_values=256,
     ),
     _field(
         "arranger",

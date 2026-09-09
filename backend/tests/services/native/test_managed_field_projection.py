@@ -1,10 +1,15 @@
+from __future__ import annotations
+
 from api.v1.schemas.library_management import (
     MANAGED_FIELD_NAMES,
     picard_style_organizer_profile,
 )
 from models.library_management import LibraryManagementOverride
+from core.exceptions import ValidationError
+import pytest
 from services.native.effective_metadata_projection_service import (
     EffectiveMetadataProjectionService,
+    normalize_managed_field_value,
 )
 from services.native.managed_field_registry import (
     ADMITTED_MANAGEMENT_FORMATS,
@@ -204,3 +209,52 @@ def test_preserve_fields_win_and_scrub_only_targets_unmanaged_fields() -> None:
     assert projection.value_for("title") == "Existing"
     assert projector.should_scrub_unmanaged_field("title", projection) is False
     assert projector.should_scrub_unmanaged_field("custom:mood", projection) is True
+
+
+def _names(count: int) -> list[str]:
+    return [f"performer-{i:04d}" for i in range(count)]
+
+
+def _casefold_collisions(count: int) -> list[str]:
+    base = "The Beatles"
+    return [base.upper() if i % 2 else base.lower() for i in range(count)]
+
+
+def test_performer_accepts_134_unique_values() -> None:
+    field = MANAGED_FIELD_REGISTRY["performer"]
+    assert field.max_unique_values == 256
+    result = normalize_managed_field_value(field, _names(134))
+    assert len(result) == 134
+
+
+def test_performer_rejects_257_unique_values() -> None:
+    field = MANAGED_FIELD_REGISTRY["performer"]
+    with pytest.raises(ValidationError, match="bounded list"):
+        normalize_managed_field_value(field, _names(257))
+
+
+def test_non_performer_ordered_strings_rejects_101_unique_values() -> None:
+    field = MANAGED_FIELD_REGISTRY["composer"]
+    assert field.max_unique_values == 100
+    with pytest.raises(ValidationError, match="bounded list"):
+        normalize_managed_field_value(field, _names(101))
+
+
+def test_non_performer_ordered_strings_accepts_after_dedup() -> None:
+    field = MANAGED_FIELD_REGISTRY["composer"]
+    # 102 inputs: 100 unique + 2 casefold duplicates of existing names
+    redundant = _names(100) + ["PERFORMER-0000", "PERFORMER-0001"]
+    result = normalize_managed_field_value(field, redundant)
+    assert len(result) == 100
+
+
+def test_performer_accepts_101_unique_values_under_new_limit() -> None:
+    field = MANAGED_FIELD_REGISTRY["performer"]
+    result = normalize_managed_field_value(field, _names(101))
+    assert len(result) == 101
+
+
+def test_bounded_list_dedup_is_casefold_first() -> None:
+    field = MANAGED_FIELD_REGISTRY["performer"]
+    result = normalize_managed_field_value(field, _casefold_collisions(300))
+    assert len(result) == 1

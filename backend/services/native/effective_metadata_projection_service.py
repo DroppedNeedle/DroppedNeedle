@@ -48,7 +48,7 @@ def normalize_managed_field_value(
         if not isinstance(value, bool):
             raise ValidationError(f"{field.name} requires true or false.")
         return value
-    if not isinstance(value, (list, tuple)) or len(value) > 100:
+    if not isinstance(value, (list, tuple)):
         raise ValidationError(f"{field.name} requires a bounded list of text values.")
     result: list[str] = []
     seen: set[str] = set()
@@ -59,6 +59,8 @@ def normalize_managed_field_value(
         if folded not in seen:
             seen.add(folded)
             result.append(item)
+    if len(result) > field.max_unique_values:
+        raise ValidationError(f"{field.name} requires a bounded list of text values.")
     return tuple(result)
 
 
