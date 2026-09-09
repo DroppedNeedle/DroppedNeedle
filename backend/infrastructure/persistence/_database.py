@@ -1,6 +1,7 @@
 """Shared SQLite infrastructure for all persistence stores."""
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import json
 import sqlite3
@@ -138,6 +139,22 @@ def _safe_alter(conn: sqlite3.Connection, sql: str) -> bool:
         return False
 
 
+# GH-265: every store's reads and writes previously dispatched through
+# asyncio.to_thread(), which runs on the event loop's implicit default
+# executor (min(32, os.cpu_count() + 4) workers - as few as 5 on a
+# single-CPU container). That pool is effectively the process-wide SQLite
+# dispatch queue, so a burst of background work (a scan, the identification
+# queue) could exhaust it and leave quick, latency-sensitive reads - the
+# polled /library/activity and /home endpoints among them - queued for a
+# free thread instead of actually running, surfacing as random multi-second
+# "Slow request" warnings unrelated to the query itself. Dispatching through
+# a dedicated pool sized independently of cpu_count keeps SQLite access off
+# the loop's shared executor entirely, the same isolation
+# library_management_planner.py's _SOURCE_INSPECTION_EXECUTOR already
+# applies to its own blocking reads for the same reason.
+_DB_EXECUTOR = ThreadPoolExecutor(max_workers=32, thread_name_prefix="persistence-db")
+
+
 class PersistenceBase:
     """Shared base for all domain-specific SQLite stores.
 
@@ -198,10 +215,12 @@ class PersistenceBase:
             conn.close()
 
     async def _read(self, operation: Any) -> Any:
-        return await asyncio.to_thread(self._execute, operation, False)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_DB_EXECUTOR, self._execute, operation, False)
 
     async def _write(self, operation: Any) -> Any:
-        return await asyncio.to_thread(self._execute, operation, True)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_DB_EXECUTOR, self._execute, operation, True)
 
     def _execute_background(self, operation: Any) -> Any:
         background = getattr(self._write_lock, "background", None)
@@ -216,7 +235,8 @@ class PersistenceBase:
                 conn.close()
 
     async def _background_write(self, operation: Any) -> Any:
-        return await asyncio.to_thread(self._execute_background, operation)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_DB_EXECUTOR, self._execute_background, operation)
 
     def _ensure_tables(self) -> None:
         raise NotImplementedError
