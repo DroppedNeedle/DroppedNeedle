@@ -555,95 +555,101 @@
 							</p>
 						{/if}
 
-						<div class="mt-5 flex flex-wrap items-center gap-2 pt-1">
-							<button
-								class="btn btn-ghost btn-sm gap-2"
-								onclick={openVideo}
-								disabled={ytSearching}
-								title={youtubeEnabled
-									? 'Find a music video'
-									: 'Look for an existing music video link'}
-							>
-								{#if ytSearching}<Loader2
-										class="h-4 w-4 animate-spin motion-reduce:animate-none"
-									/>{:else}<YouTubeIcon class="h-4 w-4" />{/if}
-								{ytSearching ? 'Finding video…' : ytError ? 'Retry video' : 'Find video'}
-							</button>
-							<a
-								class="btn btn-ghost btn-sm gap-2"
-								href={externalSearchUrl}
-								target="_blank"
-								rel="noopener noreferrer"
-							>
-								Search YouTube <ExternalLink class="h-3.5 w-3.5" />
-							</a>
-							<div class="flex flex-col gap-1">
+						<div class="mt-5 flex flex-col gap-2 pt-1">
+							<div class="flex flex-wrap items-center gap-2">
 								<button
-									class="btn btn-sm gap-2 border-none bg-base-content/10 hover:bg-base-content/20"
-									class:btn-active={sampling}
-									onclick={toggleSample}
-									disabled={deckSampler.status === 'loading' && sampling}
-									title="Play 30-second samples of this album"
+									class="btn btn-ghost btn-sm gap-2"
+									onclick={openVideo}
+									disabled={ytSearching}
+									title={youtubeEnabled
+										? 'Find a music video'
+										: 'Look for an existing music video link'}
 								>
-									{#if sampling && deckSampler.status === 'loading'}
-										<Loader2 class="h-4 w-4 animate-spin" />
-									{:else if sampling}
-										<X class="h-4 w-4" />
-									{:else}
-										<Disc3 class="h-4 w-4" />
-									{/if}
-									{sampling ? 'Stop sample' : 'Sample album'}
+									{#if ytSearching}<Loader2
+											class="h-4 w-4 animate-spin motion-reduce:animate-none"
+										/>{:else}<YouTubeIcon class="h-4 w-4" />{/if}
+									{ytSearching ? 'Finding video…' : ytError ? 'Retry video' : 'Find video'}
 								</button>
-								<label class="flex items-center gap-1.5 px-1" title="Preview volume">
-									<Volume2 class="h-3 w-3 shrink-0 text-base-content/40" />
-									<input
-										type="range"
-										min="0"
-										max="1"
-										step="0.05"
-										value={deckSampler.volume}
-										oninput={(e) => deckSampler.setVolume(Number(e.currentTarget.value))}
-										class="range range-primary range-xs w-24"
-										aria-label="Preview volume"
-									/>
-								</label>
+								<a
+									class="btn btn-ghost btn-sm gap-2"
+									href={externalSearchUrl}
+									target="_blank"
+									rel="noopener noreferrer"
+								>
+									Search YouTube <ExternalLink class="h-3.5 w-3.5" />
+								</a>
+								<div class="flex flex-col gap-1">
+									<button
+										class="btn btn-sm gap-2 border-none bg-base-content/10 hover:bg-base-content/20"
+										class:btn-active={sampling}
+										onclick={toggleSample}
+										disabled={deckSampler.status === 'loading' && sampling}
+										title="Play 30-second samples of this album"
+									>
+										{#if sampling && deckSampler.status === 'loading'}
+											<Loader2 class="h-4 w-4 animate-spin" />
+										{:else if sampling}
+											<X class="h-4 w-4" />
+										{:else}
+											<Disc3 class="h-4 w-4" />
+										{/if}
+										{sampling ? 'Stop sample' : 'Sample album'}
+									</button>
+									<label class="flex items-center gap-1.5 px-1" title="Preview volume">
+										<Volume2 class="h-3 w-3 shrink-0 text-base-content/40" />
+										<input
+											type="range"
+											min="0"
+											max="1"
+											step="0.05"
+											value={deckSampler.volume}
+											oninput={(e) => deckSampler.setVolume(Number(e.currentTarget.value))}
+											class="range range-primary range-xs w-24"
+											aria-label="Preview volume"
+										/>
+									</label>
+								</div>
+
+								{#if $integrationStore.download_client && !current.in_library}
+									<button
+										class="btn btn-primary btn-sm gap-2"
+										onclick={handleRequest}
+										disabled={requesting || isRequested}
+									>
+										{#if requesting}
+											<Loader2 class="h-4 w-4 animate-spin" />
+										{:else if isRequested}
+											<Check class="h-4 w-4" />
+										{:else}
+											<Download class="h-4 w-4" />
+										{/if}
+										{isRequested ? 'Requested' : 'Request'}
+									</button>
+								{/if}
+
+								<button class="btn btn-ghost btn-sm gap-2 text-error/80" onclick={handleIgnore}>
+									<X class="h-4 w-4" /> Not for me
+								</button>
 							</div>
 
-							{#if $integrationStore.download_client && !current.in_library}
-								<button
-									class="btn btn-primary btn-sm gap-2"
-									onclick={handleRequest}
-									disabled={requesting || isRequested}
-								>
-									{#if requesting}
-										<Loader2 class="h-4 w-4 animate-spin" />
-									{:else if isRequested}
-										<Check class="h-4 w-4" />
-									{:else}
-										<Download class="h-4 w-4" />
-									{/if}
-									{isRequested ? 'Requested' : 'Request'}
+							<!-- Kept on its own non-wrapping row so Next never shifts position when the
+							     buttons above change width/visibility per recommendation (#403). -->
+							<div class="flex items-center gap-2">
+								<button class="btn btn-outline btn-sm gap-2" onclick={handleAdvance}>
+									{deck.isLast ? 'Finish queue' : 'Next'}
+									<ArrowRight class="h-4 w-4" />
 								</button>
-							{/if}
-
-							<button class="btn btn-ghost btn-sm gap-2 text-error/80" onclick={handleIgnore}>
-								<X class="h-4 w-4" /> Not for me
-							</button>
-
-							<button class="btn btn-outline btn-sm ml-auto gap-2" onclick={handleAdvance}>
-								{deck.isLast ? 'Finish queue' : 'Next'}
-								<ArrowRight class="h-4 w-4" />
-							</button>
-							<button
-								class="btn btn-ghost btn-sm gap-2"
-								onclick={() => deck.buildNow()}
-								disabled={deck.replacing}
-							>
-								<RefreshCw
-									class={`h-3.5 w-3.5 ${deck.replacing ? 'animate-spin motion-reduce:animate-none' : ''}`}
-								/>
-								{deck.replacing ? 'Building replacement…' : 'New queue'}
-							</button>
+								<button
+									class="btn btn-ghost btn-sm gap-2"
+									onclick={() => deck.buildNow()}
+									disabled={deck.replacing}
+								>
+									<RefreshCw
+										class={`h-3.5 w-3.5 ${deck.replacing ? 'animate-spin motion-reduce:animate-none' : ''}`}
+									/>
+									{deck.replacing ? 'Building replacement…' : 'New queue'}
+								</button>
+							</div>
 							{#if deck.errorMessage}<p role="status" class="w-full text-xs text-warning">
 									{deck.errorMessage}
 								</p>{/if}
