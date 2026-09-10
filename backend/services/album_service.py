@@ -771,15 +771,6 @@ class AlbumService:
         self, release_group_id: str, priority: RequestPriority
     ) -> tuple[AlbumTracksInfo, bool]:
         started = time.perf_counter()
-        local = await self._local_album_tracks_info(release_group_id)
-        if local is not None:
-            logger.info(
-                "Album tracks album=%s source=local outcome=success tracks=%d elapsed_ms=%.1f",
-                release_group_id[:8],
-                local.total_tracks,
-                (time.perf_counter() - started) * 1000,
-            )
-            return local, True
 
         cached_album_info = await self._get_cached_album_info(
             release_group_id, f"{ALBUM_INFO_PREFIX}{release_group_id}"

@@ -3389,6 +3389,81 @@ async def test_get_target_album_tracks_batch_groups_indexed_rows(
 
 
 @pytest.mark.asyncio
+async def test_get_target_album_tracks_ignores_stale_release_group_alias(
+    store: NativeLibraryStore,
+) -> None:
+    """A legacy RG alias with no indexed files must not mask the one active
+    owner of that provider identity. Direct local IDs remain edition-scoped."""
+    await store.create_catalog_membership(_membership("stale"))
+    await store.create_catalog_membership(_membership("active"))
+    with sqlite3.connect(store.db_path) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET availability = 'missing' "
+            "WHERE id = 'track-stale'"
+        )
+        connection.executemany(
+            "INSERT INTO local_album_external_identities "
+            "(local_album_id, provider, release_group_mbid, decision_source, "
+            "selected_at) VALUES (?, 'musicbrainz', 'rg-shared', 'legacy_import', 2)",
+            [("album-stale",), ("album-active",)],
+        )
+        connection.execute(
+            "INSERT INTO local_album_aliases "
+            "(alias, local_album_id, kind, created_at) "
+            "VALUES ('rg-shared', 'album-stale', 'legacy_release_group', 2)"
+        )
+        connection.commit()
+
+    resolved = await store.get_target_album_tracks("rg-shared")
+
+    assert [row["id"] for row in resolved] == ["track-active"]
+    assert await store.get_target_album_tracks("album-stale") == []
+    unavailable = await store.get_target_album_tracks(
+        "rg-shared", include_unavailable=True
+    )
+    assert [row["id"] for row in unavailable] == ["track-stale"]
+
+
+@pytest.mark.asyncio
+async def test_get_target_album_tracks_stale_alias_does_not_merge_ambiguous_editions(
+    store: NativeLibraryStore,
+) -> None:
+    """An RG alone cannot choose between two active local editions."""
+    for suffix in ("stale", "edition-a", "edition-b"):
+        await store.create_catalog_membership(_membership(suffix))
+    with sqlite3.connect(store.db_path) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET availability = 'missing' "
+            "WHERE id = 'track-stale'"
+        )
+        connection.executemany(
+            "INSERT INTO local_album_external_identities "
+            "(local_album_id, provider, release_group_mbid, release_mbid, "
+            "decision_source, selected_at) "
+            "VALUES (?, 'musicbrainz', 'rg-shared', ?, 'legacy_import', 2)",
+            [
+                ("album-stale", None),
+                ("album-edition-a", "release-a"),
+                ("album-edition-b", "release-b"),
+            ],
+        )
+        connection.execute(
+            "INSERT INTO local_album_aliases "
+            "(alias, local_album_id, kind, created_at) "
+            "VALUES ('rg-shared', 'album-stale', 'legacy_release_group', 2)"
+        )
+        connection.commit()
+
+    assert await store.get_target_album_tracks("rg-shared") == []
+    assert [
+        row["id"] for row in await store.get_target_album_tracks("album-edition-a")
+    ] == ["track-edition-a"]
+    assert [
+        row["id"] for row in await store.get_target_album_tracks("album-edition-b")
+    ] == ["track-edition-b"]
+
+
+@pytest.mark.asyncio
 async def test_disabled_fingerprint_outcome_is_overwritable_but_matched_is_not(
     store: NativeLibraryStore,
 ) -> None:

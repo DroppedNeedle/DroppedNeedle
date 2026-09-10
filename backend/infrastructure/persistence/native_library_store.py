@@ -3244,27 +3244,63 @@ class NativeLibraryStore(PersistenceBase):
                 "FROM local_albums WHERE id = ?",
                 (album_identifier,),
             ).fetchone()
-            if direct is None:
-                direct = connection.execute(
+            if direct is not None:
+                album_ids = [str(direct["id"])]
+            else:
+                alias = connection.execute(
                     "SELECT local_album_id AS id FROM local_album_aliases "
                     "WHERE alias = ?",
                     (album_identifier.casefold(),),
                 ).fetchone()
-            if direct is not None:
-                album_ids = [str(direct["id"])]
-            else:
-                album_ids = [
-                    str(row["local_album_id"])
-                    for row in connection.execute(
-                        "SELECT identity.local_album_id "
-                        "FROM local_album_external_identities identity "
-                        "JOIN local_albums album ON album.id = identity.local_album_id "
-                        "WHERE LOWER(identity.release_group_mbid) = LOWER(?) "
-                        "AND album.retired_into_album_id IS NULL "
-                        "ORDER BY identity.local_album_id",
-                        (album_identifier,),
-                    ).fetchall()
-                ]
+                if alias is not None:
+                    alias_id = str(alias["id"])
+                    alias_has_visible_tracks = connection.execute(
+                        "SELECT 1 FROM local_tracks WHERE local_album_id = ? "
+                        "AND (? OR availability = 'indexed') LIMIT 1",
+                        (alias_id, include_unavailable),
+                    ).fetchone()
+                    # A legacy release-group alias may outlive the album card's
+                    # indexed membership. Repair that read only when the provider
+                    # identity has one unambiguous active owner; multiple matches
+                    # can be legitimate editions and must remain album-scoped.
+                    if alias_has_visible_tracks is not None:
+                        album_ids = [alias_id]
+                    else:
+                        active_provider_ids = [
+                            str(row["local_album_id"])
+                            for row in connection.execute(
+                                "SELECT identity.local_album_id "
+                                "FROM local_album_external_identities identity "
+                                "JOIN local_albums album "
+                                "ON album.id = identity.local_album_id "
+                                "WHERE identity.provider = 'musicbrainz' "
+                                "AND LOWER(identity.release_group_mbid) = LOWER(?) "
+                                "AND album.retired_into_album_id IS NULL "
+                                "AND EXISTS (SELECT 1 FROM local_tracks track "
+                                "WHERE track.local_album_id = album.id "
+                                "AND (? OR track.availability = 'indexed')) "
+                                "ORDER BY identity.local_album_id",
+                                (album_identifier, include_unavailable),
+                            ).fetchall()
+                        ]
+                        album_ids = (
+                            active_provider_ids
+                            if len(active_provider_ids) == 1
+                            else [alias_id]
+                        )
+                else:
+                    album_ids = [
+                        str(row["local_album_id"])
+                        for row in connection.execute(
+                            "SELECT identity.local_album_id "
+                            "FROM local_album_external_identities identity "
+                            "JOIN local_albums album ON album.id = identity.local_album_id "
+                            "WHERE LOWER(identity.release_group_mbid) = LOWER(?) "
+                            "AND album.retired_into_album_id IS NULL "
+                            "ORDER BY identity.local_album_id",
+                            (album_identifier,),
+                        ).fetchall()
+                    ]
             if not album_ids:
                 return []
             availability = (
