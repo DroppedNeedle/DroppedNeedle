@@ -73,6 +73,8 @@ import { getHeldImportsQuery } from '$lib/queries/downloads/HeldQueries.svelte';
 import { isActiveDownloadStatus } from '$lib/queries/downloads/downloadStatus';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { getNavidromeFolderScopeRevision } from '$lib/utils/navidromeLibraryCache';
+import { removeLibraryTrack } from '$lib/queries/library/LibraryMutations.svelte';
+import { toastStore } from '$lib/stores/toast';
 
 export interface SourceCallbacks {
 	onPlayAll: () => void;
@@ -771,6 +773,18 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		);
 	}
 
+	const removeTrack = removeLibraryTrack();
+	function removeLocalFile(fileId: string): void {
+		if (!album) return;
+		removeTrack.mutate(
+			{ fileId, albumMbid: album.musicbrainz_id },
+			{
+				onSuccess: () => toastStore.show({ message: 'File removed', type: 'success' }),
+				onError: () => toastStore.show({ message: "Couldn't remove this file", type: 'error' })
+			}
+		);
+	}
+
 	function getTrackContextMenuItems(
 		track: { position: number; disc_number?: number | null; title: string },
 		resolvedLocal: LocalTrackInfo | null,
@@ -787,7 +801,8 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 			resolvedNavidrome,
 			resolvedPlex,
 			playlistModalRef,
-			localMatch?.download_allowed !== false
+			localMatch?.download_allowed !== false,
+			authStore.isTrusted ? removeLocalFile : undefined
 		);
 	}
 

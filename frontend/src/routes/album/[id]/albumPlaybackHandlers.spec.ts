@@ -209,6 +209,69 @@ describe('track context menu Download item', () => {
 	});
 });
 
+describe('track context menu Remove file item', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	function itemsFor(onRemoveLocalFile?: (fileId: string) => void) {
+		return getTrackContextMenuItems(
+			{ position: 1, disc_number: 1, title: 'She Loves Me So' },
+			album,
+			localTracks[0],
+			null,
+			null,
+			null,
+			null,
+			true,
+			onRemoveLocalFile
+		);
+	}
+
+	it('omits the Remove file item when no callback is supplied (viewer not trusted)', () => {
+		const labels = itemsFor().map((item) => item.label);
+		expect(labels).not.toContain('Remove file');
+	});
+
+	it('omits the Remove file item when no local file is resolved', () => {
+		const items = getTrackContextMenuItems(
+			{ position: 1, disc_number: 1, title: 'She Loves Me So' },
+			album,
+			null,
+			null,
+			null,
+			null,
+			null,
+			true,
+			vi.fn()
+		);
+		expect(items.map((item) => item.label)).not.toContain('Remove file');
+	});
+
+	it('removes the file after the user confirms', () => {
+		vi.stubGlobal('confirm', vi.fn(() => true));
+		const onRemoveLocalFile = vi.fn();
+		const remove = itemsFor(onRemoveLocalFile).find((item) => item.label === 'Remove file');
+		expect(remove).toBeDefined();
+
+		remove!.onclick();
+
+		expect(onRemoveLocalFile).toHaveBeenCalledWith('file-1');
+		vi.unstubAllGlobals();
+	});
+
+	it('does nothing when the user cancels the confirmation', () => {
+		vi.stubGlobal('confirm', vi.fn(() => false));
+		const onRemoveLocalFile = vi.fn();
+		const remove = itemsFor(onRemoveLocalFile).find((item) => item.label === 'Remove file');
+
+		remove!.onclick();
+
+		expect(onRemoveLocalFile).not.toHaveBeenCalled();
+		vi.unstubAllGlobals();
+	});
+});
+
 describe('buildLocalAlbumDownloadCallback', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
