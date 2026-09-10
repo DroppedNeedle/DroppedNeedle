@@ -7,6 +7,7 @@ request relink writes, capped per-track partial dispatch with per-recording
 dedup, satisfaction-first (no search on a covered want), the active-work
 guards, cadence math with jitter bounds, and dormancy."""
 
+import asyncio
 import sqlite3
 import threading
 import time
@@ -617,6 +618,31 @@ async def test_auto_dispatch_carries_the_scout_snapshot_across_policy_changes(en
     assert summary.dispatched == 1
     assert live_snapshot is snapshot_b
     assert dispatched_snapshot is snapshot_a
+
+
+@pytest.mark.asyncio
+async def test_watch_stopped_while_scouting_is_not_dispatched(env):
+    await _add_watch(env)
+    scout_started = asyncio.Event()
+    finish_scout = asyncio.Event()
+
+    async def scout(**_kwargs):
+        scout_started.set()
+        await finish_scout.wait()
+        return [_cand(tier="auto")]
+
+    env.ds.capture_quality_snapshot = Mock(return_value=SimpleNamespace())
+    env.ds.scout_album = AsyncMock(side_effect=scout)
+    sweep = asyncio.create_task(env.watcher.run_sweep())
+    await scout_started.wait()
+    await env.store.stop_watch("rg-1")
+    finish_scout.set()
+
+    summary = await sweep
+
+    assert summary.dispatched == 0
+    env.ds.request_album.assert_not_awaited()
+    assert (await env.store.get_watch("rg-1")).state == "stopped"
 
 
 @pytest.mark.asyncio

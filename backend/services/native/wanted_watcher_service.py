@@ -782,6 +782,19 @@ class WantedWatcherService:
         identities = [(c.source, self._candidate_identity(c)) for c in candidates]
 
         if settings.auto_download_on_find and self._has_auto_hit(candidates):
+            # Scouting can take long enough for the user to stop this watch. The
+            # sweep's due row is only a snapshot, so re-read immediately before
+            # the first mutating action instead of dispatching from stale state.
+            current = await self._store.get_watch(mbid)
+            if current is None or current.state != "watching":
+                logger.info(
+                    "wanted.dispatch_skipped",
+                    extra={
+                        "release_group_mbid": mbid,
+                        "reason": "watch_not_watching",
+                    },
+                )
+                return "skipped"
             if (
                 await self._dispatch(
                     want,
