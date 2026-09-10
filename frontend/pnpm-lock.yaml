@@ -125,8 +125,8 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.19.17)(@vitest/browser-playwright@4.1.11)(vite@7.3.5(@types/node@22.19.17)(jiti@2.7.0)(lightningcss@1.32.0))
       vitest-browser-svelte:
-        specifier: ^1.1.0
-        version: 1.1.0(@vitest/browser@4.1.11(vite@7.3.5(@types/node@22.19.17)(jiti@2.7.0)(lightningcss@1.32.0))(vitest@4.1.11))(svelte@5.57.0(@typescript-eslint/types@8.69.0))(vitest@4.1.11)
+        specifier: ^3.1.0
+        version: 3.1.0(svelte@5.57.0(@typescript-eslint/types@8.69.0))(vitest@4.1.11)
 
 packages:
 
@@ -792,6 +792,12 @@ packages:
     resolution: {integrity: sha512-X+d2LvUImIf1OQiNIlJ5AfHcXrVwKMMvuC1a/6VZclkgg7Td9mSnvZrbpWowR3TFHrzFY80PHVwm+u8End7c3Q==}
     peerDependencies:
       svelte: ^5.25.0
+
+  '@testing-library/svelte-core@1.1.3':
+    resolution: {integrity: sha512-KkMAvXeWorxN2Yn0kdC1lfoAItxpoj4uOWzxK5leDrNxonLvS5nwBFvztrroyTszQ0Wf/EU6iLT8JhY5qcn22g==}
+    engines: {node: '>=16'}
+    peerDependencies:
+      svelte: ^3 || ^4 || ^5 || ^5.0.0-next.0
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -1740,13 +1746,11 @@ packages:
       vite:
         optional: true
 
-  vitest-browser-svelte@1.1.0:
-    resolution: {integrity: sha512-o98mCzKkWBjvmaGzi69rvyBd1IJ7zFPGI0jcID9vI4F5DmdG//YxkIbeQ7TS27hAVR+MULnBZNja2DUiuUBZyA==}
-    engines: {node: ^18.0.0 || >=20.0.0}
+  vitest-browser-svelte@3.1.0:
+    resolution: {integrity: sha512-+EBXSed6NArmzOC2DY4v9sI5n9TMIyfkMnewbXNQ7sR5IckQTCx7g1BbLdkH7kzm/tkgG/eEbRYlMWSbVfBtWA==}
     peerDependencies:
-      '@vitest/browser': ^2.1.0 || ^3.0.0 || ^4.0.0-0
       svelte: ^3 || ^4 || ^5 || ^5.0.0-next.0
-      vitest: ^2.1.0 || ^3.0.0 || ^4.0.0-0
+      vitest: ^4.0.0 || ^5.0.0
 
   vitest@4.1.11:
     resolution: {integrity: sha512-fhACrNXUidIbGSBr5FlbuBkO7VWC1ZyLl0DO4CU2DrQoAPxX84Ysxs+HeGQpii5lZWV1Q4gBZTTu49mF+A6Edw==}
@@ -2297,6 +2301,10 @@ snapshots:
   '@tanstack/svelte-query@6.1.48(svelte@5.57.0(@typescript-eslint/types@8.69.0))':
     dependencies:
       '@tanstack/query-core': 5.102.8
+      svelte: 5.57.0(@typescript-eslint/types@8.69.0)
+
+  '@testing-library/svelte-core@1.1.3(svelte@5.57.0(@typescript-eslint/types@8.69.0))':
+    dependencies:
       svelte: 5.57.0(@typescript-eslint/types@8.69.0)
 
   '@types/chai@5.2.3':
@@ -3205,9 +3213,9 @@ snapshots:
     optionalDependencies:
       vite: 7.3.5(@types/node@22.19.17)(jiti@2.7.0)(lightningcss@1.32.0)
 
-  vitest-browser-svelte@1.1.0(@vitest/browser@4.1.11(vite@7.3.5(@types/node@22.19.17)(jiti@2.7.0)(lightningcss@1.32.0))(vitest@4.1.11))(svelte@5.57.0(@typescript-eslint/types@8.69.0))(vitest@4.1.11):
+  vitest-browser-svelte@3.1.0(svelte@5.57.0(@typescript-eslint/types@8.69.0))(vitest@4.1.11):
     dependencies:
-      '@vitest/browser': 4.1.11(vite@7.3.5(@types/node@22.19.17)(jiti@2.7.0)(lightningcss@1.32.0))(vitest@4.1.11)
+      '@testing-library/svelte-core': 1.1.3(svelte@5.57.0(@typescript-eslint/types@8.69.0))
       svelte: 5.57.0(@typescript-eslint/types@8.69.0)
       vitest: 4.1.11(@types/node@22.19.17)(@vitest/browser-playwright@4.1.11)(vite@7.3.5(@types/node@22.19.17)(jiti@2.7.0)(lightningcss@1.32.0))
 
