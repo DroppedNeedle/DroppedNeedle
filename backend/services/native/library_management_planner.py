@@ -1463,7 +1463,8 @@ class LibraryManagementPlanner:
             destination_path,
         )
         catalog_collision = await self._store.get_target_track_by_path(
-            str(destination_path)
+            str(destination_path),
+            indexed_only=True,
         )
         catalog_directory = PurePosixPath(destination_relative).parent
         catalog_siblings = await self._store.list_target_tracks_in_directory(
@@ -1471,6 +1472,7 @@ class LibraryManagementPlanner:
             ""
             if catalog_directory == PurePosixPath(".")
             else catalog_directory.as_posix(),
+            indexed_only=True,
         )
         collisions, collision_reason = await asyncio.to_thread(
             self._destination_collisions,
