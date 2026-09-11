@@ -99,6 +99,35 @@ async def test_concurrent_entry_and_tick_do_not_create_second_user_budget(demand
 
 
 @pytest.mark.asyncio
+async def test_home_and_discover_route_through_workload_gate(tmp_path, monkeypatch):
+    monkeypatch.setattr('services.discover.demand_service.get_settings', lambda: SimpleNamespace(discover_warmer_enabled=True))
+    store = DiscoverySnapshotStore(tmp_path / 'demand.sqlite', threading.Lock())
+    discover = SimpleNamespace(warm_cache=AsyncMock(return_value=True))
+    home = SimpleNamespace(warm_cache=AsyncMock(return_value=True))
+    queue = SimpleNamespace(scheduled_enabled=lambda: True, start_build=AsyncMock(), wait_for_build=AsyncMock())
+    artist = SimpleNamespace(warm_requested_section=AsyncMock())
+    auth = SimpleNamespace(get_user_by_id=AsyncMock(return_value=SimpleNamespace(id='u')))
+
+    async def _run_warmer_unit(operation):
+        return await operation()
+
+    gate = MagicMock()
+    gate.run_warmer_unit = AsyncMock(side_effect=_run_warmer_unit)
+    service = DiscoveryDemandService(
+        store, lambda: discover, lambda: home, lambda: queue, lambda: artist, lambda: auth,
+        workload_gate=gate,
+    )
+    await enroll(store, 'home')
+    await enroll(store, 'discover', user='u2')
+    await service.run_due_tick('u')
+    await service.run_due_tick('u2')
+
+    assert gate.run_warmer_unit.await_count == 2
+    assert home.warm_cache.await_count == 1
+    assert discover.warm_cache.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_fair_user_order_does_not_repeat_recent_success(demand):
     service, store, discover, home, queue, artist, auth = demand
     await enroll(store, 'home', user='a')

@@ -27,13 +27,14 @@ def _log_error(task: asyncio.Task) -> None:
 
 class DiscoveryDemandService:
     def __init__(self, store, get_discover_service, get_home_service, get_queue_manager,
-                 get_artist_service, get_auth_store) -> None:
+                 get_artist_service, get_auth_store, workload_gate=None) -> None:
         self._store = store
         self._discover = get_discover_service
         self._home = get_home_service
         self._queue = get_queue_manager
         self._artist = get_artist_service
         self._auth = get_auth_store
+        self._workload_gate = workload_gate
 
     def trigger_user(self, user_id: str) -> None:
         registry = TaskRegistry.get_instance()
@@ -110,9 +111,17 @@ class DiscoveryDemandService:
                     "queue": ProviderWorkload.QUEUE, "artist": ProviderWorkload.ARTIST}[feature]
         with provider_workload(workload):
             if feature == "home":
-                return await self._home().warm_cache(user_id)
+                if self._workload_gate is None:
+                    return await self._home().warm_cache(user_id)
+                return await self._workload_gate.run_warmer_unit(
+                    lambda: self._home().warm_cache(user_id)
+                )
             elif feature == "discover":
-                return await self._discover().warm_cache(user_id)
+                if self._workload_gate is None:
+                    return await self._discover().warm_cache(user_id)
+                return await self._workload_gate.run_warmer_unit(
+                    lambda: self._discover().warm_cache(user_id)
+                )
             elif feature == "queue":
                 with optional_dispatch_guard(lambda: self._queue().scheduled_enabled()):
                     manager = self._queue()
