@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AlertTriangle, Check, ExternalLink, History, Music2, XCircle } from 'lucide-svelte';
+	import { TriangleAlert, Check, ExternalLink, History, Music2, CircleX } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { getLibraryReviewQuery } from '$lib/queries/library/LibraryReviewQueries.svelte';
 	import {
@@ -226,21 +226,21 @@
 				<button
 					class="btn btn-ghost btn-sm btn-square"
 					onclick={() => dialog.close()}
-					aria-label="Close review"><XCircle class="h-5 w-5" /></button
+					aria-label="Close review"><CircleX class="h-5 w-5" /></button
 				>
 			</header>
 
 			<div class="space-y-6 p-5">
 				{#if isTier}
 					<div class="alert alert-info text-sm" role="status">
-						<AlertTriangle class="h-4 w-4" /><span
+						<TriangleAlert class="h-4 w-4" /><span
 							>Release group pinned - exact edition unproven. Year, country and cover are not
 							proven. Confirm one edition below.</span
 						>
 					</div>
 				{:else}
 					<div class="alert alert-warning text-sm">
-						<AlertTriangle class="h-4 w-4" /><span>{reasonLabel(detail.review.reason_code)}</span>
+						<TriangleAlert class="h-4 w-4" /><span>{reasonLabel(detail.review.reason_code)}</span>
 					</div>
 				{/if}
 

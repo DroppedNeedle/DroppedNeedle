@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Disc3, Mic2 } from 'lucide-svelte';
+	import { Disc3, MicVocal } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import LocalAlbumTrackList from '$lib/components/library/LocalAlbumTrackList.svelte';
 	import ArtistAppearancesSectionSkeleton from './ArtistAppearancesSectionSkeleton.svelte';
@@ -57,7 +57,7 @@
 						class="appearance-mark grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-accent/20 bg-accent/10 text-accent"
 						aria-hidden="true"
 					>
-						<Mic2 class="h-5 w-5" />
+						<MicVocal class="h-5 w-5" />
 					</div>
 					<div>
 						<p class="text-[10px] font-bold uppercase tracking-[0.18em] text-base-content/45">

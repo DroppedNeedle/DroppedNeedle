@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Loader2, Play, Square } from 'lucide-svelte';
+	import { LoaderCircle, Play, Square } from 'lucide-svelte';
 	import { deckSampler } from '$lib/stores/deckSampler.svelte';
 
 	interface Props {
@@ -65,7 +65,7 @@
 	onclick={toggle}
 >
 	{#if loading}
-		<Loader2 class="h-4 w-4 animate-spin" />
+		<LoaderCircle class="h-4 w-4 animate-spin" />
 	{:else if active}
 		<Square class="h-3.5 w-3.5" fill="currentColor" />
 		<svg viewBox="0 0 20 20" class="pointer-events-none absolute inset-0 h-full w-full -rotate-90">

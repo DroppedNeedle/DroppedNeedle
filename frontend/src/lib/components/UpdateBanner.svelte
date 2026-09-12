@@ -2,7 +2,7 @@
 	import { serviceStatusStore } from '$lib/stores/serviceStatus';
 	import { fromStore } from 'svelte/store';
 	import { PersistedState } from 'runed';
-	import { ArrowUpCircle, X } from 'lucide-svelte';
+	import { CircleArrowUp, X } from 'lucide-svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	interface Props {
@@ -39,7 +39,7 @@
 			class="alert alert-info shadow-lg mx-auto mt-2 max-w-xl pointer-events-auto text-sm gap-2 py-2 banner-enter"
 			role="status"
 		>
-			<ArrowUpCircle class="h-4 w-4 shrink-0" />
+			<CircleArrowUp class="h-4 w-4 shrink-0" />
 			<span>
 				A new version of DroppedNeedle is available
 				{#if latestVersion}

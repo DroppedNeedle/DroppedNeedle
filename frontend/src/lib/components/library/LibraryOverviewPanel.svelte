@@ -1,11 +1,11 @@
 <script lang="ts">
 	import {
-		AlertTriangle,
+		TriangleAlert,
 		ArrowRight,
 		CircleCheck,
 		Clock3,
 		FolderCog,
-		Fingerprint,
+		FingerprintPattern,
 		History,
 		ListChecks,
 		Music2,
@@ -214,7 +214,7 @@
 <div class="space-y-6">
 	{#if !libraryEnabled}
 		<div class="alert alert-warning">
-			<AlertTriangle class="h-5 w-5" />
+			<TriangleAlert class="h-5 w-5" />
 			<div class="min-w-0 flex-1">
 				<strong>The local library is disabled</strong>
 				<p class="text-sm">
@@ -433,7 +433,7 @@
 				class="rounded-2xl border border-warning/30 bg-base-200/40 p-4 transition-colors hover:border-warning/50 hover:bg-base-200/60"
 			>
 				<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-warning/15 text-warning"
-					><AlertTriangle class="h-4 w-4" /></span
+					><TriangleAlert class="h-4 w-4" /></span
 				>
 				<strong class="font-display mt-3 block text-2xl font-bold text-warning tabular-nums"
 					>{attentionCount.toLocaleString()}</strong
@@ -524,7 +524,7 @@
 		>
 			<div class="flex items-center gap-2.5">
 				<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-accent/10 text-accent"
-					><Fingerprint class="h-4 w-4" /></span
+					><FingerprintPattern class="h-4 w-4" /></span
 				>
 				<h3 class="font-display text-lg font-bold">Prepare identities</h3>
 			</div>

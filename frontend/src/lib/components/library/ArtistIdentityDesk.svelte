@@ -5,11 +5,11 @@
 		ArrowUpRight,
 		BadgeCheck,
 		CircleAlert,
-		Fingerprint,
+		FingerprintPattern,
 		ListFilter,
 		Merge,
 		Search,
-		ShieldQuestion,
+		ShieldQuestionMark,
 		Split,
 		UsersRound
 	} from 'lucide-svelte';
@@ -415,7 +415,7 @@
 				<aside class={isWide ? 'sticky top-24' : ''} aria-label="Artist identity inspector">
 					{#if !selectedSummary}
 						<div class="rounded-box border border-base-content/10 bg-base-100 p-6 text-center">
-							<Fingerprint class="mx-auto h-8 w-8 text-base-content/35" />
+							<FingerprintPattern class="mx-auto h-8 w-8 text-base-content/35" />
 							<p class="mt-3 font-semibold">Select a dossier</p>
 							<p class="mt-1 text-sm text-base-content/55">
 								Inspect evidence and persisted references here.
@@ -497,7 +497,7 @@
 
 								<section aria-labelledby="provider-evidence-title">
 									<h3 id="provider-evidence-title" class="flex items-center gap-2 font-semibold">
-										<Fingerprint class="h-4 w-4" /> Exact provider evidence
+										<FingerprintPattern class="h-4 w-4" /> Exact provider evidence
 									</h3>
 									{#if detail.evidence.length}
 										<ul class="mt-2 space-y-2 text-sm">
@@ -515,7 +515,7 @@
 										</ul>
 									{:else}
 										<p class="mt-2 flex gap-2 rounded-lg bg-warning/10 p-3 text-sm">
-											<ShieldQuestion class="h-4 w-4 shrink-0" /> No complete provider proof is stored
+											<ShieldQuestionMark class="h-4 w-4 shrink-0" /> No complete provider proof is stored
 											for this group.
 										</p>
 									{/if}

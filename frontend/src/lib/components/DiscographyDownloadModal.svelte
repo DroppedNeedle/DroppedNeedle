@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Download, X, Disc3, Check, Loader2, Library } from 'lucide-svelte';
+	import { Download, X, Disc3, Check, LoaderCircle, Library } from 'lucide-svelte';
 	import { discographyDownloadStore } from '$lib/stores/discographyDownload.svelte';
 	import { batchDownloadStore } from '$lib/stores/batchDownloadStatus.svelte';
 	import {
@@ -136,7 +136,7 @@
 				{/if}
 				{#if requestedCount > 0}
 					<div class="badge badge-info gap-1">
-						<Loader2 class="h-3 w-3" />
+						<LoaderCircle class="h-3 w-3" />
 						{requestedCount} requested
 					</div>
 				{/if}

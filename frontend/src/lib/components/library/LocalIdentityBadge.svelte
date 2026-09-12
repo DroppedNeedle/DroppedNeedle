@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { CircleCheck, HardDrive, Layers3, Sparkles } from 'lucide-svelte';
+	import { CircleCheck, HardDrive, Layers, Sparkles } from 'lucide-svelte';
 	import type { AlbumIdentityState, ArtistIdentityState, NativePickBasis } from '$lib/types';
 
 	interface Props {
@@ -77,7 +77,7 @@
 		{#if state === 'local_only'}
 			<HardDrive class={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
 		{:else if state === 'release_group_linked'}
-			<Layers3 class={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
+			<Layers class={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
 		{:else if state === 'custom_edition'}
 			<Sparkles class={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
 		{:else}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { X, Music2, Loader2, AlertCircle } from 'lucide-svelte';
+	import { X, Music2, LoaderCircle, CircleAlert } from 'lucide-svelte';
 	import { slide } from 'svelte/transition';
 	import type { LyricLine } from '$lib/types';
 
@@ -118,12 +118,12 @@
 			>
 				{#if isLoading}
 					<div class="flex flex-col items-center justify-center py-12 gap-3">
-						<Loader2 class="h-6 w-6 animate-spin text-primary" />
+						<LoaderCircle class="h-6 w-6 animate-spin text-primary" />
 						<p class="text-sm text-base-content/50">Loading lyrics...</p>
 					</div>
 				{:else if hasError}
 					<div class="flex flex-col items-center justify-center py-8 gap-2">
-						<AlertCircle class="h-5 w-5 text-warning" />
+						<CircleAlert class="h-5 w-5 text-warning" />
 						<p class="text-center text-base-content/50 text-sm">
 							Couldn't load the lyrics. Try again in a bit.
 						</p>

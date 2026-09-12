@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AlertTriangle, ShieldCheck, Trash2 } from 'lucide-svelte';
+	import { TriangleAlert, ShieldCheck, Trash2 } from 'lucide-svelte';
 
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import {
@@ -58,7 +58,7 @@
 			<div
 				class="flex items-center gap-3 rounded-xl border border-base-content/5 bg-base-200/50 p-3 backdrop-blur-sm"
 			>
-				<AlertTriangle class="h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
+				<TriangleAlert class="h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
 				<div class="min-w-0 flex-1">
 					<p class="truncate text-sm font-medium" title={entry.filename}>
 						{basename(entry.filename)}

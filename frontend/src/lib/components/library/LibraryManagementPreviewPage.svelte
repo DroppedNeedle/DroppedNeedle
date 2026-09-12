@@ -4,11 +4,11 @@
 	import {
 		ArrowRight,
 		BookOpenCheck,
-		CheckCircle2,
+		CircleCheckBig,
 		Clock3,
 		FolderCog,
 		HardDrive,
-		Layers3,
+		Layers,
 		ShieldAlert,
 		Sparkles,
 		Tags,
@@ -643,7 +643,7 @@
 						{quantity(preview.summary.path_change_count, 'path change')}</span
 					>
 					<span class="badge badge-outline"
-						><Layers3 class="h-3 w-3" />
+						><Layers class="h-3 w-3" />
 						{quantity(preview.summary.sidecar_change_count, 'sidecar change')}</span
 					>
 					<span class="badge badge-outline"
@@ -1096,7 +1096,7 @@
 					applyPreview.isPending}
 				onclick={() => void apply()}
 				>{#if applyPreview.isPending}<span class="loading loading-spinner loading-sm"
-					></span>{/if}<CheckCircle2 class="h-4 w-4" />
+					></span>{/if}<CircleCheckBig class="h-4 w-4" />
 				{applyAction.confirmButton}</button
 			>
 		</div>

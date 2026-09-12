@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Play, Shuffle, ListPlus, CirclePlus, Loader2 } from 'lucide-svelte';
+	import { Play, Shuffle, ListPlus, CirclePlus, LoaderCircle } from 'lucide-svelte';
 	import { PersistedState } from 'runed';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
@@ -172,7 +172,7 @@
 					onclick={() => loader.playAll()}
 				>
 					{#if loader.loading}
-						<Loader2 class="h-4 w-4 animate-spin" />
+						<LoaderCircle class="h-4 w-4 animate-spin" />
 					{:else}
 						<Play class="h-4 w-4 fill-current" />
 					{/if}

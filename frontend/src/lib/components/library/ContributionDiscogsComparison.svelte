@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AlertTriangle, Check, ExternalLink, GitCompareArrows } from 'lucide-svelte';
+	import { TriangleAlert, Check, ExternalLink, GitCompareArrows } from 'lucide-svelte';
 	import type { LibraryContribution, ReleaseDraft } from '$lib/types';
 
 	type ComparisonField =
@@ -257,7 +257,7 @@
 							>
 								{#if alignment.classification === 'exact'}<Check
 										class="h-3 w-3"
-									/>{:else}<AlertTriangle class="h-3 w-3" />{/if}
+									/>{:else}<TriangleAlert class="h-3 w-3" />{/if}
 								{alignment.classification}
 								{alignment.provider_position ?? ''}
 							</span>

@@ -3,7 +3,7 @@
 		CirclePause,
 		CirclePlay,
 		FolderSync,
-		Fingerprint,
+		FingerprintPattern,
 		ListChecks,
 		OctagonX,
 		RefreshCw,
@@ -517,7 +517,7 @@
 				<div
 					class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary"
 				>
-					<Fingerprint class="h-5 w-5" />
+					<FingerprintPattern class="h-5 w-5" />
 				</div>
 				<div class="min-w-0 flex-1">
 					<h3 class="font-semibold">Artist identity desk</h3>

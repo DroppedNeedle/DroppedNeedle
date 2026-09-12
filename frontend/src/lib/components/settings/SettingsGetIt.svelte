@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { Coffee, ExternalLink, Github, ShoppingBag } from 'lucide-svelte';
+	import { Coffee, ExternalLink, ShoppingBag } from 'lucide-svelte';
+	import GitHubIcon from '$lib/components/GitHubIcon.svelte';
 	import { API } from '$lib/constants';
 	import type { GetItSettings } from '$lib/types';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
@@ -96,7 +97,7 @@
 					rel="noopener noreferrer"
 					class="btn btn-ghost btn-sm border border-base-content/15"
 				>
-					<Github class="h-4 w-4" aria-hidden="true" />
+					<GitHubIcon class="h-4 w-4" />
 					GitHub Sponsors
 					<ExternalLink class="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
 				</a>

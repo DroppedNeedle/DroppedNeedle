@@ -1,9 +1,9 @@
 // separate from downloadStatus.ts so the lucide imports stay out of the lucide-free nav store
 import type { ComponentType } from 'svelte';
 import {
-	AlertTriangle,
+	TriangleAlert,
 	Ban,
-	CheckCircle,
+	CircleCheck,
 	Clock,
 	Download,
 	Eye,
@@ -11,7 +11,7 @@ import {
 	RefreshCw,
 	Search,
 	Timer,
-	XCircle
+	CircleX
 } from 'lucide-svelte';
 
 import type { DerivedDownloadStatus, RetryDisplay } from './downloadStatus';
@@ -31,7 +31,7 @@ type RetryKind = NonNullable<RetryDisplay>['kind'];
 export const retryBadgeConfig: Record<RetryKind, Omit<DownloadStatusMeta, 'label'>> = {
 	scheduled: { badgeClass: 'badge-warning', icon: Timer, pulse: true },
 	retrying: { badgeClass: 'badge-warning', icon: RefreshCw, pulse: true },
-	failed_exhausted: { badgeClass: 'badge-error', icon: XCircle, pulse: false }
+	failed_exhausted: { badgeClass: 'badge-error', icon: CircleX, pulse: false }
 };
 
 export const downloadStatusConfig: Record<DerivedDownloadStatus, DownloadStatusMeta> = {
@@ -45,8 +45,8 @@ export const downloadStatusConfig: Record<DerivedDownloadStatus, DownloadStatusM
 	queued: { label: 'Queued', badgeClass: 'badge-ghost', icon: Clock, pulse: false },
 	downloading: { label: 'Downloading', badgeClass: 'badge-primary', icon: Download, pulse: true },
 	processing: { label: 'Processing', badgeClass: 'badge-accent', icon: Loader, pulse: true },
-	completed: { label: 'Completed', badgeClass: 'badge-success', icon: CheckCircle, pulse: false },
-	partial: { label: 'Partial', badgeClass: 'badge-warning', icon: AlertTriangle, pulse: false },
-	failed: { label: 'Failed', badgeClass: 'badge-error', icon: XCircle, pulse: false },
+	completed: { label: 'Completed', badgeClass: 'badge-success', icon: CircleCheck, pulse: false },
+	partial: { label: 'Partial', badgeClass: 'badge-warning', icon: TriangleAlert, pulse: false },
+	failed: { label: 'Failed', badgeClass: 'badge-error', icon: CircleX, pulse: false },
 	cancelled: { label: 'Cancelled', badgeClass: 'badge-neutral', icon: Ban, pulse: false }
 };

@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import {
-		AlertTriangle,
+		TriangleAlert,
 		Check,
 		Clipboard,
 		Download,
-		FileJson,
+		FileBraces,
 		FileUp,
 		Hash,
 		PackageCheck
@@ -246,7 +246,7 @@
 				<span
 					class="rounded-xl border border-library-manage/20 bg-library-manage/10 p-2.5 text-library-manage"
 				>
-					<FileJson class="h-5 w-5" aria-hidden="true" />
+					<FileBraces class="h-5 w-5" aria-hidden="true" />
 				</span>
 				<div>
 					<p class="management-step">Portable profile</p>
@@ -387,7 +387,7 @@
 							ondrop={(event) => void dropFile(event)}
 						>
 							<span class="rounded-2xl bg-library-manage/10 p-3 text-library-manage"
-								><FileJson class="h-7 w-7" /></span
+								><FileBraces class="h-7 w-7" /></span
 							>
 							<strong class="mt-3 text-sm">Choose or drop a .dnprofile file</strong>
 							<small class="mt-1 text-base-content/50">.dnprofile files up to 1 MiB</small>
@@ -458,7 +458,7 @@
 											: 'border-warning/25 bg-warning/5'}"
 									>
 										<strong class="flex items-center gap-2"
-											><AlertTriangle
+											><TriangleAlert
 												class="h-4 w-4 {warning.severity === 'danger'
 													? 'text-error'
 													: 'text-warning'}"

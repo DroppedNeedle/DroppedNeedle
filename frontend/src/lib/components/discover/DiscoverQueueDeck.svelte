@@ -9,7 +9,7 @@
 		ExternalLink,
 		Flag,
 		Headphones,
-		Loader2,
+		LoaderCircle,
 		RefreshCw,
 		Volume2,
 		X
@@ -405,7 +405,7 @@
 											class="flex h-16 w-16 items-center justify-center rounded-full bg-base-100/85 shadow-lg backdrop-blur-sm transition-transform duration-300"
 										>
 											{#if ytSearching}
-												<Loader2
+												<LoaderCircle
 													class="h-7 w-7 animate-spin"
 													style="color: var(--color-youtube);"
 												/>
@@ -565,7 +565,7 @@
 										? 'Find a music video'
 										: 'Look for an existing music video link'}
 								>
-									{#if ytSearching}<Loader2
+									{#if ytSearching}<LoaderCircle
 											class="h-4 w-4 animate-spin motion-reduce:animate-none"
 										/>{:else}<YouTubeIcon class="h-4 w-4" />{/if}
 									{ytSearching ? 'Finding video…' : ytError ? 'Retry video' : 'Find video'}
@@ -587,7 +587,7 @@
 										title="Play 30-second samples of this album"
 									>
 										{#if sampling && deckSampler.status === 'loading'}
-											<Loader2 class="h-4 w-4 animate-spin" />
+											<LoaderCircle class="h-4 w-4 animate-spin" />
 										{:else if sampling}
 											<X class="h-4 w-4" />
 										{:else}
@@ -617,7 +617,7 @@
 										disabled={requesting || isRequested}
 									>
 										{#if requesting}
-											<Loader2 class="h-4 w-4 animate-spin" />
+											<LoaderCircle class="h-4 w-4 animate-spin" />
 										{:else if isRequested}
 											<Check class="h-4 w-4" />
 										{:else}

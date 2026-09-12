@@ -15,9 +15,9 @@
 		Download,
 		FileDown,
 		Loader,
-		CheckCircle2,
-		XCircle,
-		AlertTriangle,
+		CircleCheckBig,
+		CircleX,
+		TriangleAlert,
 		Ban,
 		Pause,
 		Music,
@@ -119,17 +119,17 @@
 			case 'paused':
 				return { badgeClass: 'badge-warning', label: 'Paused', icon: Pause };
 			case 'downloadClientUnavailable':
-				return { badgeClass: 'badge-error', label: 'Client Unavailable', icon: AlertTriangle };
+				return { badgeClass: 'badge-error', label: 'Client Unavailable', icon: TriangleAlert };
 			case 'importFailed':
-				return { badgeClass: 'badge-error', label: 'Import Failed', icon: XCircle };
+				return { badgeClass: 'badge-error', label: 'Import Failed', icon: CircleX };
 			case 'importBlocked':
-				return { badgeClass: 'badge-warning', label: 'Import Blocked', icon: AlertTriangle };
+				return { badgeClass: 'badge-warning', label: 'Import Blocked', icon: TriangleAlert };
 			case 'incomplete':
-				return { badgeClass: 'badge-warning', label: 'Incomplete', icon: AlertTriangle };
+				return { badgeClass: 'badge-warning', label: 'Incomplete', icon: TriangleAlert };
 			case 'imported':
-				return { badgeClass: 'badge-success', label: 'Imported', icon: CheckCircle2 };
+				return { badgeClass: 'badge-success', label: 'Imported', icon: CircleCheckBig };
 			case 'failed':
-				return { badgeClass: 'badge-error', label: 'Failed', icon: XCircle };
+				return { badgeClass: 'badge-error', label: 'Failed', icon: CircleX };
 			case 'cancelled':
 				return { badgeClass: 'badge-ghost', label: 'Cancelled', icon: Ban };
 			case 'awaiting_approval':

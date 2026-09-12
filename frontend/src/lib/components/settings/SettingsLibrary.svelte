@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AlertTriangle, ArrowRight, CheckCircle2, FolderCog, ScanSearch } from 'lucide-svelte';
+	import { TriangleAlert, ArrowRight, CircleCheckBig, FolderCog, ScanSearch } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/client';
 	import {
 		getLibraryRestorableRootsQuery,
@@ -256,7 +256,7 @@
 	{:else}
 		{#if settingsQuery.isError}
 			<div class="alert alert-warning text-sm">
-				<AlertTriangle class="h-4 w-4" /><span
+				<TriangleAlert class="h-4 w-4" /><span
 					>Could not refresh library settings. You are seeing the last loaded values; saving still
 					checks for conflicting changes.</span
 				>
@@ -275,7 +275,7 @@
 
 		{#if !hasKey}
 			<div class="alert alert-warning">
-				<AlertTriangle class="h-5 w-5" /><span class="text-sm"
+				<TriangleAlert class="h-5 w-5" /><span class="text-sm"
 					>No AcoustID key - fingerprint identification is off for files without MusicBrainz tags.
 					Add a key to enable it.</span
 				>
@@ -284,7 +284,7 @@
 
 		{#if currentSettings?.reconciliation_required}
 			<div class="alert alert-warning items-start">
-				<AlertTriangle class="mt-0.5 h-5 w-5" />
+				<TriangleAlert class="mt-0.5 h-5 w-5" />
 				<div class="min-w-0 flex-1">
 					<strong>Awaiting reconciliation</strong>
 					<p class="text-sm">
@@ -309,7 +309,7 @@
 
 		{#if restorableRoots.length > 0}
 			<div class="alert alert-warning items-start">
-				<AlertTriangle class="mt-0.5 h-5 w-5" />
+				<TriangleAlert class="mt-0.5 h-5 w-5" />
 				<div class="min-w-0 flex-1">
 					<strong>Library roots were removed</strong>
 					<p class="text-sm">
@@ -527,7 +527,7 @@
 					are in the affected scopes.
 				</p>
 				{#if impact.data.content_will_become_unavailable}<div class="alert alert-warning">
-						<AlertTriangle class="h-4 w-4" /> Some music will become unavailable after you explicitly
+						<TriangleAlert class="h-4 w-4" /> Some music will become unavailable after you explicitly
 						apply reconciliation.
 					</div>{/if}{#if impact.data.queued_work_will_be_cancelled}<p class="text-warning">
 						Queued work in these scopes will be cancelled when the policy is saved.
@@ -537,7 +537,7 @@
 						{warning}
 					</p>{/each}
 				<p class="flex items-center gap-2 text-success">
-					<CheckCircle2 class="h-4 w-4" /> Saving does not start a scan.
+					<CircleCheckBig class="h-4 w-4" /> Saving does not start a scan.
 				</p>
 			</div>{/if}
 		{#if save.error}
@@ -572,7 +572,7 @@
 				committed catalog changes remain safe if the job is paused or stopped.
 			</p>
 			{#if applyPreview.data.content_will_become_unavailable}<div class="alert alert-warning mt-3">
-					<AlertTriangle class="h-4 w-4" /> Music under Excluded scopes will become unavailable to DroppedNeedle
+					<TriangleAlert class="h-4 w-4" /> Music under Excluded scopes will become unavailable to DroppedNeedle
 					and connected clients.
 				</div>{/if}{/if}
 		<div class="modal-action">

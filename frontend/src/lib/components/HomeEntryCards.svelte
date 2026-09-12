@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Headphones, ArrowRight, Sparkles, AlertTriangle } from 'lucide-svelte';
+	import { Headphones, ArrowRight, Sparkles, TriangleAlert } from 'lucide-svelte';
 	import type { ComponentType } from 'svelte';
 	import { fromStore } from 'svelte/store';
 	import DropImportZone from '$lib/components/import/DropImportZone.svelte';
@@ -214,7 +214,7 @@
 						: 'bg-base-100/40 text-base-content/70'}"
 				>
 					{#if isError}
-						<AlertTriangle class="h-4 w-4 shrink-0" />
+						<TriangleAlert class="h-4 w-4 shrink-0" />
 						<span>Couldn't load stats - open to retry.</span>
 					{:else}
 						<Sparkles class="h-4 w-4 shrink-0 {card.iconColor}" />

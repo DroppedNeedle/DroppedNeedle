@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ChevronDown, Loader2, Sparkles, Trash2 } from 'lucide-svelte';
+	import { ChevronDown, LoaderCircle, Sparkles, Trash2 } from 'lucide-svelte';
 	import { slide } from 'svelte/transition';
 	import { SvelteSet } from 'svelte/reactivity';
 	import {
@@ -159,7 +159,7 @@
 								</ul>
 							{:else}
 								<div class="flex justify-center py-4">
-									<Loader2 class="h-5 w-5 animate-spin text-base-content/40" />
+									<LoaderCircle class="h-5 w-5 animate-spin text-base-content/40" />
 								</div>
 							{/if}
 						</div>
@@ -195,7 +195,7 @@
 					onclick={() => confirmRemove(true)}
 				>
 					{#if removing}
-						<Loader2 class="h-4 w-4 animate-spin" />
+						<LoaderCircle class="h-4 w-4 animate-spin" />
 					{:else}
 						<Trash2 class="h-4 w-4" />
 					{/if}

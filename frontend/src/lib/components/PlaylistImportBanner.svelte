@@ -3,7 +3,7 @@
 	import type { Snippet } from 'svelte';
 	import {
 		ArrowRight,
-		CheckCircle2,
+		CircleCheckBig,
 		CircleAlert,
 		Disc3,
 		Link2,
@@ -205,7 +205,7 @@
 				</svg>
 				<div class="absolute inset-0 flex items-center justify-center">
 					{#if allImported}
-						<CheckCircle2 class="h-6 w-6 text-success" />
+						<CircleCheckBig class="h-6 w-6 text-success" />
 					{:else}
 						<span class="text-xs font-bold tabular-nums text-base-content/70">
 							{importedCount}/{totalCount}

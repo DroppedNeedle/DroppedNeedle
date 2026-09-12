@@ -23,7 +23,7 @@
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { Music, Lock, Download, Loader2 } from 'lucide-svelte';
+	import { Music, Lock, Download, LoaderCircle } from 'lucide-svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import type { PageData } from './$types';
@@ -431,7 +431,7 @@
 						disabled={requesting}
 					>
 						{#if requesting}
-							<Loader2 class="h-3.5 w-3.5 animate-spin" />
+							<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
 						{:else}
 							<Download class="h-3.5 w-3.5" />
 						{/if}

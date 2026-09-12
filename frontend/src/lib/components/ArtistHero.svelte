@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, Mic2, RefreshCw } from 'lucide-svelte';
+	import { Check, MicVocal, RefreshCw } from 'lucide-svelte';
 	import type { ArtistInfo } from '$lib/types';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import { imageSettingsStore } from '$lib/stores/imageSettings';
@@ -103,7 +103,7 @@
 							</div>
 						{:else if artist.appears_in_library}
 							<div class="absolute -bottom-2 -right-2 badge badge-accent badge-lg gap-1 shadow-lg">
-								<Mic2 class="h-4 w-4" />
+								<MicVocal class="h-4 w-4" />
 								Appears in library
 							</div>
 						{/if}

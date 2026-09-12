@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AlertTriangle } from 'lucide-svelte';
+	import { TriangleAlert } from 'lucide-svelte';
 
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import type { HeldImport } from '$lib/types';
@@ -23,7 +23,7 @@
 				/>
 			{:else}
 				<div class="grid h-full w-full place-items-center bg-base-300">
-					<AlertTriangle class="size-6 text-warning" aria-hidden="true" />
+					<TriangleAlert class="size-6 text-warning" aria-hidden="true" />
 				</div>
 			{/if}
 		</div>

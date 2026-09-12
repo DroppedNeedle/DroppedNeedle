@@ -32,7 +32,7 @@
 		Library,
 		TrendingUp,
 		LayoutGrid,
-		Wand2,
+		WandSparkles,
 		Heart,
 		SlidersHorizontal
 	} from 'lucide-svelte';
@@ -325,7 +325,7 @@
 											<div
 												class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/15 shadow-[0_0_16px_oklch(from_var(--color-primary)_l_c_h_/_0.15)]"
 											>
-												<Wand2 class="h-5 w-5 text-primary" />
+												<WandSparkles class="h-5 w-5 text-primary" />
 											</div>
 											<div class="flex-1 min-w-0">
 												<h3 class="font-bold text-sm sm:text-base">Discover for a Playlist</h3>

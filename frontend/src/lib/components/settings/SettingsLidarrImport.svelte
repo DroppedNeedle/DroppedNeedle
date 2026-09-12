@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { CircleCheck, CircleX, DownloadCloud } from 'lucide-svelte';
+	import { CircleCheck, CircleX, CloudDownload } from 'lucide-svelte';
 
 	import { getLidarrImportConfigQuery } from '$lib/queries/lidarr-import/LidarrImportQueries.svelte';
 	import {
@@ -76,7 +76,7 @@
 		<div class="card-body gap-0 p-0">
 			<div class="flex items-center gap-3 p-4">
 				<div class="grid size-12 place-items-center rounded-2xl bg-base-300/60">
-					<DownloadCloud class="size-6 text-accent" aria-hidden="true" />
+					<CloudDownload class="size-6 text-accent" aria-hidden="true" />
 				</div>
 				<div>
 					<h3 class="text-lg font-bold">Connection</h3>

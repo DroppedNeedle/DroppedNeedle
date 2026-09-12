@@ -5,7 +5,7 @@
 		Users,
 		Disc3,
 		Image,
-		Loader2,
+		LoaderCircle,
 		Check,
 		TriangleAlert,
 		X,
@@ -21,7 +21,7 @@
 		audiodb_prewarm: Image
 	};
 
-	let PhaseIcon = $derived(syncStatus.phase ? (phaseIcons[syncStatus.phase] ?? Loader2) : Loader2);
+	let PhaseIcon = $derived(syncStatus.phase ? (phaseIcons[syncStatus.phase] ?? LoaderCircle) : LoaderCircle);
 
 	let isComplete = $derived(!syncStatus.isActive && !syncStatus.error && syncStatus.showIndicator);
 

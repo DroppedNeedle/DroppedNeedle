@@ -4,7 +4,7 @@
 	import { onMount } from 'svelte';
 	import { SvelteURL } from 'svelte/reactivity';
 	import {
-		AlertTriangle,
+		TriangleAlert,
 		ArrowRight,
 		CirclePause,
 		CirclePlay,
@@ -584,7 +584,7 @@
 			{#if recoveryQuery.data && (recoveryQuery.data.needs_attention_count || recoveryQuery.data.cleanup_pending_count)}<div
 					class="alert alert-warning items-start"
 				>
-					<AlertTriangle class="mt-0.5 h-5 w-5" /><span
+					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
 						><strong>Recovery needs attention</strong><br />{recoveryQuery.data
 							.needs_attention_count} bundles need review; {recoveryQuery.data
 							.cleanup_pending_count} have safe cleanup pending. No uncertain file is deleted automatically.</span
@@ -601,7 +601,7 @@
 								>{/each}
 						</div>{/if}
 				</div>{:else if recoveryUnavailable}<div class="alert alert-error items-start" role="alert">
-					<AlertTriangle class="mt-0.5 h-5 w-5" /><span
+					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
 						><strong>Recovery status is unavailable</strong><br />Do not start new file writes until
 						diagnostics load successfully. Refresh this page or check the server logs.</span
 					>

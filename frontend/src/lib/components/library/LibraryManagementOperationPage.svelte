@@ -2,8 +2,8 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {
-		AlertTriangle,
-		CheckCircle2,
+		TriangleAlert,
+		CircleCheckBig,
 		CirclePause,
 		CirclePlay,
 		Clock3,
@@ -431,7 +431,7 @@
 					class={`alert ${terminalPresentation.className}`}
 					role={operation.state === 'failed' ? 'alert' : 'status'}
 				>
-					{#if operation.state === 'succeeded'}<CheckCircle2 class="h-5 w-5" />{:else}<AlertTriangle
+					{#if operation.state === 'succeeded'}<CircleCheckBig class="h-5 w-5" />{:else}<TriangleAlert
 							class="h-5 w-5"
 						/>{/if}<span
 						><strong>{terminalPresentation.label}</strong><br />{terminalPresentation.detail}</span

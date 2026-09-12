@@ -10,7 +10,7 @@
 	import type { ActiveRequestItem, RequestHistoryItem, RequestKind } from '$lib/types';
 	import {
 		TriangleAlert,
-		CheckCircle,
+		CircleCheck,
 		Clock,
 		Download,
 		History,
@@ -21,7 +21,7 @@
 		X,
 		Heart,
 		Sparkles,
-		DownloadCloud,
+		CloudDownload,
 		TrendingUp
 	} from 'lucide-svelte';
 	import WantedWatchCard from '$lib/components/WantedWatchCard.svelte';
@@ -710,7 +710,7 @@
 			{:else if activeItems.length === 0}
 				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
 					<div class="w-16 h-16 rounded-full bg-success/5 flex items-center justify-center mb-4">
-						<CheckCircle class="h-8 w-8 text-success/30" />
+						<CircleCheck class="h-8 w-8 text-success/30" />
 					</div>
 					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">All clear</h2>
 					<p class="text-base-content/30 text-sm max-w-xs">
@@ -955,7 +955,7 @@
 			{:else if approvalItems.length === 0}
 				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
 					<div class="w-16 h-16 rounded-full bg-success/5 flex items-center justify-center mb-4">
-						<CheckCircle class="h-8 w-8 text-success/30" />
+						<CircleCheck class="h-8 w-8 text-success/30" />
 					</div>
 					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">No pending approvals</h2>
 					<p class="text-base-content/30 text-sm max-w-xs">
@@ -1081,7 +1081,7 @@
 			{:else if upgradeItems.length === 0}
 				<div class="flex flex-col items-center justify-center min-h-60 text-center py-16">
 					<div class="w-16 h-16 rounded-full bg-success/5 flex items-center justify-center mb-4">
-						<CheckCircle class="h-8 w-8 text-success/30" />
+						<CircleCheck class="h-8 w-8 text-success/30" />
 					</div>
 					<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">
 						Everything meets your cutoff
@@ -1265,7 +1265,7 @@
 							<div
 								class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg bg-base-300 flex items-center justify-center"
 							>
-								<DownloadCloud class="h-6 w-6 text-accent/60" />
+								<CloudDownload class="h-6 w-6 text-accent/60" />
 							</div>
 							<div class="flex-1 min-w-0">
 								<span class="block font-semibold text-sm">

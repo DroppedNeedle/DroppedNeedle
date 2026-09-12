@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Home, RotateCw } from 'lucide-svelte';
+	import { House, RotateCw } from 'lucide-svelte';
 	import { page } from '$app/state';
 	import { withBasePath } from '$lib/utils/basePath';
 
@@ -25,7 +25,7 @@
 	<p class="err-blurb">{blurb}</p>
 	<div class="err-actions">
 		<a href={withBasePath('/')} class="btn btn-ghost btn-sm">
-			<Home class="h-4 w-4" />
+			<House class="h-4 w-4" />
 			Home
 		</a>
 		<button class="btn btn-accent btn-sm" onclick={() => location.reload()}>

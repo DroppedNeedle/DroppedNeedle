@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import {
-		AlertTriangle,
+		TriangleAlert,
 		ArrowLeft,
 		Check,
 		CircleDot,
@@ -234,7 +234,7 @@
 	{:else if contributionQuery.isError || !contribution}
 		<div class="mx-auto max-w-xl py-20">
 			<div class="alert alert-error" role="alert">
-				<AlertTriangle class="h-5 w-5" />
+				<TriangleAlert class="h-5 w-5" />
 				<div>
 					<h1 class="font-bold">Couldn't open this contribution</h1>
 					<p class="text-sm">It may have been removed, or the album is no longer in the library.</p>
@@ -577,7 +577,7 @@
 							aria-labelledby="validation-title"
 						>
 							<h2 id="validation-title" class="flex items-center gap-2 font-bold">
-								<AlertTriangle class="h-4 w-4 text-warning" /> Still needed
+								<TriangleAlert class="h-4 w-4 text-warning" /> Still needed
 							</h2>
 							<ul class="mt-2 list-inside list-disc text-sm text-base-content/65">
 								{#each contribution.validation as issue (issue.code + issue.field)}

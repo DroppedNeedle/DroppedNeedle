@@ -1,6 +1,6 @@
 <script lang="ts">
 	import {
-		AlertTriangle,
+		TriangleAlert,
 		BadgeCheck,
 		Check,
 		Clock3,
@@ -257,7 +257,7 @@
 	{:else if contribution.state === 'needs_review' && contribution.result_release_mbid}
 		<div class="space-y-4 p-5 sm:p-6">
 			<div class="flex items-start gap-3 rounded-box border border-warning/35 bg-warning/10 p-4">
-				<AlertTriangle class="mt-0.5 h-5 w-5 shrink-0 text-warning" />
+				<TriangleAlert class="mt-0.5 h-5 w-5 shrink-0 text-warning" />
 				<div class="min-w-0 flex-1">
 					<h3 class="font-bold">The returned release needs review</h3>
 					<p class="mt-1 text-sm text-base-content/65">
@@ -317,7 +317,7 @@
 				{@const candidate = exactCandidates[0]}
 				<div class="rounded-box border border-warning/35 bg-warning/10 p-4 sm:p-5">
 					<div class="flex items-start gap-3">
-						<AlertTriangle class="mt-0.5 h-5 w-5 shrink-0 text-warning" />
+						<TriangleAlert class="mt-0.5 h-5 w-5 shrink-0 text-warning" />
 						<div class="min-w-0 flex-1">
 							<p class="text-xs font-bold uppercase tracking-[0.14em] text-warning">
 								Exact match found
@@ -356,7 +356,7 @@
 			{:else if exactCandidates.length > 1}
 				<div class="rounded-box border border-error/30 bg-error/10 p-4">
 					<div class="flex items-start gap-3">
-						<AlertTriangle class="mt-0.5 h-5 w-5 shrink-0 text-error" />
+						<TriangleAlert class="mt-0.5 h-5 w-5 shrink-0 text-error" />
 						<div>
 							<h3 class="font-bold">Discogs points to several MusicBrainz releases</h3>
 							<p class="mt-1 text-sm text-base-content/65">

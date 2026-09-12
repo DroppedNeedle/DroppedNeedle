@@ -8,8 +8,8 @@
 		Database,
 		Disc3,
 		Download,
-		FileCheck2,
-		Fingerprint,
+		FileCheck,
+		FingerprintPattern,
 		Info,
 		ListMusic,
 		OctagonX,
@@ -447,7 +447,7 @@
 	<div class="modal-box identification-workspace" data-testid="identification-workspace">
 		<header class="identification-modal-header">
 			<div class="identification-modal-mark" aria-hidden="true">
-				<Fingerprint class="h-6 w-6" />
+				<FingerprintPattern class="h-6 w-6" />
 			</div>
 			<div class="min-w-0 flex-1">
 				<p class="identification-kicker">Read-only identity desk</p>
@@ -606,7 +606,7 @@
 							disabled={conversionPreview.isPending}
 							onclick={() => void openFinalPreview()}
 						>
-							<FileCheck2 class="h-4 w-4" /> Review final changes
+							<FileCheck class="h-4 w-4" /> Review final changes
 						</button>
 					{/if}
 					{#if ['preflight', 'acquiring', 'ready', 'needs_recheck'].includes(conversion.state)}
@@ -646,7 +646,7 @@
 					<div class="identification-empty-state identification-empty-state--ready">
 						<div class="identification-empty-illustration" aria-hidden="true">
 							<Disc3 class="h-10 w-10" />
-							<Fingerprint class="h-5 w-5" />
+							<FingerprintPattern class="h-5 w-5" />
 						</div>
 						<div class="max-w-xl">
 							<p class="identification-kicker">
@@ -669,7 +669,7 @@
 								onclick={() => void begin(album.musicbrainz_release_id ?? null)}
 							>
 								{#if start.isPending}<span class="loading loading-spinner loading-sm"
-									></span>{:else}<Fingerprint class="h-4 w-4" />{/if}
+									></span>{:else}<FingerprintPattern class="h-4 w-4" />{/if}
 								{album.musicbrainz_release_id ? 'Check attached identity' : 'Start identification'}
 							</button>
 						</div>
@@ -815,7 +815,7 @@
 								<span><strong>Catalog identity</strong>Saved</span>
 							</div>
 							<div>
-								<FileCheck2 class="h-5 w-5" />
+								<FileCheck class="h-5 w-5" />
 								<span
 									><strong>Track mappings</strong>{acceptedCandidate
 										? `${countEvidence(acceptedCandidate, 'supported')} exact`
@@ -968,7 +968,7 @@
 
 								{#if hasCompleteTrackMap(selectedCandidate) && !selectedCandidate.automatic_safe}
 									<div class="identification-insight" data-tone="success">
-										<FileCheck2 class="h-5 w-5 shrink-0" />
+										<FileCheck class="h-5 w-5 shrink-0" />
 										<p>
 											<strong>Every local track maps to this exact edition.</strong> The text currently
 											attached to the album does not agree, so an administrator must confirm the catalog

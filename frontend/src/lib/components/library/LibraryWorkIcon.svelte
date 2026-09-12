@@ -1,6 +1,6 @@
 <script lang="ts">
 	import {
-		AlertTriangle,
+		TriangleAlert,
 		BookOpenCheck,
 		FolderCog,
 		FolderSync,
@@ -20,7 +20,7 @@
 </script>
 
 {#if item.effect === 'attention'}
-	<AlertTriangle class={className} aria-hidden="true" />
+	<TriangleAlert class={className} aria-hidden="true" />
 {:else if item.kind === 'scan'}
 	<FolderSync class={className} aria-hidden="true" />
 {:else if item.kind === 'identification'}

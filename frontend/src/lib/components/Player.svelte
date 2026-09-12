@@ -23,7 +23,7 @@
 		Disc3,
 		Shuffle,
 		SkipBack,
-		AlertCircle,
+		CircleAlert,
 		Pause,
 		Play,
 		SkipForward,
@@ -238,7 +238,7 @@
 								: 'Play'}
 					>
 						{#if playerStore.playbackState === 'error'}
-							<AlertCircle class="h-5 w-5" />
+							<CircleAlert class="h-5 w-5" />
 						{:else if playerStore.isBuffering}
 							<span class="loading loading-spinner loading-sm"></span>
 						{:else if playerStore.isPlaying}

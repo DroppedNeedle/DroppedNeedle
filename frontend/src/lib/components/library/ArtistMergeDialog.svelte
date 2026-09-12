@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Fingerprint } from 'lucide-svelte';
+	import { FingerprintPattern } from 'lucide-svelte';
 
 	import type { LibraryArtistSummary } from '$lib/types';
 
@@ -14,6 +14,6 @@
 </script>
 
 <a class="btn btn-ghost btn-sm gap-2" href={identityDeskUrl}>
-	<Fingerprint class="h-4 w-4" />
+	<FingerprintPattern class="h-4 w-4" />
 	Open artist identity desk
 </a>

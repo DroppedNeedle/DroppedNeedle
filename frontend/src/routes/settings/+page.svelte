@@ -11,23 +11,22 @@
 	import {
 		Settings2,
 		Music,
-		Youtube,
 		Database,
 		Settings,
 		Radio,
 		Search,
-		BarChart3,
+		ChartColumn,
 		Info,
-		ArrowUpCircle,
+		CircleArrowUp,
 		Globe,
-		Home,
+		House,
 		Compass,
 		Users,
 		ShieldCheck,
 		HardDriveDownload,
 		Waypoints,
 		CalendarClock,
-		DownloadCloud,
+		CloudDownload,
 		Gift,
 		ShoppingBag,
 		Landmark,
@@ -39,6 +38,7 @@
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
+	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 
 	const integration = fromStore(integrationStore);
 
@@ -75,14 +75,14 @@
 						icon: HardDriveDownload
 					},
 					{ id: 'indexers', label: 'Indexers / Prowlarr', tier: 'setup', icon: Search },
-					{ id: 'lidarr-import', label: 'Lidarr Import', tier: 'setup', icon: DownloadCloud }
+					{ id: 'lidarr-import', label: 'Lidarr Import', tier: 'setup', icon: CloudDownload }
 				]
 			: []),
 		{ id: 'connect-apps', label: 'Connect Apps', tier: 'setup', icon: Waypoints },
 		{ id: 'jellyfin', label: 'Jellyfin', tier: 'setup', icon: JellyfinIcon },
 		{ id: 'navidrome', label: 'Navidrome', tier: 'setup', icon: NavidromeIcon },
 		{ id: 'plex', label: 'Plex', tier: 'setup', icon: PlexIcon },
-		{ id: 'youtube', label: 'YouTube', tier: 'setup', icon: Youtube },
+		{ id: 'youtube', label: 'YouTube', tier: 'setup', icon: YouTubeIcon },
 		...(authStore.isAdmin ? [{ id: 'lastfm', label: 'Last.fm', tier: 'setup', icon: Radio }] : []),
 		...(authStore.isAdmin
 			? [{ id: 'spotify', label: 'Spotify', tier: 'setup', icon: SpotifyIcon }]
@@ -94,10 +94,10 @@
 			? [{ id: 'get-it', label: 'Get it', tier: 'setup', icon: ShoppingBag }]
 			: []),
 		{ id: 'settings', label: 'Release Types', tier: 'personalize', icon: Settings2 },
-		{ id: 'home', label: 'Home', tier: 'personalize', icon: Home },
+		{ id: 'home', label: 'Home', tier: 'personalize', icon: House },
 		{ id: 'discover', label: 'Discover', tier: 'personalize', icon: Compass },
 		{ id: 'sidebar', label: 'Sidebar', tier: 'personalize', icon: PanelLeft },
-		{ id: 'music-source', label: 'Music Source', tier: 'personalize', icon: BarChart3 },
+		{ id: 'music-source', label: 'Music Source', tier: 'personalize', icon: ChartColumn },
 		{ id: 'cache', label: 'Cache', tier: 'system', icon: Database },
 		...(isSettingsTabVisible('musicbrainz', authStore.isAdmin)
 			? [{ id: 'musicbrainz', label: 'MusicBrainz', tier: 'system', icon: Globe }]
@@ -227,7 +227,7 @@
 												<span
 													class="ml-auto flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 text-xs font-semibold text-accent"
 												>
-													<ArrowUpCircle class="h-3 w-3" />
+													<CircleArrowUp class="h-3 w-3" />
 													Update
 												</span>
 											{/if}

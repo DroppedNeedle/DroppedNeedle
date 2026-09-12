@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Blocks, CircleAlert, ExternalLink, Github, Trash2 } from 'lucide-svelte';
+	import { Blocks, CircleAlert, ExternalLink, Trash2 } from 'lucide-svelte';
+	import GitHubIcon from '$lib/components/GitHubIcon.svelte';
 	import { getPluginsQuery } from '$lib/queries/plugins/PluginQueries.svelte';
 	import {
 		installPluginMutation,
@@ -67,7 +68,7 @@
 					<span class="label-text text-sm">Install from GitHub</span>
 				</label>
 				<label class="input input-bordered input-sm flex w-full items-center gap-2">
-					<Github class="h-4 w-4 shrink-0 opacity-50" aria-hidden="true" />
+					<GitHubIcon class="h-4 w-4 shrink-0 opacity-50" />
 					<input
 						id="plugin-repo-url"
 						type="url"

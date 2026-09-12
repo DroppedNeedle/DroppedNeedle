@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Filter, Search, X } from 'lucide-svelte';
+	import { Funnel, Search, X } from 'lucide-svelte';
 	import type { LibraryReviewFilters as Filters } from '$lib/queries/library/LibraryReviewQueries.svelte';
 	import type { LibraryPolicyTreeNode } from '$lib/queries/library/LibraryOperationsTypes';
 
@@ -70,7 +70,7 @@
 			<button class="btn btn-primary btn-sm join-item" type="submit">Search</button>
 		</form>
 		<button class="btn btn-outline btn-sm md:hidden" onclick={openMobileFilters}
-			><Filter class="h-4 w-4" /> Filters</button
+			><Funnel class="h-4 w-4" /> Filters</button
 		>
 	</div>
 	<div class="hidden grid-cols-2 gap-2 md:grid lg:grid-cols-5">

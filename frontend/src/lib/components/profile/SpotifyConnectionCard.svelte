@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Loader2 } from 'lucide-svelte';
+	import { LoaderCircle } from 'lucide-svelte';
 	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
 	import {
@@ -75,7 +75,7 @@
 						disabled={disconnectMutation.isPending}
 					>
 						{#if disconnectMutation.isPending}
-							<Loader2 class="h-3.5 w-3.5 animate-spin" />
+							<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
 						{/if}
 						Disconnect
 					</button>
@@ -87,7 +87,7 @@
 						disabled={connectMutation.isPending}
 					>
 						{#if connectMutation.isPending}
-							<Loader2 class="h-3.5 w-3.5 animate-spin" />
+							<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
 						{:else}
 							<SpotifyIcon class="h-3.5 w-3.5" />
 						{/if}

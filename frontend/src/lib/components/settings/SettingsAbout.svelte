@@ -11,9 +11,9 @@
 		Info,
 		Tag,
 		Calendar,
-		ArrowUpCircle,
-		Github
+		CircleArrowUp
 	} from 'lucide-svelte';
+	import GitHubIcon from '$lib/components/GitHubIcon.svelte';
 
 	const versionQuery = getVersionQuery();
 	const updateCheckQuery = getUpdateCheckQuery();
@@ -138,7 +138,7 @@
 							rel="noopener noreferrer"
 							class="btn btn-ghost btn-sm"
 						>
-							<Github class="w-4 h-4" />
+							<GitHubIcon class="w-4 h-4" />
 							View on GitHub
 							<ExternalLink class="w-3 h-3" />
 						</a>
@@ -148,7 +148,7 @@
 				{#if updateCheck}
 					{#if updateCheck.update_available && updateCheck.latest_version}
 						<div class="alert alert-info alert-soft mt-4">
-							<ArrowUpCircle class="w-5 h-5 shrink-0" />
+							<CircleArrowUp class="w-5 h-5 shrink-0" />
 							<div>
 								<p class="font-semibold">
 									Update available: <span class="text-accent">{updateCheck.latest_version}</span>
@@ -180,7 +180,7 @@
 						</div>
 					{:else}
 						<div class="alert alert-success alert-soft mt-4">
-							<ArrowUpCircle class="w-5 h-5 shrink-0" />
+							<CircleArrowUp class="w-5 h-5 shrink-0" />
 							<span>You're on the latest version.</span>
 						</div>
 					{/if}

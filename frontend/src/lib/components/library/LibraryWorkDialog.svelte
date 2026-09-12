@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AlertTriangle, CirclePause, CirclePlay, FolderTree, OctagonX } from 'lucide-svelte';
+	import { TriangleAlert, CirclePause, CirclePlay, FolderTree, OctagonX } from 'lucide-svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getLibraryPolicyTreeQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import {
@@ -276,18 +276,18 @@
 
 		{#if hasUnavailable}
 			<div class="alert alert-warning mt-4 text-sm">
-				<AlertTriangle class="h-4 w-4" /> An unavailable scope cannot be processed until it is mounted.
+				<TriangleAlert class="h-4 w-4" /> An unavailable scope cannot be processed until it is mounted.
 			</div>
 		{/if}
 		{#if kind === 'retry_identification' && hasLocalMetadata}
 			<div class="alert alert-warning mt-4 text-sm">
-				<AlertTriangle class="h-4 w-4" /> This is a one-off external identification action for Local metadata
+				<TriangleAlert class="h-4 w-4" /> This is a one-off external identification action for Local metadata
 				content. Its saved policy will not change.
 			</div>
 		{/if}
 		{#if kind === 'retry_identification' && hasExcluded}
 			<div class="alert alert-warning mt-4 text-sm">
-				<AlertTriangle class="h-4 w-4" /> Excluded content is unavailable and will not be identified until
+				<TriangleAlert class="h-4 w-4" /> Excluded content is unavailable and will not be identified until
 				it is restored.
 			</div>
 		{/if}

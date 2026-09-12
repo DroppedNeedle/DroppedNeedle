@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { ChevronLeft, Disc3, ExternalLink, FileSearch, FileUp, Mic2 } from 'lucide-svelte';
+	import { ChevronLeft, Disc3, ExternalLink, FileSearch, FileUp, MicVocal } from 'lucide-svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
 	import ArtistAppearancesSection from '$lib/components/library/ArtistAppearancesSection.svelte';
@@ -95,7 +95,7 @@
 					{/if}
 					{#if artist.appearance_track_count > 0}
 						<span class="inline-flex items-center gap-1.5 text-accent">
-							<Mic2 class="h-3.5 w-3.5" />
+							<MicVocal class="h-3.5 w-3.5" />
 							Appears on {artist.appearance_track_count}
 							{artist.appearance_track_count === 1 ? 'local track' : 'local tracks'}
 						</span>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowDown, ArrowUp, Copy, FileCode2, Plus } from 'lucide-svelte';
+	import { ArrowDown, ArrowUp, Copy, FileCode, Plus } from 'lucide-svelte';
 
 	import type { ManagementScriptSettings } from '$lib/queries/library-management/types';
 	import { createUuid } from '$lib/utils/uuid';
@@ -123,7 +123,7 @@
 		<div class="management-script-workbench">
 			<div class="flex flex-wrap items-center justify-between gap-2">
 				<div class="flex items-center gap-2">
-					<FileCode2 class="h-4 w-4 text-library-manage" />
+					<FileCode class="h-4 w-4 text-library-manage" />
 					<span class="text-xs text-base-content/55">
 						{kind === 'naming' ? 'Changes paths, never tags.' : 'Changes metadata, never paths.'}
 					</span>

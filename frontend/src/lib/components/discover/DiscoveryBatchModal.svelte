@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, Download, Loader2, X } from 'lucide-svelte';
+	import { Check, Download, LoaderCircle, X } from 'lucide-svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -151,7 +151,7 @@
 				onclick={submit}
 			>
 				{#if submitting}
-					<Loader2 class="h-4 w-4 animate-spin" />
+					<LoaderCircle class="h-4 w-4 animate-spin" />
 				{:else}
 					<Download class="h-4 w-4" />
 				{/if}

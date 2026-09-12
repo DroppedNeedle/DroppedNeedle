@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Disc3, Loader2, Pause, Play, SkipForward, Volume2, X } from 'lucide-svelte';
+	import { Disc3, LoaderCircle, Pause, Play, SkipForward, Volume2, X } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { deckSampler } from '$lib/stores/deckSampler.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
@@ -71,7 +71,7 @@
 				{/if}
 				{#if deckSampler.status === 'loading'}
 					<div class="absolute inset-0 flex items-center justify-center bg-black/40">
-						<Loader2 class="h-6 w-6 animate-spin text-white" />
+						<LoaderCircle class="h-6 w-6 animate-spin text-white" />
 					</div>
 				{/if}
 			</div>

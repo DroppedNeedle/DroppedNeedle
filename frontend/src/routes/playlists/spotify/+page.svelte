@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { Loader2, Music2, ArrowLeft, RefreshCw, CheckCircle2, Download } from 'lucide-svelte';
+	import { LoaderCircle, Music2, ArrowLeft, RefreshCw, CircleCheckBig, Download } from 'lucide-svelte';
 	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import {
@@ -101,7 +101,7 @@
 			</button>
 		{:else if importingAll}
 			<div class="flex shrink-0 items-center gap-2 text-sm text-base-content/60">
-				<Loader2 class="h-4 w-4 animate-spin" />
+				<LoaderCircle class="h-4 w-4 animate-spin" />
 				{importAllProgress.done}/{importAllProgress.total}
 			</div>
 		{/if}
@@ -171,7 +171,7 @@
 									disabled={!!importing}
 								>
 									{#if isImporting}
-										<Loader2 class="h-3 w-3 animate-spin" />
+										<LoaderCircle class="h-3 w-3 animate-spin" />
 									{:else}
 										<RefreshCw class="h-3 w-3" />
 									{/if}
@@ -185,7 +185,7 @@
 								disabled={!!importing}
 							>
 								{#if isImporting}
-									<Loader2 class="h-8 w-8 animate-spin text-white" />
+									<LoaderCircle class="h-8 w-8 animate-spin text-white" />
 								{:else}
 									<div class="flex flex-col items-center gap-1 rounded-xl px-3 py-2 text-white">
 										<SpotifyIcon class="h-6 w-6 text-green-400" />
@@ -199,7 +199,7 @@
 							<div
 								class="absolute right-2 top-2 rounded-full bg-green-600 p-0.5 shadow group-hover:opacity-0 transition-opacity"
 							>
-								<CheckCircle2 class="h-4 w-4 text-white" />
+								<CircleCheckBig class="h-4 w-4 text-white" />
 							</div>
 						{/if}
 					</div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Radio, Music, Loader2, ExternalLink, RadioTower, Check, Sparkles } from 'lucide-svelte';
+	import { Radio, Music, LoaderCircle, ExternalLink, RadioTower, Check, Sparkles } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/client';
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
 	import {
@@ -179,7 +179,7 @@
 	>
 		{#if loading}
 			<div class="flex items-center justify-center py-10">
-				<Loader2 class="h-5 w-5 animate-spin text-base-content/40" />
+				<LoaderCircle class="h-5 w-5 animate-spin text-base-content/40" />
 			</div>
 		{:else}
 			<div>
@@ -268,7 +268,7 @@
 								disabled={connectLbMutation.isPending || !lbToken.trim() || !lbUsername.trim()}
 							>
 								{#if connectLbMutation.isPending}
-									<Loader2 class="h-3.5 w-3.5 animate-spin" />
+									<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
 								{/if}
 								Link account
 							</button>
@@ -325,7 +325,7 @@
 									disabled={exchangeSessionMutation.isPending}
 								>
 									{#if exchangeSessionMutation.isPending}
-										<Loader2 class="h-3.5 w-3.5 animate-spin" />
+										<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
 									{:else}
 										<Check class="h-3.5 w-3.5" />
 									{/if}
@@ -340,7 +340,7 @@
 								disabled={requestTokenMutation.isPending}
 							>
 								{#if requestTokenMutation.isPending}
-									<Loader2 class="h-3.5 w-3.5 animate-spin" />
+									<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
 								{:else}
 									<ExternalLink class="h-3.5 w-3.5" />
 								{/if}
@@ -510,7 +510,7 @@
 						disabled={!lb || refreshMixMutation.isPending}
 					>
 						{#if refreshMixMutation.isPending}
-							<Loader2 class="h-3.5 w-3.5 animate-spin" />
+							<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
 						{/if}
 						Refresh my mix
 					</button>

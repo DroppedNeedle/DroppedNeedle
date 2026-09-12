@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Loader2, ServerCog } from 'lucide-svelte';
+	import { LoaderCircle, ServerCog } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/client';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
@@ -174,7 +174,7 @@
 
 			{#if connectionsQuery.isPending}
 				<div class="flex items-center justify-center py-10">
-					<Loader2 class="h-5 w-5 animate-spin text-base-content/40" />
+					<LoaderCircle class="h-5 w-5 animate-spin text-base-content/40" />
 				</div>
 			{:else}
 				{#each rows as row (row.service)}
@@ -241,7 +241,7 @@
 											Cancel
 										</button>
 										<span class="flex items-center gap-1 text-xs text-base-content/50">
-											<Loader2 class="h-3.5 w-3.5 animate-spin" />
+											<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
 											Waiting for Plex…
 										</span>
 									</div>
@@ -299,7 +299,7 @@
 											!navidromeForm.password}
 									>
 										{#if connectNavidromeMutation.isPending}
-											<Loader2 class="h-3.5 w-3.5 animate-spin" />
+											<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
 										{/if}
 										Link account
 									</button>
@@ -349,7 +349,7 @@
 											!jellyfinForm.password}
 									>
 										{#if connectJellyfinMutation.isPending}
-											<Loader2 class="h-3.5 w-3.5 animate-spin" />
+											<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
 										{/if}
 										Link account
 									</button>

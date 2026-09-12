@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { CheckCircle2, CircleAlert, Loader2, RotateCw, Search, Trash2, X } from 'lucide-svelte';
+	import { CircleCheckBig, CircleAlert, LoaderCircle, RotateCw, Search, Trash2, X } from 'lucide-svelte';
 	import {
 		cancelFreeMusicMutation,
 		clearFreeMusicHistoryMutation,
@@ -82,13 +82,13 @@
 					<div class="min-w-0 flex-1">
 						<div class="flex min-w-0 items-center gap-2">
 							{#if task.status === 'completed'}
-								<CheckCircle2 class="h-4 w-4 shrink-0 text-success" aria-hidden="true" />
+								<CircleCheckBig class="h-4 w-4 shrink-0 text-success" aria-hidden="true" />
 							{:else if task.status === 'failed'}
 								<CircleAlert class="h-4 w-4 shrink-0 text-error" aria-hidden="true" />
 							{:else if task.status === 'searching'}
 								<Search class="h-4 w-4 shrink-0 animate-pulse text-info" aria-hidden="true" />
 							{:else if isActive(task.status)}
-								<Loader2 class="h-4 w-4 shrink-0 animate-spin text-info" aria-hidden="true" />
+								<LoaderCircle class="h-4 w-4 shrink-0 animate-spin text-info" aria-hidden="true" />
 							{:else}
 								<X class="h-4 w-4 shrink-0 text-base-content/40" aria-hidden="true" />
 							{/if}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, ChevronDown, CornerDownRight, Layers3 } from 'lucide-svelte';
+	import { Check, ChevronDown, CornerDownRight, Layers } from 'lucide-svelte';
 
 	import type { LibraryManagementProfile } from '$lib/queries/library-management/types';
 
@@ -67,7 +67,7 @@
 		onclick={() => (expanded = !expanded)}
 	>
 		<span class="management-profile-picker-mark" aria-hidden="true"
-			><Layers3 class="h-5 w-5" /></span
+			><Layers class="h-5 w-5" /></span
 		>
 		<span class="min-w-0">
 			<span class="management-step">{eyebrow}</span>
@@ -137,7 +137,7 @@
 							onchange={() => choose(profile.id)}
 						/>
 						<span class="management-profile-option-icon" aria-hidden="true">
-							<Layers3 class="h-4 w-4" />
+							<Layers class="h-4 w-4" />
 						</span>
 						<span class="min-w-0">
 							<span class="flex flex-wrap items-center gap-2">

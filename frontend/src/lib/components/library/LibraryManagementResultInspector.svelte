@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowRight, CheckCircle2, FileClock, ShieldAlert } from 'lucide-svelte';
+	import { ArrowRight, CircleCheckBig, FileClock, ShieldAlert } from 'lucide-svelte';
 
 	import type { LibraryManagementResultItem } from '$lib/queries/library-management/types';
 	import {
@@ -82,7 +82,7 @@
 			<ol class="management-journal-chain">
 				{#each item.journal_states as state, index (state)}
 					<li>
-						<CheckCircle2 class="h-3.5 w-3.5" />
+						<CircleCheckBig class="h-3.5 w-3.5" />
 						<span>{titleManagementValue(state)}</span>
 						{#if index < item.journal_states.length - 1}<ArrowRight
 								class="h-3 w-3 text-base-content/25"

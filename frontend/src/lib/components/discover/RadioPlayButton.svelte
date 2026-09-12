@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Loader2, Play, Shuffle } from 'lucide-svelte';
+	import { LoaderCircle, Play, Shuffle } from 'lucide-svelte';
 	import { fromStore } from 'svelte/store';
 	import { launchRadio, type RadioMode } from '$lib/player/launchRadio';
 	import { deckSampler, type SampleEntry } from '$lib/stores/deckSampler.svelte';
@@ -87,7 +87,7 @@
 		title="Play a station seeded from this"
 	>
 		{#if tuning}
-			<Loader2 class="h-4 w-4 animate-spin" />
+			<LoaderCircle class="h-4 w-4 animate-spin" />
 			Tuning…
 		{:else}
 			<Play class="h-4 w-4" fill="currentColor" />
@@ -102,7 +102,7 @@
 			title="Shuffle a station seeded from this"
 		>
 			{#if shuffling}
-				<Loader2 class="h-4 w-4 animate-spin" />
+				<LoaderCircle class="h-4 w-4 animate-spin" />
 			{:else}
 				<Shuffle class="h-4 w-4" />
 			{/if}

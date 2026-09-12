@@ -28,8 +28,8 @@ importers:
         specifier: ^6.3.0
         version: 6.3.0
       lucide-svelte:
-        specifier: ^0.575.0
-        version: 0.575.0(svelte@5.57.0(@typescript-eslint/types@8.69.0))
+        specifier: ^1.0.1
+        version: 1.0.1(svelte@5.57.0(@typescript-eslint/types@8.69.0))
       marked:
         specifier: ^18.0.11
         version: 18.0.11
@@ -1373,8 +1373,8 @@ packages:
   lodash.merge@4.6.2:
     resolution: {integrity: sha512-0KpjqXRVvrYyCsX1swR/XTK0va6VQkQM6MNo7PqW77ByjAhoARA8EfrP1N4+KlKj8YS0ZUCtRT/YUuhyYDujIQ==}
 
-  lucide-svelte@0.575.0:
-    resolution: {integrity: sha512-Tu15tJfbmRNPaU61yeNFf3jfRHs8ABA+NwTt7TWmwVbhlSA3H7sW65tX6RttcP7HGV4aHUlYhXixZOlntoFBdw==}
+  lucide-svelte@1.0.1:
+    resolution: {integrity: sha512-WvzZgk0pqzgda+AErLvgWxHkfg/+GgUwqKMRHvzt0IqyMdmyEDzDCk3Z+Wo/3y753oIgx8u9Q4eUbWkghFa8Jg==}
     deprecated: Package deprecated. Please use @lucide/svelte instead.
     peerDependencies:
       svelte: ^3 || ^4 || ^5.0.0-next.42
@@ -2881,7 +2881,7 @@ snapshots:
 
   lodash.merge@4.6.2: {}
 
-  lucide-svelte@0.575.0(svelte@5.57.0(@typescript-eslint/types@8.69.0)):
+  lucide-svelte@1.0.1(svelte@5.57.0(@typescript-eslint/types@8.69.0)):
     dependencies:
       svelte: 5.57.0(@typescript-eslint/types@8.69.0)
 
