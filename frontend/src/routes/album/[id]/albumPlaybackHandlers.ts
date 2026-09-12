@@ -29,7 +29,7 @@ import { launchNavidromePlayback } from '$lib/player/launchNavidromePlayback';
 import { launchPlexPlayback } from '$lib/player/launchPlexPlayback';
 import { playerStore } from '$lib/stores/player.svelte';
 import type { MenuItem } from '$lib/components/ContextMenu.svelte';
-import { ListPlus, ListStart, ListMusic, Download } from 'lucide-svelte';
+import { ListPlus, ListStart, ListMusic, Download, Trash2 } from 'lucide-svelte';
 import { downloadAlbumArchive, downloadTrackFile } from '$lib/utils/downloadActions';
 import { API } from '$lib/constants';
 import type { SourceCallbacks } from './albumPageState.svelte';
@@ -187,7 +187,8 @@ export function getTrackContextMenuItems(
 	resolvedNavidrome: NavidromeTrackInfo | null,
 	resolvedPlex: PlexTrackInfo | null,
 	playlistModalRef: { open: (tracks: QueueItem[]) => void } | null,
-	showDownload: boolean = true
+	showDownload: boolean = true,
+	onRemoveLocalFile?: (fileId: string) => void
 ): MenuItem[] {
 	const queueItem = buildTrackQueueItem(
 		track,
@@ -230,6 +231,14 @@ export function getTrackContextMenuItems(
 			icon: Download,
 			onclick: () =>
 				void downloadTrackFile(API.download.localTrack(resolvedLocal.track_file_id), track.title)
+		});
+	}
+	if (resolvedLocal && onRemoveLocalFile) {
+		items.push({
+			label: 'Remove file',
+			icon: Trash2,
+			className: 'text-error',
+			onclick: () => onRemoveLocalFile(resolvedLocal.track_file_id)
 		});
 	}
 	return items;

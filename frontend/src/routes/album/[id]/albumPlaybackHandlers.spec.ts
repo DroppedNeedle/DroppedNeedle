@@ -209,6 +209,55 @@ describe('track context menu Download item', () => {
 	});
 });
 
+describe('track context menu Remove file item', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	function itemsFor(onRemoveLocalFile?: (fileId: string) => void) {
+		return getTrackContextMenuItems(
+			{ position: 1, disc_number: 1, title: 'She Loves Me So' },
+			album,
+			localTracks[0],
+			null,
+			null,
+			null,
+			null,
+			true,
+			onRemoveLocalFile
+		);
+	}
+
+	it('omits the Remove file item when no callback is supplied (viewer not trusted)', () => {
+		expect(itemsFor().map((item) => item.label)).not.toContain('Remove file');
+	});
+
+	it('omits the Remove file item when no local file is resolved', () => {
+		const items = getTrackContextMenuItems(
+			{ position: 1, disc_number: 1, title: 'She Loves Me So' },
+			album,
+			null,
+			null,
+			null,
+			null,
+			null,
+			true,
+			vi.fn()
+		);
+		expect(items.map((item) => item.label)).not.toContain('Remove file');
+	});
+
+	it('opens the confirm dialog for the resolved local file', () => {
+		const onRemoveLocalFile = vi.fn();
+		const remove = itemsFor(onRemoveLocalFile).find((item) => item.label === 'Remove file');
+		expect(remove).toBeDefined();
+
+		remove!.onclick();
+
+		expect(onRemoveLocalFile).toHaveBeenCalledWith('file-1');
+	});
+});
+
 describe('buildLocalAlbumDownloadCallback', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();

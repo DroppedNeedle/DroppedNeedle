@@ -35,7 +35,8 @@ import {
 	albumLastFmCache,
 	albumTracksCache,
 	albumYouTubeCache,
-	albumSourceMatchCache
+	albumSourceMatchCache,
+	albumSourceMatchCacheKey
 } from '$lib/utils/albumDetailCache';
 import { hydrateDetailCacheEntry } from '$lib/utils/detailCacheHydration';
 import { compareDiscTrack, getDiscTrackKey } from '$lib/player/queueHelpers';
@@ -72,7 +73,8 @@ import { getAlbumDownloadsQuery } from '$lib/queries/downloads/DownloadQueries.s
 import { getHeldImportsQuery } from '$lib/queries/downloads/HeldQueries.svelte';
 import { isActiveDownloadStatus } from '$lib/queries/downloads/downloadStatus';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { getNavidromeFolderScopeRevision } from '$lib/utils/navidromeLibraryCache';
+import { removeLibraryTrack } from '$lib/queries/library/LibraryMutations.svelte';
+import { toastStore } from '$lib/stores/toast';
 
 export interface SourceCallbacks {
 	onPlayAll: () => void;
@@ -83,14 +85,6 @@ export interface SourceCallbacks {
 }
 
 export function createAlbumPageState(albumIdGetter: () => string) {
-	const sourceCacheKey = (albumId: string) =>
-		[
-			authStore.user?.id ?? 'anonymous',
-			getNavidromeFolderScopeRevision(authStore.user?.id ?? ''),
-			albumId
-		]
-			.map(encodeURIComponent)
-			.join(':');
 	let album = $state<AlbumBasicInfo | null>(null);
 	let tracksInfo = $state<AlbumTracksInfo | null>(null);
 	let error = $state<string | null>(null);
@@ -351,7 +345,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 			}
 		});
 		const refreshSourceMatch = (() => {
-			const cached = albumSourceMatchCache.get(sourceCacheKey(albumId));
+			const cached = albumSourceMatchCache.get(albumSourceMatchCacheKey(albumId));
 			if (cached && !albumSourceMatchCache.isStale(cached.timestamp)) {
 				jellyfinMatch = cached.data.jellyfin;
 				localMatch = cached.data.local;
@@ -454,7 +448,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		try {
 			const result = await fetcher();
 			setter(result);
-			const cacheKey = sourceCacheKey(albumId);
+			const cacheKey = albumSourceMatchCacheKey(albumId);
 			const existing = albumSourceMatchCache.get(cacheKey)?.data ?? {
 				jellyfin: null,
 				local: null,
@@ -607,7 +601,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		const albumId = albumIdGetter();
 		const signal = abortController?.signal;
 		if (!albumId || !signal || signal.aborted) return;
-		albumSourceMatchCache.remove(sourceCacheKey(albumId));
+		albumSourceMatchCache.remove(albumSourceMatchCacheKey(albumId));
 		void fetchMbidSourceMatches(albumId, signal);
 		void fetchNamedSourceMatches(albumId, signal);
 	}
@@ -633,7 +627,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	async function forceLoadAlbum(albumId: string): Promise<void> {
 		albumBasicCache.remove(albumId);
 		albumTracksCache.remove(albumId);
-		albumSourceMatchCache.remove(sourceCacheKey(albumId));
+		albumSourceMatchCache.remove(albumSourceMatchCacheKey(albumId));
 
 		error = null;
 		primaryError = null;
@@ -675,7 +669,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 			albumBasicCache.set(album, albumIdGetter());
 		}
 		localMatch = null;
-		albumSourceMatchCache.remove(sourceCacheKey(albumIdGetter()));
+		albumSourceMatchCache.remove(albumSourceMatchCacheKey(albumIdGetter()));
 		toastMessage = 'Removed from Library';
 		toastType = 'success';
 		showToast = true;
@@ -715,7 +709,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		},
 		setShowToast: (v) => (showToast = v),
 		onRequestSuccess: () => {
-			albumSourceMatchCache.remove(sourceCacheKey(albumIdGetter()));
+			albumSourceMatchCache.remove(albumSourceMatchCacheKey(albumIdGetter()));
 			// pick up the freshly-created download task so the header strip + polling kick in
 			void downloadsQuery.refetch();
 		}
@@ -787,7 +781,87 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 			resolvedNavidrome,
 			resolvedPlex,
 			playlistModalRef,
-			localMatch?.download_allowed !== false
+			localMatch?.download_allowed !== false,
+			authStore.isTrusted
+				? (fileId: string) => openRemoveFileDialog(fileId, track.title)
+				: undefined
+		);
+	}
+
+	const removeTrack = removeLibraryTrack();
+	let removeFileTarget = $state<{
+		fileId: string;
+		albumMbid: string;
+		albumCacheId: string;
+		albumCacheKey: string;
+		title: string;
+	} | null>(null);
+	let removeFileError = $state<string | null>(null);
+
+	// A route change must not leave the old dialog (and its stale ids) on screen.
+	$effect(() => {
+		const activeAlbumId = albumIdGetter();
+		if (removeFileTarget && removeFileTarget.albumCacheId !== activeAlbumId) {
+			removeFileTarget = null;
+			removeFileError = null;
+		}
+	});
+
+	function openRemoveFileDialog(fileId: string, title: string): void {
+		const albumMbid = album?.musicbrainz_id ?? '';
+		const albumCacheId = albumIdGetter();
+		if (!albumMbid || !fileId || !albumCacheId) return;
+		removeFileError = null;
+		removeFileTarget = {
+			fileId,
+			albumMbid,
+			albumCacheId,
+			albumCacheKey: albumSourceMatchCacheKey(albumCacheId),
+			title
+		};
+	}
+
+	function closeRemoveFileDialog(): void {
+		if (removeTrack.isPending) return;
+		removeFileTarget = null;
+		removeFileError = null;
+	}
+
+	function refetchRemovedAlbumMatch(albumCacheId: string): void {
+		const signal = abortController?.signal;
+		if (!signal || signal.aborted || albumIdGetter() !== albumCacheId) return;
+		void doFetchSourceMatch(
+			signal,
+			() => fetchLocalMatch(albumCacheId, signal),
+			(v) => (localMatch = v),
+			(v) => (loadingLocal = v),
+			'local',
+			albumCacheId,
+			'local'
+		);
+	}
+
+	function confirmRemoveFile(): void {
+		const target = removeFileTarget;
+		if (!target || removeTrack.isPending) return;
+		removeTrack.mutate(
+			{
+				fileId: target.fileId,
+				albumMbid: target.albumMbid,
+				albumCacheKey: target.albumCacheKey
+			},
+			{
+				onSuccess: () => {
+					removeFileTarget = null;
+					removeFileError = null;
+					toastStore.show({ message: 'File removed', type: 'success' });
+					refetchRemovedAlbumMatch(target.albumCacheId);
+				},
+				onError: () => {
+					removeFileError = "Couldn't remove this file";
+					toastStore.show({ message: "Couldn't remove this file", type: 'error' });
+				}
+			}
 		);
 	}
 
@@ -878,6 +952,18 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		set showDeleteModal(v: boolean) {
 			showDeleteModal = v;
 		},
+		get removeFileTarget() {
+			return removeFileTarget;
+		},
+		get removeFilePending() {
+			return removeTrack.isPending;
+		},
+		get removeFileError() {
+			return removeFileError;
+		},
+		openRemoveFileDialog,
+		closeRemoveFileDialog,
+		confirmRemoveFile,
 		get moreByArtist() {
 			return moreByArtist;
 		},

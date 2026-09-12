@@ -1,4 +1,6 @@
 import { CACHE_KEYS, CACHE_TTL } from '$lib/constants';
+import { authStore } from '$lib/stores/authStore.svelte';
+import { getNavidromeFolderScopeRevision } from '$lib/utils/navidromeLibraryCache';
 import type {
 	AlbumBasicInfo,
 	AlbumTracksInfo,
@@ -79,6 +81,16 @@ export const albumSourceMatchCache = createLocalStorageCache<AlbumSourceMatchCac
 	CACHE_TTL.ALBUM_DETAIL_SOURCE_MATCH,
 	{ maxEntries: MAX_ALBUM_DETAIL_CACHE_ENTRIES }
 );
+
+export function albumSourceMatchCacheKey(albumId: string): string {
+	return [
+		authStore.user?.id ?? 'anonymous',
+		getNavidromeFolderScopeRevision(authStore.user?.id ?? ''),
+		albumId
+	]
+		.map(encodeURIComponent)
+		.join(':');
+}
 
 // MusicBrainz source changes can make these provider-backed album payloads stale. Keep
 // Last.fm/YouTube/integration and mixed local-search namespaces untouched: they are

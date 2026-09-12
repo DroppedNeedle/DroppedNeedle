@@ -9,6 +9,7 @@ import { WantedQueryKeyFactory } from '../wanted/WantedQueryKeyFactory';
 import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
 import { LOCAL_KEYS } from '../local/LocalQueries.svelte';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
+import { albumSourceMatchCache } from '$lib/utils/albumDetailCache';
 import type {
 	AlbumRemoveResponse,
 	TargetCatalogRemovalResponse,
@@ -96,15 +97,18 @@ export function saveLibraryScanSchedule() {
 	}));
 }
 
-// Remove ONE library file - the album page's orphan-review action (P5): a held
-// file that matches none of the album's expected tracks. Admin/trusted only
-// (the route enforces it). Invalidates the album's coverage/status AND the
-// local-library lists (cross-domain: sizes and sidebars change with the file).
+// Remove ONE library file by id: the orphan-review action (P5) and the matched
+// track page's per-row action. Admin/trusted only (the route enforces it).
+// Invalidates the album's coverage/status AND the local-library lists, and
+// clears the caller's captured source-match cache entry (the exact key string
+// taken when the action started) here rather than in the page, so a page that
+// unmounts before settle cannot leave the entry behind.
 export function removeLibraryTrack() {
 	return createMutation(() => ({
-		mutationFn: ({ fileId }: { fileId: string; albumMbid: string }) =>
+		mutationFn: ({ fileId }: { fileId: string; albumMbid: string; albumCacheKey: string }) =>
 			api.global.delete<StatusMessageResponse>(API.library.removeTrack(fileId)),
-		onSuccess: async (_data, { albumMbid }) => {
+		onSuccess: async (_data, { albumMbid, albumCacheKey }) => {
+			albumSourceMatchCache.remove(albumCacheKey);
 			await invalidateQueriesWithPersister({
 				queryKey: LibraryQueryKeyFactory.album(albumMbid)
 			});
