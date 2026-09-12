@@ -2910,10 +2910,25 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
-    async def get_target_track_by_path(self, file_path: str) -> dict[str, Any] | None:
+    async def get_target_track_by_path(
+        self, file_path: str, *, exclude_missing: bool = False
+    ) -> dict[str, Any] | None:
+        """Get a target track by its file path.
+
+        ``exclude_missing`` drops catalog ghosts whose files are gone; Library
+        Management collision checks pass it so an absent file cannot reserve a
+        destination while excluded and indexed rows still occupy it.
+        """
+
         def operation(connection: sqlite3.Connection) -> dict[str, Any] | None:
+            availability_clause = (
+                " AND t.availability != 'missing'" if exclude_missing else ""
+            )
             row = connection.execute(
-                _TARGET_TRACK_SELECT + " WHERE t.file_path = ? ORDER BY t.id LIMIT 1",
+                _TARGET_TRACK_SELECT
+                + " WHERE t.file_path = ?"
+                + availability_clause
+                + " ORDER BY t.id LIMIT 1",
                 (file_path,),
             ).fetchone()
             return _row(row)
@@ -2926,19 +2941,29 @@ class NativeLibraryStore(PersistenceBase):
         relative_directory: str,
         *,
         limit: int = 10_001,
+        exclude_missing: bool = False,
     ) -> list[dict[str, Any]]:
-        """Return a bounded set used for Unicode/case destination collision checks."""
+        """Return a bounded set used for Unicode/case destination collision checks.
+
+        ``exclude_missing`` drops catalog ghosts whose files are gone while
+        keeping every other availability state in the collision set.
+        """
 
         if limit < 1 or limit > 10_001:
             raise ValidationError("Catalog collision page size is out of range.")
         directory = relative_directory.strip("/")
 
         def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+            availability_clause = (
+                " AND availability != 'missing'" if exclude_missing else ""
+            )
             if directory:
                 prefix_length = len(directory) + 2
                 rows = connection.execute(
                     "SELECT id, relative_path, file_path FROM local_tracks "
-                    "WHERE root_id = ? AND relative_path LIKE ? ESCAPE '\\' "
+                    "WHERE root_id = ?"
+                    + availability_clause
+                    + " AND relative_path LIKE ? ESCAPE '\\' "
                     "AND instr(substr(relative_path, ?), '/') = 0 "
                     "ORDER BY relative_path, id LIMIT ?",
                     (
@@ -2951,7 +2976,9 @@ class NativeLibraryStore(PersistenceBase):
             else:
                 rows = connection.execute(
                     "SELECT id, relative_path, file_path FROM local_tracks "
-                    "WHERE root_id = ? AND instr(relative_path, '/') = 0 "
+                    "WHERE root_id = ?"
+                    + availability_clause
+                    + " AND instr(relative_path, '/') = 0 "
                     "ORDER BY relative_path, id LIMIT ?",
                     (root_id, limit),
                 ).fetchall()

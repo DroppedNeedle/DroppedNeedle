@@ -2113,6 +2113,175 @@ async def test_preview_blocks_destination_collision_without_overwrite(
     assert destination.read_bytes() == b"occupied"
 
 
+def _add_catalog_collision_track(
+    database: Path,
+    source: Path,
+    *,
+    relative_path: str,
+    file_path: str,
+    availability: str,
+) -> None:
+    metadata = source.stat()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO local_tracks "
+            "(id, local_album_id, root_id, file_path, relative_path, path_hash, "
+            "file_size_bytes, file_mtime_ns, stat_revision, stat_revision_kind, "
+            "availability, tag_revision, title, title_folded, artist_name, "
+            "artist_name_folded, album_title, album_title_folded, album_artist_name, "
+            "album_artist_name_folded, disc_number, track_number, year, genre, "
+            "genre_folded, file_format, ingest_source, imported_at, membership_source) "
+            "VALUES ('collision-track', 'album-1', 'root-1', ?, ?, ?, "
+            "?, ?, ?, 'exact', ?, 'tag-1', 'Collision Track', 'collision track', "
+            "'Alpha', 'alpha', 'Management Album', 'management album', 'Alpha', "
+            "'alpha', 1, 2, 2024, 'Electronic', 'electronic', 'flac', 'scan', 1, "
+            "'automatic')",
+            (
+                file_path,
+                relative_path,
+                hashlib.sha256(relative_path.encode()).hexdigest(),
+                metadata.st_size,
+                metadata.st_mtime_ns,
+                f"{metadata.st_size}:{metadata.st_mtime_ns}",
+                availability,
+            ),
+        )
+
+
+async def _run_collision_preview(tmp_path: Path, availability: str):
+    (
+        root,
+        source,
+        preferences,
+        store,
+        settings_revision,
+        policy_revision,
+    ) = _configured(tmp_path)
+    destination_relative = (
+        "Johann Sebastian Bach; Glenn Gould/"
+        "Goldberg Variations, BWV 988 (1982)/01 - Aria.flac"
+    )
+    destination = root / destination_relative
+    assert not destination.exists()
+    _add_catalog_collision_track(
+        tmp_path / "library.db",
+        source,
+        relative_path=destination_relative,
+        file_path=str(destination),
+        availability=availability,
+    )
+    planner = _planner(tmp_path, store, preferences)
+    handle = await planner.create_preview(
+        selection=LibraryManagementSelection(kind="tracks", ids=("track-1",)),
+        profile_id=PICARD_ORGANIZER_PROFILE_ID,
+        expected_settings_revision=settings_revision,
+        expected_policy_revision=policy_revision,
+        actor_user_id="admin",
+        idempotency_key=None,
+    )
+    claimed = await store.claim_operation_job(
+        "worker-1", now=100, lease_seconds=60, kind="library_management"
+    )
+    assert claimed is not None
+    await planner.run_claimed_preview(claimed, "worker-1")
+    return await store.list_library_management_plan_items(handle.job_id)
+
+
+@pytest.mark.asyncio
+async def test_preview_ignores_missing_catalog_destination_collision(
+    tmp_path: Path,
+) -> None:
+    plan = await _run_collision_preview(tmp_path, availability="missing")
+
+    assert len(plan) == 1
+    assert plan[0].eligibility in {"eligible", "warning"}
+    assert plan[0].reason_code != "PATH_COLLISION_DIFFERENT"
+    assert not any(
+        evidence.get("existing_local_track_id") == "collision-track"
+        for evidence in json.loads(plan[0].collision_json)
+    )
+
+
+@pytest.mark.asyncio
+async def test_preview_still_blocks_excluded_catalog_destination_collision(
+    tmp_path: Path,
+) -> None:
+    plan = await _run_collision_preview(tmp_path, availability="excluded")
+    track_item = next(value for value in plan if value.local_track_id == "track-1")
+
+    assert track_item.eligibility == "blocked"
+    assert track_item.reason_code == "PATH_COLLISION_DIFFERENT"
+    assert any(
+        evidence.get("existing_local_track_id") == "collision-track"
+        for evidence in json.loads(track_item.collision_json)
+    )
+
+
+@pytest.mark.asyncio
+async def test_preview_still_blocks_indexed_catalog_destination_collision(
+    tmp_path: Path,
+) -> None:
+    plan = await _run_collision_preview(tmp_path, availability="indexed")
+    track_item = next(value for value in plan if value.local_track_id == "track-1")
+
+    assert track_item.eligibility == "blocked"
+    assert track_item.reason_code == "PATH_COLLISION_DIFFERENT"
+    assert any(
+        evidence.get("existing_local_track_id") == "collision-track"
+        for evidence in json.loads(track_item.collision_json)
+    )
+
+
+@pytest.mark.asyncio
+async def test_preview_ignores_missing_normalized_catalog_collision(
+    tmp_path: Path,
+) -> None:
+    (
+        root,
+        source,
+        preferences,
+        store,
+        settings_revision,
+        policy_revision,
+    ) = _configured(tmp_path)
+    missing_relative = (
+        "Johann Sebastian Bach; Glenn Gould/"
+        "Goldberg Variations, BWV 988 (1982)/01 - ARIA.FLAC"
+    )
+    missing_path = root / missing_relative
+    assert not missing_path.exists()
+    _add_catalog_collision_track(
+        tmp_path / "library.db",
+        source,
+        relative_path=missing_relative,
+        file_path=str(missing_path),
+        availability="missing",
+    )
+    planner = _planner(tmp_path, store, preferences)
+    handle = await planner.create_preview(
+        selection=LibraryManagementSelection(kind="tracks", ids=("track-1",)),
+        profile_id=PICARD_ORGANIZER_PROFILE_ID,
+        expected_settings_revision=settings_revision,
+        expected_policy_revision=policy_revision,
+        actor_user_id="admin",
+        idempotency_key=None,
+    )
+    claimed = await store.claim_operation_job(
+        "worker-1", now=100, lease_seconds=60, kind="library_management"
+    )
+    assert claimed is not None
+    await planner.run_claimed_preview(claimed, "worker-1")
+    plan = await store.list_library_management_plan_items(handle.job_id)
+
+    assert len(plan) == 1
+    assert plan[0].eligibility in {"eligible", "warning"}
+    assert plan[0].reason_code != "PATH_COLLISION_DIFFERENT"
+    assert not any(
+        evidence.get("classification") == "normalized_catalog_path_collision"
+        for evidence in json.loads(plan[0].collision_json)
+    )
+
+
 def test_destination_collision_allows_case_only_rename_of_source(
     tmp_path: Path,
 ) -> None:
