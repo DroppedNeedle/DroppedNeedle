@@ -329,10 +329,10 @@ async def test_refresh_replacement_does_not_evict_tracks_singleflight():
         if calls == 1:
             old_started.set()
             await old_gate.wait()
-            return old_tracks, False
+            return old_tracks
         replacement_started.set()
         await replacement_gate.wait()
-        return replacement_tracks, False
+        return replacement_tracks
 
     svc._build_album_tracks_info = build_tracks
     svc.get_album_info = AsyncMock(return_value=_fake_album_info())

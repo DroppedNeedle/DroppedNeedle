@@ -729,16 +729,10 @@ class AlbumService:
             future: asyncio.Future[AlbumTracksInfo] = loop.create_future()
             self._tracks_in_flight[inflight_key] = future
             try:
-                result, is_local = await self._build_album_tracks_info(
-                    release_group_id, priority
-                )
+                result = await self._build_album_tracks_info(release_group_id, priority)
                 if result.tracks:
                     settings = self._preferences_service.get_advanced_settings()
-                    ttl = (
-                        settings.cache_ttl_album_library
-                        if is_local
-                        else settings.cache_ttl_album_non_library
-                    )
+                    ttl = settings.cache_ttl_album_non_library
                     await mb_publish_if_current(
                         source_context,
                         lambda: self._cache.set(
@@ -787,17 +781,8 @@ class AlbumService:
 
     async def _build_album_tracks_info(
         self, release_group_id: str, priority: RequestPriority
-    ) -> tuple[AlbumTracksInfo, bool]:
+    ) -> AlbumTracksInfo:
         started = time.perf_counter()
-        local = await self._local_album_tracks_info(release_group_id)
-        if local is not None:
-            logger.info(
-                "Album tracks album=%s source=local outcome=success tracks=%d elapsed_ms=%.1f",
-                release_group_id[:8],
-                local.total_tracks,
-                (time.perf_counter() - started) * 1000,
-            )
-            return local, True
 
         cached_album_info = await self._get_cached_album_info(
             release_group_id, f"{ALBUM_INFO_PREFIX}{release_group_id}"
@@ -809,17 +794,14 @@ class AlbumService:
                 cached_album_info.total_tracks,
                 (time.perf_counter() - started) * 1000,
             )
-            return (
-                AlbumTracksInfo(
-                    tracks=cached_album_info.tracks,
-                    total_tracks=cached_album_info.total_tracks,
-                    total_length=cached_album_info.total_length,
-                    label=cached_album_info.label,
-                    barcode=cached_album_info.barcode,
-                    country=cached_album_info.country,
-                    selected_release_mbid=cached_album_info.selected_release_mbid,
-                ),
-                False,
+            return AlbumTracksInfo(
+                tracks=cached_album_info.tracks,
+                total_tracks=cached_album_info.total_tracks,
+                total_length=cached_album_info.total_length,
+                label=cached_album_info.label,
+                barcode=cached_album_info.barcode,
+                country=cached_album_info.country,
+                selected_release_mbid=cached_album_info.selected_release_mbid,
             )
 
         group_started = time.perf_counter()
@@ -844,7 +826,7 @@ class AlbumService:
 
         ranked_releases = get_ranked_releases(release_group)
         if not ranked_releases:
-            return AlbumTracksInfo(tracks=[], total_tracks=0), False
+            return AlbumTracksInfo(tracks=[], total_tracks=0)
 
         canonical_rg_id = release_group.get("id") or release_group_id
         selected_release_id, _owned, _pinned, _basis = await self._effective_release_id(
@@ -903,95 +885,16 @@ class AlbumService:
             )
             if not tracks:
                 continue
-            return (
-                AlbumTracksInfo(
-                    tracks=tracks,
-                    total_tracks=len(tracks),
-                    total_length=total_length if total_length > 0 else None,
-                    label=extract_label(release_data),
-                    barcode=release_data.get("barcode"),
-                    country=release_data.get("country"),
-                    selected_release_mbid=candidate_id,
-                ),
-                False,
+            return AlbumTracksInfo(
+                tracks=tracks,
+                total_tracks=len(tracks),
+                total_length=total_length if total_length > 0 else None,
+                label=extract_label(release_data),
+                barcode=release_data.get("barcode"),
+                country=release_data.get("country"),
+                selected_release_mbid=candidate_id,
             )
-        return AlbumTracksInfo(tracks=[], total_tracks=0), False
-
-    async def _local_album_tracks_info(
-        self, release_group_id: str
-    ) -> AlbumTracksInfo | None:
-        if self._native_library_store is not None:
-            ownership = await self._native_library_store.target_album_ownership_rows(
-                provider_ids={release_group_id.casefold()}
-            )
-            if len(ownership) != 1:
-                return None
-            local_album_id = str(ownership[0]["local_album_id"])
-            rows = await self._native_library_store.get_target_album_tracks(
-                local_album_id
-            )
-        else:
-            rows = await self._library_db.get_library_files_for_album(release_group_id)
-        if not rows:
-            return None
-
-        local_album_ids = {
-            str(row.get("local_album_id") or row.get("release_group_mbid") or "")
-            for row in rows
-        }
-        if len(local_album_ids) != 1:
-            return None
-
-        release_ids = {
-            str(row.get("provider_release_mbid") or row.get("release_mbid"))
-            for row in rows
-            if row.get("provider_release_mbid") or row.get("release_mbid")
-        }
-        if len(release_ids) > 1:
-            return None
-        local_release_id = next(iter(release_ids), None)
-        pinned_release_id = await self._pinned_release_id(release_group_id)
-        if pinned_release_id and pinned_release_id != local_release_id:
-            return None
-
-        tracks: list[Track] = []
-        total_length = 0
-        for row in rows:
-            duration = row.get("duration_seconds")
-            length = None
-            if duration is not None:
-                try:
-                    seconds = float(duration)
-                    if math.isfinite(seconds) and seconds > 0:
-                        length = round(seconds * 1000)
-                except (TypeError, ValueError):
-                    pass
-            if length is not None:
-                total_length += length
-            tracks.append(
-                Track(
-                    position=int(row.get("track_number") or 0),
-                    disc_number=int(row.get("disc_number") or 1),
-                    title=str(row.get("track_title") or row.get("title") or ""),
-                    length=length,
-                    recording_id=(
-                        str(row["recording_mbid"])
-                        if row.get("recording_mbid")
-                        else None
-                    ),
-                    release_track_id=(
-                        str(row["release_track_mbid"])
-                        if row.get("release_track_mbid")
-                        else None
-                    ),
-                )
-            )
-        return AlbumTracksInfo(
-            tracks=tracks,
-            total_tracks=len(tracks),
-            total_length=total_length if total_length > 0 else None,
-            selected_release_mbid=local_release_id,
-        )
+        return AlbumTracksInfo(tracks=[], total_tracks=0)
 
     async def get_exact_edition_tracks_info(
         self,

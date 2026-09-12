@@ -2,7 +2,7 @@
 
 - empty + healthy -> cached @600 s (the AlbumTracksInfo doubles as sentinel)
 - empty + musicbrainz-degraded -> NOT cached (outage must not pin "no tracks")
-- local-library albums -> never reach the empty path (positive TTL unchanged)
+- non-empty -> cached at the settings TTL
 """
 
 import pytest
@@ -42,12 +42,9 @@ def _make_service() -> tuple[AlbumService, AsyncMock]:
     return svc, memory_cache
 
 
-def _patch_build(svc: AlbumService, tracks: list, is_local: bool) -> AsyncMock:
+def _patch_build(svc: AlbumService, tracks: list) -> AsyncMock:
     build = AsyncMock(
-        return_value=(
-            AlbumTracksInfo(tracks=tracks, total_tracks=len(tracks)),
-            is_local,
-        )
+        return_value=AlbumTracksInfo(tracks=tracks, total_tracks=len(tracks))
     )
     svc._build_album_tracks_info = build
     svc._provider_album_id = AsyncMock(side_effect=lambda rg: rg)
@@ -58,7 +55,7 @@ class TestEmptyTracklistMatrix:
     @pytest.mark.asyncio
     async def test_empty_healthy_result_cached_at_600s(self):
         svc, cache = _make_service()
-        _patch_build(svc, tracks=[], is_local=False)
+        _patch_build(svc, tracks=[])
 
         result = await svc.get_album_tracks_info(RG)
 
@@ -68,7 +65,7 @@ class TestEmptyTracklistMatrix:
     @pytest.mark.asyncio
     async def test_empty_degraded_result_not_cached(self):
         svc, cache = _make_service()
-        _patch_build(svc, tracks=[], is_local=False)
+        _patch_build(svc, tracks=[])
 
         ctx = init_degradation_context()
         try:
@@ -86,7 +83,7 @@ class TestEmptyTracklistMatrix:
     async def test_other_source_degradation_does_not_veto_caching(self):
         """Only a musicbrainz degradation vetoes; unrelated sources don't."""
         svc, cache = _make_service()
-        _patch_build(svc, tracks=[], is_local=False)
+        _patch_build(svc, tracks=[])
 
         ctx = init_degradation_context()
         try:
@@ -101,7 +98,7 @@ class TestEmptyTracklistMatrix:
     async def test_positive_result_keeps_settings_ttl(self):
         svc, cache = _make_service()
         tracks = [_track()]
-        _patch_build(svc, tracks=tracks, is_local=False)
+        _patch_build(svc, tracks=tracks)
 
         await svc.get_album_tracks_info(RG)
 
@@ -110,7 +107,7 @@ class TestEmptyTracklistMatrix:
     @pytest.mark.asyncio
     async def test_degraded_key_absent_repeat_view_repays_ladder(self):
         svc, cache = _make_service()
-        build = _patch_build(svc, tracks=[], is_local=False)
+        build = _patch_build(svc, tracks=[])
 
         ctx = init_degradation_context()
         try:
@@ -123,22 +120,6 @@ class TestEmptyTracklistMatrix:
         # Key stayed absent both times: each degraded view re-pays the ladder.
         assert build.await_count == 2
         cache.set.assert_not_awaited()
-
-
-class TestLocalNeverEmpty:
-    @pytest.mark.asyncio
-    async def test_local_hit_uses_positive_branch(self):
-        svc, cache = _make_service()
-        local_info = AlbumTracksInfo(tracks=[_track()], total_tracks=1)
-        build = AsyncMock(return_value=(local_info, True))
-        svc._build_album_tracks_info = build
-        svc._provider_album_id = AsyncMock(side_effect=lambda rg: rg)
-
-        result = await svc.get_album_tracks_info(RG)
-
-        assert result.total_tracks == 1
-        # Positive branch: settings-based TTL for local albums.
-        cache.set.assert_awaited_once_with(TRACKS_KEY, local_info, ttl_seconds=21600)
 
 
 def _track():

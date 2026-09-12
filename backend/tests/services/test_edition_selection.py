@@ -293,7 +293,7 @@ async def _seed_unidentified_files(library_db: LibraryDB, count: int) -> None:
 
 
 @pytest.mark.asyncio
-async def test_twenty_unidentified_files_render_locally_without_changing_acquisition_edition(
+async def test_twenty_unidentified_files_use_the_authoritative_edition(
     tmp_path: Path,
 ):
     service, library_db, _pins, *_ = _make_album_service(tmp_path)
@@ -317,9 +317,9 @@ async def test_twenty_unidentified_files_render_locally_without_changing_acquisi
 
     assert full.selected_release_mbid == REL_AUTO_20
     assert full.total_tracks == 20
-    # Display tracks are native and therefore do not invent an edition identity.
-    # The edition query and acquisition resolver still agree on the 20-track target.
-    assert tracks.selected_release_mbid is None
+    # The tracks endpoint reports the authoritative selected edition; the
+    # edition query and acquisition resolver agree on the same 20-track target.
+    assert tracks.selected_release_mbid == REL_AUTO_20
     assert tracks.total_tracks == 20
     assert editions["selected_release_mbid"] == REL_AUTO_20
     assert editions["owned_release_mbid"] is None
