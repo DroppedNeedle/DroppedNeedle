@@ -24832,8 +24832,10 @@ class NativeLibraryStore(PersistenceBase):
                         or str(current["stat_revision"])
                         != str(expected["expected_stat_revision"])
                         or (
+                            # The LEFT JOIN yields NULL when the track has no identity.
                             int(identity_row["identity_row_revision"])
                             if identity_row is not None
+                            and identity_row["identity_row_revision"] is not None
                             else None
                         )
                         != expected["expected_identity_revision"]

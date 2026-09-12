@@ -1,16 +1,36 @@
+import hashlib
 import sqlite3
 import threading
 from pathlib import Path
 
+import msgspec
 import pytest
 
+from core.exceptions import StaleRevisionError
 from infrastructure.persistence.native_library_store import NativeLibraryStore
+from models.audio import AudioInfo, AudioTag
 from models.edition_management import (
     EditionConversionJob,
     EditionConversionLocalFile,
     EditionConversionTarget,
 )
-from core.exceptions import StaleRevisionError
+from models.library_management import (
+    LibraryManagementImportBundle,
+    LibraryManagementImportBundleRecord,
+    LibraryManagementImportFile,
+    LibraryManagementImportJournal,
+)
+from models.library_work import ScannedTrackWrite
+from models.local_catalog import (
+    LocalAlbum,
+    LocalArtist,
+    LocalArtistCredit,
+    LocalTrack,
+)
+from services.native.identification_revisions import (
+    album_identity_revision,
+    album_input_revisions,
+)
 
 
 def _seed(path: Path) -> None:
@@ -341,3 +361,208 @@ def test_store_clears_legacy_plaintext_conversion_preview_tokens(
             "WHERE id='legacy'"
         ).fetchone()[0]
     assert token is None
+
+
+def _conversion_write(track_id: str) -> ScannedTrackWrite:
+    artist = LocalArtist(
+        id="artist",
+        display_name="Artist",
+        folded_name="artist",
+        normalized_name="artist",
+        kind="person",
+        created_at=1,
+        updated_at=1,
+    )
+    album = LocalAlbum(
+        id="album",
+        root_id="root",
+        grouping_key="group",
+        title="Album",
+        album_artist_id="artist",
+        album_artist_name="Artist",
+        created_at=1,
+        updated_at=1,
+    )
+    track = LocalTrack(
+        id=track_id,
+        local_album_id="album",
+        root_id="root",
+        file_path="/music/a.flac",
+        relative_path="a.flac",
+        path_hash="hash",
+        file_size_bytes=1,
+        file_mtime_ns=1,
+        stat_revision="stat",
+        title="Track",
+        artist_name="Artist",
+        album_title="Album",
+        album_artist_name="Artist",
+        file_format="flac",
+        imported_at=1,
+    )
+    return ScannedTrackWrite(
+        artist=artist,
+        album=album,
+        track=track,
+        credit=LocalArtistCredit(local_artist_id="artist", position=0),
+        root_id="root",
+        relative_path="a.flac",
+        comparison_result="new",
+        grouping_context="test",
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversion_commit_accepts_source_track_without_identity(
+    tmp_path: Path,
+) -> None:
+    """A conversion Apply commits for an un-identified indexed source track."""
+    path = tmp_path / "library.db"
+    _seed(path)
+    store = NativeLibraryStore(path, threading.Lock())
+    with sqlite3.connect(path) as connection:
+        # final_preview_job_id references library_operation_jobs (RESTRICT).
+        connection.execute(
+            "INSERT INTO library_operation_jobs (id,kind,state,created_at,updated_at) "
+            "VALUES ('preview','library_management','ready',1,1)"
+        )
+
+    context = await store.get_album_identification_context("album")
+    assert context is not None
+    tracks = context["tracks"]
+    assert [track["identity_row_revision"] for track in tracks] == [None]
+
+    request = LibraryManagementImportFile(
+        ordinal=0,
+        input_path="/incoming/Track.flac",
+        destination_root_id="root",
+        destination_relative_path="Converted/Track.flac",
+        tag=AudioTag(title="Track", artist="Artist", album="Album", track_number=1),
+        info=AudioInfo(
+            duration_seconds=180.0,
+            bitrate=800,
+            sample_rate=44100,
+            channels=2,
+            file_format="flac",
+            file_size_bytes=100,
+        ),
+        release_group_mbid=None,
+        release_mbid=None,
+        recording_mbid=None,
+        confidence=0.0,
+        source="edition_conversion",
+    )
+    bundle = LibraryManagementImportBundle(
+        idempotency_key="edition-conversion:null-identity",
+        origin="edition_conversion",
+        policy_revision="policy-1",
+        files=(request,),
+        conversion_job_id="job",
+        conversion_expected_row_revision=1,
+        conversion_local_album_id="album",
+        conversion_preview_job_id="preview",
+    )
+    request_json = msgspec.json.encode(bundle).decode()
+    request_hash = hashlib.sha256(request_json.encode()).hexdigest()
+    await store.ensure_library_management_import_bundle(
+        LibraryManagementImportBundleRecord(
+            id="bundle",
+            idempotency_key=bundle.idempotency_key,
+            origin="acquisition",
+            policy_revision="policy-1",
+            request_json=request_json,
+            request_hash=request_hash,
+            state="publishing",
+            created_at=1,
+            updated_at=1,
+        )
+    )
+    await store.ensure_library_management_import_journal(
+        LibraryManagementImportJournal(
+            bundle_id="bundle",
+            ordinal=0,
+            state="published",
+            source_fingerprint="a" * 64,
+            source_size=1,
+            source_mtime_ns=1,
+            temporary_relative_path="conversion/track.flac",
+            destination_root_id="root",
+            destination_relative_path="Converted/Track.flac",
+        )
+    )
+    local_track = tracks[0]
+    await store.create_edition_conversion(
+        EditionConversionJob(
+            id="job",
+            local_album_id="album",
+            target_release_group_mbid="group",
+            target_release_mbid="release",
+            target_album_title="Album",
+            target_artist_name="Artist",
+            state="ready",
+            expected_album_revision=int(context["album"]["row_revision"]),
+            expected_input_revision=":".join(album_input_revisions(tracks)),
+            expected_identity_revision=album_identity_revision(
+                context["identity"], tracks
+            ),
+            preflight_token_hash="hash",
+            download_source_ready=True,
+            required_temporary_bytes=1,
+            kept_count=1,
+            acquire_count=0,
+            recycle_count=0,
+            staged_count=0,
+            failed_count=0,
+            final_preview_job_id="preview",
+            final_preview_token_hash="preview-hash",
+            final_bundle_json=request_json,
+            final_bundle_hash=request_hash,
+            requested_by_user_id="admin",
+            error_code=None,
+            created_at=1,
+            updated_at=1,
+        ),
+        (
+            EditionConversionTarget(
+                job_id="job",
+                ordinal=0,
+                disc_number=1,
+                track_number=1,
+                release_track_mbid="release-track",
+                recording_mbid="recording",
+                title="Track",
+                duration_seconds=1,
+                state="kept",
+                kept_local_track_id="track",
+            ),
+        ),
+        (
+            EditionConversionLocalFile(
+                job_id="job",
+                local_track_id="track",
+                action="keep",
+                target_ordinal=0,
+                evidence_kind="recording",
+                expected_track_revision=int(local_track["row_revision"]),
+                expected_identity_revision=None,
+                expected_stat_revision="stat",
+            ),
+        ),
+    )
+
+    track_ids = await store.commit_library_management_import_bundle(
+        "bundle",
+        writes=[(0, _conversion_write("track"))],
+        replacement_track_ids={},
+        recycle_track_ids={},
+        requests_by_ordinal={0: request},
+        automatic_requests={},
+        expected_policy_revision="policy-1",
+        result_paths_by_ordinal={0: "Converted/Track.flac"},
+        updated_at=10.0,
+    )
+
+    assert track_ids == ("track",)
+    committed = await store.get_library_management_import_bundle("bundle")
+    assert committed is not None
+    assert committed.state == "catalog_committed"
