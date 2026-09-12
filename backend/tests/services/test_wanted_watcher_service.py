@@ -7,6 +7,7 @@ request relink writes, capped per-track partial dispatch with per-recording
 dedup, satisfaction-first (no search on a covered want), the active-work
 guards, cadence math with jitter bounds, and dormancy."""
 
+import asyncio
 import sqlite3
 import threading
 import time
@@ -1626,3 +1627,34 @@ async def test_partial_want_never_dispatches_video_positions(env):
         c.kwargs["recording_mbid"] for c in env.ds.request_track.await_args_list
     }
     assert requested == {"rec-2"}
+
+
+@pytest.mark.asyncio
+async def test_watch_stopped_while_scouting_is_not_dispatched(env):
+    await _add_watch(env)
+    scout_started = asyncio.Event()
+    finish_scout = asyncio.Event()
+
+    async def scout(**_kwargs):
+        scout_started.set()
+        await finish_scout.wait()
+        return [_cand(tier="auto")]
+
+    env.ds.capture_quality_snapshot = Mock(return_value=SimpleNamespace())
+    env.ds.scout_album = AsyncMock(side_effect=scout)
+    sweep = asyncio.create_task(env.watcher.run_sweep())
+    try:
+        await scout_started.wait()
+        await env.store.stop_watch("rg-1")
+    finally:
+        finish_scout.set()
+        try:
+            summary = await asyncio.wait_for(sweep, timeout=5)
+        except asyncio.TimeoutError:
+            sweep.cancel()
+            await asyncio.gather(sweep, return_exceptions=True)
+            raise
+
+    assert summary.dispatched == 0
+    env.ds.request_album.assert_not_awaited()
+    assert (await env.store.get_watch("rg-1")).state == "stopped"
