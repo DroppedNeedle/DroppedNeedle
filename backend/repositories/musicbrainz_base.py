@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Awaitable, Callable, TypeVar
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 import msgspec
@@ -73,6 +73,7 @@ from infrastructure.observability.provider_counters import (
 from infrastructure.http.brainzmash_transport import (
     BRAINZMASH_ENDPOINT,
     validate_brainzmash_path,
+    validate_brainzmash_request_url,
     validate_brainzmash_url,
 )
 from repositories.edition_policy import recall_key
@@ -845,6 +846,34 @@ def _musicbrainz_breaker_for_request(*args: Any, **kwargs: Any) -> CircuitBreake
     return mb_circuit_breaker
 
 
+_BRAINZMASH_MAX_REDIRECTS = 2
+
+
+def _validated_brainzmash_redirect_path(response: httpx.Response) -> str | None:
+    """Return the validated ``/ws/2`` path for one same-origin redirect hop.
+
+    Probed live 2026-09-12 against api.brainzmash.cc: fetching merged release
+    77a698a8-98da-401d-a59b-1ae4bc28df56 answers ``301`` with
+    ``location: https://api.brainzmash.cc/ws/2/release/9cb4af06-...?fmt=json``,
+    and that hop answers ``200`` with the surviving release. The live server
+    exposes no version information (only cloudflare/x-runtime/etag style
+    headers). The Location is resolved against the approved origin before
+    validation, so a foreign host, scheme downgrade, port shift, or off-/ws/2
+    path still returns None and the 3xx falls through to the existing rejection.
+    """
+    if not 300 <= response.status_code < 400:
+        return None
+    location = response.headers.get("location")
+    if not location:
+        return None
+    try:
+        resolved = urljoin(str(response.url), location)
+        validate_brainzmash_request_url(resolved)
+        return validate_brainzmash_path(urlsplit(resolved).path[len("/ws/2") :])
+    except ValueError:
+        return None
+
+
 @with_retry(
     max_attempts=3,
     circuit_breaker=_musicbrainz_breaker_for_request,
@@ -889,29 +918,39 @@ async def _mb_api_get_attempt(
         request_params = dict(params) if params else {}
         request_params["fmt"] = "json"
 
-        async def request() -> httpx.Response:
+        async def dispatch(target_url: str) -> httpx.Response:
             if not is_mb_source_current(source_context):
                 raise _stale_source_error()
             owner = mb_singleflight.current_owner.get()
             if owner is not None:
                 owner.before_dispatch()
-            client = (
-                get_mb_brainzmash_http_client() if brainzmash else get_mb_http_client()
-            )
-            return await client.get(url, params=request_params)
+            return await client.get(target_url, params=request_params)
 
+        async def brainzmash_hop(target_url: str) -> httpx.Response:
+            return await brainzmash_scheduler.run(
+                priority,
+                lambda: dispatch(target_url),
+                limiter=brainzmash_rate_limiter,
+                on_result=_note_brainzmash_response,
+            )
+
+        client = (
+            get_mb_brainzmash_http_client() if brainzmash else get_mb_http_client()
+        )
         try:
             if brainzmash:
-                response = await brainzmash_scheduler.run(
-                    priority,
-                    request,
-                    limiter=brainzmash_rate_limiter,
-                    on_result=_note_brainzmash_response,
-                )
+                response = await brainzmash_hop(url)
+                for _ in range(_BRAINZMASH_MAX_REDIRECTS):
+                    hop_path = _validated_brainzmash_redirect_path(response)
+                    if hop_path is None:
+                        break
+                    response = await brainzmash_hop(
+                        f"{BRAINZMASH_ENDPOINT}{hop_path}"
+                    )
             else:
                 if not _mb_limiter_bypassed:
                     await mb_rate_limiter.acquire(priority=int(priority))
-                response = await request()
+                response = await dispatch(url)
         except httpx.HTTPError:
             # Transport-level failure: record only the opaque source context.
             record_provider_call(
