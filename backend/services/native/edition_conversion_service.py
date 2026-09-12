@@ -9,7 +9,7 @@ from pathlib import Path
 import secrets
 import shutil
 import time
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 import unicodedata
 import uuid
 
@@ -1047,6 +1047,18 @@ class EditionConversionService:
             created_at=now,
             updated_at=now,
         )
+        replacement_track_ids = list(
+            dict.fromkeys(
+                request.replacement_local_track_id
+                for request in prepared.files
+                if request.replacement_local_track_id
+            )
+        )
+        live_source_revisions = (
+            await self._store.get_target_tracks_by_ids(replacement_track_ids)
+            if replacement_track_ids
+            else {}
+        )
         plan_items = list(
             await asyncio.gather(
                 *(
@@ -1059,6 +1071,7 @@ class EditionConversionService:
                         policy_revision=policy.policy_revision,
                         profile_revision=pinned.profile.revision,
                         created_at=now,
+                        live_revisions=live_source_revisions,
                     )
                     for request in prepared.files
                 )
@@ -1109,6 +1122,7 @@ class EditionConversionService:
         policy_revision: str,
         profile_revision: str,
         created_at: float,
+        live_revisions: dict[str, dict[str, Any]],
     ) -> LibraryManagementPlanItem:
         desired_json = msgspec.json.encode(request.desired_document).decode()
         source_root_id = request.replacement_root_id or request.destination_root_id
@@ -1151,6 +1165,16 @@ class EditionConversionService:
             for artifact in request.artifacts
         ]
         fingerprint = _sha256_file(Path(request.input_path))
+        # The freshness check compares these fields against the current
+        # local_tracks row, so pin the row values; only an acquired file with no
+        # local row keeps the previous fingerprint for both.
+        live_row = live_revisions.get(request.replacement_local_track_id or "")
+        stat_revision = (
+            fingerprint if live_row is None else str(live_row["stat_revision"])
+        )
+        tag_revision = (
+            fingerprint if live_row is None else str(live_row["tag_revision"] or "")
+        )
         return LibraryManagementPlanItem(
             job_id=preview_job_id,
             ordinal=request.ordinal,
@@ -1162,8 +1186,8 @@ class EditionConversionService:
             expected_profile_revision=profile_revision,
             expected_root_id=source_root_id,
             expected_relative_path=source_relative,
-            expected_stat_revision=fingerprint,
-            expected_tag_revision=fingerprint,
+            expected_stat_revision=stat_revision,
+            expected_tag_revision=tag_revision,
             expected_file_fingerprint=fingerprint,
             source_path_identity=hashlib.sha256(
                 f"{source_root_id}\x00{source_relative}".encode()

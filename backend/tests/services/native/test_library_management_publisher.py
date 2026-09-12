@@ -11,6 +11,7 @@ import stat
 from pathlib import Path, PurePosixPath
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import msgspec
@@ -46,6 +47,10 @@ from infrastructure.audio.metadata_engine import (
 from infrastructure.library_management_blob_store import LibraryManagementBlobStore
 from services.native.audio_write_planning_service import AudioWritePlanningService
 from services.native.library_filesystem_coordinator import LibraryFilesystemCoordinator
+from services.native.edition_conversion_service import EditionConversionService
+from services.native.library_management_preview_service import (
+    LibraryManagementPreviewService,
+)
 from services.native.library_management_baseline_service import (
     LibraryManagementBaselineService,
 )
@@ -4263,3 +4268,158 @@ async def test_publish_refuses_destination_created_in_replace_window(
     # the external file survived untouched and nothing half-published remains
     assert planned.read_bytes() == b"external writer bytes"
     assert source.is_file()
+
+
+async def _conversion_final_preview(tmp_path: Path, *, null_tag: bool = False):
+    root, source, preferences, store, _settings_revision, _policy_revision = _configured(
+        tmp_path
+    )
+    if null_tag:
+        with sqlite3.connect(store.db_path) as connection:
+            connection.execute(
+                "UPDATE local_tracks SET tag_revision=NULL WHERE id='track-1'"
+            )
+    recycle = tmp_path / "managed-recycle"
+    recycle.mkdir()
+    current = preferences.get_library_management_settings()
+    management = preferences.get_library_management_settings_raw()
+    management.recycle_bin_path = str(recycle)
+    preferences.save_library_management_settings_if_current(
+        management, expected_settings_revision=current.settings_revision
+    )
+    management = preferences.get_library_management_settings_raw()
+    profile = next(
+        value
+        for value in management.profiles
+        if value.id == PICARD_ORGANIZER_PROFILE_ID
+    )
+    pinned = pin_library_management_profile(management, profile)
+    context = await store.get_album_identification_context("album-1")
+    assert context is not None
+    tracks = [
+        value for value in context["tracks"] if value["availability"] == "indexed"
+    ]
+    track = next(value for value in tracks if value["id"] == "track-1")
+    target_recording = "33333333-3333-4333-8333-333333333333"
+    service = EditionConversionService(
+        store=store,
+        album_service=AsyncMock(),
+        preferences=preferences,
+        acquisition=AsyncMock(),
+        download_store=AsyncMock(),
+        get_download_service=lambda: AsyncMock(),
+        get_free_music_service=lambda: AsyncMock(),
+        automatic_management=AsyncMock(),
+        fingerprinter=AsyncMock(),
+        held_dir=tmp_path / "held",
+        import_library=AsyncMock(),
+        clock=lambda: 100.0,
+    )
+    service._fingerprinter.fingerprint.return_value = SimpleNamespace(
+        status="pass",
+        recording_id=target_recording,
+        recording_ids=[target_recording],
+    )
+
+    async def prepare(bundle):
+        return msgspec.structs.replace(
+            bundle,
+            files=tuple(
+                msgspec.structs.replace(value, pinned_profile=pinned)
+                for value in bundle.files
+            ),
+        )
+
+    service._automatic_management.prepare = AsyncMock(side_effect=prepare)
+    job = EditionConversionJob(
+        id="conversion-427",
+        local_album_id="album-1",
+        target_release_group_mbid="dcff25f1-702d-3b5e-b0da-d48172e6e62a",
+        target_release_mbid="77777777-7777-4777-8777-777777777777",
+        target_album_title="Management Album",
+        target_artist_name="Alpha",
+        state="ready",
+        expected_album_revision=int(context["album"]["row_revision"]),
+        expected_input_revision=":".join(album_input_revisions(tracks)),
+        expected_identity_revision=album_identity_revision(
+            context["identity"], tracks
+        ),
+        preflight_token_hash=hashlib.sha256(b"preflight").hexdigest(),
+        download_source_ready=True,
+        required_temporary_bytes=1,
+        kept_count=1,
+        acquire_count=0,
+        recycle_count=0,
+        staged_count=0,
+        failed_count=0,
+        final_preview_job_id=None,
+        final_preview_token_hash=None,
+        final_bundle_json=None,
+        final_bundle_hash=None,
+        requested_by_user_id="admin",
+        error_code=None,
+        created_at=1,
+        updated_at=1,
+    )
+    target = EditionConversionTarget(
+        job_id=job.id,
+        ordinal=0,
+        disc_number=1,
+        track_number=int(track["track_number"]),
+        release_track_mbid="77777777-7777-4777-8777-000000000001",
+        recording_mbid=target_recording,
+        title="Management Track",
+        duration_seconds=1.0,
+        state="kept",
+        kept_local_track_id="track-1",
+    )
+    local_file = EditionConversionLocalFile(
+        job_id=job.id,
+        local_track_id="track-1",
+        action="keep",
+        target_ordinal=0,
+        evidence_kind="recording",
+        expected_track_revision=int(track["row_revision"]),
+        expected_identity_revision=None,
+        expected_stat_revision=str(track["stat_revision"]),
+    )
+    job = await store.create_edition_conversion(job, (target,), (local_file,))
+    sealed = await service._ensure_final_preview(job, preview_token="preview-token")
+    preview_job_id = sealed.final_preview_job_id
+    assert preview_job_id is not None
+    row = await store.get_target_track("track-1")
+    assert row is not None
+    return SimpleNamespace(
+        source=source,
+        store=store,
+        preview=LibraryManagementPreviewService(
+            store, preferences, AsyncMock(), AsyncMock()
+        ),
+        snapshot=await store.get_library_management_job_snapshot(preview_job_id),
+        row=row,
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversion_final_preview_is_not_born_stale(tmp_path: Path) -> None:
+    scenario = await _conversion_final_preview(tmp_path)
+
+    assert await scenario.preview._preview_inputs_moved(scenario.snapshot) is False
+
+    with sqlite3.connect(scenario.store.db_path) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET stat_revision='changed:1', "
+            "tag_revision='changed', row_revision=row_revision+1 "
+            "WHERE id='track-1'"
+        )
+    assert await scenario.preview._preview_inputs_moved(scenario.snapshot) is True
+
+
+@pytest.mark.asyncio
+async def test_conversion_final_preview_normalizes_null_tag_revision(
+    tmp_path: Path,
+) -> None:
+    scenario = await _conversion_final_preview(tmp_path, null_tag=True)
+
+    assert scenario.row["tag_revision"] is None
+    assert await scenario.preview._preview_inputs_moved(scenario.snapshot) is False
