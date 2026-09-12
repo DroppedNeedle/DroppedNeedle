@@ -71,14 +71,14 @@ beforeEach(() => {
 
 describe('ScrobblingDiscoveryCard', () => {
 	it('hides the Navidrome ownership control when Navidrome is unavailable', async () => {
-		render(ScrobblingDiscoveryCard, { navidromeEnabled: false });
+		await render(ScrobblingDiscoveryCard, { navidromeEnabled: false });
 		expect(
 			page.getByRole('checkbox', { name: /Let Navidrome handle Last.fm/ }).elements()
 		).toHaveLength(0);
 	});
 
 	it('defaults to Navidrome ownership and allows opting out', async () => {
-		render(ScrobblingDiscoveryCard, { navidromeEnabled: true });
+		await render(ScrobblingDiscoveryCard, { navidromeEnabled: true });
 		const toggle = page.getByRole('checkbox', {
 			name: /Let Navidrome handle Last.fm/
 		});

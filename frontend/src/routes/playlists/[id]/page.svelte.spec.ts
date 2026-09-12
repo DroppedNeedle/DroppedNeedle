@@ -103,8 +103,8 @@ vi.mock('$app/navigation', () => ({
 
 import DetailPage from './+page.svelte';
 
-function renderDetail(playlistId = 'pl-1') {
-	return render(DetailPage, {
+async function renderDetail(playlistId = 'pl-1') {
+	return await render(DetailPage, {
 		props: { data: { playlistId } }
 	} as Parameters<typeof render<typeof DetailPage>>[1]);
 }
@@ -192,7 +192,7 @@ describe('Playlist detail page', () => {
 
 	it('renders header with playlist name, track count, and duration', async () => {
 		detailQuery.data = makePlaylist();
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect
 			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
@@ -203,7 +203,7 @@ describe('Playlist detail page', () => {
 
 	it('renders track rows with correct data', async () => {
 		detailQuery.data = makePlaylist();
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect.element(page.getByText('First Track')).toBeVisible();
 		await expect.element(page.getByText('Second Track')).toBeVisible();
@@ -214,7 +214,7 @@ describe('Playlist detail page', () => {
 		detailQuery.data = undefined;
 		detailQuery.isError = true;
 		detailQuery.error = new Error('404 not found');
-		renderDetail('pl-bad');
+		await renderDetail('pl-bad');
 
 		await expect.element(page.getByText("Couldn't load this playlist")).toBeVisible();
 		await expect.element(page.getByText('Playlist not found')).toBeVisible();
@@ -222,7 +222,7 @@ describe('Playlist detail page', () => {
 
 	it('shows a redacted placeholder for an admin viewing a private playlist', async () => {
 		detailQuery.data = { id: 'pl-1', track_count: 9, owner_name: 'Cara', is_redacted: true };
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect.element(page.getByRole('heading', { name: 'Private playlist' })).toBeVisible();
 		await expect.element(page.getByText(/owned by Cara/)).toBeVisible();
@@ -230,14 +230,14 @@ describe('Playlist detail page', () => {
 
 	it('shows empty state when playlist has no tracks', async () => {
 		detailQuery.data = makePlaylist({ tracks: [], track_count: 0 });
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect.element(page.getByText('This playlist is empty')).toBeVisible();
 	});
 
 	it('Play All calls playQueue with all tracks', async () => {
 		detailQuery.data = makePlaylist();
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect
 			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
@@ -254,7 +254,7 @@ describe('Playlist detail page', () => {
 
 	it('Shuffle calls playQueue with shuffle=true', async () => {
 		detailQuery.data = makePlaylist();
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect
 			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
@@ -268,7 +268,7 @@ describe('Playlist detail page', () => {
 
 	it('Play All is disabled when playlist has no tracks', async () => {
 		detailQuery.data = makePlaylist({ tracks: [], track_count: 0 });
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect.element(page.getByText('This playlist is empty')).toBeVisible();
 		const playBtn = page.getByRole('button', { name: /Play All/ });
@@ -277,7 +277,7 @@ describe('Playlist detail page', () => {
 
 	it('back button is visible when playlist loads', async () => {
 		detailQuery.data = makePlaylist();
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect
 			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
@@ -287,7 +287,7 @@ describe('Playlist detail page', () => {
 
 	it('owner sees the share toggle', async () => {
 		detailQuery.data = makePlaylist({ is_owner: true });
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect
 			.element(page.getByRole('checkbox', { name: /Make playlist public/ }))
@@ -296,7 +296,7 @@ describe('Playlist detail page', () => {
 
 	it('non-owner public view is read-only (no share toggle, no edit name)', async () => {
 		detailQuery.data = makePlaylist({ is_owner: false, is_public: true, owner_name: 'Ann' });
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect
 			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
@@ -310,7 +310,7 @@ describe('Playlist detail page', () => {
 
 	it('inline name editing: clicking name shows input, Escape cancels', async () => {
 		detailQuery.data = makePlaylist();
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await page.getByRole('button', { name: /Edit playlist name/ }).click();
 		const nameInput = page.getByPlaceholder('Playlist name');
@@ -327,7 +327,7 @@ describe('Playlist detail page', () => {
 	it('inline name editing: Enter saves new name', async () => {
 		mockUpdatePlaylist.mockResolvedValue({ name: 'Renamed', updated_at: '2026-01-03T00:00:00Z' });
 		detailQuery.data = makePlaylist();
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await page.getByRole('button', { name: /Edit playlist name/ }).click();
 		const nameInput = page.getByPlaceholder('Playlist name');
@@ -343,7 +343,7 @@ describe('Playlist detail page', () => {
 	it('calls resolvePlaylistSources after playlist loads', async () => {
 		detailQuery.data = makePlaylist();
 		mockResolvePlaylistSources.mockResolvedValue({});
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect
 			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
@@ -355,7 +355,7 @@ describe('Playlist detail page', () => {
 
 	it('shows play button on track hover with correct aria label', async () => {
 		detailQuery.data = makePlaylist();
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect.element(page.getByText('First Track')).toBeVisible();
 		expect(page.getByRole('button', { name: 'Play First Track' }).elements()).toHaveLength(1);
@@ -363,7 +363,7 @@ describe('Playlist detail page', () => {
 
 	it('play button on track calls playQueue with correct start index', async () => {
 		detailQuery.data = makePlaylist();
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect.element(page.getByText('Second Track')).toBeVisible();
 		await page.getByRole('button', { name: 'Play Second Track' }).click();
@@ -397,19 +397,21 @@ describe('Playlist detail page', () => {
 			],
 			track_count: 2
 		});
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect.element(page.getByText('Missing Track')).toBeVisible();
 		// Owned library_file_id rows are skipped, so only 1 album is missing.
 		await expect.element(page.getByText(/not in your library/)).toBeVisible();
 		expect(page.getByText(/albums not in your library/).elements()).toHaveLength(0);
-		await expect.element(page.getByRole('button', { name: 'Request album', exact: true })).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'Request album', exact: true }))
+			.toBeVisible();
 	});
 
 	it('does not cache empty resolve results', async () => {
 		detailQuery.data = makePlaylist();
 		mockResolvePlaylistSources.mockResolvedValue({});
-		renderDetail('pl-1');
+		await renderDetail('pl-1');
 
 		await expect
 			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
@@ -422,4 +424,4 @@ describe('Playlist detail page', () => {
 		// Empty resolve maps are never fresh, so no per-user cache entry is stored.
 		expect(localStorage.getItem('droppedneedle_playlist_sources_anon_pl-1')).toBeNull();
 	});
-	});
+});

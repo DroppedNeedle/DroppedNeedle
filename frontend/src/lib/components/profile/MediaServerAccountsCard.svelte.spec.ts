@@ -49,7 +49,7 @@ beforeEach(() => {
 
 describe('MediaServerAccountsCard.svelte', () => {
 	it('renders a row per admin-enabled server with the shared-account caption', async () => {
-		render(MediaServerAccountsCard, { services: ALL_SERVICES });
+		await render(MediaServerAccountsCard, { services: ALL_SERVICES });
 		await expect
 			.element(page.getByRole('heading', { name: 'Media Server Accounts', level: 2 }))
 			.toBeInTheDocument();
@@ -60,14 +60,14 @@ describe('MediaServerAccountsCard.svelte', () => {
 	});
 
 	it('renders nothing when no media server is enabled', async () => {
-		const { container } = render(MediaServerAccountsCard, {
+		const { container } = await render(MediaServerAccountsCard, {
 			services: ALL_SERVICES.map((s) => ({ ...s, enabled: false }))
 		});
 		expect(container.querySelector('section')).toBeNull();
 	});
 
 	it('hides servers the admin has not enabled', async () => {
-		render(MediaServerAccountsCard, {
+		await render(MediaServerAccountsCard, {
 			services: ALL_SERVICES.filter((s) => s.name === 'Navidrome')
 		});
 		await expect.element(page.getByText('Navidrome', { exact: true })).toBeInTheDocument();
@@ -75,7 +75,7 @@ describe('MediaServerAccountsCard.svelte', () => {
 	});
 
 	it('links a Navidrome account through the credentials form', async () => {
-		render(MediaServerAccountsCard, {
+		await render(MediaServerAccountsCard, {
 			services: ALL_SERVICES.filter((s) => s.name === 'Navidrome')
 		});
 		await page.getByRole('button', { name: 'Connect' }).click();
@@ -87,7 +87,7 @@ describe('MediaServerAccountsCard.svelte', () => {
 
 	it('shows the linked identity and disconnects', async () => {
 		h.connections = [{ service: 'jellyfin', enabled: true, username: 'alice_jf' }];
-		render(MediaServerAccountsCard, {
+		await render(MediaServerAccountsCard, {
 			services: ALL_SERVICES.filter((s) => s.name === 'Jellyfin')
 		});
 		await expect.element(page.getByText('Plays count as @alice_jf')).toBeInTheDocument();
@@ -97,7 +97,7 @@ describe('MediaServerAccountsCard.svelte', () => {
 
 	it('starts the Plex pin flow and shows the waiting state', async () => {
 		const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
-		render(MediaServerAccountsCard, {
+		await render(MediaServerAccountsCard, {
 			services: ALL_SERVICES.filter((s) => s.name === 'Plex')
 		});
 		await page.getByRole('button', { name: 'Connect' }).click();
@@ -113,7 +113,7 @@ describe('MediaServerAccountsCard.svelte', () => {
 
 	it('surfaces a link error inline', async () => {
 		h.connectJellyfin.mockRejectedValueOnce(new Error('boom'));
-		render(MediaServerAccountsCard, {
+		await render(MediaServerAccountsCard, {
 			services: ALL_SERVICES.filter((s) => s.name === 'Jellyfin')
 		});
 		await page.getByRole('button', { name: 'Connect' }).click();

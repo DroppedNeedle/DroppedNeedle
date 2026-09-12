@@ -30,8 +30,8 @@ vi.mock('$lib/stores/player.svelte', () => ({
 import { integrationStore } from '$lib/stores/integration';
 import AlbumCardOverlay from './AlbumCardOverlay.svelte';
 
-function renderOverlay() {
-	render(AlbumCardOverlay, {
+async function renderOverlay() {
+	await render(AlbumCardOverlay, {
 		mbid: 'mbid-1',
 		albumName: 'Avalon',
 		artistName: 'Roxy Music',
@@ -57,7 +57,7 @@ afterEach(() => {
 describe('AlbumCardOverlay Download Album item', () => {
 	it('downloads the album zip for an allowed viewer', async () => {
 		expect.assertions(3);
-		renderOverlay();
+		await renderOverlay();
 		await openMenu();
 
 		await expect.element(page.getByRole('menuitem', { name: 'Download Album' })).toBeVisible();
@@ -68,7 +68,7 @@ describe('AlbumCardOverlay Download Album item', () => {
 	it('omits the item when downloads are restricted', async () => {
 		expect.assertions(3);
 		h.accessQuery = { data: { allowed: false } };
-		renderOverlay();
+		await renderOverlay();
 		await openMenu();
 
 		await expect.element(page.getByRole('menuitem', { name: 'Add to Queue' })).toBeVisible();
@@ -78,7 +78,7 @@ describe('AlbumCardOverlay Download Album item', () => {
 	it('keeps the item while the permission is still loading (fail-open)', async () => {
 		expect.assertions(2);
 		h.accessQuery = {};
-		renderOverlay();
+		await renderOverlay();
 		await openMenu();
 
 		await expect.element(page.getByRole('menuitem', { name: 'Download Album' })).toBeVisible();

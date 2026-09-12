@@ -77,7 +77,7 @@ beforeEach(() => {
 
 describe('HomeEntryCards review footer (issue 372)', () => {
 	it('labels the count as review items and links the card to the review queue', async () => {
-		render(HomeEntryCards);
+		await render(HomeEntryCards);
 		await expect.element(page.getByText('5,483 need review')).toBeVisible();
 		expect(page.getByText('albums need review').all()).toHaveLength(0);
 		await expect
@@ -88,7 +88,7 @@ describe('HomeEntryCards review footer (issue 372)', () => {
 	it('keeps non-admins on the library link since review is admin-only', async () => {
 		h.userId = 'user-1';
 		h.isAdmin = false;
-		render(HomeEntryCards);
+		await render(HomeEntryCards);
 		await expect.element(page.getByText('5,483 need review')).toBeVisible();
 		await expect
 			.element(page.getByRole('link', { name: /Manage library/ }))
@@ -99,7 +99,7 @@ describe('HomeEntryCards review footer (issue 372)', () => {
 		h.activity = {
 			data: { items: [{ kind: 'identification', waiting_count: 5, deferred_count: 0 }] }
 		};
-		render(HomeEntryCards);
+		await render(HomeEntryCards);
 		await expect.element(page.getByText('5 still matching — 5,483 need a decision')).toBeVisible();
 		await expect
 			.element(page.getByRole('link', { name: /Manage library/ }))

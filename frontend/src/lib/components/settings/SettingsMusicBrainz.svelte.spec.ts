@@ -166,7 +166,7 @@ afterEach(async () => {
 
 describe('MusicBrainz four-way source picker', () => {
 	it('renders four same-name native radios with BrainzMash recommended and active by default', async () => {
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 
 		const radios = page.getByRole('radio');
 		expect(radios.all()).toHaveLength(4);
@@ -180,7 +180,7 @@ describe('MusicBrainz four-way source picker', () => {
 	});
 
 	it('does not show Official as active while the built-in BrainzMash source is selected', async () => {
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 
 		await expect.element(page.getByTestId('active-source-preserved')).not.toBeInTheDocument();
 		await expect.element(page.getByText(/Active source: Official/)).not.toBeInTheDocument();
@@ -213,7 +213,7 @@ describe('MusicBrainz four-way source picker', () => {
 				verified: false
 			}
 		});
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 
 		await expect.element(page.getByTestId('active-brainzmash-binding')).toBeVisible();
 		await expect.element(page.getByText(/Optional disclosure metadata/)).toBeVisible();
@@ -224,7 +224,7 @@ describe('MusicBrainz four-way source picker', () => {
 
 	it('does not advertise a quarantined BrainzMash binding as active', async () => {
 		h.data = quarantinedSettings('official');
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 
 		await expect.element(page.getByTestId('musicbrainz-quarantined')).toBeVisible();
 		await expect.element(page.getByTestId('active-brainzmash-binding')).not.toBeInTheDocument();
@@ -237,7 +237,7 @@ describe('MusicBrainz four-way source picker', () => {
 		['community', 'Community Server API Endpoint URL']
 	] as const)('does not seed the quarantine BrainzMash URL for %s', async (mode, label) => {
 		h.data = quarantinedSettings(mode);
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 
 		await expect.element(page.getByTestId('musicbrainz-quarantined')).toBeVisible();
 		await expect.element(page.getByTestId('active-brainzmash-binding')).not.toBeInTheDocument();
@@ -262,7 +262,7 @@ describe('MusicBrainz four-way source picker', () => {
 				quarantine_reason: ''
 			})
 		);
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 
 		const endpoint = page.getByRole('textbox', { name: 'Community Server API Endpoint URL' });
 		await expect.element(page.getByRole('button', { name: 'Save Settings' })).toBeDisabled();
@@ -300,7 +300,7 @@ describe('MusicBrainz four-way source picker', () => {
 			pending_brainzmash: null
 		});
 		h.stage.mutateAsync.mockResolvedValueOnce(active);
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 
 		await page.getByRole('button', { name: 'Reset to Defaults' }).click();
 		expect(h.stage.mutateAsync).toHaveBeenCalledWith();
@@ -340,7 +340,7 @@ describe('MusicBrainz four-way source picker', () => {
 		h.verify.mutateAsync.mockResolvedValueOnce(verified);
 		h.activate.mutateAsync.mockResolvedValueOnce(active);
 
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 		// A pending proposal is visible as optional disclosure metadata; runtime
 		// BrainzMash remains selected and active throughout the flow.
 		await expect
@@ -378,7 +378,7 @@ describe('MusicBrainz four-way source picker', () => {
 	});
 
 	it('supports native arrow-key movement and Enter selection', async () => {
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 		const brainzMash = page
 			.getByRole('radio', { name: 'BrainzMash' })
 			.element() as HTMLInputElement;
@@ -398,7 +398,7 @@ describe('MusicBrainz four-way source picker', () => {
 	});
 
 	it('shows only source-specific controls', async () => {
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 		await expect.element(page.getByRole('spinbutton')).not.toBeInTheDocument();
 		await page.getByText('More info: BrainzMash', { exact: true }).click();
 		await expect.element(page.getByText(/local wire policy/).last()).toBeVisible();
@@ -439,7 +439,7 @@ describe('MusicBrainz four-way source picker', () => {
 
 	it('keeps cards in one column on mobile and a 2x2 grid at md', async () => {
 		await page.viewport(390, 760);
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 		const grid = page.getByTestId('musicbrainz-source-grid');
 		await expect.element(grid).toHaveClass(/grid-cols-1/);
 		await expect.element(grid).toHaveClass(/md:grid-cols-2/);
@@ -456,7 +456,7 @@ describe('MusicBrainz four-way source picker', () => {
 	it('shows BrainzMash staging failures as a role alert without fallback', async () => {
 		h.stage.mutateAsync.mockRejectedValueOnce(new Error('stage rejected'));
 		h.data = settings({ pending_brainzmash: null });
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 		await page.getByRole('button', { name: 'Reset to Defaults' }).click();
 		await expect.element(page.getByRole('alert')).toHaveTextContent('stage rejected');
 		await expect.element(page.getByText(/Official/).first()).toBeVisible();
@@ -490,7 +490,7 @@ describe('MusicBrainz four-way source picker', () => {
 		});
 		h.data = activeBrainz;
 		h.save.mutateAsync.mockResolvedValueOnce(switchedBrainz);
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 
 		await page.getByRole('radio', { name: 'Official' }).click();
 		await expect.element(page.getByRole('button', { name: 'Test Connection' })).toBeDisabled();
@@ -527,7 +527,7 @@ describe('MusicBrainz four-way source picker', () => {
 		});
 		h.data = current;
 		h.save.mutateAsync.mockResolvedValueOnce(next);
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 		await page.getByRole('radio', { name: 'Official' }).click();
 		await page.getByRole('button', { name: 'Test Connection' }).click();
 		await expect.element(page.getByText('MusicBrainz connection verified.')).toBeVisible();
@@ -555,7 +555,7 @@ describe('MusicBrainz four-way source picker', () => {
 		h.data = current;
 		h.verify.mutateAsync.mockResolvedValueOnce(current);
 		h.save.mutateAsync.mockResolvedValueOnce(next);
-		render(SettingsMusicBrainz);
+		await render(SettingsMusicBrainz);
 
 		await page.getByRole('button', { name: 'Test Connection' }).click();
 		await expect.element(page.getByText('MusicBrainz connection verified.')).toBeVisible();

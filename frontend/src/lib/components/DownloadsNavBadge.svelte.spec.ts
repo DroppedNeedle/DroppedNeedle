@@ -29,7 +29,7 @@ vi.mock('$lib/queries/QueryClient', () => ({
 import DownloadsNavBadge from './DownloadsNavBadge.svelte';
 
 it('renders the active count with an accessible label', async () => {
-	render(DownloadsNavBadge);
+	await render(DownloadsNavBadge);
 
 	await expect.element(page.getByLabelText('3 active downloads')).toHaveTextContent('3');
 });

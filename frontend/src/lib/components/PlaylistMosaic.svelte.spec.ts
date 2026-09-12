@@ -3,22 +3,22 @@ import { describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import PlaylistMosaic from './PlaylistMosaic.svelte';
 
-function renderMosaic(props: Record<string, unknown> = {}) {
-	return render(PlaylistMosaic, {
+async function renderMosaic(props: Record<string, unknown> = {}) {
+	return await render(PlaylistMosaic, {
 		props
 	} as Parameters<typeof render<typeof PlaylistMosaic>>[1]);
 }
 
 describe('PlaylistMosaic.svelte', () => {
 	it('renders single img when customCoverUrl is provided', async () => {
-		renderMosaic({ customCoverUrl: 'https://example.com/custom.jpg' });
+		await renderMosaic({ customCoverUrl: 'https://example.com/custom.jpg' });
 		const img = page.getByAltText('Playlist cover');
 		await expect.element(img).toBeInTheDocument();
 		expect(await img.element()).toHaveAttribute('src', 'https://example.com/custom.jpg');
 	});
 
 	it('custom cover overrides coverUrls even when URLs are provided', async () => {
-		renderMosaic({
+		await renderMosaic({
 			customCoverUrl: 'https://example.com/custom.jpg',
 			coverUrls: ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg']
 		});
@@ -28,7 +28,7 @@ describe('PlaylistMosaic.svelte', () => {
 	});
 
 	it('renders 4 img elements in grid for 4+ URLs', async () => {
-		const { container } = renderMosaic({
+		const { container } = await renderMosaic({
 			coverUrls: ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg', 'e.jpg']
 		});
 		const elements = container.querySelectorAll('img');
@@ -36,19 +36,19 @@ describe('PlaylistMosaic.svelte', () => {
 	});
 
 	it('renders 3 img elements plus placeholder for 3 URLs', async () => {
-		const { container } = renderMosaic({ coverUrls: ['a.jpg', 'b.jpg', 'c.jpg'] });
+		const { container } = await renderMosaic({ coverUrls: ['a.jpg', 'b.jpg', 'c.jpg'] });
 		const elements = container.querySelectorAll('img');
 		expect(elements).toHaveLength(3);
 	});
 
 	it('renders 2 img elements for 2 URLs', async () => {
-		const { container } = renderMosaic({ coverUrls: ['a.jpg', 'b.jpg'] });
+		const { container } = await renderMosaic({ coverUrls: ['a.jpg', 'b.jpg'] });
 		const elements = container.querySelectorAll('img');
 		expect(elements).toHaveLength(2);
 	});
 
 	it('renders Music icon for 0 URLs', async () => {
-		const { container } = renderMosaic({ coverUrls: [] });
+		const { container } = await renderMosaic({ coverUrls: [] });
 		const svg = container.querySelector('svg');
 		expect(svg).toBeTruthy();
 		const images = container.querySelectorAll('img');
@@ -56,7 +56,7 @@ describe('PlaylistMosaic.svelte', () => {
 	});
 
 	it('applies default size and rounded props', async () => {
-		const { container } = renderMosaic();
+		const { container } = await renderMosaic();
 		const wrapper = container.firstElementChild as HTMLElement;
 		expect(wrapper.className).toContain('w-32');
 		expect(wrapper.className).toContain('h-32');
@@ -65,7 +65,7 @@ describe('PlaylistMosaic.svelte', () => {
 	});
 
 	it('applies custom size and rounded props', async () => {
-		const { container } = renderMosaic({ size: 'w-10 h-10', rounded: 'rounded-md' });
+		const { container } = await renderMosaic({ size: 'w-10 h-10', rounded: 'rounded-md' });
 		const wrapper = container.firstElementChild as HTMLElement;
 		expect(wrapper.className).toContain('w-10');
 		expect(wrapper.className).toContain('h-10');
@@ -74,7 +74,7 @@ describe('PlaylistMosaic.svelte', () => {
 
 	it('shows fallback placeholder when an image fails to load', async () => {
 		expect.assertions(2);
-		const { container } = renderMosaic({ coverUrls: ['bad.jpg'] });
+		const { container } = await renderMosaic({ coverUrls: ['bad.jpg'] });
 		const img = container.querySelector('img') as HTMLImageElement;
 		expect(img).toBeTruthy();
 		img.dispatchEvent(new Event('error'));

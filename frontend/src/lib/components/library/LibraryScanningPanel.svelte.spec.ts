@@ -260,7 +260,7 @@ describe('LibraryScanningPanel', () => {
 			isError: false
 		};
 		h.runs = { data: { active: run(), queued: null }, isLoading: false, isError: false };
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await expect.element(page.getByRole('heading', { name: 'Scan & identify' })).toBeVisible();
 		await expect.element(page.getByText(/Nothing here writes to your files/)).toBeVisible();
 		expect(page.getByRole('button', { name: 'Scan for changes' }).elements()).toHaveLength(1);
@@ -283,7 +283,7 @@ describe('LibraryScanningPanel', () => {
 			isSuccess: true,
 			isLoading: false
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await expect.element(page.getByText('The local library is disabled')).toBeVisible();
 		expect(page.getByRole('heading', { name: 'Scan & identify' }).query()).toBeNull();
 		expect(page.getByRole('button', { name: 'Scan for changes' }).query()).toBeNull();
@@ -316,7 +316,7 @@ describe('LibraryScanningPanel', () => {
 				}
 			}
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await expect.element(page.getByRole('heading', { name: 'Local files' })).toBeVisible();
 		await expect
 			.element(page.getByRole('heading', { name: 'Identification', exact: true }))
@@ -346,7 +346,7 @@ describe('LibraryScanningPanel', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await expect.element(page.getByText('Idle').nth(1)).toBeVisible();
 		await expect.element(page.getByText('12 of 12')).toBeVisible();
 		await expect
@@ -386,7 +386,7 @@ describe('LibraryScanningPanel', () => {
 				}
 			}
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await expect.element(page.getByText(/Whole library/).first()).toBeVisible();
 		await expect.element(page.getByText(/Queued follow-up: rescan files/)).toBeVisible();
 		await expect.element(page.getByText('Administrator retries')).toBeVisible();
@@ -408,7 +408,7 @@ describe('LibraryScanningPanel', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await expect.element(page.getByText(/3\s+albums need attention/)).toBeVisible();
 		expect(page.getByText(/MusicBrainz is currently unavailable/).query()).toBeNull();
 		expect(page.getByText(/retry automatically/).query()).toBeNull();
@@ -430,7 +430,7 @@ describe('LibraryScanningPanel', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await expect.element(page.getByText(/3\s+metadata\s+checks are deferred/)).toBeVisible();
 		await expect.element(page.getByText(/provider temporarily unavailable: 2/)).toBeVisible();
 		await expect.element(page.getByText(/album no longer available: 1/)).toBeVisible();
@@ -473,7 +473,7 @@ describe('LibraryScanningPanel', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await expect.element(page.getByText('Stuck Album')).toBeVisible();
 		await expect.element(page.getByText(/- Stuck Artist/)).toBeVisible();
 		await expect.element(page.getByText(/unexpected error · attempt 3/)).toBeVisible();
@@ -494,7 +494,7 @@ describe('LibraryScanningPanel', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await expect.element(page.getByText(/1\s+metadata\s+check is deferred/)).toBeVisible();
 		await expect
 			.element(
@@ -512,7 +512,7 @@ describe('LibraryScanningPanel', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await expect
 			.element(page.getByRole('heading', { name: 'Identification', exact: true }))
 			.toBeVisible();
@@ -532,7 +532,7 @@ describe('LibraryScanningPanel', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await expect.element(page.getByText('Pausing after the current file...')).toBeVisible();
 		await expect
 			.element(page.getByRole('button', { name: 'Pause local scan' }))
@@ -547,7 +547,7 @@ describe('LibraryScanningPanel', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await page.getByRole('button', { name: 'Stop local scan' }).click();
 		await expect.element(page.getByRole('heading', { name: 'Stop this scan?' })).toBeVisible();
 		await expect.element(page.getByText(/Files already indexed will stay available/)).toBeVisible();
@@ -569,7 +569,7 @@ describe('LibraryScanningPanel', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await expect
 			.element(page.getByText('Stopped because library policy changed').first())
 			.toBeVisible();
@@ -580,7 +580,7 @@ describe('LibraryScanningPanel', () => {
 
 	it('opens the shared scoped retry preview with immutable policy IDs', async () => {
 		h.reviews = { data: { pages: [{ filtered_total: 12, catalog_revision: 42 }] } };
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await page.getByRole('button', { name: 'Retry identification...' }).click();
 		await expect.element(page.getByRole('heading', { name: 'Retry identification' })).toBeVisible();
 		await page.getByRole('checkbox').nth(1).click();
@@ -614,7 +614,7 @@ describe('LibraryScanningPanel', () => {
 				row_revision: 2
 			}
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await page.getByRole('button', { name: 'Retry identification...' }).click();
 		await expect.element(page.getByText('Identification retry succeeded')).toBeVisible();
 		expect(sessionStorage.getItem('droppedneedle:identification-retry:admin-1')).toBeNull();
@@ -626,7 +626,7 @@ describe('LibraryScanningPanel', () => {
 		h.schedule = {
 			data: { scan_frequency: 'manual', daily_scan_time: '03:00', server_timezone: '' }
 		};
-		render(LibraryScanningPanel);
+		await render(LibraryScanningPanel);
 		await expect
 			.element(page.getByText('Scheduled scans off (file watcher still active)'))
 			.toBeVisible();

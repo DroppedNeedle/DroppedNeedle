@@ -10,11 +10,11 @@ vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({
 
 import DeleteAlbumModal from './DeleteAlbumModal.svelte';
 
-function renderModal(ondeleted = vi.fn(), onclose = vi.fn()) {
+async function renderModal(ondeleted = vi.fn(), onclose = vi.fn()) {
 	return {
 		ondeleted,
 		onclose,
-		...render(DeleteAlbumModal, {
+		...(await render(DeleteAlbumModal, {
 			props: {
 				albumTitle: 'Blue Lines',
 				artistName: 'Massive Attack',
@@ -22,7 +22,7 @@ function renderModal(ondeleted = vi.fn(), onclose = vi.fn()) {
 				ondeleted,
 				onclose
 			}
-		} as unknown as Parameters<typeof render<typeof DeleteAlbumModal>>[1])
+		} as unknown as Parameters<typeof render<typeof DeleteAlbumModal>>[1]))
 	};
 }
 
@@ -33,7 +33,7 @@ describe('DeleteAlbumModal', () => {
 	});
 
 	it('describes only the selected album file deletion', async () => {
-		renderModal();
+		await renderModal();
 
 		await expect.element(page.getByRole('heading', { name: 'Remove Album' })).toBeVisible();
 		await expect.element(page.getByText(/Blue Lines/)).toBeVisible();
@@ -43,7 +43,7 @@ describe('DeleteAlbumModal', () => {
 	});
 
 	it('waits for removal before reporting success', async () => {
-		const { ondeleted } = renderModal();
+		const { ondeleted } = await renderModal();
 
 		await page.getByRole('button', { name: 'Remove' }).click();
 
@@ -52,7 +52,7 @@ describe('DeleteAlbumModal', () => {
 	});
 
 	it('lets the administrator keep the Wanted watch', async () => {
-		renderModal();
+		await renderModal();
 		const checkbox = page.getByRole('checkbox', { name: /Stop the Wanted watcher/i });
 		await expect.element(checkbox).toBeChecked();
 
@@ -64,7 +64,7 @@ describe('DeleteAlbumModal', () => {
 
 	it('keeps the confirmation open when removal fails', async () => {
 		mutateAsync.mockRejectedValueOnce(new Error("Couldn't remove this album"));
-		const { ondeleted } = renderModal();
+		const { ondeleted } = await renderModal();
 
 		await page.getByRole('button', { name: 'Remove' }).click();
 
@@ -74,7 +74,7 @@ describe('DeleteAlbumModal', () => {
 	});
 
 	it('closes with the keyboard without removing the album', async () => {
-		const { onclose } = renderModal();
+		const { onclose } = await renderModal();
 
 		await userEvent.keyboard('{Escape}');
 

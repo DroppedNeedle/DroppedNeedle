@@ -78,7 +78,7 @@ describe('Turntable lyrics', () => {
 
 	it('opens the shared lyrics panel for a local track', async () => {
 		playLocalTrack();
-		render(Turntable, callbacks);
+		await render(Turntable, callbacks);
 
 		const toggle = page.getByLabelText('Toggle lyrics');
 		await expect.element(toggle).toBeInTheDocument();
@@ -91,7 +91,7 @@ describe('Turntable lyrics', () => {
 	it('hides the lyrics action when the local file has none', async () => {
 		mockQueryState.data = null;
 		playLocalTrack();
-		render(Turntable, callbacks);
+		await render(Turntable, callbacks);
 
 		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
 	});
@@ -132,14 +132,14 @@ describe('Turntable deck cover', () => {
 
 	it('renders the covers proxy when the queued remote cover is a local path', async () => {
 		playDeckTrack({ coverRemoteUrl: proxyCover });
-		render(Turntable, callbacks);
+		await render(Turntable, callbacks);
 
 		await expect.element(page.getByAltText('Guard Album')).toHaveAttribute('src', proxyCover);
 	});
 
 	it('renders the remote branch for https covers', async () => {
 		playDeckTrack({ coverUrl: remoteCover, coverRemoteUrl: remoteCover });
-		render(Turntable, callbacks);
+		await render(Turntable, callbacks);
 
 		await expect
 			.element(page.getByAltText('Guard Album'))

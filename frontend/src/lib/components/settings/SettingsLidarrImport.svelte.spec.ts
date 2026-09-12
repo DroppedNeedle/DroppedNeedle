@@ -51,7 +51,7 @@ describe('SettingsLidarrImport', () => {
 			version: '3.1.3.4968',
 			message: 'Connected - Lidarr v3.1.3.4968'
 		});
-		render(SettingsLidarrImport);
+		await render(SettingsLidarrImport);
 		await page.getByLabelText('URL').fill('http://lidarr.test');
 		await page.getByRole('button', { name: 'Test' }).click();
 		await expect.element(page.getByText(/Connected - Lidarr v3.1.3.4968/)).toBeVisible();
@@ -63,7 +63,7 @@ describe('SettingsLidarrImport', () => {
 			message:
 				'Lidarr rejected the API key. Check Settings → General → Security → API Key in Lidarr.'
 		});
-		render(SettingsLidarrImport);
+		await render(SettingsLidarrImport);
 		await page.getByLabelText('URL').fill('http://lidarr.test');
 		await page.getByRole('button', { name: 'Test' }).click();
 		await expect.element(page.getByText(/rejected the API key/)).toBeVisible();
@@ -71,7 +71,7 @@ describe('SettingsLidarrImport', () => {
 
 	it('shows the locked sync panel when no connection is saved', async () => {
 		mockConfig = { url: '', api_key: '' };
-		render(SettingsLidarrImport);
+		await render(SettingsLidarrImport);
 		await expect.element(page.getByRole('heading', { name: 'Artist sync' })).toBeVisible();
 		await expect
 			.element(page.getByText('Connect Lidarr above to unlock artist sync.'))
@@ -80,7 +80,7 @@ describe('SettingsLidarrImport', () => {
 
 	it('shows the sync card unlocked once a connection is saved', async () => {
 		mockConfig = { url: 'http://lidarr.test', api_key: 'lidarr****' };
-		render(SettingsLidarrImport);
+		await render(SettingsLidarrImport);
 		await expect.element(page.getByRole('heading', { name: 'Artist sync' })).toBeVisible();
 		await expect.element(page.getByLabelText('Loading monitored artists')).toBeInTheDocument();
 	});

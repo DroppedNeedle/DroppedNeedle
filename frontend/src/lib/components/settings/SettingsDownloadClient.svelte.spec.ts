@@ -52,20 +52,20 @@ import SettingsDownloadClient from './SettingsDownloadClient.svelte';
 
 describe('SettingsDownloadClient.svelte', () => {
 	it('shows the slskd card header with an enable toggle (collapsed by default)', async () => {
-		render(SettingsDownloadClient);
+		await render(SettingsDownloadClient);
 		await expect.element(page.getByText('slskd')).toBeInTheDocument();
 		await expect.element(page.getByLabelText('Enable slskd download client')).toBeInTheDocument();
 	});
 
 	it('reveals the URL and API key inputs when expanded', async () => {
-		render(SettingsDownloadClient);
+		await render(SettingsDownloadClient);
 		await page.getByRole('button', { name: 'Expand' }).click();
 		await expect.element(page.getByPlaceholder('http://slskd:5030')).toBeInTheDocument();
 		await expect.element(page.getByPlaceholder('slskd API key')).toBeInTheDocument();
 	});
 
 	it('runs Test connection with the current form values and shows the result', async () => {
-		render(SettingsDownloadClient);
+		await render(SettingsDownloadClient);
 		await page.getByRole('button', { name: 'Expand' }).click();
 		await page.getByRole('button', { name: 'Test connection' }).click();
 		// Test sends the form config, not an empty body, so the backend validates what's typed.
@@ -76,7 +76,7 @@ describe('SettingsDownloadClient.svelte', () => {
 	});
 
 	it('shows the effective lookup folder under the mount header', async () => {
-		render(SettingsDownloadClient);
+		await render(SettingsDownloadClient);
 		await page.getByRole('button', { name: 'Expand' }).click();
 		await expect
 			.element(page.getByTestId('effective-downloads-path'))
@@ -84,13 +84,13 @@ describe('SettingsDownloadClient.svelte', () => {
 	});
 
 	it('tells the user to leave the subfolder empty when the mount already matches slskd', async () => {
-		render(SettingsDownloadClient);
+		await render(SettingsDownloadClient);
 		await page.getByRole('button', { name: 'Expand' }).click();
 		await expect.element(page.getByText(/Leave this empty/)).toBeInTheDocument();
 	});
 
 	it('warns on a full path in the subfolder and trims it to relative', async () => {
-		render(SettingsDownloadClient);
+		await render(SettingsDownloadClient);
 		await page.getByRole('button', { name: 'Expand' }).click();
 		const input = page.getByPlaceholder('e.g. downloads/slskd/complete');
 		await expect.element(input).toBeInTheDocument();
@@ -105,7 +105,7 @@ describe('SettingsDownloadClient.svelte', () => {
 	});
 
 	it('reveals the incomplete-folder input and sends it on save', async () => {
-		render(SettingsDownloadClient);
+		await render(SettingsDownloadClient);
 		await page.getByRole('button', { name: 'Expand' }).click();
 		const input = page.getByPlaceholder('e.g. /data/slskd/incomplete');
 		await expect.element(input).toBeInTheDocument();

@@ -114,7 +114,7 @@ describe('LibraryManagementOperationPage', () => {
 			isError: false
 		};
 
-		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+		await render(LibraryManagementOperationPage, { jobId: 'job-1' });
 
 		expect(h.goto).toHaveBeenCalledWith('/library/management/previews/job-1', {
 			replaceState: true
@@ -134,7 +134,7 @@ describe('LibraryManagementOperationPage', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+		await render(LibraryManagementOperationPage, { jobId: 'job-1' });
 
 		await expect.element(page.getByText('1,000 files planned so far')).toBeVisible();
 		await expect.element(page.getByText('0 / 0')).not.toBeInTheDocument();
@@ -146,7 +146,7 @@ describe('LibraryManagementOperationPage', () => {
 	});
 
 	it('uses the current row revision for pause and states that Stop is not rollback', async () => {
-		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+		await render(LibraryManagementOperationPage, { jobId: 'job-1' });
 		await page.getByRole('button', { name: 'Pause' }).click();
 		expect(h.pause).toHaveBeenCalledWith({ jobId: 'job-1', expectedRevision: 12 });
 
@@ -172,7 +172,7 @@ describe('LibraryManagementOperationPage', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+		await render(LibraryManagementOperationPage, { jobId: 'job-1' });
 
 		await expect.element(page.getByRole('heading', { name: 'Undo this operation' })).toBeVisible();
 		await expect.element(page.getByRole('heading', { name: 'Original baseline' })).toBeVisible();
@@ -215,7 +215,7 @@ describe('LibraryManagementOperationPage', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+		await render(LibraryManagementOperationPage, { jobId: 'job-1' });
 
 		await expect.element(page.getByRole('button', { name: 'Preview Undo...' })).toBeDisabled();
 		await expect
@@ -250,7 +250,7 @@ describe('LibraryManagementOperationPage', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+		await render(LibraryManagementOperationPage, { jobId: 'job-1' });
 
 		await expect
 			.element(page.getByRole('heading', { name: 'Media-server delivery ledger' }))
@@ -271,7 +271,7 @@ describe('LibraryManagementOperationPage', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+		await render(LibraryManagementOperationPage, { jobId: 'job-1' });
 
 		await expect.element(page.getByText('COMPLETED', { exact: true })).toBeVisible();
 		await expect.element(page.getByText('All planned work finished.')).toBeVisible();
@@ -326,7 +326,7 @@ describe('LibraryManagementOperationPage', () => {
 			isFetchingNextPage: false,
 			fetchNextPage: vi.fn()
 		};
-		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+		await render(LibraryManagementOperationPage, { jobId: 'job-1' });
 
 		await expect
 			.element(
@@ -436,7 +436,7 @@ describe('LibraryManagementOperationPage', () => {
 			isFetchingNextPage: false,
 			fetchNextPage: vi.fn()
 		};
-		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+		await render(LibraryManagementOperationPage, { jobId: 'job-1' });
 
 		await expect.element(page.getByRole('heading', { name: 'Avalon' })).toBeVisible();
 		await expect.element(page.getByText('2 files')).toBeVisible();
@@ -470,7 +470,7 @@ describe('LibraryManagementOperationPage', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+		await render(LibraryManagementOperationPage, { jobId: 'job-1' });
 
 		await expect.element(page.getByText('Recovery Failed')).toBeVisible();
 		await expect
@@ -484,7 +484,7 @@ describe('LibraryManagementOperationPage', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryManagementOperationPage, { jobId: 'job-1' });
+		await render(LibraryManagementOperationPage, { jobId: 'job-1' });
 
 		await expect.element(page.getByText('Operation Failed')).toBeVisible();
 		await expect

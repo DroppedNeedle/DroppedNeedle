@@ -14,8 +14,8 @@ function makeItems(overrides: Partial<MenuItem>[] = []): MenuItem[] {
 	return defaults.map((d, i) => ({ ...d, ...overrides[i] }));
 }
 
-function renderMenu(items: MenuItem[] = makeItems()) {
-	return render(ContextMenu, {
+async function renderMenu(items: MenuItem[] = makeItems()) {
+	return await render(ContextMenu, {
 		props: { items }
 	} as Parameters<typeof render<typeof ContextMenu>>[1]);
 }
@@ -26,12 +26,12 @@ describe('ContextMenu.svelte', () => {
 	});
 
 	it('renders the trigger button', async () => {
-		renderMenu();
+		await renderMenu();
 		await expect.element(page.getByLabelText('More actions')).toBeInTheDocument();
 	});
 
 	it('shows menu items when opened', async () => {
-		renderMenu();
+		await renderMenu();
 		const trigger = page.getByLabelText('More actions');
 		await trigger.click();
 		await expect.element(page.getByText('Add to Queue')).toBeVisible();
@@ -40,7 +40,7 @@ describe('ContextMenu.svelte', () => {
 
 	it('fires callback on item click and closes menu', async () => {
 		const items = makeItems();
-		renderMenu(items);
+		await renderMenu(items);
 		const trigger = page.getByLabelText('More actions');
 		await trigger.click();
 		await page.getByText('Add to Queue').click();
@@ -49,7 +49,7 @@ describe('ContextMenu.svelte', () => {
 
 	it('renders disabled items as non-interactive', async () => {
 		const items = makeItems([{ disabled: true }]);
-		renderMenu(items);
+		await renderMenu(items);
 		const trigger = page.getByLabelText('More actions');
 		await trigger.click();
 		const disabledBtn = page.getByText('Add to Queue');
@@ -57,7 +57,7 @@ describe('ContextMenu.svelte', () => {
 	});
 
 	it('has correct ARIA roles', async () => {
-		renderMenu();
+		await renderMenu();
 		const trigger = page.getByLabelText('More actions');
 		await trigger.click();
 		await expect.element(page.getByRole('menu')).toBeInTheDocument();
@@ -66,7 +66,7 @@ describe('ContextMenu.svelte', () => {
 	});
 
 	it('does not have redundant role on summary', async () => {
-		renderMenu();
+		await renderMenu();
 		const summary = page.getByLabelText('More actions');
 		const roleAttr = await summary.element().getAttribute('role');
 		expect(roleAttr).toBeNull();
@@ -76,8 +76,8 @@ describe('ContextMenu.svelte', () => {
 		const items1: MenuItem[] = [{ label: 'Action A', icon: ListPlus, onclick: vi.fn() }];
 		const items2: MenuItem[] = [{ label: 'Action B', icon: ListStart, onclick: vi.fn() }];
 
-		renderMenu(items1);
-		renderMenu(items2);
+		await renderMenu(items1);
+		await renderMenu(items2);
 
 		const triggers = page.getByLabelText('More actions').all();
 		expect((await triggers).length).toBe(2);

@@ -63,20 +63,20 @@ function makeHistory(overrides: Partial<RequestHistoryItem> = {}): RequestHistor
 	};
 }
 
-function renderActive(
+async function renderActive(
 	overrides: Partial<ActiveRequestItem> = {},
 	props: Record<string, unknown> = {}
 ) {
-	return render(RequestCard, {
+	return await render(RequestCard, {
 		props: { item: makeActive(overrides), mode: 'active', ...props }
 	} as unknown as Parameters<typeof render<typeof RequestCard>>[1]);
 }
 
-function renderHistory(
+async function renderHistory(
 	overrides: Partial<RequestHistoryItem> = {},
 	props: Record<string, unknown> = {}
 ) {
-	return render(RequestCard, {
+	return await render(RequestCard, {
 		props: { item: makeHistory(overrides), mode: 'history', ...props }
 	} as unknown as Parameters<typeof render<typeof RequestCard>>[1]);
 }
@@ -88,7 +88,7 @@ describe('RequestCard.svelte', () => {
 	});
 
 	it('keeps album requests displayed as albums', async () => {
-		renderActive();
+		await renderActive();
 
 		await expect.element(page.getByText('OK Computer', { exact: true })).toBeVisible();
 		await expect.element(page.getByText('Track', { exact: true })).not.toBeInTheDocument();
@@ -101,7 +101,7 @@ describe('RequestCard.svelte', () => {
 	});
 
 	it('shows a track title, album context, label, and release-group artwork', async () => {
-		renderActive({
+		await renderActive({
 			musicbrainz_id: recordingId,
 			request_kind: 'track',
 			track_title: 'Paranoid Android',
@@ -123,7 +123,7 @@ describe('RequestCard.svelte', () => {
 
 	it('passes the track kind through the cancel callback', async () => {
 		const oncancel = vi.fn();
-		renderActive(
+		await renderActive(
 			{
 				musicbrainz_id: recordingId,
 				request_kind: 'track',
@@ -141,7 +141,7 @@ describe('RequestCard.svelte', () => {
 	it('passes the track kind through retry and clear callbacks', async () => {
 		const onretry = vi.fn();
 		const onclear = vi.fn();
-		renderHistory(
+		await renderHistory(
 			{
 				musicbrainz_id: recordingId,
 				request_kind: 'track',

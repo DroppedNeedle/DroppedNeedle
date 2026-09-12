@@ -9,7 +9,7 @@ vi.mock('$lib/queries/following/AdminApprovalsQueries.svelte', () => ({
 import PendingApprovalNavBadge from './PendingApprovalNavBadge.svelte';
 
 it('caps the visible count while preserving the exact accessible label', async () => {
-	render(PendingApprovalNavBadge);
+	await render(PendingApprovalNavBadge);
 
 	await expect.element(page.getByLabelText('12 pending approvals')).toHaveTextContent('9+');
 });

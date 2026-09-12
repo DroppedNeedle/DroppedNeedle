@@ -48,7 +48,7 @@ const item: LibraryManagementPlanItem = {
 
 describe('LibraryManagementLyricsEvidence', () => {
 	it('does not promise a future write after an operation stops', async () => {
-		render(LibraryManagementLyricsEvidence, {
+		await render(LibraryManagementLyricsEvidence, {
 			item,
 			workState: 'pending',
 			operationState: 'stopped'
@@ -59,7 +59,7 @@ describe('LibraryManagementLyricsEvidence', () => {
 	});
 
 	it('treats unscheduled work as terminal', async () => {
-		render(LibraryManagementLyricsEvidence, {
+		await render(LibraryManagementLyricsEvidence, {
 			item,
 			workState: 'not_scheduled',
 			operationState: 'succeeded'

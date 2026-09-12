@@ -23,12 +23,12 @@ beforeEach(() => {
 describe('LibraryManagementDiscardPreview', () => {
 	it('keeps its completion callback when successful invalidation unmounts it', async () => {
 		const complete = vi.fn();
-		let unmount = () => {};
+		let unmount: (() => Promise<void>) | undefined = undefined;
 		h.discard.mockImplementation(async () => {
-			unmount();
+			await unmount?.();
 			return {};
 		});
-		const view = render(LibraryManagementDiscardPreview, {
+		const view = await render(LibraryManagementDiscardPreview, {
 			jobId: 'preview-1',
 			expectedRevision: 4,
 			profileName: 'Picard-style Organizer',

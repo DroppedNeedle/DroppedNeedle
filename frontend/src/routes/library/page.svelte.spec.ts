@@ -32,13 +32,13 @@ afterEach(() => authStore.clear());
 
 describe('library route page', () => {
 	it('renders the Library header and subtitle', async () => {
-		render(LibraryPage);
+		await render(LibraryPage);
 		await expect.element(page.getByRole('heading', { name: 'Library' })).toBeVisible();
 		await expect.element(page.getByText('Your scanned music library')).toBeVisible();
 	});
 
 	it('links Listen to the Listening Room', async () => {
-		render(LibraryPage);
+		await render(LibraryPage);
 		await expect
 			.element(page.getByRole('link', { name: 'Listen' }))
 			.toHaveAttribute('href', '/library/local');
@@ -46,7 +46,7 @@ describe('library route page', () => {
 
 	it('points a non-admin to their own Profile for Connect Apps', async () => {
 		authStore.setUser(user('user'));
-		render(LibraryPage);
+		await render(LibraryPage);
 		await expect
 			.element(page.getByRole('link', { name: 'Connect Apps' }))
 			.toHaveAttribute('href', '/profile#connect-apps');
@@ -54,7 +54,7 @@ describe('library route page', () => {
 
 	it('points an admin to their Profile for Connect Apps', async () => {
 		authStore.setUser(user('admin'));
-		render(LibraryPage);
+		await render(LibraryPage);
 		await expect
 			.element(page.getByRole('link', { name: 'Connect Apps' }))
 			.toHaveAttribute('href', '/profile#connect-apps');
@@ -62,7 +62,7 @@ describe('library route page', () => {
 
 	it('links Controls to Library Management for administrators', async () => {
 		authStore.setUser(user('admin'));
-		render(LibraryPage);
+		await render(LibraryPage);
 		await expect
 			.element(page.getByRole('link', { name: 'Controls' }))
 			.toHaveAttribute('href', '/library/management');
@@ -70,7 +70,7 @@ describe('library route page', () => {
 
 	it('keeps Controls visible but locked for non-administrators', async () => {
 		authStore.setUser(user('user'));
-		render(LibraryPage);
+		await render(LibraryPage);
 		const controls = page.getByRole('button', { name: 'Controls' });
 		await expect.element(controls).toHaveAttribute('aria-disabled', 'true');
 		await expect

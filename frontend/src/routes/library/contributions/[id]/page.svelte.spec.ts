@@ -135,7 +135,7 @@ beforeEach(() => {
 
 describe('library contribution page', () => {
 	it('presents the local proof sheet without filesystem data', async () => {
-		render(ContributionPage, {
+		await render(ContributionPage, {
 			props: { data: { contributionId: contribution.id, primarySource: 'listenbrainz' } }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -146,7 +146,7 @@ describe('library contribution page', () => {
 	});
 
 	it('marks edits as entered here and saves against the current revision', async () => {
-		render(ContributionPage, {
+		await render(ContributionPage, {
 			props: { data: { contributionId: contribution.id, primarySource: 'listenbrainz' } }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -166,7 +166,7 @@ describe('library contribution page', () => {
 	});
 
 	it('blocks provider actions until visible draft edits are saved or discarded', async () => {
-		render(ContributionPage, {
+		await render(ContributionPage, {
 			props: { data: { contributionId: contribution.id, primarySource: 'listenbrainz' } }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -180,7 +180,7 @@ describe('library contribution page', () => {
 	});
 
 	it('uses an exact Discogs ID through the deterministic selection action', async () => {
-		render(ContributionPage, {
+		await render(ContributionPage, {
 			props: { data: { contributionId: contribution.id, primarySource: 'listenbrainz' } }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -196,7 +196,7 @@ describe('library contribution page', () => {
 
 	it('shows shared contribution status without curator controls to listeners', async () => {
 		h.authStore.isTrusted = false;
-		render(ContributionPage, {
+		await render(ContributionPage, {
 			props: { data: { contributionId: contribution.id, primarySource: 'listenbrainz' } }
 		} as unknown as Parameters<typeof render>[1]);
 

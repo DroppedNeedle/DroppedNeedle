@@ -9,7 +9,7 @@ const loadMore = vi.fn();
 beforeEach(() => vi.clearAllMocks());
 
 it('loads another release page only after an explicit accessible action', async () => {
-	const view = render(ArtistReleasePagination, {
+	const view = await render(ArtistReleasePagination, {
 		loadedCount: 50,
 		totalCount: 240,
 		loading: false,

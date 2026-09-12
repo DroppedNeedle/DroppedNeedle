@@ -62,7 +62,7 @@ describe('SettingsSecurity library downloads', () => {
 	it('reflects the loaded access level', async () => {
 		expect.assertions(2);
 		h.securityData.library_download_access = 'trusted';
-		render(SettingsSecurity);
+		await render(SettingsSecurity);
 
 		await expect.element(page.getByText('Library downloads')).toBeVisible();
 		await expect
@@ -72,7 +72,7 @@ describe('SettingsSecurity library downloads', () => {
 
 	it('saves the selected access level', async () => {
 		expect.assertions(2);
-		render(SettingsSecurity);
+		await render(SettingsSecurity);
 
 		await page.getByText('Admins only').click();
 		await page.getByRole('button', { name: 'Save Settings' }).click();

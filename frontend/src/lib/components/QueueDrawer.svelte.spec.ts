@@ -24,8 +24,8 @@ vi.mock('$lib/player/createSource', () => ({
 
 import { playerStore } from '$lib/stores/player.svelte';
 
-function renderDrawer(open: boolean, onclose: () => void) {
-	return render(QueueDrawer, {
+async function renderDrawer(open: boolean, onclose: () => void) {
+	return await render(QueueDrawer, {
 		props: { open, onclose }
 	} as Parameters<typeof render<typeof QueueDrawer>>[1]);
 }
@@ -37,7 +37,7 @@ describe('QueueDrawer.svelte', () => {
 
 	it('shows empty state when queue is empty', async () => {
 		const onclose = vi.fn();
-		renderDrawer(true, onclose);
+		await renderDrawer(true, onclose);
 		await expect.element(page.getByText('Queue is empty')).toBeVisible();
 	});
 
@@ -67,7 +67,7 @@ describe('QueueDrawer.svelte', () => {
 			}
 		]);
 		const onclose = vi.fn();
-		renderDrawer(true, onclose);
+		await renderDrawer(true, onclose);
 		await expect.element(page.getByRole('heading', { name: 'Queue' })).toBeVisible();
 		await expect.element(page.getByText('Track A')).toBeVisible();
 		await expect.element(page.getByText('Track B')).toBeVisible();
@@ -76,7 +76,7 @@ describe('QueueDrawer.svelte', () => {
 
 	it('does not render content when closed', async () => {
 		const onclose = vi.fn();
-		renderDrawer(false, onclose);
+		await renderDrawer(false, onclose);
 		await expect.element(page.getByText('Queue')).not.toBeInTheDocument();
 	});
 
@@ -106,7 +106,7 @@ describe('QueueDrawer.svelte', () => {
 			}
 		]);
 		const onclose = vi.fn();
-		renderDrawer(true, onclose);
+		await renderDrawer(true, onclose);
 		const clearBtn = page.getByText('Clear');
 		await expect.element(clearBtn).toBeVisible();
 		await clearBtn.click();
@@ -142,7 +142,7 @@ describe('QueueDrawer.svelte', () => {
 			}
 		]);
 		const onclose = vi.fn();
-		renderDrawer(true, onclose);
+		await renderDrawer(true, onclose);
 		const removeButtons = page.getByLabelText('Remove from queue').all();
 		expect(removeButtons.length).toBeGreaterThanOrEqual(1);
 	});
@@ -187,7 +187,7 @@ describe('QueueDrawer.svelte', () => {
 			1
 		);
 		const onclose = vi.fn();
-		const view = renderDrawer(true, onclose);
+		const view = await renderDrawer(true, onclose);
 		await expect.element(page.getByText('Track C')).toBeVisible();
 
 		const enabledHandles = view.container.querySelectorAll(

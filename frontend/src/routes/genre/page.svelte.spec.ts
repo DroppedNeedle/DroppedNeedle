@@ -64,7 +64,7 @@ import GenrePage from './+page.svelte';
 
 describe('genre local catalog routing', () => {
 	it('renders same-name local-only artists and albums as distinct stable links', async () => {
-		render(GenrePage);
+		await render(GenrePage);
 
 		const artists = page.getByRole('link', { name: /Same Name/ }).all();
 		const albums = page.getByRole('link', { name: /Same Album/ }).all();

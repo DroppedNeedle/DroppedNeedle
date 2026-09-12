@@ -153,7 +153,7 @@ beforeEach(() => {
 
 describe('LibraryRepairPanel', () => {
 	it('previews exact scope, candidate count, and queue impact before starting', async () => {
-		render(LibraryRepairPanel);
+		await render(LibraryRepairPanel);
 		await page.getByRole('button', { name: 'Check existing matches' }).click();
 		await expect.element(page.getByText(/does not change/)).toBeVisible();
 		await expect.element(page.getByText('12 identities')).toBeVisible();
@@ -166,7 +166,7 @@ describe('LibraryRepairPanel', () => {
 
 	it('shows the complete report and requests server-filtered tabs', async () => {
 		h.repairs = { data: { pages: [{ items: [repair()] }] }, isLoading: false };
-		render(LibraryRepairPanel);
+		await render(LibraryRepairPanel);
 		await page.getByRole('button', { name: 'View report' }).click();
 		await expect
 			.element(page.getByRole('tab', { name: /Safe to detach 3/ }))
@@ -186,12 +186,12 @@ describe('LibraryRepairPanel', () => {
 			data: { pages: [{ items: [repair({ state: 'running', row_revision: 9 })] }] },
 			isLoading: false
 		};
-		render(LibraryRepairPanel);
+		await render(LibraryRepairPanel);
 		await page.getByRole('button', { name: 'Pause' }).click();
 		expect(h.pause).toHaveBeenCalledWith({ jobId: 'repair-1', expectedRevision: 9 });
 
 		h.repairs = { data: { pages: [{ items: [repair()] }] }, isLoading: false };
-		render(LibraryRepairPanel);
+		await render(LibraryRepairPanel);
 		await page.getByRole('button', { name: 'Apply safe repairs...' }).last().click();
 		await expect.element(page.getByText(/Local files, album IDs/).last()).toBeVisible();
 		await expect.element(page.getByText('3 identities are eligible.')).toBeVisible();
@@ -210,7 +210,7 @@ describe('LibraryRepairPanel', () => {
 			},
 			isLoading: false
 		};
-		render(LibraryRepairPanel);
+		await render(LibraryRepairPanel);
 		await expect.element(page.getByText('stopping', { exact: true })).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Stopping...' })).toBeDisabled();
 		await expect
@@ -235,7 +235,7 @@ describe('LibraryRepairPanel', () => {
 			},
 			isLoading: false
 		};
-		render(LibraryRepairPanel);
+		await render(LibraryRepairPanel);
 		await expect.element(page.getByText('3 of 12')).toBeVisible();
 		await expect.element(page.getByText('2 of 12')).not.toBeInTheDocument();
 		await page.getByRole('button', { name: 'Show 2 older checks' }).click();

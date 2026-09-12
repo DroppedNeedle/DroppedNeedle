@@ -191,7 +191,7 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 it('does not fetch a second release page until the user asks for it', async () => {
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		data: { artistId: 'artist-1', primarySource: 'listenbrainz' }
 	});
 
@@ -214,7 +214,7 @@ it('renders available biography data even while the query still reports loading'
 		error: null
 	};
 
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		data: { artistId: 'artist-1', primarySource: 'listenbrainz' }
 	});
 
@@ -230,7 +230,7 @@ it('keeps the biography skeleton while extended data is initially unavailable', 
 		error: null
 	};
 
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		data: { artistId: 'artist-1', primarySource: 'listenbrainz' }
 	});
 
@@ -242,7 +242,7 @@ it('repairs a stale Last.fm selection to ListenBrainz when only ListenBrainz is 
 		connections: [{ service: 'listenbrainz', enabled: true, username: 'lb-user' }]
 	};
 
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		data: { artistId: 'artist-1', primarySource: 'lastfm' }
 	});
 
@@ -255,7 +255,7 @@ it('repairs a stale ListenBrainz selection to Last.fm when only Last.fm is linke
 		connections: [{ service: 'lastfm', enabled: true, username: 'lfm-user' }]
 	};
 
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		data: { artistId: 'artist-1', primarySource: 'listenbrainz' }
 	});
 
@@ -271,7 +271,7 @@ it('preserves the intentional source selection when both services are linked', a
 		]
 	};
 
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		data: { artistId: 'artist-1', primarySource: 'listenbrainz' }
 	});
 
@@ -291,7 +291,7 @@ it('does not rewrite a stale selection while connections are pending', async () 
 	h.connectionsData = undefined;
 	h.connectionsPending = true;
 
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		data: { artistId: 'artist-1', primarySource: 'listenbrainz' }
 	});
 
@@ -302,7 +302,7 @@ it('does not rewrite a stale selection when no services are linked', async () =>
 	h.persistedSource = 'lastfm';
 	h.connectionsData = { connections: [] };
 
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		data: { artistId: 'artist-1', primarySource: 'listenbrainz' }
 	});
 
@@ -323,7 +323,7 @@ it('keeps discovery disabled during a cold connections load without flashing sta
 	h.connectionsData = undefined;
 	h.connectionsPending = true;
 
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		data: { artistId: 'artist-1', primarySource: 'listenbrainz' }
 	});
 
@@ -346,7 +346,7 @@ it('enables each discovery section exactly once on the resolved ListenBrainz sou
 		connections: [{ service: 'listenbrainz', enabled: true, username: 'lb-user' }]
 	};
 
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		data: { artistId: 'artist-1', primarySource: 'lastfm' }
 	});
 
@@ -367,7 +367,7 @@ it('uses the selected source as a graceful fallback when connections fail', asyn
 	h.connectionsData = undefined;
 	h.connectionsError = new Error('connections unavailable');
 
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		data: { artistId: 'artist-1', primarySource: 'listenbrainz' }
 	});
 
@@ -388,7 +388,7 @@ it('uses the selected source when connections settle without response data', asy
 	h.persistedSource = 'lastfm';
 	h.connectionsData = undefined;
 
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		data: { artistId: 'artist-1', primarySource: 'listenbrainz' }
 	});
 

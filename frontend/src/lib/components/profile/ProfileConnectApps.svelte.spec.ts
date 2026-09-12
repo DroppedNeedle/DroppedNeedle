@@ -105,7 +105,7 @@ beforeEach(() => {
 
 describe('ProfileConnectApps.svelte', () => {
 	it("renders the section, the user's app-passwords, and the cap", async () => {
-		render(ProfileConnectApps);
+		await render(ProfileConnectApps);
 		await expect
 			.element(page.getByRole('heading', { name: 'Connect Apps', level: 2 }))
 			.toBeInTheDocument();
@@ -114,7 +114,7 @@ describe('ProfileConnectApps.svelte', () => {
 	});
 
 	it('renders connection URLs for both protocols', async () => {
-		render(ProfileConnectApps);
+		await render(ProfileConnectApps);
 		await expect.element(page.getByLabelText('OpenSubsonic server URL')).toBeInTheDocument();
 		await expect.element(page.getByLabelText('Jellyfin server URL')).toBeInTheDocument();
 		await expect
@@ -123,7 +123,7 @@ describe('ProfileConnectApps.svelte', () => {
 	});
 
 	it('reveals the created secret exactly once', async () => {
-		render(ProfileConnectApps);
+		await render(ProfileConnectApps);
 		await page.getByLabelText('New app-password name').fill('Finamp (tablet)');
 		await page.getByRole('button', { name: 'Create' }).click();
 		await expect
@@ -137,12 +137,12 @@ describe('ProfileConnectApps.svelte', () => {
 
 	it('disables Create at the cap', async () => {
 		h.passwords = { items: [], cap: 25, active_count: 25 };
-		render(ProfileConnectApps);
+		await render(ProfileConnectApps);
 		await expect.element(page.getByRole('button', { name: 'Create' })).toBeDisabled();
 	});
 
 	it('confirms before revoking, then revokes on confirm', async () => {
-		render(ProfileConnectApps);
+		await render(ProfileConnectApps);
 		// the row action only opens the dialog; nothing is revoked yet
 		await page.getByRole('button', { name: 'Revoke Symfonium (phone)' }).click();
 		await expect.element(page.getByText(/Revoke "Symfonium \(phone\)"\?/)).toBeInTheDocument();
@@ -154,7 +154,7 @@ describe('ProfileConnectApps.svelte', () => {
 
 	it('tells a non-admin to wait for the admin when both protocols are off', async () => {
 		h.settings = { ...h.settings, subsonic_enabled: false, jellyfin_enabled: false };
-		render(ProfileConnectApps);
+		await render(ProfileConnectApps);
 		await expect
 			.element(page.getByText(/Your admin hasn't turned on streaming yet/))
 			.toBeInTheDocument();
@@ -165,7 +165,7 @@ describe('ProfileConnectApps.svelte', () => {
 	it('gives an admin a one-click Enable-in-Settings link when streaming is off', async () => {
 		h.isAdmin = true;
 		h.settings = { ...h.settings, subsonic_enabled: false, jellyfin_enabled: false };
-		render(ProfileConnectApps);
+		await render(ProfileConnectApps);
 		await expect
 			.element(page.getByRole('link', { name: 'enable it in Settings' }))
 			.toHaveAttribute('href', '/settings?tab=connect-apps');
@@ -173,7 +173,7 @@ describe('ProfileConnectApps.svelte', () => {
 
 	it('shows an error with a working retry when a query fails', async () => {
 		h.isError = true;
-		render(ProfileConnectApps);
+		await render(ProfileConnectApps);
 		await expect.element(page.getByText("Couldn't load Connect Apps.")).toBeInTheDocument();
 		await expect.element(page.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
 	});

@@ -5,7 +5,7 @@ import AlbumImage from './AlbumImage.svelte';
 
 describe('AlbumImage cached-local mode', () => {
 	it('uses only the stable local route for a UUID-shaped album ID', async () => {
-		render(AlbumImage, {
+		await render(AlbumImage, {
 			props: {
 				albumId: 'b1392450-e666-3926-a536-22c65f834433',
 				coverVersion: 9,
@@ -24,7 +24,7 @@ describe('AlbumImage cached-local mode', () => {
 
 	it('treats a local miss as terminal with no warming retry', async () => {
 		vi.useFakeTimers();
-		render(AlbumImage, {
+		await render(AlbumImage, {
 			props: { albumId: 'local-album', coverVersion: 2, alt: 'Local cover', lazy: false }
 		} as Parameters<typeof render<typeof AlbumImage>>[1]);
 		const image = page.getByAltText('Local cover');

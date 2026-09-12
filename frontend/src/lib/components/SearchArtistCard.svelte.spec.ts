@@ -13,14 +13,14 @@ const baseArtist: Artist = {
 	listen_count: 2500000
 };
 
-function renderComponent(
+async function renderComponent(
 	overrides: Partial<{
 		artist: Artist;
 		enrichmentSource: EnrichmentSource;
 		onenrichmentrequest: () => void;
 	}> = {}
 ) {
-	return render(SearchArtistCard, {
+	return await render(SearchArtistCard, {
 		props: {
 			artist: overrides.artist ?? baseArtist,
 			enrichmentSource: overrides.enrichmentSource ?? 'none',
@@ -31,17 +31,17 @@ function renderComponent(
 
 describe('SearchArtistCard.svelte', () => {
 	it('should display the artist name', async () => {
-		renderComponent();
+		await renderComponent();
 		await expect.element(page.getByText('Radiohead')).toBeInTheDocument();
 	});
 
 	it('should display release count badge', async () => {
-		renderComponent();
+		await renderComponent();
 		await expect.element(page.getByText('9 releases')).toBeInTheDocument();
 	});
 
 	it('should show Last.fm branded badge when source is lastfm', async () => {
-		renderComponent({ enrichmentSource: 'lastfm' });
+		await renderComponent({ enrichmentSource: 'lastfm' });
 
 		const badge = page.getByTitle('Last.fm listeners');
 		await expect.element(badge).toBeInTheDocument();
@@ -49,7 +49,7 @@ describe('SearchArtistCard.svelte', () => {
 	});
 
 	it('should show ListenBrainz branded badge when source is listenbrainz', async () => {
-		renderComponent({ enrichmentSource: 'listenbrainz' });
+		await renderComponent({ enrichmentSource: 'listenbrainz' });
 
 		const badge = page.getByTitle('ListenBrainz plays');
 		await expect.element(badge).toBeInTheDocument();
@@ -57,7 +57,7 @@ describe('SearchArtistCard.svelte', () => {
 	});
 
 	it('should show generic badge when source is none', async () => {
-		renderComponent({ enrichmentSource: 'none' });
+		await renderComponent({ enrichmentSource: 'none' });
 
 		const badge = page.getByTitle('Plays');
 		await expect.element(badge).toBeInTheDocument();
@@ -67,7 +67,7 @@ describe('SearchArtistCard.svelte', () => {
 	});
 
 	it('should not render listen count badge when listen_count is null', async () => {
-		renderComponent({
+		await renderComponent({
 			artist: { ...baseArtist, listen_count: null },
 			enrichmentSource: 'lastfm'
 		});
@@ -76,7 +76,7 @@ describe('SearchArtistCard.svelte', () => {
 	});
 
 	it('should render zero listen count as "0"', async () => {
-		renderComponent({
+		await renderComponent({
 			artist: { ...baseArtist, listen_count: 0 },
 			enrichmentSource: 'lastfm'
 		});
@@ -87,20 +87,20 @@ describe('SearchArtistCard.svelte', () => {
 	});
 
 	it('should display formatted count for large numbers', async () => {
-		renderComponent({ enrichmentSource: 'lastfm' });
+		await renderComponent({ enrichmentSource: 'lastfm' });
 
 		await expect.element(page.getByText('Last.fm 2.5M')).toBeInTheDocument();
 	});
 
 	it('should display disambiguation when present', async () => {
-		renderComponent();
+		await renderComponent();
 		await expect.element(page.getByText('English rock band')).toBeInTheDocument();
 	});
 
 	it('requests optional enrichment on keyboard focus', async () => {
 		expect.assertions(2);
 		const onenrichmentrequest = vi.fn();
-		renderComponent({ onenrichmentrequest });
+		await renderComponent({ onenrichmentrequest });
 		const artistName = page.getByText('Radiohead');
 		await expect.element(artistName).toBeInTheDocument();
 		onenrichmentrequest.mockClear();
@@ -112,7 +112,7 @@ describe('SearchArtistCard.svelte', () => {
 
 	it('does not enrich a local-only artist with a local id', async () => {
 		const onenrichmentrequest = vi.fn();
-		renderComponent({
+		await renderComponent({
 			artist: {
 				...baseArtist,
 				musicbrainz_id: 'local-artist-id',
@@ -128,7 +128,7 @@ describe('SearchArtistCard.svelte', () => {
 	});
 
 	it('should singular release for count of 1', async () => {
-		renderComponent({
+		await renderComponent({
 			artist: { ...baseArtist, release_group_count: 1 }
 		});
 		await expect.element(page.getByText('1 release')).toBeInTheDocument();

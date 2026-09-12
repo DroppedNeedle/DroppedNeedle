@@ -65,13 +65,13 @@ describe('FreeMusicQueue.svelte', () => {
 
 	it('renders nothing when there are no tasks', async () => {
 		tasks = [];
-		render(FreeMusicQueue);
+		await render(FreeMusicQueue);
 		await expect.element(page.getByText('Free Music')).not.toBeInTheDocument();
 	});
 
 	it('shows the licence a download is being taken under', async () => {
 		tasks = [task()];
-		render(FreeMusicQueue);
+		await render(FreeMusicQueue);
 		await expect.element(page.getByText('CC BY-NC-SA 3.0')).toBeInTheDocument();
 	});
 	it('shows the pinned quality summary without exposing its raw hash', async () => {
@@ -81,7 +81,7 @@ describe('FreeMusicQueue.svelte', () => {
 				quality_snapshot_summary: 'Lossless preferred; MP3 320 fallback.'
 			})
 		];
-		render(FreeMusicQueue);
+		await render(FreeMusicQueue);
 
 		const summary = page.getByTestId('free-music-quality-summary');
 		await expect.element(summary).toHaveTextContent('Lossless preferred; MP3 320 fallback.');
@@ -91,13 +91,13 @@ describe('FreeMusicQueue.svelte', () => {
 
 	it('names a public-domain licence rather than showing a raw URL', async () => {
 		tasks = [task({ licence_url: 'http://creativecommons.org/publicdomain/zero/1.0/' })];
-		render(FreeMusicQueue);
+		await render(FreeMusicQueue);
 		await expect.element(page.getByText('Public domain (ZERO)')).toBeInTheDocument();
 	});
 
 	it('shows progress and offers cancel while downloading', async () => {
 		tasks = [task()];
-		render(FreeMusicQueue);
+		await render(FreeMusicQueue);
 		await expect.element(page.getByText(/4\/10 files/)).toBeInTheDocument();
 		await page.getByRole('button', { name: /Cancel/ }).click();
 		expect(cancelMutate).toHaveBeenCalledWith('T1');
@@ -105,7 +105,7 @@ describe('FreeMusicQueue.svelte', () => {
 
 	it('offers retry, and surfaces the reason, when a download failed', async () => {
 		tasks = [task({ status: 'failed', error: 'The download failed. Try again.' })];
-		render(FreeMusicQueue);
+		await render(FreeMusicQueue);
 		await expect.element(page.getByText('The download failed. Try again.')).toBeInTheDocument();
 		await page.getByRole('button', { name: 'Retry' }).click();
 		expect(retryMutate).toHaveBeenCalledWith('T1');
@@ -113,7 +113,7 @@ describe('FreeMusicQueue.svelte', () => {
 
 	it('a completed task offers neither cancel nor retry', async () => {
 		tasks = [task({ status: 'completed', files_completed: 10 })];
-		render(FreeMusicQueue);
+		await render(FreeMusicQueue);
 		await expect.element(page.getByText('In your library')).toBeInTheDocument();
 		await expect.element(page.getByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
 		await expect.element(page.getByRole('button', { name: /Cancel/ })).not.toBeInTheDocument();
@@ -124,7 +124,7 @@ describe('FreeMusicQueue.svelte', () => {
 			task({ id: 'done', status: 'completed' }),
 			task({ id: 'active', title: 'Active download' })
 		];
-		render(FreeMusicQueue);
+		await render(FreeMusicQueue);
 
 		await page.getByRole('button', { name: /Remove Guess Who's a Mess from history/ }).click();
 		expect(removeMutate).toHaveBeenCalledWith('done');
@@ -135,7 +135,7 @@ describe('FreeMusicQueue.svelte', () => {
 
 	it('clears terminal history in the current view', async () => {
 		tasks = [task({ status: 'failed' }), task({ id: 'active' })];
-		render(FreeMusicQueue);
+		await render(FreeMusicQueue);
 
 		await page.getByRole('button', { name: 'Clear history' }).click();
 		expect(clearMutate).toHaveBeenCalledWith(false);

@@ -64,7 +64,7 @@ describe('SectionPrefsManager', () => {
 	});
 
 	it('renders sections grouped by zone with toggles', async () => {
-		render(SectionPrefsManager, {
+		await render(SectionPrefsManager, {
 			props: { page: 'home', title: 'Home', description: 'Pick sections.' }
 		} as Parameters<typeof render<typeof SectionPrefsManager>>[1]);
 
@@ -77,7 +77,7 @@ describe('SectionPrefsManager', () => {
 	});
 
 	it('unavailable sections show a connect link and a disabled toggle', async () => {
-		render(SectionPrefsManager, {
+		await render(SectionPrefsManager, {
 			props: { page: 'home', title: 'Home', description: 'Pick sections.' }
 		} as Parameters<typeof render<typeof SectionPrefsManager>>[1]);
 
@@ -97,7 +97,7 @@ describe('SectionPrefsManager', () => {
 			requires: 'lastfm'
 		});
 		try {
-			render(SectionPrefsManager, {
+			await render(SectionPrefsManager, {
 				props: { page: 'discover', title: 'Discover', description: 'Pick sections.' }
 			} as Parameters<typeof render<typeof SectionPrefsManager>>[1]);
 
@@ -110,7 +110,7 @@ describe('SectionPrefsManager', () => {
 	});
 
 	it('toggling a section saves the page after the debounce', async () => {
-		render(SectionPrefsManager, {
+		await render(SectionPrefsManager, {
 			props: { page: 'home', title: 'Home', description: 'Pick sections.' }
 		} as Parameters<typeof render<typeof SectionPrefsManager>>[1]);
 
@@ -132,7 +132,7 @@ describe('SectionPrefsManager', () => {
 	});
 
 	it('master toggle disables every section', async () => {
-		render(SectionPrefsManager, {
+		await render(SectionPrefsManager, {
 			props: { page: 'home', title: 'Home', description: 'Pick sections.' }
 		} as Parameters<typeof render<typeof SectionPrefsManager>>[1]);
 

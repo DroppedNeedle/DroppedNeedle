@@ -18,52 +18,52 @@ const fullEnrichment: LastFmArtistEnrichment = {
 	url: 'https://www.last.fm/music/TestArtist'
 };
 
-function renderComponent(props: Record<string, unknown> = {}) {
-	return render(LastFmEnrichment, {
+async function renderComponent(props: Record<string, unknown> = {}) {
+	return await render(LastFmEnrichment, {
 		props: { enrichment: fullEnrichment, ...props }
 	} as Parameters<typeof render<typeof LastFmEnrichment>>[1]);
 }
 
 describe('LastFmEnrichment.svelte', () => {
 	it('should show loading skeleton when loading', async () => {
-		renderComponent({ enrichment: null, loading: true });
+		await renderComponent({ enrichment: null, loading: true });
 
 		const skeletons = document.querySelectorAll('.skeleton');
 		expect(skeletons.length).toBeGreaterThan(0);
 	});
 
 	it('should render nothing when not enabled', async () => {
-		renderComponent({ enabled: false });
+		await renderComponent({ enabled: false });
 
 		await expect.element(page.getByText('Last.fm')).not.toBeInTheDocument();
 	});
 
 	it('should render nothing when enrichment is null', async () => {
-		renderComponent({ enrichment: null });
+		await renderComponent({ enrichment: null });
 
 		await expect.element(page.getByText('Last.fm')).not.toBeInTheDocument();
 	});
 
 	it('should display Last.fm badge when enrichment is present', async () => {
-		renderComponent();
+		await renderComponent();
 
 		await expect.element(page.getByText('Last.fm', { exact: true })).toBeInTheDocument();
 	});
 
 	it('should display formatted listener count', async () => {
-		renderComponent();
+		await renderComponent();
 
 		await expect.element(page.getByText('2.5M listeners')).toBeInTheDocument();
 	});
 
 	it('should display formatted play count', async () => {
-		renderComponent();
+		await renderComponent();
 
 		await expect.element(page.getByText('150.0M plays')).toBeInTheDocument();
 	});
 
 	it('should display bio text', async () => {
-		renderComponent();
+		await renderComponent();
 
 		await expect
 			.element(page.getByText('A legendary rock band formed in the 1960s.'))
@@ -71,7 +71,7 @@ describe('LastFmEnrichment.svelte', () => {
 	});
 
 	it('should render tags as anchor links', async () => {
-		renderComponent();
+		await renderComponent();
 
 		const rockLink = page.getByRole('link', { name: 'rock', exact: true });
 		await expect.element(rockLink).toBeInTheDocument();
@@ -83,7 +83,7 @@ describe('LastFmEnrichment.svelte', () => {
 	});
 
 	it('should display View on Last.fm link', async () => {
-		renderComponent();
+		await renderComponent();
 
 		const link = page.getByRole('link', { name: /View on Last\.fm/ });
 		await expect.element(link).toBeInTheDocument();
@@ -91,7 +91,7 @@ describe('LastFmEnrichment.svelte', () => {
 	});
 
 	it('should hide stats section when both counts are zero', async () => {
-		renderComponent({
+		await renderComponent({
 			enrichment: { ...fullEnrichment, listeners: 0, playcount: 0 }
 		});
 
@@ -99,7 +99,7 @@ describe('LastFmEnrichment.svelte', () => {
 	});
 
 	it('should render enrichment with only tags (no bio, no stats)', async () => {
-		renderComponent({
+		await renderComponent({
 			enrichment: {
 				...fullEnrichment,
 				bio: null,

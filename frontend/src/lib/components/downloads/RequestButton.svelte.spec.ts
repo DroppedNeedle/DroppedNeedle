@@ -38,8 +38,8 @@ vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 import RequestButton from './RequestButton.svelte';
 
 const base = { releaseGroupMbid: 'rg', title: 'OK Computer', artistName: 'Radiohead', year: 1997 };
-function renderButton(overrides: Record<string, unknown> = {}) {
-	return render(RequestButton, { props: { ...base, ...overrides } } as Parameters<
+async function renderButton(overrides: Record<string, unknown> = {}) {
+	return await render(RequestButton, { props: { ...base, ...overrides } } as Parameters<
 		typeof render<typeof RequestButton>
 	>[1]);
 }
@@ -53,31 +53,31 @@ describe('RequestButton.svelte', () => {
 	});
 
 	it('shows "In Library" when the album is present', async () => {
-		renderButton({ inLibrary: true });
+		await renderButton({ inLibrary: true });
 		await expect.element(page.getByText('In Library')).toBeVisible();
 	});
 
 	it('shows "Requested" when an active task exists', async () => {
-		renderButton({ requested: true });
+		await renderButton({ requested: true });
 		await expect.element(page.getByText('Requested')).toBeVisible();
 	});
 
 	it('shows "Configure Download Client" for admins when not configured', async () => {
 		h.configured = false;
 		h.isAdmin = true;
-		renderButton();
+		await renderButton();
 		await expect.element(page.getByText('Configure Download Client')).toBeVisible();
 	});
 
 	it('shows "Downloads Unavailable" for non-admins when not configured', async () => {
 		h.configured = false;
 		h.isAdmin = false;
-		renderButton();
+		await renderButton();
 		await expect.element(page.getByText('Downloads Unavailable')).toBeVisible();
 	});
 
 	it('shows "Request" and fires the mutation on click', async () => {
-		renderButton();
+		await renderButton();
 		await page.getByRole('button', { name: 'Request' }).click();
 		expect(h.requestMutate).toHaveBeenCalled();
 	});

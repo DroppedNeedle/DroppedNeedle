@@ -75,8 +75,11 @@ function makePlaylists() {
 
 type ModalRef = { open: (tracks: QueueItem[]) => void };
 
-function renderModal() {
-	return render(AddToPlaylistModal, {} as Parameters<typeof render<typeof AddToPlaylistModal>>[1]);
+async function renderModal() {
+	return await render(
+		AddToPlaylistModal,
+		{} as Parameters<typeof render<typeof AddToPlaylistModal>>[1]
+	);
 }
 
 describe('AddToPlaylistModal.svelte', () => {
@@ -91,7 +94,7 @@ describe('AddToPlaylistModal.svelte', () => {
 
 	it('opening modal fetches playlists and renders list', async () => {
 		mockFetchPlaylists.mockResolvedValue(makePlaylists());
-		const result = renderModal();
+		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
 		await expect.element(page.getByText('My Playlist')).toBeVisible();
@@ -106,7 +109,7 @@ describe('AddToPlaylistModal.svelte', () => {
 				resolveFetch = r;
 			})
 		);
-		const result = renderModal();
+		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
 		const skeletons = page.getByTestId('playlist-skeleton').all();
@@ -118,7 +121,7 @@ describe('AddToPlaylistModal.svelte', () => {
 
 	it('renders empty state when playlists list is empty', async () => {
 		mockFetchPlaylists.mockResolvedValue([]);
-		const result = renderModal();
+		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
 		await expect.element(page.getByText("You haven't created any playlists yet.")).toBeVisible();
@@ -128,7 +131,7 @@ describe('AddToPlaylistModal.svelte', () => {
 		mockFetchPlaylists.mockResolvedValue(makePlaylists());
 		mockAddTracksToPlaylist.mockResolvedValue([]);
 		const track = makeTrack();
-		const result = renderModal();
+		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([track]);
 
 		await expect.element(page.getByText('My Playlist')).toBeVisible();
@@ -144,7 +147,7 @@ describe('AddToPlaylistModal.svelte', () => {
 	it('after adding, button transitions from CirclePlus to Check', async () => {
 		mockFetchPlaylists.mockResolvedValue(makePlaylists());
 		mockAddTracksToPlaylist.mockResolvedValue([]);
-		const result = renderModal();
+		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
 		await expect.element(page.getByText('My Playlist')).toBeVisible();
@@ -156,7 +159,7 @@ describe('AddToPlaylistModal.svelte', () => {
 	it('clicking add on same playlist twice is a no-op (addedSet guard)', async () => {
 		mockFetchPlaylists.mockResolvedValue(makePlaylists());
 		mockAddTracksToPlaylist.mockResolvedValue([]);
-		const result = renderModal();
+		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
 		await expect.element(page.getByText('My Playlist')).toBeVisible();
@@ -181,7 +184,7 @@ describe('AddToPlaylistModal.svelte', () => {
 		});
 		mockAddTracksToPlaylist.mockResolvedValue([]);
 
-		const result = renderModal();
+		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
 		await expect.element(page.getByText("You haven't created any playlists yet.")).toBeVisible();
@@ -197,7 +200,7 @@ describe('AddToPlaylistModal.svelte', () => {
 	it('error during add shows error status and does not mark as added', async () => {
 		mockFetchPlaylists.mockResolvedValue(makePlaylists());
 		mockAddTracksToPlaylist.mockRejectedValue(new Error('Network error'));
-		const result = renderModal();
+		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
 		await expect.element(page.getByText('My Playlist')).toBeVisible();
@@ -211,7 +214,7 @@ describe('AddToPlaylistModal.svelte', () => {
 	it('shows tick for playlists where all tracks already exist', async () => {
 		mockFetchPlaylists.mockResolvedValue(makePlaylists());
 		mockCheckTrackMembership.mockResolvedValue({ p1: [0] });
-		const result = renderModal();
+		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
 		await expect.element(page.getByText('My Playlist')).toBeVisible();
@@ -225,7 +228,7 @@ describe('AddToPlaylistModal.svelte', () => {
 		mockCheckTrackMembership.mockResolvedValue({ p1: [0] });
 		const track1 = makeTrack({ trackName: 'Track 1' });
 		const track2 = makeTrack({ trackName: 'Track 2', trackSourceId: 'v2' });
-		const result = renderModal();
+		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([track1, track2]);
 
 		await expect.element(page.getByText('My Playlist')).toBeVisible();
@@ -239,7 +242,7 @@ describe('AddToPlaylistModal.svelte', () => {
 		mockAddTracksToPlaylist.mockResolvedValue([]);
 		const track1 = makeTrack({ trackName: 'Track 1' });
 		const track2 = makeTrack({ trackName: 'Track 2', trackSourceId: 'v2' });
-		const result = renderModal();
+		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([track1, track2]);
 
 		await expect.element(page.getByText('My Playlist')).toBeVisible();
@@ -256,7 +259,7 @@ describe('AddToPlaylistModal.svelte', () => {
 	it('shows + for playlists with no overlap', async () => {
 		mockFetchPlaylists.mockResolvedValue(makePlaylists());
 		mockCheckTrackMembership.mockResolvedValue({});
-		const result = renderModal();
+		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
 		await expect.element(page.getByText('My Playlist')).toBeVisible();

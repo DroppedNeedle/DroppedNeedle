@@ -45,7 +45,7 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('ArtistHero library relationship', () => {
 	it('labels a track-only contributor as appearing in the library', async () => {
-		render(ArtistHero, {
+		await render(ArtistHero, {
 			props: { artist }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -54,7 +54,7 @@ describe('ArtistHero library relationship', () => {
 	});
 
 	it('prioritizes album ownership when an artist is both owned and a contributor', async () => {
-		render(ArtistHero, {
+		await render(ArtistHero, {
 			props: { artist: { ...artist, in_library: true, appears_in_library: true } }
 		} as unknown as Parameters<typeof render>[1]);
 

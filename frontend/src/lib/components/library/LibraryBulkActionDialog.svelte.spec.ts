@@ -127,8 +127,8 @@ const selected = [
 	}
 ];
 
-function renderDialog(onclear = vi.fn(), allMatching = false) {
-	return render(LibraryBulkActionDialog, {
+async function renderDialog(onclear = vi.fn(), allMatching = false) {
+	return await render(LibraryBulkActionDialog, {
 		props: {
 			selected: allMatching ? [] : selected,
 			allMatching,
@@ -151,7 +151,7 @@ beforeEach(() => {
 describe('LibraryBulkActionDialog', () => {
 	it('uses the server preview and starts one durable job', async () => {
 		const clear = vi.fn();
-		renderDialog(clear);
+		await renderDialog(clear);
 		const opener = page.getByRole('button', { name: 'Retry...' });
 		await opener.click();
 		expect(h.preview).toHaveBeenCalledWith(
@@ -178,7 +178,7 @@ describe('LibraryBulkActionDialog', () => {
 	it('recovers the stored terminal result after refresh without replaying Apply', async () => {
 		sessionStorage.setItem('droppedneedle:library-bulk-job:admin-1', 'job-1');
 		h.jobs = { 'job-1': operation };
-		renderDialog();
+		await renderDialog();
 		await expect.element(page.getByText('Bulk review · succeeded')).toBeVisible();
 		await expect.element(page.getByText('2 complete · 1 skipped · 0 failed')).toBeVisible();
 		expect(sessionStorage.getItem('droppedneedle:library-bulk-job:admin-1')).toBeNull();
@@ -188,7 +188,7 @@ describe('LibraryBulkActionDialog', () => {
 	});
 
 	it('distinguishes the full filtered result from the current page', async () => {
-		renderDialog(vi.fn(), true);
+		await renderDialog(vi.fn(), true);
 		await expect.element(page.getByText('All 120 matching selected')).toBeVisible();
 		await page.getByRole('button', { name: 'Retry...' }).click();
 		expect(h.preview).toHaveBeenCalledWith(
@@ -209,7 +209,7 @@ describe('LibraryBulkActionDialog', () => {
 			eligible_count: 2,
 			common_candidate_keys: ['rg-shared:release-shared']
 		};
-		renderDialog();
+		await renderDialog();
 
 		await page.getByRole('button', { name: 'Accept shared candidate...' }).click();
 		await page

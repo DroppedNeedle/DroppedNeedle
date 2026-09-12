@@ -85,7 +85,7 @@ beforeEach(() => {
 
 describe('ContributionMusicBrainzReview', () => {
 	it('runs the duplicate check against the current revision', async () => {
-		render(ContributionMusicBrainzReview, { contribution: contribution() });
+		await render(ContributionMusicBrainzReview, { contribution: contribution() });
 
 		await page.getByRole('button', { name: 'Check MusicBrainz' }).click();
 
@@ -118,7 +118,7 @@ describe('ContributionMusicBrainzReview', () => {
 			},
 			next_actions: ['edit_draft', 'run_duplicate_check', 'attach_existing', 'cancel']
 		});
-		render(ContributionMusicBrainzReview, { contribution: exact });
+		await render(ContributionMusicBrainzReview, { contribution: exact });
 
 		await expect.element(page.getByText('Exact match found')).toBeVisible();
 		await expect
@@ -172,7 +172,7 @@ describe('ContributionMusicBrainzReview', () => {
 				entries: Array.from(new FormData(this).entries())
 			};
 		});
-		render(ContributionMusicBrainzReview, {
+		await render(ContributionMusicBrainzReview, {
 			contribution: contribution({
 				state: 'seeded',
 				duplicate_result: {
@@ -201,7 +201,7 @@ describe('ContributionMusicBrainzReview', () => {
 	});
 
 	it('shows a returned MBID as pending while verification runs', async () => {
-		render(ContributionMusicBrainzReview, {
+		await render(ContributionMusicBrainzReview, {
 			contribution: contribution({
 				state: 'verifying',
 				result_release_mbid: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
@@ -217,7 +217,7 @@ describe('ContributionMusicBrainzReview', () => {
 	});
 
 	it('validates and queues a pasted MusicBrainz recovery result locally', async () => {
-		render(ContributionMusicBrainzReview, {
+		await render(ContributionMusicBrainzReview, {
 			contribution: contribution({
 				state: 'seeded',
 				duplicate_result: {
@@ -249,7 +249,7 @@ describe('ContributionMusicBrainzReview', () => {
 	});
 
 	it('explicitly replaces a rejected result before re-verification', async () => {
-		render(ContributionMusicBrainzReview, {
+		await render(ContributionMusicBrainzReview, {
 			contribution: contribution({
 				state: 'needs_review',
 				result_release_mbid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',

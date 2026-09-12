@@ -71,11 +71,11 @@ function work(overrides: Partial<LibraryWorkItem> = {}): LibraryWorkItem {
 	};
 }
 
-function renderStrip(
+async function renderStrip(
 	workItems: LibraryWorkItem[],
 	props: { now?: number; adminOverride?: boolean; userIdOverride?: string } = {}
 ) {
-	return render(LibraryActivityStrip, {
+	return await render(LibraryActivityStrip, {
 		props: {
 			activityOverride: { items: [], work_items: workItems },
 			now: props.now ?? 1_000,
@@ -93,12 +93,12 @@ beforeEach(async () => {
 
 describe('LibraryActivityStrip', () => {
 	it('stays out of the way while every worker is idle', async () => {
-		renderStrip([]);
+		await renderStrip([]);
 		await expect.element(page.getByTestId('library-activity-strip')).not.toBeInTheDocument();
 	});
 
 	it('leads with one truthful scan progress bar', async () => {
-		renderStrip([work()]);
+		await renderStrip([work()]);
 
 		await expect.element(page.getByText('Scanning library', { exact: true })).toBeVisible();
 		await expect.element(page.getByText('42 / 100 files · 42%')).toBeVisible();
@@ -109,7 +109,7 @@ describe('LibraryActivityStrip', () => {
 	});
 
 	it('shows scan reconciliation as a completed file bar with a finalizing phase', async () => {
-		renderStrip([work({ phase: 'reconciling', processed: 100 })]);
+		await renderStrip([work({ phase: 'reconciling', processed: 100 })]);
 
 		await expect.element(page.getByText('Finalizing the catalog')).toBeVisible();
 		await expect.element(page.getByText('100 / 100 files · 100%')).toBeVisible();
@@ -119,12 +119,12 @@ describe('LibraryActivityStrip', () => {
 		['pausing', 'Pausing after the current file'],
 		['stopping', 'Stopping after the current file']
 	] as const)('keeps the %s transition visible', async (state, label) => {
-		renderStrip([work({ state })]);
+		await renderStrip([work({ state })]);
 		await expect.element(page.getByText(label)).toBeVisible();
 	});
 
 	it('uses the primary item and keeps concurrent work in an expandable stack', async () => {
-		renderStrip([
+		await renderStrip([
 			work({
 				id: 'management-1',
 				kind: 'library_management',
@@ -147,7 +147,7 @@ describe('LibraryActivityStrip', () => {
 	});
 
 	it('does not turn historical identification totals into a misleading percentage', async () => {
-		renderStrip([
+		await renderStrip([
 			work({
 				id: 'identification',
 				kind: 'identification',
@@ -172,12 +172,12 @@ describe('LibraryActivityStrip', () => {
 			kind: 'library_management',
 			effect: 'file_writing'
 		});
-		renderStrip([management], { adminOverride: true });
+		await renderStrip([management], { adminOverride: true });
 		await expect
 			.element(page.getByRole('link'))
 			.toHaveAttribute('href', '/library/management/operations/operation%201');
 
-		renderStrip([management], { adminOverride: false });
+		await renderStrip([management], { adminOverride: false });
 		await expect.element(page.getByRole('link').last()).toHaveAttribute('href', '/library');
 	});
 
@@ -190,12 +190,12 @@ describe('LibraryActivityStrip', () => {
 			failure_event_id: 'failure-1',
 			failure_at: 9_900
 		});
-		renderStrip([failed], { now: 10_000 });
+		await renderStrip([failed], { now: 10_000 });
 		await page.getByRole('button', { name: 'Dismiss library failure' }).click();
 		expect(localStorage.getItem('droppedneedle:library-failure:user-1:failure-1')).toBe('1');
 		await expect.element(page.getByTestId('library-activity-strip')).not.toBeInTheDocument();
 
-		renderStrip(
+		await renderStrip(
 			[
 				work({
 					id: 'recovery',
@@ -218,7 +218,7 @@ describe('LibraryActivityStrip', () => {
 	});
 
 	it('expires a terminal failure after 24 hours', async () => {
-		renderStrip(
+		await renderStrip(
 			[
 				work({
 					state: 'failed',
@@ -235,9 +235,9 @@ describe('LibraryActivityStrip', () => {
 	it('expires a visible failure while the page remains open', async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date(1_000_000 * 1000));
-		let unmount: (() => void) | undefined;
+		let unmount: (() => Promise<void>) | undefined;
 		try {
-			({ unmount } = render(LibraryActivityStrip, {
+			({ unmount } = await render(LibraryActivityStrip, {
 				props: {
 					activityOverride: {
 						items: [],
@@ -256,7 +256,7 @@ describe('LibraryActivityStrip', () => {
 			await vi.advanceTimersByTimeAsync(60_000);
 			await expect.element(page.getByTestId('library-activity-strip')).not.toBeInTheDocument();
 		} finally {
-			unmount?.();
+			await unmount?.();
 			vi.useRealTimers();
 		}
 	});
@@ -267,7 +267,7 @@ describe('LibraryActivityStrip', () => {
 			features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
 		});
 		try {
-			renderStrip([work()]);
+			await renderStrip([work()]);
 			const fill = page.getByTestId('library-work-progress-fill');
 			await expect.element(fill).toBeVisible();
 			expect(getComputedStyle(fill.element()).transitionDuration).toBe('0s');

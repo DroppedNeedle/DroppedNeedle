@@ -36,7 +36,7 @@ vi.mock('$lib/stores/playbackToast.svelte', () => ({
 import LocalFilesBand from './LocalFilesBand.svelte';
 
 it('uses one managed 250px image for the blurred recent-album backdrop', async () => {
-	render(LocalFilesBand);
+	await render(LocalFilesBand);
 
 	expect(page.getByTestId('local-files-backdrop').all()).toHaveLength(1);
 	expect(page.getByTestId('local-files-backdrop-image').all()).toHaveLength(1);

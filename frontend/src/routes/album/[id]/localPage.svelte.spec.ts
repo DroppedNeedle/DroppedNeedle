@@ -249,7 +249,7 @@ beforeEach(() => {
 
 describe('local-only album page', () => {
 	it('plays stable local tracks and presents local identity separately', async () => {
-		render(LocalAlbumPage, {
+		await render(LocalAlbumPage, {
 			props: { albumId: album.id }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -285,7 +285,7 @@ describe('local-only album page', () => {
 		album.album_identity_state = 'release_group_linked';
 		album.musicbrainz_release_group_id = 'rg-1';
 		album.pick_basis = 'embedded_tags';
-		render(LocalAlbumPage, {
+		await render(LocalAlbumPage, {
 			props: { albumId: album.id }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -297,7 +297,7 @@ describe('local-only album page', () => {
 		album.album_identity_state = 'release_group_linked';
 		album.musicbrainz_release_group_id = 'rg-1';
 		album.pick_basis = 'pin';
-		render(LocalAlbumPage, {
+		await render(LocalAlbumPage, {
 			props: { albumId: album.id }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -308,7 +308,7 @@ describe('local-only album page', () => {
 		album.album_identity_state = 'release_group_linked';
 		album.musicbrainz_release_group_id = 'rg-1';
 		album.pick_basis = 'ranked' as unknown as typeof album.pick_basis;
-		render(LocalAlbumPage, {
+		await render(LocalAlbumPage, {
 			props: { albumId: album.id }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -338,7 +338,7 @@ describe('local-only album page', () => {
 			owned_release_mbid: null,
 			selected_release_mbid: 'rel-1'
 		};
-		render(LocalAlbumPage, {
+		await render(LocalAlbumPage, {
 			props: { albumId: album.id }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -348,7 +348,7 @@ describe('local-only album page', () => {
 	it('warns an administrator when Library Management needs an exact identity', async () => {
 		h.isAdmin = true;
 		album.management_identity_readiness = 'track_mapping_required';
-		render(LocalAlbumPage, {
+		await render(LocalAlbumPage, {
 			props: { albumId: album.id }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -362,7 +362,7 @@ describe('local-only album page', () => {
 		h.isAdmin = true;
 		album.management_identity_readiness = 'ready';
 		album.identification_status = 'identified';
-		render(LocalAlbumPage, {
+		await render(LocalAlbumPage, {
 			props: { albumId: album.id }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -405,7 +405,7 @@ describe('local-only album page', () => {
 			owned_release_mbid: null,
 			selected_release_mbid: 'release-20'
 		};
-		render(LocalAlbumPage, {
+		await render(LocalAlbumPage, {
 			props: { albumId: album.id }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -444,7 +444,7 @@ describe('local-only album page', () => {
 			owned_release_mbid: null,
 			selected_release_mbid: null
 		};
-		render(LocalAlbumPage, {
+		await render(LocalAlbumPage, {
 			props: { albumId: album.id }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -456,7 +456,7 @@ describe('local-only album page', () => {
 
 	it('shows no picker for an unidentified album without a release group', async () => {
 		h.isTrusted = true;
-		render(LocalAlbumPage, {
+		await render(LocalAlbumPage, {
 			props: { albumId: album.id }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -472,15 +472,15 @@ describe('local album page download button', () => {
 		blob.download.mockResolvedValue(undefined);
 	});
 
-	function renderPage() {
-		render(LocalAlbumPage, {
+	async function renderPage() {
+		await render(LocalAlbumPage, {
 			props: { albumId: album.id }
 		} as unknown as Parameters<typeof render>[1]);
 	}
 
 	it('downloads the album zip with a total-size caption', async () => {
 		expect.assertions(3);
-		renderPage();
+		await renderPage();
 
 		const button = page.getByRole('button', { name: /Download album/ });
 		await expect.element(button).toBeVisible();
@@ -492,7 +492,7 @@ describe('local album page download button', () => {
 	it('toasts a user-safe error when the download fails', async () => {
 		blob.download.mockRejectedValueOnce(new Error('gone'));
 		h.toast.mockClear();
-		renderPage();
+		await renderPage();
 
 		await page.getByRole('button', { name: /Download album/ }).click();
 		await vi.waitFor(() => {
@@ -508,15 +508,15 @@ describe('local album page track menu', () => {
 		blob.download.mockResolvedValue(undefined);
 	});
 
-	function renderPage() {
-		render(LocalAlbumPage, {
+	async function renderPage() {
+		await render(LocalAlbumPage, {
 			props: { albumId: album.id }
 		} as unknown as Parameters<typeof render>[1]);
 	}
 
 	it('opens the shared 4-item menu with a working Download', async () => {
 		expect.assertions(7);
-		renderPage();
+		await renderPage();
 
 		await expect.element(page.getByText('Unmatched Song')).toBeVisible();
 		expect(page.getByLabelText('More actions').elements()).toHaveLength(1);
@@ -531,7 +531,7 @@ describe('local album page track menu', () => {
 
 	it('queues the local track through the menu', async () => {
 		expect.assertions(3);
-		renderPage();
+		await renderPage();
 
 		await expect.element(page.getByText('Unmatched Song')).toBeVisible();
 		await (await page.getByLabelText('More actions').all())[0].click();
@@ -543,7 +543,7 @@ describe('local album page track menu', () => {
 	it('hides the button and omits the menu Download item when restricted', async () => {
 		expect.assertions(4);
 		album.download_allowed = false;
-		renderPage();
+		await renderPage();
 
 		await expect.element(page.getByText('Unmatched Song')).toBeVisible();
 		await expect

@@ -20,32 +20,32 @@ const basePlaylist: PlaylistSummary = {
 	is_redacted: false
 };
 
-function renderCard(playlist: PlaylistSummary = basePlaylist) {
-	return render(PlaylistCard, {
+async function renderCard(playlist: PlaylistSummary = basePlaylist) {
+	return await render(PlaylistCard, {
 		props: { playlist }
 	} as Parameters<typeof render<typeof PlaylistCard>>[1]);
 }
 
 describe('PlaylistCard.svelte', () => {
 	it('renders playlist name', async () => {
-		renderCard();
+		await renderCard();
 		await expect.element(page.getByText('My Playlist')).toBeInTheDocument();
 	});
 
 	it('renders track count and duration subtitle', async () => {
-		renderCard();
+		await renderCard();
 		await expect.element(page.getByText(/5 tracks/)).toBeInTheDocument();
 		await expect.element(page.getByText(/20 min/)).toBeInTheDocument();
 	});
 
 	it('renders singular "track" for 1 track', async () => {
 		const single: PlaylistSummary = { ...basePlaylist, track_count: 1 };
-		renderCard(single);
+		await renderCard(single);
 		await expect.element(page.getByText(/1 track(?!s)/)).toBeInTheDocument();
 	});
 
 	it('links to the correct playlist detail page', async () => {
-		renderCard();
+		await renderCard();
 		const link = page.getByRole('link', { name: /Open My Playlist/ });
 		await expect.element(link).toBeInTheDocument();
 		expect(await link.element()).toHaveAttribute('href', '/playlists/pl-1');
@@ -53,7 +53,7 @@ describe('PlaylistCard.svelte', () => {
 
 	it('omits duration from subtitle when total_duration is null', async () => {
 		const noDuration: PlaylistSummary = { ...basePlaylist, total_duration: null };
-		renderCard(noDuration);
+		await renderCard(noDuration);
 		const subtitle = page.getByText(/5 tracks/);
 		await expect.element(subtitle).toBeInTheDocument();
 		const el = await subtitle.element();

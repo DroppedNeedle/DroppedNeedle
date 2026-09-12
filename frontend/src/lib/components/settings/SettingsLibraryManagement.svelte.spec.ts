@@ -351,7 +351,7 @@ beforeEach(() => {
 
 describe('SettingsLibraryManagement', () => {
 	it('starts off everywhere and preserves subordinate profile values while a master toggle is off', async () => {
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await expect.element(page.getByText('Off everywhere')).toBeVisible();
 		await expect.element(page.getByText('Scanning: Automatic identification')).toBeVisible();
 		await expect.element(page.getByText('Library default', { exact: true })).toBeVisible();
@@ -453,7 +453,7 @@ describe('SettingsLibraryManagement', () => {
 	});
 
 	it('edits both naming slots and explains the multi-disc defaults', async () => {
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('button', { name: 'Edit' }).click();
 		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
 		await profileDialog.getByText('File naming and organization').click();
@@ -526,7 +526,7 @@ describe('SettingsLibraryManagement', () => {
 		settings.profiles.push(complete);
 		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 
 		await expect
 			.element(page.getByText('Complete Library Organizer', { exact: true }))
@@ -565,7 +565,7 @@ describe('SettingsLibraryManagement', () => {
 		];
 		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('button', { name: 'Edit' }).click();
 		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
 
@@ -655,7 +655,7 @@ describe('SettingsLibraryManagement', () => {
 	});
 
 	it('round-trips the explicit per-root multi-disc script mode', async () => {
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
 		await page.getByText('Per-root profile overrides').click();
 		await page.getByRole('checkbox', { name: /Override selected profile values/ }).click();
@@ -688,7 +688,7 @@ describe('SettingsLibraryManagement', () => {
 	});
 
 	it('serializes the per-root effective-standard mode without a script ID', async () => {
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
 		await page.getByText('Per-root profile overrides').click();
 		await page.getByRole('checkbox', { name: /Override selected profile values/ }).click();
@@ -723,7 +723,7 @@ describe('SettingsLibraryManagement', () => {
 		settings.profiles.push(lyricsProfile);
 		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 
 		const lyricsCard = page.getByRole('article', { name: 'Picard-style Organizer + Lyrics' });
 		await expect.element(lyricsCard).toHaveAttribute('data-default', 'false');
@@ -812,7 +812,7 @@ describe('SettingsLibraryManagement', () => {
 			refetch: vi.fn()
 		};
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 
 		await expect.element(page.getByText('Dry run planning', { exact: true })).toBeVisible();
 		await expect.element(page.getByText(/files found/)).toHaveTextContent(/1,000.*files found/);
@@ -861,7 +861,7 @@ describe('SettingsLibraryManagement', () => {
 				: null
 		);
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await vi.waitFor(() => expect(h.readSession).toHaveBeenCalledWith('admin-1'));
 		h.rememberSession.mockClear();
 
@@ -895,7 +895,7 @@ describe('SettingsLibraryManagement', () => {
 			isError: false
 		};
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 
 		await expect.element(page.getByText('Write-access dry run in progress')).toBeVisible();
 		await expect
@@ -934,7 +934,7 @@ describe('SettingsLibraryManagement', () => {
 		};
 		h.copy.mockResolvedValue({ profile: copiedProfile, settings_revision: 'settings-2' });
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('combobox', { name: 'Profile to copy' }).selectOptions(sourceProfile.id);
 		await page.getByRole('textbox', { name: 'New profile name' }).fill('Archive profile');
 		await page.getByRole('button', { name: 'Create copy' }).click();
@@ -963,7 +963,7 @@ describe('SettingsLibraryManagement', () => {
 		const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
 		const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('button', { name: 'Share Picard-style Organizer' }).click();
 
 		const dialog = page.getByRole('dialog', { name: 'Share Picard-style Organizer' });
@@ -1068,7 +1068,7 @@ describe('SettingsLibraryManagement', () => {
 			settings_revision: 'settings-2'
 		});
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('button', { name: 'Import profile' }).click();
 		const dialog = page.getByRole('dialog', { name: 'Import profile' });
 		await expect.element(dialog.getByRole('heading', { name: 'Import profile' })).toHaveFocus();
@@ -1110,7 +1110,7 @@ describe('SettingsLibraryManagement', () => {
 	});
 
 	it('blocks profile import while Library Management has unsaved changes', async () => {
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
 
 		await expect.element(page.getByRole('button', { name: 'Import profile' })).toBeDisabled();
@@ -1146,7 +1146,7 @@ describe('SettingsLibraryManagement', () => {
 			settings_revision: 'settings-3'
 		});
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		const profileRegion = page.getByRole('region', {
 			name: 'Saved organization profiles'
 		});
@@ -1234,7 +1234,7 @@ describe('SettingsLibraryManagement', () => {
 		prepare(settings);
 		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 
 		const control = page.getByRole('button', { name: `Cannot delete ${name}: ${reason}` });
 		await expect.element(control).toBeDisabled();
@@ -1242,7 +1242,7 @@ describe('SettingsLibraryManagement', () => {
 	});
 
 	it('resets one preset section in the draft and confirms before discarding changes', async () => {
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('button', { name: 'Edit' }).click();
 		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
 		const resetButton = profileDialog.getByRole('button', { name: 'Reset Metadata' });
@@ -1294,7 +1294,7 @@ describe('SettingsLibraryManagement', () => {
 			isError: false
 		};
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('button', { name: 'Edit' }).click();
 		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
 		await profileDialog.getByRole('button', { name: 'Reset Metadata' }).click();
@@ -1341,7 +1341,7 @@ describe('SettingsLibraryManagement', () => {
 			isError: false
 		};
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('button', { name: 'Edit' }).click();
 		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
 		await profileDialog.getByRole('button', { name: 'Reset File organization' }).click();
@@ -1398,7 +1398,7 @@ describe('SettingsLibraryManagement', () => {
 			refetch: vi.fn(async () => ({ data: activationData, error: null }))
 		};
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
 		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
 		await page.getByRole('button', { name: 'Validate and save' }).click();
@@ -1466,7 +1466,7 @@ describe('SettingsLibraryManagement', () => {
 		saved.root_assignments[0].automatic_drop_imports = true;
 		h.update.mockResolvedValue(saved);
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 
 		await page.getByRole('checkbox', { name: /Drop & Free imports/ }).click();
 		await expect.element(page.getByText(/Trigger-only changes save immediately/)).toBeVisible();
@@ -1515,7 +1515,7 @@ describe('SettingsLibraryManagement', () => {
 		];
 		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 
 		const custom = page.getByRole('checkbox', { name: /Include Custom editions/ });
 		await expect.element(custom).toBeChecked();
@@ -1553,7 +1553,7 @@ describe('SettingsLibraryManagement', () => {
 		}));
 		h.activation = { data: ready, isLoading: false, refetch };
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
 		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
 		await page.getByRole('button', { name: 'Validate and save' }).click();
@@ -1604,7 +1604,7 @@ describe('SettingsLibraryManagement', () => {
 			refetch: vi.fn()
 		};
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
 		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
 		await page.getByRole('button', { name: 'Validate and save' }).click();
@@ -1655,7 +1655,7 @@ describe('SettingsLibraryManagement', () => {
 			refetch: vi.fn()
 		};
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
 		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
 		await page.getByRole('button', { name: 'Validate and save' }).click();
@@ -1708,7 +1708,7 @@ describe('SettingsLibraryManagement', () => {
 			refetch: vi.fn()
 		};
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
 		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
 		await page.getByRole('button', { name: 'Validate and save' }).click();
@@ -1760,7 +1760,7 @@ describe('SettingsLibraryManagement', () => {
 			refetch
 		};
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
 		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
 		await page.getByRole('button', { name: 'Validate and save' }).click();
@@ -1798,7 +1798,7 @@ describe('SettingsLibraryManagement', () => {
 			refetch: vi.fn()
 		};
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
 		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
 		await page.getByRole('button', { name: 'Validate and save' }).click();
@@ -1835,7 +1835,7 @@ describe('SettingsLibraryManagement', () => {
 			refetch: vi.fn()
 		};
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
 		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
 		await page.getByRole('button', { name: 'Validate and save' }).click();
@@ -1865,7 +1865,7 @@ describe('SettingsLibraryManagement', () => {
 			refetch
 		};
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
 		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
 		await page.getByRole('button', { name: 'Validate and save' }).click();
@@ -1889,7 +1889,7 @@ describe('SettingsLibraryManagement', () => {
 		});
 		h.confirmActivationPending = true;
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
 		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
 		await page.getByRole('button', { name: 'Validate and save' }).click();
@@ -1918,7 +1918,7 @@ describe('SettingsLibraryManagement', () => {
 			existing: false
 		});
 
-		render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await page.getByText('Retention, recycle, and refresh').click();
 		await page.getByRole('button', { name: 'Purge baselines...' }).click();
 		await expect

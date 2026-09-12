@@ -113,7 +113,7 @@ beforeEach(() => {
 
 describe('LibraryManagementRunner', () => {
 	it('keeps selected releases visible across searches and removable from the scope tray', async () => {
-		render(LibraryManagementRunner, {
+		await render(LibraryManagementRunner, {
 			roots,
 			settings,
 			policyRevision: 'policy-1',
@@ -155,7 +155,7 @@ describe('LibraryManagementRunner', () => {
 				name: `Profile ${index + 1}`
 			}))
 		} as LibraryManagementSettingsResponse;
-		render(LibraryManagementRunner, {
+		await render(LibraryManagementRunner, {
 			roots,
 			settings: manyProfiles,
 			policyRevision: 'policy-1',
@@ -173,7 +173,7 @@ describe('LibraryManagementRunner', () => {
 	});
 
 	it('discloses track-to-album expansion and creates only a durable preview', async () => {
-		render(LibraryManagementRunner, {
+		await render(LibraryManagementRunner, {
 			roots,
 			settings,
 			policyRevision: 'policy-1',
@@ -215,7 +215,7 @@ describe('LibraryManagementRunner', () => {
 	});
 
 	it('labels baseline restore as broader than Undo', async () => {
-		render(LibraryManagementRunner, {
+		await render(LibraryManagementRunner, {
 			mode: 'baseline_restore',
 			roots,
 			settings,
@@ -235,7 +235,7 @@ describe('LibraryManagementRunner', () => {
 			default_profile_id: 'missing-profile',
 			profiles: []
 		} as unknown as LibraryManagementSettingsResponse;
-		render(LibraryManagementRunner, {
+		await render(LibraryManagementRunner, {
 			mode: 'baseline_restore',
 			roots,
 			settings: settingsWithoutProfile,

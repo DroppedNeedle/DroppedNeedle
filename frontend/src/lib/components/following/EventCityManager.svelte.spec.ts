@@ -41,7 +41,7 @@ describe('EventCityManager', () => {
 	});
 
 	it('renders a chip per city with its radius in miles', async () => {
-		render(EventCityManager, {
+		await render(EventCityManager, {
 			props: { cities: [LIVERPOOL, CHESTER] }
 		} as Parameters<typeof render<typeof EventCityManager>>[1]);
 		// chips carry the radius; the (closed) preset dropdowns repeat the text,
@@ -51,7 +51,7 @@ describe('EventCityManager', () => {
 	});
 
 	it('opens the city search when Add city is clicked', async () => {
-		render(EventCityManager, {
+		await render(EventCityManager, {
 			props: { cities: [LIVERPOOL] }
 		} as Parameters<typeof render<typeof EventCityManager>>[1]);
 		await page.getByRole('button', { name: 'Add city' }).click();
@@ -59,7 +59,7 @@ describe('EventCityManager', () => {
 	});
 
 	it('removing a city submits the remaining list', async () => {
-		render(EventCityManager, {
+		await render(EventCityManager, {
 			props: { cities: [LIVERPOOL, CHESTER] }
 		} as Parameters<typeof render<typeof EventCityManager>>[1]);
 		await page.getByTitle(/of Liverpool/).click();
@@ -68,7 +68,7 @@ describe('EventCityManager', () => {
 	});
 
 	it('picking a radius preset stores kilometres', async () => {
-		render(EventCityManager, {
+		await render(EventCityManager, {
 			props: { cities: [LIVERPOOL] }
 		} as Parameters<typeof render<typeof EventCityManager>>[1]);
 		await page.getByTitle(/of Liverpool/).click();

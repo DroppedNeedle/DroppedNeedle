@@ -159,13 +159,13 @@ describe('DownloadQueue.svelte', () => {
 	});
 
 	it('shows the empty turntable state when there are no downloads', async () => {
-		render(DownloadQueue);
+		await render(DownloadQueue);
 		await expect.element(page.getByText('Nothing on the turntable')).toBeVisible();
 	});
 
 	it('groups an active download under Now spinning', async () => {
 		h.items = [task({ id: 'a', album_title: 'In Rainbows', status: 'downloading' })];
-		render(DownloadQueue);
+		await render(DownloadQueue);
 		await expect.element(page.getByRole('heading', { name: /Now spinning/ })).toBeVisible();
 		await expect.element(page.getByText('In Rainbows').first()).toBeVisible();
 	});
@@ -185,7 +185,7 @@ describe('DownloadQueue.svelte', () => {
 				has_next_source: true
 			})
 		];
-		render(DownloadQueue);
+		await render(DownloadQueue);
 
 		await expect.element(page.getByText('24-bit / 48 kHz FLAC').first()).toBeVisible();
 		await expect
@@ -196,7 +196,7 @@ describe('DownloadQueue.svelte', () => {
 
 	it('shows a scheduled-retry album in the Still hunting section with its ladder and countdown', async () => {
 		h.items = [wanted()];
-		render(DownloadQueue);
+		await render(DownloadQueue);
 		await expect.element(page.getByRole('heading', { name: /Still hunting/ })).toBeVisible();
 		await expect.element(page.getByText('Kid A').first()).toBeVisible();
 		await expect.element(page.getByText(/retry 2 of 6/)).toBeVisible();
@@ -206,14 +206,14 @@ describe('DownloadQueue.svelte', () => {
 
 	it('summarises the queue in the system pulse', async () => {
 		h.items = [task({ id: 'a', status: 'downloading' }), wanted()];
-		render(DownloadQueue);
+		await render(DownloadQueue);
 		await expect.element(page.getByText('spinning').first()).toBeVisible();
 		await expect.element(page.getByText('still hunting').first()).toBeVisible();
 	});
 
 	it('collapses terminal downloads into an expandable History section', async () => {
 		h.items = [task({ id: 'c', album_title: 'Amnesiac', status: 'completed' })];
-		render(DownloadQueue);
+		await render(DownloadQueue);
 		const header = page.getByRole('button', { name: /History/ });
 		await expect.element(header).toBeVisible();
 		await expect.element(header).toHaveTextContent(/1 in your crate/);
@@ -227,11 +227,11 @@ describe('DownloadQueue.svelte', () => {
 		h.quarantine = [
 			{ id: 1, filename: '/x.flac', username: 'p', reason: 'dupe', quarantined_at: 0 }
 		];
-		render(DownloadQueue);
+		await render(DownloadQueue);
 		await expect.element(page.getByRole('button', { name: /Quarantine/ })).not.toBeInTheDocument();
 
 		h.isAdmin = true;
-		render(DownloadQueue);
+		await render(DownloadQueue);
 		await expect.element(page.getByRole('button', { name: /Quarantine/ })).toBeVisible();
 	});
 
@@ -266,7 +266,7 @@ describe('DownloadQueue.svelte', () => {
 				management_next_retry_at: null
 			}
 		];
-		render(DownloadQueue);
+		await render(DownloadQueue);
 		await expect.element(page.getByRole('heading', { name: /Couldn't verify/ })).toBeVisible();
 		await expect.element(page.getByText(/You Shook Me/).first()).toBeVisible();
 		await expect
@@ -312,7 +312,7 @@ describe('DownloadQueue.svelte', () => {
 			management_next_retry_at: null
 		}));
 
-		render(DownloadQueue);
+		await render(DownloadQueue);
 
 		await expect
 			.element(page.getByRole('heading', { name: /Organizer needs attention/ }))
@@ -384,7 +384,7 @@ describe('DownloadQueue.svelte', () => {
 				management_next_retry_at: null
 			}
 		];
-		render(DownloadQueue);
+		await render(DownloadQueue);
 		await page.getByRole('button', { name: 'Re-check all' }).click();
 		// only the verification hold is swept; the organizer hold keeps its own retry path
 		expect(h.reverifyBulkMut).toHaveBeenCalledWith({ held_ids: [1] });
@@ -421,7 +421,7 @@ describe('DownloadQueue.svelte', () => {
 				management_next_retry_at: null
 			}
 		];
-		render(DownloadQueue);
+		await render(DownloadQueue);
 		await page.getByRole('button', { name: 'Re-check', exact: true }).click();
 		expect(h.reverifySingleMut).toHaveBeenCalledWith(
 			{ id: 1, release_group_mbid: 'rg-1' },

@@ -69,7 +69,7 @@ describe('DiscoveryShelfActions', () => {
 	it('offers matching play and download actions when acquisition is configured', async () => {
 		integrationStore.setStatus({ download_client: true });
 		libraryStore.addRequested('store-requested-album');
-		render(DiscoveryShelfActions, {
+		await render(DiscoveryShelfActions, {
 			section,
 			sectionKey: 'radio_sections',
 			seed: { seed_type: 'artist', seed_id: 'seed-artist' }
@@ -90,7 +90,7 @@ describe('DiscoveryShelfActions', () => {
 	});
 
 	it('does not offer downloads without an acquisition source', async () => {
-		render(DiscoveryShelfActions, {
+		await render(DiscoveryShelfActions, {
 			section,
 			sectionKey: 'daily_mixes',
 			seed: { seed_type: 'items', items: [] }

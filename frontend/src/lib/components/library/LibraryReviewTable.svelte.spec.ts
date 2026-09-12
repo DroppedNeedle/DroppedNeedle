@@ -30,8 +30,8 @@ const item = {
 	row_revision: 1
 };
 
-function renderTable(items = [item], filtered = false, state?: string) {
-	return render(LibraryReviewTable, {
+async function renderTable(items = [item], filtered = false, state?: string) {
+	return await render(LibraryReviewTable, {
 		props: {
 			items,
 			selectedIds: [],
@@ -50,14 +50,14 @@ afterEach(async () => {
 describe('LibraryReviewTable responsive presentation', () => {
 	it('uses a readable table on desktop with explicit selection', async () => {
 		await page.viewport(1280, 720);
-		renderTable();
+		await renderTable();
 		await expect.element(page.getByRole('table')).toBeVisible();
 		await expect.element(page.getByRole('checkbox', { name: 'Select Local Album' })).toBeVisible();
 		await expect.element(page.getByText('Several equally likely releases').first()).toBeVisible();
 	});
 
 	it('uses the signed empty state for albums kept with local metadata', async () => {
-		renderTable([], false, 'keep_tagged');
+		await renderTable([], false, 'keep_tagged');
 		await expect
 			.element(page.getByText('No albums have been kept with local metadata yet.'))
 			.toBeVisible();
@@ -65,16 +65,16 @@ describe('LibraryReviewTable responsive presentation', () => {
 
 	it('switches to an equivalent review card on mobile', async () => {
 		await page.viewport(390, 760);
-		renderTable();
+		await renderTable();
 		await expect.element(page.getByRole('heading', { name: 'Local Album' })).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Review' })).toBeVisible();
 		await expect.element(page.getByRole('checkbox', { name: 'Select' })).toBeVisible();
 	});
 
 	it('uses distinct active and filtered empty-state copy', async () => {
-		renderTable([], false);
+		await renderTable([], false);
 		await expect.element(page.getByText('No albums need identification review.')).toBeVisible();
-		renderTable([], true);
+		await renderTable([], true);
 		await expect
 			.element(page.getByText('No review items match these filters.').last())
 			.toBeVisible();

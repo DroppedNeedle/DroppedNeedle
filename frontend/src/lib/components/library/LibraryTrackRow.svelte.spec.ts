@@ -34,25 +34,25 @@ const meta: LibraryFileMeta = {
 	below_cutoff: false
 };
 
-function renderComponent() {
-	return render(LibraryTrackRow, {
+async function renderComponent() {
+	return await render(LibraryTrackRow, {
 		props: { meta }
 	} as Parameters<typeof render<typeof LibraryTrackRow>>[1]);
 }
 
 describe('LibraryTrackRow.svelte', () => {
 	it('shows the stable local track ID without exposing a path', async () => {
-		renderComponent();
+		await renderComponent();
 		await expect.element(page.getByText(meta.id)).toBeInTheDocument();
 	});
 
 	it('shows the recording MBID', async () => {
-		renderComponent();
+		await renderComponent();
 		await expect.element(page.getByText('rec-airbag-0001')).toBeInTheDocument();
 	});
 
 	it('does not show the admin Edit tags button for non-admins', async () => {
-		renderComponent();
+		await renderComponent();
 		await expect.element(page.getByText('Edit tags')).not.toBeInTheDocument();
 	});
 });

@@ -21,8 +21,8 @@ const base = {
 	artistName: 'Radiohead',
 	albumMbid: 'rg'
 };
-function renderButton(overrides: Record<string, unknown> = {}) {
-	return render(TrackRequestButton, { props: { ...base, ...overrides } } as Parameters<
+async function renderButton(overrides: Record<string, unknown> = {}) {
+	return await render(TrackRequestButton, { props: { ...base, ...overrides } } as Parameters<
 		typeof render<typeof TrackRequestButton>
 	>[1]);
 }
@@ -34,18 +34,18 @@ describe('TrackRequestButton.svelte', () => {
 	});
 
 	it('renders an accessible per-track request button', async () => {
-		renderButton();
+		await renderButton();
 		await expect.element(page.getByRole('button', { name: 'Request this track' })).toBeVisible();
 	});
 
 	it('fires requestTrack on click', async () => {
-		renderButton();
+		await renderButton();
 		await page.getByRole('button', { name: 'Request this track' }).click();
 		expect(h.mutate).toHaveBeenCalled();
 	});
 
 	it('sends the displayed selected edition as release_id in the exact-track mutation', async () => {
-		renderButton({ releaseMbid: 'release-20' });
+		await renderButton({ releaseMbid: 'release-20' });
 		await page.getByRole('button', { name: 'Request this track' }).click();
 		expect(h.mutate).toHaveBeenCalledTimes(1);
 		expect(h.mutate.mock.calls[0][0]).toMatchObject({
@@ -56,7 +56,7 @@ describe('TrackRequestButton.svelte', () => {
 	});
 
 	it('keeps release_id null when no edition is selected', async () => {
-		renderButton();
+		await renderButton();
 		await page.getByRole('button', { name: 'Request this track' }).click();
 		expect(h.mutate).toHaveBeenCalledTimes(1);
 		expect(h.mutate.mock.calls[0][0].release_id).toBeNull();

@@ -182,7 +182,7 @@ beforeEach(() => {
 
 describe('LibraryManagementIdentityReadiness', () => {
 	it('explains the exact-edition prerequisite before starting a read-only check', async () => {
-		render(LibraryManagementIdentityReadiness, { roots });
+		await render(LibraryManagementIdentityReadiness, { roots });
 
 		await expect.element(page.getByText('Need exact track maps')).toBeVisible();
 		await expect.element(page.getByText('Need an exact edition', { exact: true })).toBeVisible();
@@ -202,7 +202,7 @@ describe('LibraryManagementIdentityReadiness', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryManagementIdentityReadiness, { roots });
+		await render(LibraryManagementIdentityReadiness, { roots });
 
 		await expect.element(page.getByText('Juturna')).toBeVisible();
 		await expect.element(page.getByText('Circa Survive')).toBeVisible();
@@ -235,7 +235,7 @@ describe('LibraryManagementIdentityReadiness', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryManagementIdentityReadiness, { roots });
+		await render(LibraryManagementIdentityReadiness, { roots });
 
 		await page.getByRole('button', { name: 'Dismiss report' }).click();
 		await expect.element(page.getByRole('heading', { name: 'Dismiss this report?' })).toHaveFocus();
@@ -257,7 +257,7 @@ describe('LibraryManagementIdentityReadiness', () => {
 			isError: false
 		};
 		h.findings.data.pages[0].items[0].reason_code = 'RELEASE_TYPE_REQUIRES_CONFIRMATION';
-		render(LibraryManagementIdentityReadiness, { roots });
+		await render(LibraryManagementIdentityReadiness, { roots });
 		await page.getByRole('button', { name: /Needs review/ }).click();
 		await expect.element(page.getByRole('button', { name: 'Re-identify' })).toBeVisible();
 		await expect
@@ -275,7 +275,7 @@ describe('LibraryManagementIdentityReadiness', () => {
 		};
 		h.findings.data.pages[0].refresh_required = true;
 		h.findings.data.pages[0].items[0].reason_code = 'UNSAFE_RELEASE_TYPE';
-		render(LibraryManagementIdentityReadiness, { roots });
+		await render(LibraryManagementIdentityReadiness, { roots });
 
 		await expect
 			.element(page.getByText('These checks used older rules. Run a fresh identity check.'))
@@ -318,7 +318,7 @@ describe('LibraryManagementIdentityReadiness', () => {
 				status: 'Official'
 			}
 		};
-		render(LibraryManagementIdentityReadiness, { roots });
+		await render(LibraryManagementIdentityReadiness, { roots });
 
 		await page.getByRole('button', { name: /Choose edition/ }).click();
 		await expect.element(page.getByText(/Suggested: Juturna \(Deluxe\)/)).toBeVisible();
@@ -341,7 +341,7 @@ describe('LibraryManagementIdentityReadiness', () => {
 			exact_release_suggested: 2,
 			needs_review: 1
 		};
-		render(LibraryManagementIdentityReadiness, { roots });
+		await render(LibraryManagementIdentityReadiness, { roots });
 
 		await page.getByRole('button', { name: 'Accept editions (2)...' }).click();
 		await expect
@@ -366,7 +366,7 @@ describe('LibraryManagementIdentityReadiness', () => {
 			exact_release_suggested: 2,
 			needs_review: 1
 		};
-		render(LibraryManagementIdentityReadiness, { roots });
+		await render(LibraryManagementIdentityReadiness, { roots });
 
 		await page.getByRole('button', { name: 'Accept editions (2)...' }).click();
 		await page.getByRole('button', { name: 'Accept identities' }).click();
@@ -383,7 +383,7 @@ describe('LibraryManagementIdentityReadiness', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryManagementIdentityReadiness, { roots });
+		await render(LibraryManagementIdentityReadiness, { roots });
 
 		await expect.element(page.getByRole('button', { name: 'Accept mappings...' })).toBeVisible();
 		await expect
@@ -424,7 +424,7 @@ describe('LibraryManagementIdentityReadiness', () => {
 			updated_at: 10,
 			row_revision: 3
 		};
-		render(LibraryManagementIdentityReadiness, { roots });
+		await render(LibraryManagementIdentityReadiness, { roots });
 
 		const tab = page.getByRole('button', { name: /Auto-accepted/ });
 		await expect.element(tab).toHaveTextContent('2');
@@ -463,7 +463,7 @@ describe('LibraryManagementIdentityReadiness', () => {
 			updated_at: 10,
 			row_revision: 3
 		};
-		render(LibraryManagementIdentityReadiness, { roots });
+		await render(LibraryManagementIdentityReadiness, { roots });
 		await page.getByRole('button', { name: /Auto-accepted/ }).click();
 
 		await expect.element(page.getByText('Edition accepted automatically')).toBeVisible();

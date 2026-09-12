@@ -5,7 +5,7 @@ import GenreGrid from './GenreGrid.svelte';
 
 describe('GenreGrid.svelte', () => {
 	it('uses the genre as the only accessible link name and preserves keyboard focus', async () => {
-		render(GenreGrid, {
+		await render(GenreGrid, {
 			props: {
 				title: 'Browse Genres',
 				genres: [{ name: 'Electronic', listen_count: 1200 }],

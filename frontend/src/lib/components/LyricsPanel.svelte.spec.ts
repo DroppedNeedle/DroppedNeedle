@@ -6,7 +6,7 @@ import LyricsPanel from './LyricsPanel.svelte';
 
 describe('LyricsPanel', () => {
 	it('highlights the synchronized line at the current playback time', async () => {
-		render(LyricsPanel, {
+		await render(LyricsPanel, {
 			open: true,
 			lyricsText: 'First line\nSecond line\nThird line',
 			lines: [
@@ -28,7 +28,7 @@ describe('LyricsPanel', () => {
 	});
 
 	it('renders plain lyrics when no timed lines are available', async () => {
-		render(LyricsPanel, {
+		await render(LyricsPanel, {
 			open: true,
 			lyricsText: 'Plain first line\nPlain second line',
 			lines: [

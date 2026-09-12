@@ -103,7 +103,7 @@ beforeEach(() => {
 
 describe('SettingsUsers password recovery', () => {
 	it('creates and displays a one-time code for a local account', async () => {
-		render(SettingsUsers);
+		await render(SettingsUsers);
 		await expect.element(page.getByText('Local Listener')).toBeVisible();
 
 		await page.getByLabelText('Create recovery code for Local Listener').click();
@@ -118,7 +118,7 @@ describe('SettingsUsers password recovery', () => {
 	});
 
 	it('disables DroppedNeedle recovery for an SSO-only account', async () => {
-		render(SettingsUsers);
+		await render(SettingsUsers);
 		await expect.element(page.getByText('SSO Listener')).toBeVisible();
 		await expect
 			.element(page.getByLabelText('Create recovery code for SSO Listener'))
@@ -139,7 +139,7 @@ describe('SettingsUsers password recovery', () => {
 				expires_at: '2026-07-17T17:00:00Z'
 			});
 
-		render(SettingsUsers);
+		await render(SettingsUsers);
 		await expect.element(page.getByText('Local Listener')).toBeVisible();
 		await page.getByLabelText('Create recovery code for Local Listener').click();
 		await page.getByRole('button', { name: 'Create code' }).click();

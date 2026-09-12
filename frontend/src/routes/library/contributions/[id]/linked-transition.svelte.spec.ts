@@ -140,7 +140,7 @@ beforeEach(async () => {
 describe('contribution linked-transition catalog guard', () => {
 	it('sweeps the catalog exactly once when polling observes the link landing', async () => {
 		h.get.mockResolvedValue(contribution('verifying', 1));
-		const screen = render(LinkedTransitionHarness, {
+		const screen = await render(LinkedTransitionHarness, {
 			props: { data: { contributionId: 'contribution-1', primarySource: 'listenbrainz' } }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -158,19 +158,19 @@ describe('contribution linked-transition catalog guard', () => {
 		await expect.element(page.getByText('linked', { exact: true })).toBeVisible();
 		expect(h.invalidateCatalog).toHaveBeenCalledOnce();
 
-		screen.unmount();
+		await screen.unmount();
 	});
 
 	it('never sweeps on revisits of an already-linked contribution', async () => {
 		h.get.mockResolvedValue(contribution('linked', 5));
-		const first = render(LinkedTransitionHarness, {
+		const first = await render(LinkedTransitionHarness, {
 			props: { data: { contributionId: 'contribution-1', primarySource: 'listenbrainz' } }
 		} as unknown as Parameters<typeof render>[1]);
 		await expect.element(page.getByText('linked', { exact: true })).toBeVisible();
 
 		// leave and come back - the repeat-visit pathology must stay at zero sweeps
-		first.unmount();
-		render(LinkedTransitionHarness, {
+		await first.unmount();
+		await render(LinkedTransitionHarness, {
 			props: { data: { contributionId: 'contribution-1', primarySource: 'listenbrainz' } }
 		} as unknown as Parameters<typeof render>[1]);
 		await expect.element(page.getByText('linked', { exact: true })).toBeVisible();

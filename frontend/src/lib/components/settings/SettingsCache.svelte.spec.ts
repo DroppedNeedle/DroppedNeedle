@@ -55,7 +55,7 @@ describe('SettingsCache', () => {
 	it('renders an admin-required warning instead of stats when the endpoint answers 403', async () => {
 		stubStatsFetch(403);
 
-		render(SettingsCache);
+		await render(SettingsCache);
 
 		await expect.element(page.getByText(/admin access is required/i)).toBeVisible();
 		const alerts = await page.getByRole('alert').all();
@@ -66,7 +66,7 @@ describe('SettingsCache', () => {
 	it('renders the same admin-required warning on 401', async () => {
 		stubStatsFetch(401);
 
-		render(SettingsCache);
+		await render(SettingsCache);
 
 		await expect.element(page.getByText(/admin access is required/i)).toBeVisible();
 		const alerts = await page.getByRole('alert').all();
@@ -76,7 +76,7 @@ describe('SettingsCache', () => {
 	it('labels the destructive and metadata-scoped clears honestly using live counts', async () => {
 		stubStatsFetch(200);
 
-		render(SettingsCache);
+		await render(SettingsCache);
 
 		await expect
 			.element(page.getByRole('button', { name: 'Full wipe - also deletes 1550 cover files' }))
@@ -90,7 +90,7 @@ describe('SettingsCache', () => {
 		stubStatsFetch(200);
 		const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
 
-		render(SettingsCache);
+		await render(SettingsCache);
 
 		await page.getByRole('button', { name: /Full wipe/i }).click();
 
@@ -121,7 +121,7 @@ describe('SettingsCache', () => {
 				)
 		}));
 		globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
-		render(SettingsCache);
+		await render(SettingsCache);
 
 		await page.getByRole('button', { name: 'Metadata only - covers preserved' }).click();
 

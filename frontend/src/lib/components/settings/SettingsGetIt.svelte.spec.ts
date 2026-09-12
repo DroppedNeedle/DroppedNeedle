@@ -29,7 +29,7 @@ describe('SettingsGetIt', () => {
 	});
 
 	it('keeps the regional storefront setting', async () => {
-		render(SettingsGetIt);
+		await render(SettingsGetIt);
 
 		await expect.element(page.getByRole('combobox', { name: 'Store region' })).toHaveValue('GB');
 		await page.getByRole('button', { name: 'Save' }).click();
@@ -37,7 +37,7 @@ describe('SettingsGetIt', () => {
 	});
 
 	it('offers direct support links without a monetization setting', async () => {
-		render(SettingsGetIt);
+		await render(SettingsGetIt);
 
 		await expect
 			.element(page.getByRole('link', { name: 'Ko-fi' }))

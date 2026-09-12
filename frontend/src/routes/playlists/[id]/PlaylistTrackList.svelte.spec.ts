@@ -51,7 +51,7 @@ function makeTrack(overrides: Partial<PlaylistTrack> = {}): PlaylistTrack {
 	};
 }
 
-function renderList() {
+async function renderList() {
 	const playlist: PlaylistDetail = {
 		id: 'pl-1',
 		name: 'Link Test Playlist',
@@ -90,14 +90,14 @@ function renderList() {
 			})
 		]
 	};
-	return render(PlaylistTrackList, {
+	return await render(PlaylistTrackList, {
 		props: { playlist, ontrackchange: vi.fn(), readonly: true }
 	} as Parameters<typeof render<typeof PlaylistTrackList>>[1]);
 }
 
 describe('PlaylistTrackList album links', () => {
 	it('links track title and album name for a valid MBID album_id', async () => {
-		renderList();
+		await renderList();
 		await expect
 			.element(page.getByRole('link', { name: 'Mbid Track' }))
 			.toHaveAttribute('href', `/album/${MBID}`);
@@ -107,14 +107,14 @@ describe('PlaylistTrackList album links', () => {
 	});
 
 	it('renders plain text with no album link for a 32-hex GUID album_id', async () => {
-		renderList();
+		await renderList();
 		await expect.element(page.getByText('Guid Track')).toBeVisible();
 		await expect.element(page.getByRole('link', { name: 'Guid Track' })).not.toBeInTheDocument();
 		await expect.element(page.getByRole('link', { name: 'Guid Album' })).not.toBeInTheDocument();
 	});
 
 	it('renders plain text with no album link when album_id is null', async () => {
-		renderList();
+		await renderList();
 		await expect.element(page.getByText('Unlinked Track')).toBeVisible();
 		await expect
 			.element(page.getByRole('link', { name: 'Unlinked Track' }))

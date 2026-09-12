@@ -85,7 +85,7 @@ describe('SidebarServices', () => {
 	it('renders a link for a connected service', async () => {
 		integrationState.jellyfin = true;
 		prefsState.data = sidebarPrefs([]);
-		render(SidebarServices);
+		await render(SidebarServices);
 
 		const link = page.getByRole('link', { name: 'Jellyfin' });
 		await expect.element(link).toBeInTheDocument();
@@ -95,7 +95,7 @@ describe('SidebarServices', () => {
 		integrationState.jellyfin = true;
 		integrationState.navidrome = true;
 		prefsState.data = sidebarPrefs(['jellyfin']);
-		render(SidebarServices);
+		await render(SidebarServices);
 
 		await expect.element(page.getByRole('link', { name: 'Navidrome' })).toBeInTheDocument();
 		await expect.element(page.getByText('Jellyfin')).not.toBeInTheDocument();
@@ -104,7 +104,7 @@ describe('SidebarServices', () => {
 	it('hides the admin connect hint for a disabled service', async () => {
 		authState.isAdmin = true;
 		prefsState.data = sidebarPrefs(['youtube']);
-		render(SidebarServices);
+		await render(SidebarServices);
 
 		// other hints remain, the hidden one is gone entirely
 		await expect.element(page.getByText('Plex')).toBeInTheDocument();
@@ -115,14 +115,14 @@ describe('SidebarServices', () => {
 		integrationState.plex = true;
 		prefsState.data = undefined;
 		prefsState.isLoading = true;
-		render(SidebarServices);
+		await render(SidebarServices);
 
 		await expect.element(page.getByRole('link', { name: 'Plex' })).toBeInTheDocument();
 	});
 
 	it('shows no connect hints to non-admins', async () => {
 		prefsState.data = sidebarPrefs([]);
-		render(SidebarServices);
+		await render(SidebarServices);
 
 		await expect.element(page.getByText('YouTube')).not.toBeInTheDocument();
 		await expect.element(page.getByText('Jellyfin')).not.toBeInTheDocument();

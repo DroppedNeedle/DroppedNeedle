@@ -34,7 +34,7 @@ describe('password recovery page', () => {
 	});
 
 	it('explains both administrator-issued and server-owner recovery', async () => {
-		render(RecoveryPage);
+		await render(RecoveryPage);
 		await expect
 			.element(page.getByRole('heading', { name: 'Recover your local account' }))
 			.toBeVisible();
@@ -47,7 +47,7 @@ describe('password recovery page', () => {
 	});
 
 	it('builds a safe host command from the entered username', async () => {
-		render(RecoveryPage);
+		await render(RecoveryPage);
 		await page.getByText('Recover as server owner').click();
 		await expect.element(page.getByLabelText('Copy recovery command')).toBeDisabled();
 		await page.getByLabelText('Username').fill('Alice.Admin');
@@ -57,7 +57,7 @@ describe('password recovery page', () => {
 	});
 
 	it('submits the username, recovery code, and new password', async () => {
-		render(RecoveryPage);
+		await render(RecoveryPage);
 		await page.getByLabelText('Username').fill('Alice');
 		await page.getByLabelText('Recovery code').fill('AAAA-BBBB-CCCC-DDDD-EEEE');
 		await page.getByLabelText('New password').fill('a new secure password');
@@ -74,7 +74,7 @@ describe('password recovery page', () => {
 	});
 
 	it('rejects mismatched passwords before calling the server', async () => {
-		render(RecoveryPage);
+		await render(RecoveryPage);
 		await page.getByLabelText('Username').fill('Alice');
 		await page.getByLabelText('Recovery code').fill('AAAA-BBBB-CCCC-DDDD-EEEE');
 		await page.getByLabelText('New password').fill('a new secure password');
@@ -86,7 +86,7 @@ describe('password recovery page', () => {
 	});
 
 	it('rejects passwords over the bcrypt byte limit before calling the server', async () => {
-		render(RecoveryPage);
+		await render(RecoveryPage);
 		await page.getByLabelText('Username').fill('Alice');
 		await page.getByLabelText('Recovery code').fill('AAAA-BBBB-CCCC-DDDD-EEEE');
 		await page.getByLabelText('New password').fill('é'.repeat(37));

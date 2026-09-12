@@ -9,8 +9,8 @@ const sourceIcon = createRawSnippet(() => ({
 	render: () => '<span data-testid="source-icon"></span>'
 }));
 
-function renderBanner(overrides: Record<string, unknown> = {}) {
-	return render(PlaylistImportBanner, {
+async function renderBanner(overrides: Record<string, unknown> = {}) {
+	return await render(PlaylistImportBanner, {
 		props: {
 			sourceLabel: 'Jellyfin',
 			playlistsHref: '/library/jellyfin/playlists',
@@ -22,7 +22,7 @@ function renderBanner(overrides: Record<string, unknown> = {}) {
 
 describe('PlaylistImportBanner.svelte', () => {
 	it('always explains the unlinked shared-account state', async () => {
-		renderBanner({ accountMode: 'shared', playlists: [] });
+		await renderBanner({ accountMode: 'shared', playlists: [] });
 
 		await expect
 			.element(page.getByText('No playlists found on the shared Jellyfin account'))
@@ -34,7 +34,7 @@ describe('PlaylistImportBanner.svelte', () => {
 	});
 
 	it('shows a connected empty state instead of disappearing', async () => {
-		renderBanner({ accountMode: 'linked', accountLabel: 'alice', playlists: [] });
+		await renderBanner({ accountMode: 'linked', accountLabel: 'alice', playlists: [] });
 
 		await expect.element(page.getByText('No Jellyfin playlists found for alice')).toBeVisible();
 		await expect
@@ -44,14 +44,14 @@ describe('PlaylistImportBanner.svelte', () => {
 	});
 
 	it('keeps its footprint while playlist discovery is loading', async () => {
-		renderBanner({ loading: true });
+		await renderBanner({ loading: true });
 
 		await expect.element(page.getByText('Jellyfin')).toBeVisible();
 		await expect.element(page.getByRole('group')).toBeVisible();
 	});
 
 	it('shows relink guidance for a stale personal credential', async () => {
-		renderBanner({
+		await renderBanner({
 			accountMode: 'linked',
 			errorCode: 'MEDIA_ACCOUNT_RELINK_REQUIRED'
 		});
@@ -64,7 +64,7 @@ describe('PlaylistImportBanner.svelte', () => {
 
 	it('keeps a visible retry state for generic failures', async () => {
 		const onretry = vi.fn();
-		renderBanner({ errorCode: 'EXTERNAL_SERVICE_ERROR', onretry });
+		await renderBanner({ errorCode: 'EXTERNAL_SERVICE_ERROR', onretry });
 
 		await expect.element(page.getByText("Couldn't check Jellyfin playlists")).toBeVisible();
 		await page.getByRole('button', { name: 'Check again' }).click();
@@ -72,7 +72,7 @@ describe('PlaylistImportBanner.svelte', () => {
 	});
 
 	it('reports import progress for accessible playlists', async () => {
-		renderBanner({
+		await renderBanner({
 			accountMode: 'linked',
 			accountLabel: 'alice',
 			playlists: [
@@ -102,7 +102,7 @@ describe('PlaylistImportBanner.svelte', () => {
 	});
 
 	it('keeps a completed banner after every playlist is imported', async () => {
-		renderBanner({
+		await renderBanner({
 			accountMode: 'linked',
 			accountLabel: 'alice',
 			playlists: [

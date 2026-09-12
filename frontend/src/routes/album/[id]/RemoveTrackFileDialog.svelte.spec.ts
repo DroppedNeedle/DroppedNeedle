@@ -6,7 +6,7 @@ import RemoveTrackFileDialog from './RemoveTrackFileDialog.svelte';
 describe('RemoveTrackFileDialog', () => {
 	it('confirms the removal with the captured track title', async () => {
 		const onconfirm = vi.fn();
-		const screen = render(RemoveTrackFileDialog, {
+		const screen = await render(RemoveTrackFileDialog, {
 			trackTitle: 'Aria',
 			removing: false,
 			error: null,
@@ -21,7 +21,7 @@ describe('RemoveTrackFileDialog', () => {
 	});
 
 	it('renders the failure as an alert and blocks cancel while removing', async () => {
-		const screen = render(RemoveTrackFileDialog, {
+		const screen = await render(RemoveTrackFileDialog, {
 			trackTitle: 'Aria',
 			removing: true,
 			error: "Couldn't remove this file",

@@ -85,7 +85,7 @@ function coverUrls(container: HTMLElement): string {
 
 describe('library All Tracks artwork wiring (issue 377)', () => {
 	it('requests the provider release-group for identified tracks, never the local album id', async () => {
-		const { container } = render(TracksPage);
+		const { container } = await render(TracksPage);
 
 		await expect.element(page.getByText('Identified Track')).toBeVisible();
 		await expect
@@ -98,7 +98,7 @@ describe('library All Tracks artwork wiring (issue 377)', () => {
 	});
 
 	it('keeps local-only tracks on the placeholder without requesting the local id', async () => {
-		const { container } = render(TracksPage);
+		const { container } = await render(TracksPage);
 
 		await expect.element(page.getByText('Local Only Track')).toBeVisible();
 		await expect.element(page.getByAltText('Local Only Album')).not.toBeInTheDocument();

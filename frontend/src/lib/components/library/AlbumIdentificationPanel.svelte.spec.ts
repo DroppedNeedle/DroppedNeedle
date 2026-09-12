@@ -272,7 +272,7 @@ beforeEach(() => {
 
 describe('AlbumIdentificationPanel', () => {
 	it('shows an accessible management-readiness warning on its trigger', async () => {
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album, attentionLabel: 'Exact track map required' }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -285,7 +285,7 @@ describe('AlbumIdentificationPanel', () => {
 	});
 
 	it('starts a durable one-off Local metadata job and keeps it across closure', async () => {
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 		const opener = page.getByRole('button', { name: 'Re-identify…' });
@@ -328,7 +328,7 @@ describe('AlbumIdentificationPanel', () => {
 
 	it('checks only the exact MusicBrainz edition supplied by an administrator', async () => {
 		const releaseMbid = '428b6417-8a4d-4a5b-b1a3-8762002167a8';
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -354,7 +354,7 @@ describe('AlbumIdentificationPanel', () => {
 		album.identification_status = 'identified';
 		album.management_identity_readiness = 'ready';
 		album.mapped_track_count = 2;
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -371,7 +371,7 @@ describe('AlbumIdentificationPanel', () => {
 	});
 
 	it('keeps malformed exact release IDs on the client', async () => {
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -391,7 +391,7 @@ describe('AlbumIdentificationPanel', () => {
 	it('recovers a saved job, projects candidates, and sends the current revision', async () => {
 		sessionStorage.setItem('droppedneedle:album-identification:admin-1:album-1', 'job-1');
 		h.jobs = { 'job-1': candidateJob };
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 		await page.getByRole('button', { name: 'Re-identify…' }).click();
@@ -415,7 +415,7 @@ describe('AlbumIdentificationPanel', () => {
 		accepted.selected_reidentification_candidate_key = 'rg-1:release-1';
 		sessionStorage.setItem('droppedneedle:album-identification:admin-1:album-1', 'job-1');
 		h.jobs = { 'job-1': accepted };
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -438,7 +438,7 @@ describe('AlbumIdentificationPanel', () => {
 		});
 		sessionStorage.setItem('droppedneedle:album-identification:admin-1:album-1', 'job-1');
 		h.jobs = { 'job-1': noCandidates };
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -479,7 +479,7 @@ describe('AlbumIdentificationPanel', () => {
 		multipleCandidates.reidentification_candidates.push(alternate);
 		sessionStorage.setItem('droppedneedle:album-identification:admin-1:album-1', 'job-1');
 		h.jobs = { 'job-1': multipleCandidates };
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -514,7 +514,7 @@ describe('AlbumIdentificationPanel', () => {
 		}));
 		sessionStorage.setItem('droppedneedle:album-identification:admin-1:album-1', 'job-1');
 		h.jobs = { 'job-1': tagConflict };
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -537,7 +537,7 @@ describe('AlbumIdentificationPanel', () => {
 		sessionStorage.setItem('droppedneedle:album-identification:admin-1:album-1', 'job-1');
 		h.jobs = { 'job-1': candidateJob };
 		h.start.mockResolvedValue(job({ id: 'job-2', state: 'queued' }));
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -559,7 +559,7 @@ describe('AlbumIdentificationPanel', () => {
 	it('can discard a ready evidence check', async () => {
 		sessionStorage.setItem('droppedneedle:album-identification:admin-1:album-1', 'job-1');
 		h.jobs = { 'job-1': candidateJob };
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -572,7 +572,7 @@ describe('AlbumIdentificationPanel', () => {
 	it('controls the persisted job without a fixed-delay refresh', async () => {
 		sessionStorage.setItem('droppedneedle:album-identification:admin-1:album-1', 'job-1');
 		h.jobs = { 'job-1': job() };
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 		await page.getByRole('button', { name: 'Re-identify…' }).click();
@@ -624,7 +624,7 @@ describe('AlbumIdentificationPanel', () => {
 		unsafe.reidentification_candidates[0].evidence.unmatched_expected_tracks = ['Missing Song'];
 		sessionStorage.setItem('droppedneedle:album-identification:admin-1:album-1', 'job-1');
 		h.jobs = { 'job-1': unsafe };
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -654,7 +654,7 @@ describe('AlbumIdentificationPanel', () => {
 		contradictory.reidentification_candidates[0].evidence.track_evidence = [];
 		sessionStorage.setItem('droppedneedle:album-identification:admin-1:album-1', 'job-1');
 		h.jobs = { 'job-1': contradictory };
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -685,7 +685,7 @@ describe('AlbumIdentificationPanel', () => {
 			'droppedneedle:edition-conversion-preflight:admin-1:conversion-1',
 			'sealed-token'
 		);
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -709,7 +709,7 @@ describe('AlbumIdentificationPanel', () => {
 		h.selectError = new ApiError(409, 'Backend detail', 'STALE_REVISION');
 		sessionStorage.setItem('droppedneedle:album-identification:admin-1:album-1', 'job-1');
 		h.jobs = { 'job-1': unsafe };
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -731,7 +731,7 @@ describe('GH-286: attached identity passes the release MBID', () => {
 			...album,
 			musicbrainz_release_id: '11111111-2222-4333-8444-555555555555'
 		};
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album: attached }
 		} as unknown as Parameters<typeof render>[1]);
 		await page.getByRole('button', { name: 'Re-identify…' }).click();
@@ -746,7 +746,7 @@ describe('GH-286: attached identity passes the release MBID', () => {
 
 	it('Start identification without an attached release sends null', async () => {
 		h.start.mockClear();
-		render(AlbumIdentificationPanel, {
+		await render(AlbumIdentificationPanel, {
 			props: { album }
 		} as unknown as Parameters<typeof render>[1]);
 		await page.getByRole('button', { name: 'Re-identify…' }).click();

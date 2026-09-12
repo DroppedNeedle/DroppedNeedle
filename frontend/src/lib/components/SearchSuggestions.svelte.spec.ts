@@ -73,11 +73,11 @@ function mockFetchError() {
 	});
 }
 
-function renderComponent(props: Record<string, unknown> = {}) {
+async function renderComponent(props: Record<string, unknown> = {}) {
 	const options = {
 		props: { query: '', onSearch: vi.fn(), onSelect: vi.fn(), ...props }
 	};
-	return render(
+	return await render(
 		SearchSuggestionsTestHarness,
 		options as unknown as Parameters<typeof render<typeof SearchSuggestionsTestHarness>>[1]
 	);
@@ -110,14 +110,14 @@ describe('SearchSuggestions.svelte', () => {
 	});
 
 	it('should render the search input', async () => {
-		renderComponent();
+		await renderComponent();
 
 		const input = page.getByRole('searchbox');
 		await expect.element(input).toBeInTheDocument();
 	});
 
 	it('should not show dropdown for short input', async () => {
-		renderComponent({ query: 'a' });
+		await renderComponent({ query: 'a' });
 
 		const listbox = page.getByRole('listbox');
 		await expect.element(listbox).not.toBeInTheDocument();
@@ -126,7 +126,7 @@ describe('SearchSuggestions.svelte', () => {
 	it('should show dropdown with suggestions after typing', async () => {
 		globalThis.fetch = mockFetchSuccess();
 
-		renderComponent();
+		await renderComponent();
 
 		const input = page.getByRole('searchbox');
 		await input.fill('mus');
@@ -143,7 +143,7 @@ describe('SearchSuggestions.svelte', () => {
 		globalThis.fetch = mockFetchSuccess();
 
 		const onSelect = vi.fn();
-		renderComponent({ onSelect });
+		await renderComponent({ onSelect });
 
 		const input = page.getByRole('searchbox');
 		await input.fill('mus');
@@ -157,7 +157,7 @@ describe('SearchSuggestions.svelte', () => {
 
 	it('should call onSearch on form submit (Enter)', async () => {
 		const onSearch = vi.fn();
-		renderComponent({ query: 'test', onSearch });
+		await renderComponent({ query: 'test', onSearch });
 
 		const input = page.getByRole('searchbox');
 		await input.click();
@@ -169,7 +169,7 @@ describe('SearchSuggestions.svelte', () => {
 	it('should hide dropdown on Escape', async () => {
 		globalThis.fetch = mockFetchSuccess();
 
-		renderComponent();
+		await renderComponent();
 
 		const input = page.getByRole('searchbox');
 		await input.fill('mus');
@@ -187,7 +187,7 @@ describe('SearchSuggestions.svelte', () => {
 		const fetchSpy = mockFetchError();
 		globalThis.fetch = fetchSpy;
 
-		renderComponent();
+		await renderComponent();
 
 		const input = page.getByRole('searchbox');
 		await input.fill('mus');
@@ -227,7 +227,7 @@ describe('SearchSuggestions.svelte', () => {
 		});
 		globalThis.fetch = fetchSpy;
 
-		renderComponent();
+		await renderComponent();
 		const input = page.getByRole('searchbox');
 		await input.fill('mus');
 		await vi.advanceTimersByTimeAsync(400);
@@ -257,7 +257,7 @@ describe('SearchSuggestions.svelte', () => {
 			return Promise.resolve(makeResponse({ items: [], total: 0 }));
 		});
 		globalThis.fetch = fetchSpy;
-		renderComponent();
+		await renderComponent();
 		const input = page.getByRole('searchbox');
 
 		await input.fill('mus');
@@ -274,7 +274,7 @@ describe('SearchSuggestions.svelte', () => {
 		globalThis.fetch = mockFetchSuccess();
 
 		const onSearch = vi.fn();
-		renderComponent({ onSearch });
+		await renderComponent({ onSearch });
 
 		const input = page.getByRole('searchbox');
 		await input.fill('mus');
@@ -291,7 +291,7 @@ describe('SearchSuggestions.svelte', () => {
 		const fetchSpy = mockFetchSuccess();
 		globalThis.fetch = fetchSpy;
 
-		renderComponent();
+		await renderComponent();
 
 		const input = page.getByRole('searchbox');
 		await input.fill('m');
@@ -312,7 +312,7 @@ describe('SearchSuggestions.svelte', () => {
 	it('should use custom id for listbox', async () => {
 		globalThis.fetch = mockFetchSuccess();
 
-		renderComponent({ id: 'custom-test' });
+		await renderComponent({ id: 'custom-test' });
 
 		const input = page.getByRole('searchbox');
 		await input.fill('mus');
@@ -377,7 +377,7 @@ describe('SearchSuggestions.svelte', () => {
 			);
 		});
 
-		renderComponent();
+		await renderComponent();
 
 		const input = page.getByRole('searchbox');
 
@@ -399,7 +399,7 @@ describe('SearchSuggestions.svelte', () => {
 	it('should render combobox with correct ARIA attributes', async () => {
 		globalThis.fetch = mockFetchSuccess();
 
-		renderComponent({ id: 'aria-test' });
+		await renderComponent({ id: 'aria-test' });
 
 		const combobox = page.getByRole('combobox');
 		await expect.element(combobox).toHaveAttribute('aria-haspopup', 'listbox');
@@ -421,7 +421,7 @@ describe('SearchSuggestions.svelte', () => {
 	it('should hide dropdown on click outside', async () => {
 		globalThis.fetch = mockFetchSuccess();
 
-		renderComponent();
+		await renderComponent();
 
 		const input = page.getByRole('searchbox');
 		await input.fill('mus');

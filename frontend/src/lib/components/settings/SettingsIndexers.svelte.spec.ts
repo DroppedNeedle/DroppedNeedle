@@ -52,7 +52,7 @@ import SettingsIndexers from './SettingsIndexers.svelte';
 describe('SettingsIndexers.svelte', () => {
 	it('shows the empty state teaching bring-your-own when no indexers exist', async () => {
 		indexersData = [];
-		render(SettingsIndexers);
+		await render(SettingsIndexers);
 		await expect.element(page.getByText('No indexers yet')).toBeInTheDocument();
 		// "bring your own" only appears in the empty state (the header says "add your own").
 		await expect.element(page.getByText(/bring your own/)).toBeInTheDocument();
@@ -60,7 +60,7 @@ describe('SettingsIndexers.svelte', () => {
 
 	it('opens an add form and saves a new indexer', async () => {
 		indexersData = [];
-		render(SettingsIndexers);
+		await render(SettingsIndexers);
 		await page.getByRole('button', { name: 'Add indexer' }).click();
 		await page.getByPlaceholder('https://indexer.example/api').fill('https://idx.test/api');
 		await page.getByRole('button', { name: 'Save' }).click();
@@ -82,7 +82,7 @@ describe('SettingsIndexers.svelte', () => {
 				priority: 1
 			}
 		];
-		render(SettingsIndexers);
+		await render(SettingsIndexers);
 		await expect.element(page.getByText('DrunkenSlug', { exact: true })).toBeInTheDocument();
 		// Expand and run Test - the result line reports the text-search fallback.
 		await page.getByRole('button', { name: 'Expand' }).click();
@@ -101,7 +101,7 @@ describe('SettingsIndexers.svelte', () => {
 			supports_audio_search: false,
 			category_count: 0
 		});
-		render(SettingsIndexers);
+		await render(SettingsIndexers);
 		await page.getByRole('button', { name: 'Add indexer' }).click();
 		await page.getByPlaceholder('https://indexer.example/api').fill('https://idx.test');
 		await page.getByRole('button', { name: 'Test' }).click();
@@ -115,7 +115,7 @@ describe('SettingsIndexers.svelte', () => {
 	it('offers the either/or backend radio with the active side checked', async () => {
 		backendData = 'indexers';
 		indexersData = [];
-		render(SettingsIndexers);
+		await render(SettingsIndexers);
 		await expect.element(page.getByText('Indexers / Prowlarr')).toBeInTheDocument();
 		await expect.element(page.getByText('Search via')).toBeInTheDocument();
 		const radios = page.getByRole('radio');
@@ -127,7 +127,7 @@ describe('SettingsIndexers.svelte', () => {
 		backendData = 'indexers';
 		indexersData = [];
 		saveBackendMutate.mockClear();
-		render(SettingsIndexers);
+		await render(SettingsIndexers);
 		await expect.element(page.getByText('Not configured yet')).toBeInTheDocument();
 		await page.getByRole('radio', { name: /Prowlarr/ }).click();
 		expect(saveBackendMutate).toHaveBeenCalledWith('prowlarr');

@@ -10,7 +10,7 @@ describe('LocalIdentityBadge.svelte', () => {
 		['custom_edition', 'Custom edition'],
 		['release_linked', 'MusicBrainz linked']
 	] as const)('shows the album identity state %s', async (state, label) => {
-		render(LocalIdentityBadge, {
+		await render(LocalIdentityBadge, {
 			props: { state, subject: 'album', showDescription: true }
 		} as Parameters<typeof render<typeof LocalIdentityBadge>>[1]);
 
@@ -18,7 +18,7 @@ describe('LocalIdentityBadge.svelte', () => {
 	});
 
 	it('describes artist identity independently', async () => {
-		render(LocalIdentityBadge, {
+		await render(LocalIdentityBadge, {
 			props: { state: 'musicbrainz_linked', subject: 'artist', showDescription: true }
 		} as Parameters<typeof render<typeof LocalIdentityBadge>>[1]);
 
@@ -26,7 +26,7 @@ describe('LocalIdentityBadge.svelte', () => {
 	});
 
 	it('shows a best-fit edition when tags agree on a pressing', async () => {
-		render(LocalIdentityBadge, {
+		await render(LocalIdentityBadge, {
 			props: {
 				state: 'release_group_linked',
 				subject: 'album',
@@ -44,7 +44,7 @@ describe('LocalIdentityBadge.svelte', () => {
 	});
 
 	it('shows a best-fit edition when the pressing is pinned', async () => {
-		render(LocalIdentityBadge, {
+		await render(LocalIdentityBadge, {
 			props: {
 				state: 'release_group_linked',
 				subject: 'album',
@@ -57,7 +57,7 @@ describe('LocalIdentityBadge.svelte', () => {
 	});
 
 	it('shows a best-fit edition when the pressing matches the identity', async () => {
-		render(LocalIdentityBadge, {
+		await render(LocalIdentityBadge, {
 			props: {
 				state: 'release_group_linked',
 				subject: 'album',

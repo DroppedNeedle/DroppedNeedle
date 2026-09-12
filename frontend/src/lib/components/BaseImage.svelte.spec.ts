@@ -50,7 +50,7 @@ async function holdCdnRequests(): Promise<() => Promise<unknown>> {
 	return () => session.send('Fetch.disable');
 }
 
-function renderComponent(
+async function renderComponent(
 	overrides: Partial<{
 		mbid: string;
 		remoteUrl: string | null;
@@ -63,7 +63,7 @@ function renderComponent(
 		alt: string;
 	}> = {}
 ) {
-	return render(BaseImage, {
+	return await render(BaseImage, {
 		props: {
 			mbid: overrides.mbid ?? validMbid,
 			remoteUrl: overrides.remoteUrl ?? null,
@@ -86,7 +86,7 @@ describe('BaseImage.svelte - remoteUrl', () => {
 	});
 
 	it('renders CDN URL with referrerpolicy when remoteUrl is set', async () => {
-		renderComponent({ remoteUrl: cdnUrl });
+		await renderComponent({ remoteUrl: cdnUrl });
 
 		const img = page.getByAltText('Test Image');
 		await expect.element(img).toBeInTheDocument();
@@ -95,26 +95,31 @@ describe('BaseImage.svelte - remoteUrl', () => {
 	});
 
 	it('appends /medium suffix for lg size', async () => {
-		renderComponent({ remoteUrl: cdnUrl, size: 'lg' });
+		await renderComponent({ remoteUrl: cdnUrl, size: 'lg' });
 
 		const img = page.getByAltText('Test Image');
 		await expect.element(img).toHaveAttribute('src', `${cdnUrl}/medium`);
 	});
 
 	it('uses original URL for full size', async () => {
-		renderComponent({ remoteUrl: cdnUrl, size: 'full' });
+		await renderComponent({ remoteUrl: cdnUrl, size: 'full' });
 
 		const img = page.getByAltText('Test Image');
 		await expect.element(img).toHaveAttribute('src', cdnUrl);
 	});
 
 	it('lets card layout request a 250px proxy and small direct image', async () => {
-		renderComponent({ remoteUrl: cdnUrl, size: 'full', requestSize: 250 });
+		await renderComponent({ remoteUrl: cdnUrl, size: 'full', requestSize: 250 });
 
 		await expect.element(page.getByAltText('Test Image')).toHaveAttribute('src', `${cdnUrl}/small`);
 
 		mockDirectRemoteEnabled = false;
-		renderComponent({ imageType: 'artist', size: 'full', requestSize: 250, alt: 'Proxy image' });
+		await renderComponent({
+			imageType: 'artist',
+			size: 'full',
+			requestSize: 250,
+			alt: 'Proxy image'
+		});
 		await expect
 			.element(page.getByAltText('Proxy image'))
 			.toHaveAttribute('src', `/api/v1/covers/artist/${validMbid}?size=250`);
@@ -122,7 +127,7 @@ describe('BaseImage.svelte - remoteUrl', () => {
 
 	it('offers 250px and 500px variants when the rendered size can cross the boundary', async () => {
 		mockDirectRemoteEnabled = false;
-		renderComponent({
+		await renderComponent({
 			imageType: 'artist',
 			size: 'full',
 			requestSize: 250,
@@ -142,7 +147,7 @@ describe('BaseImage.svelte - remoteUrl', () => {
 	});
 
 	it('renders proxy img without referrerpolicy when remoteUrl is null', async () => {
-		renderComponent({ remoteUrl: null, imageType: 'album' });
+		await renderComponent({ remoteUrl: null, imageType: 'album' });
 
 		const img = page.getByAltText('Test Image');
 		await expect.element(img).toBeInTheDocument();
@@ -150,7 +155,7 @@ describe('BaseImage.svelte - remoteUrl', () => {
 	});
 
 	it('renders proxy URL for artist when remoteUrl is null', async () => {
-		renderComponent({ remoteUrl: null, imageType: 'artist' });
+		await renderComponent({ remoteUrl: null, imageType: 'artist' });
 
 		const img = page.getByAltText('Test Image');
 		await expect.element(img).toBeInTheDocument();
@@ -159,7 +164,7 @@ describe('BaseImage.svelte - remoteUrl', () => {
 
 	it('renders proxy URL when remoteUrl is set but setting is disabled', async () => {
 		mockDirectRemoteEnabled = false;
-		renderComponent({ remoteUrl: cdnUrl, imageType: 'artist' });
+		await renderComponent({ remoteUrl: cdnUrl, imageType: 'artist' });
 
 		const img = page.getByAltText('Test Image');
 		await expect.element(img).toBeInTheDocument();
@@ -168,7 +173,7 @@ describe('BaseImage.svelte - remoteUrl', () => {
 	});
 
 	it('falls back to proxy URL when remote image errors', async () => {
-		renderComponent({ remoteUrl: cdnUrl, imageType: 'artist' });
+		await renderComponent({ remoteUrl: cdnUrl, imageType: 'artist' });
 
 		const img = page.getByAltText('Test Image');
 		await expect.element(img).toHaveAttribute('src', `${cdnUrl}/small`);
@@ -189,7 +194,7 @@ describe('BaseImage.svelte - warming skeleton', () => {
 	});
 
 	it('shows a shimmer skeleton while the cover is loading', async () => {
-		renderComponent({ imageType: 'album' });
+		await renderComponent({ imageType: 'album' });
 
 		await expect.element(page.getByTestId('cover-skeleton')).toBeInTheDocument();
 	});
@@ -197,13 +202,13 @@ describe('BaseImage.svelte - warming skeleton', () => {
 	it('holds the skeleton on the lazy path (placeholder gif load must not hide it)', async () => {
 		// The lazy <img> mounts with a 1x1 data-URI gif whose load fires immediately; it must not
 		// count as the cover loading, or the skeleton would vanish on the default grid path.
-		renderComponent({ imageType: 'album', lazy: true });
+		await renderComponent({ imageType: 'album', lazy: true });
 
 		await expect.element(page.getByTestId('cover-skeleton')).toBeInTheDocument();
 	});
 
 	it('holds the skeleton after a warming error instead of dropping to the placeholder', async () => {
-		renderComponent({ imageType: 'album', lazy: false });
+		await renderComponent({ imageType: 'album', lazy: false });
 
 		const img = page.getByAltText('Test Image');
 		await expect.element(img).toBeInTheDocument();
@@ -218,7 +223,7 @@ describe('BaseImage.svelte - warming skeleton', () => {
 
 	it('settles the visible shimmer within 6.5 seconds while warming remains subscribed', async () => {
 		vi.useFakeTimers();
-		renderComponent({ imageType: 'album', lazy: false });
+		await renderComponent({ imageType: 'album', lazy: false });
 
 		page.getByAltText('Test Image').element().dispatchEvent(new Event('error'));
 		await vi.advanceTimersByTimeAsync(6500);
@@ -233,7 +238,7 @@ describe('BaseImage.svelte - warming skeleton', () => {
 		const releaseCdn = await holdCdnRequests();
 		vi.useFakeTimers();
 		try {
-			renderComponent({ remoteUrl: cdnUrl, imageType: 'artist', lazy: false });
+			await renderComponent({ remoteUrl: cdnUrl, imageType: 'artist', lazy: false });
 
 			await vi.advanceTimersByTimeAsync(6500);
 
@@ -253,7 +258,7 @@ describe('BaseImage.svelte - warming skeleton', () => {
 		const releaseCdn = await holdCdnRequests();
 		vi.useFakeTimers();
 		try {
-			renderComponent({ remoteUrl: cdnUrl, imageType: 'artist', lazy: false });
+			await renderComponent({ remoteUrl: cdnUrl, imageType: 'artist', lazy: false });
 
 			await vi.advanceTimersByTimeAsync(4000);
 			page.getByAltText('Test Image').element().dispatchEvent(new Event('load'));
@@ -271,7 +276,7 @@ describe('BaseImage.svelte - warming skeleton', () => {
 
 	it('replaces a settled fallback when shared warming succeeds later', async () => {
 		vi.useFakeTimers();
-		renderComponent({ imageType: 'album', lazy: false });
+		await renderComponent({ imageType: 'album', lazy: false });
 
 		page.getByAltText('Test Image').element().dispatchEvent(new Event('error'));
 		await vi.advanceTimersByTimeAsync(6500);

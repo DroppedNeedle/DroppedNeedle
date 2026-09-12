@@ -112,7 +112,7 @@ describe('LidarrImportSyncCard', () => {
 	});
 
 	it('renders the locked panel when unlocked=false and leaves the candidates query disabled', async () => {
-		render(LidarrImportSyncCard, { props: { unlocked: false } } as Parameters<
+		await render(LidarrImportSyncCard, { props: { unlocked: false } } as Parameters<
 			typeof render<typeof LidarrImportSyncCard>
 		>[1]);
 		await expect
@@ -122,7 +122,7 @@ describe('LidarrImportSyncCard', () => {
 	});
 
 	it('shows unsynced counts and an Import K button with K new', async () => {
-		render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
+		await render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
 			typeof render<typeof LidarrImportSyncCard>
 		>[1]);
 		await expect.element(page.getByText('1 of 3 in your follows · 2 new')).toBeVisible();
@@ -131,7 +131,7 @@ describe('LidarrImportSyncCard', () => {
 	});
 
 	it('pre-checks every not-yet-followed row (D7)', async () => {
-		render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
+		await render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
 			typeof render<typeof LidarrImportSyncCard>
 		>[1]);
 		// D7: two not-yet-followed rows selected by default.
@@ -140,7 +140,7 @@ describe('LidarrImportSyncCard', () => {
 
 	it('shows the in-sync banner when all monitored artists are followed and Check again refetches', async () => {
 		h.data = ALL_FOLLOWING;
-		render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
+		await render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
 			typeof render<typeof LidarrImportSyncCard>
 		>[1]);
 		await expect
@@ -151,7 +151,7 @@ describe('LidarrImportSyncCard', () => {
 	});
 
 	it('renders the result summary after the import resolves', async () => {
-		render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
+		await render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
 			typeof render<typeof LidarrImportSyncCard>
 		>[1]);
 		await page.getByRole('button', { name: /Import 2/ }).click();
@@ -167,7 +167,7 @@ describe('LidarrImportSyncCard', () => {
 
 	it('shows an error alert with a Retry button that refetches', async () => {
 		h.isError = true;
-		render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
+		await render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
 			typeof render<typeof LidarrImportSyncCard>
 		>[1]);
 		await expect.element(page.getByText(/Couldn't reach Lidarr/)).toBeVisible();
@@ -176,7 +176,7 @@ describe('LidarrImportSyncCard', () => {
 	});
 
 	it('exits the result state via Select remaining after a partial import', async () => {
-		render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
+		await render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
 			typeof render<typeof LidarrImportSyncCard>
 		>[1]);
 		await page.getByRole('button', { name: /Import 2/ }).click();
@@ -189,7 +189,7 @@ describe('LidarrImportSyncCard', () => {
 
 	it('shows an empty state with a Check again button that refetches', async () => {
 		h.data = { total: 0, artists: [] };
-		render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
+		await render(LidarrImportSyncCard, { props: { unlocked: true } } as Parameters<
 			typeof render<typeof LidarrImportSyncCard>
 		>[1]);
 		await expect.element(page.getByText('No monitored artists in Lidarr.')).toBeVisible();

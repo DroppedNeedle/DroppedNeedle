@@ -72,7 +72,7 @@ beforeEach(() => {
 
 describe('NavidromeMusicFoldersCard', () => {
 	it('defaults to All folders and keeps the folder list visible', async () => {
-		render(NavidromeMusicFoldersCard, { userId: 'alice' });
+		await render(NavidromeMusicFoldersCard, { userId: 'alice' });
 		await expect.element(page.getByRole('radio', { name: /All folders/ })).toBeChecked();
 		await page.getByRole('radio', { name: /Selected folders/ }).click();
 		await expect.element(page.getByText('Folder A', { exact: true })).toBeInTheDocument();
@@ -80,7 +80,7 @@ describe('NavidromeMusicFoldersCard', () => {
 	});
 
 	it('saves multiple selected folders in one mutation', async () => {
-		render(NavidromeMusicFoldersCard, { userId: 'alice' });
+		await render(NavidromeMusicFoldersCard, { userId: 'alice' });
 		await page.getByRole('radio', { name: /Selected folders/ }).click();
 		await page.getByRole('checkbox', { name: /Folder A/ }).click();
 		await page.getByRole('checkbox', { name: /Folder B/ }).click();
@@ -99,7 +99,7 @@ describe('NavidromeMusicFoldersCard', () => {
 			stale_folder_ids: ['gone'],
 			scope_revision: 'selected-empty'
 		});
-		render(NavidromeMusicFoldersCard, { userId: 'alice' });
+		await render(NavidromeMusicFoldersCard, { userId: 'alice' });
 		await expect.element(page.getByRole('radio', { name: /Selected folders/ })).toBeChecked();
 		await expect
 			.element(page.getByText('Some saved folders are no longer available.'))
@@ -116,7 +116,7 @@ describe('NavidromeMusicFoldersCard', () => {
 
 	it('makes the saved choice read-only while Navidrome is unavailable', async () => {
 		h.preference = preference({ source_available: false });
-		render(NavidromeMusicFoldersCard, { userId: 'alice' });
+		await render(NavidromeMusicFoldersCard, { userId: 'alice' });
 		await expect.element(page.getByText(/Navidrome is unavailable/)).toBeInTheDocument();
 		await expect.element(page.getByRole('button', { name: 'Save folders' })).toBeDisabled();
 	});

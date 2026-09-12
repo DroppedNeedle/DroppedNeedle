@@ -6,7 +6,7 @@ import LibraryFormatBadge from './LibraryFormatBadge.svelte';
 
 describe('LibraryFormatBadge (F-PERF-10 display policy)', () => {
 	it('renders MIXED as a neutral ghost badge without lossless or MP3 classes', async () => {
-		render(LibraryFormatBadge, {
+		await render(LibraryFormatBadge, {
 			props: { format: 'mixed' }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -19,14 +19,14 @@ describe('LibraryFormatBadge (F-PERF-10 display policy)', () => {
 	});
 
 	it('keeps the existing homogeneous labels unchanged', async () => {
-		const { unmount } = render(LibraryFormatBadge, {
+		const { unmount } = await render(LibraryFormatBadge, {
 			props: { format: 'flac' }
 		} as unknown as Parameters<typeof render>[1]);
 		await expect.element(page.getByText('FLAC')).toBeVisible();
 		await expect.element(page.getByText('FLAC')).toHaveClass(/badge-success/);
-		unmount();
+		await unmount();
 
-		render(LibraryFormatBadge, {
+		await render(LibraryFormatBadge, {
 			props: { format: 'mp3' }
 		} as unknown as Parameters<typeof render>[1]);
 		await expect.element(page.getByText('MP3')).toBeVisible();

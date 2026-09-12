@@ -56,14 +56,14 @@ describe('WhereToBuy', () => {
 
 	it('shows a slim skeleton while loading', async () => {
 		h.isLoading = true;
-		const { container } = render(WhereToBuy, { releaseGroupMbid: 'rg-1' });
+		const { container } = await render(WhereToBuy, { releaseGroupMbid: 'rg-1' });
 		await expect.element(page.getByText('Where to buy')).toBeVisible();
 		expect(container.querySelector('.skeleton')).not.toBeNull();
 	});
 
 	it('collapsed row shows stores in fairness order, across every kind', async () => {
 		h.data = options();
-		render(WhereToBuy, { releaseGroupMbid: 'rg-1' });
+		await render(WhereToBuy, { releaseGroupMbid: 'rg-1' });
 		await expect.element(page.getByRole('link', { name: 'Bandcamp', exact: true })).toBeVisible();
 		await expect.element(page.getByRole('link', { name: 'Qobuz', exact: true })).toBeVisible();
 		await expect.element(page.getByRole('link', { name: 'Amazon', exact: true })).toBeVisible();
@@ -83,7 +83,7 @@ describe('WhereToBuy', () => {
 				}
 			]
 		});
-		render(WhereToBuy, { releaseGroupMbid: 'rg-1' });
+		await render(WhereToBuy, { releaseGroupMbid: 'rg-1' });
 		await expect.element(page.getByRole('link', { name: 'Amazon', exact: false })).toBeVisible();
 		await expect
 			.element(page.getByRole('link', { name: 'cstrecords.com', exact: false }))
@@ -101,13 +101,13 @@ describe('WhereToBuy', () => {
 				{ store: 'amazon', label: 'Amazon', url: 'https://amazon.co.uk/dp/C', kind: 'physical' }
 			]
 		});
-		render(WhereToBuy, { releaseGroupMbid: 'rg-1' });
+		await render(WhereToBuy, { releaseGroupMbid: 'rg-1' });
 		await expect.element(page.getByRole('button', { name: '2 more' })).toBeVisible();
 	});
 
 	it('expanding reveals grouped stores and the ownership line', async () => {
 		h.data = options();
-		render(WhereToBuy, { releaseGroupMbid: 'rg-1' });
+		await render(WhereToBuy, { releaseGroupMbid: 'rg-1' });
 		await page.getByRole('button', { name: 'Details' }).click();
 		await expect.element(page.getByText('Vinyl & CD')).toBeVisible();
 		await expect
@@ -117,7 +117,7 @@ describe('WhereToBuy', () => {
 
 	it('offers only the Bandcamp search when nothing direct exists', async () => {
 		h.data = options({ digital: [], physical: [] });
-		render(WhereToBuy, { releaseGroupMbid: 'rg-1' });
+		await render(WhereToBuy, { releaseGroupMbid: 'rg-1' });
 		await expect.element(page.getByRole('link', { name: 'Search Bandcamp' })).toBeVisible();
 	});
 });

@@ -201,7 +201,7 @@ beforeEach(async () => {
 
 describe('ArtistIdentityDesk', () => {
 	it('shows progress and an evidence dossier with release work', async () => {
-		render(ArtistIdentityDesk);
+		await render(ArtistIdentityDesk);
 		await expect.element(page.getByText('12 of 24 albums')).toBeVisible();
 		await expect.element(page.getByText('14', { exact: true }).first()).toBeVisible();
 		await page.getByRole('button', { name: /NIKI/ }).click();
@@ -215,7 +215,7 @@ describe('ArtistIdentityDesk', () => {
 	});
 
 	it('filters groups through the URL-backed query parameters', async () => {
-		render(ArtistIdentityDesk);
+		await render(ArtistIdentityDesk);
 		expect(h.paramsGetter()).toEqual({ state: undefined, search: undefined });
 		await page.getByLabelText('Search artist groups').fill('Grimes');
 		await page.getByLabelText('Evidence state').selectOptions('provider_conflict');
@@ -231,7 +231,7 @@ describe('ArtistIdentityDesk', () => {
 		h.pageUrl = new URL(
 			'https://example.test/library/management/artists?state=same_name_only&q=Grimes'
 		);
-		render(ArtistIdentityDesk);
+		await render(ArtistIdentityDesk);
 		expect(h.paramsGetter()).toEqual({ state: 'same_name_only', search: 'Grimes' });
 		await expect.element(page.getByLabelText('Search artist groups')).toHaveValue('Grimes');
 		await expect.element(page.getByLabelText('Evidence state')).toHaveValue('same_name_only');
@@ -251,7 +251,7 @@ describe('ArtistIdentityDesk', () => {
 				]
 			}
 		];
-		render(ArtistIdentityDesk);
+		await render(ArtistIdentityDesk);
 
 		const firstDossier = page.getByRole('button', { name: /NIKI/ }).first().element();
 		const inspector = page
@@ -267,7 +267,7 @@ describe('ArtistIdentityDesk', () => {
 	});
 
 	it('previews and confirms the whole group while restoring focus', async () => {
-		render(ArtistIdentityDesk);
+		await render(ArtistIdentityDesk);
 		await page.getByRole('button', { name: /NIKI/ }).click();
 		const opener = page.getByRole('button', { name: 'Preview group merge' });
 		await opener.click();
@@ -296,7 +296,7 @@ describe('ArtistIdentityDesk', () => {
 
 	it('resets a prior detach choice before every new merge preview', async () => {
 		h.preview.mockResolvedValue({ ...previewResult, identity_conflicts: ['mbid-conflict'] });
-		render(ArtistIdentityDesk);
+		await render(ArtistIdentityDesk);
 		await page.getByRole('button', { name: /NIKI/ }).first().click();
 		const opener = page.getByRole('button', { name: 'Preview group merge' });
 		await opener.click();
@@ -316,7 +316,7 @@ describe('ArtistIdentityDesk', () => {
 
 	it('keeps a stale preview safe and requires a new one', async () => {
 		h.apply.mockRejectedValue(new Error('stale'));
-		render(ArtistIdentityDesk);
+		await render(ArtistIdentityDesk);
 		await page.getByRole('button', { name: /NIKI/ }).click();
 		await page.getByRole('button', { name: 'Preview group merge' }).click();
 		await page.getByRole('checkbox', { name: /preserve retired IDs/ }).click();
@@ -326,7 +326,7 @@ describe('ArtistIdentityDesk', () => {
 	});
 
 	it('dismisses the exact member revisions after confirmation', async () => {
-		render(ArtistIdentityDesk);
+		await render(ArtistIdentityDesk);
 		await page.getByRole('button', { name: /NIKI/ }).click();
 		await page.getByRole('button', { name: 'Mark records as distinct' }).click();
 		await expect
@@ -343,7 +343,7 @@ describe('ArtistIdentityDesk', () => {
 	it('has a deliberate empty state', async () => {
 		h.groups = [];
 		h.detail = null;
-		render(ArtistIdentityDesk);
+		await render(ArtistIdentityDesk);
 		await expect
 			.element(page.getByRole('heading', { name: 'No matching artist groups' }))
 			.toBeVisible();

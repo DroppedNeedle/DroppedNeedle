@@ -97,7 +97,7 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('local artist MusicBrainz entry points', () => {
 	it('lists unlinked albums and their active contribution state', async () => {
-		render(LocalArtistPage, {
+		await render(LocalArtistPage, {
 			props: { artistId: artist.id }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -126,7 +126,7 @@ describe('local artist MusicBrainz entry points', () => {
 	});
 
 	it('starts a draft or resumes the existing shared contribution', async () => {
-		render(LocalArtistPage, {
+		await render(LocalArtistPage, {
 			props: { artistId: artist.id }
 		} as unknown as Parameters<typeof render>[1]);
 

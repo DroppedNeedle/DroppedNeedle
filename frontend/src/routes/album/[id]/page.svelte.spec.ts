@@ -585,7 +585,7 @@ describe('album detail page track rendering', () => {
 			orphans: []
 		};
 
-		render(AlbumPage, {
+		await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 
@@ -621,7 +621,7 @@ describe('album detail page track rendering', () => {
 			]
 		};
 
-		render(AlbumPage, {
+		await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 
@@ -657,7 +657,7 @@ describe('album detail page track rendering', () => {
 			}
 		);
 
-		render(AlbumPage, {
+		await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 
@@ -670,7 +670,7 @@ describe('album detail page track rendering', () => {
 
 	it('renders visible grouped track rows alongside source bars', async () => {
 		expect.assertions(6);
-		render(AlbumPage, {
+		await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 
@@ -715,7 +715,7 @@ describe('album detail page track rendering', () => {
 			return true;
 		});
 
-		render(AlbumPage, {
+		await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 
@@ -735,7 +735,7 @@ describe('album detail page track rendering', () => {
 			page_size: 100
 		};
 
-		render(AlbumPage, {
+		await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 
@@ -765,7 +765,7 @@ describe('album detail page track rendering', () => {
 			page_size: 100
 		};
 
-		render(AlbumPage, {
+		await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 
@@ -822,7 +822,7 @@ describe('album detail page track rendering', () => {
 			}))
 		};
 
-		render(AlbumPage, {
+		await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 
@@ -847,7 +847,7 @@ describe('album detail page track rendering', () => {
 		expect.assertions(2);
 		mockDownloadsData.value = { items: [], page: 1, page_size: 100 };
 
-		render(AlbumPage, {
+		await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 
@@ -906,7 +906,7 @@ describe('album detail page track rendering', () => {
 			page_size: 100
 		};
 
-		render(AlbumPage, {
+		await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 
@@ -946,7 +946,7 @@ describe('album detail page track rendering', () => {
 	}
 
 	it('removes the file with the captured ids and refetches only that album', async () => {
-		render(AlbumPage, {
+		await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 		await openRemoveFileDialog();
@@ -968,7 +968,7 @@ describe('album detail page track rendering', () => {
 	});
 
 	it('cancel closes the dialog without removing the file', async () => {
-		render(AlbumPage, {
+		await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 		await openRemoveFileDialog();
@@ -980,7 +980,7 @@ describe('album detail page track rendering', () => {
 	});
 
 	it('surfaces a removal failure in the dialog and refetches nothing', async () => {
-		render(AlbumPage, {
+		await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 		await openRemoveFileDialog();
@@ -996,7 +996,7 @@ describe('album detail page track rendering', () => {
 	});
 
 	it('drops the dialog on navigation and never refetches the old album', async () => {
-		const view = render(AlbumPage, {
+		const view = await render(AlbumPage, {
 			props: { data: { albumId } }
 		} as Parameters<typeof render<typeof AlbumPage>>[1]);
 		await openRemoveFileDialog();
@@ -1006,7 +1006,7 @@ describe('album detail page track rendering', () => {
 		const otherAlbumId = '5b0f0f11-1111-4111-8111-111111111111';
 		await view.rerender({
 			data: { albumId: otherAlbumId }
-		} as Parameters<typeof render<typeof AlbumPage>>[1]['props']);
+		});
 
 		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
 		const before = mockPageFetch.mock.calls.filter(([url]) => String(url).endsWith(albumId)).length;

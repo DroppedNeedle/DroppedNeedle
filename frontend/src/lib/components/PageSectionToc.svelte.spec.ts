@@ -34,7 +34,7 @@ afterEach(() => {
 
 describe('PageSectionToc', () => {
 	it('scrolls to a section and marks its link as current', async () => {
-		render(PageSectionToc, { sections });
+		await render(PageSectionToc, { sections });
 		const navigation = page.getByRole('navigation', { name: 'Page sections' });
 		const scrobblingLink = navigation.getByRole('link', { name: 'Scrobbling' });
 

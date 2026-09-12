@@ -40,13 +40,13 @@ beforeEach(() => {
 
 describe('LibraryScanScheduleControl', () => {
 	it('labels the control as the scheduled frequency', async () => {
-		render(LibraryScanScheduleControl);
+		await render(LibraryScanScheduleControl);
 		await expect.element(page.getByText('Scheduled scan frequency')).toBeVisible();
 		await expect.element(page.getByText('Automatic scan frequency')).not.toBeInTheDocument();
 	});
 
 	it('seeds the select from the saved schedule', async () => {
-		render(LibraryScanScheduleControl);
+		await render(LibraryScanScheduleControl);
 		await expect.element(page.getByLabelText('Scan frequency')).toHaveValue('24hr');
 	});
 });

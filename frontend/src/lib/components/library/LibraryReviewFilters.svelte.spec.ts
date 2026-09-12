@@ -25,7 +25,7 @@ afterEach(async () => {
 describe('LibraryReviewFilters', () => {
 	it('offers root and reason filters on desktop', async () => {
 		const onchange = vi.fn();
-		render(LibraryReviewFilters, {
+		await render(LibraryReviewFilters, {
 			props: { filters: {}, roots, onchange }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -40,7 +40,7 @@ describe('LibraryReviewFilters', () => {
 
 	it('includes root and reason controls in the mobile dialog', async () => {
 		await page.viewport(390, 760);
-		render(LibraryReviewFilters, {
+		await render(LibraryReviewFilters, {
 			props: { filters: {}, roots, onchange: vi.fn() }
 		} as unknown as Parameters<typeof render>[1]);
 

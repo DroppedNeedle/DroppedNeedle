@@ -114,7 +114,7 @@ beforeEach(() => {
 
 describe('LibraryReviewBrowser URL state', () => {
 	it('owns filters and cursors in the URL and preserves them when opening and closing review', async () => {
-		render(LibraryReviewBrowser);
+		await render(LibraryReviewBrowser);
 
 		expect(h.filters()).toEqual({
 			cursor: 'cursor-1',
@@ -160,7 +160,7 @@ describe('LibraryReviewBrowser URL state', () => {
 	});
 
 	it('clears the cursor when filters change and retains filters across pagination', async () => {
-		render(LibraryReviewBrowser);
+		await render(LibraryReviewBrowser);
 
 		await page.getByRole('button', { name: 'First page' }).click();
 		expect(h.goto).toHaveBeenLastCalledWith(
@@ -182,7 +182,7 @@ describe('LibraryReviewBrowser URL state', () => {
 
 describe('LibraryReviewBrowser state depths (N-02/T30)', () => {
 	it('renders scoped per-state depths and filters by state on click', async () => {
-		render(LibraryReviewBrowser);
+		await render(LibraryReviewBrowser);
 
 		await expect.element(page.getByRole('button', { name: 'Needs review · 12' })).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Keep as tagged · 3' })).toBeVisible();
@@ -196,7 +196,7 @@ describe('LibraryReviewBrowser state depths (N-02/T30)', () => {
 
 	it('falls back to all-time state totals when the scoped field is absent', async () => {
 		delete (h.reviewPage as Record<string, unknown>).counts_by_state_filtered;
-		render(LibraryReviewBrowser);
+		await render(LibraryReviewBrowser);
 
 		await expect.element(page.getByRole('button', { name: 'Needs review · 40' })).toBeVisible();
 		await expect.element(page.getByText('All-time totals')).toBeVisible();
@@ -209,7 +209,7 @@ describe('LibraryReviewBrowser confirm lane', () => {
 		// ever contain the active lane.
 		h.reviewPage.counts_by_state_filtered = { edition_to_confirm: 3 };
 		setLibraryReviewUrl('/library/review?state=edition_to_confirm');
-		render(LibraryReviewBrowser);
+		await render(LibraryReviewBrowser);
 
 		await expect.element(page.getByText(/3 editions to confirm\./)).toBeVisible();
 		await expect
@@ -223,7 +223,7 @@ describe('LibraryReviewBrowser confirm lane', () => {
 		h.reviewPage.counts_by_state_filtered = {};
 		h.reviewPage.counts_by_state = { needs_review: 40, keep_tagged: 5, resolved: 40 };
 		setLibraryReviewUrl('/library/review?state=edition_to_confirm&cursor=cursor-9');
-		render(LibraryReviewBrowser);
+		await render(LibraryReviewBrowser);
 
 		await expect.element(page.getByText('Edition queue is clear.')).toBeVisible();
 		const link = page.getByRole('button', { name: 'View 40 resolved reviews' });
@@ -240,7 +240,7 @@ describe('LibraryReviewBrowser confirm lane', () => {
 		h.reviewPage.counts_by_state_filtered = {};
 		h.reviewPage.counts_by_state = { needs_review: 40, keep_tagged: 5, resolved: 40 };
 		setLibraryReviewUrl('/library/review?state=edition_to_confirm&reason=EDITION_UNCERTAIN');
-		render(LibraryReviewBrowser);
+		await render(LibraryReviewBrowser);
 
 		// The table owns the filtered empty state; the lane makes no claim.
 		await expect.element(page.getByText('Edition queue is clear.')).not.toBeInTheDocument();
@@ -249,7 +249,7 @@ describe('LibraryReviewBrowser confirm lane', () => {
 	it('shows the banner above the threshold', async () => {
 		h.reviewPage.counts_by_state_filtered = { edition_to_confirm: 26 };
 		setLibraryReviewUrl('/library/review?state=edition_to_confirm');
-		render(LibraryReviewBrowser);
+		await render(LibraryReviewBrowser);
 
 		await expect
 			.element(page.getByText('Edition to confirm - release group pinned, pressing unproven.'))
@@ -259,7 +259,7 @@ describe('LibraryReviewBrowser confirm lane', () => {
 	it('shows the quiet line at the threshold', async () => {
 		h.reviewPage.counts_by_state_filtered = { edition_to_confirm: 25 };
 		setLibraryReviewUrl('/library/review?state=edition_to_confirm');
-		render(LibraryReviewBrowser);
+		await render(LibraryReviewBrowser);
 
 		await expect.element(page.getByText(/25 editions to confirm\./)).toBeVisible();
 		await expect

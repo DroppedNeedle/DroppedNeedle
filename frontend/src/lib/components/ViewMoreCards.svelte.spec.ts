@@ -6,7 +6,7 @@ import ViewMoreArtistCard from './ViewMoreArtistCard.svelte';
 
 describe('Search view-more artwork', () => {
 	it('offers right-sized WebP variants for the artist card', async () => {
-		render(ViewMoreArtistCard);
+		await render(ViewMoreArtistCard);
 
 		const image = page.getByTestId('view-more-artist-background');
 		await expect.element(image).toHaveAttribute('src', '/img/artist_bg-250.webp');
@@ -17,7 +17,7 @@ describe('Search view-more artwork', () => {
 	});
 
 	it('offers right-sized WebP variants for the album card', async () => {
-		render(ViewMoreAlbumCard);
+		await render(ViewMoreAlbumCard);
 
 		const image = page.getByTestId('view-more-album-background');
 		await expect.element(image).toHaveAttribute('src', '/img/album_bg-250.webp');

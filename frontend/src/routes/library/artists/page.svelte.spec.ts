@@ -65,7 +65,7 @@ import ArtistsPage from './+page.svelte';
 beforeEach(() => vi.clearAllMocks());
 
 it('uses MusicBrainz routes for linked artists and local routes for local-only artists', async () => {
-	render(ArtistsPage);
+	await render(ArtistsPage);
 
 	await expect
 		.element(page.getByRole('link', { name: 'Open Linked Artist' }))
@@ -83,7 +83,7 @@ it('uses MusicBrainz routes for linked artists and local routes for local-only a
 });
 
 it('keeps the contributor view addressable in the URL', async () => {
-	render(ArtistsPage);
+	await render(ArtistsPage);
 
 	await page.getByRole('button', { name: /Contributors/ }).click();
 

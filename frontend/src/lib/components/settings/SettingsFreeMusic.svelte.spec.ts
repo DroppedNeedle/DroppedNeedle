@@ -72,7 +72,7 @@ describe('SettingsFreeMusic policy status', () => {
 				quality_recipe_status: status,
 				quality_recipe_error: status === 'invalid' ? detail : null
 			};
-			render(SettingsFreeMusic);
+			await render(SettingsFreeMusic);
 
 			await expect
 				.element(page.getByRole('alert'))

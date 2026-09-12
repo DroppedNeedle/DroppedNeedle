@@ -84,7 +84,7 @@ import LibraryManagementHistoryPage from './LibraryManagementHistoryPage.svelte'
 
 describe('LibraryManagementHistoryPage', () => {
 	it('labels both the start and finish time of completed work', async () => {
-		render(LibraryManagementHistoryPage);
+		await render(LibraryManagementHistoryPage);
 
 		const historyRow = page.getByRole('link', { name: /Picard-style Organizer/ });
 		await expect.element(page.getByText(/Started .*Finished/)).toBeVisible();
@@ -92,7 +92,7 @@ describe('LibraryManagementHistoryPage', () => {
 		await expect.element(historyRow.getByText('Succeeded', { exact: true })).toBeVisible();
 	});
 	it('shows outcome chips and an expiry badge on ready rows', async () => {
-		render(LibraryManagementHistoryPage);
+		await render(LibraryManagementHistoryPage);
 
 		const readyRow = page.getByRole('link', { name: /Ready Preview/ });
 		await expect.element(readyRow.getByText('4 eligible')).toBeVisible();

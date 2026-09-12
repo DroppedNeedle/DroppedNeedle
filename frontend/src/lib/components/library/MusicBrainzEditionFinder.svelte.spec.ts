@@ -90,7 +90,7 @@ beforeEach(() => {
 describe('MusicBrainzEditionFinder', () => {
 	it('keeps artist and release title separate, allows an unknown artist, and pages results', async () => {
 		const oncheck = vi.fn();
-		render(MusicBrainzEditionFinder, {
+		await render(MusicBrainzEditionFinder, {
 			props: {
 				albumId: 'album-1',
 				artistName: 'Signal Artist',
@@ -140,7 +140,7 @@ describe('MusicBrainzEditionFinder', () => {
 			}
 		];
 		const oncheck = vi.fn();
-		render(MusicBrainzEditionFinder, {
+		await render(MusicBrainzEditionFinder, {
 			props: {
 				albumId: 'album-1',
 				artistName: 'Signal Artist',
@@ -173,7 +173,7 @@ describe('MusicBrainzEditionFinder', () => {
 
 	it('accepts a canonical MusicBrainz release URL', async () => {
 		const oncheck = vi.fn();
-		render(MusicBrainzEditionFinder, {
+		await render(MusicBrainzEditionFinder, {
 			props: {
 				albumId: 'album-1',
 				artistName: 'Signal Artist',
@@ -193,7 +193,7 @@ describe('MusicBrainzEditionFinder', () => {
 	it('shows empty and provider-unavailable states independently', async () => {
 		h.queryState.data.items = [];
 		h.queryState.data.total = 0;
-		const empty = render(MusicBrainzEditionFinder, {
+		const empty = await render(MusicBrainzEditionFinder, {
 			props: {
 				albumId: 'album-1',
 				artistName: 'Signal Artist',
@@ -202,10 +202,10 @@ describe('MusicBrainzEditionFinder', () => {
 			}
 		} as unknown as Parameters<typeof render>[1]);
 		await expect.element(page.getByText('No editions found')).toBeVisible();
-		empty.unmount();
+		await empty.unmount();
 
 		h.queryState.isError = true;
-		render(MusicBrainzEditionFinder, {
+		await render(MusicBrainzEditionFinder, {
 			props: {
 				albumId: 'album-1',
 				artistName: 'Signal Artist',

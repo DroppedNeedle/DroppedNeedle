@@ -74,7 +74,7 @@ describe('ManagementHoldCard.svelte', () => {
 	});
 
 	it('presents a secured album as one actionable unit with expandable evidence', async () => {
-		render(ManagementHoldCard, { props: { items: [held(2), held(1)] } } as Parameters<
+		await render(ManagementHoldCard, { props: { items: [held(2), held(1)] } } as Parameters<
 			typeof render<typeof ManagementHoldCard>
 		>[1]);
 
@@ -99,7 +99,7 @@ describe('ManagementHoldCard.svelte', () => {
 		h.retry.mockImplementation(() => {
 			h.retryPending = true;
 		});
-		render(ManagementHoldCard, { props: { items: [held(1)] } } as Parameters<
+		await render(ManagementHoldCard, { props: { items: [held(1)] } } as Parameters<
 			typeof render<typeof ManagementHoldCard>
 		>[1]);
 
@@ -114,7 +114,7 @@ describe('ManagementHoldCard.svelte', () => {
 			...held(1),
 			reason: 'management:SCRIPT_VALIDATION_FAILED'
 		};
-		render(ManagementHoldCard, { props: { items: [item] } } as Parameters<
+		await render(ManagementHoldCard, { props: { items: [item] } } as Parameters<
 			typeof render<typeof ManagementHoldCard>
 		>[1]);
 
@@ -133,7 +133,7 @@ describe('ManagementHoldCard.svelte', () => {
 			management_retry_count: 1,
 			management_next_retry_at: new Date('2026-08-04T14:15:00').getTime() / 1000
 		};
-		render(ManagementHoldCard, { props: { items: [item] } } as Parameters<
+		await render(ManagementHoldCard, { props: { items: [item] } } as Parameters<
 			typeof render<typeof ManagementHoldCard>
 		>[1]);
 
@@ -147,7 +147,7 @@ describe('ManagementHoldCard.svelte', () => {
 		h.retry.mockImplementation((_input, options) => {
 			options.onError(new Error('Exact edition proof is incomplete.'));
 		});
-		const view = render(ManagementHoldCard, { props: { items: [held(1)] } } as Parameters<
+		const view = await render(ManagementHoldCard, { props: { items: [held(1)] } } as Parameters<
 			typeof render<typeof ManagementHoldCard>
 		>[1]);
 
@@ -169,7 +169,7 @@ describe('ManagementHoldCard.svelte', () => {
 	});
 
 	it('removes the resolved card as soon as refreshed held data is empty', async () => {
-		const view = render(ManagementHoldCard, { props: { items: [held(1)] } } as Parameters<
+		const view = await render(ManagementHoldCard, { props: { items: [held(1)] } } as Parameters<
 			typeof render<typeof ManagementHoldCard>
 		>[1]);
 
@@ -181,7 +181,7 @@ describe('ManagementHoldCard.svelte', () => {
 	});
 
 	it('requires confirmation before discarding every secured file', async () => {
-		render(ManagementHoldCard, { props: { items: [held(1), held(2)] } } as Parameters<
+		await render(ManagementHoldCard, { props: { items: [held(1), held(2)] } } as Parameters<
 			typeof render<typeof ManagementHoldCard>
 		>[1]);
 
@@ -198,7 +198,7 @@ describe('ManagementHoldCard.svelte', () => {
 
 	it('keeps destructive organizer controls admin-only', async () => {
 		h.isAdmin = false;
-		render(ManagementHoldCard, { props: { items: [held(1)] } } as Parameters<
+		await render(ManagementHoldCard, { props: { items: [held(1)] } } as Parameters<
 			typeof render<typeof ManagementHoldCard>
 		>[1]);
 
@@ -219,7 +219,7 @@ describe('ManagementHoldCard.svelte', () => {
 		h.discard.mockImplementation((_input, options) => {
 			options.onError(new Error('The secured files are still in use.'));
 		});
-		render(ManagementHoldCard, { props: { items: [held(1)] } } as Parameters<
+		await render(ManagementHoldCard, { props: { items: [held(1)] } } as Parameters<
 			typeof render<typeof ManagementHoldCard>
 		>[1]);
 

@@ -26,7 +26,7 @@ import SettingsProwlarr from './SettingsProwlarr.svelte';
 
 describe('SettingsProwlarr.svelte', () => {
 	it('renders the connection card seeded from the masked config', async () => {
-		render(SettingsProwlarr);
+		await render(SettingsProwlarr);
 		await expect.element(page.getByText('Prowlarr')).toBeInTheDocument();
 		await expect.element(page.getByLabelText('Enabled')).toBeInTheDocument();
 		const url = page.getByLabelText('URL');
@@ -36,13 +36,13 @@ describe('SettingsProwlarr.svelte', () => {
 	});
 
 	it('shows the untouched masked sentinel is preserved (save sends the sentinel back)', async () => {
-		render(SettingsProwlarr);
+		await render(SettingsProwlarr);
 		await page.getByRole('button', { name: 'Save' }).click();
 		expect(saveMutate).toHaveBeenCalledWith(expect.objectContaining({ api_key: 'prowlarr****' }));
 	});
 
 	it('runs Test pre-save and renders the indexer count', async () => {
-		render(SettingsProwlarr);
+		await render(SettingsProwlarr);
 		await page.getByRole('button', { name: 'Test' }).click();
 		expect(testMutate).toHaveBeenCalledWith(
 			expect.objectContaining({ url: 'http://prowlarr:9696' })
@@ -51,7 +51,7 @@ describe('SettingsProwlarr.svelte', () => {
 	});
 
 	it('explains SABnzbd is still required for downloads', async () => {
-		render(SettingsProwlarr);
+		await render(SettingsProwlarr);
 		await expect.element(page.getByText(/SABnzbd still downloads them/)).toBeInTheDocument();
 	});
 });

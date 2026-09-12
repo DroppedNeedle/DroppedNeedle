@@ -83,7 +83,7 @@ describe('Playlists list page', () => {
 			makePlaylist({ id: 'pl-1', name: 'Rock Mix', track_count: 10 }),
 			makePlaylist({ id: 'pl-2', name: 'Chill Vibes', track_count: 3 })
 		];
-		render(PlaylistsPage);
+		await render(PlaylistsPage);
 
 		await expect.element(page.getByText('Rock Mix')).toBeVisible();
 		await expect.element(page.getByText('Chill Vibes')).toBeVisible();
@@ -92,7 +92,7 @@ describe('Playlists list page', () => {
 
 	it('renders empty state when no playlists exist', async () => {
 		listQuery.data = [];
-		render(PlaylistsPage);
+		await render(PlaylistsPage);
 
 		await expect.element(page.getByText('No playlists yet')).toBeVisible();
 		await expect.element(page.getByText('Create your first playlist')).toBeVisible();
@@ -101,7 +101,7 @@ describe('Playlists list page', () => {
 	it('renders error state when fetch fails', async () => {
 		listQuery.isError = true;
 		listQuery.error = new Error('Server error');
-		render(PlaylistsPage);
+		await render(PlaylistsPage);
 
 		await expect.element(page.getByText('Server error')).toBeVisible();
 		await expect.element(page.getByRole('button', { name: /Retry/ })).toBeVisible();
@@ -109,7 +109,7 @@ describe('Playlists list page', () => {
 
 	it('shows new playlist input when clicking New Playlist', async () => {
 		listQuery.data = [];
-		render(PlaylistsPage);
+		await render(PlaylistsPage);
 
 		await expect.element(page.getByText('No playlists yet')).toBeVisible();
 		const newBtn = page.getByRole('button', { name: /New Playlist/ }).first();
@@ -120,7 +120,7 @@ describe('Playlists list page', () => {
 
 	it('page heading is visible', async () => {
 		listQuery.data = [];
-		render(PlaylistsPage);
+		await render(PlaylistsPage);
 		await expect
 			.element(page.getByRole('heading', { name: 'Playlists', exact: true }))
 			.toBeVisible();
@@ -137,7 +137,7 @@ describe('Playlists list page', () => {
 				owner_name: 'Ann Smith'
 			})
 		];
-		render(PlaylistsPage);
+		await render(PlaylistsPage);
 
 		await expect.element(page.getByRole('heading', { name: 'My Playlists' })).toBeVisible();
 		await expect.element(page.getByRole('heading', { name: 'Shared with you' })).toBeVisible();
@@ -146,7 +146,7 @@ describe('Playlists list page', () => {
 
 	it('renders an admin redacted private card', async () => {
 		listQuery.data = [makeRedacted({ id: 'priv', track_count: 4, owner_name: 'Cara' })];
-		render(PlaylistsPage);
+		await render(PlaylistsPage);
 
 		await expect.element(page.getByText('Private playlist')).toBeVisible();
 		await expect.element(page.getByText(/owned by Cara/)).toBeVisible();
@@ -162,7 +162,7 @@ describe('Playlists list page', () => {
 				owner_name: 'Ann'
 			})
 		];
-		render(PlaylistsPage);
+		await render(PlaylistsPage);
 
 		await expect.element(page.getByText('Ann Mix')).toBeVisible();
 		expect(page.getByRole('button', { name: /Delete Ann Mix/ }).elements()).toHaveLength(0);

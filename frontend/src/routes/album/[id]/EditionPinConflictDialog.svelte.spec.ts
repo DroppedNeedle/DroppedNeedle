@@ -67,7 +67,7 @@ describe('EditionPinConflictDialog', () => {
 	it('pins the chosen copy through the local URL, then refreshes and closes', async () => {
 		const onrefresh = vi.fn();
 		const onclose = vi.fn();
-		render(EditionPinConflictDialog, {
+		await render(EditionPinConflictDialog, {
 			props: {
 				releaseMbid: 'release-11',
 				localCopies: [
@@ -103,7 +103,7 @@ describe('EditionPinConflictDialog', () => {
 	it('clears the chosen copy back to Automatic when the intent is null', async () => {
 		const onrefresh = vi.fn();
 		const onclose = vi.fn();
-		render(EditionPinConflictDialog, {
+		await render(EditionPinConflictDialog, {
 			props: {
 				releaseMbid: null,
 				localCopies: [localCopy('local-album-1', 'Avalon')],
@@ -127,7 +127,7 @@ describe('EditionPinConflictDialog', () => {
 	it('never fires the per-album mutation for a row without a local id', async () => {
 		const onrefresh = vi.fn();
 		const onclose = vi.fn();
-		render(EditionPinConflictDialog, {
+		await render(EditionPinConflictDialog, {
 			props: {
 				releaseMbid: 'release-11',
 				localCopies: [
@@ -157,7 +157,7 @@ describe('EditionPinConflictDialog', () => {
 	});
 
 	it('shows an honest empty state instead of an empty picker', async () => {
-		render(EditionPinConflictDialog, {
+		await render(EditionPinConflictDialog, {
 			props: {
 				releaseMbid: 'release-11',
 				localCopies: [],

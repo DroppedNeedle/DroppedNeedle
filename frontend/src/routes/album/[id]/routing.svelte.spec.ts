@@ -54,7 +54,7 @@ beforeEach(() => {
 });
 
 it('keeps a linked album on its MusicBrainz release-group route', async () => {
-	render(AlbumPage, {
+	await render(AlbumPage, {
 		props: { data: { albumId: 'provider-album-id' } }
 	} as unknown as Parameters<typeof render>[1]);
 
@@ -66,7 +66,7 @@ it('keeps a linked album on its MusicBrainz release-group route', async () => {
 
 it('mounts the provider once when local detail returns 404', async () => {
 	h.localDetail404 = true;
-	render(AlbumPage, {
+	await render(AlbumPage, {
 		props: { data: { albumId: 'provider-album-id' } }
 	} as unknown as Parameters<typeof render>[1]);
 
@@ -76,7 +76,7 @@ it('mounts the provider once when local detail returns 404', async () => {
 });
 
 it('replaces a linked local route with its MusicBrainz release-group route', async () => {
-	render(AlbumPage, {
+	await render(AlbumPage, {
 		props: { data: { albumId: 'local-album-id' } }
 	} as unknown as Parameters<typeof render>[1]);
 
@@ -92,7 +92,7 @@ it('replaces a linked local route with its MusicBrainz release-group route', asy
 
 it('keeps a local-only album on its local route', async () => {
 	h.album.musicbrainz_release_group_id = null;
-	render(AlbumPage, {
+	await render(AlbumPage, {
 		props: { data: { albumId: 'local-album-id' } }
 	} as unknown as Parameters<typeof render>[1]);
 

@@ -12,7 +12,7 @@ import ReviewPage from './+page.svelte';
 
 describe('identification review route', () => {
 	it('uses the full-width library header with a back link', async () => {
-		render(ReviewPage);
+		await render(ReviewPage);
 
 		await expect
 			.element(page.getByRole('heading', { name: 'Identification review' }))

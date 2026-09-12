@@ -21,18 +21,18 @@ function makeItem(overrides: Partial<WantedRetryingItem> = {}): WantedRetryingIt
 	};
 }
 
-function renderCard(
+async function renderCard(
 	overrides: Partial<WantedRetryingItem> = {},
 	props: Record<string, unknown> = {}
 ) {
-	return render(WantedRetryingCard, {
+	return await render(WantedRetryingCard, {
 		props: { item: makeItem(overrides), ...props }
 	} as unknown as Parameters<typeof render<typeof WantedRetryingCard>>[1]);
 }
 
 describe('WantedRetryingCard.svelte', () => {
 	it('shows the album with a still-hunting retry line', async () => {
-		renderCard();
+		await renderCard();
 		await expect.element(page.getByText('the arrival')).toBeVisible();
 		await expect.element(page.getByText('Still hunting')).toBeVisible();
 		await expect.element(page.getByText('retry 2 of 6')).toBeVisible();
@@ -40,19 +40,19 @@ describe('WantedRetryingCard.svelte', () => {
 	});
 
 	it('links to the downloads queue instead of offering watch actions', async () => {
-		renderCard();
+		await renderCard();
 		await expect.element(page.getByText('Manage in Downloads')).toBeVisible();
 		expect(page.getByText('Stop').elements()).toHaveLength(0);
 		expect(page.getByText('Check now').elements()).toHaveLength(0);
 	});
 
 	it('shows the requester chip when an owner name is given (admin view)', async () => {
-		renderCard({}, { ownerName: 'Someone Else' });
+		await renderCard({}, { ownerName: 'Someone Else' });
 		await expect.element(page.getByText('requested by Someone Else')).toBeVisible();
 	});
 
 	it('never claims an attempt beyond the ladder', async () => {
-		renderCard({ retry_count: 6 });
+		await renderCard({ retry_count: 6 });
 		await expect.element(page.getByText('retry 6 of 6')).toBeVisible();
 	});
 });

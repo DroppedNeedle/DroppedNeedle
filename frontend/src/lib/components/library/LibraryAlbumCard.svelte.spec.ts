@@ -27,47 +27,47 @@ const baseAlbum: LibraryAlbumSummary = {
 	contribution_state: null
 };
 
-function renderComponent(overrides: Partial<LibraryAlbumSummary> = {}) {
-	return render(LibraryAlbumCard, {
+async function renderComponent(overrides: Partial<LibraryAlbumSummary> = {}) {
+	return await render(LibraryAlbumCard, {
 		props: { album: { ...baseAlbum, ...overrides } }
 	} as Parameters<typeof render<typeof LibraryAlbumCard>>[1]);
 }
 
 describe('LibraryAlbumCard.svelte', () => {
 	it('shows the album title', async () => {
-		renderComponent();
+		await renderComponent();
 		await expect.element(page.getByText('OK Computer')).toBeInTheDocument();
 	});
 
 	it('shows the album artist', async () => {
-		renderComponent();
+		await renderComponent();
 		await expect.element(page.getByText(/Radiohead/)).toBeInTheDocument();
 	});
 
 	it('shows a FLAC format badge for flac albums', async () => {
-		renderComponent();
+		await renderComponent();
 		await expect.element(page.getByText('FLAC')).toBeInTheDocument();
 	});
 
 	it('shows an MP3 format badge for mp3 albums', async () => {
-		renderComponent({ format: 'mp3' });
+		await renderComponent({ format: 'mp3' });
 		await expect.element(page.getByText('MP3')).toBeInTheDocument();
 	});
 
 	it('shows the track count', async () => {
-		renderComponent();
+		await renderComponent();
 		await expect.element(page.getByText('12 tracks')).toBeInTheDocument();
 	});
 
 	it('opens linked albums on their MusicBrainz route', async () => {
-		renderComponent();
+		await renderComponent();
 		await expect
 			.element(page.getByRole('link', { name: 'Open OK Computer' }))
 			.toHaveAttribute('href', '/album/b1392450-e666-3926-a536-22c65f834433');
 	});
 
 	it('marks local-only albums and keeps their local route', async () => {
-		renderComponent({
+		await renderComponent({
 			musicbrainz_release_group_id: null,
 			album_identity_state: 'local_only'
 		});
@@ -78,7 +78,7 @@ describe('LibraryAlbumCard.svelte', () => {
 	});
 
 	it('does not add an identity badge to linked album cards', async () => {
-		renderComponent();
+		await renderComponent();
 		await expect.element(page.getByText('Local-only', { exact: true })).not.toBeInTheDocument();
 	});
 });

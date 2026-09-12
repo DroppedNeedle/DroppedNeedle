@@ -73,12 +73,12 @@ function task(overrides: Partial<DownloadTask> = {}): DownloadTask {
 	};
 }
 
-function renderStatus(
+async function renderStatus(
 	download: DownloadTask,
 	bytesDownloaded = download.downloaded_bytes,
 	live: DownloadSourceUpdate | null = null
 ) {
-	return render(DownloadSourceStatus, {
+	return await render(DownloadSourceStatus, {
 		props: { task: download, bytesDownloaded, live }
 	} as Parameters<typeof render<typeof DownloadSourceStatus>>[1]);
 }
@@ -91,7 +91,7 @@ describe('DownloadSourceStatus.svelte', () => {
 	});
 
 	it('renders quality, queue, attempt, live range and fallback for a queued transfer', async () => {
-		renderStatus(task());
+		await renderStatus(task());
 
 		await expect.element(page.getByText('24-bit / 48 kHz FLAC')).toBeVisible();
 		await expect.element(page.getByText('Waiting for Soulseek · queue 2,710')).toBeVisible();
@@ -102,7 +102,7 @@ describe('DownloadSourceStatus.svelte', () => {
 	});
 
 	it('invokes next source from the keyboard with the visible candidate index', async () => {
-		renderStatus(task({ candidate_index: 4 }));
+		await renderStatus(task({ candidate_index: 4 }));
 		const button = page.getByRole('button', { name: 'Try the next ranked download source' });
 
 		await userEvent.tab();
@@ -116,7 +116,7 @@ describe('DownloadSourceStatus.svelte', () => {
 	});
 
 	it('replaces persisted source details with a live automatic fallback', async () => {
-		renderStatus(task(), 0, {
+		await renderStatus(task(), 0, {
 			candidate_index: 1,
 			source: 'soulseek',
 			quality_format: 'flac',
@@ -148,7 +148,7 @@ describe('DownloadSourceStatus.svelte', () => {
 		h.mutate.mockImplementation((_input, options) => {
 			options.onError(new Error('The queued source changed before it could be switched.'));
 		});
-		renderStatus(task());
+		await renderStatus(task());
 
 		await userEvent.click(
 			page.getByRole('button', { name: 'Try the next ranked download source' })
@@ -160,7 +160,7 @@ describe('DownloadSourceStatus.svelte', () => {
 	});
 
 	it('stops showing Soulseek telemetry after a live switch to another source', async () => {
-		renderStatus(task(), 0, {
+		await renderStatus(task(), 0, {
 			candidate_index: 1,
 			source: 'usenet',
 			quality_format: null,
@@ -181,7 +181,7 @@ describe('DownloadSourceStatus.svelte', () => {
 
 	it('shows pending feedback and disables repeated source changes', async () => {
 		h.pending = true;
-		renderStatus(task());
+		await renderStatus(task());
 
 		const button = page.getByRole('button', { name: 'Try the next ranked download source' });
 		await expect.element(button).toBeDisabled();
@@ -189,7 +189,7 @@ describe('DownloadSourceStatus.svelte', () => {
 	});
 
 	it('distinguishes active bytes from a remote queue and hides fallback actions', async () => {
-		renderStatus(task({ downloaded_bytes: 1 }), 1);
+		await renderStatus(task({ downloaded_bytes: 1 }), 1);
 
 		await expect.element(page.getByText('Downloading from Soulseek')).toBeVisible();
 		await expect.element(page.getByText(/fallback in/)).not.toBeInTheDocument();
@@ -199,7 +199,7 @@ describe('DownloadSourceStatus.svelte', () => {
 	});
 
 	it('does not call a zero-byte connection queued until the peer confirms it', async () => {
-		renderStatus(task({ remote_queued: false }));
+		await renderStatus(task({ remote_queued: false }));
 
 		await expect.element(page.getByText('Downloading from Soulseek')).toBeVisible();
 		await expect
@@ -208,7 +208,7 @@ describe('DownloadSourceStatus.svelte', () => {
 	});
 
 	it('hides historical Soulseek telemetry after the download is held for review', async () => {
-		renderStatus(task({ status: 'failed', held_for_review: true }));
+		await renderStatus(task({ status: 'failed', held_for_review: true }));
 
 		await expect.element(page.getByText('24-bit / 48 kHz FLAC')).not.toBeInTheDocument();
 		await expect.element(page.getByText('Downloading from Soulseek')).not.toBeInTheDocument();
@@ -216,7 +216,7 @@ describe('DownloadSourceStatus.svelte', () => {
 	});
 
 	it('names the awaited preference from advertised lossy bitrate', async () => {
-		renderStatus(
+		await renderStatus(
 			task({
 				quality_format: 'mp3',
 				quality_bit_depth: null,
@@ -229,7 +229,7 @@ describe('DownloadSourceStatus.svelte', () => {
 	});
 
 	it('states explicitly that no further fallback is accepted without a deadline', async () => {
-		renderStatus(task({ preferred_quality_fallback_at: null, has_next_source: false }));
+		await renderStatus(task({ preferred_quality_fallback_at: null, has_next_source: false }));
 
 		await expect.element(page.getByText('No fallback accepted')).toBeVisible();
 		await expect
@@ -238,7 +238,7 @@ describe('DownloadSourceStatus.svelte', () => {
 	});
 
 	it('renders the display-only awaiting-review state with a candidates link', async () => {
-		renderStatus(task({ status: 'queued', search_job_id: 'job-9', candidate_index: null }));
+		await renderStatus(task({ status: 'queued', search_job_id: 'job-9', candidate_index: null }));
 
 		await expect
 			.element(
@@ -251,14 +251,14 @@ describe('DownloadSourceStatus.svelte', () => {
 	});
 
 	it('hides the awaiting-review card once a candidate is picked or held', async () => {
-		renderStatus(task({ status: 'queued', candidate_index: 0 }));
+		await renderStatus(task({ status: 'queued', candidate_index: 0 }));
 		await expect
 			.element(page.getByText(/unknown-resolution copies were found/))
 			.not.toBeInTheDocument();
 	});
 
 	it('shows quality evidence chips and the verbatim snapshot summary', async () => {
-		renderStatus(
+		await renderStatus(
 			task({
 				quality_bitrate: 320,
 				quality_preference_step: 1,

@@ -5,7 +5,7 @@ import HomeSection from './HomeSection.svelte';
 
 describe('HomeSection.svelte', () => {
 	it('routes a local-only artist through its stable DroppedNeedle identity', async () => {
-		render(HomeSection, {
+		await render(HomeSection, {
 			props: {
 				section: {
 					title: 'Your Artists',
@@ -28,7 +28,7 @@ describe('HomeSection.svelte', () => {
 	});
 
 	it('prefers the familiar provider route when both identities exist', async () => {
-		render(HomeSection, {
+		await render(HomeSection, {
 			props: {
 				section: {
 					title: 'Your Albums',
@@ -52,7 +52,7 @@ describe('HomeSection.svelte', () => {
 	});
 
 	it('links a local-only album without nesting a search action inside the card', async () => {
-		render(HomeSection, {
+		await render(HomeSection, {
 			props: {
 				section: {
 					title: 'Your Albums',

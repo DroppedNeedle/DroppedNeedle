@@ -22,7 +22,7 @@ const artist: LibraryArtistSummary = {
 
 describe('ArtistMergeDialog', () => {
 	it('opens the group-oriented identity workflow for the current artist', async () => {
-		render(ArtistMergeDialog, {
+		await render(ArtistMergeDialog, {
 			props: { artist }
 		} as unknown as Parameters<typeof render>[1]);
 		const link = page.getByRole('link', { name: /Open artist identity desk/ });

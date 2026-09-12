@@ -80,7 +80,7 @@ describe('dedicated artist search', () => {
 			});
 		}) as typeof fetch;
 
-		render(ArtistSearchPage, { data: { query: 'muse' } });
+		await render(ArtistSearchPage, { data: { query: 'muse' } });
 
 		await expect.element(page.getByText('Removed Cached Artist')).toBeInTheDocument();
 		await expect
@@ -113,7 +113,7 @@ describe('dedicated artist search', () => {
 			});
 		}) as typeof fetch;
 
-		render(ArtistSearchPage, { data: { query: '  Muse  ' } });
+		await render(ArtistSearchPage, { data: { query: '  Muse  ' } });
 
 		await expect.element(page.getByText('Muse')).toBeInTheDocument();
 		expect(requests[0]).toContain('q=Muse');

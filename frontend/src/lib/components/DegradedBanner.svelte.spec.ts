@@ -4,8 +4,8 @@ import { render } from 'vitest-browser-svelte';
 import DegradedBanner from './DegradedBanner.svelte';
 import { serviceStatusStore } from '$lib/stores/serviceStatus';
 
-function renderBanner() {
-	return render(DegradedBanner);
+async function renderBanner() {
+	return await render(DegradedBanner);
 }
 
 describe('DegradedBanner.svelte', () => {
@@ -15,14 +15,14 @@ describe('DegradedBanner.svelte', () => {
 
 	it('is hidden when store is empty', async () => {
 		expect.assertions(1);
-		renderBanner();
+		await renderBanner();
 		await expect.element(page.getByRole('status')).not.toBeInTheDocument();
 	});
 
 	it('renders when store has degraded services', async () => {
 		expect.assertions(1);
 		serviceStatusStore.recordFromResponse({ musicbrainz: 'error' });
-		renderBanner();
+		await renderBanner();
 		await expect
 			.element(page.getByText(/Musicbrainz is unavailable, so some results may be missing/))
 			.toBeVisible();
@@ -31,7 +31,7 @@ describe('DegradedBanner.svelte', () => {
 	it('shows multiple degraded sources with plural verb', async () => {
 		expect.assertions(1);
 		serviceStatusStore.recordFromResponse({ musicbrainz: 'error', audiodb: 'degraded' });
-		renderBanner();
+		await renderBanner();
 		await expect
 			.element(
 				page.getByText(/Musicbrainz, Audiodb are unavailable, so some results may be missing/)
@@ -42,7 +42,7 @@ describe('DegradedBanner.svelte', () => {
 	it('can be dismissed', async () => {
 		expect.assertions(2);
 		serviceStatusStore.recordFromResponse({ musicbrainz: 'error' });
-		renderBanner();
+		await renderBanner();
 
 		await expect.element(page.getByRole('status')).toBeVisible();
 

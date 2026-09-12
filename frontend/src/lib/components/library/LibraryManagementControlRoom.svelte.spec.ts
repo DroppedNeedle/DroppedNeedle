@@ -66,7 +66,12 @@ vi.mock('$lib/queries/library-management/LibraryManagementInvalidation', () => (
 }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
 	LAST_USER_ID_KEY: 'test:last-user',
-	authStore: { get isAdmin() { return h.admin; }, user: { id: 'admin-1' } }
+	authStore: {
+		get isAdmin() {
+			return h.admin;
+		},
+		user: { id: 'admin-1' }
+	}
 }));
 vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({
 	getTargetLibrarySettingsQuery: () => ({
@@ -226,7 +231,7 @@ beforeEach(() => {
 
 describe('LibraryManagementControlRoom', () => {
 	it('presents organization as a separate opt-in write system', async () => {
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 		await expect.element(page.getByRole('heading', { name: 'Organize files' })).toBeVisible();
 		await expect
 			.element(
@@ -252,7 +257,7 @@ describe('LibraryManagementControlRoom', () => {
 
 	it('fails closed visually when recovery diagnostics are unavailable', async () => {
 		h.recovery.isError = true;
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await expect.element(page.getByText('Status unavailable')).toBeVisible();
 		await expect
@@ -267,7 +272,7 @@ describe('LibraryManagementControlRoom', () => {
 		h.appPage.url = new URL(
 			'https://music.example.test/library/management?runner=baseline_restore#management-controls'
 		);
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await expect
 			.element(page.getByRole('heading', { name: 'Restore original state' }))
@@ -305,7 +310,7 @@ describe('LibraryManagementControlRoom', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await page.getByRole('button', { name: 'Discard preview for Picard-style Organizer' }).click();
 		await expect
@@ -346,7 +351,7 @@ describe('LibraryManagementControlRoom', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await expect.element(page.getByText('Ready previews')).toBeVisible();
 		await expect
@@ -385,7 +390,7 @@ describe('LibraryManagementControlRoom', () => {
 			isError: false
 		};
 
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await expect.element(page.getByText('Write-access dry run')).toBeVisible();
 		await expect.element(page.getByText(/Discovering files and release bundles/)).toBeVisible();
@@ -438,7 +443,7 @@ describe('LibraryManagementControlRoom', () => {
 			isLoading: false,
 			isError: false
 		};
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await expect.element(page.getByText('4 eligible')).toBeVisible();
 		await expect.element(page.getByText('2 warning')).toBeVisible();
@@ -450,7 +455,7 @@ describe('LibraryManagementControlRoom', () => {
 
 	it('renders a STALE_INPUT terminal as superseded, not as needs-attention', async () => {
 		h.operations = historyWith([failedOperation('stale-1', {}, { failed_count: 1 })]);
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await expect.element(page.getByText('Superseded · inputs moved')).toBeVisible();
 		await expect.element(page.getByText(/Inputs moved since planning/)).toBeVisible();
@@ -462,7 +467,7 @@ describe('LibraryManagementControlRoom', () => {
 
 	it('collapses duplicate failed cards for the same album into one group with a count', async () => {
 		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await expect.element(page.getByText('2 failed attempts · same album')).toBeVisible();
 		await expect.element(page.getByText('Superseded', { exact: true })).toBeVisible();
@@ -472,7 +477,7 @@ describe('LibraryManagementControlRoom', () => {
 
 	it('bulk-retries only the stale members with one toast summary', async () => {
 		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await page.getByRole('button', { name: 'Retry 2 stale' }).click();
 
@@ -490,13 +495,11 @@ describe('LibraryManagementControlRoom', () => {
 	it('tolerates per-item bulk errors with a count in the summary', async () => {
 		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
 		h.reissue.mockRejectedValueOnce(new Error('gone'));
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await page.getByRole('button', { name: 'Retry 2 stale' }).click();
 
-		await expect
-			.element(page.getByText('Retried 1 of 2 stale previews (1 failed).'))
-			.toBeVisible();
+		await expect.element(page.getByText('Retried 1 of 2 stale previews (1 failed).')).toBeVisible();
 		expect(h.toast).toHaveBeenCalledTimes(1);
 		expect(h.toast).toHaveBeenCalledWith({
 			message: 'Retried 1 of 2 stale previews (1 failed).',
@@ -509,7 +512,7 @@ describe('LibraryManagementControlRoom', () => {
 			failedOperation('stale-1'),
 			failedOperation('real-1', {}, { terminal_code: 'PLANNING_FAILED', failed_count: 1 })
 		]);
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		// The sentence spans a source line break Svelte does not join for text
 		// matching, so assert both halves instead of one spanning expression.
@@ -527,7 +530,7 @@ describe('LibraryManagementControlRoom', () => {
 
 	it('bulk-dismisses stale previews with their expected revisions', async () => {
 		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await page.getByRole('button', { name: 'Dismiss 2 stale' }).click();
 
@@ -549,7 +552,7 @@ describe('LibraryManagementControlRoom', () => {
 	it('hides bulk stale actions from non-admins', async () => {
 		h.admin = false;
 		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await expect.element(page.getByText('2 failed attempts · same album')).toBeVisible();
 		await expect
@@ -565,7 +568,7 @@ describe('LibraryManagementControlRoom', () => {
 			needs_attention_count: 1,
 			needs_attention_bundles: [{ bundle_id: 'bundle-1' }]
 		});
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await expect.element(page.getByText('Recovery needs attention')).toBeVisible();
 		await page.getByRole('button', { name: 'Mark bundle-1 as handled' }).click();
@@ -585,7 +588,7 @@ describe('LibraryManagementControlRoom', () => {
 			needs_attention_bundles: [{ bundle_id: 'bundle-1' }]
 		});
 		h.resolveImportBundle.mockRejectedValue(new Error('2 files failed verification'));
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await page.getByRole('button', { name: 'Mark bundle-1 as handled' }).click();
 
@@ -603,7 +606,7 @@ describe('LibraryManagementControlRoom', () => {
 			needs_attention_count: 1,
 			needs_attention_bundles: [{ bundle_id: 'bundle-1' }]
 		});
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await expect.element(page.getByText('Recovery needs attention')).toBeVisible();
 		await expect
@@ -613,7 +616,7 @@ describe('LibraryManagementControlRoom', () => {
 
 	it('shows counts without resolve actions when no bundle identities are reported', async () => {
 		h.recovery.data = recoveryDataWith({ needs_attention_count: 2, cleanup_pending_count: 1 });
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await expect.element(page.getByText('Recovery needs attention')).toBeVisible();
 		await expect
@@ -623,7 +626,7 @@ describe('LibraryManagementControlRoom', () => {
 
 	it('dismisses the recovery alert once diagnostics report nothing pending', async () => {
 		h.recovery.data = recoveryDataWith();
-		render(LibraryManagementControlRoom);
+		await render(LibraryManagementControlRoom);
 
 		await expect.element(page.getByText('Off everywhere')).toBeVisible();
 		await expect.element(page.getByText('Recovery needs attention')).not.toBeInTheDocument();

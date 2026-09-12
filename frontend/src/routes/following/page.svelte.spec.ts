@@ -69,7 +69,7 @@ describe('Following hub digest', () => {
 			total: 9
 		};
 		concertsData = { configured: true, items: [GIG], total: 11 };
-		render(FollowingHub);
+		await render(FollowingHub);
 
 		await expect.element(page.getByText('New releases')).toBeVisible();
 		await expect.element(page.getByText('(9)')).toBeVisible();
@@ -85,7 +85,7 @@ describe('Following hub digest', () => {
 		artistsData = [artist(1)];
 		releasesData = { items: [], total: 0 };
 		concertsData = { configured: true, items: [], total: 0 };
-		render(FollowingHub);
+		await render(FollowingHub);
 		await expect
 			.element(page.getByText('Nothing released in the last 30 days - quiet month.'))
 			.toBeVisible();
@@ -106,7 +106,7 @@ describe('Following hub digest', () => {
 			total: 1
 		};
 		concertsData = { configured: true, items: [], total: 0 };
-		render(FollowingHub);
+		await render(FollowingHub);
 		await expect.element(page.getByText('In your library')).toBeInTheDocument();
 	});
 
@@ -114,7 +114,7 @@ describe('Following hub digest', () => {
 		artistsData = [];
 		releasesData = { items: [], total: 0 };
 		concertsData = { configured: true, items: [], total: 0 };
-		render(FollowingHub);
+		await render(FollowingHub);
 		await expect.element(page.getByText("You're not following anyone yet")).toBeVisible();
 		await expect.element(page.getByRole('link', { name: 'Discover artists' })).toBeVisible();
 	});
@@ -123,7 +123,7 @@ describe('Following hub digest', () => {
 		artistsData = [artist(1)];
 		releasesData = { items: [], total: 0 };
 		concertsData = { configured: true, items: [], total: 0 };
-		render(FollowingHub);
+		await render(FollowingHub);
 		await expect.element(page.getByText('Pick your cities to see gigs near you')).toBeVisible();
 	});
 
@@ -131,7 +131,7 @@ describe('Following hub digest', () => {
 		artistsData = Array.from({ length: 15 }, (_, i) => artist(i));
 		releasesData = { items: [], total: 0 };
 		concertsData = { configured: true, items: [], total: 0 };
-		render(FollowingHub);
+		await render(FollowingHub);
 		await expect.element(page.getByRole('link', { name: '+3' })).toBeVisible();
 	});
 });

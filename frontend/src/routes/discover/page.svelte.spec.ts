@@ -105,7 +105,7 @@ describe('/discover degraded and error states (#147)', () => {
 		discoverState.data = emptyResponse({
 			service_status: { listenbrainz: 'degraded' }
 		});
-		render(DiscoverPage);
+		await render(DiscoverPage);
 
 		await expect
 			.element(page.getByRole('heading', { name: 'Recommendations Unavailable' }))
@@ -119,7 +119,7 @@ describe('/discover degraded and error states (#147)', () => {
 			refreshing: true,
 			service_status: { listenbrainz: 'degraded' }
 		});
-		render(DiscoverPage);
+		await render(DiscoverPage);
 
 		await expect
 			.element(page.getByText(/recommendations will appear here as each section becomes ready/i))
@@ -149,7 +149,7 @@ describe('/discover degraded and error states (#147)', () => {
 				connect_service: null
 			}
 		});
-		render(DiscoverPage);
+		await render(DiscoverPage);
 
 		await expect.element(page.getByText('Cocteau Twins')).toBeVisible();
 		await expect
@@ -162,7 +162,7 @@ describe('/discover degraded and error states (#147)', () => {
 
 	it('falls back to the generic empty state when nothing is degraded', async () => {
 		discoverState.data = emptyResponse({ discover_queue_enabled: true });
-		render(DiscoverPage);
+		await render(DiscoverPage);
 
 		await expect.element(page.getByRole('heading', { name: 'Still Loading' })).toBeVisible();
 	});
@@ -170,7 +170,7 @@ describe('/discover degraded and error states (#147)', () => {
 	it('a crashing section degrades to an inline error card instead of killing the page', async () => {
 		deckState.shouldThrow = true;
 		discoverState.data = emptyResponse({ discover_queue_enabled: true });
-		render(DiscoverPage);
+		await render(DiscoverPage);
 
 		await expect.element(page.getByText('Something Went Wrong')).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Try Again' })).toBeVisible();
@@ -188,7 +188,7 @@ describe('/discover degraded and error states (#147)', () => {
 				connect_service: null
 			}
 		});
-		render(DiscoverPage);
+		await render(DiscoverPage);
 
 		await expect.element(page.getByText('Because You Listened')).toBeVisible();
 		await expect.element(page.getByText('Something Went Wrong')).not.toBeInTheDocument();
@@ -209,7 +209,7 @@ describe('/discover degraded and error states (#147)', () => {
 				}
 			]
 		});
-		render(DiscoverPage);
+		await render(DiscoverPage);
 
 		await expect.element(page.getByRole('heading', { name: 'Radio: Cocteau Twins' })).toBeVisible();
 		await expect.element(page.getByText('Ready to play')).toBeVisible();
@@ -253,7 +253,7 @@ describe('/discover degraded and error states (#147)', () => {
 				}
 			]
 		});
-		render(DiscoverPage);
+		await render(DiscoverPage);
 
 		await page.getByRole('button', { name: /Daily Dream Mix - 2 albums/ }).click();
 		await page.getByRole('button', { name: 'Play all' }).click();

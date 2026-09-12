@@ -17,15 +17,15 @@ function artwork(count: number): GenreArtworkModel {
 	};
 }
 
-function renderArtwork(count: number) {
-	return render(GenreArtwork, {
+async function renderArtwork(count: number) {
+	return await render(GenreArtwork, {
 		props: { artwork: artwork(count), gradientClass: 'from-blue-500/90 to-cyan-700' }
 	} as Parameters<typeof render<typeof GenreArtwork>>[1]);
 }
 
 describe('GenreArtwork.svelte', () => {
 	it.each([0, 1, 2, 3, 4])('renders the deterministic %i-cover layout', async (count) => {
-		renderArtwork(count);
+		await renderArtwork(count);
 
 		await expect.element(page.getByTestId('genre-gradient')).toBeInTheDocument();
 		if (count === 0) {
@@ -39,7 +39,7 @@ describe('GenreArtwork.svelte', () => {
 	});
 
 	it('keeps the gradient visible when a cached local cover disappears', async () => {
-		renderArtwork(1);
+		await renderArtwork(1);
 		const image = page.getByTestId('genre-artwork-image');
 		await expect
 			.element(image)

@@ -83,7 +83,7 @@ describe('/+page.svelte', () => {
 
 	it('should render the greeting h1', async () => {
 		expect.assertions(2);
-		render(Page);
+		await render(Page);
 
 		const heading = page.getByRole('heading', { level: 1 });
 		await expect.element(heading).toBeInTheDocument();
@@ -93,7 +93,7 @@ describe('/+page.svelte', () => {
 
 	it('renders the page subtitle', async () => {
 		expect.assertions(1);
-		render(Page);
+		await render(Page);
 
 		await expect
 			.element(page.getByText('Discover music, explore your library, and find new favorites.'))
@@ -103,7 +103,7 @@ describe('/+page.svelte', () => {
 	it('a crashing section degrades to an inline error card instead of killing the page', async () => {
 		homeState.data = contentResponse();
 		sectionState.shouldThrow = true;
-		render(Page);
+		await render(Page);
 
 		await expect.element(page.getByText('Something Went Wrong')).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Try Again' })).toBeVisible();
@@ -111,7 +111,7 @@ describe('/+page.svelte', () => {
 
 	it('renders content sections without the error card when nothing crashes', async () => {
 		homeState.data = contentResponse();
-		render(Page);
+		await render(Page);
 
 		await expect.element(page.getByText("What's Hot")).toBeVisible();
 		await expect.element(page.getByText('Something Went Wrong')).not.toBeInTheDocument();

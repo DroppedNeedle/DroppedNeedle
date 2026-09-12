@@ -48,7 +48,7 @@ describe('SettingsWanted', () => {
 			auto_download_on_find: false,
 			max_checks_per_sweep: 5
 		};
-		render(SettingsWanted);
+		await render(SettingsWanted);
 		await expect
 			.element(page.getByRole('checkbox', { name: 'Watch failed requests' }))
 			.not.toBeChecked();
@@ -66,7 +66,7 @@ describe('SettingsWanted', () => {
 
 	it('disables the dependent controls while the master toggle is off', async () => {
 		h.settings = { ...baseSettings, enabled: false };
-		render(SettingsWanted);
+		await render(SettingsWanted);
 		await expect
 			.element(page.getByRole('checkbox', { name: 'Also watch albums with missing tracks' }))
 			.toBeDisabled();
@@ -76,7 +76,7 @@ describe('SettingsWanted', () => {
 	});
 
 	it('saves the edited settings', async () => {
-		render(SettingsWanted);
+		await render(SettingsWanted);
 		await page
 			.getByRole('checkbox', { name: 'Download automatically when a verified copy appears' })
 			.click();

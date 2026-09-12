@@ -51,7 +51,7 @@ function track(
 
 describe('LocalAlbumTrackList', () => {
 	it('keeps compilation track credits linked to their stable local artists', async () => {
-		render(LocalAlbumTrackList, {
+		await render(LocalAlbumTrackList, {
 			props: {
 				tracks: [
 					track('track-1', 'Northbound', 'artist-north', 'North Signal'),
@@ -71,7 +71,7 @@ describe('LocalAlbumTrackList', () => {
 	it('uses the MusicBrainz artist route when the track credit is linked', async () => {
 		const linked = track('track-1', 'Northbound', 'artist-north', 'North Signal');
 		linked.musicbrainz_artist_id = 'provider-north';
-		render(LocalAlbumTrackList, {
+		await render(LocalAlbumTrackList, {
 			props: { tracks: [linked] }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -82,7 +82,7 @@ describe('LocalAlbumTrackList', () => {
 
 	it('shows formatBytes sizes per row', async () => {
 		expect.assertions(2);
-		render(LocalAlbumTrackList, {
+		await render(LocalAlbumTrackList, {
 			props: {
 				tracks: [
 					track('track-1', 'Northbound', 'artist-north', 'North Signal', 12582912),
@@ -97,7 +97,7 @@ describe('LocalAlbumTrackList', () => {
 
 	it('shows the absence marker for zero-byte rows', async () => {
 		expect.assertions(2);
-		render(LocalAlbumTrackList, {
+		await render(LocalAlbumTrackList, {
 			props: { tracks: [track('track-1', 'Northbound', 'artist-north', 'North Signal', 0)] }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -113,7 +113,7 @@ describe('LocalAlbumTrackList', () => {
 			{ label: 'Add to Queue', icon: ListPlus, onclick: vi.fn() },
 			{ label: 'Download', icon: Download, onclick: () => download(t.id) }
 		];
-		render(LocalAlbumTrackList, {
+		await render(LocalAlbumTrackList, {
 			props: {
 				tracks: [
 					track('track-1', 'Northbound', 'artist-north', 'North Signal'),
@@ -135,7 +135,7 @@ describe('LocalAlbumTrackList', () => {
 
 	it('renders no menu without a builder', async () => {
 		expect.assertions(2);
-		render(LocalAlbumTrackList, {
+		await render(LocalAlbumTrackList, {
 			props: { tracks: [track('track-1', 'Northbound', 'artist-north', 'North Signal')] }
 		} as unknown as Parameters<typeof render>[1]);
 

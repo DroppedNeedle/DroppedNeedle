@@ -123,8 +123,8 @@ const context = (acceptedIdentity = true): LibraryManagementTagEditorContext => 
 	]
 });
 
-function renderEditor() {
-	return render(TagEditor, { track, open: true });
+async function renderEditor() {
+	return await render(TagEditor, { track, open: true });
 }
 
 describe('TagEditor.svelte', () => {
@@ -145,7 +145,7 @@ describe('TagEditor.svelte', () => {
 	});
 
 	it('defaults to a local override and submits list-valued fields to a durable preview', async () => {
-		renderEditor();
+		await renderEditor();
 		await expect.element(page.getByText('Staged metadata edit')).toBeVisible();
 		await expect
 			.element(page.getByRole('button', { name: /Save as local override/ }))
@@ -174,7 +174,7 @@ describe('TagEditor.svelte', () => {
 	});
 
 	it('makes write-once semantics explicit', async () => {
-		renderEditor();
+		await renderEditor();
 		await page.getByRole('button', { name: /Write once/ }).click();
 		await expect
 			.element(page.getByRole('button', { name: /Write once/ }))
@@ -191,7 +191,7 @@ describe('TagEditor.svelte', () => {
 	});
 
 	it('never preselects override resets and warns when album scope expands', async () => {
-		renderEditor();
+		await renderEditor();
 		await page.getByRole('button', { name: /Reset to canonical/ }).click();
 		const albumOverride = page.getByRole('checkbox', { name: /Album/ });
 		await expect.element(albumOverride).not.toBeChecked();
@@ -210,14 +210,14 @@ describe('TagEditor.svelte', () => {
 
 	it('blocks mutation without an accepted release-track mapping', async () => {
 		mockQuery.mockReturnValue({ data: context(false), isPending: false, isError: false });
-		renderEditor();
+		await renderEditor();
 		await expect.element(page.getByText(/needs an accepted MusicBrainz release/)).toBeVisible();
 		await expect.element(page.getByRole('button', { name: /Preview changes/ })).toBeDisabled();
 	});
 
 	it('shows a query failure instead of an endless loading state', async () => {
 		mockQuery.mockReturnValue({ data: undefined, isPending: false, isError: true });
-		renderEditor();
+		await renderEditor();
 
 		await expect
 			.element(page.getByRole('alert'))

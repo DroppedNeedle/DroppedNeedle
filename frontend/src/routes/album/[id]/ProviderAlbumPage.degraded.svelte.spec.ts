@@ -112,7 +112,7 @@ beforeEach(() => {
 });
 
 it('renders the local surface with a banner when the provider is unavailable', async () => {
-	render(ProviderAlbumPage, {
+	await render(ProviderAlbumPage, {
 		props: {
 			data: { albumId: 'rg-id' },
 			localAlbum: h.libraryAlbum
@@ -126,7 +126,7 @@ it('renders the local surface with a banner when the provider is unavailable', a
 
 it('renders a terminal not-found state for a provider 404 even with a local album', async () => {
 	h.primaryError = new ApiError(404, 'Album not found');
-	render(ProviderAlbumPage, {
+	await render(ProviderAlbumPage, {
 		props: {
 			data: { albumId: 'missing-album-id' },
 			localAlbum: h.libraryAlbum
@@ -139,7 +139,7 @@ it('renders a terminal not-found state for a provider 404 even with a local albu
 });
 
 it('offers an explicit retry when the provider is unavailable without a local album', async () => {
-	render(ProviderAlbumPage, {
+	await render(ProviderAlbumPage, {
 		props: { data: { albumId: 'unavailable-album-id' } }
 	} as unknown as Parameters<typeof render>[1]);
 
@@ -150,7 +150,7 @@ it('offers an explicit retry when the provider is unavailable without a local al
 
 it('keeps other provider errors generic instead of using the local fallback', async () => {
 	h.primaryError = new ApiError(400, 'Bad request');
-	render(ProviderAlbumPage, {
+	await render(ProviderAlbumPage, {
 		props: {
 			data: { albumId: 'invalid-album-id' },
 			localAlbum: h.libraryAlbum

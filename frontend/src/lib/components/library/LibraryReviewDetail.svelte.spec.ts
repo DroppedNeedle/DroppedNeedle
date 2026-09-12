@@ -221,7 +221,7 @@ describe('LibraryReviewDetail', () => {
 	}
 
 	it('shows stable local links, compilation credit, evidence, and safe/manual candidate actions', async () => {
-		render(LibraryReviewDetail, {
+		await render(LibraryReviewDetail, {
 			props: { reviewId: 'review-1', onclose: vi.fn() }
 		} as unknown as Parameters<typeof render>[1]);
 		await expect.element(page.getByRole('heading', { name: 'The Local Album' })).toBeVisible();
@@ -235,7 +235,7 @@ describe('LibraryReviewDetail', () => {
 	});
 
 	it('offers plain Keep only without an external identity', async () => {
-		render(LibraryReviewDetail, {
+		await render(LibraryReviewDetail, {
 			props: { reviewId: 'review-1', onclose: vi.fn() }
 		} as unknown as Parameters<typeof render>[1]);
 		await expect.element(page.getByRole('button', { name: 'Keep as tagged' })).toBeVisible();
@@ -246,7 +246,7 @@ describe('LibraryReviewDetail', () => {
 
 	it('requires the explicit detach preview when an identity exists', async () => {
 		h.query = { data: detail(true), isLoading: false, isError: false };
-		render(LibraryReviewDetail, {
+		await render(LibraryReviewDetail, {
 			props: { reviewId: 'review-1', onclose: vi.fn() }
 		} as unknown as Parameters<typeof render>[1]);
 		await expect
@@ -292,7 +292,7 @@ describe('LibraryReviewDetail', () => {
 	});
 
 	it('requires confirmation before accepting a conflicting candidate', async () => {
-		render(LibraryReviewDetail, {
+		await render(LibraryReviewDetail, {
 			props: { reviewId: 'review-1', onclose: vi.fn() }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -333,7 +333,7 @@ describe('LibraryReviewDetail', () => {
 		window.addEventListener('unhandledrejection', recordUnhandled);
 		try {
 			h.retry.mockRejectedValueOnce(new TypeError('Failed to fetch'));
-			render(LibraryReviewDetail, {
+			await render(LibraryReviewDetail, {
 				props: { reviewId: 'review-1', onclose: vi.fn() }
 			} as unknown as Parameters<typeof render>[1]);
 			await page.getByRole('button', { name: 'Retry identification' }).first().click();
@@ -363,7 +363,7 @@ describe('LibraryReviewDetail', () => {
 		data.available_actions = ['dismiss', 'exclude', 'retry', 'keep_tagged'];
 		h.query = { data, isLoading: false, isError: false };
 		h.dismiss.mockResolvedValue(undefined);
-		render(LibraryReviewDetail, {
+		await render(LibraryReviewDetail, {
 			props: { reviewId: 'review-1', onclose: vi.fn() }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -407,7 +407,7 @@ describe('LibraryReviewDetail', () => {
 			}
 		];
 		h.query = { data, isLoading: false, isError: false };
-		render(LibraryReviewDetail, {
+		await render(LibraryReviewDetail, {
 			props: { reviewId: 'review-1', onclose: vi.fn() }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -435,7 +435,7 @@ describe('LibraryReviewDetail', () => {
 			}
 		];
 		h.query = { data, isLoading: false, isError: false };
-		render(LibraryReviewDetail, {
+		await render(LibraryReviewDetail, {
 			props: { reviewId: 'review-1', onclose: vi.fn() }
 		} as unknown as Parameters<typeof render>[1]);
 

@@ -50,7 +50,7 @@ beforeEach(() => {
 
 describe('login local tab uses a username field', () => {
 	it('keeps the auth-only theme and component styles active', async () => {
-		render(Login);
+		await render(Login);
 		const heading = page.getByRole('heading', { name: 'DroppedNeedle' });
 		const submit = page.getByRole('button', { name: 'Sign in' });
 		await expect.element(heading).toBeVisible();
@@ -63,7 +63,7 @@ describe('login local tab uses a username field', () => {
 	});
 
 	it('renders a text username input (autocomplete=username), not an email input', async () => {
-		render(Login);
+		await render(Login);
 		const input = page.getByPlaceholder('Username');
 		await expect.element(input).toBeInTheDocument();
 		const el = input.element() as HTMLInputElement;
@@ -74,19 +74,19 @@ describe('login local tab uses a username field', () => {
 	});
 
 	it('labels the local tab "Username"', async () => {
-		render(Login);
+		await render(Login);
 		await expect.element(page.getByRole('button', { name: 'Username' })).toBeInTheDocument();
 	});
 
 	it('offers local-account recovery from the password field', async () => {
-		render(Login);
+		await render(Login);
 		await expect
 			.element(page.getByRole('link', { name: 'Forgot password?' }))
 			.toHaveAttribute('href', '/recover-password');
 	});
 
 	it('submits the mixed-case username + password to the local login mutation', async () => {
-		render(Login);
+		await render(Login);
 		await userEvent.fill(page.getByPlaceholder('Username'), 'Jane.Doe');
 		await userEvent.fill(page.getByPlaceholder('Password'), 'a-strong-password');
 		await page.getByRole('button', { name: 'Sign in' }).click();

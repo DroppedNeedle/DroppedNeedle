@@ -31,8 +31,8 @@ const stats = {
 	last_scan_at: null
 };
 
-function renderComponent() {
-	return render(LibraryHubTiles, {
+async function renderComponent() {
+	return await render(LibraryHubTiles, {
 		props: { stats }
 	} as Parameters<typeof render<typeof LibraryHubTiles>>[1]);
 }
@@ -47,7 +47,7 @@ describe('LibraryHubTiles artwork window', () => {
 	});
 
 	it('mounts only the five visible cards per desktop fan at 250px', async () => {
-		renderComponent();
+		await renderComponent();
 
 		const cards = page.getByTestId('library-fan-card').all();
 		expect(cards).toHaveLength(15);
@@ -62,7 +62,7 @@ describe('LibraryHubTiles artwork window', () => {
 
 	it('does not mount the CSS-hidden track fan on mobile', async () => {
 		await page.viewport(390, 760);
-		renderComponent();
+		await renderComponent();
 
 		expect(page.getByTestId('library-fan-card').all()).toHaveLength(10);
 		expect(page.getByTestId('library-fan-image').all()).toHaveLength(10);
@@ -83,7 +83,7 @@ describe('LibraryHubTiles artwork window', () => {
 					dispatchEvent: vi.fn()
 				}) as MediaQueryList
 		);
-		renderComponent();
+		await renderComponent();
 		const cards = page.getByTestId('library-fan-card').all();
 		const firstKey = (cards[0]!.element() as HTMLElement).dataset.fanKey;
 

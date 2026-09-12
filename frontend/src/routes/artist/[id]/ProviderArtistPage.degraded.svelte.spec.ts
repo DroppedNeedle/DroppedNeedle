@@ -109,7 +109,7 @@ beforeEach(() => {
 });
 
 it('renders the local artist surface with a banner when the provider is unavailable', async () => {
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		props: {
 			data: { artistId: 'mb-artist-id', primarySource: 'local' },
 			localArtist: h.libraryArtist
@@ -123,7 +123,7 @@ it('renders the local artist surface with a banner when the provider is unavaila
 
 it('renders a terminal not-found state for a provider 404 even with a local artist', async () => {
 	h.basicError = new ApiError(404, 'Artist not found');
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		props: {
 			data: { artistId: 'missing-artist-id', primarySource: 'local' },
 			localArtist: h.libraryArtist
@@ -136,7 +136,7 @@ it('renders a terminal not-found state for a provider 404 even with a local arti
 });
 
 it('offers an explicit retry when the provider is unavailable without a local artist', async () => {
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		props: { data: { artistId: 'unavailable-artist-id', primarySource: 'local' } }
 	} as unknown as Parameters<typeof render>[1]);
 
@@ -147,7 +147,7 @@ it('offers an explicit retry when the provider is unavailable without a local ar
 
 it('keeps other provider errors generic instead of using the local fallback', async () => {
 	h.basicError = new ApiError(400, 'Bad request');
-	render(ProviderArtistPage, {
+	await render(ProviderArtistPage, {
 		props: {
 			data: { artistId: 'invalid-artist-id', primarySource: 'local' },
 			localArtist: h.libraryArtist

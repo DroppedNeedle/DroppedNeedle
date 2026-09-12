@@ -48,21 +48,21 @@ beforeEach(() => {
 
 describe('SettingsOnboardingChecklist', () => {
 	it('leaves the scan item undone before any run exists', async () => {
-		render(SettingsOnboardingChecklist);
+		await render(SettingsOnboardingChecklist);
 		await expect.element(page.getByText('Run a library scan')).toBeVisible();
 		await expect.element(page.getByText('0/5 complete')).toBeVisible();
 	});
 
 	it('leaves the scan item undone while the first scan is still running', async () => {
 		h.runHistory = historyWith([{ state: 'indexing', terminal_at: null }]);
-		render(SettingsOnboardingChecklist);
+		await render(SettingsOnboardingChecklist);
 		await expect.element(page.getByText('Run a library scan')).toBeVisible();
 		await expect.element(page.getByText('0/5 complete')).toBeVisible();
 	});
 
 	it('marks the scan item done after the first terminal run', async () => {
 		h.runHistory = historyWith([{ state: 'completed', terminal_at: 1_700_000_000 }]);
-		render(SettingsOnboardingChecklist);
+		await render(SettingsOnboardingChecklist);
 		await expect.element(page.getByText('Run a library scan')).toBeVisible();
 		await expect.element(page.getByText('1/5 complete')).toBeVisible();
 	});

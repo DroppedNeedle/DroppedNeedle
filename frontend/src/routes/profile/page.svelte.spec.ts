@@ -87,14 +87,14 @@ afterEach(() => scrollSpy.mockRestore());
 
 describe('profile route page', () => {
 	it('wires the Connect Apps section into the profile', async () => {
-		render(ProfilePage);
+		await render(ProfilePage);
 		await expect
 			.element(page.getByRole('heading', { name: 'Connect Apps', level: 2 }))
 			.toBeInTheDocument();
 	});
 
 	it('lists the visible profile sections in the page navigation', async () => {
-		render(ProfilePage);
+		await render(ProfilePage);
 		const navigation = page.getByRole('navigation', { name: 'Page sections' });
 		await expect.element(navigation.getByRole('link', { name: 'Account' })).toBeInTheDocument();
 		await expect
@@ -108,7 +108,7 @@ describe('profile route page', () => {
 	});
 
 	it('scrolls to the #connect-apps anchor on a cold deep-link once profile has rendered', async () => {
-		render(ProfilePage);
+		await render(ProfilePage);
 		// the effect fires after profile resolves + one animation frame
 		await vi.waitFor(() => expect(scrollSpy).toHaveBeenCalled());
 		expect(document.getElementById('connect-apps')).not.toBeNull();

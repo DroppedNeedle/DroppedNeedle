@@ -93,8 +93,8 @@ function task(overrides: Partial<DownloadTask> = {}): DownloadTask {
 	};
 }
 
-function renderItem(t: DownloadTask) {
-	return render(DownloadItem, { props: { task: t } } as Parameters<
+async function renderItem(t: DownloadTask) {
+	return await render(DownloadItem, { props: { task: t } } as Parameters<
 		typeof render<typeof DownloadItem>
 	>[1]);
 }
@@ -109,7 +109,7 @@ describe('DownloadItem.svelte', () => {
 	});
 
 	it('shows the album, a Downloading badge and a Cancel button while downloading', async () => {
-		renderItem(task({ status: 'downloading' }));
+		await renderItem(task({ status: 'downloading' }));
 		await expect.element(page.getByText('OK Computer')).toBeVisible();
 		await expect.element(page.getByText('Downloading', { exact: true })).toBeVisible();
 		await page.getByRole('button', { name: 'Cancel download' }).click();
@@ -117,19 +117,19 @@ describe('DownloadItem.svelte', () => {
 	});
 
 	it('shows a Searching badge for a queued task with no search job', async () => {
-		renderItem(task({ status: 'queued', search_job_id: null, candidate_index: null }));
+		await renderItem(task({ status: 'queued', search_job_id: null, candidate_index: null }));
 		await expect.element(page.getByText('Searching')).toBeVisible();
 	});
 
 	it('shows the error and a Retry button for a failed task', async () => {
-		renderItem(task({ status: 'failed', error_message: 'no match found' }));
+		await renderItem(task({ status: 'failed', error_message: 'no match found' }));
 		await expect.element(page.getByText('no match found')).toBeVisible();
 		await page.getByRole('button', { name: 'Retry download' }).click();
 		expect(h.retryMutate).toHaveBeenCalled();
 	});
 
 	it('shows a "View in Library" link when completed', async () => {
-		renderItem(task({ status: 'completed' }));
+		await renderItem(task({ status: 'completed' }));
 		await expect.element(page.getByRole('link', { name: 'View in library' })).toBeVisible();
 	});
 
@@ -138,12 +138,12 @@ describe('DownloadItem.svelte', () => {
 		['preserved', 'Temporary files kept'],
 		['needs_attention', "Couldn't remove temporary files"]
 	] as const)('shows the %s cleanup treatment', async (cleanupState, label) => {
-		renderItem(task({ status: 'completed', acquisition_cleanup_state: cleanupState }));
+		await renderItem(task({ status: 'completed', acquisition_cleanup_state: cleanupState }));
 		await expect.element(page.getByText(label, { exact: true })).toBeVisible();
 	});
 
 	it('keeps ordinary completed cleanup visually quiet', async () => {
-		renderItem(task({ status: 'completed', acquisition_cleanup_state: 'complete' }));
+		await renderItem(task({ status: 'completed', acquisition_cleanup_state: 'complete' }));
 		await expect
 			.element(page.getByText(/temporary files|removing temporary|couldn't remove/i))
 			.not.toBeInTheDocument();
@@ -151,13 +151,13 @@ describe('DownloadItem.svelte', () => {
 
 	it('offers a "Stop retrying" off-switch for a scheduled auto-retry', async () => {
 		const future = Date.now() / 1000 + 10 * 60;
-		renderItem(task({ status: 'failed', retry_count: 1, next_retry_at: future }));
+		await renderItem(task({ status: 'failed', retry_count: 1, next_retry_at: future }));
 		await page.getByRole('button', { name: 'Stop auto-retrying this download' }).click();
 		expect(h.stopRetryMutate).toHaveBeenCalledWith('t');
 	});
 
 	it('does not offer "Stop retrying" once auto-retries are exhausted', async () => {
-		renderItem(task({ status: 'failed', retry_count: 6, next_retry_at: null }));
+		await renderItem(task({ status: 'failed', retry_count: 6, next_retry_at: null }));
 		await expect
 			.element(page.getByRole('button', { name: 'Stop auto-retrying this download' }))
 			.not.toBeInTheDocument();
@@ -165,7 +165,7 @@ describe('DownloadItem.svelte', () => {
 
 	it('shows a "Retry import" button for an admin on a reimportable task and fires the mutation with the album mbid', async () => {
 		h.isAdmin = true;
-		renderItem(task({ status: 'failed' }));
+		await renderItem(task({ status: 'failed' }));
 		const button = page.getByRole('button', { name: 'Retry import from slskd' });
 		await expect.element(button).toBeVisible();
 		await button.click();
@@ -174,24 +174,26 @@ describe('DownloadItem.svelte', () => {
 
 	it('does not show "Retry import" for a non-admin', async () => {
 		h.isAdmin = false;
-		renderItem(task({ status: 'failed' }));
+		await renderItem(task({ status: 'failed' }));
 		await expect
 			.element(page.getByRole('button', { name: 'Retry import from slskd' }))
 			.not.toBeInTheDocument();
 	});
 
 	it('classifies failure causes into distinct empty-state copy', async () => {
-		renderItem(
+		await renderItem(
 			task({ status: 'failed', error_message: 'Every candidate was outside policy for this task.' })
 		);
 		await expect.element(page.getByText('Copies were outside your quality policy')).toBeVisible();
 
-		renderItem(task({ status: 'failed', manual_quality_override: true }));
+		await renderItem(task({ status: 'failed', manual_quality_override: true }));
 		await expect.element(page.getByText('Quality did not match what was promised')).toBeVisible();
 	});
 
 	it('suppresses the empty-state block while the task is held for review', async () => {
-		renderItem(task({ status: 'failed', held_for_review: true, error_message: 'source died' }));
+		await renderItem(
+			task({ status: 'failed', held_for_review: true, error_message: 'source died' })
+		);
 		await expect.element(page.getByText(/The source gave up/)).not.toBeInTheDocument();
 	});
 });

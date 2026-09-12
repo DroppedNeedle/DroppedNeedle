@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 
 it('shows an accessible placeholder while loading only the requested tab', async () => {
-	const view = render(SettingsTabContent, { tab: 'library', isAdmin: false });
+	const view = await render(SettingsTabContent, { tab: 'library', isAdmin: false });
 
 	await expect.element(page.getByLabelText('Loading settings')).toBeInTheDocument();
 	await expect
@@ -29,12 +29,12 @@ it('shows an accessible placeholder while loading only the requested tab', async
 	expect(loadSettingsTab).toHaveBeenCalledTimes(2);
 	expect(loadSettingsTab).toHaveBeenLastCalledWith('users', true);
 
-	view.unmount();
+	await view.unmount();
 });
 
 it('shows a retry action when a settings chunk fails to load', async () => {
 	loadSettingsTab.mockRejectedValueOnce(new Error('chunk unavailable'));
-	const view = render(SettingsTabContent, { tab: 'library', isAdmin: false });
+	const view = await render(SettingsTabContent, { tab: 'library', isAdmin: false });
 
 	await expect.element(page.getByRole('alert')).toBeVisible();
 	const retry = page.getByRole('button', { name: 'Try again' });
@@ -44,5 +44,5 @@ it('shows a retry action when a settings chunk fails to load', async () => {
 	await expect.element(page.getByLabelText('Loading settings')).toBeInTheDocument();
 	expect(loadSettingsTab).toHaveBeenCalledTimes(2);
 
-	view.unmount();
+	await view.unmount();
 });

@@ -40,7 +40,7 @@ import PreviewWidget from './PreviewWidget.svelte';
 
 describe('PreviewWidget', () => {
 	it('shows the sampled album and artist, and wires the controls', async () => {
-		const { unmount } = render(PreviewWidget);
+		const { unmount } = await render(PreviewWidget);
 
 		await expect.element(page.getByText('Souvlaki')).toBeVisible();
 		await expect.element(page.getByText('Slowdive', { exact: false })).toBeVisible();
@@ -52,14 +52,14 @@ describe('PreviewWidget', () => {
 		await page.getByRole('button', { name: /close preview/i }).click();
 		expect(sampler.stop).toHaveBeenCalled();
 
-		unmount();
+		await unmount();
 	});
 
 	it('is hidden when the sampler is idle', async () => {
 		sampler.status = 'idle';
-		const { container, unmount } = render(PreviewWidget);
+		const { container, unmount } = await render(PreviewWidget);
 		expect(container.querySelector('.preview-widget')).toBeNull();
 		sampler.status = 'playing';
-		unmount();
+		await unmount();
 	});
 });

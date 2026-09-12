@@ -51,7 +51,7 @@ describe('LibraryRootPolicyEditor', () => {
 	}
 
 	it('renders backend effective rows with inheritance, availability, and counts', async () => {
-		render(LibraryRootPolicyEditor, {
+		await render(LibraryRootPolicyEditor, {
 			props: {
 				roots: [
 					{
@@ -98,7 +98,7 @@ describe('LibraryRootPolicyEditor', () => {
 				}
 			]
 		};
-		const view = render(LibraryRootPolicyEditor, {
+		const view = await render(LibraryRootPolicyEditor, {
 			props: { roots: [root], onchange: vi.fn() }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -110,7 +110,7 @@ describe('LibraryRootPolicyEditor', () => {
 
 	it('adds a root through the labelled dialog form', async () => {
 		const onchange = vi.fn();
-		render(LibraryRootPolicyEditor, {
+		await render(LibraryRootPolicyEditor, {
 			props: { roots: [], onchange }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -136,7 +136,7 @@ describe('LibraryRootPolicyEditor', () => {
 		const restoreRandomUuid = disableRandomUuid();
 		const onchange = vi.fn();
 		try {
-			render(LibraryRootPolicyEditor, {
+			await render(LibraryRootPolicyEditor, {
 				props: {
 					roots: [
 						{

@@ -82,13 +82,13 @@ describe('DropImportJobList', () => {
 	});
 
 	it('shows the empty state when nothing was imported yet', async () => {
-		render(DropImportJobList);
+		await render(DropImportJobList);
 		await expect.element(page.getByText('Nothing imported yet', { exact: false })).toBeVisible();
 	});
 
 	it('renders an imported item with its album identity and detail', async () => {
 		h.jobs = [job()];
-		render(DropImportJobList);
+		await render(DropImportJobList);
 		await expect.element(page.getByText('Artist - Album')).toBeVisible();
 		await expect.element(page.getByText('Imported', { exact: true })).toBeVisible();
 		await expect.element(page.getByText('Imported 10')).toBeVisible();
@@ -113,7 +113,7 @@ describe('DropImportJobList', () => {
 				]
 			})
 		];
-		render(DropImportJobList);
+		await render(DropImportJobList);
 		await expect.element(page.getByText('Needs a match')).toBeVisible();
 		await page.getByRole('button', { name: 'Discard Mystery Folder' }).click();
 		expect(h.discard).toHaveBeenCalledWith(2);
@@ -136,14 +136,14 @@ describe('DropImportJobList', () => {
 			job({ created_at: Date.now() / 1000 - 80 * 86400, items: [reviewItem] }),
 			job({ id: 'job-fresh', created_at: Date.now() / 1000, items: [{ ...reviewItem, id: 5 }] })
 		];
-		render(DropImportJobList);
+		await render(DropImportJobList);
 		await expect.element(page.getByText('10 days left', { exact: false })).toBeVisible();
 		await expect.element(page.getByText('90 days left', { exact: false })).toBeVisible();
 	});
 
 	it('shows no retention note when nothing awaits review', async () => {
 		h.jobs = [job()];
-		render(DropImportJobList);
+		await render(DropImportJobList);
 		await expect.element(page.getByText('Imported', { exact: true })).toBeVisible();
 		await expect.element(page.getByText('days left', { exact: false })).not.toBeInTheDocument();
 	});
@@ -167,7 +167,7 @@ describe('DropImportJobList', () => {
 				]
 			})
 		];
-		render(DropImportJobList);
+		await render(DropImportJobList);
 		await page.getByRole('button', { name: 'Match…' }).click();
 		await expect.element(page.getByText('Match to an album')).toBeVisible();
 	});

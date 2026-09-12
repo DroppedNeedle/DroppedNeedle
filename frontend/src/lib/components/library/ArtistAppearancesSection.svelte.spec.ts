@@ -127,7 +127,7 @@ beforeEach(() => {
 
 describe('ArtistAppearancesSection', () => {
 	it('groups exact local appearances under their owned release', async () => {
-		render(ArtistAppearancesSection, {
+		await render(ArtistAppearancesSection, {
 			props: { artistId: 'mbid-guest' }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -144,7 +144,7 @@ describe('ArtistAppearancesSection', () => {
 	});
 
 	it('uses the track controls as the only appearance playback actions', async () => {
-		render(ArtistAppearancesSection, {
+		await render(ArtistAppearancesSection, {
 			props: { artistId: 'mbid-guest' }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -169,7 +169,7 @@ describe('ArtistAppearancesSection', () => {
 			pages: [{ items: [], total: 0, total_tracks: 0, offset: 0, limit: 20 }],
 			pageParams: [0]
 		};
-		render(ArtistAppearancesSection, {
+		await render(ArtistAppearancesSection, {
 			props: { artistId: 'mbid-guest' }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -181,7 +181,7 @@ describe('ArtistAppearancesSection', () => {
 	it('offers a retry without confusing an API failure for an empty result', async () => {
 		h.data = null;
 		h.isError = true;
-		render(ArtistAppearancesSection, {
+		await render(ArtistAppearancesSection, {
 			props: { artistId: 'mbid-guest' }
 		} as unknown as Parameters<typeof render>[1]);
 
@@ -206,7 +206,7 @@ describe('ArtistAppearancesSection', () => {
 			],
 			pageParams: [0]
 		};
-		render(ArtistAppearancesSection, {
+		await render(ArtistAppearancesSection, {
 			props: { artistId: 'mbid-guest' }
 		} as unknown as Parameters<typeof render>[1]);
 

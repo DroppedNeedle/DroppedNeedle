@@ -172,7 +172,7 @@ const byPosition = new Map<string, LibraryFileMeta>([
 	['1:2', libTrack({ id: 'b', musicbrainz_recording_id: null, track_number: 2 })]
 ]);
 
-function renderList(
+async function renderList(
 	over: {
 		heldByRecording?: Map<string, HeldImport>;
 		heldByPosition?: Map<string, HeldImport>;
@@ -244,7 +244,7 @@ function renderList(
 				) => realMenuItems(track, album, local, jellyfin, navidrome, plex, null)
 			: () => []
 	};
-	render(AlbumTrackList, { props } as unknown as Parameters<
+	await render(AlbumTrackList, { props } as unknown as Parameters<
 		typeof render<typeof AlbumTrackList>
 	>[1]);
 }
@@ -252,7 +252,7 @@ function renderList(
 describe('AlbumTrackList in-library detection', () => {
 	it('shows the Request button only for the genuinely-missing track', async () => {
 		expect.assertions(2);
-		renderList();
+		await renderList();
 
 		// matched rows are hidden, leaving exactly one Request button for the genuinely missing track
 		await expect.element(page.getByText('Genuinely Missing')).toBeVisible();
@@ -262,7 +262,7 @@ describe('AlbumTrackList in-library detection', () => {
 
 	it('shows a "held" chip (not Request) for an un-owned track with a held candidate', async () => {
 		expect.assertions(2);
-		renderList({ heldByRecording: new Map([['rec-3', heldFor('rec-3')]]) });
+		await renderList({ heldByRecording: new Map([['rec-3', heldFor('rec-3')]]) });
 
 		// the genuinely-missing track now has a held candidate -> the held review chip appears...
 		await expect.element(page.getByRole('button', { name: /held/i })).toBeVisible();
@@ -288,7 +288,7 @@ describe('AlbumTrackList upgrade affordance (admin/trusted, below cutoff)', () =
 	it('shows the upgrade button to a curator for a below-cutoff owned track', async () => {
 		expect.assertions(2);
 		auth.role = 'trusted';
-		renderList({ byRecording: belowCutoffOwned });
+		await renderList({ byRecording: belowCutoffOwned });
 
 		await expect.element(page.getByRole('button', { name: /upgrade/i })).toBeVisible();
 		expect(page.getByRole('button', { name: /upgrade/i }).elements()).toHaveLength(1);
@@ -297,7 +297,7 @@ describe('AlbumTrackList upgrade affordance (admin/trusted, below cutoff)', () =
 	it('hides the upgrade button from a plain user even when below cutoff', async () => {
 		expect.assertions(1);
 		auth.role = 'user';
-		renderList({ byRecording: belowCutoffOwned });
+		await renderList({ byRecording: belowCutoffOwned });
 
 		expect(page.getByRole('button', { name: /upgrade/i }).elements()).toHaveLength(0);
 	});
@@ -305,7 +305,7 @@ describe('AlbumTrackList upgrade affordance (admin/trusted, below cutoff)', () =
 	it('hides the upgrade button when the track meets the cutoff', async () => {
 		expect.assertions(1);
 		auth.role = 'admin';
-		renderList(); // default fixtures: below_cutoff false everywhere
+		await renderList(); // default fixtures: below_cutoff false everywhere
 
 		expect(page.getByRole('button', { name: /upgrade/i }).elements()).toHaveLength(0);
 	});
@@ -314,7 +314,7 @@ describe('AlbumTrackList upgrade affordance (admin/trusted, below cutoff)', () =
 describe('AlbumTrackList exact-track request release propagation', () => {
 	it('sends the displayed selected edition to the track request mutation', async () => {
 		downloadMutations.requestMutate.mockClear();
-		renderList({ releaseMbid: 'release-20' });
+		await renderList({ releaseMbid: 'release-20' });
 
 		await page.getByRole('button', { name: 'Request this track' }).click();
 		expect(downloadMutations.requestMutate).toHaveBeenCalledTimes(1);
@@ -327,7 +327,7 @@ describe('AlbumTrackList exact-track request release propagation', () => {
 
 	it('keeps the track request usable with a null edition', async () => {
 		downloadMutations.requestMutate.mockClear();
-		renderList();
+		await renderList();
 
 		await page.getByRole('button', { name: 'Request this track' }).click();
 		expect(downloadMutations.requestMutate).toHaveBeenCalledTimes(1);
@@ -377,7 +377,7 @@ describe('AlbumTrackList per-track file sizes', () => {
 
 	it('shows formatBytes sizes for matched rows across discs (disc-aware join)', async () => {
 		expect.assertions(3);
-		renderList({
+		await renderList({
 			tracks: TWO_DISCS,
 			localTracks: [localTrack(1, 1, 10485760), localTrack(1, 2, 15728640)]
 		});
@@ -391,7 +391,7 @@ describe('AlbumTrackList per-track file sizes', () => {
 
 	it('shows the absence marker for zero-byte and unmatched rows', async () => {
 		expect.assertions(2);
-		renderList({ tracks: TWO_DISCS, localTracks: [localTrack(1, 1, 0)] });
+		await renderList({ tracks: TWO_DISCS, localTracks: [localTrack(1, 1, 0)] });
 
 		await expect.element(page.getByText('Disc Two Opener')).toBeVisible();
 		expect(page.getByText('—', { exact: true }).elements()).toHaveLength(3);
@@ -415,14 +415,14 @@ describe('AlbumTrackList 3-dot menu (provider pin)', () => {
 		};
 	}
 
-	function renderMenu(localTracks: LocalTrackInfo[]) {
+	async function renderMenu(localTracks: LocalTrackInfo[]) {
 		closeAllMenus();
 		blob.download.mockReset();
 		blob.download.mockResolvedValue(undefined);
 		player.addToQueue.mockClear();
 		// empty library maps: rows show Request, which renders the actions
 		// block (and its trigger) the way enabled sources do on a real page
-		renderList({
+		await renderList({
 			useRealMenuItems: true,
 			tracks: MENU_TRACKS,
 			localTracks,
@@ -433,7 +433,7 @@ describe('AlbumTrackList 3-dot menu (provider pin)', () => {
 
 	it('shows a trigger on every row opening the 4-item menu with a working Download', async () => {
 		expect.assertions(7);
-		renderMenu([menuLocalTrack(1), menuLocalTrack(2)]);
+		await renderMenu([menuLocalTrack(1), menuLocalTrack(2)]);
 
 		await expect.element(page.getByText('First')).toBeVisible();
 		const triggers = await page.getByLabelText('More actions').all();
@@ -449,7 +449,7 @@ describe('AlbumTrackList 3-dot menu (provider pin)', () => {
 
 	it('queues through the shared builder', async () => {
 		expect.assertions(3);
-		renderMenu([menuLocalTrack(1)]);
+		await renderMenu([menuLocalTrack(1)]);
 
 		await expect.element(page.getByText('First')).toBeVisible();
 		await (await page.getByLabelText('More actions').all())[0].click();
@@ -460,7 +460,7 @@ describe('AlbumTrackList 3-dot menu (provider pin)', () => {
 
 	it('keeps a single menu open and closes on outside click', async () => {
 		expect.assertions(4);
-		renderMenu([menuLocalTrack(1), menuLocalTrack(2)]);
+		await renderMenu([menuLocalTrack(1), menuLocalTrack(2)]);
 
 		await expect.element(page.getByText('First')).toBeVisible();
 		const triggers = await page.getByLabelText('More actions').all();
@@ -476,7 +476,7 @@ describe('AlbumTrackList 3-dot menu (provider pin)', () => {
 
 	it('omits Download when the row has no local file', async () => {
 		expect.assertions(3);
-		renderMenu([]);
+		await renderMenu([]);
 
 		await expect.element(page.getByText('First')).toBeVisible();
 		await (await page.getByLabelText('More actions').all())[0].click();

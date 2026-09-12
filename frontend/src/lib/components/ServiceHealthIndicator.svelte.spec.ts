@@ -79,7 +79,7 @@ describe('ServiceHealthIndicator', () => {
 
 	it('is invisible when nothing is degraded', async () => {
 		queryState.data = { degraded: [] };
-		render(ServiceHealthIndicator);
+		await render(ServiceHealthIndicator);
 		await expect
 			.element(page.getByRole('button', { name: /service status/i }))
 			.not.toBeInTheDocument();
@@ -100,7 +100,7 @@ describe('ServiceHealthIndicator', () => {
 			]
 		};
 
-		render(ServiceHealthIndicator);
+		await render(ServiceHealthIndicator);
 
 		// first-time toast fired
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
@@ -133,7 +133,7 @@ describe('ServiceHealthIndicator', () => {
 			]
 		};
 
-		render(ServiceHealthIndicator);
+		await render(ServiceHealthIndicator);
 
 		await page.getByRole('button', { name: /service status/i }).click();
 		await expect.element(page.getByText('MusicBrainz', { exact: true })).toBeVisible();
@@ -155,7 +155,7 @@ describe('ServiceHealthIndicator', () => {
 			]
 		};
 
-		render(ServiceHealthIndicator);
+		await render(ServiceHealthIndicator);
 
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 		const msg = toast.show.mock.calls[0][0].message as string;
@@ -179,7 +179,7 @@ describe('ServiceHealthIndicator', () => {
 			]
 		};
 
-		render(ServiceHealthIndicator);
+		await render(ServiceHealthIndicator);
 		await page.getByRole('button', { name: /service status/i }).click();
 		await expect.element(page.getByText('Download cleanup', { exact: true })).toBeVisible();
 		await expect
@@ -217,7 +217,7 @@ describe('ServiceHealthIndicator', () => {
 			]
 		};
 
-		render(ServiceHealthIndicator);
+		await render(ServiceHealthIndicator);
 
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 		const message = toast.show.mock.calls[0][0].message as string;
@@ -244,7 +244,7 @@ describe('ServiceHealthIndicator', () => {
 			]
 		};
 
-		render(ServiceHealthIndicator);
+		await render(ServiceHealthIndicator);
 
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 		const message = toast.show.mock.calls[0][0].message as string;
@@ -255,7 +255,7 @@ describe('ServiceHealthIndicator', () => {
 		vi.spyOn(Date, 'now').mockReturnValue(START_TIME);
 		queryState.data = { degraded: [degradedItem('lastfm', 'scrobbling')] };
 
-		render(ServiceHealthIndicator);
+		await render(ServiceHealthIndicator);
 
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 		expect(toast.show.mock.calls[0][0].message).toContain('Last.fm');
@@ -271,7 +271,7 @@ describe('ServiceHealthIndicator', () => {
 		);
 		queryState.data = { degraded: [initial] };
 
-		render(ServiceHealthIndicator);
+		await render(ServiceHealthIndicator);
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 
 		queryState.data = {
@@ -289,7 +289,7 @@ describe('ServiceHealthIndicator', () => {
 		const initial = degradedItem('listenbrainz', 'flapping-popularity');
 		queryState.data = { degraded: [initial] };
 
-		render(ServiceHealthIndicator);
+		await render(ServiceHealthIndicator);
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 
 		queryState.data = { degraded: [] };
@@ -306,14 +306,14 @@ describe('ServiceHealthIndicator', () => {
 		const initial = degradedItem('listenbrainz', 'remount-popularity');
 		queryState.data = { degraded: [initial] };
 
-		const first = render(ServiceHealthIndicator);
+		const first = await render(ServiceHealthIndicator);
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
-		first.unmount();
+		await first.unmount();
 
-		const second = render(ServiceHealthIndicator);
+		const second = await render(ServiceHealthIndicator);
 		await expect.element(page.getByRole('button', { name: /service status/i })).toBeVisible();
 		expect(toast.show).toHaveBeenCalledTimes(1);
-		second.unmount();
+		await second.unmount();
 	});
 
 	it('does not re-toast a capability just under the ten-minute boundary', async () => {
@@ -321,7 +321,7 @@ describe('ServiceHealthIndicator', () => {
 		const initial = degradedItem('listenbrainz', 'just-under-boundary-popularity');
 		queryState.data = { degraded: [initial] };
 
-		const view = render(ServiceHealthIndicator);
+		const view = await render(ServiceHealthIndicator);
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 
 		now.mockReturnValue(START_TIME + NOTIFICATION_COOLDOWN - 1);
@@ -333,7 +333,7 @@ describe('ServiceHealthIndicator', () => {
 			.element(page.getByText('Popularity remains unavailable just under ten minutes.'))
 			.toBeVisible();
 		expect(toast.show).toHaveBeenCalledTimes(1);
-		view.unmount();
+		await view.unmount();
 	});
 
 	it('prunes expired notification timestamps before checking eligibility', async () => {
@@ -341,7 +341,7 @@ describe('ServiceHealthIndicator', () => {
 		const initial = degradedItem('listenbrainz', 'pruned-timestamp-popularity');
 		queryState.data = { degraded: [initial] };
 
-		const view = render(ServiceHealthIndicator);
+		const view = await render(ServiceHealthIndicator);
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 
 		now.mockReturnValue(START_TIME + NOTIFICATION_COOLDOWN);
@@ -364,7 +364,7 @@ describe('ServiceHealthIndicator', () => {
 			.element(page.getByText('Popularity returned just under the cooldown after pruning.'))
 			.toBeVisible();
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(2));
-		view.unmount();
+		await view.unmount();
 	});
 
 	it('toasts again when the same capability reaches the ten-minute boundary', async () => {
@@ -372,7 +372,7 @@ describe('ServiceHealthIndicator', () => {
 		const initial = degradedItem('listenbrainz', 'slow-popularity');
 		queryState.data = { degraded: [initial] };
 
-		render(ServiceHealthIndicator);
+		await render(ServiceHealthIndicator);
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 
 		now.mockReturnValue(START_TIME + NOTIFICATION_COOLDOWN);
@@ -400,7 +400,7 @@ describe('ServiceHealthIndicator', () => {
 		);
 		queryState.data = { degraded: [existing] };
 
-		render(ServiceHealthIndicator);
+		await render(ServiceHealthIndicator);
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 
 		queryState.data = {

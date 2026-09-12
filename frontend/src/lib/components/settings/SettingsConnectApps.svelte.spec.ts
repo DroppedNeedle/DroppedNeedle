@@ -84,7 +84,7 @@ beforeEach(() => {
 
 describe('SettingsConnectApps.svelte (admin)', () => {
 	it('renders the server-setup header, protocol toggles, and the Profile pointer', async () => {
-		render(SettingsConnectApps);
+		await render(SettingsConnectApps);
 		await expect
 			.element(page.getByRole('heading', { name: 'Connect Apps', level: 2 }))
 			.toBeInTheDocument();
@@ -94,7 +94,7 @@ describe('SettingsConnectApps.svelte (admin)', () => {
 	});
 
 	it("lists every user's app-password with owner, count, and no secret", async () => {
-		render(SettingsConnectApps);
+		await render(SettingsConnectApps);
 		await expect.element(page.getByText('Alice', { exact: true })).toBeInTheDocument();
 		await expect.element(page.getByText('@alice')).toBeInTheDocument();
 		await expect.element(page.getByText('Symfonium (phone)')).toBeInTheDocument();
@@ -102,7 +102,7 @@ describe('SettingsConnectApps.svelte (admin)', () => {
 	});
 
 	it('confirms before an admin revoke, then revokes with the owner id on confirm', async () => {
-		render(SettingsConnectApps);
+		await render(SettingsConnectApps);
 		// the row action only opens the dialog
 		await page.getByRole('button', { name: 'Revoke Symfonium (phone) for alice' }).click();
 		await expect
@@ -116,7 +116,7 @@ describe('SettingsConnectApps.svelte (admin)', () => {
 
 	it('shows an error with a working retry when the roster fails to load', async () => {
 		h.rosterError = true;
-		render(SettingsConnectApps);
+		await render(SettingsConnectApps);
 		await expect
 			.element(page.getByText('Could not load the app-password list.'))
 			.toBeInTheDocument();
@@ -125,14 +125,14 @@ describe('SettingsConnectApps.svelte (admin)', () => {
 
 	it('shows an empty state when no app-passwords exist', async () => {
 		h.roster = { items: [], active_count: 0 };
-		render(SettingsConnectApps);
+		await render(SettingsConnectApps);
 		await expect
 			.element(page.getByText('No app-passwords have been created yet.'))
 			.toBeInTheDocument();
 	});
 
 	it('saves settings via the mutation', async () => {
-		render(SettingsConnectApps);
+		await render(SettingsConnectApps);
 		await page.getByRole('button', { name: 'Save' }).click();
 		expect(h.saveMutate).toHaveBeenCalledOnce();
 	});

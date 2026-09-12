@@ -73,8 +73,8 @@ const matchFixture: LocalAlbumMatch = {
 	primary_format: 'FLAC'
 };
 
-function renderModal(album: LocalAlbumSummary) {
-	render(SourceAlbumModal, {
+async function renderModal(album: LocalAlbumSummary) {
+	await render(SourceAlbumModal, {
 		props: { open: true, sourceType: 'local', album, onclose: () => {} }
 	} as unknown as Parameters<typeof render>[1]);
 	// The dialog relies on app CSS (absent in the test env) for visibility, so
@@ -100,7 +100,7 @@ beforeEach(() => {
 describe('SourceAlbumModal local downloads', () => {
 	it('downloads the album zip from the bulk menu', async () => {
 		expect.assertions(4);
-		renderModal(albumFixture(true));
+		await renderModal(albumFixture(true));
 
 		await expect.element(page.getByText('Play All')).toBeVisible();
 		await openMenu(0);
@@ -111,7 +111,7 @@ describe('SourceAlbumModal local downloads', () => {
 
 	it('downloads the file from the track menu', async () => {
 		expect.assertions(4);
-		renderModal(albumFixture(true));
+		await renderModal(albumFixture(true));
 
 		await expect.element(page.getByText('Avalon Song')).toBeVisible();
 		await openMenu(1);
@@ -125,7 +125,7 @@ describe('SourceAlbumModal local downloads', () => {
 
 	it('omits both Download items when downloads are restricted', async () => {
 		expect.assertions(7);
-		renderModal(albumFixture(false));
+		await renderModal(albumFixture(false));
 
 		// Row menu first: an open dropdown overlaps the trigger below it, so a
 		// second menu can only be opened after the first is closed.
