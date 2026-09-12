@@ -29,7 +29,7 @@
 		"test": "pnpm run test:unit -- --run"
 	},
 	"devDependencies": {
-		"@eslint/compat": "^1.4.0",
+		"@eslint/compat": "^2.1.1",
 		"@eslint/js": "^9.36.0",
 		"@playwright/test": "^1.63.0",
 		"@sveltejs/adapter-auto": "^7.0.1",
