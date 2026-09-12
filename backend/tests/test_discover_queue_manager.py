@@ -14,6 +14,7 @@ from api.v1.schemas.discover import (
 )
 from repositories import musicbrainz_base as mb_base
 from services.discover_queue_manager import DiscoverQueueManager
+from services.native.background_workload_gate import BackgroundWorkloadGate
 from infrastructure.persistence.discovery_snapshot_store import DiscoverySnapshotStore
 
 from infrastructure.observability.optional_work import (
@@ -506,7 +507,10 @@ async def test_cancelled_scheduled_waiter_does_not_cancel_foreground_build():
 
     mgr._discover.build_queue.side_effect = build
     auth = AsyncMock()
-    demand = DiscoveryDemandService(None, None, None, lambda: mgr, None, lambda: auth)
+    demand = DiscoveryDemandService(
+        None, None, None, lambda: mgr, None, lambda: auth,
+        workload_gate=BackgroundWorkloadGate(),
+    )
     await mgr.start_build(_UID)
     await entered.wait()
     foreground = mgr._states[_UID].task
@@ -558,7 +562,10 @@ async def test_failed_scheduled_build_retries_instead_of_recording_success(tmp_p
     rows = await store.get_due_activity("source", now)
     mgr = _make_manager(build_error=RuntimeError("provider unavailable"))
     auth = AsyncMock()
-    demand = demand_service.DiscoveryDemandService(store, None, None, lambda: mgr, None, lambda: auth)
+    demand = demand_service.DiscoveryDemandService(
+        store, None, None, lambda: mgr, None, lambda: auth,
+        workload_gate=BackgroundWorkloadGate(),
+    )
     await demand._run_user(_UID, rows, mb_base.capture_mb_source_context())
     retry = (await store.get_due_activity("source", now + 120))[0]
     assert retry["last_success"] == 0

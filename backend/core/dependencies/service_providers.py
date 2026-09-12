@@ -2213,6 +2213,7 @@ def get_discovery_demand_service():
         get_target_discover_queue_manager,
         get_target_artist_discovery_service,
         get_auth_store,
+        workload_gate=get_background_workload_gate(),
     )
 
 

@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import time
+from typing import TYPE_CHECKING
 
 import msgspec
 
@@ -12,6 +13,9 @@ from infrastructure.observability.optional_work import (
 )
 from infrastructure.observability.provider_counters import ProviderWorkload, provider_workload
 from repositories.musicbrainz_base import capture_mb_source_context, is_mb_source_current
+
+if TYPE_CHECKING:
+    from services.native.background_workload_gate import BackgroundWorkloadGate
 
 logger = logging.getLogger(__name__)
 _active_users: set[str] = set()
@@ -27,13 +31,15 @@ def _log_error(task: asyncio.Task) -> None:
 
 class DiscoveryDemandService:
     def __init__(self, store, get_discover_service, get_home_service, get_queue_manager,
-                 get_artist_service, get_auth_store) -> None:
+                 get_artist_service, get_auth_store, *,
+                 workload_gate: "BackgroundWorkloadGate") -> None:
         self._store = store
         self._discover = get_discover_service
         self._home = get_home_service
         self._queue = get_queue_manager
         self._artist = get_artist_service
         self._auth = get_auth_store
+        self._workload_gate = workload_gate
 
     def trigger_user(self, user_id: str) -> None:
         registry = TaskRegistry.get_instance()
@@ -110,9 +116,13 @@ class DiscoveryDemandService:
                     "queue": ProviderWorkload.QUEUE, "artist": ProviderWorkload.ARTIST}[feature]
         with provider_workload(workload):
             if feature == "home":
-                return await self._home().warm_cache(user_id)
+                return await self._workload_gate.run_warmer_unit(
+                    lambda: self._home().warm_cache(user_id)
+                )
             elif feature == "discover":
-                return await self._discover().warm_cache(user_id)
+                return await self._workload_gate.run_warmer_unit(
+                    lambda: self._discover().warm_cache(user_id)
+                )
             elif feature == "queue":
                 with optional_dispatch_guard(lambda: self._queue().scheduled_enabled()):
                     manager = self._queue()

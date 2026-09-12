@@ -78,10 +78,10 @@ class BackgroundWorkloadGate:
             await self.wait_until_available()
             yield
 
-    async def run_warmer_unit(self, operation: Callable[[], Awaitable[None]]) -> None:
+    async def run_warmer_unit[T](self, operation: Callable[[], Awaitable[T]]) -> T:
         await self.wait_until_available()
         async with self.warmer_slot():
-            await operation()
+            return await operation()
 
     async def wait_until_available(self) -> None:
         started = monotonic()
