@@ -492,6 +492,7 @@ export const API = {
 		activationPreview: (jobId: string) =>
 			`/api/v1/settings/library-management/activation-previews/${encodeURIComponent(jobId)}`,
 		activationConfirmations: () => '/api/v1/settings/library-management/activation-confirmations',
+		activationHealth: () => '/api/v1/settings/library-management/activation-health',
 		previews: () => '/api/v1/library/management/previews',
 		tagEditor: (trackId: string) =>
 			`/api/v1/library/management/tracks/${encodeURIComponent(trackId)}/tag-editor`,

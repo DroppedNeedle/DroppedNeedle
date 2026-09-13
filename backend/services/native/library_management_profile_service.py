@@ -11,6 +11,7 @@ from pathlib import Path
 import msgspec
 
 from api.v1.schemas.library_management import (
+    LibraryManagementActivationHealthResponse,
     LibraryManagementChangeImpact,
     ManagedFieldSettings,
     LibraryManagementPresetDiff,
@@ -78,6 +79,28 @@ def _active_automatic(assignment: LibraryManagementRootAssignment | None) -> boo
             or assignment.automatic_drop_imports
             or assignment.automatic_scan_discovered
         )
+    )
+
+
+def _activation_is_current(
+    assignment: LibraryManagementRootAssignment,
+    effective: LibraryManagementProfile,
+    pinned: PinnedLibraryManagementProfile,
+    policy: LibraryPolicyResolver,
+) -> bool:
+    """The exact gate `prepare_automatic_profile` enforces, as a predicate.
+
+    Shared with `activation_health` so the automation tab reports precisely
+    the roots the automatic path would hold - the two must never drift.
+    """
+
+    return bool(
+        assignment.activation_profile_revision == profile_revision(effective)
+        and activation_naming_policy_matches(assignment, pinned)
+        and assignment.activation_policy_revision == policy.policy_revision
+        and assignment.activation_preview_token
+        and assignment.activation_preview_hash
+        and assignment.activation_confirmed_at is not None
     )
 
 
@@ -819,18 +842,54 @@ class LibraryManagementProfileService:
             return None
         effective = self._effective_profile(settings, assignment)
         pinned = self._pin_effective_profile(settings, assignment)
-        if (
-            assignment.activation_profile_revision != profile_revision(effective)
-            or not activation_naming_policy_matches(assignment, pinned)
-            or assignment.activation_policy_revision != policy.policy_revision
-            or not assignment.activation_preview_token
-            or not assignment.activation_preview_hash
-            or assignment.activation_confirmed_at is None
-        ):
+        if not _activation_is_current(assignment, effective, pinned, policy):
             raise StaleRevisionError(
                 "Library Management activation is stale; run and confirm a new dry run."
             )
         return settings, assignment, effective, policy
+
+    def activation_health(self) -> LibraryManagementActivationHealthResponse:
+        """Report dry-run activation health for active automatic roots.
+
+        Advisory read for the automation tab. One broken assignment must
+        not hide the others. Roots whose effective profile cannot even
+        resolve land in blocked: a dry run re-validates the same
+        settings and would fail identically, so no dry run is offered.
+        Roots that resolve but no longer match their stored activation
+        land in stale. A policy that cannot resolve at all (unknown
+        root, unavailable path, recycle-bin overlap) blocks every active
+        root with the policy error as the reason.
+        """
+
+        settings = self._preferences.get_library_management_settings_raw()
+        try:
+            policy = self._validate_root_assignments(settings)
+        except ConfigurationError as error:
+            blocked = [
+                assignment.root_id
+                for assignment in settings.root_assignments
+                if _active_automatic(assignment)
+            ]
+            return LibraryManagementActivationHealthResponse(
+                blocked_root_ids=blocked,
+                blocked_reason=str(error) if blocked else None,
+            )
+        stale: list[str] = []
+        blocked: list[str] = []
+        for assignment in settings.root_assignments:
+            if not _active_automatic(assignment):
+                continue
+            try:
+                effective = self._effective_profile(settings, assignment)
+                pinned = self._pin_effective_profile(settings, assignment)
+            except Exception:  # noqa: BLE001 - health must survive one bad root
+                blocked.append(assignment.root_id)
+                continue
+            if not _activation_is_current(assignment, effective, pinned, policy):
+                stale.append(assignment.root_id)
+        return LibraryManagementActivationHealthResponse(
+            stale_root_ids=stale, blocked_root_ids=blocked
+        )
 
     def prepare_conversion_profile(
         self,

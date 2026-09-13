@@ -446,6 +446,12 @@ export interface LibraryManagementActivationProof {
 	preview_token: string;
 }
 
+export interface LibraryManagementActivationHealthResponse {
+	stale_root_ids: string[];
+	blocked_root_ids: string[];
+	blocked_reason: string | null;
+}
+
 export interface LibraryManagementSettingsUpdateRequest {
 	settings: LibraryManagementSettings;
 	expected_settings_revision: string;

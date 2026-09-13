@@ -6,6 +6,7 @@ import { API } from '$lib/constants';
 
 import { LibraryManagementQueryKeyFactory } from './LibraryManagementQueryKeyFactory';
 import type {
+	LibraryManagementActivationHealthResponse,
 	LibraryManagementHistoryParams,
 	LibraryManagementOperationHistoryResponse,
 	LibraryManagementPlanItemPageResponse,
@@ -266,6 +267,20 @@ export const getLibraryManagementRecoveryQuery = (
 		queryFn: ({ signal }) =>
 			api.global.get<LibraryManagementRecoveryDiagnosticsResponse>(
 				API.libraryManagement.recoveryDiagnostics(),
+				{ signal }
+			)
+	}));
+
+export const getLibraryManagementActivationHealthQuery = (
+	getUserId: Getter<string | null | undefined>,
+	enabled: Getter<boolean> = () => true
+) =>
+	createQuery(() => ({
+		enabled: enabled(),
+		queryKey: LibraryManagementQueryKeyFactory.activationHealth(getUserId()),
+		queryFn: ({ signal }) =>
+			api.global.get<LibraryManagementActivationHealthResponse>(
+				API.libraryManagement.activationHealth(),
 				{ signal }
 			)
 	}));

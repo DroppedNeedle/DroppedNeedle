@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query, Response
 
 from api.v1.schemas.library_management import (
+    LibraryManagementActivationHealthResponse,
     LibraryManagementChangeImpact,
     LibraryManagementPresetDiff,
     LibraryManagementProfile,
@@ -93,6 +94,16 @@ async def get_library_management_settings(
     service: LibraryManagementProfileServiceDep,
 ) -> LibraryManagementSettingsResponse:
     return service.get_settings()
+
+
+@router.get(
+    "/settings/library-management/activation-health",
+    response_model=LibraryManagementActivationHealthResponse,
+)
+async def get_library_management_activation_health(
+    service: LibraryManagementProfileServiceDep,
+) -> LibraryManagementActivationHealthResponse:
+    return service.activation_health()
 
 
 @router.put(

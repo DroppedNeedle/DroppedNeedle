@@ -12,6 +12,7 @@ from api.v1.routes.library_management import router
 from api.v1.routes.library_target import router as target_library_router
 from api.v1.schemas.library_management import (
     PICARD_ORGANIZER_PROFILE_ID,
+    LibraryManagementRootAssignment,
     LibraryManagementSettings,
 )
 from api.v1.schemas.library_management_preview import (
@@ -786,6 +787,7 @@ def test_management_route_inventory_is_complete() -> None:
         ("POST", "/settings/library-management/activation-previews"),
         ("GET", "/settings/library-management/activation-previews/{job_id}"),
         ("POST", "/settings/library-management/activation-confirmations"),
+        ("GET", "/settings/library-management/activation-health"),
         ("POST", "/library/management/previews"),
         ("GET", "/library/management/tracks/{track_id}/tag-editor"),
         ("POST", "/library/management/tag-edit-previews"),
@@ -866,6 +868,47 @@ def _resolve_recovery(app: FastAPI) -> AsyncMock:
         lambda: recovery
     )
     return recovery
+
+
+def test_activation_health_route_reports_stale_roots(
+    app: FastAPI,
+    route_services: tuple[LibraryManagementProfileService, AsyncMock],
+) -> None:
+    profile_service, _ = route_services
+    override_admin_auth(app)
+    client = build_test_client(app)
+
+    fresh = client.get("/settings/library-management/activation-health")
+    assert fresh.status_code == 200
+    assert fresh.json() == {
+        "stale_root_ids": [],
+        "blocked_root_ids": [],
+        "blocked_reason": None,
+    }
+
+    prefs = profile_service._preferences
+    root_id = prefs.get_typed_library_settings_raw().library_roots[0].id
+    current = profile_service.get_settings()
+    proposed = prefs.get_library_management_settings_raw()
+    proposed.root_assignments = [
+        LibraryManagementRootAssignment(
+            root_id=root_id,
+            enabled=True,
+            automatic_acquisitions=True,
+        )
+    ]
+    prefs.save_library_management_settings_if_current(
+        proposed,
+        expected_settings_revision=current.settings_revision,
+    )
+
+    stale = client.get("/settings/library-management/activation-health")
+    assert stale.status_code == 200
+    assert stale.json() == {
+        "stale_root_ids": [root_id],
+        "blocked_root_ids": [],
+        "blocked_reason": None,
+    }
 
 
 def test_resolve_import_bundle_returns_contract_shape(app: FastAPI) -> None:

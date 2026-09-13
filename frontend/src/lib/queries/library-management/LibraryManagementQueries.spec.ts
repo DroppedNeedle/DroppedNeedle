@@ -14,6 +14,7 @@ import { api } from '$lib/api/client';
 import { LibraryManagementQueryKeyFactory } from './LibraryManagementQueryKeyFactory';
 import type { LibraryManagementResultPageResponse } from './types';
 import {
+	getLibraryManagementActivationHealthQuery,
 	getLibraryManagementActivationPreviewQuery,
 	getLibraryManagementOperationQuery,
 	getLibraryManagementOperationResultsQuery,
@@ -214,7 +215,8 @@ describe('Library Management query endpoints', () => {
 				() => 'admin-a',
 				() => 'operation/1'
 			),
-			getLibraryManagementRecoveryQuery(() => 'admin-a')
+			getLibraryManagementRecoveryQuery(() => 'admin-a'),
+			getLibraryManagementActivationHealthQuery(() => 'admin-a')
 		];
 		for (const query of queries) await callQueryFn(query, { signal });
 
@@ -225,7 +227,8 @@ describe('Library Management query endpoints', () => {
 			'/api/v1/settings/library-management/activation-previews/activation%2F1',
 			'/api/v1/library/management/previews/preview%2F1',
 			'/api/v1/library/management/operations/operation%2F1',
-			'/api/v1/library/management/recovery/diagnostics'
+			'/api/v1/library/management/recovery/diagnostics',
+			'/api/v1/settings/library-management/activation-health'
 		]);
 		expect(mockGet.mock.calls.every((call) => call[1]?.signal === signal)).toBe(true);
 	});

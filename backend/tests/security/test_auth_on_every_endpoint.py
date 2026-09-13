@@ -377,6 +377,11 @@ _ADMIN_ENDPOINTS = [
         },
     ),
     (
+        "GET",
+        "/api/v1/settings/library-management/activation-health",
+        None,
+    ),
+    (
         "POST",
         "/api/v1/library/management/previews",
         {

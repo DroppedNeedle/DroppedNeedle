@@ -34,6 +34,7 @@
 	import { createUuid } from '$lib/utils/uuid';
 	import type { LibraryRootSettings } from '$lib/queries/library/LibraryOperationsTypes';
 	import {
+		getLibraryManagementActivationHealthQuery,
 		getLibraryManagementActivationPreviewQuery,
 		getLibraryManagementOperationsQuery,
 		getLibraryManagementSettingsQuery
@@ -75,6 +76,10 @@
 	const operationsQuery = getLibraryManagementOperationsQuery(
 		() => authStore.user?.id,
 		() => ({ limit: 20 })
+	);
+	const activationHealthQuery = getLibraryManagementActivationHealthQuery(
+		() => authStore.user?.id,
+		() => authStore.isAdmin
 	);
 	const updateSettings = updateLibraryManagementSettingsMutation();
 	const validateSettings = validateLibraryManagementSettingsMutation();
@@ -244,6 +249,25 @@
 	const selectedProfile = $derived(
 		profiles.find((profile) => profile.id === selectedProfileId) ?? null
 	);
+	const staleActivationRootIds = $derived(
+		activationHealthQuery.isLoading ? [] : (activationHealthQuery.data?.stale_root_ids ?? [])
+	);
+	const staleActivationRootLabels = $derived(
+		staleActivationRootIds.map(
+			(rootId) => roots.find((root) => root.id === rootId)?.label ?? 'Unknown root'
+		)
+	);
+	const blockedActivationRootIds = $derived(
+		activationHealthQuery.isLoading ? [] : (activationHealthQuery.data?.blocked_root_ids ?? [])
+	);
+	const blockedActivationRootLabels = $derived(
+		blockedActivationRootIds.map(
+			(rootId) => roots.find((root) => root.id === rootId)?.label ?? 'Unknown root'
+		)
+	);
+	const blockedActivationReason = $derived(
+		activationHealthQuery.isLoading ? null : (activationHealthQuery.data?.blocked_reason ?? null)
+	);
 	const currentActivationRootId = $derived(activationRootIds[activationIndex] ?? null);
 	const currentActivationRoot = $derived(
 		roots.find((root) => root.id === currentActivationRootId) ?? null
@@ -346,7 +370,11 @@
 				saved.automatic_drop_imports ||
 				saved.automatic_scan_discovered)
 		) {
-			return 'Active';
+			if (activationHealthQuery.isLoading) return 'Checking activation…';
+			if (blockedActivationRootIds.includes(rootId)) return 'Paused — needs attention';
+			return staleActivationRootIds.includes(rootId)
+				? 'Activation stale — run a dry run'
+				: 'Active';
 		}
 		return saved.enabled ? 'Configured; automatic triggers off' : 'Off';
 	}
@@ -679,6 +707,25 @@
 		const proposed = $state.snapshot(draft);
 		resetActivationSession();
 		await reviewAndSave(proposed, opener).catch(() => undefined);
+	}
+
+	function startFreshActivation(opener: HTMLButtonElement): void {
+		if (
+			!persistedSettings ||
+			hasUnsavedSettings ||
+			activationPending ||
+			staleActivationRootIds.length === 0
+		)
+			return;
+		activationDraft = structuredClone($state.snapshot(persistedSettings));
+		activationRootIds = [...staleActivationRootIds];
+		activationIndex = 0;
+		activationJobId = null;
+		activationToken = '';
+		activationProofs = [];
+		activationPhrase = '';
+		activationError = '';
+		showActivationDialog(opener);
 	}
 
 	function showActivationDialog(opener: HTMLButtonElement | null): void {
@@ -1428,6 +1475,70 @@
 						class="btn management-btn"
 						href={`/library/management/previews/${encodeURIComponent(remoteActivation.operation.id)}`}
 						><ShieldAlert class="h-4 w-4" /> Review dry run</a
+					>
+				{:else if activationHealthQuery.isError}
+					<div>
+						<strong class="text-sm">Could not check activation status</strong>
+						<p class="text-xs text-base-content/50">
+							Automatic writes may be paused. Retry the status check.
+						</p>
+					</div>
+					<button
+						class="btn management-btn"
+						disabled={activationHealthQuery.isFetching}
+						onclick={() => void activationHealthQuery.refetch()}
+						><RefreshCw class="h-4 w-4" /> Retry status check</button
+					>
+				{:else if activationHealthQuery.isLoading}
+					<div>
+						<strong class="text-sm">Checking activation status…</strong>
+						<p class="text-xs text-base-content/50">
+							Confirming every automatic root still matches its dry run.
+						</p>
+					</div>
+					<button class="btn btn-ghost" disabled
+						><span class="loading loading-spinner loading-sm"></span> Checking</button
+					>
+				{:else if blockedActivationRootIds.length > 0}
+					<div>
+						<strong class="text-sm">Automatic writes paused — needs attention</strong>
+						<p class="text-xs text-base-content/50">
+							{#if blockedActivationRootLabels.length === 1}
+								{blockedActivationRootLabels[0]} needs attention before automatic writes can
+								resume. Check the library roots and the assignment below, then recheck.
+							{:else}
+								{blockedActivationRootLabels.length} roots need attention before automatic
+								writes can resume. Check the library roots and assignments below, then recheck.
+							{/if}
+						</p>
+						{#if blockedActivationReason}
+							<p class="mt-1 text-xs text-base-content/50">{blockedActivationReason}</p>
+						{/if}
+					</div>
+					<button
+						class="btn management-btn"
+						disabled={activationHealthQuery.isFetching}
+						onclick={() => void activationHealthQuery.refetch()}
+						><RefreshCw class="h-4 w-4" /> Recheck</button
+					>
+				{:else if staleActivationRootIds.length > 0}
+					<div>
+						<strong class="text-sm">Automatic writes paused — dry run needed</strong>
+						<p class="text-xs text-base-content/50">
+							{#if staleActivationRootLabels.length === 1}
+								{staleActivationRootLabels[0]} no longer matches its confirmed dry run. Run a fresh dry
+								run to resume automatic writes.
+							{:else}
+								{staleActivationRootLabels.length} roots no longer match their confirmed dry run. Run
+								a fresh dry run to resume automatic writes.
+							{/if}
+						</p>
+					</div>
+					<button
+						class="btn management-btn"
+						disabled={activationPending || activationHealthQuery.isFetching}
+						onclick={(event) => startFreshActivation(event.currentTarget)}
+						><ShieldAlert class="h-4 w-4" /> Run a fresh dry run</button
 					>
 				{:else}
 					<div>

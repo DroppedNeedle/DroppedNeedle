@@ -55,6 +55,8 @@ export const LibraryManagementQueryKeyFactory = {
 		] as const,
 	activationPreview: (userId: string | null | undefined, jobId: string) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'activation-previews', jobId] as const,
+	activationHealth: (userId: string | null | undefined) =>
+		[...LibraryManagementQueryKeyFactory.user(userId), 'activation-health'] as const,
 	operationsPrefix: (userId: string | null | undefined) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'operations'] as const,
 	operations: (userId: string | null | undefined, params: LibraryManagementHistoryParams) =>

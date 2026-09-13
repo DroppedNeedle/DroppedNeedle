@@ -370,6 +370,11 @@ const COVERAGE: Array<[string, string, string]> = [
 		'/api/v1/settings/library-management/activation-confirmations'
 	],
 	[
+		'library management activation health',
+		API.libraryManagement.activationHealth(),
+		'/api/v1/settings/library-management/activation-health'
+	],
+	[
 		'create library management preview',
 		API.libraryManagement.previews(),
 		'/api/v1/library/management/previews'

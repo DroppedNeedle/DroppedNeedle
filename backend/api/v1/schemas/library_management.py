@@ -580,6 +580,25 @@ class LibraryManagementChangeImpact(AppStruct):
     reasons: list[str] = msgspec.field(default_factory=list)
 
 
+class LibraryManagementActivationHealthResponse(AppStruct):
+    """Dry-run activation health for active automatic roots.
+
+    A root is stale when its saved activation no longer matches the
+    current effective profile, naming policy, or library policy - for
+    example after a default migration rewrote the profile - and needs a
+    fresh dry run. A root is blocked when no dry run could help: either
+    the whole library policy is unresolvable (unknown root, unavailable
+    path, recycle-bin overlap), in which case every active root is
+    blocked and `blocked_reason` carries the policy error, or that one
+    root's effective profile fails to resolve (no reason is attached).
+    `blocked_reason` is only set alongside a non-empty `blocked_root_ids`.
+    """
+
+    stale_root_ids: list[str] = msgspec.field(default_factory=list)
+    blocked_root_ids: list[str] = msgspec.field(default_factory=list)
+    blocked_reason: str | None = None
+
+
 class LibraryManagementPresetDiff(AppStruct):
     profile_id: str
     preset_origin: str | None = None

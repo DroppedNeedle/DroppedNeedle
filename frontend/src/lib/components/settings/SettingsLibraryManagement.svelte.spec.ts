@@ -12,6 +12,11 @@ const h = vi.hoisted(() => ({
 	>,
 	presetDiff: { data: null, isLoading: false, isError: false } as Record<string, unknown>,
 	activation: { data: null, isLoading: false, refetch: vi.fn() } as Record<string, unknown>,
+	health: {
+		data: { stale_root_ids: [], blocked_root_ids: [] },
+		isLoading: false,
+		isFetching: false
+	} as Record<string, unknown>,
 	validate: vi.fn(),
 	impact: vi.fn(),
 	update: vi.fn(),
@@ -49,6 +54,7 @@ vi.mock('$lib/queries/library-management/LibraryManagementPreviewTokens', () => 
 vi.mock('$lib/queries/library-management/LibraryManagementQueries.svelte', () => ({
 	getLibraryManagementSettingsQuery: () => h.settings,
 	getLibraryManagementActivationPreviewQuery: () => h.activation,
+	getLibraryManagementActivationHealthQuery: () => h.health,
 	getLibraryManagementOperationsQuery: () => h.operations,
 	getLibraryManagementPresetDiffQuery: () => h.presetDiff
 }));
@@ -276,6 +282,30 @@ const roots = [
 	}
 ];
 
+function activeAssignmentSettings(): LibraryManagementSettingsResponse {
+	const settings = baseSettings();
+	settings.root_assignments = [
+		{
+			root_id: 'root-1',
+			profile_id: null,
+			overrides: null,
+			enabled: true,
+			automatic_acquisitions: true,
+			automatic_drop_imports: false,
+			automatic_scan_discovered: false,
+			automatic_custom_editions: false,
+			activation_profile_revision: 'stale-profile',
+			activation_naming_policy_revision: null,
+			activation_policy_revision: 'policy-1',
+			activation_settings_revision: 'settings-0',
+			activation_preview_token: 'old-token',
+			activation_preview_hash: 'old-hash',
+			activation_confirmed_at: 1
+		}
+	];
+	return settings;
+}
+
 function adminUser(id: string): AuthUser {
 	return {
 		id,
@@ -326,6 +356,11 @@ beforeEach(() => {
 		isError: false,
 		isFetching: false,
 		refetch: vi.fn()
+	};
+	h.health = {
+		data: { stale_root_ids: [], blocked_root_ids: [] },
+		isLoading: false,
+		isFetching: false
 	};
 	const harmless = {
 		current_settings_revision: 'settings-1',
@@ -1428,6 +1463,107 @@ describe('SettingsLibraryManagement', () => {
 				proofs: [{ root_id: 'root-1', job_id: 'preview-1', preview_token: 'token-1' }]
 			})
 		);
+	});
+
+	it('offers a fresh dry run when a saved activation goes stale', async () => {
+		const settings = activeAssignmentSettings();
+		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
+		h.health = {
+			data: { stale_root_ids: ['root-1'], blocked_root_ids: [] },
+			isLoading: false,
+			isFetching: false
+		};
+
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+
+		await expect.element(page.getByText('Activation stale — run a dry run')).toBeVisible();
+		await expect.element(page.getByText('Automatic writes paused — dry run needed')).toBeVisible();
+		await expect
+			.element(page.getByText(/Archive no longer matches its confirmed dry run/))
+			.toBeVisible();
+		await page.getByRole('button', { name: 'Run a fresh dry run' }).click();
+
+		await expect
+			.element(page.getByRole('heading', { name: 'Enable file organization' }))
+			.toHaveFocus();
+		await page.getByRole('button', { name: 'Run dry run' }).click();
+		expect(h.createActivation).toHaveBeenCalledWith(expect.objectContaining({ root_id: 'root-1' }));
+	});
+
+	it('disables the fresh dry run while activation health is rechecking', async () => {
+		const settings = activeAssignmentSettings();
+		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
+		h.health = {
+			data: { stale_root_ids: ['root-1'], blocked_root_ids: [] },
+			isLoading: false,
+			isFetching: true
+		};
+
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+
+		await expect.element(page.getByRole('button', { name: 'Run a fresh dry run' })).toBeDisabled();
+	});
+
+	it('explains blocked storage without offering a dry run', async () => {
+		const settings = activeAssignmentSettings();
+		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
+		const refetch = vi.fn();
+		h.health = {
+			data: {
+				stale_root_ids: [],
+				blocked_root_ids: ['root-1'],
+				blocked_reason: 'Library root Archive is not currently available.'
+			},
+			isLoading: false,
+			isFetching: false,
+			refetch
+		};
+
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+
+		await expect.element(page.getByText('Paused — needs attention', { exact: true })).toBeVisible();
+		await expect.element(page.getByText('Automatic writes paused — needs attention')).toBeVisible();
+		await expect
+			.element(page.getByText(/Archive needs attention before automatic writes/))
+			.toBeVisible();
+		await expect
+			.element(page.getByText('Library root Archive is not currently available.'))
+			.toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'Run a fresh dry run' }))
+			.not.toBeInTheDocument();
+		await page.getByRole('button', { name: 'Recheck' }).click();
+		expect(refetch).toHaveBeenCalled();
+	});
+
+	it('shows a neutral checking state while activation health loads', async () => {
+		const settings = activeAssignmentSettings();
+		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
+		h.health = { data: undefined, isLoading: true, isFetching: true, isError: false };
+
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+
+		await expect.element(page.getByText('Checking activation status…')).toBeVisible();
+		await expect.element(page.getByText('Checking activation…')).toBeVisible();
+		await expect.element(page.getByText('Configuration saved')).not.toBeInTheDocument();
+	});
+
+	it('offers a retry when the activation status check fails', async () => {
+		const refetch = vi.fn();
+		h.health = {
+			data: undefined,
+			isLoading: false,
+			isFetching: false,
+			isError: true,
+			refetch
+		};
+
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+
+		await expect.element(page.getByText('Could not check activation status')).toBeVisible();
+		await expect.element(page.getByText('Configuration saved')).not.toBeInTheDocument();
+		await page.getByRole('button', { name: 'Retry status check' }).click();
+		expect(refetch).toHaveBeenCalled();
 	});
 
 	it('saves another trigger immediately when the write profile is already authorized', async () => {
