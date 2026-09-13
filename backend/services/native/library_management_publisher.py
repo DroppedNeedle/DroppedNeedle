@@ -72,6 +72,7 @@ from services.native.audio_write_planning_service import AudioWritePlanningServi
 from services.native.file_revision import revision_from_stat
 from services.native.library_management_profile_service import (
     LibraryManagementProfileService,
+    migration_carry_applies,
 )
 from services.native.library_policy_resolver import LibraryPolicyResolver
 from services.native.recycle_bin import recycle
@@ -2884,9 +2885,15 @@ class LibraryManagementPublisher:
                         "The automatic Library Management profile changed."
                     )
                 continue
+            profile_matches = (
+                assignment.activation_profile_revision == effective.revision
+                or migration_carry_applies(
+                    assignment, effective, current_pinned, policy
+                )
+            )
             if (
                 profile_changed
-                or assignment.activation_profile_revision != effective.revision
+                or not profile_matches
                 or not activation_matches
                 or assignment.activation_policy_revision != policy.policy_revision
                 or not assignment.activation_preview_token

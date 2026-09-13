@@ -6,6 +6,7 @@ import pytest
 
 from api.v1.schemas.library_management import (
     COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID,
+    LEGACY_DEFAULT_SIDECAR_PATTERNS,
     LEGACY_NAMING_PROFILE_ID,
     PICARD_ORGANIZER_MULTI_DISC_NAMING_SCRIPT_ID,
     PICARD_ORGANIZER_NAMING_SCRIPT_ID,
@@ -772,6 +773,213 @@ def test_activation_health_blocks_every_active_root_when_policy_unresolvable(
             trigger="acquisition",
             expected_policy_revision=policy_revision,
         )
+
+
+def _activate_over_legacy_sidecars(
+    service: LibraryManagementProfileService, prefs: PreferencesService
+) -> str:
+    """Forge the exact post-#401 state: new sidecars stored, legacy pin kept.
+
+    A pre-#401 activation pinned the legacy-sidecar hash, and the #401
+    load migration then rewrote the stored profiles without touching the
+    pin. Post-#401 code can no longer create that state through normal
+    reads (every load migrates first), so the pin is rewound directly to
+    what the same effective profile hashed to with legacy sidecars - a
+    construction proven against live data (it reproduces the real held
+    user's activation hash exactly).
+    """
+
+    _activate(service, prefs)
+    root_id = prefs.get_typed_library_settings_raw().library_roots[0].id
+    current = service.get_settings()
+    raw = prefs.get_library_management_settings_raw()
+    assignment = next(
+        value for value in raw.root_assignments if value.root_id == root_id
+    )
+    effective = LibraryManagementProfileService._effective_profile(raw, assignment)
+    legacy_organization = msgspec.structs.replace(
+        effective.organization,
+        sidecar_patterns=list(LEGACY_DEFAULT_SIDECAR_PATTERNS),
+    )
+    legacy_effective = msgspec.structs.replace(
+        effective, organization=legacy_organization
+    )
+    assignment.activation_profile_revision = profile_revision(legacy_effective)
+    assert assignment.activation_profile_revision != profile_revision(effective)
+    prefs.save_library_management_settings_if_current(
+        raw, expected_settings_revision=current.settings_revision
+    )
+    return root_id
+
+
+def _policy_revision_for(prefs: PreferencesService) -> str:
+    return LibraryPolicyResolver(
+        prefs.get_typed_library_settings_raw()
+    ).policy_revision
+
+
+def test_automatic_gate_carries_activation_across_default_migration(
+    tmp_path: Path,
+) -> None:
+    prefs = _preferences(tmp_path)
+    service = _service(prefs, validate=True)
+    root_id = _activate_over_legacy_sidecars(service, prefs)
+
+    result = service.prepare_automatic_profile(
+        root_id=root_id,
+        trigger="acquisition",
+        expected_policy_revision=_policy_revision_for(prefs),
+    )
+
+    assert result is not None
+    # The carry is read-only: pins converge on the next user-confirmed dry
+    # run instead of being rewritten mid-import (which would churn the
+    # settings revision the in-flight bundle sealed).
+    carried = prefs.get_library_management_settings_raw()
+    assignment = next(
+        value for value in carried.root_assignments if value.root_id == root_id
+    )
+    effective = LibraryManagementProfileService._effective_profile(
+        carried, assignment
+    )
+    assert assignment.activation_profile_revision != profile_revision(effective)
+
+
+def test_activation_health_current_across_default_migration(
+    tmp_path: Path,
+) -> None:
+    prefs = _preferences(tmp_path)
+    service = _service(prefs, validate=True)
+    _activate_over_legacy_sidecars(service, prefs)
+
+    health = service.activation_health()
+
+    assert health.stale_root_ids == []
+    assert health.blocked_root_ids == []
+
+
+def test_automatic_gate_still_holds_migration_plus_real_change(
+    tmp_path: Path,
+) -> None:
+    prefs = _preferences(tmp_path)
+    service = _service(prefs, validate=True)
+    root_id = _activate_over_legacy_sidecars(service, prefs)
+    current = service.get_settings()
+    edited = prefs.get_library_management_settings_raw()
+    organizer = next(
+        profile
+        for profile in edited.profiles
+        if profile.id == PICARD_ORGANIZER_PROFILE_ID
+    )
+    organizer.organization.rename_enabled = (
+        not organizer.organization.rename_enabled
+    )
+    prefs.save_library_management_settings_if_current(
+        edited, expected_settings_revision=current.settings_revision
+    )
+
+    _assert_migration_plus_change_holds(service, prefs, root_id)
+
+
+def _assert_migration_plus_change_holds(
+    service: LibraryManagementProfileService,
+    prefs: PreferencesService,
+    root_id: str,
+) -> None:
+    with pytest.raises(StaleRevisionError, match="activation is stale"):
+        service.prepare_automatic_profile(
+            root_id=root_id,
+            trigger="acquisition",
+            expected_policy_revision=_policy_revision_for(prefs),
+        )
+    assert service.activation_health().stale_root_ids == [root_id]
+
+
+def test_automatic_gate_still_holds_migration_plus_naming_change(
+    tmp_path: Path,
+) -> None:
+    prefs = _preferences(tmp_path)
+    service = _service(prefs, validate=True)
+    root_id = _activate_over_legacy_sidecars(service, prefs)
+    current = service.get_settings()
+    edited = prefs.get_library_management_settings_raw()
+    organizer = next(
+        profile
+        for profile in edited.profiles
+        if profile.id == PICARD_ORGANIZER_PROFILE_ID
+    )
+    organizer.organization.naming_script_id = (
+        PICARD_ORGANIZER_MULTI_DISC_NAMING_SCRIPT_ID
+    )
+    prefs.save_library_management_settings_if_current(
+        edited, expected_settings_revision=current.settings_revision
+    )
+
+    _assert_migration_plus_change_holds(service, prefs, root_id)
+
+
+def test_automatic_gate_still_holds_migration_plus_cleared_proof(
+    tmp_path: Path,
+) -> None:
+    prefs = _preferences(tmp_path)
+    service = _service(prefs, validate=True)
+    root_id = _activate_over_legacy_sidecars(service, prefs)
+    current = service.get_settings()
+    edited = prefs.get_library_management_settings_raw()
+    assignment = next(
+        value for value in edited.root_assignments if value.root_id == root_id
+    )
+    assignment.activation_preview_token = None
+    prefs.save_library_management_settings_if_current(
+        edited, expected_settings_revision=current.settings_revision
+    )
+
+    _assert_migration_plus_change_holds(service, prefs, root_id)
+
+
+def test_automatic_gate_still_holds_migration_plus_overrides(
+    tmp_path: Path,
+) -> None:
+    prefs = _preferences(tmp_path)
+    service = _service(prefs, validate=True)
+    root_id = _activate_over_legacy_sidecars(service, prefs)
+    current = service.get_settings()
+    edited = prefs.get_library_management_settings_raw()
+    organizer = next(
+        profile
+        for profile in edited.profiles
+        if profile.id == PICARD_ORGANIZER_PROFILE_ID
+    )
+    assignment = next(
+        value for value in edited.root_assignments if value.root_id == root_id
+    )
+    assignment.overrides = LibraryManagementRootOverrides(
+        move_enabled=not organizer.organization.move_enabled
+    )
+    prefs.save_library_management_settings_if_current(
+        edited, expected_settings_revision=current.settings_revision
+    )
+
+    _assert_migration_plus_change_holds(service, prefs, root_id)
+
+
+def test_automatic_gate_still_holds_migration_plus_policy_drift(
+    tmp_path: Path,
+) -> None:
+    prefs = _preferences(tmp_path)
+    service = _service(prefs, validate=True)
+    root_id = _activate_over_legacy_sidecars(service, prefs)
+    current = service.get_settings()
+    edited = prefs.get_library_management_settings_raw()
+    assignment = next(
+        value for value in edited.root_assignments if value.root_id == root_id
+    )
+    assignment.activation_policy_revision = "bogus-policy-revision"
+    prefs.save_library_management_settings_if_current(
+        edited, expected_settings_revision=current.settings_revision
+    )
+
+    _assert_migration_plus_change_holds(service, prefs, root_id)
 
 
 def test_activation_health_omits_reason_when_nothing_is_blocked(

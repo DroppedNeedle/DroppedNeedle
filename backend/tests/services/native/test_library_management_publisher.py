@@ -18,6 +18,7 @@ import msgspec
 import pytest
 
 from api.v1.schemas.library_management import (
+    LEGACY_DEFAULT_SIDECAR_PATTERNS,
     LibraryManagementRootAssignment,
     LibraryManagementRootOverrides,
     NamingScriptSettings,
@@ -2068,6 +2069,92 @@ def test_automatic_publication_rejects_a_tampered_pinned_profile(
                 files=(request,),
             )
         )
+
+
+def _legacy_pinned_publication(
+    tmp_path: Path, *, tamper_sealed_profile: bool
+) -> tuple[LibraryManagementPublisher, LibraryManagementImportBundle]:
+    _root, source, preferences, store, _settings, policy_revision = _configured(
+        tmp_path
+    )
+    _activate_automatic_acquisitions(preferences, policy_revision)
+    management = preferences.get_library_management_settings_raw()
+    assignment = management.root_assignments[0]
+    effective = LibraryManagementProfileService._effective_profile(
+        management, assignment
+    )
+    legacy_organization = msgspec.structs.replace(
+        effective.organization,
+        sidecar_patterns=list(LEGACY_DEFAULT_SIDECAR_PATTERNS),
+    )
+    legacy_effective = msgspec.structs.replace(
+        effective, organization=legacy_organization
+    )
+    assignment.activation_profile_revision = profile_revision(legacy_effective)
+    assert assignment.activation_profile_revision != profile_revision(effective)
+    current = preferences.get_library_management_settings()
+    preferences.save_library_management_settings_if_current(
+        management, expected_settings_revision=current.settings_revision
+    )
+
+    management = preferences.get_library_management_settings_raw()
+    profile = next(
+        value
+        for value in management.profiles
+        if value.id == PICARD_ORGANIZER_PROFILE_ID
+    )
+    pinned = _planner(tmp_path, store, preferences).pin_profile(management, profile)
+    if tamper_sealed_profile:
+        pinned.profile.description = "Tampered after preparation"
+    current_settings_revision = settings_revision(management)
+    audio = AudioMetadataEngine()
+    request = msgspec.structs.replace(
+        _import_file(
+            audio,
+            source,
+            ordinal=0,
+            relative_path="Managed/01 Track.flac",
+        ),
+        pinned_profile=pinned,
+        settings_revision=current_settings_revision,
+        naming_policy_revision=naming_policy_revision(pinned),
+    )
+    publisher = LibraryManagementPublisher(
+        store,
+        preferences,
+        audio,
+        AudioWritePlanningService(audio),
+        LibraryManagementBlobStore(tmp_path / "carried-blobs", store),
+        LibraryFilesystemCoordinator(),
+    )
+    bundle = LibraryManagementImportBundle(
+        idempotency_key="acquisition:carried-migration",
+        origin="acquisition",
+        policy_revision=policy_revision,
+        files=(request,),
+    )
+    return publisher, bundle
+
+
+def test_automatic_publication_carries_activation_across_default_migration(
+    tmp_path: Path,
+) -> None:
+    publisher, bundle = _legacy_pinned_publication(
+        tmp_path, tamper_sealed_profile=False
+    )
+
+    publisher._validate_automatic_import_configuration(bundle)
+
+
+def test_automatic_publication_still_holds_migration_plus_real_change(
+    tmp_path: Path,
+) -> None:
+    publisher, bundle = _legacy_pinned_publication(
+        tmp_path, tamper_sealed_profile=True
+    )
+
+    with pytest.raises(StaleRevisionError, match="activation is stale"):
+        publisher._validate_automatic_import_configuration(bundle)
 
 
 @pytest.mark.asyncio
