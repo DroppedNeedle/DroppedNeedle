@@ -6,6 +6,7 @@ import pytest
 
 from api.v1.schemas.library_management import (
     COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID,
+    DEFAULT_SIDECAR_PATTERNS,
     LEGACY_NAMING_PROFILE_ID,
     LEGACY_NAMING_SCRIPT_ID,
     MANAGED_FIELD_NAMES,
@@ -354,3 +355,30 @@ def test_duplicate_profile_ids_are_rejected() -> None:
 
     with pytest.raises(ValueError, match="unique ID"):
         normalize_library_management_settings(settings)
+
+
+def test_initial_organizer_profiles_cover_back_booklet_and_medium_sidecars() -> None:
+    settings = build_initial_library_management_settings()
+    expected = [
+        "back.jpg",
+        "back.jpeg",
+        "back.png",
+        "back.webp",
+        "booklet*.jpg",
+        "booklet*.jpeg",
+        "booklet*.png",
+        "booklet*.webp",
+        "medium*.jpg",
+        "medium*.jpeg",
+        "medium*.png",
+        "medium*.webp",
+    ]
+
+    for profile_id in (
+        PICARD_ORGANIZER_PROFILE_ID,
+        COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID,
+    ):
+        profile = next(value for value in settings.profiles if value.id == profile_id)
+        assert profile.organization.sidecar_patterns == list(DEFAULT_SIDECAR_PATTERNS)
+        for pattern in expected:
+            assert pattern in profile.organization.sidecar_patterns

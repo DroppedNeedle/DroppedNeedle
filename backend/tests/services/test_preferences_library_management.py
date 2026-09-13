@@ -6,6 +6,8 @@ import pytest
 
 from api.v1.schemas.library_management import (
     COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID,
+    DEFAULT_SIDECAR_PATTERNS,
+    LEGACY_DEFAULT_SIDECAR_PATTERNS,
     LEGACY_NAMING_PROFILE_ID,
     LEGACY_NAMING_SCRIPT_ID,
     LibraryManagementSettings,
@@ -674,3 +676,86 @@ def test_legacy_editor_options_normalize_to_current_live_settings(
     assert current.genres.write_primary_only_for_constrained_formats is True
     assert "audiodb" not in current.artwork.providers
     assert current.notification.refresh_droppedneedle is True
+
+
+def _stored_profile(payload: dict, profile_id: str) -> dict:
+    return next(value for value in payload["profiles"] if value["id"] == profile_id)
+
+
+def test_stored_legacy_sidecar_defaults_migrate_to_back_booklet_medium(
+    tmp_path: Path,
+) -> None:
+    payload = msgspec.to_builtins(build_initial_library_management_settings())
+    for profile_id in (
+        PICARD_ORGANIZER_PROFILE_ID,
+        COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID,
+    ):
+        _stored_profile(payload, profile_id)["organization"]["sidecar_patterns"] = list(
+            LEGACY_DEFAULT_SIDECAR_PATTERNS
+        )
+    prefs = _preferences(tmp_path, {"library_management": payload})
+
+    migrated = prefs.get_library_management_settings_raw()
+
+    for profile_id in (
+        PICARD_ORGANIZER_PROFILE_ID,
+        COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID,
+    ):
+        profile = next(value for value in migrated.profiles if value.id == profile_id)
+        assert profile.organization.sidecar_patterns == list(DEFAULT_SIDECAR_PATTERNS)
+    stored = json.loads(prefs._config_path.read_text(encoding="utf-8"))[
+        "library_management"
+    ]
+    for profile_id in (
+        PICARD_ORGANIZER_PROFILE_ID,
+        COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID,
+    ):
+        assert _stored_profile(stored, profile_id)["organization"][
+            "sidecar_patterns"
+        ] == list(DEFAULT_SIDECAR_PATTERNS)
+
+
+def test_customized_sidecar_list_and_empty_legacy_list_are_untouched(
+    tmp_path: Path,
+) -> None:
+    payload = msgspec.to_builtins(build_initial_library_management_settings())
+    customized = [*LEGACY_DEFAULT_SIDECAR_PATTERNS, "*.txt"]
+    _stored_profile(payload, PICARD_ORGANIZER_PROFILE_ID)["organization"][
+        "sidecar_patterns"
+    ] = list(customized)
+    assert (
+        _stored_profile(payload, LEGACY_NAMING_PROFILE_ID)["organization"][
+            "sidecar_patterns"
+        ]
+        == []
+    )
+    prefs = _preferences(tmp_path, {"library_management": payload})
+
+    migrated = prefs.get_library_management_settings_raw()
+
+    picard = next(
+        value for value in migrated.profiles if value.id == PICARD_ORGANIZER_PROFILE_ID
+    )
+    legacy = next(
+        value for value in migrated.profiles if value.id == LEGACY_NAMING_PROFILE_ID
+    )
+    assert picard.organization.sidecar_patterns == customized
+    assert legacy.organization.sidecar_patterns == []
+
+
+def test_v3_payload_with_explicit_legacy_sidecars_still_migrates_to_v4(
+    tmp_path: Path,
+) -> None:
+    payload = _legacy_picard_management_payload(3)
+    _stored_profile(payload, PICARD_ORGANIZER_PROFILE_ID)["organization"][
+        "sidecar_patterns"
+    ] = list(LEGACY_DEFAULT_SIDECAR_PATTERNS)
+    prefs = _preferences(tmp_path, {"library_management": payload})
+
+    migrated = prefs.get_library_management_settings_raw()
+    profile = next(
+        value for value in migrated.profiles if value.id == PICARD_ORGANIZER_PROFILE_ID
+    )
+
+    assert profile.preset_version == 4
+    assert profile.organization.sidecar_patterns == list(DEFAULT_SIDECAR_PATTERNS)

@@ -2585,6 +2585,30 @@ def test_sidecar_planning_is_album_relative_bounded_and_never_follows_symlinks(
     assert reason == "SIDECAR_COLLISION"
 
 
+def test_sidecar_planning_covers_back_booklet_and_medium_artwork(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir(parents=True)
+    destination.mkdir()
+    (source / "back.jpg").write_text("back", encoding="utf-8")
+    (source / "booklet01.jpg").write_text("booklet", encoding="utf-8")
+    (source / "medium2.jpg").write_text("medium", encoding="utf-8")
+    profile = picard_style_organizer_profile()
+
+    planned, reason = LibraryManagementPlanner._sidecars(
+        source, destination, profile, True
+    )
+
+    assert reason is None
+    assert sorted(item["source_relative_path"] for item in planned) == [
+        "back.jpg",
+        "booklet01.jpg",
+        "medium2.jpg",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_preview_materializes_custom_external_artwork_path_without_writing_it(
     tmp_path: Path,
