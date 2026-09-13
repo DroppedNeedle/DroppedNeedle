@@ -489,3 +489,80 @@ async def test_folder_import_skips_quarantine_for_local_faults(tmp_path):
     await strategy.import_files(_folder_task(), _folder_manifest(), completed=True)
 
     store.record_quarantine.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_folder_import_never_quarantines_target_occupied(tmp_path):
+    """#418: a target_occupied collision is a local fault (a stray file at the
+    destination), never proof the release is bad - the release must not be
+    quarantined."""
+    from services.native.file_processor import (
+        QUARANTINE_REASONS,
+        TARGET_OCCUPIED,
+        FileFailure,
+        ProcessResult,
+    )
+
+    assert TARGET_OCCUPIED not in QUARANTINE_REASONS
+    store = AsyncMock()
+    store.get_search_job_candidates.return_value = [
+        SimpleNamespace(source=GOOD_KEY, plugin_release=_plugin_release())
+    ]
+    client = AsyncMock()
+    client.list_completed_files.return_value = [tmp_path / "track.flac"]
+    file_processor = AsyncMock()
+    file_processor.process_downloaded_folder.return_value = ProcessResult(
+        succeeded=[],
+        failed=[FileFailure(filename="track.flac", reason=TARGET_OCCUPIED)],
+    )
+    strategy = _folder_strategy(
+        tmp_path, store=store, client=client, file_processor=file_processor
+    )
+
+    result, enumerated = await strategy.import_files(
+        _folder_task(), _folder_manifest(), completed=True
+    )
+
+    assert enumerated == 1
+    assert [f.reason for f in result.failed] == [TARGET_OCCUPIED]
+    store.record_quarantine.assert_not_awaited()
+    store.set_final_path.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_files_import_never_quarantines_target_occupied(tmp_path):
+    """#418 files-mode equivalent: a per-file target_occupied collision never
+    quarantines the plugin release."""
+    from services.native.file_processor import (
+        QUARANTINE_REASONS,
+        TARGET_OCCUPIED,
+        FileFailure,
+        ProcessResult,
+    )
+
+    assert TARGET_OCCUPIED not in QUARANTINE_REASONS
+    store = AsyncMock()
+    store.get_search_job_candidates.return_value = [
+        SimpleNamespace(source=GOOD_KEY, plugin_release=_plugin_release())
+    ]
+    file_processor = AsyncMock()
+    file_processor.process_downloaded.return_value = ProcessResult(
+        succeeded=[],
+        failed=[FileFailure(filename="track.flac", reason=TARGET_OCCUPIED)],
+    )
+    strategy = _folder_strategy(
+        tmp_path, store=store, client=AsyncMock(), file_processor=file_processor
+    )
+    manifest = SimpleNamespace(
+        handle=SimpleNamespace(job_name="j1"),
+        target_files=[SimpleNamespace(filename="track.flac")],
+        task_id="task-1",
+    )
+
+    result, _enumerated = await strategy.import_files(
+        _folder_task(), manifest, completed=True
+    )
+
+    assert [f.reason for f in result.failed] == [TARGET_OCCUPIED]
+    store.record_quarantine.assert_not_awaited()
+    store.set_final_path.assert_not_awaited()

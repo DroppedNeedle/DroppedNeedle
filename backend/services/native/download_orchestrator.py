@@ -81,6 +81,7 @@ from services.native.file_processor import (
     IMPORT_FAILED,
     SIZE_MISMATCH,
     SOURCE_FILE_MISSING,
+    TARGET_OCCUPIED,
     FileProcessor,
     ProcessResult,
 )
@@ -201,6 +202,15 @@ _CONTENT_PROOF_FAILURES = frozenset(
 _IMPORT_FAILED_MSG = (
     "Files downloaded, but couldn't be saved into your library - check the library "
     "folder is writable and has free space"
+)
+# slskd delivered verified files but the library path is occupied by a file this
+# release does not own: a local collision, never a bad peer or a missing release.
+# It must NOT prefix-match the Wanted availability constants
+# (_NO_SOURCE_MSG/_NO_MATCH_MSG/_TAG_MISMATCH_MSG) - re-searching cannot fix local
+# bytes blocking the path, so a collision never enrols in Wanted.
+_TARGET_OCCUPIED_MSG = (
+    "Files downloaded, but the library path is occupied by a file this release "
+    "does not own - held for review instead of overwriting it"
 )
 _MANAGEMENT_HELD_MSG = "Download complete. The files are secured while Library Management waits for attention."
 _MANAGEMENT_HOLD_STORAGE_MSG = (
@@ -1604,6 +1614,7 @@ class DownloadOrchestrator:
         source_missing = False
         import_failed = False
         tag_mismatch = False
+        target_occupied = False
         # Per-file failover (#292): (disc, track) positions still missing after the
         # last attempt; consumed by the next iteration's enqueue so the following
         # candidate is asked for ONLY the missing tracks instead of the whole album.
@@ -1744,8 +1755,17 @@ class DownloadOrchestrator:
                 # failover: the loop below still advances to the next
                 # candidate, so a genuinely wrong-size delivery from the
                 # delivering peer fails over instead of looping here.
+                # TARGET_OCCUPIED joins the local-fault family (#418): the peer
+                # delivered a verified file and the occupying bytes are ours, so
+                # the source must not be blocklisted for the collision.
                 attempt_import_fault = any(
-                    f.reason in (IMPORT_FAILED, SOURCE_FILE_MISSING, SIZE_MISMATCH)
+                    f.reason
+                    in (
+                        IMPORT_FAILED,
+                        SOURCE_FILE_MISSING,
+                        SIZE_MISMATCH,
+                        TARGET_OCCUPIED,
+                    )
                     for f in result.failed
                 )
                 if any(f.reason == WRONG_TRACK for f in result.failed):
@@ -1754,6 +1774,8 @@ class DownloadOrchestrator:
                     source_missing = True
                 if any(f.reason == IMPORT_FAILED for f in result.failed):
                     import_failed = True
+                if any(f.reason == TARGET_OCCUPIED for f in result.failed):
+                    target_occupied = True
                 if any(f.reason == "tag_mismatch" for f in result.failed):
                     tag_mismatch = True
                 if result.management_hold_reason_code is not None:
@@ -1910,6 +1932,7 @@ class DownloadOrchestrator:
                     imported_any,
                     source_missing=source_missing,
                     import_failed=import_failed,
+                    target_occupied=target_occupied,
                     tag_mismatch=tag_mismatch,
                     process_result=attempt_result,
                 )
@@ -2760,6 +2783,7 @@ class DownloadOrchestrator:
         *,
         source_missing: bool = False,
         import_failed: bool = False,
+        target_occupied: bool = False,
         tag_mismatch: bool = False,
         process_result=None,
     ) -> None:
@@ -2767,16 +2791,21 @@ class DownloadOrchestrator:
         either imported (already finalized 'completed') or it didn't ('failed'); an
         album keeps whatever landed as 'partial', or 'failed' if nothing did.
 
-        ``source_missing``/``import_failed``/``tag_mismatch`` flip the failure message
-        off the default 'no source on Soulseek': slskd delivered the files but we either
-        couldn't find them on the mount (config), couldn't write them into the library
-        (perms/disk), or found files whose embedded tags identify different music.
-        Local faults take precedence over a content mismatch, and both take precedence
-        over the generic no-source message."""
+        ``source_missing``/``import_failed``/``target_occupied``/``tag_mismatch`` flip
+        the failure message off the default 'no source on Soulseek': slskd delivered
+        the files but we either couldn't find them on the mount (config), couldn't
+        write them into the library (perms/disk), found the library path occupied by
+        a file this release does not own (collision - held for review), or found
+        files whose embedded tags identify different music. Precedence is
+        source_missing -> import_failed -> target_occupied -> tag_mismatch -> default:
+        a collision means local bytes block the path, so re-search cannot fix it and
+        the message must never read as an availability failure."""
         if source_missing:
             fail_msg = _FILES_NOT_FOUND_MSG
         elif import_failed:
             fail_msg = _IMPORT_FAILED_MSG
+        elif target_occupied:
+            fail_msg = _TARGET_OCCUPIED_MSG
         elif tag_mismatch:
             fail_msg = _TAG_MISMATCH_MSG
         else:
@@ -3606,6 +3635,8 @@ class DownloadOrchestrator:
                     fail_msg = _FILES_NOT_FOUND_MSG
                 elif any(f.reason == IMPORT_FAILED for f in result.failed):
                     fail_msg = _IMPORT_FAILED_MSG
+                elif any(f.reason == TARGET_OCCUPIED for f in result.failed):
+                    fail_msg = _TARGET_OCCUPIED_MSG
                 elif any(f.reason == "tag_mismatch" for f in result.failed):
                     fail_msg = _TAG_MISMATCH_MSG
                 else:

@@ -31,6 +31,7 @@ from services.native.download_orchestrator import (
     _NO_MATCH_MSG,
     _NO_SOURCE_MSG,
     _TAG_MISMATCH_MSG,
+    _TARGET_OCCUPIED_MSG,
     DownloadOrchestrator,
 )
 from services.native.download_service import ALREADY_IN_LIBRARY, DownloadService
@@ -321,7 +322,14 @@ async def test_track_failures_are_excluded_from_album_wanted_enrolment(env):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "message", [_FILES_NOT_FOUND_MSG, _IMPORT_FAILED_MSG, "download failed", None]
+    "message",
+    [
+        _FILES_NOT_FOUND_MSG,
+        _IMPORT_FAILED_MSG,
+        _TARGET_OCCUPIED_MSG,
+        "download failed",
+        None,
+    ],
 )
 async def test_local_faults_do_not_enrol(env, message):
     _serve_history(env, failed=[_record()])
@@ -329,6 +337,14 @@ async def test_local_faults_do_not_enrol(env, message):
     summary = await env.watcher.run_sweep()
     assert summary.enrolled == 0
     assert await env.store.get_watch("rg-1") is None
+
+
+def test_occupied_message_matches_no_availability_prefix():
+    """The collision message must never prefix-match an enrolment constant in
+    either direction: re-search cannot fix local bytes blocking the path."""
+    for constant in (_NO_SOURCE_MSG, _NO_MATCH_MSG, _TAG_MISMATCH_MSG):
+        assert not _TARGET_OCCUPIED_MSG.startswith(constant)
+        assert not constant.startswith(_TARGET_OCCUPIED_MSG)
 
 
 @pytest.mark.asyncio

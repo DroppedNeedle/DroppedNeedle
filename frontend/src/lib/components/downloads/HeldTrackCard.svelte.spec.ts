@@ -167,6 +167,23 @@ describe('HeldTrackCard', () => {
 		await expect.element(page.getByText(/closest copy/i)).toBeVisible();
 	});
 
+	it('describes target_occupied as a path collision, never AcoustID', async () => {
+		await renderCard(
+			held({
+				reason: 'target_occupied',
+				reason_detail: '/music/Led Zeppelin/03 You Shook Me.flac',
+				evidence_title: null,
+				evidence_artist: null,
+				evidence_score: null
+			})
+		);
+		await expect.element(page.getByText(/destination is taken/i)).toBeVisible();
+		await expect.element(page.getByText(/file in the way/i)).toBeVisible();
+		await expect.element(page.getByText(/03 You Shook Me\.flac/)).toBeVisible();
+		await expect.element(page.getByText(/couldn't confirm/i)).not.toBeInTheDocument();
+		await expect.element(page.getByText(/AcoustID/)).not.toBeInTheDocument();
+	});
+
 	it('shows the file length against the expected length', async () => {
 		await renderCard(held());
 		await expect.element(page.getByText(/File length 6:28/)).toBeVisible();

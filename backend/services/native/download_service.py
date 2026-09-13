@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from core.exceptions import (
     AutomaticManagementHoldError,
     ConfigurationError,
+    ConflictError,
     PermissionDeniedError,
     ResourceNotFoundError,
     ValidationError,
@@ -1864,7 +1865,12 @@ class DownloadService:
                 status, final_path = await self.reverify_held(
                     held.id, user_id, user_role
                 )
-            except (ResourceNotFoundError, ValidationError, ConfigurationError) as exc:
+            except (
+                ResourceNotFoundError,
+                ValidationError,
+                ConfigurationError,
+                ConflictError,
+            ) as exc:
                 results.append(
                     {
                         "held_id": held.id,

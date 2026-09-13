@@ -46,13 +46,27 @@
 			? err.message
 			: null;
 	});
+	// collision holds verified the file - only the destination is taken, so the lead
+	// sentence differs from the couldn't-confirm-it recording copy below.
+	const header = $derived(
+		held.reason === 'target_occupied'
+			? 'Downloaded and verified, but the destination is taken.'
+			: "Downloaded, but couldn't confirm it's the right recording."
+	);
 	// what the rejecting check SAW - the reason we couldn't auto-confirm it, so the human
 	// decides informed. The evidence source depends on the hold reason: AcoustID's
-	// identification (fingerprint_mismatch), the file's own tags (tag_mismatch), or the
-	// measured length vs the expected recording (wrong_track).
+	// identification (fingerprint_mismatch), the file's own tags (tag_mismatch), the
+	// measured length vs the expected recording (wrong_track), or the occupying file
+	// path (target_occupied - the file itself verified fine, detail carries the path).
 	const evidence = $derived.by(() => {
 		const title = held.evidence_title?.trim();
 		const artist = held.evidence_artist?.trim();
+		if (held.reason === 'target_occupied') {
+			const detail = held.reason_detail?.trim().replace(/\.+$/, '');
+			return detail
+				? `The file in the way: ${detail}`
+				: 'The library path is already occupied by a file this release does not own';
+		}
 		if (held.reason === 'wrong_track') {
 			const tagged = title ? `, tagged “${title}”${artist ? ` by ${artist}` : ''}` : '';
 			return `Every source had the wrong length for this recording. This is the closest copy${tagged}`;
@@ -115,7 +129,7 @@
 
 <div class="space-y-2">
 	<p class="text-xs text-base-content/55">
-		Downloaded, but couldn't confirm it's the right recording.{#if evidence}
+		{header}{#if evidence}
 			{evidence}.{/if}
 	</p>
 	{#if expectedLength != null && total > 0}

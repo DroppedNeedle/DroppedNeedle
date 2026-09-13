@@ -1561,6 +1561,38 @@ async def test_reverify_held_bulk_reports_single_error_row_on_unexpected_failure
 
 
 @pytest.mark.asyncio
+async def test_reverify_held_bulk_surfaces_collision_conflict_message(tmp_path):
+    """#418: a re-check whose import hits an occupied destination reports the
+    ConflictError message, not the generic sweep failure."""
+    import threading
+
+    from core.exceptions import ConflictError
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    (tmp_path / "held").mkdir()
+    path = tmp_path / "held" / "a.flac"
+    path.write_bytes(b"audio")
+    held_id = await _record_held(store, path, track_number=1)
+    svc = _held_service(store, MagicMock())
+    svc.reverify_held = AsyncMock(
+        side_effect=ConflictError("The library destination 'a.flac' is occupied.")
+    )
+
+    results = await svc.reverify_held_bulk("user-a", "user", held_ids=[held_id])
+
+    assert results == [
+        {
+            "held_id": held_id,
+            "status": "error",
+            "final_path": None,
+            "release_group_mbid": "rg-1",
+            "message": "The library destination 'a.flac' is occupied.",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_reverify_held_bulk_scopes_to_caller(tmp_path):
     import threading
 

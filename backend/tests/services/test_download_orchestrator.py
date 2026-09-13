@@ -58,6 +58,8 @@ from services.native.download_orchestrator import (
     _OUT_QUEUED,
     _OUT_STALLED,
     _TAG_MISMATCH_MSG,
+    _TARGET_OCCUPIED_MSG,
+    TARGET_OCCUPIED,
     DownloadOrchestrator,
     _Cancelled,
 )
@@ -5047,3 +5049,199 @@ async def test_abort_outage_waits_and_retries_same_abort(tmp_path: Path):
     await orch._abort_abandoned_transfer(task)
 
     assert client.abort.await_count == 2
+
+
+# Unattributed existing-target collisions (#418): the peer delivered a verified
+# file but the library path is occupied by bytes this release does not own. A
+# local fault - failed (never completed), never blocklisted or quarantined.
+
+
+@pytest.mark.asyncio
+async def test_track_collision_fails_with_occupied_message(tmp_path: Path):
+    """A per-track download whose file collides with unattributed library bytes
+    fails with the occupied message - never completed, never a no-source claim."""
+    client = _StubClient(
+        _status("completed", files_completed=1, succeeded=["peer/01.flac"])
+    )
+    store, orch, _fp, _lib = _build(
+        tmp_path,
+        client=client,
+        track_result=_candidate(0.9),
+        fp_result=ProcessResult(
+            succeeded=[],
+            failed=[FileFailure(filename="peer/01.flac", reason=TARGET_OCCUPIED)],
+        ),
+        imported_rows=[],
+    )
+    task = await _new_task(
+        store,
+        download_type="track",
+        recording_mbid="rec-1",
+        track_title="Song",
+        track_count=1,
+    )
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "failed"
+    assert final.error_message == _TARGET_OCCUPIED_MSG
+    assert "No working source" not in final.error_message
+
+
+@pytest.mark.asyncio
+async def test_album_all_collision_is_not_complete_via_delivery_trust(
+    tmp_path: Path,
+):
+    """Zero library rows plus an all-collision result must NOT complete via the
+    delivery-trust exception: nothing published, so there is no delivery to trust
+    (regression test for the false completion)."""
+    client = _StubClient(
+        _status(
+            "completed",
+            files_completed=2,
+            succeeded=["peer/01.flac", "peer/02.flac"],
+        )
+    )
+    store, orch, _fp, _lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[_candidate(0.9, files=2)],
+        fp_result=ProcessResult(
+            succeeded=[],
+            failed=[
+                FileFailure(filename="peer/01.flac", reason=TARGET_OCCUPIED),
+                FileFailure(filename="peer/02.flac", reason=TARGET_OCCUPIED),
+            ],
+        ),
+        imported_rows=[],
+    )
+    task = await _new_task(store, track_count=2)
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "failed"
+    assert final.error_message == _TARGET_OCCUPIED_MSG
+
+
+@pytest.mark.asyncio
+async def test_mixed_published_and_collision_album_settles_partial(tmp_path: Path):
+    """One published file plus one collision is a partial album - the landed file
+    is kept and the task neither completes nor fails outright."""
+    client = _StubClient(
+        _status(
+            "completed",
+            files_completed=2,
+            succeeded=["peer/01.flac", "peer/02.flac"],
+        )
+    )
+    store, orch, fp, lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[_candidate(0.9, files=2)],
+        imported_rows=[],
+    )
+
+    async def _proc(manifest, only_filenames=None):
+        path = "/lib/peer/01.flac"
+        lib.rows.append({"file_path": path})
+        return ProcessResult(
+            succeeded=[path],
+            failed=[FileFailure(filename="peer/02.flac", reason=TARGET_OCCUPIED)],
+        )
+
+    fp.process_downloaded = AsyncMock(side_effect=_proc)
+    task = await _new_task(store, track_count=2)
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "partial"
+    assert final.files_completed == 1
+
+
+@pytest.mark.asyncio
+async def test_settle_precedence_occupied_beats_tag_mismatch(tmp_path: Path):
+    """A collision means local bytes block the path, so it outranks a content
+    mismatch; mount/import faults still outrank the collision."""
+    store, orch, _fp, _lib = _build(tmp_path, imported_rows=[])
+
+    task = await _new_task(store)
+    await orch._settle_incomplete(
+        task, False, target_occupied=True, tag_mismatch=True
+    )
+    assert (await store.get_task(task.id)).error_message == _TARGET_OCCUPIED_MSG
+
+    task = await _new_task(store)
+    await orch._settle_incomplete(
+        task, False, import_failed=True, target_occupied=True, tag_mismatch=True
+    )
+    assert "couldn't be saved into your library" in (
+        await store.get_task(task.id)
+    ).error_message
+
+    task = await _new_task(store)
+    await orch._settle_incomplete(
+        task, False, source_missing=True, target_occupied=True
+    )
+    assert "slskd downloads folder" in (await store.get_task(task.id)).error_message
+
+
+@pytest.mark.asyncio
+async def test_collision_does_not_blocklist_the_source_identity(tmp_path: Path):
+    """The peer delivered a verified file; the occupying bytes are ours. The
+    release-level blocklist must not learn the source identity from a collision."""
+    client = _StubClient(
+        _status("completed", files_completed=1, succeeded=["peer/01.flac"])
+    )
+    store, orch, _fp, _lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[_candidate(0.9)],
+        fp_result=ProcessResult(
+            succeeded=[],
+            failed=[FileFailure(filename="peer/01.flac", reason=TARGET_OCCUPIED)],
+        ),
+        imported_rows=[],
+    )
+    blocklist = AsyncMock()
+    orch._strategy("soulseek").maybe_blocklist_on_failure = blocklist
+    task = await _new_task(store)
+
+    await orch.process_task(task.id)
+
+    assert (await store.get_task(task.id)).status == "failed"
+    blocklist.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_collision_does_not_quarantine_through_import(tmp_path: Path):
+    """An all-collision import writes no per-file and no folder quarantine rows -
+    neither the peer/file identity nor the folder identity is bad."""
+    client = _StubClient(
+        _status(
+            "completed",
+            files_completed=2,
+            succeeded=["peer/01.flac", "peer/02.flac"],
+        )
+    )
+    store, orch, _fp, _lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[_candidate(0.9, files=2)],
+        fp_result=ProcessResult(
+            succeeded=[],
+            failed=[
+                FileFailure(filename="peer/01.flac", reason=TARGET_OCCUPIED),
+                FileFailure(filename="peer/02.flac", reason=TARGET_OCCUPIED),
+            ],
+        ),
+        imported_rows=[],
+    )
+    task = await _new_task(store, track_count=2)
+
+    await orch.process_task(task.id)
+
+    assert (await store.get_task(task.id)).status == "failed"
+    assert await store.load_quarantine_set() == set()

@@ -25,7 +25,11 @@ from uuid import uuid4
 
 from rapidfuzz import fuzz
 
-from core.exceptions import AutomaticManagementHoldError, ConfigurationError
+from core.exceptions import (
+    AutomaticManagementHoldError,
+    ConfigurationError,
+    ConflictError,
+)
 from infrastructure.msgspec_fastapi import AppStruct
 from models.audio import AudioInfo, AudioTag
 from models.download_manifest import DownloadManifest, ExpectedFile, ExpectedTrack
@@ -80,6 +84,10 @@ SOURCE_FILE_MISSING = "downloaded file not found on the downloads mount"
 # The shortfall is local (a partial write / stale copy), never proof the peer is
 # bad - so it must fail without blacklisting the source.
 SIZE_MISMATCH = "size_mismatch"
+# not a quarantine reason: the destination path is already occupied by a file the
+# catalog cannot prove IS this track. The source verified fine; the fault is local
+# (a stray/foreign file at the target), so it is held for review, never blacklisted.
+TARGET_OCCUPIED = "target_occupied"
 
 
 class VerifyStatus:
@@ -154,6 +162,7 @@ def _workspace_disposition(failures: list[FileFailure]) -> str:
         IMPORT_FAILED,
         SOURCE_FILE_MISSING,
         SIZE_MISMATCH,
+        TARGET_OCCUPIED,
     }
     return (
         "preserve"
@@ -1540,15 +1549,49 @@ class FileProcessor:
             fp=fp,
         )
         if target_path.exists() and replacement is None:
-            if not await self._same_path_upgrade_applies(
+            # An occupied destination only stands as a success when the catalog
+            # proves it IS this track (#418): a bare file (zero publication, zero
+            # attribution) is a collision, never an acquisition.
+            replace_ready = False
+            if await self._same_path_upgrade_applies(
                 manifest.origin, target_path, info
             ):
-                return target_path
-            replacement = (
-                await self._library.get_attributions_for_paths([str(target_path)])
-            ).get(str(target_path))
-            if replacement is None or self._recycle_bin is None:
-                return target_path
+                replacement = (
+                    await self._library.get_attributions_for_paths([str(target_path)])
+                ).get(str(target_path))
+                replace_ready = (
+                    replacement is not None and self._recycle_bin is not None
+                )
+            if not replace_ready:
+                if await self._target_attribution_covers(
+                    target_path,
+                    release_group_mbid=manifest.release_group_mbid,
+                    recording_mbid=track.recording_mbid,
+                    title=track.title,
+                    duration_seconds=track.duration_seconds,
+                ):
+                    return target_path
+                await self._hold_for_review(
+                    source=source,
+                    manifest=manifest,
+                    reason=TARGET_OCCUPIED,
+                    reason_detail=str(target_path),
+                    evidence_title=tag.title,
+                    evidence_artist=tag.artist,
+                    evidence_score=None,
+                    track_number=track.track_number,
+                    disc_number=track.disc_number or 1,
+                    track_title=track.title,
+                    recording_mbid=track.recording_mbid,
+                    duration_seconds=info.duration_seconds,
+                    expected_duration_seconds=track.duration_seconds,
+                    file_format=info.file_format,
+                )
+                raise VerificationFailed(
+                    f"Target already occupied: {target_path.name}",
+                    reason=TARGET_OCCUPIED,
+                    filename=source.name,
+                )
         return _PlannedImport(
             source=source,
             target=target_path,
@@ -1606,6 +1649,37 @@ class FileProcessor:
             return False
         existing_tier = await self._existing_tier_at(target_path)
         return existing_tier is not None and _is_strict_upgrade(existing_tier, info)
+
+    async def _target_attribution_covers(
+        self,
+        target_path: Path,
+        *,
+        release_group_mbid: str | None,
+        recording_mbid: str | None,
+        title: str | None,
+        duration_seconds: float | None,
+    ) -> bool:
+        """Whether the catalog proves the file already at ``target_path`` IS the
+        expected track (#418): an attribution row exists for the path, its release
+        group matches (rows store lower-cased MBIDs), and the row covers the expected
+        recording (P4 ``row_covers_track``). A bare on-disk file with no row never
+        covers - returning it as success would report an acquisition with zero
+        publication and zero catalog attribution."""
+        rows = await self._library.get_attributions_for_paths([str(target_path)])
+        row = rows.get(str(target_path))
+        if row is None:
+            return False
+        expected_rg = (release_group_mbid or "").strip().lower()
+        if not expected_rg:
+            return False
+        if (row.get("release_group_mbid") or "").strip().lower() != expected_rg:
+            return False
+        return row_covers_track(
+            row,
+            recording_mbid=recording_mbid,
+            title=title,
+            duration_seconds=duration_seconds,
+        )
 
     async def _hold_for_review(
         self,
@@ -1816,7 +1890,9 @@ class FileProcessor:
         """Force-import a held file under the track it was matched to, WITHOUT the AcoustID
         identity check (a human has judged it correct). Stamps the album's MBIDs onto the file
         so a later rescan trusts it (tag tier) and never re-rejects. Raises ``FileNotFoundError``
-        if the held file is gone, or on import I/O error - the caller maps that to a 4xx."""
+        if the held file is gone, or on import I/O error - the caller maps that to a 4xx.
+        Raises ``ConflictError`` when the destination is occupied by a file the catalog
+        cannot prove is this track (the held source is kept, the row stays held)."""
         source = Path(held.held_path)
         if not source.exists():
             raise FileNotFoundError(held.held_path)
@@ -1873,19 +1949,32 @@ class FileProcessor:
                     return Path(present["file_path"])
                 replacement = present
         if target_path.exists() and replacement is None:
-            if not await self._same_path_upgrade_applies(origin, target_path, info):
-                # F-INDEXREC-04: validated redundant no-op - consume the held
-                # source off the event loop before reporting success.
-                await asyncio.to_thread(source.unlink, True)
-                return target_path
-            replacement = (
-                await self._library.get_attributions_for_paths([str(target_path)])
-            ).get(str(target_path))
-            if replacement is None or self._recycle_bin is None:
-                # F-INDEXREC-04: no safe replace is possible, so the held source
-                # is a validated redundant no-op - consume it off the event loop.
-                await asyncio.to_thread(source.unlink, True)
-                return target_path
+            # An occupied destination is only a validated redundant no-op when the
+            # catalog proves it IS this track (#418) - otherwise the held source
+            # is kept and the collision surfaces as a 409, never a silent success.
+            replace_ready = False
+            if await self._same_path_upgrade_applies(origin, target_path, info):
+                replacement = (
+                    await self._library.get_attributions_for_paths([str(target_path)])
+                ).get(str(target_path))
+                replace_ready = (
+                    replacement is not None and self._recycle_bin is not None
+                )
+            if not replace_ready:
+                if await self._target_attribution_covers(
+                    target_path,
+                    release_group_mbid=held.release_group_mbid,
+                    recording_mbid=target_tag.musicbrainz_recording_id,
+                    title=target_tag.title,
+                    duration_seconds=held.expected_duration_seconds,
+                ):
+                    # F-INDEXREC-04: validated redundant no-op - consume the held
+                    # source off the event loop before reporting success.
+                    await asyncio.to_thread(source.unlink, True)
+                    return target_path
+                raise ConflictError(
+                    f"The library destination '{target_path.name}' is already occupied."
+                )
         published = await self._publish_planned_imports(
             [
                 _PlannedImport(
@@ -2369,15 +2458,71 @@ class FileProcessor:
             fp=fp,
         )
         if target_path.exists() and replacement is None:
-            if not await self._same_path_upgrade_applies(
+            # An occupied destination only stands as a success when the catalog
+            # proves it IS this track (#418): a bare file (zero publication, zero
+            # attribution) is a collision, never an acquisition.
+            replace_ready = False
+            if await self._same_path_upgrade_applies(
                 manifest.origin, target_path, info
             ):
-                return target_path
-            replacement = (
-                await self._library.get_attributions_for_paths([str(target_path)])
-            ).get(str(target_path))
-            if replacement is None or self._recycle_bin is None:
-                return target_path
+                replacement = (
+                    await self._library.get_attributions_for_paths([str(target_path)])
+                ).get(str(target_path))
+                replace_ready = (
+                    replacement is not None and self._recycle_bin is not None
+                )
+            if not replace_ready:
+                if await self._target_attribution_covers(
+                    target_path,
+                    release_group_mbid=manifest.release_group_mbid,
+                    recording_mbid=(
+                        expected_track.recording_mbid
+                        if expected_track is not None
+                        else tag.musicbrainz_recording_id
+                    ),
+                    title=(
+                        expected_track.title
+                        if expected_track is not None
+                        else tag.title
+                    ),
+                    duration_seconds=(
+                        expected_track.duration_seconds
+                        if expected_track is not None
+                        else expected.duration
+                    ),
+                ):
+                    return target_path
+                await self._hold_for_review(
+                    source=source,
+                    manifest=manifest,
+                    reason=TARGET_OCCUPIED,
+                    reason_detail=str(target_path),
+                    evidence_title=tag.title,
+                    evidence_artist=tag.artist,
+                    evidence_score=None,
+                    track_number=tag.track_number,
+                    disc_number=tag.disc_number or 1,
+                    track_title=(
+                        expected_track.title if expected_track else tag.title
+                    ),
+                    recording_mbid=(
+                        expected_track.recording_mbid
+                        if expected_track
+                        else tag.musicbrainz_recording_id
+                    ),
+                    duration_seconds=info.duration_seconds,
+                    expected_duration_seconds=(
+                        expected_track.duration_seconds
+                        if expected_track is not None
+                        else expected.duration
+                    ),
+                    file_format=info.file_format,
+                )
+                raise VerificationFailed(
+                    f"Target already occupied: {target_path.name}",
+                    reason=TARGET_OCCUPIED,
+                    filename=expected.filename,
+                )
         return _PlannedImport(
             source=source,
             target=target_path,
