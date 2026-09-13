@@ -338,6 +338,7 @@ async def _extensions(c: Ctx) -> Response:
         m.SOpenSubsonicExtension(name="apiKeyAuthentication", versions=[1]),
         m.SOpenSubsonicExtension(name="formPost", versions=[1]),
         m.SOpenSubsonicExtension(name="transcodeOffset", versions=[1]),
+        m.SOpenSubsonicExtension(name="transcoding", versions=[1]),
     ]
     return c.render("openSubsonicExtensions", exts)
 

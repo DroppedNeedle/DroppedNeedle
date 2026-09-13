@@ -101,6 +101,7 @@ async def test_extensions_public_no_auth(compat_env):
     names = {e["name"] for e in body["openSubsonicExtensions"]}
     assert "apiKeyAuthentication" in names
     assert "formPost" in names
+    assert "transcoding" in names
 
 
 # ----- enablement -----
