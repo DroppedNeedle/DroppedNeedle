@@ -11,9 +11,18 @@
 
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import {
+		createDownloadStream,
+		getOrganizerRetry,
+		resetOrganizerRetry,
+		type OrganizerRetryStage
+	} from '$lib/queries/downloads/DownloadSSE.svelte';
+	import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
+	import {
 		discardHeldManagementUnit,
 		retryHeldManagementUnit
 	} from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
+	import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import type { HeldImport } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -27,10 +36,34 @@
 
 	const retry = retryHeldManagementUnit();
 	const discard = discardHeldManagementUnit();
+	const retryStream = createDownloadStream();
 	const first = $derived(items[0]);
 	const taskId = $derived(first?.source_task_id ?? '');
 	const releaseGroupMbid = $derived(first?.release_group_mbid ?? null);
-	const busy = $derived(retry.isPending || discard.isPending);
+	// The task-keyed organizer_retry snapshot: live while this card's own mutation
+	// runs, and re-attached on mount when another session started the retry.
+	const retrySnapshot = $derived(taskId ? getOrganizerRetry(taskId) : null);
+	const retryRunning = $derived(retrySnapshot?.state === 'running');
+	const busy = $derived(retry.isPending || discard.isPending || retryRunning);
+
+	const STAGE_LABELS: Record<OrganizerRetryStage, string> = {
+		preparing: 'Preparing',
+		planning: 'Planning',
+		publishing: 'Publishing',
+		finalizing: 'Finalizing'
+	};
+	// Non-empty-guarded: every label below renders only when it has real content,
+	// so a partial snapshot can never paint a blank line.
+	const stageLabel = $derived(
+		retrySnapshot ? (STAGE_LABELS[retrySnapshot.stage] ?? 'Working') : ''
+	);
+	const progressCompleted = $derived(retrySnapshot?.files_completed ?? 0);
+	const progressTotal = $derived(retrySnapshot?.files_total ?? 0);
+	const progressLine = $derived(
+		retrySnapshot?.state === 'running' && stageLabel
+			? `${stageLabel} ${progressCompleted}/${progressTotal}`
+			: ''
+	);
 	const canManage = $derived(authStore.isAdmin);
 	const sorted = $derived(
 		[...items].sort(
@@ -58,10 +91,73 @@
 	let retryError = $state<string | null>(null);
 	let retryDetailAtAttempt = $state<string | null>(null);
 	let showRetryStatus = $state(false);
+	// Owned attempt bookkeeping: the mutation response and the terminal SSE event
+	// race, so the first to arrive settles the UI and the other is a no-op.
+	let retryOwned = $state(false);
+	let retrySettled = $state(false);
+	let retryImported = $state<number | null>(null);
+	const completeLine = $derived(
+		retryOwned && retrySettled && retryImported !== null
+			? `Organizer retry imported ${retryImported} ${retryImported === 1 ? 'file' : 'files'}.`
+			: ''
+	);
+	const awaitingFirstEvent = $derived(retry.isPending && !retrySnapshot);
+	const retryFailed = $derived(retrySettled && !completeLine);
+	const retryBoxTone = $derived(
+		completeLine
+			? 'border-success/25 bg-success/8 text-success'
+			: retryFailed
+				? 'border-error/25 bg-error/8 text-error'
+				: 'border-info/25 bg-info/8 text-info'
+	);
+
+	// Subscribe for the attempt's live snapshots and for mount re-attach: the
+	// backend replays the latest organizer_retry snapshot on connect, so a refresh
+	// mid-retry resumes progress instead of starting a duplicate.
+	$effect(() => {
+		if (!taskId) return;
+		retryStream.start(taskId);
+		return () => retryStream.stop();
+	});
 
 	$effect(() => {
 		if (retryError && detail !== retryDetailAtAttempt) {
 			retryError = null;
+			retryDetailAtAttempt = detail;
+		}
+	});
+
+	// Mirror of the retry mutation's invalidation surface for terminal snapshots
+	// that arrive without an owning mutation (refresh-orphaned or foreign tab):
+	// silent, no toast - the outcome belongs to another session.
+	function settleForeignTerminal(): void {
+		resetOrganizerRetry(taskId);
+		void invalidateQueriesWithPersister({
+			queryKey: DownloadQueryKeyFactory.tasks(authStore.user?.id)
+		});
+		void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.stats() });
+		void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.recentlyAdded() });
+		if (releaseGroupMbid) {
+			void invalidateQueriesWithPersister({
+				queryKey: LibraryQueryKeyFactory.album(releaseGroupMbid)
+			});
+		}
+	}
+
+	$effect(() => {
+		const snapshot = retrySnapshot;
+		if (!snapshot || snapshot.state === 'running') return;
+		if (!retryOwned) {
+			settleForeignTerminal();
+			return;
+		}
+		if (retrySettled) return;
+		retrySettled = true;
+		showRetryStatus = true;
+		if (snapshot.state === 'complete') {
+			retryImported = snapshot.files_imported ?? snapshot.files_completed ?? 0;
+		} else {
+			retryError = snapshot.error?.trim() || 'File organization still needs attention.';
 			retryDetailAtAttempt = detail;
 		}
 	});
@@ -108,16 +204,33 @@
 	function retryUnit(): void {
 		if (!taskId) return;
 		retry.reset();
+		// A stale terminal snapshot would reject the new attempt's events, so the
+		// entry resets up front; the stream (opened on mount) stays subscribed.
+		resetOrganizerRetry(taskId);
 		retryError = null;
 		retryDetailAtAttempt = detail;
+		retryOwned = true;
+		retrySettled = false;
+		retryImported = null;
 		showRetryStatus = true;
 		retry.mutate(
 			{ taskId, releaseGroupMbid },
 			{
-				onSuccess: () => {
-					showRetryStatus = false;
+				onSuccess: (data) => {
+					// The mutation's own handlers already toasted + invalidated; the
+					// entry reset accompanies that invalidation, and the UI settles
+					// here only if the terminal event has not beaten the response.
+					resetOrganizerRetry(taskId);
+					if (retrySettled) return;
+					retrySettled = true;
+					retryImported = data?.files ?? 0;
 				},
 				onError: (error: unknown) => {
+					// 409 already-running and every other failure surface through the
+					// existing inline pattern with the backend message verbatim.
+					resetOrganizerRetry(taskId);
+					if (retrySettled) return;
+					retrySettled = true;
 					retryError =
 						error instanceof Error && error.message
 							? error.message
@@ -206,26 +319,10 @@
 					{items.length === 1 ? 'file' : 'files'} safely held
 				</p>
 				<p class="mt-3 max-w-3xl text-sm leading-relaxed text-base-content/70">{reason}</p>
-				{#if nextRetryLabel && !retry.isPending}
+				{#if nextRetryLabel && !retry.isPending && !retryRunning}
 					<p class="mt-2 text-xs font-semibold text-info" role="status">
 						Automatic organizer retry scheduled for {nextRetryLabel}. You can retry now instead.
 					</p>
-				{/if}
-				{#if showRetryStatus}
-					<div
-						class="mt-3 rounded-xl border px-3 py-2.5 text-sm {retry.isPending
-							? 'border-info/25 bg-info/8 text-info'
-							: 'border-error/25 bg-error/8 text-error'}"
-						role={retry.isPending ? 'status' : 'alert'}
-						aria-live="polite"
-					>
-						<p class="font-bold">
-							{retry.isPending ? 'Rechecking the secured album…' : 'Organizer still paused'}
-						</p>
-						{#if !retry.isPending && (retryError || detail)}
-							<p class="mt-0.5 leading-relaxed">{retryError ?? detail}</p>
-						{/if}
-					</div>
 				{/if}
 
 				<div class="mt-4 flex flex-wrap items-center gap-2">
@@ -237,10 +334,16 @@
 							disabled={busy || !taskId}
 						>
 							<RefreshCw
-								class="size-4 {retry.isPending ? 'animate-spin motion-reduce:animate-none' : ''}"
+								class="size-4 {retry.isPending || retryRunning
+									? 'animate-spin motion-reduce:animate-none'
+									: ''}"
 								aria-hidden="true"
 							/>
-							{retry.isPending ? 'Retrying organizer…' : 'Retry organizer'}
+							{retry.isPending
+								? 'Retrying organizer…'
+								: retryRunning
+									? 'Retry in progress…'
+									: 'Retry organizer'}
 						</button>
 						<a
 							href={withBasePath('/library/management?tab=automation')}
@@ -262,6 +365,34 @@
 						</span>
 					{/if}
 				</div>
+				{#if showRetryStatus || retryRunning}
+					<div
+						class="mt-3 rounded-xl border px-3 py-2.5 text-sm {retryBoxTone}"
+						role={retryFailed ? 'alert' : 'status'}
+						aria-live="polite"
+					>
+						{#if completeLine}
+							<p class="font-bold">{completeLine}</p>
+						{:else if progressLine}
+							<p class="font-bold">{progressLine}</p>
+							<progress
+								class="progress progress-info mt-2 w-full"
+								value={progressCompleted}
+								max={Math.max(progressTotal, 1)}
+								aria-label={progressLine}
+							>
+								{progressLine}
+							</progress>
+						{:else if awaitingFirstEvent}
+							<p class="font-bold">Rechecking the secured album…</p>
+						{:else}
+							<p class="font-bold">Organizer still paused</p>
+							{#if retryError || detail}
+								<p class="mt-0.5 leading-relaxed">{retryError ?? detail}</p>
+							{/if}
+						{/if}
+					</div>
+				{/if}
 
 				<div class="mt-4 border-t border-base-content/8 pt-3">
 					<button

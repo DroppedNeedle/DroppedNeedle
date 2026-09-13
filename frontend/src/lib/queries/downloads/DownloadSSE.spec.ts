@@ -45,7 +45,8 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-const { createDownloadStream } = await import('./DownloadSSE.svelte');
+const { createDownloadStream, getOrganizerRetry, resetOrganizerRetry } =
+	await import('./DownloadSSE.svelte');
 
 describe('createDownloadStream', () => {
 	it('maps progress events to rune state', () => {
@@ -161,5 +162,153 @@ describe('createDownloadStream', () => {
 		vi.advanceTimersByTime(100);
 		expect(stream.state.done).toBe(false);
 		expect(invalidate).not.toHaveBeenCalled();
+	});
+});
+
+describe('organizerRetry', () => {
+	function retryStream(taskId: string): FakeEventSource {
+		const s = createDownloadStream();
+		s.start(taskId);
+		return FakeEventSource.instances[FakeEventSource.instances.length - 1];
+	}
+
+	it('keys snapshots by task id with latest-wins ordering', () => {
+		const a = retryStream('retry-a');
+		const b = retryStream('retry-b');
+		a.emit('organizer_retry', {
+			state: 'running',
+			stage: 'preparing',
+			files_completed: 0,
+			files_total: 13,
+			updated_at: '2026-09-13T22:00:00+00:00'
+		});
+		a.emit('organizer_retry', {
+			state: 'running',
+			stage: 'publishing',
+			files_completed: 7,
+			files_total: 13,
+			updated_at: '2026-09-13T22:00:01+00:00'
+		});
+		b.emit('organizer_retry', {
+			state: 'running',
+			stage: 'planning',
+			files_completed: 0,
+			files_total: 4,
+			updated_at: '2026-09-13T22:00:02+00:00'
+		});
+		expect(getOrganizerRetry('retry-a')).toMatchObject({
+			state: 'running',
+			stage: 'publishing',
+			files_completed: 7,
+			files_total: 13
+		});
+		expect(getOrganizerRetry('retry-b')).toMatchObject({
+			state: 'running',
+			stage: 'planning',
+			files_completed: 0,
+			files_total: 4
+		});
+		expect(getOrganizerRetry('retry-unknown')).toBeNull();
+	});
+
+	it('resets the entry on invalidation so a refresh re-attaches from live state', () => {
+		const events = retryStream('retry-reset');
+		events.emit('organizer_retry', {
+			state: 'running',
+			stage: 'publishing',
+			files_completed: 7,
+			files_total: 13,
+			updated_at: '2026-09-13T22:00:00+00:00'
+		});
+		expect(getOrganizerRetry('retry-reset')).not.toBeNull();
+		resetOrganizerRetry('retry-reset');
+		expect(getOrganizerRetry('retry-reset')).toBeNull();
+	});
+
+	it('accepts a fresh retry after the previous terminal settled and reset', () => {
+		const events = retryStream('retry-again');
+		events.emit('organizer_retry', {
+			state: 'complete',
+			stage: 'finalizing',
+			files_completed: 13,
+			files_total: 13,
+			files_imported: 13,
+			updated_at: '2026-09-13T22:00:00+00:00'
+		});
+		expect(getOrganizerRetry('retry-again')?.state).toBe('complete');
+		resetOrganizerRetry('retry-again');
+		events.emit('organizer_retry', {
+			state: 'running',
+			stage: 'preparing',
+			files_completed: 0,
+			files_total: 13,
+			updated_at: '2026-09-13T22:00:01+00:00'
+		});
+		expect(getOrganizerRetry('retry-again')).toMatchObject({
+			state: 'running',
+			stage: 'preparing'
+		});
+	});
+
+	it('settles terminal states exactly once and rejects a complete-then-failed double settle', () => {
+		const events = retryStream('retry-settle');
+		events.emit('organizer_retry', {
+			state: 'complete',
+			stage: 'finalizing',
+			files_completed: 13,
+			files_total: 13,
+			files_imported: 13,
+			updated_at: '2026-09-13T22:00:00+00:00'
+		});
+		events.emit('organizer_retry', {
+			state: 'failed',
+			stage: 'publishing',
+			files_completed: 7,
+			files_total: 13,
+			error: 'Contradictory late failure',
+			updated_at: '2026-09-13T22:00:01+00:00'
+		});
+		events.emit('organizer_retry', {
+			state: 'running',
+			stage: 'preparing',
+			files_completed: 0,
+			files_total: 13,
+			updated_at: '2026-09-13T22:00:02+00:00'
+		});
+		expect(getOrganizerRetry('retry-settle')).toMatchObject({
+			state: 'complete',
+			stage: 'finalizing',
+			files_imported: 13,
+			error: null
+		});
+	});
+
+	it('carries the failure message on a failed terminal', () => {
+		const events = retryStream('retry-failed');
+		events.emit('organizer_retry', {
+			state: 'failed',
+			stage: 'publishing',
+			files_completed: 7,
+			files_total: 13,
+			error: 'The library destination was unavailable.',
+			updated_at: '2026-09-13T22:00:00+00:00'
+		});
+		expect(getOrganizerRetry('retry-failed')).toMatchObject({
+			state: 'failed',
+			error: 'The library destination was unavailable.'
+		});
+	});
+
+	it('ignores malformed organizer_retry payloads without clobbering state', () => {
+		const events = retryStream('retry-malformed');
+		events.emit('organizer_retry', { state: 'running', stage: 'publishing' });
+		expect(getOrganizerRetry('retry-malformed')).toMatchObject({ stage: 'publishing' });
+		events.emit('organizer_retry', { state: 'exploding', stage: 'publishing' });
+		events.emit('organizer_retry', { state: 'failed', stage: 'rebobulating' });
+		events.emit('organizer_retry', { nope: true });
+		expect(getOrganizerRetry('retry-malformed')).toMatchObject({
+			state: 'running',
+			stage: 'publishing'
+		});
 	});
 });

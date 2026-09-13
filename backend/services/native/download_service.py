@@ -10,8 +10,9 @@ import logging
 import os
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,7 @@ from core.exceptions import (
     AutomaticManagementHoldError,
     ConfigurationError,
     ConflictError,
+    OrganizerRetryAlreadyRunningError,
     PermissionDeniedError,
     ResourceNotFoundError,
     ValidationError,
@@ -135,6 +137,47 @@ def check_downloads_mount(
     return DownloadsMountStatus(
         ok=True, move_supported=False, reason="ok", path=path_str
     )
+
+
+def _organizer_retry_payload(
+    *,
+    state: str,
+    stage: str,
+    files_completed: int,
+    files_total: int,
+    files_imported: int | None = None,
+    error: str | None = None,
+) -> dict:
+    """The single constructor for ``organizer_retry`` SSE payloads.
+
+    ``files_imported`` appears on terminal complete only; ``error`` on terminal
+    failed only. Every event carries the full state so a reconnecting client can
+    settle from the latest snapshot alone.
+    """
+    payload = {
+        "state": state,
+        "stage": stage,
+        "files_completed": files_completed,
+        "files_total": files_total,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if files_imported is not None:
+        payload["files_imported"] = files_imported
+    if error is not None:
+        payload["error"] = error
+    return payload
+
+
+def _organizer_retry_user_error(exc: Exception) -> str:
+    """User-safe text for the terminal failed ``organizer_retry`` event.
+
+    Deliberate domain (4xx) messages are user-safe by the house error contract;
+    anything else (filesystem paths, provider text, unexpected tracebacks)
+    collapses to a fixed string - never interpolated.
+    """
+    if isinstance(exc, (ValidationError, ResourceNotFoundError, ConfigurationError)):
+        return str(exc)
+    return "The organizer retry failed before it could finish. Try again."
 
 
 class DownloadService:
@@ -1908,17 +1951,84 @@ class DownloadService:
         self, source_task_id: str, user_id: str, user_role: str
     ) -> list[str]:
         """Re-plan and publish a complete held acquisition against current settings."""
-
+        async with self._management_hold_locks_guard:
+            in_flight = self._management_hold_locks.get(source_task_id)
+            if in_flight is not None and in_flight.locked():
+                raise OrganizerRetryAlreadyRunningError()
+        channel = f"download:{source_task_id}"
         async with self._management_hold_action(source_task_id):
+            await self._bus.publish(
+                channel,
+                "organizer_retry",
+                _organizer_retry_payload(
+                    state="running",
+                    stage="preparing",
+                    files_completed=0,
+                    files_total=0,
+                ),
+            )
+            progress = {"stage": "preparing", "files_completed": 0, "files_total": 0}
+
+            async def report_progress(
+                stage: str, files_completed: int, files_total: int
+            ) -> None:
+                progress["stage"] = stage
+                progress["files_completed"] = files_completed
+                progress["files_total"] = files_total
+                await self._bus.publish(
+                    channel,
+                    "organizer_retry",
+                    _organizer_retry_payload(
+                        state="running",
+                        stage=stage,
+                        files_completed=files_completed,
+                        files_total=files_total,
+                    ),
+                )
+
             try:
-                return await self._retry_management_hold_locked(
-                    source_task_id, user_id, user_role
+                targets = await self._retry_management_hold_locked(
+                    source_task_id, user_id, user_role, on_progress=report_progress
                 )
-            except ValidationError:
-                await self._schedule_management_hold_after_failure(
-                    source_task_id, user_id
+            except Exception as exc:
+                await self._bus.publish(
+                    channel,
+                    "organizer_retry",
+                    _organizer_retry_payload(
+                        state="failed",
+                        stage=progress["stage"],
+                        files_completed=progress["files_completed"],
+                        files_total=progress["files_total"],
+                        error=_organizer_retry_user_error(exc),
+                    ),
                 )
+                if isinstance(exc, ValidationError):
+                    await self._schedule_management_hold_after_failure(
+                        source_task_id, user_id
+                    )
                 raise
+            await self._bus.publish(
+                channel,
+                "organizer_retry",
+                _organizer_retry_payload(
+                    state="running",
+                    stage="finalizing",
+                    files_completed=len(targets),
+                    files_total=len(targets),
+                ),
+            )
+            await self._bus.publish(
+                channel,
+                "organizer_retry",
+                _organizer_retry_payload(
+                    state="complete",
+                    stage="finalizing",
+                    files_completed=len(targets),
+                    files_total=len(targets),
+                    files_imported=len(targets),
+                ),
+            )
+            return targets
 
     async def _schedule_management_hold_after_failure(
         self, source_task_id: str, user_id: str
@@ -1949,7 +2059,11 @@ class DownloadService:
         for source_task_id, user_id in due:
             try:
                 await self.retry_management_hold(source_task_id, user_id, "admin")
-            except (ResourceNotFoundError, ValidationError):
+            except (
+                ResourceNotFoundError,
+                ValidationError,
+                OrganizerRetryAlreadyRunningError,
+            ):
                 continue
             except Exception:  # noqa: BLE001 - one held unit must not stop the sweep
                 logger.exception(
@@ -2198,7 +2312,12 @@ class DownloadService:
         return repaired
 
     async def _retry_management_hold_locked(
-        self, source_task_id: str, user_id: str, user_role: str
+        self,
+        source_task_id: str,
+        user_id: str,
+        user_role: str,
+        *,
+        on_progress: Callable[[str, int, int], Awaitable[None]] | None = None,
     ) -> list[str]:
         held = await self.list_held(user_id, user_role, source_task_id=source_task_id)
         if not held:
@@ -2214,7 +2333,9 @@ class DownloadService:
         held = await self._repair_legacy_management_hold(source_task_id, held)
         ids = [value.id for value in held]
         try:
-            targets = await self._file_processor.place_held_management_bundle(held)
+            targets = await self._file_processor.place_held_management_bundle(
+                held, on_progress=on_progress
+            )
         except AutomaticManagementHoldError as error:
             await self._store.update_held_import_reason(
                 ids,

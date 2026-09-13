@@ -2129,9 +2129,19 @@ async def test_management_hold_retry_republishes_the_secured_unit_once(
         local_track_ids=("track-1",),
     )
 
-    paths = await fp.place_held_management_bundle(held)
+    events: list[tuple[str, int, int]] = []
+
+    async def record(stage: str, completed: int, total: int) -> None:
+        events.append((stage, completed, total))
+
+    paths = await fp.place_held_management_bundle(held, on_progress=record)
 
     assert paths == [expected]
+    assert events == [
+        ("planning", 1, 1),
+        ("publishing", 0, 1),
+        ("publishing", 1, 1),
+    ]
     retry_bundle = publisher.await_args.args[0]
     assert len(retry_bundle.files) == 1
     assert retry_bundle.files[0].input_path == held[0].held_path

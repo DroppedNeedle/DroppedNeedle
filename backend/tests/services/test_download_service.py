@@ -11,12 +11,14 @@ import pytest
 from core.exceptions import (
     AutomaticManagementHoldError,
     ConfigurationError,
+    OrganizerRetryAlreadyRunningError,
     PermissionDeniedError,
     ResourceNotFoundError,
     ValidationError,
 )
 from api.v1.schemas.settings import DownloadPolicySettings
 from infrastructure.queue.priority_queue import RequestPriority
+from infrastructure.sse_publisher import SSEPublisher
 from models.acquisition_quality import (
     AcquisitionQualitySnapshot,
     AudioQualityEvidence,
@@ -1097,7 +1099,7 @@ def _held_service(store, file_processor, library_reconciler=None, album_service=
         MagicMock(),
         library,
         store,
-        MagicMock(),
+        SSEPublisher(),
         orchestrator,
         file_processor=file_processor,
         library_reconciler=library_reconciler,
@@ -2404,7 +2406,7 @@ async def test_track_not_mapped_hold_with_full_expected_ids_is_not_repaired(tmp_
 
 
 @pytest.mark.asyncio
-async def test_management_hold_actions_serialize_one_task(tmp_path):
+async def test_management_hold_retry_refuses_concurrent_retry(tmp_path):
     import threading
 
     from infrastructure.persistence.download_store import DownloadStore
@@ -2423,7 +2425,7 @@ async def test_management_hold_actions_serialize_one_task(tmp_path):
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def publish(_held):  # noqa: ANN001
+    async def publish(_held, **_kwargs):  # noqa: ANN001
         entered.set()
         await release.wait()
         return [Path("/music/Album/01.flac")]
@@ -2444,18 +2446,271 @@ async def test_management_hold_actions_serialize_one_task(tmp_path):
         service.retry_management_hold("managed-task", "user-a", "user")
     )
     await entered.wait()
-    second = asyncio.create_task(
-        service.retry_management_hold("managed-task", "user-a", "user")
-    )
-    await asyncio.sleep(0)
+
+    with pytest.raises(OrganizerRetryAlreadyRunningError, match="already running"):
+        await service.retry_management_hold("managed-task", "user-a", "user")
 
     processor.place_held_management_bundle.assert_awaited_once()
+    latest = service._bus._latest["download:managed-task"]["organizer_retry"]
+    assert latest["state"] == "running"
+    assert latest["stage"] == "preparing"
     release.set()
     assert await first == ["/music/Album/01.flac"]
-    with pytest.raises(ResourceNotFoundError):
-        await second
     assert service._management_hold_locks == {}
     assert service._management_hold_lock_users == {}
+
+
+@pytest.mark.asyncio
+async def test_management_hold_retry_after_consume_fails_with_failed_snapshot(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    held_file = tmp_path / "held.flac"
+    held_file.write_bytes(b"audio")
+    await _record_held(
+        store,
+        held_file,
+        task_id="managed-task",
+        reason="management:PROFILE_CHANGED",
+        release_mbid="release-1",
+        release_track_mbid="release-track-3",
+    )
+    processor = MagicMock()
+    processor.place_held_management_bundle = AsyncMock(
+        return_value=[Path("/music/Album/03.flac")]
+    )
+    service = _held_service(store, processor)
+    store.get_task = AsyncMock(
+        return_value=DownloadTask(
+            id="managed-task",
+            user_id="user-a",
+            release_group_mbid="rg-1",
+            release_mbid="release-1",
+        )
+    )
+
+    assert await service.retry_management_hold("managed-task", "user-a", "user") == [
+        "/music/Album/03.flac"
+    ]
+
+    with pytest.raises(
+        ResourceNotFoundError, match="Held Library Management unit not found"
+    ):
+        await service.retry_management_hold("managed-task", "user-a", "user")
+
+    assert processor.place_held_management_bundle.await_count == 1
+    latest = service._bus._latest["download:managed-task"]["organizer_retry"]
+    assert latest["state"] == "failed"
+    assert latest["error"] == "Held Library Management unit not found"
+    assert "files_imported" not in latest
+
+
+@pytest.mark.asyncio
+async def test_management_hold_retry_emits_ordered_progress_events(tmp_path):
+    import threading
+    from datetime import datetime
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    for track in (1, 2):
+        held_file = tmp_path / "held" / f"{track}.flac"
+        held_file.parent.mkdir(exist_ok=True)
+        held_file.write_bytes(b"audio")
+        await _record_held(
+            store,
+            held_file,
+            task_id="managed-task",
+            reason="management:PROFILE_CHANGED",
+            track_number=track,
+            release_mbid="release-1",
+            release_track_mbid=f"release-track-{track}",
+        )
+
+    async def publish(_held, *, on_progress):
+        total = len(_held)
+        for position in range(1, total + 1):
+            await on_progress("planning", position, total)
+        await on_progress("publishing", 0, total)
+        await on_progress("publishing", total, total)
+        return [
+            Path(f"/music/Album/0{position}.flac")
+            for position in range(1, total + 1)
+        ]
+
+    processor = MagicMock()
+    processor.place_held_management_bundle = AsyncMock(side_effect=publish)
+    service = _held_service(store, processor)
+    store.get_task = AsyncMock(
+        return_value=DownloadTask(
+            id="managed-task",
+            user_id="user-a",
+            release_group_mbid="rg-1",
+            release_mbid="release-1",
+        )
+    )
+    published = []
+    real_publish = service._bus.publish
+
+    async def spy(channel, event, data):
+        published.append((channel, event, data))
+        await real_publish(channel, event, data)
+
+    service._bus.publish = spy
+
+    result = await service.retry_management_hold("managed-task", "user-a", "user")
+
+    assert result == ["/music/Album/01.flac", "/music/Album/02.flac"]
+    assert [event for _, event, _ in published] == ["organizer_retry"] * 7
+    assert all(channel == "download:managed-task" for channel, _, _ in published)
+    assert [(data["state"], data["stage"]) for _, _, data in published] == [
+        ("running", "preparing"),
+        ("running", "planning"),
+        ("running", "planning"),
+        ("running", "publishing"),
+        ("running", "publishing"),
+        ("running", "finalizing"),
+        ("complete", "finalizing"),
+    ]
+    assert [(data["files_completed"], data["files_total"]) for _, _, data in published] == [
+        (0, 0),
+        (1, 2),
+        (2, 2),
+        (0, 2),
+        (2, 2),
+        (2, 2),
+        (2, 2),
+    ]
+    for _, _, data in published:
+        assert 0 <= data["files_completed"] <= data["files_total"]
+        datetime.fromisoformat(data["updated_at"])
+    for _, _, data in published[:-1]:
+        assert "files_imported" not in data
+        assert "error" not in data
+    assert published[-1][2]["files_imported"] == 2
+    assert "error" not in published[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_management_hold_retry_failed_event_carries_user_safe_error(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    for task_id in ("missing-task", "boom-task"):
+        held_file = tmp_path / f"{task_id}.flac"
+        held_file.write_bytes(b"audio")
+        await _record_held(
+            store,
+            held_file,
+            task_id=task_id,
+            reason="management:PROFILE_CHANGED",
+            release_mbid="release-1",
+            release_track_mbid="release-track-3",
+        )
+
+    async def publish(_held, **_kwargs):
+        if _held[0].source_task_id == "missing-task":
+            raise FileNotFoundError("/srv/data/held/secret-copy.flac")
+        raise RuntimeError("kaboom /etc/shadow")
+
+    processor = MagicMock()
+    processor.place_held_management_bundle = AsyncMock(side_effect=publish)
+    service = _held_service(store, processor)
+
+    async def get_task(task_id):
+        return DownloadTask(
+            id=task_id,
+            user_id="user-a",
+            release_group_mbid="rg-1",
+            release_mbid="release-1",
+        )
+
+    store.get_task = AsyncMock(side_effect=get_task)
+
+    with pytest.raises(ValidationError, match="secured files are missing"):
+        await service.retry_management_hold("missing-task", "user-a", "user")
+    with pytest.raises(RuntimeError, match="kaboom"):
+        await service.retry_management_hold("boom-task", "user-a", "user")
+
+    missing = service._bus._latest["download:missing-task"]["organizer_retry"]
+    assert missing["state"] == "failed"
+    assert missing["error"] == (
+        "One or more secured files are missing; discard this held unit and "
+        "download it again"
+    )
+    assert "/srv/data" not in missing["error"]
+    assert "secret-copy.flac" not in missing["error"]
+    assert "files_imported" not in missing
+
+    boom = service._bus._latest["download:boom-task"]["organizer_retry"]
+    assert boom["state"] == "failed"
+    assert boom["error"] == "The organizer retry failed before it could finish. Try again."
+    assert "kaboom" not in boom["error"]
+    assert "shadow" not in boom["error"]
+    assert "files_imported" not in boom
+
+
+@pytest.mark.asyncio
+async def test_management_hold_retry_reconnect_reads_latest_snapshot(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    for task_id in ("done-task", "dead-task"):
+        held_file = tmp_path / f"{task_id}.flac"
+        held_file.write_bytes(b"audio")
+        await _record_held(
+            store,
+            held_file,
+            task_id=task_id,
+            reason="management:PROFILE_CHANGED",
+            release_mbid="release-1",
+            release_track_mbid="release-track-3",
+        )
+
+    async def publish(_held, **_kwargs):
+        if _held[0].source_task_id == "dead-task":
+            raise AutomaticManagementHoldError(
+                "SIDECAR_COLLISION", "cover.jpg conflicts with a different file"
+            )
+        return [Path("/music/Album/01.flac")]
+
+    processor = MagicMock()
+    processor.place_held_management_bundle = AsyncMock(side_effect=publish)
+    service = _held_service(store, processor)
+
+    async def get_task(task_id):
+        return DownloadTask(
+            id=task_id,
+            user_id="user-a",
+            release_group_mbid="rg-1",
+            release_mbid="release-1",
+        )
+
+    store.get_task = AsyncMock(side_effect=get_task)
+
+    await service.retry_management_hold("done-task", "user-a", "user")
+    with pytest.raises(ValidationError, match="cover.jpg conflicts"):
+        await service.retry_management_hold("dead-task", "user-a", "user")
+
+    gen = service._bus.subscribe("download:done-task")
+    snapshot = await gen.__anext__()
+    await gen.aclose()
+    assert snapshot["event"] == "organizer_retry"
+    assert snapshot["data"]["state"] == "complete"
+    assert snapshot["data"]["files_imported"] == 1
+
+    gen = service._bus.subscribe("download:dead-task")
+    snapshot = await gen.__anext__()
+    await gen.aclose()
+    assert snapshot["event"] == "organizer_retry"
+    assert snapshot["data"]["state"] == "failed"
+    assert "cover.jpg conflicts" in snapshot["data"]["error"]
 
 
 @pytest.mark.asyncio

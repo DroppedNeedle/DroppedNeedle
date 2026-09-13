@@ -1776,13 +1776,18 @@ class FileProcessor:
         return self._library_paths[0]
 
     async def place_held_management_bundle(
-        self, held_files: list["HeldImport"]
+        self,
+        held_files: list["HeldImport"],
+        *,
+        on_progress: Callable[[str, int, int], Awaitable[None]] | None = None,
     ) -> list[Path]:
         """Retry one complete automatic-management hold through the staged publisher.
 
         The held copies already passed acquisition matching and verification. They are
         prepared again against the current profile, then published as one all-or-nothing
-        unit. No per-track escape hatch is allowed on this path.
+        unit. No per-track escape hatch is allowed on this path. ``on_progress`` is an
+        optional ``(stage, files_completed, files_total)`` reporter the caller forwards
+        to progress subscribers; it never changes what is planned or published.
         """
 
         if not held_files:
@@ -1797,15 +1802,16 @@ class FileProcessor:
         if any(not value.reason.startswith("management:") for value in held_files):
             raise ValidationError("Only Library Management holds can use this retry.")
 
-        planned: list[_PlannedImport] = []
-        for held in sorted(
+        ordered = sorted(
             held_files,
             key=lambda value: (
                 value.disc_number or 1,
                 value.track_number or 0,
                 value.id,
             ),
-        ):
+        )
+        planned: list[_PlannedImport] = []
+        for position, held in enumerate(ordered, start=1):
             source = Path(held.held_path)
             if not source.exists():
                 raise FileNotFoundError(held.held_path)
@@ -1878,12 +1884,18 @@ class FileProcessor:
                     replacement=replacement,
                 )
             )
+            if on_progress is not None:
+                await on_progress("planning", position, len(ordered))
 
         task_id = next(iter(task_ids))
+        if on_progress is not None:
+            await on_progress("publishing", 0, len(ordered))
         published = await self._publish_planned_imports(
             planned,
             idempotency_key=f"acquisition:management-held:{task_id}",
         )
+        if on_progress is not None:
+            await on_progress("publishing", len(ordered), len(ordered))
         return [Path(value) for value in published.paths]
 
     async def place_held_file(self, held: "HeldImport") -> Path:

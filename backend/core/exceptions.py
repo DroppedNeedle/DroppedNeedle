@@ -147,6 +147,19 @@ class MediaAccountRelinkRequiredError(ConflictError):
     error_code = "MEDIA_ACCOUNT_RELINK_REQUIRED"
 
 
+class OrganizerRetryAlreadyRunningError(ConflictError):
+    """A second organizer retry started while one was already running.
+
+    Mapped to HTTP 409 by the registered handler."""
+
+    def __init__(
+        self,
+        message: str = "An organizer retry is already running for this album.",
+        details: Any = None,
+    ) -> None:
+        super().__init__(message, details)
+
+
 class PlaylistNotFoundError(ResourceNotFoundError):
     pass
 
