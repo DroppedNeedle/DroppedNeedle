@@ -283,12 +283,6 @@ const COVERAGE: Array<[string, string, string]> = [
 	['remove library album', API.library.removeAlbum('M1'), '/api/v1/library/album/M1'],
 	['rescan album', API.library.rescanAlbum('M1'), '/api/v1/library/albums/M1/rescan'],
 	['library activity', API.library.activity(), '/api/v1/library/activity'],
-	['library activity stream', API.library.activityStream(), '/api/v1/library/activity/stream'],
-	[
-		'library operations stream',
-		API.library.operationsStream(),
-		'/api/v1/library/operations/stream'
-	],
 	[
 		'library management settings',
 		API.libraryManagement.settings(),
@@ -664,6 +658,8 @@ const COVERAGE: Array<[string, string, string]> = [
 	// QW9 runtime observability (admin diagnostics card)
 	['system queue stats', API.system.queueStats(), '/api/v1/system/queue-stats'],
 	['system provider stats', API.system.providerStats(), '/api/v1/system/provider-stats'],
+	['cache sync status', API.cacheSync.status(), '/api/v1/cache/sync/status'],
+	['cache sync cancel', API.cacheSync.cancel(), '/api/v1/cache/sync/cancel'],
 	// keyless 30s previews (user-scoped)
 	[
 		'track preview',
@@ -707,7 +703,7 @@ const COVERAGE: Array<[string, string, string]> = [
 		API.following.markNewReleasesSeen(),
 		'/api/v1/following/new-releases/seen'
 	],
-	['following events', API.following.events(), '/api/v1/following/events'],
+	['mux events stream', API.events.stream(), '/api/v1/events/stream'],
 	// upcoming events / concerts (user-scoped)
 	['concerts', API.following.concerts(), '/api/v1/following/concerts'],
 	['concert cities', API.following.concertCities(), '/api/v1/following/concerts/cities'],

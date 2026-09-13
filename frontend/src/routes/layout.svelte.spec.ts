@@ -102,6 +102,25 @@ const { followingEventsMock } = vi.hoisted(() => ({
 vi.mock('$lib/queries/following/FollowingEvents', () => ({
 	createFollowingEvents: vi.fn(() => followingEventsMock)
 }));
+const { libraryActivityEventsMock } = vi.hoisted(() => ({
+	libraryActivityEventsMock: { start: vi.fn(), stop: vi.fn() }
+}));
+vi.mock('$lib/queries/library/LibraryActivityEvents', () => ({
+	createLibraryActivityEvents: vi.fn(() => libraryActivityEventsMock)
+}));
+const { muxMock } = vi.hoisted(() => ({
+	muxMock: {
+		connect: vi.fn(),
+		disconnect: vi.fn(),
+		on: vi.fn(() => () => {}),
+		onConnect: vi.fn(() => () => {}),
+		isConnected: false
+	}
+}));
+vi.mock('$lib/queries/events/MuxEventStream', () => ({
+	muxEventStream: muxMock,
+	createMuxEventStream: vi.fn(() => muxMock)
+}));
 vi.mock('$lib/stores/cacheTtl.svelte', () => ({ initCacheTTLs: vi.fn() }));
 const { syncStatusMock } = vi.hoisted(() => ({
 	syncStatusMock: { connect: vi.fn(), disconnect: vi.fn() }
@@ -465,6 +484,17 @@ describe('+layout.svelte auth-reactive session state (#155)', () => {
 		expect(nowPlayingReporter.start).toHaveBeenCalled();
 		expect(followingEventsMock.start).toHaveBeenCalled();
 		await vi.waitFor(() => expect(syncStatusMock.connect).toHaveBeenCalled());
+		await vi.waitFor(() => expect(muxMock.connect).toHaveBeenCalled());
+		// consumers start before the mux connects so their starts see a
+		// disconnected mux and refresh exactly once via the first open.
+		// libraryActivityEvents is the order-sensitive one: its admin
+		// direct-refresh gate depends on starting while disconnected.
+		const lastStart = Math.max(
+			vi.mocked(followingEventsMock.start).mock.invocationCallOrder[0],
+			vi.mocked(libraryActivityEventsMock.start).mock.invocationCallOrder[0],
+			vi.mocked(nowPlayingStore.start).mock.invocationCallOrder[0]
+		);
+		expect(lastStart).toBeLessThan(muxMock.connect.mock.invocationCallOrder[0]);
 	});
 
 	it('loads integration status after a warm in-app login without a remount', async () => {
@@ -486,6 +516,7 @@ describe('+layout.svelte auth-reactive session state (#155)', () => {
 		await vi.waitFor(() => expect(nowPlayingStore.stop).toHaveBeenCalled());
 		expect(nowPlayingReporter.stop).toHaveBeenCalled();
 		expect(followingEventsMock.stop).toHaveBeenCalled();
+		expect(muxMock.disconnect).toHaveBeenCalled();
 		expect(vi.mocked(integrationStore.reset)).toHaveBeenCalled();
 	});
 

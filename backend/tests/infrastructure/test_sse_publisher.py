@@ -1,4 +1,4 @@
-"""Tests for SSEPublisher — pub/sub, snapshot, disconnect cleanup, ring-buffer."""
+"""Tests for SSEPublisher - pub/sub, snapshot, disconnect cleanup, ring-buffer."""
 
 import asyncio
 
@@ -58,7 +58,7 @@ async def test_disconnect_removes_subscriber():
     task = await _register(gen, pub, "scan")
     assert await pub.subscriber_count("scan") == 1
     # Cancelling the streaming task throws into the generator's `await queue.get()`,
-    # running its finally (unsubscribe) — exactly what a client disconnect does.
+    # running its finally (unsubscribe), exactly what a client disconnect does.
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -80,7 +80,7 @@ async def test_channels_are_isolated():
 def test_offer_drains_buffer_on_overflow_keeping_newest():
     queue: asyncio.Queue = asyncio.Queue(maxsize=2)
     for n in (1, 2, 3):  # third overflows a size-2 queue
-        assert SSEPublisher._offer(queue, {"event": "e", "data": {"n": n}}) is True
+        assert SSEPublisher.offer_newest(queue, {"event": "e", "data": {"n": n}}) is True
     assert queue.qsize() == 1
     assert queue.get_nowait()["data"]["n"] == 3  # buffer drained, newest retained
 
@@ -91,7 +91,7 @@ def test_offer_reports_dead_queue():
             raise asyncio.QueueFull
 
     queue = _DeadQueue(maxsize=1)
-    assert SSEPublisher._offer(queue, {"event": "e", "data": {}}) is False
+    assert SSEPublisher.offer_newest(queue, {"event": "e", "data": {}}) is False
 
 
 @pytest.mark.asyncio

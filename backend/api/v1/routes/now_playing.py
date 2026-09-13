@@ -1,19 +1,17 @@
 """Live now-playing presence endpoints.
 
 - ``GET /api/v1/now-playing``         - projected snapshot (hydrate)
-- ``GET /api/v1/now-playing/events``  - SSE stream of projected snapshots
 - ``POST /api/v1/now-playing``        - native web-player heartbeat (upsert presence)
 - ``DELETE /api/v1/now-playing``      - native web-player stop (clear presence)
+
+Live snapshots ride the multiplexed ``GET /api/v1/events/stream`` feed.
 
 Privacy is applied in ``NowPlayingService`` keyed on the owner's setting, so the song
 of a user on ``track_hidden`` is never serialized here.
 """
 
-import asyncio
-
-import msgspec
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response
 
 from api.v1.schemas.now_playing import NowPlayingReport, NowPlayingSnapshot
 from core.dependencies import get_now_playing_service
@@ -22,12 +20,6 @@ from middleware import CurrentUserDep
 from services.now_playing_service import NowPlayingService
 
 router = APIRouter(route_class=MsgSpecRoute, prefix="/now-playing", tags=["now-playing"])
-
-_SSE_HEADERS = {
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive",
-    "X-Accel-Buffering": "no",
-}
 
 
 @router.get("", response_model=NowPlayingSnapshot)
@@ -69,24 +61,3 @@ async def clear_now_playing(
 ) -> Response:
     await service.remove(f"{current_user.id}:{device}")
     return Response(status_code=204)
-
-
-@router.get("/events")
-async def stream_now_playing(
-    current_user: CurrentUserDep,
-    service: NowPlayingService = Depends(get_now_playing_service),
-):
-    async def event_generator():
-        try:
-            async for message in service.subscribe():
-                if not message["event"]:
-                    yield ": keepalive\n\n"
-                    continue
-                payload = msgspec.json.encode(message["data"]).decode("utf-8")
-                yield f"event: {message['event']}\ndata: {payload}\n\n"
-        except asyncio.CancelledError:
-            pass
-
-    return StreamingResponse(
-        event_generator(), media_type="text/event-stream", headers=_SSE_HEADERS
-    )

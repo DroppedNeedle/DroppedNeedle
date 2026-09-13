@@ -6166,6 +6166,33 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def get_library_revisions(self) -> dict[str, int]:
+        """Read every library revision counter in a single connection.
+
+        The central revision poller calls this once per process per poll
+        instead of the four sequential reads ``stream_revisions`` used to fan
+        out per SSE connection."""
+
+        def operation(connection: sqlite3.Connection) -> dict[str, int]:
+            rows = connection.execute(
+                "SELECT stream_kind, value FROM library_event_stream_revisions"
+            ).fetchall()
+            values = {row["stream_kind"]: int(row["value"]) for row in rows}
+            revisions = {}
+            for stream in ("scan", "identification", "operation"):
+                if stream not in values:
+                    raise ResourceNotFoundError(
+                        f"Unknown library event stream: {stream}"
+                    )
+                revisions[stream] = values[stream]
+            row = connection.execute(
+                "SELECT value FROM library_catalog_revision WHERE singleton = 1"
+            ).fetchone()
+            revisions["catalog"] = int(row["value"])
+            return revisions
+
+        return await self._read(operation)
+
     async def get_legacy_migration_snapshot(self) -> dict[str, list[dict[str, Any]]]:
         """Read every catalog/reference source from an isolated copied database."""
 

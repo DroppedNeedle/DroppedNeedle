@@ -30,7 +30,6 @@ from models.library_work import (
     ScanScope,
 )
 from services.native.library_policy_resolver import LibraryPolicyResolver
-from services.native.library_activity_events import activity_events
 from tests.helpers import build_test_client, override_admin_auth, override_user_auth
 
 
@@ -278,7 +277,6 @@ def test_activity_is_authenticated_and_redacted(
 ) -> None:
     unauthenticated = build_test_client(app)
     assert unauthenticated.get("/library/activity").status_code == 401
-    assert unauthenticated.get("/library/activity/stream").status_code == 401
 
     coordinator.current.return_value = [
         SimpleNamespace(
@@ -813,8 +811,6 @@ def test_target_route_security_inventory_is_complete() -> None:
     }
     assert paths == {
         "/library/activity",
-        "/library/activity/stream",
-        "/library/operations/stream",
         "/library/identification/pause",
         "/library/identification/resume",
         "/library/scan-runs",
@@ -828,33 +824,6 @@ def test_target_route_security_inventory_is_complete() -> None:
     }
     for legacy in ("/library/scan/start", "/library/scan/cancel", "/library/scan/status"):
         assert legacy not in paths
-
-
-@pytest.mark.asyncio
-async def test_activity_stream_coalesces_revisions_and_sends_bounded_heartbeats() -> (
-    None
-):
-    identification = AsyncMock()
-    revisions = {"scan": 1, "identification": 2, "operation": 3}
-    identification.stream_revisions.side_effect = lambda: dict(revisions)
-    delays: list[float] = []
-
-    async def no_wait(delay: float) -> None:
-        delays.append(delay)
-
-    events = activity_events(identification, sleep=no_wait)
-    first = await anext(events)
-    heartbeat = await anext(events)
-    revisions["identification"] = 4
-    changed = await anext(events)
-    await events.aclose()
-
-    assert "event: activity.changed" in first
-    assert '"scan":1' in first
-    assert heartbeat == ": keepalive\n\n"
-    assert '"identification":4' in changed
-    assert first.splitlines()[0] != changed.splitlines()[0]
-    assert delays == [2.0] * 16
 
 
 def test_policy_reconcile_apply_uses_frozen_pending_scopes(

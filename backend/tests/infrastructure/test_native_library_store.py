@@ -5112,3 +5112,41 @@ async def test_locked_rescan_with_failed_tag_read_keeps_displays_and_provenance(
         assert refreshed["title_provenance"] == "parsed"
         assert refreshed["album_title_provenance"] == "parsed"
         assert refreshed["album_artist_provenance"] == "parsed"
+
+
+@pytest.mark.asyncio
+async def test_library_revisions_reads_all_streams_and_catalog(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    assert await store.get_library_revisions() == {
+        "scan": 0,
+        "identification": 0,
+        "operation": 0,
+        "catalog": 0,
+    }
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_event_stream_revisions SET value = 7 "
+            "WHERE stream_kind = 'scan'"
+        )
+        connection.execute(
+            "UPDATE library_catalog_revision SET value = 3 WHERE singleton = 1"
+        )
+    assert await store.get_library_revisions() == {
+        "scan": 7,
+        "identification": 0,
+        "operation": 0,
+        "catalog": 3,
+    }
+
+
+@pytest.mark.asyncio
+async def test_library_revisions_missing_stream_row_raises_not_found(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "DELETE FROM library_event_stream_revisions WHERE stream_kind = 'operation'"
+        )
+    with pytest.raises(ResourceNotFoundError, match="operation"):
+        await store.get_library_revisions()

@@ -57,10 +57,24 @@ _PUBLIC_PREFIXES: tuple[str, ...] = (
     "/api/v1/wrapped",
 )
 
-_NON_INTERACTIVE_API_PATHS: frozenset[str] = frozenset({
-    "/api/v1/following/events",
-    "/api/v1/now-playing/events",
-})
+
+def _rate_limited_response(limiter: TokenBucketRateLimiter) -> MsgSpecJSONResponse:
+    retry_after = limiter.retry_after()
+    return MsgSpecJSONResponse(
+        status_code=429,
+        content={
+            "error": {
+                "code": "RATE_LIMITED",
+                "message": "Too many requests",
+                "details": None,
+            }
+        },
+        headers={
+            "Retry-After": str(int(retry_after)),
+            "X-RateLimit-Limit": str(limiter.capacity),
+            "X-RateLimit-Remaining": "0",
+        },
+    )
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -95,26 +109,63 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         if acquired:
             response = await call_next(request)
+            # An inner layer (per-user limiter) may have set its own budget
+            # headers already; never mask them with the aggregate bucket's.
+            if "X-RateLimit-Limit" not in response.headers:
+                response.headers["X-RateLimit-Limit"] = str(limiter.capacity)
+                response.headers["X-RateLimit-Remaining"] = str(limiter.remaining)
+            return response
+
+        return _rate_limited_response(limiter)
+
+
+class PerUserRateLimitMiddleware(BaseHTTPMiddleware):
+    """Per-user token buckets behind AuthMiddleware.
+
+    The global RateLimitMiddleware stays as the pre-auth backstop (it shields
+    verify_token from unauthenticated floods) and the aggregate cap; this
+    layer caps each authenticated user's burst rate against their own budget,
+    so routine per-user spikes are absorbed without touching other users'
+    budgets. It does not raise aggregate headroom: sustained all-user load is
+    still governed by the shared global bucket. Wire it by adding it BEFORE
+    AuthMiddleware (Starlette executes last-added-first). Buckets are
+    intentionally not evicted: self-hosted user counts are tiny and a bucket
+    is a few floats.
+    """
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        default_rate: float = 30.0,
+        default_capacity: int = 60,
+    ):
+        super().__init__(app)
+        self._rate = default_rate
+        self._capacity = default_capacity
+        self._buckets: dict[str, TokenBucketRateLimiter] = {}
+
+    def _bucket_for(self, user_id: str) -> TokenBucketRateLimiter:
+        bucket = self._buckets.get(user_id)
+        if bucket is None:
+            bucket = TokenBucketRateLimiter(rate=self._rate, capacity=self._capacity)
+            self._buckets[user_id] = bucket
+        return bucket
+
+    async def dispatch(self, request: Request, call_next):
+        path = application_path(request.scope)
+        if not path.startswith("/api/"):
+            return await call_next(request)
+        user_id = getattr(getattr(request.state, "user", None), "id", None)
+        if user_id is None:
+            return await call_next(request)
+
+        limiter = self._bucket_for(str(user_id))
+        if await limiter.try_acquire():
+            response = await call_next(request)
             response.headers["X-RateLimit-Limit"] = str(limiter.capacity)
             response.headers["X-RateLimit-Remaining"] = str(limiter.remaining)
             return response
-
-        retry_after = limiter.retry_after()
-        return MsgSpecJSONResponse(
-            status_code=429,
-            content={
-                "error": {
-                    "code": "RATE_LIMITED",
-                    "message": "Too many requests",
-                    "details": None,
-                }
-            },
-            headers={
-                "Retry-After": str(int(retry_after)),
-                "X-RateLimit-Limit": str(limiter.capacity),
-                "X-RateLimit-Remaining": "0",
-            },
-        )
+        return _rate_limited_response(limiter)
 
 
 class DegradationMiddleware(BaseHTTPMiddleware):
@@ -215,8 +266,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
     @staticmethod
     def _tracks_interactive_activity(path: str) -> bool:
         """Exclude long-lived media and SSE connections from activity tracking."""
-        if path in _NON_INTERACTIVE_API_PATHS:
-            return False
         if path.startswith("/api/v1/stream/") or "/held-audio/" in path:
             return False
         return not path.endswith("/stream")

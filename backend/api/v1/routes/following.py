@@ -1,8 +1,4 @@
-import asyncio
-
-import msgspec
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
 
 from api.v1.schemas.following import (
     CitySearchResponse,
@@ -21,7 +17,6 @@ from core.dependencies import (
     get_events_service,
     get_follow_service,
     get_geocoding_repository,
-    get_sse_publisher,
 )
 from core.dependencies.type_aliases import CurrentUserDep
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
@@ -31,37 +26,6 @@ from services.events_service import EventsService
 from services.follow_service import FollowService
 
 router = APIRouter(route_class=MsgSpecRoute, prefix="/following", tags=["following"])
-
-_SSE_HEADERS = {
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive",
-    "X-Accel-Buffering": "no",
-}
-
-
-@router.get("/events")
-async def stream_following_events(
-    current_user: CurrentUserDep,
-    publisher=Depends(get_sse_publisher),
-):
-    """Per-user event stream for auto_download_enqueued. Frontend de-dupes by
-    task id, so the snapshot replayed on (re)connect toasts at most once."""
-    user_id = current_user.id
-
-    async def event_generator():
-        try:
-            async for message in publisher.subscribe(f"user:{user_id}"):
-                if not message["event"]:
-                    yield ": keepalive\n\n"
-                    continue
-                payload = msgspec.json.encode(message["data"]).decode("utf-8")
-                yield f"event: {message['event']}\ndata: {payload}\n\n"
-        except asyncio.CancelledError:
-            pass
-
-    return StreamingResponse(
-        event_generator(), media_type="text/event-stream", headers=_SSE_HEADERS
-    )
 
 
 @router.get("/artists", response_model=list[FollowedArtistResponse])
@@ -156,10 +120,6 @@ async def mark_new_releases_seen(
     """Stamp the user's seen marker; the unseen count is 0 by definition after."""
     await follow_service.mark_new_releases_seen(current_user.id)
     return UnseenCountResponse(count=0)
-
-
-# NB: GET /following/events is the SSE stream above - the concerts API lives
-# under /following/concerts on purpose.
 
 
 def _to_concert_response(match) -> ConcertResponse:

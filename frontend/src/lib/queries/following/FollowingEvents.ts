@@ -1,5 +1,3 @@
-import { getApiUrl } from '$lib/api/api-utils';
-import { API } from '$lib/constants';
 import { toastStore } from '$lib/stores/toast';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
@@ -11,6 +9,11 @@ import { FreeMusicQueryKeyFactory } from '$lib/queries/free-music/FreeMusicQuery
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { LOCAL_KEYS } from '$lib/queries/local/LocalQueries.svelte';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
+import {
+	muxEventStream,
+	type MuxEventStream,
+	type MuxUnsubscribe
+} from '$lib/queries/events/MuxEventStream';
 
 // SSEPublisher replays its last payload to every new subscriber, so toasting
 // events arrive again on each reconnect. De-dupe them by id, persisted per
@@ -38,8 +41,8 @@ function persistSeen(key: string, seen: Set<string>): void {
 	}
 }
 
-export function createFollowingEvents() {
-	let source: EventSource | null = null;
+export function createFollowingEvents(mux: MuxEventStream = muxEventStream) {
+	let unsubs: MuxUnsubscribe[] = [];
 	let seen = new Set<string>();
 	// Spotify import completions replay on reconnect too; de-dupe by event_id so the
 	// playlist queries are invalidated once per real import (in-memory is enough - a
@@ -141,6 +144,33 @@ export function createFollowingEvents() {
 		});
 	}
 
+	// Hidden tabs hibernate the mux, so edge-triggered invalidations from the
+	// hidden window never arrive; revalidate badges and lists on every
+	// (re)connect. All idempotent refetches.
+	function handleConnect(): void {
+		const userId = authStore.user?.id;
+		void invalidateQueriesWithPersister({
+			queryKey: FollowQueryKeyFactory.newReleasesUnseen(userId)
+		});
+		invalidateWantedList();
+		void invalidateQueriesWithPersister({
+			queryKey: FollowQueryKeyFactory.concertsUnseen(userId)
+		});
+		// user-scoped parent, not list(): detail keys are not prefixed by list,
+		// so invalidate the parent to cascade to an open detail view too
+		void invalidateQueriesWithPersister({
+			queryKey: [...PlaylistQueryKeyFactory.prefix, userId ?? 'anon']
+		});
+		void invalidateQueriesWithPersister({
+			queryKey: FollowQueryKeyFactory.concerts(userId)
+		});
+		void invalidateQueriesWithPersister({ queryKey: DropImportQueryKeyFactory.prefix });
+		void invalidateQueriesWithPersister({ queryKey: FreeMusicQueryKeyFactory.prefix });
+		// completed Free Music tasks land an album in the library: Library/Home
+		// are covered by the activity.changed replay sweep, but local lists are not
+		void invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root });
+	}
+
 	// badge-only: the new-candidates count lives in the wanted list data, so a
 	// refetch is the whole reaction (idempotent - no de-dupe needed)
 	function handleWantedNewCandidates(): void {
@@ -231,24 +261,24 @@ export function createFollowingEvents() {
 		mixSeen = loadSeen(MIX_SEEN_KEY);
 		wantedSeen = loadSeen(WANTED_SEEN_KEY);
 		requestImportedSeen = loadSeen(REQUEST_IMPORTED_SEEN_KEY);
-		source = new EventSource(getApiUrl(API.following.events()));
-		source.addEventListener('auto_download_enqueued', handleEnqueued);
-		source.addEventListener('playlist_imported', handlePlaylistImported);
-		source.addEventListener('personal_mix_refreshed', handlePersonalMixRefreshed);
-		source.addEventListener('wanted_new_candidates', handleWantedNewCandidates);
-		source.addEventListener('concerts_new', handleConcertsNew);
-		source.addEventListener('wanted_auto_dispatched', handleWantedAutoDispatched);
-		source.addEventListener('wanted_fulfilled', handleWantedFulfilled);
-		source.addEventListener('request_imported', handleRequestImported);
-		source.addEventListener('drop_import_updated', handleDropImportUpdated);
-		source.addEventListener('free_music_updated', handleFreeMusicUpdated);
+		unsubs = [
+			mux.on('auto_download_enqueued', handleEnqueued),
+			mux.on('playlist_imported', handlePlaylistImported),
+			mux.on('personal_mix_refreshed', handlePersonalMixRefreshed),
+			mux.on('wanted_new_candidates', handleWantedNewCandidates),
+			mux.on('concerts_new', handleConcertsNew),
+			mux.on('wanted_auto_dispatched', handleWantedAutoDispatched),
+			mux.on('wanted_fulfilled', handleWantedFulfilled),
+			mux.on('request_imported', handleRequestImported),
+			mux.on('drop_import_updated', handleDropImportUpdated),
+			mux.on('free_music_updated', handleFreeMusicUpdated),
+			mux.onConnect(handleConnect)
+		];
 	}
 
 	function stop(): void {
-		if (source) {
-			source.close();
-			source = null;
-		}
+		for (const unsub of unsubs) unsub();
+		unsubs = [];
 	}
 
 	return { start, stop };

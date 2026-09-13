@@ -1,7 +1,9 @@
-import { getApiUrl } from '$lib/api/api-utils';
-import { API } from '$lib/constants';
-
 import { invalidateLibraryManagementSurfaces } from './LibraryManagementInvalidation';
+import {
+	muxEventStream,
+	type MuxEventStream,
+	type MuxUnsubscribe
+} from '$lib/queries/events/MuxEventStream';
 
 export interface LibraryManagementActivityEvent {
 	id: string;
@@ -39,8 +41,8 @@ export function parseLibraryManagementActivityEvent(
 	return { id: record.id, revisions };
 }
 
-export function createLibraryManagementEvents() {
-	let source: EventSource | null = null;
+export function createLibraryManagementEvents(mux: MuxEventStream = muxEventStream) {
+	let unsubs: MuxUnsubscribe[] = [];
 	const seenIds = new Set<string>();
 	const seenOrder: string[] = [];
 
@@ -70,14 +72,15 @@ export function createLibraryManagementEvents() {
 
 	function start(): void {
 		stop();
-		source = new EventSource(getApiUrl(API.library.operationsStream()));
-		source.addEventListener('open', refresh);
-		source.addEventListener('activity.changed', handleActivity);
+		unsubs = [mux.on('activity.changed', handleActivity), mux.onConnect(refresh)];
+		// Refresh directly only when already connected; otherwise the imminent
+		// first open fires refresh and a direct call would double it.
+		if (mux.isConnected) refresh();
 	}
 
 	function stop(): void {
-		source?.close();
-		source = null;
+		for (const unsub of unsubs) unsub();
+		unsubs = [];
 	}
 
 	return { start, stop };

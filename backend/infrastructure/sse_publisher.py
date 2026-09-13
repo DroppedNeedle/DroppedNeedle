@@ -1,8 +1,8 @@
-"""SSEPublisher — in-memory multi-channel pub/sub event bus (AUD-4).
+"""SSEPublisher - in-memory multi-channel pub/sub event bus (AUD-4).
 
 Generalises the single-channel fan-out in ``services/cache_status_service.py``
 to N named channels. Used by scan progress (Phase 4) and download progress
-(Phase 7). **Must be a singleton** — one instance per app lifecycle, registered
+(Phase 7). **Must be a singleton** - one instance per app lifecycle, registered
 via the house ``@singleton`` provider; per-request instances would each get
 their own bus and never receive published events.
 
@@ -31,7 +31,7 @@ class SSEPublisher:
     """Publish ``(channel, event, data)``; subscribers get snapshot-then-deltas.
 
     Per-channel ``_latest`` retains the most recent payload of each event type,
-    so a new subscriber (or one that reconnects) immediately sees current state —
+    so a new subscriber (or one that reconnects) immediately sees current state:
     terminal events (``complete``/``failed``) are never missed by a late joiner.
     """
 
@@ -51,18 +51,20 @@ class SSEPublisher:
             # mutate the list mid-iteration; put_nowait never awaits. Dead queues
             # (consumer gone but not yet torn down) are evicted, mirroring
             # CacheStatusService.broadcast_progress (AUD-4).
-            dead = [q for q in queues if not self._offer(q, message)]
+            dead = [q for q in queues if not self.offer_newest(q, message)]
             for q in dead:
                 queues.remove(q)
             if not queues:
                 self._subscribers.pop(channel, None)
 
     @staticmethod
-    def _offer(queue: asyncio.Queue, message: dict) -> bool:
+    def offer_newest(queue: asyncio.Queue, message: object) -> bool:
         """Deliver the newest message, draining buffered items on overflow so a
-        slow consumer always converges to current state (terminal events also
-        persist in ``_latest`` for late joiners). Returns ``False`` if the queue
-        is dead — cannot accept even after draining — so the caller evicts it."""
+        slow consumer always converges to current state (bus terminal events
+        also persist in ``_latest`` for late joiners). Returns ``False`` if the
+        queue is dead (cannot accept even after draining), so the caller
+        evicts it. Payload-agnostic: the bus passes dicts, the mux passes
+        tagged tuples."""
         try:
             queue.put_nowait(message)
         except asyncio.QueueFull:

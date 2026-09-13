@@ -209,6 +209,9 @@ test-compat: backend-test-compat frontend-test-connect-apps ## Connect Apps: ful
 backend-test-album-refresh: $(BACKEND_VENV_STAMP) ## Run album refresh endpoint tests
 	$(PYTEST) tests/routes/test_album_refresh.py tests/services/test_navidrome_cache_invalidation.py -v
 
+backend-test-sse-mux: $(BACKEND_VENV_STAMP) ## Run mux SSE stream + revision poller backend tests
+	$(PYTEST) tests/routes/test_events_routes.py tests/services/native/test_library_revision_poller.py -v
+
 backend-test-ident-quiet-reconfirm: $(BACKEND_VENV_STAMP) ## Quiet re-confirmation + collab-artist subset rule (engine, finish path, oracle)
 	$(PYTEST) tests/services/native/test_album_evidence_engine.py tests/services/native/test_identification_pipeline.py tests/services/native/test_library_review_operations.py tests/services/native/test_lane_equivalence_oracle.py tests/infrastructure/test_native_library_store.py -v
 
@@ -973,6 +976,9 @@ frontend-test-client: ## Run frontend client-project tests only (chromium, needs
 
 frontend-test-connections: ## Run per-user connections + scrobble-preferences frontend tests
 	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project server src/lib/queries/connections src/lib/queries/scrobble-preferences
+
+frontend-test-sse-mux: ## Run mux SSE stream + consumer migration frontend tests
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project server src/lib/queries/events src/lib/queries/following/FollowingEvents.spec.ts src/lib/queries/library/LibraryActivityEvents.spec.ts src/lib/queries/library-management/LibraryManagementEvents.spec.ts src/lib/stores/syncStatus.spec.ts src/lib/stores/nowPlayingSessions.spec.ts
 
 frontend-test-home-discover: ## Run Phase 5 per-user home/discover key + cache-isolation frontend tests (AMU-5/AMU-8)
 	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run src/lib/queries/HomeQueryKeyFactory.spec.ts src/lib/queries/discover/DiscoverQueryKeyFactory.spec.ts src/lib/queries/discover/DiscoverQuery.spec.ts src/lib/queries/clearOnUserSwitch.svelte.spec.ts src/lib/utils/discoverQueueCache.svelte.spec.ts src/lib/components/TimeRangeView.svelte.spec.ts src/lib/components/RadioSection.spec.ts

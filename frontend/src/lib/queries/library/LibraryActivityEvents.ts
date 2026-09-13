@@ -1,13 +1,15 @@
-import { getApiUrl } from '$lib/api/api-utils';
-import { API } from '$lib/constants';
 import { invalidateQueriesWithPersister, queryClient } from '$lib/queries/QueryClient';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
 import type { LibraryActivityResponse } from './LibraryOperationsTypes';
+import {
+	muxEventStream,
+	type MuxEventStream,
+	type MuxUnsubscribe
+} from '$lib/queries/events/MuxEventStream';
 
-export function createLibraryActivityEvents() {
-	let activitySource: EventSource | null = null;
-	let operationsSource: EventSource | null = null;
+export function createLibraryActivityEvents(mux: MuxEventStream = muxEventStream) {
+	let unsubs: MuxUnsubscribe[] = [];
 	let revisions: Record<string, number> | null = null;
 	let pendingInitialRevisions: Record<string, number> | null = null;
 	let admin = false;
@@ -89,6 +91,10 @@ export function createLibraryActivityEvents() {
 		applyRevisionChange(baseline, pending);
 	}
 
+	function handleConnect(): void {
+		if (admin) invalidateOperations();
+	}
+
 	function start(isAdmin: boolean, sessionUserId: string): void {
 		stop();
 		admin = isAdmin;
@@ -96,20 +102,15 @@ export function createLibraryActivityEvents() {
 		unsubscribeQueryCache = queryClient.getQueryCache().subscribe(() => {
 			reconcilePendingInitialRevisions();
 		});
-		activitySource = new EventSource(getApiUrl(API.library.activityStream()));
-		activitySource.addEventListener('activity.changed', activityChanged);
-		if (isAdmin) {
-			operationsSource = new EventSource(getApiUrl(API.library.operationsStream()));
-			operationsSource.addEventListener('open', invalidateOperations);
-			operationsSource.addEventListener('activity.changed', activityChanged);
-		}
+		unsubs = [mux.on('activity.changed', activityChanged), mux.onConnect(handleConnect)];
+		// Refresh directly only when already connected; otherwise the imminent
+		// first open fires handleConnect and a direct call would double it.
+		if (isAdmin && mux.isConnected) invalidateOperations();
 	}
 
 	function stop(): void {
-		activitySource?.close();
-		operationsSource?.close();
-		activitySource = null;
-		operationsSource = null;
+		for (const unsub of unsubs) unsub();
+		unsubs = [];
 		revisions = null;
 		pendingInitialRevisions = null;
 		admin = false;

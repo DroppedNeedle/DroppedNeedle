@@ -165,6 +165,9 @@ export const API = {
 			return `/api/v1/artists/${id}/purchase-options?${params.toString()}`;
 		}
 	},
+	events: {
+		stream: () => '/api/v1/events/stream'
+	},
 	following: {
 		artists: () => '/api/v1/following/artists',
 		newReleases: (limit: number, offset: number) =>
@@ -173,7 +176,6 @@ export const API = {
 			`/api/v1/following/new-releases/recent?days=${days}&limit=${limit}&include_owned=${includeOwned}`,
 		newReleasesUnseenCount: () => '/api/v1/following/new-releases/unseen-count',
 		markNewReleasesSeen: () => '/api/v1/following/new-releases/seen',
-		events: () => '/api/v1/following/events',
 		concerts: () => '/api/v1/following/concerts',
 		concertCities: () => '/api/v1/following/concerts/cities',
 		concertCitySearch: (q: string) =>
@@ -288,8 +290,6 @@ export const API = {
 		trackTags: (fileId: string) => `/api/v1/library/tracks/${fileId}/tags`,
 		removeTrack: (fileId: string) => `/api/v1/library/tracks/${fileId}`,
 		activity: () => '/api/v1/library/activity',
-		activityStream: () => '/api/v1/library/activity/stream',
-		operationsStream: () => '/api/v1/library/operations/stream',
 		pauseIdentification: () => '/api/v1/library/identification/pause',
 		resumeIdentification: () => '/api/v1/library/identification/resume',
 		scanRuns: (limit?: number, cursor?: string) => {
@@ -599,6 +599,10 @@ export const API = {
 		queueStats: () => '/api/v1/system/queue-stats',
 		providerStats: () => '/api/v1/system/provider-stats'
 	},
+	cacheSync: {
+		status: () => '/api/v1/cache/sync/status',
+		cancel: () => '/api/v1/cache/sync/cancel'
+	},
 	home: () => '/api/v1/home',
 	homeGenre: (genre: string, limit = 50, artistOffset = 0, albumOffset = 0) => {
 		const params = new URLSearchParams({
@@ -706,8 +710,7 @@ export const API = {
 		submit: () => '/api/v1/scrobble/submit'
 	},
 	nowPlaying: {
-		report: () => '/api/v1/now-playing',
-		events: () => '/api/v1/now-playing/events'
+		report: () => '/api/v1/now-playing'
 	},
 	playlists: {
 		list: () => '/api/v1/playlists',

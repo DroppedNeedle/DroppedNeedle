@@ -85,9 +85,10 @@ class CacheStatusService:
         with self._sse_lock:
             self._sse_subscribers.discard(queue)
 
-    async def broadcast_progress(self) -> None:
+    def progress_payload(self) -> dict:
+        """Current progress as the SSE payload dict (shared by the mux stream)."""
         progress = self.get_progress()
-        data = msgspec.json.encode({
+        return {
             'is_syncing': progress.is_syncing,
             'phase': progress.phase,
             'total_items': progress.total_items,
@@ -100,7 +101,10 @@ class CacheStatusService:
             'processed_artists': progress.processed_artists,
             'total_albums': progress.total_albums,
             'processed_albums': progress.processed_albums
-        }).decode("utf-8")
+        }
+
+    async def broadcast_progress(self) -> None:
+        data = msgspec.json.encode(self.progress_payload()).decode("utf-8")
         with self._sse_lock:
             dead_queues = []
             for queue in self._sse_subscribers:

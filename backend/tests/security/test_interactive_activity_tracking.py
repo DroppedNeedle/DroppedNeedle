@@ -81,8 +81,7 @@ async def test_interactive_activity_hold_is_released_when_handler_fails() -> Non
         "/api/v1/stream/local/file-id",
         "/api/v1/downloads/task-id/stream",
         "/api/v1/library/scan/stream",
-        "/api/v1/following/events",
-        "/api/v1/now-playing/events",
+        "/api/v1/events/stream",
         "/api/v1/downloads/task-id/held-audio/file-id",
     ],
 )

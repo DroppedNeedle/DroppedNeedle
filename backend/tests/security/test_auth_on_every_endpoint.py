@@ -11,9 +11,9 @@ auth-passed. This test owns the auth posture; route unit tests own body behaviou
 
 Service providers are overridden with non-raising mocks so dependency resolution
 never 500s before the auth dependency is evaluated (which would mask a 401).
-The two library scan SSE stream endpoints ARE inventoried: an autouse fixture
-swaps their generator for a one-event fake, so admitted requests end after the
-status/headers instead of hanging TestClient on the infinite poll loop.
+The multiplexed SSE stream endpoint IS inventoried: an autouse fixture
+swaps its generator for a one-event fake, so admitted requests end after the
+status/headers instead of hanging TestClient on the infinite stream.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -32,6 +32,7 @@ from api.v1.routes import indexers as indexers_routes
 from api.v1.routes import lastfm as lastfm_routes
 from api.v1.routes import downloads as downloads_routes
 from api.v1.routes import downloads_search as downloads_search_routes
+from api.v1.routes import events as events_routes
 from api.v1.routes import following as following_routes
 from api.v1.routes import free_music as free_music_routes
 from api.v1.routes import import_drop as import_drop_routes
@@ -809,16 +810,12 @@ _ADMIN_ENDPOINTS = [
         "/api/v1/library/scan-runs/run-1/stop",
         {"expected_revision": 1},
     ),
-    # Library scan SSE streams: CurrentAdminDep (admin-only) and CurrentUserDep
-    # respectively; the autouse SSE fixture ends admitted responses after the
-    # headers, so status-only assertions hold here like everywhere else.
-    ("GET", "/api/v1/library/operations/stream", None),
     ("POST", "/api/v1/downloads/held/management/task-1/retry", None),
     ("POST", "/api/v1/downloads/held/management/task-1/discard", None),
     # F-16: global Last.fm linking is admin-only (per-user flow lives at /me).
     ("POST", "/api/v1/lastfm/auth/token", None),
     ("POST", "/api/v1/lastfm/auth/session", {"token": "tok-123"}),
-    # F-17: precache cancel is curator-gated (status/stream stay user-open).
+    # F-17: precache cancel is curator-gated (status and the mux stream stay user-open).
     ("POST", "/api/v1/cache/sync/cancel", None),
     # F-18: indexer management is admin-only.
     ("GET", "/api/v1/indexers", None),
@@ -959,7 +956,6 @@ _USER_ENDPOINTS = [
     ("GET", "/api/v1/library/albums/album-1/edition", None),
     ("POST", "/api/v1/library/resolve-tracks", {"items": []}),
     ("GET", "/api/v1/library/activity", None),
-    ("GET", "/api/v1/library/activity/stream", None),
     ("POST", "/api/v1/me/personal-mix/refresh", None),
     ("PUT", "/api/v1/me/section-prefs", {"page": "home", "sections": []}),
     ("GET", "/api/v1/discover/batches", None),
@@ -983,8 +979,9 @@ _USER_ENDPOINTS = [
     ("GET", "/api/v1/me/connections/spotify/auth/url", None),
     ("GET", "/api/v1/me/spotify/playlists", None),
     ("POST", "/api/v1/playlists/pl-1/request-missing", None),
-    # Following hub. GET /following/events is omitted: it's an SSE stream whose
-    # infinite generator can't be driven through TestClient for the admitted case.
+    # Following hub. The old per-feed GET /following/events stream was removed;
+    # the mux replacement below is inventoried via the one-event fixture.
+    ("GET", "/api/v1/events/stream", None),
     ("GET", "/api/v1/following/artists", None),
     ("GET", "/api/v1/following/new-releases", None),
     ("GET", "/api/v1/following/new-releases/recent", None),
@@ -1045,18 +1042,17 @@ _ALL_ENDPOINTS = _ADMIN_ENDPOINTS + _USER_ENDPOINTS
 
 @pytest.fixture(autouse=True)
 def finite_sse_streams(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Swap the library scan SSE generators for a one-event fake.
+    """Swap the infinite mux SSE generator for a one-event fake.
 
-    The real generator polls forever; TestClient buffers a response to
+    The real generator never ends; TestClient buffers a response to
     completion, so admitted requests must end after the status/headers for the
     inventory loops above to assert on them.
     """
 
-    async def one_event(source):
-        await source.stream_revisions()
-        yield "id: activity:test\nevent: activity.changed\ndata: {}\n\n"
+    async def one_mux_frame(*args, **kwargs):
+        yield "retry: 5000\n\n"
 
-    monkeypatch.setattr(target_library_scan_routes, "activity_events", one_event)
+    monkeypatch.setattr(events_routes, "mux_events", one_mux_frame)
 
 
 @pytest.fixture(autouse=True)
@@ -1117,6 +1113,7 @@ def _client(scenario: str):
         downloads_search_routes.router,
         downloads_routes.router,
         following_routes.router,
+        events_routes.router,
         tracks_routes.router,
         library_operations_target_routes.router,
         target_library_routes.router,

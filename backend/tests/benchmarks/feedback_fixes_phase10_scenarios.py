@@ -31,7 +31,9 @@ from models.identification import (
 )
 from models.library_work import ScanRun
 from services.native.identification_queue_service import IdentificationQueueService
-from services.native.library_activity_events import activity_events
+from api.v1.routes.events import _MUX_KEEPALIVE_SECONDS, mux_events
+from infrastructure.sse_publisher import SSEPublisher
+from services.native.library_revision_poller import LIBRARY_REVISIONS_CHANNEL
 from services.native.local_album_grouper import (
     LocalAlbumGrouper,
     assign_album_continuity,
@@ -517,33 +519,58 @@ async def benchmark_evidence_protection() -> dict[str, object]:
 
 
 async def benchmark_sse_protocol() -> dict[str, object]:
-    revisions = {"scan": 1, "identification": 1, "operation": 1}
+    """Characterize the multiplexed stream: retry frame first, named cache
+    snapshot second, then one live frame per bus feed. The idle keepalive
+    cadence is the configured mux timeout (covered live by unit test)."""
+    publisher = SSEPublisher()
 
-    class Revisions:
-        async def stream_revisions(self) -> dict[str, int]:
-            return dict(revisions)
+    class CacheStatus:
+        def __init__(self) -> None:
+            self.queues: list[asyncio.Queue] = []
+            self.unsubscribed: list[asyncio.Queue] = []
 
-    delays: list[float] = []
+        def progress_payload(self) -> dict:
+            return {"is_syncing": False}
 
-    async def no_wait(delay: float) -> None:
-        delays.append(delay)
+        def subscribe_sse(self) -> asyncio.Queue:
+            queue: asyncio.Queue = asyncio.Queue()
+            self.queues.append(queue)
+            return queue
 
-    events = activity_events(Revisions(), sleep=no_wait)
-    initial = await anext(events)
-    heartbeat = await anext(events)
-    revisions["scan"] += 1
-    changed = await anext(events)
+        def unsubscribe_sse(self, queue: asyncio.Queue) -> None:
+            self.unsubscribed.append(queue)
+
+    now_playing = SimpleNamespace(subscribe=lambda: publisher.subscribe("now-playing"))
+    events = mux_events("user-1", publisher, now_playing, CacheStatus())
+    retry = await asyncio.wait_for(anext(events), timeout=5)
+    snapshot = await asyncio.wait_for(anext(events), timeout=5)
+    await publisher.publish("user:user-1", "concerts_new", {"count": 1})
+    bus = await asyncio.wait_for(anext(events), timeout=5)
+    await publisher.publish(
+        LIBRARY_REVISIONS_CHANNEL,
+        "activity.changed",
+        {"id": "activity:9", "revisions": {"scan": 2}},
+    )
+    changed = await asyncio.wait_for(anext(events), timeout=5)
     await events.aclose()
+    checks = {
+        "retry_first": retry == "retry: 5000\n\n",
+        "cache_snapshot_named": snapshot.startswith("event: cache.sync\n"),
+        "bus_event_forwarded": bus.startswith("event: concerts_new\n"),
+        "activity_id_line": changed.startswith(
+            "id: activity:9\nevent: activity.changed\n"
+        ),
+    }
     return {
-        "poll_interval_seconds": 2.0,
-        "heartbeat_interval_seconds": sum(delays[:15]),
-        "event_trace": [initial.strip(), heartbeat.strip(), changed.strip()],
-        "initial_transition": "event: activity.changed" in initial,
-        "bounded_heartbeat": heartbeat == ": keepalive\n\n",
-        "changed_transition": '"scan":2' in changed,
-        "passed": "event: activity.changed" in initial
-        and heartbeat == ": keepalive\n\n"
-        and '"scan":2' in changed,
+        "heartbeat_interval_seconds": _MUX_KEEPALIVE_SECONDS,
+        "event_trace": [
+            retry.strip(),
+            snapshot.splitlines()[0],
+            bus.splitlines()[0],
+            changed.splitlines()[0],
+        ],
+        **checks,
+        "passed": all(checks.values()),
     }
 
 

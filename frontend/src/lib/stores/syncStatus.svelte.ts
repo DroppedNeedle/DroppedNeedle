@@ -1,6 +1,11 @@
 import { browser } from '$app/environment';
 import { api } from '$lib/api/client';
-import { getApiUrl } from '$lib/api/api-utils';
+import { API } from '$lib/constants';
+import {
+	muxEventStream,
+	type MuxEventStream,
+	type MuxUnsubscribe
+} from '$lib/queries/events/MuxEventStream';
 
 type SyncStatus = {
 	is_syncing: boolean;
@@ -39,40 +44,19 @@ const EMPTY_STATUS: SyncStatus = {
 	processed_albums: 0
 };
 
-const MAX_RECONNECT_ATTEMPTS = 5;
-const POLL_ACTIVE_MS = 1500;
-const POLL_IDLE_MS = 5000;
 const AUTO_HIDE_SUCCESS_MS = 4000;
 const AUTO_HIDE_ERROR_MS = 6000;
 
-function createSyncStatusStore() {
+export function createSyncStatusStore(mux: MuxEventStream = muxEventStream) {
 	let status = $state<SyncStatus>({ ...EMPTY_STATUS });
 	let isDismissed = $state(false);
 	let isMinimized = $state(false);
 	let showIndicator = $state(false);
-	let connectionMode = $state<'sse' | 'polling'>('sse');
 
-	let eventSource: EventSource | null = null;
-	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	let unsubCacheSync: MuxUnsubscribe | null = null;
 	let hideTimeout: ReturnType<typeof setTimeout> | null = null;
-	let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-	let reconnectAttempts = 0;
+	let liveGeneration = 0;
 	let connected = false;
-
-	function clearAllTimers(): void {
-		if (pollInterval) {
-			clearInterval(pollInterval);
-			pollInterval = null;
-		}
-		if (hideTimeout) {
-			clearTimeout(hideTimeout);
-			hideTimeout = null;
-		}
-		if (reconnectTimeout) {
-			clearTimeout(reconnectTimeout);
-			reconnectTimeout = null;
-		}
-	}
 
 	function applyStatus(newStatus: SyncStatus): void {
 		const wasSyncing = status.is_syncing;
@@ -84,10 +68,6 @@ function createSyncStatusStore() {
 		}
 
 		handleStatusUpdate(newStatus);
-
-		if (connectionMode === 'polling' && wasSyncing !== newStatus.is_syncing) {
-			schedulePoll();
-		}
 	}
 
 	function handleStatusUpdate(newStatus: SyncStatus): void {
@@ -115,107 +95,27 @@ function createSyncStatusStore() {
 		}
 	}
 
-	function connectSSE(): void {
-		if (!browser || document.hidden) return;
-		if (eventSource) {
-			eventSource.close();
-			eventSource = null;
+	function onCacheSync(event: Event): void {
+		if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return;
+		try {
+			applyStatus(JSON.parse(event.data) as SyncStatus);
+		} catch {
+			// ignore malformed messages without bumping the generation, so a
+			// bad frame never kills an in-flight seed without applying anything
+			return;
 		}
-
-		eventSource = new EventSource(getApiUrl('/api/v1/cache/sync/stream'));
-
-		eventSource.onopen = () => {
-			connectionMode = 'sse';
-			reconnectAttempts = 0;
-			if (pollInterval) {
-				clearInterval(pollInterval);
-				pollInterval = null;
-			}
-		};
-
-		eventSource.onmessage = (event) => {
-			try {
-				applyStatus(JSON.parse(event.data));
-			} catch {
-				// ignore malformed messages
-			}
-		};
-
-		eventSource.onerror = () => {
-			eventSource?.close();
-			eventSource = null;
-			reconnectAttempts++;
-
-			if (reconnectTimeout) {
-				clearTimeout(reconnectTimeout);
-				reconnectTimeout = null;
-			}
-
-			if (status.is_syncing && !pollInterval) {
-				startPolling();
-			}
-
-			if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-				const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-				reconnectTimeout = setTimeout(() => {
-					reconnectTimeout = null;
-					if (connected && !document.hidden) connectSSE();
-				}, delay);
-			} else {
-				connectionMode = 'polling';
-				if (!pollInterval) startPolling();
-			}
-		};
+		liveGeneration += 1;
 	}
 
 	async function fetchStatus(): Promise<void> {
+		const basis = liveGeneration;
 		try {
-			const data = await api.global.get<SyncStatus>('/api/v1/cache/sync/status');
+			const data = await api.global.get<SyncStatus>(API.cacheSync.status());
+			// A live frame that landed mid-fetch is fresher than this seed.
+			if (basis !== liveGeneration) return;
 			applyStatus(data);
 		} catch {
 			// ignore fetch errors
-		}
-	}
-
-	function startPolling(): void {
-		if (pollInterval) {
-			clearInterval(pollInterval);
-			pollInterval = null;
-		}
-		void fetchStatus();
-		schedulePoll();
-	}
-
-	function schedulePoll(): void {
-		if (pollInterval) {
-			clearInterval(pollInterval);
-		}
-		pollInterval = setInterval(
-			() => void fetchStatus(),
-			status.is_syncing ? POLL_ACTIVE_MS : POLL_IDLE_MS
-		);
-	}
-
-	function handleVisibilityChange(): void {
-		if (!connected) return;
-		if (document.hidden) {
-			if (reconnectTimeout) {
-				clearTimeout(reconnectTimeout);
-				reconnectTimeout = null;
-			}
-			eventSource?.close();
-			eventSource = null;
-			if (pollInterval) {
-				clearInterval(pollInterval);
-				pollInterval = null;
-			}
-		} else {
-			if (connectionMode === 'sse') {
-				reconnectAttempts = 0;
-				connectSSE();
-			} else {
-				startPolling();
-			}
 		}
 	}
 
@@ -253,9 +153,6 @@ function createSyncStatusStore() {
 		get isMinimized() {
 			return isMinimized;
 		},
-		get connectionMode() {
-			return connectionMode;
-		},
 		get phaseLabel() {
 			return status.phase ? (PHASE_LABELS[status.phase] ?? 'Syncing') : 'Library';
 		},
@@ -271,17 +168,23 @@ function createSyncStatusStore() {
 		connect(): void {
 			if (!browser || connected) return;
 			connected = true;
-			connectSSE();
-			document.addEventListener('visibilitychange', handleVisibilityChange);
+			unsubCacheSync = mux.on('cache.sync', onCacheSync);
+			// The mux yields its initial snapshot once per connection, which
+			// may predate this registration (connect runs deferred), so seed
+			// directly. Drops reconnect natively at the server's retry frame;
+			// no polling fallback: a fetch here plus live frames covers it.
+			void fetchStatus();
 		},
 
 		disconnect(): void {
 			if (!browser) return;
 			connected = false;
-			eventSource?.close();
-			eventSource = null;
-			clearAllTimers();
-			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			unsubCacheSync?.();
+			unsubCacheSync = null;
+			if (hideTimeout) {
+				clearTimeout(hideTimeout);
+				hideTimeout = null;
+			}
 		},
 
 		dismiss(): void {
@@ -306,7 +209,7 @@ function createSyncStatusStore() {
 
 		async cancelSync(): Promise<void> {
 			try {
-				await api.global.post('/api/v1/cache/sync/cancel');
+				await api.global.post(API.cacheSync.cancel());
 			} catch {
 				// ignore errors, sync may already be stopped
 			}

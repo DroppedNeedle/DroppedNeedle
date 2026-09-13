@@ -79,15 +79,6 @@ def test_target_scheduler_uses_configured_iana_timezone(
     assert _server_timezone_name() == "Europe/London"
 
 
-def test_library_operation_stream_precedes_dynamic_operation_route() -> None:
-    app = create_isolated_target_application()
-    paths = [route.path for route in app.routes]
-
-    assert paths.index("/api/v1/library/operations/stream") < paths.index(
-        "/api/v1/library/operations/{job_id}"
-    )
-
-
 @pytest.mark.parametrize("invalid_timezone", ["BST", "/etc/localtime"])
 def test_target_scheduler_rejects_invalid_timezone_and_falls_back_to_utc(
     monkeypatch: pytest.MonkeyPatch,

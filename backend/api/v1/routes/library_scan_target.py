@@ -6,7 +6,6 @@ import time
 from pathlib import PurePosixPath
 
 from fastapi import APIRouter, Query
-from fastapi.responses import StreamingResponse
 
 from api.v1.schemas.library_scan_target import (
     DeferredIdentificationJobSummary,
@@ -37,7 +36,6 @@ from core.exceptions import ValidationError
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from middleware import CurrentAdminDep, CurrentUserDep
 from models.library_work import LibraryWorkItem, ScanRequest, ScanScope
-from services.native.library_activity_events import activity_events
 
 router = APIRouter(
     route_class=MsgSpecRoute, prefix="/library", tags=["library-scan-target"]
@@ -449,22 +447,6 @@ async def library_activity(
     )
 
 
-@router.get("/activity/stream")
-async def library_activity_stream(
-    _: CurrentUserDep,
-    identification: TargetIdentificationQueueDep,
-):
-    return StreamingResponse(
-        activity_events(identification),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
 async def _identification_control_response(
     identification: TargetIdentificationQueueDep,
     revision: int,
@@ -501,14 +483,6 @@ async def resume_identification(
 ) -> IdentificationControlResponse:
     revision = await identification.resume(expected_revision=body.expected_revision)
     return await _identification_control_response(identification, revision)
-
-
-@router.get("/operations/stream")
-async def library_operations_stream(
-    _: CurrentAdminDep,
-    identification: TargetIdentificationQueueDep,
-):
-    return await library_activity_stream(_, identification)
 
 
 @router.post("/scan-runs", response_model=ScanRunRequestedResponse, status_code=202)

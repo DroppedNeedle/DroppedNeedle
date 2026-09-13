@@ -1,8 +1,12 @@
-import { getApiUrl } from '$lib/api/api-utils';
 import { API } from '$lib/constants';
 import { api } from '$lib/api/client';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { NowPlayingSession } from '$lib/types';
+import {
+	muxEventStream,
+	type MuxEventStream,
+	type MuxUnsubscribe
+} from '$lib/queries/events/MuxEventStream';
 
 // Server-driven presence: hydrate once over HTTP, then receive privacy-projected
 // snapshots live over SSE (the `now-playing` channel). The 1s tick only smooths
@@ -14,9 +18,9 @@ const MAX_INTERPOLATION_ADVANCE_MS = 12_000;
 
 type InterpolationBasis = { serverProgress: number; updatedAt: number };
 
-function createNowPlayingStore() {
+export function createNowPlayingStore(mux: MuxEventStream = muxEventStream) {
 	let sessions = $state<NowPlayingSession[]>([]);
-	let source: EventSource | null = null;
+	let unsubSnapshot: MuxUnsubscribe | null = null;
 	let tickTimer: ReturnType<typeof setInterval> | undefined;
 	let running = false;
 
@@ -95,17 +99,14 @@ function createNowPlayingStore() {
 		if (running) return;
 		running = true;
 		void hydrate();
-		source = new EventSource(getApiUrl(API.nowPlaying.events()));
-		source.addEventListener('snapshot', onSnapshot as EventListener);
+		unsubSnapshot = mux.on('snapshot', onSnapshot as EventListener);
 		tickTimer = setInterval(tick, TICK_MS);
 	}
 
 	function stop(): void {
 		running = false;
-		if (source) {
-			source.close();
-			source = null;
-		}
+		unsubSnapshot?.();
+		unsubSnapshot = null;
 		if (tickTimer) {
 			clearInterval(tickTimer);
 			tickTimer = undefined;

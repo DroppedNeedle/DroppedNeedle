@@ -80,6 +80,7 @@
 	import ConcertsNavBadge from '$lib/components/ConcertsNavBadge.svelte';
 	import { createFollowingEvents } from '$lib/queries/following/FollowingEvents';
 	import { createLibraryActivityEvents } from '$lib/queries/library/LibraryActivityEvents';
+	import { muxEventStream } from '$lib/queries/events/MuxEventStream';
 	import LibraryActivityStrip from '$lib/components/library/LibraryActivityStrip.svelte';
 	import DownloadsNavBadge from '$lib/components/DownloadsNavBadge.svelte';
 	import PendingApprovalNavBadge from '$lib/components/PendingApprovalNavBadge.svelte';
@@ -263,12 +264,20 @@
 			// so it no longer waits on integration status
 			nowPlayingStore.start();
 			nowPlayingReporter.start();
+			// The tab's single multiplexed stream; connect last so the gated
+			// consumer starts (library activity's admin direct-refresh gate)
+			// see a disconnected mux and refresh exactly once via the first
+			// open instead of doubling with a direct refresh. syncStatus
+			// connects deferred after this on purpose - it has no gate and its
+			// seed/generation guard covers either order.
+			muxEventStream.connect();
 		});
 		return () => {
 			followingEvents.stop();
 			libraryActivityEvents.stop();
 			nowPlayingStore.stop();
 			nowPlayingReporter.stop();
+			muxEventStream.disconnect();
 		};
 	});
 
@@ -280,6 +289,7 @@
 			document.removeEventListener('keydown', handleGlobalKeydown);
 		}
 		syncStatus.disconnect();
+		muxEventStream.disconnect();
 		resetPlaylistModal();
 		discographyDownloadStore.close();
 		batchDownloadStore.clear();
