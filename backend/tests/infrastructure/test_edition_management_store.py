@@ -566,3 +566,225 @@ async def test_conversion_commit_accepts_source_track_without_identity(
     committed = await store.get_library_management_import_bundle("bundle")
     assert committed is not None
     assert committed.state == "catalog_committed"
+
+
+_PREVIEW_TOKEN_HASH = "t" * 64
+
+
+def _insert_edition_preview(
+    path: Path,
+    *,
+    preview_id: str = "preview",
+    op_state: str = "ready",
+    snapshot_phase: str = "ready",
+    idempotency_key: str | None = "edition-conversion-preview:job",
+) -> None:
+    with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute(
+            "INSERT INTO library_operation_jobs "
+            "(id,kind,state,idempotency_key,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (preview_id, "library_management", op_state, idempotency_key, 1, 1),
+        )
+        connection.execute(
+            "INSERT INTO library_management_job_snapshots "
+            "(job_id,mode,origin,phase,selection_json,profile_revision,"
+            "settings_revision,naming_revision,policy_revision,catalog_revision,"
+            "profile_snapshot_json,preview_token_hash,preview_created_at,"
+            "preview_expires_at,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                preview_id,
+                "preview",
+                "manual",
+                snapshot_phase,
+                "{}",
+                "p",
+                "s",
+                "n",
+                "p",
+                1,
+                "{}",
+                _PREVIEW_TOKEN_HASH,
+                1,
+                9999999999.0,
+                1,
+                1,
+            ),
+        )
+
+
+def _ready_edition_job(
+    job_id: str = "job",
+    preview_id: str = "preview",
+    *,
+    staged_artifact_id: str | None = None,
+) -> tuple[EditionConversionJob, EditionConversionTarget, EditionConversionLocalFile]:
+    job = EditionConversionJob(
+        id=job_id,
+        local_album_id="album",
+        target_release_group_mbid="group",
+        target_release_mbid="release",
+        target_album_title="Album",
+        target_artist_name="Artist",
+        state="ready",
+        expected_album_revision=1,
+        expected_input_revision="input",
+        expected_identity_revision="identity",
+        preflight_token_hash="hash",
+        download_source_ready=True,
+        required_temporary_bytes=1,
+        kept_count=1,
+        acquire_count=0,
+        recycle_count=0,
+        staged_count=0,
+        failed_count=0,
+        final_preview_job_id=preview_id,
+        final_preview_token_hash=_PREVIEW_TOKEN_HASH,
+        final_bundle_json="{}",
+        final_bundle_hash="h" * 64,
+        requested_by_user_id="admin",
+        error_code=None,
+        created_at=1,
+        updated_at=1,
+    )
+    target = EditionConversionTarget(
+        job_id=job_id,
+        ordinal=0,
+        disc_number=1,
+        track_number=1,
+        release_track_mbid="release-track",
+        recording_mbid="recording",
+        title="Track",
+        duration_seconds=1,
+        state="kept",
+        kept_local_track_id="track",
+        staged_artifact_id=staged_artifact_id,
+    )
+    local = EditionConversionLocalFile(
+        job_id=job_id,
+        local_track_id="track",
+        action="keep",
+        target_ordinal=0,
+        evidence_kind="recording",
+        expected_track_revision=1,
+        expected_identity_revision=None,
+        expected_stat_revision="stat",
+    )
+    return job, target, local
+
+
+@pytest.mark.asyncio
+async def test_cancel_edition_conversion_recovers_after_preview_discard(
+    tmp_path: Path,
+) -> None:
+    """Issue #425: cancel must tolerate an already-discarded final preview."""
+    path = tmp_path / "library.db"
+    _seed(path)
+    _insert_edition_preview(path)
+    store = NativeLibraryStore(path, threading.Lock())
+    job, target, local = _ready_edition_job()
+    await store.create_edition_conversion(job, (target,), (local,))
+    discarded = await store.discard_library_management_preview(
+        "preview", expected_job_revision=1, now=2.0
+    )
+    assert discarded["state"] == "cancelled"
+
+    cancelled = await store.cancel_edition_conversion(
+        "job", expected_row_revision=1, now=3.0
+    )
+
+    assert cancelled.state == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_edition_conversion_refuses_mid_apply_preview(
+    tmp_path: Path,
+) -> None:
+    """Cancel must not race an in-flight Apply of the final preview."""
+    path = tmp_path / "library.db"
+    _seed(path)
+    _insert_edition_preview(path, op_state="running", snapshot_phase="applying")
+    store = NativeLibraryStore(path, threading.Lock())
+    job, target, local = _ready_edition_job()
+    await store.create_edition_conversion(job, (target,), (local,))
+
+    with pytest.raises(StaleRevisionError):
+        await store.cancel_edition_conversion("job", expected_row_revision=1, now=2.0)
+
+    current = await store.get_edition_conversion("job")
+    assert current is not None
+    assert current.state == "ready"
+
+
+@pytest.mark.asyncio
+async def test_detach_dead_preview_frees_link_and_idempotency_key(
+    tmp_path: Path,
+) -> None:
+    """Issue #425: detach clears the dead link so a fresh preview can seal."""
+    path = tmp_path / "library.db"
+    _seed(path)
+    _insert_edition_preview(path)
+    store = NativeLibraryStore(path, threading.Lock())
+    job, target, local = _ready_edition_job(staged_artifact_id="artifact-1")
+    await store.create_edition_conversion(job, (target,), (local,))
+    await store.discard_library_management_preview(
+        "preview", expected_job_revision=1, now=2.0
+    )
+
+    detached = await store.detach_dead_edition_conversion_preview(
+        "job", expected_row_revision=1, now=3.0
+    )
+
+    assert detached.final_preview_job_id is None
+    assert detached.final_preview_token_hash is None
+    assert detached.final_bundle_json is None
+    assert detached.final_bundle_hash is None
+    assert detached.row_revision == 2
+    with sqlite3.connect(path) as connection:
+        key = connection.execute(
+            "SELECT idempotency_key FROM library_operation_jobs WHERE id='preview'"
+        ).fetchone()[0]
+    assert key is None
+
+    _insert_edition_preview(
+        path,
+        preview_id="preview-2",
+        idempotency_key="edition-conversion-preview:job",
+    )
+    bundle_json = "{}"
+    resealed = await store.seal_edition_conversion_preview(
+        "job",
+        expected_row_revision=detached.row_revision,
+        preview_job_id="preview-2",
+        preview_token_hash="n" * 64,
+        bundle_json=bundle_json,
+        bundle_hash=hashlib.sha256(bundle_json.encode()).hexdigest(),
+        now=4.0,
+    )
+    assert resealed.final_preview_job_id == "preview-2"
+
+
+@pytest.mark.asyncio
+async def test_rotate_preview_capability_still_works_for_live_preview(
+    tmp_path: Path,
+) -> None:
+    """A live final preview keeps the rotate path (no detach)."""
+    path = tmp_path / "library.db"
+    _seed(path)
+    _insert_edition_preview(path)
+    store = NativeLibraryStore(path, threading.Lock())
+    job, target, local = _ready_edition_job()
+    await store.create_edition_conversion(job, (target,), (local,))
+
+    rotated = await store.rotate_edition_conversion_preview_capability(
+        "job",
+        expected_row_revision=1,
+        preview_token_hash="n" * 64,
+        preview_expires_at=9999999999.0,
+        now=2.0,
+    )
+
+    assert rotated.final_preview_job_id == "preview"
+    assert rotated.final_preview_token_hash == "n" * 64

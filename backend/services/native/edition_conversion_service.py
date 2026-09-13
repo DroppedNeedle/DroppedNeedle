@@ -315,15 +315,45 @@ class EditionConversionService:
         if job.final_preview_job_id is None:
             job = await self._ensure_final_preview(job, preview_token=preview_token)
         else:
-            settings = self._preferences.get_library_management_settings_raw()
-            now = self._clock()
-            job = await self._store.rotate_edition_conversion_preview_capability(
-                job.id,
-                expected_row_revision=job.row_revision,
-                preview_token_hash=hashlib.sha256(preview_token.encode()).hexdigest(),
-                preview_expires_at=(now + settings.preview_retention_hours * 60 * 60),
-                now=now,
+            operation = await self._store.get_operation_job(job.final_preview_job_id)
+            snapshot = await self._store.get_library_management_job_snapshot(
+                job.final_preview_job_id
             )
+            if (
+                operation is not None
+                and str(operation["state"]) == "ready"
+                and snapshot is not None
+                and snapshot.phase == "ready"
+            ):
+                settings = self._preferences.get_library_management_settings_raw()
+                now = self._clock()
+                job = await self._store.rotate_edition_conversion_preview_capability(
+                    job.id,
+                    expected_row_revision=job.row_revision,
+                    preview_token_hash=hashlib.sha256(
+                        preview_token.encode()
+                    ).hexdigest(),
+                    preview_expires_at=(
+                        now + settings.preview_retention_hours * 60 * 60
+                    ),
+                    now=now,
+                )
+            else:
+                if operation is None or str(operation["state"]) not in {
+                    "cancelled",
+                    "succeeded",
+                    "failed",
+                    "stopped",
+                }:
+                    raise StaleRevisionError(
+                        "The final conversion preview is no longer ready."
+                    )
+                job = await self._store.detach_dead_edition_conversion_preview(
+                    job.id,
+                    expected_row_revision=job.row_revision,
+                    now=self._clock(),
+                )
+                job = await self._ensure_final_preview(job, preview_token=preview_token)
         return EditionConversionPreviewResponse(
             status=self._response(job), preview_token=preview_token
         )

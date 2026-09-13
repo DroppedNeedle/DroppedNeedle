@@ -21127,6 +21127,18 @@ class NativeLibraryStore(PersistenceBase):
                 )
             preview_job_id = job["final_preview_job_id"]
             if preview_job_id is not None:
+                preview = connection.execute(
+                    "SELECT state FROM library_operation_jobs WHERE id=?",
+                    (preview_job_id,),
+                ).fetchone()
+                if preview is not None and str(preview["state"]) in {
+                    "cancelled",
+                    "succeeded",
+                    "failed",
+                    "stopped",
+                }:
+                    preview_job_id = None
+            if preview_job_id is not None:
                 snapshot = connection.execute(
                     "SELECT phase FROM library_management_job_snapshots WHERE job_id=?",
                     (preview_job_id,),
@@ -21164,6 +21176,64 @@ class NativeLibraryStore(PersistenceBase):
                 "UPDATE library_edition_conversion_downloads SET state='cancelled',"
                 "updated_at=? WHERE job_id=? AND state IN ('active','downloading')",
                 (now, job_id),
+            )
+            self._bump_stream(connection, "operation")
+
+        await self._write(operation)
+        result = await self.get_edition_conversion(job_id)
+        assert result is not None
+        return result
+
+    async def detach_dead_edition_conversion_preview(
+        self,
+        job_id: str,
+        *,
+        expected_row_revision: int,
+        now: float,
+    ) -> EditionConversionJob:
+        def operation(connection: sqlite3.Connection) -> None:
+            job = connection.execute(
+                "SELECT state,row_revision,final_preview_job_id FROM "
+                "library_edition_conversion_jobs WHERE id=?",
+                (job_id,),
+            ).fetchone()
+            if (
+                job is None
+                or str(job["state"]) != "ready"
+                or int(job["row_revision"]) != expected_row_revision
+                or job["final_preview_job_id"] is None
+            ):
+                raise StaleRevisionError(
+                    "The edition conversion changed before its final preview was detached."
+                )
+            preview_job_id = str(job["final_preview_job_id"])
+            preview = connection.execute(
+                "SELECT state FROM library_operation_jobs WHERE id=?",
+                (preview_job_id,),
+            ).fetchone()
+            if preview is None or str(preview["state"]) not in {
+                "cancelled",
+                "succeeded",
+                "failed",
+                "stopped",
+            }:
+                raise StaleRevisionError("The final conversion preview is still live.")
+            updated = connection.execute(
+                "UPDATE library_edition_conversion_jobs SET final_preview_job_id=NULL,"
+                "final_preview_token_hash=NULL,final_bundle_json=NULL,"
+                "final_bundle_hash=NULL,updated_at=?,row_revision=row_revision+1 "
+                "WHERE id=? AND state='ready' AND row_revision=?",
+                (now, job_id, expected_row_revision),
+            )
+            if updated.rowcount != 1:
+                raise StaleRevisionError(
+                    "The edition conversion changed before its final preview was detached."
+                )
+            connection.execute(
+                "UPDATE library_operation_jobs SET idempotency_key=NULL,updated_at=?,"
+                "row_revision=row_revision+1,event_revision=event_revision+1 "
+                "WHERE id=?",
+                (now, preview_job_id),
             )
             self._bump_stream(connection, "operation")
 

@@ -3,10 +3,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import msgspec
 import pytest
 
 from api.v1.schemas.album import AlbumTracksInfo
-from core.exceptions import ValidationError
+from core.exceptions import StaleRevisionError, ValidationError
 from models.album import AlbumInfo, Track
 from models.edition_management import EditionConversionJob, EditionConversionTarget
 from services.native.edition_conversion_service import EditionConversionService
@@ -373,3 +374,115 @@ async def test_final_preview_accepts_expected_recording_after_selected_candidate
 
     service._fingerprinter.fingerprint.assert_awaited_once()
     store.stage_retained_edition_conversion_artifact.assert_awaited_once()
+
+
+def _ready_job_with_preview() -> EditionConversionJob:
+    return EditionConversionJob(
+        id="job-1",
+        local_album_id="album-1",
+        target_release_group_mbid=RELEASE_GROUP,
+        target_release_mbid=RELEASE,
+        target_album_title="Album",
+        target_artist_name="Artist",
+        state="ready",
+        expected_album_revision=1,
+        expected_input_revision="input",
+        expected_identity_revision="identity",
+        preflight_token_hash="hash",
+        download_source_ready=True,
+        required_temporary_bytes=1,
+        kept_count=1,
+        acquire_count=0,
+        recycle_count=0,
+        staged_count=0,
+        failed_count=0,
+        final_preview_job_id="preview-1",
+        final_preview_token_hash="t" * 64,
+        final_bundle_json="{}",
+        final_bundle_hash="h" * 64,
+        requested_by_user_id="admin",
+        error_code=None,
+        created_at=1,
+        updated_at=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_final_preview_detaches_dead_preview_and_mints_fresh(
+    tmp_path: Path,
+) -> None:
+    """Issue #425: re-preview after discard detaches and mints a new preview."""
+    service, store, _albums = _service(tmp_path)
+    job = _ready_job_with_preview()
+    store.get_edition_conversion.return_value = job
+    store.get_operation_job.return_value = {"id": "preview-1", "state": "cancelled"}
+    store.get_library_management_job_snapshot.return_value = SimpleNamespace(
+        phase="ready"
+    )
+    detached = msgspec.structs.replace(
+        job,
+        final_preview_job_id=None,
+        final_preview_token_hash=None,
+        final_bundle_json=None,
+        final_bundle_hash=None,
+        row_revision=job.row_revision + 1,
+    )
+    store.detach_dead_edition_conversion_preview.return_value = detached
+    minted = msgspec.structs.replace(detached, final_preview_job_id="preview-2")
+    ensure = AsyncMock(return_value=minted)
+    service._ensure_final_preview = ensure  # type: ignore[method-assign]
+
+    response = await service.create_final_preview("job-1", expected_row_revision=1)
+
+    store.detach_dead_edition_conversion_preview.assert_awaited_once_with(
+        "job-1", expected_row_revision=1, now=100.0
+    )
+    ensure.assert_awaited_once()
+    assert ensure.await_args is not None
+    assert ensure.await_args.args[0] == detached
+    assert ensure.await_args.kwargs["preview_token"] == response.preview_token
+    store.rotate_edition_conversion_preview_capability.assert_not_awaited()
+    assert response.status.final_preview_job_id == "preview-2"
+
+
+@pytest.mark.asyncio
+async def test_create_final_preview_rotates_a_live_preview(
+    tmp_path: Path,
+) -> None:
+    service, store, _albums = _service(tmp_path)
+    job = _ready_job_with_preview()
+    store.get_edition_conversion.return_value = job
+    store.get_operation_job.return_value = {"id": "preview-1", "state": "ready"}
+    store.get_library_management_job_snapshot.return_value = SimpleNamespace(
+        phase="ready"
+    )
+    rotated = msgspec.structs.replace(job, final_preview_token_hash="n" * 64)
+    store.rotate_edition_conversion_preview_capability.return_value = rotated
+    ensure = AsyncMock()
+    service._ensure_final_preview = ensure  # type: ignore[method-assign]
+
+    response = await service.create_final_preview("job-1", expected_row_revision=1)
+
+    store.rotate_edition_conversion_preview_capability.assert_awaited_once()
+    store.detach_dead_edition_conversion_preview.assert_not_awaited()
+    ensure.assert_not_awaited()
+    assert response.status.final_preview_job_id == "preview-1"
+
+
+@pytest.mark.asyncio
+async def test_create_final_preview_refuses_mid_apply_preview(
+    tmp_path: Path,
+) -> None:
+    service, store, _albums = _service(tmp_path)
+    job = _ready_job_with_preview()
+    store.get_edition_conversion.return_value = job
+    store.get_operation_job.return_value = {"id": "preview-1", "state": "running"}
+    store.get_library_management_job_snapshot.return_value = SimpleNamespace(
+        phase="applying"
+    )
+
+    with pytest.raises(StaleRevisionError):
+        await service.create_final_preview("job-1", expected_row_revision=1)
+
+    store.detach_dead_edition_conversion_preview.assert_not_awaited()
+    store.rotate_edition_conversion_preview_capability.assert_not_awaited()
