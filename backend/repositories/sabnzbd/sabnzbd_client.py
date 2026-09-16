@@ -2,10 +2,10 @@
 ``SabnzbdDownloadClient``).
 
 Verified against the owner's SABnzbd 5.0.4. Every call appends ``output=json`` +
-``apikey`` as suffix query params (never headers; Lidarr ``SabnzbdProxy``). Adds an
-NZB via ``mode=addfile`` (multipart POST of the fetched+validated NZB bytes), not
-``addurl`` - we validate the bytes are a real NZB (not an indexer error page) before
-handing off. Errors arrive as ``{"status": false, "error": …}`` or plain-text
+``apikey`` as suffix query params (never headers; Lidarr ``SabnzbdProxy``). New
+downloads are handed to SABnzbd via ``mode=addurl`` so SABnzbd, rather than
+DroppedNeedle, fetches the Newznab enclosure URL. Errors arrive as
+``{"status": false, "error": …}`` or plain-text
 ``error: …``; both are handled, auth failures detected by message.
 
 The httpx client is INJECTED (AUD-12). The full ``apikey`` is required (the add-only
@@ -157,6 +157,43 @@ class SabnzbdClient:
             )
         except httpx.HTTPError as exc:
             raise SabnzbdApiError(f"SABnzbd addfile failed: {exc}") from exc
+        data = self._parse(response)
+        import msgspec
+
+        return msgspec.convert(data, type=SabnzbdAddResponse, strict=False)
+
+    async def add_url(
+        self,
+        job_name: str,
+        nzb_url: str,
+        *,
+        category: str | None = None,
+        priority: int | None = None,
+        post_processing: int | None = None,
+        timeout: float = 60.0,
+    ) -> SabnzbdAddResponse:
+        """Hand an NZB URL to SABnzbd with ``mode=addurl``.
+
+        ``addurl`` mutates SABnzbd's queue, so it deliberately bypasses the retry
+        helper: retrying an uncertain response could enqueue the same job twice.
+        """
+        params: dict[str, str] = {
+            "mode": "addurl",
+            "name": nzb_url,
+            "nzbname": job_name,
+        }
+        if category:
+            params["cat"] = category
+        if priority is not None:
+            params["priority"] = str(priority)
+        if post_processing is not None:
+            params["pp"] = str(post_processing)
+        try:
+            response = await self._http.get(
+                self._url(), params=self._params(params), timeout=timeout
+            )
+        except httpx.HTTPError as exc:
+            raise SabnzbdApiError(f"SABnzbd addurl failed: {exc}") from exc
         data = self._parse(response)
         import msgspec
 

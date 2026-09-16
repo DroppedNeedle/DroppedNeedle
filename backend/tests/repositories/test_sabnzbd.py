@@ -47,22 +47,36 @@ async def test_auth_error_surfaces():
 
 
 @pytest.mark.asyncio
-async def test_enqueue_returns_handle_with_nzo_id(monkeypatch):
+async def test_enqueue_hands_url_to_sabnzbd_and_returns_handle():
     mock = sabnzbd_mock.SabnzbdMock()
     mock.add_nzo_ids = ["nzo-xyz"]
     dc = _dc(mock)
-
-    async def fake_fetch(url, *, timeout=60.0):
-        return b"<?xml version='1.0'?><nzb></nzb>"
-
-    monkeypatch.setattr(dc._client, "fetch_nzb", fake_fetch)
     handle = await dc.enqueue(
-        EnqueueRequest(task_id="t1", source="usenet", nzb_url="https://idx/nzb",
-                       job_name="droppedneedle-t1", category="audio")
+        EnqueueRequest(
+            task_id="t1",
+            source="usenet",
+            nzb_url="https://aggregator.example/getnzb/abc?apikey=secret",
+            job_name="droppedneedle-t1",
+            category="audio",
+            priority=1,
+            post_processing=3,
+        )
     )
     assert handle.source == "usenet"
     assert handle.nzo_id == "nzo-xyz"
     assert handle.job_name == "droppedneedle-t1"
+    assert mock.add_url_requests == [
+        {
+            "mode": "addurl",
+            "name": "https://aggregator.example/getnzb/abc?apikey=secret",
+            "nzbname": "droppedneedle-t1",
+            "cat": "audio",
+            "priority": "1",
+            "pp": "3",
+            "output": "json",
+            "apikey": "key",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -464,6 +478,25 @@ async def test_addfile_is_not_retried():
     with pytest.raises(SabnzbdApiError):
         await client.add_file("droppedneedle-t1", b"<nzb></nzb>")
     assert calls["n"] == 1  # one attempt only - no retry
+
+
+@pytest.mark.asyncio
+async def test_addurl_is_not_retried():
+    # addurl also mutates the queue. An uncertain transport failure must not cause
+    # a second enqueue attempt and a duplicate SABnzbd job.
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        raise httpx.ConnectError("blip")
+
+    client = SabnzbdClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        "http://sab:8080", "key", retry_backoff=0,
+    )
+    with pytest.raises(SabnzbdApiError):
+        await client.add_url("droppedneedle-t1", "https://aggregator.example/getnzb/abc")
+    assert calls["n"] == 1
 
 
 # --- fetch_nzb: indexer error/limit page vs real NZB (issue #266) ------------------

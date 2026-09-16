@@ -1,8 +1,9 @@
 """``SabnzbdDownloadClient`` - the download side of Usenet (D2): a
 ``DownloadClientProtocol`` impl over ``SabnzbdClient``.
 
-enqueue = fetch the release NZB → validate → ``addfile`` → ``TaskHandle{job_name,
-nzo_id}`` (job_name = ``droppedneedle-{task_id}`` is the PRE-enqueue key). get_status
+enqueue = hand the release URL to SABnzbd via ``addurl`` →
+``TaskHandle{job_name, nzo_id}`` (job_name = ``droppedneedle-{task_id}`` is the
+PRE-enqueue key). get_status
 walks queue→history; **only the true ``Downloading`` state sets
 ``has_active_transfer``** (so Grabbing/Queued/Paused/post-processing don't trip the
 orchestrator's stall/queued watchdogs - ``05-…`` §Poll). list_completed_files remaps
@@ -97,10 +98,9 @@ class SabnzbdDownloadClient:
         if not request.nzb_url:
             raise SabnzbdApiError("enqueue requires an nzb_url for the usenet source")
         job_name = request.job_name or f"droppedneedle-{request.task_id}"
-        nzb_bytes = await self._client.fetch_nzb(request.nzb_url)
-        response = await self._client.add_file(
+        response = await self._client.add_url(
             job_name,
-            nzb_bytes,
+            request.nzb_url,
             category=request.category,
             priority=request.priority,
             post_processing=request.post_processing,
