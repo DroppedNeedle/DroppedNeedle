@@ -9,7 +9,7 @@ Tables in the shared ``library.db``:
   ``needs_review`` item can be re-imported against a manually chosen release
   group after a restart.
 
-``PRAGMA foreign_keys=ON`` on top of ``PersistenceBase._connect`` so the
+``foreign_keys = True`` (``PRAGMA foreign_keys=ON`` on every connection) so the
 ``ON DELETE CASCADE`` from items to jobs fires (the events-store pattern).
 """
 
@@ -67,10 +67,7 @@ class DropImportStore(PersistenceBase):
     def __init__(self, db_path: Path, write_lock: threading.Lock) -> None:
         super().__init__(db_path, write_lock)
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = super()._connect()
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+    foreign_keys = True
 
     def _ensure_tables(self) -> None:
         conn = self._connect()

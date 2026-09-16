@@ -561,11 +561,8 @@ class DownloadStore(PersistenceBase):
             tuple[str, bool], DownloadActivitySummary
         ] = OrderedDict()
 
-    def _connect(self) -> sqlite3.Connection:
-        # (AUD-6) Enforce download_tasks.user_id -> auth_users(id) ON DELETE CASCADE.
-        conn = super()._connect()
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+    # (AUD-6) Enforce download_tasks.user_id -> auth_users(id) ON DELETE CASCADE.
+    foreign_keys = True
 
     def _ensure_tables(self) -> None:
         conn = self._connect()

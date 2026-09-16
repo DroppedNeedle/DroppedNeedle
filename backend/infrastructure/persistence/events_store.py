@@ -14,7 +14,7 @@ Tables in the shared ``library.db``:
 - ``user_event_seen`` - unseen-badge marker, same shape as
   ``user_new_release_seen``.
 
-``PRAGMA foreign_keys=ON`` is added on top of ``PersistenceBase._connect`` so
+``foreign_keys = True`` has ``PersistenceBase`` enable ``PRAGMA foreign_keys`` so
 the ``ON DELETE CASCADE`` to ``auth_users(id)`` fires when a user is deleted
 (the follow-store pattern).
 """
@@ -69,10 +69,7 @@ class EventsStore(PersistenceBase):
     def __init__(self, db_path: Path, write_lock: threading.Lock) -> None:
         super().__init__(db_path, write_lock)
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = super()._connect()
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+    foreign_keys = True
 
     def _ensure_tables(self) -> None:
         conn = self._connect()
