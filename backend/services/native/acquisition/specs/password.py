@@ -18,7 +18,7 @@ def password(
     context: DecisionContext,
     policy: SpecPolicy,
 ) -> Decision:
-    if candidate.password:
+    if candidate.password > 0:
         return Reject(
             code=RejectCode.PASSWORD_PROTECTED,
             detail="password-protected NZB cannot be auto-unpacked",

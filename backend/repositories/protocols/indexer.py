@@ -45,8 +45,8 @@ class UsenetRelease(AppStruct):
     grabs: int | None = None
     files: int | None = None
     usenet_date: float | None = None
-    # Newznab "password" attr: 0/absent = none, non-zero = the NZB is password-protected
-    # (SABnzbd can't auto-unpack it), so it's rejected before download (Lidarr/Prowlarr).
+    # Newznab "password" attr: positive = password-protected, 0/absent = none. Some
+    # aggregators use a negative value for unknown, which must not be rejected as protected.
     password: int = 0
 
 
