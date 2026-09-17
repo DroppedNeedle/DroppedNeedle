@@ -12,7 +12,7 @@ pydantic==2.13.5
 pydantic-core==2.46.5
 pydantic-settings==2.15.0
 python-dotenv>=1.2.3
-python-multipart==0.0.31
+python-multipart==0.0.32
 rapidfuzz>=3.14.6,<4
 starlette==0.48.0
 unidecode>=1.4.0,<2
