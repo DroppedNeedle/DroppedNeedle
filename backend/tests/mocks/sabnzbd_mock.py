@@ -14,6 +14,8 @@ class SabnzbdMock:
         self.categories = ["*", "movies", "tv", "audio", "software"]
         self.complete_dir = "/data/Downloads/complete"
         self.add_nzo_ids = ["nzo-test-1"]
+        self.add_file_requests: list[dict] = []
+        self.add_url_requests: list[dict] = []
         self.deleted: list[tuple[str, str]] = []  # (mode, value)
         self.delete_requests: list[dict] = []
         self.deleted_storage: list[str] = []
@@ -84,6 +86,12 @@ class SabnzbdMock:
                 slots = [s for s in slots if search in s["name"]]
             return _json({"history": {"slots": slots, "noofslots": len(slots)}})
         if mode == "addfile":
+            self.add_file_requests.append(dict(p))
+            return _json({"status": True, "nzo_ids": self.add_nzo_ids})
+        if mode == "addurl":
+            # Same nzo_ids envelope as addfile (SABnzbd 5.1 API reference; addurl
+            # itself was validated against a live SABnzbd for #457, version unstated).
+            self.add_url_requests.append(dict(p))
             return _json({"status": True, "nzo_ids": self.add_nzo_ids})
         return _json({"status": False, "error": f"unknown mode {mode}"})
 

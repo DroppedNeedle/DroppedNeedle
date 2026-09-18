@@ -3,6 +3,7 @@
 Shapes and completed-history deletion behavior mirror the owner's real 5.0.4.
 """
 
+import traceback
 from pathlib import Path
 
 import httpx
@@ -10,7 +11,11 @@ import pytest
 
 from core.exceptions import NewznabApiError
 from repositories.protocols.download_client import EnqueueRequest, TaskHandle
-from repositories.sabnzbd.sabnzbd_client import SabnzbdApiError, SabnzbdClient
+from repositories.sabnzbd.sabnzbd_client import (
+    SabnzbdApiError,
+    SabnzbdClient,
+    _redact_query_secrets,
+)
 from repositories.sabnzbd.sabnzbd_download_client import SabnzbdDownloadClient
 from tests.mocks import sabnzbd_mock
 
@@ -25,6 +30,22 @@ def _dc(mock, mount="/sabnzbd-downloads"):
 
 def _handle(nzo_id="nzo-1", job_name="droppedneedle-t1"):
     return TaskHandle(source="usenet", job_name=job_name, nzo_id=nzo_id)
+
+
+# Whole fake secret, kept at module level (never inline in a test body): tracebacks
+# render the source of every frame, so an inline literal would false-positive the
+# chain-rendering assertion below. Test bodies reference this name only.
+_LIVE_SECRET = "live-secret-value"
+
+
+def _assert_no_secret_leak(exc, secret):
+    # The secret must be absent from str(exc), from the exception chain (redaction
+    # must use `from None`: logger.exception renders __cause__ and unsuppressed
+    # __context__), and from the full rendered traceback end to end.
+    assert secret not in str(exc)
+    assert exc.__cause__ is None
+    assert exc.__suppress_context__ is True
+    assert secret not in "".join(traceback.format_exception(exc))
 
 
 @pytest.mark.asyncio
@@ -63,6 +84,128 @@ async def test_enqueue_returns_handle_with_nzo_id(monkeypatch):
     assert handle.source == "usenet"
     assert handle.nzo_id == "nzo-xyz"
     assert handle.job_name == "droppedneedle-t1"
+    assert len(mock.add_file_requests) == 1
+    assert mock.add_url_requests == []  # success path never touches the fallback
+
+
+@pytest.mark.asyncio
+async def test_enqueue_falls_back_to_addurl_when_fetch_fails(monkeypatch):
+    # No-response transport failure (not a content rejection or definitive HTTP
+    # error): the indexer may be reachable only from the SABnzbd host, so enqueue
+    # hands SABnzbd the enclosure URL.
+    mock = sabnzbd_mock.SabnzbdMock()
+    mock.add_nzo_ids = ["nzo-fallback"]
+    dc = _dc(mock)
+
+    async def failing_fetch(url, *, timeout=60.0):
+        error = NewznabApiError("NZB fetch failed: connection refused")
+        error.transport_failure = True
+        raise error
+
+    monkeypatch.setattr(dc._client, "fetch_nzb", failing_fetch)
+    handle = await dc.enqueue(
+        EnqueueRequest(
+            task_id="t1",
+            source="usenet",
+            nzb_url="https://indexer.example/getnzb/abc?apikey=test-key",
+            job_name="droppedneedle-t1",
+            category="audio",
+            priority=1,
+            post_processing=3,
+        )
+    )
+    assert handle.source == "usenet"
+    assert handle.nzo_id == "nzo-fallback"
+    assert handle.job_name == "droppedneedle-t1"
+    assert mock.add_file_requests == []  # fallback only - never both in one enqueue
+    assert mock.add_url_requests == [
+        {
+            "mode": "addurl",
+            "name": "https://indexer.example/getnzb/abc?apikey=test-key",
+            "nzbname": "droppedneedle-t1",
+            "cat": "audio",
+            "priority": "1",
+            "pp": "3",
+            "output": "json",
+            "apikey": "key",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_fallback_without_nzo_id_raises(monkeypatch):
+    mock = sabnzbd_mock.SabnzbdMock()
+    mock.add_nzo_ids = []
+    dc = _dc(mock)
+
+    async def failing_fetch(url, *, timeout=60.0):
+        error = NewznabApiError("NZB fetch failed: connection refused")
+        error.transport_failure = True
+        raise error
+
+    monkeypatch.setattr(dc._client, "fetch_nzb", failing_fetch)
+    with pytest.raises(SabnzbdApiError, match="no nzo_id returned"):
+        await dc.enqueue(
+            EnqueueRequest(task_id="t1", source="usenet", nzb_url="https://idx/nzb",
+                           job_name="droppedneedle-t1", category="audio")
+        )
+    assert len(mock.add_url_requests) == 1
+    assert mock.add_file_requests == []
+
+
+@pytest.mark.asyncio
+async def test_enqueue_does_not_fall_back_on_content_rejection(monkeypatch):
+    # A deterministic content rejection (indexer error/limit page, not an NZB) must
+    # propagate to the blocklist path - falling back to addurl would queue the error
+    # page in SABnzbd instead of rejecting it before download.
+    mock = sabnzbd_mock.SabnzbdMock()
+    dc = _dc(mock)
+
+    async def rejecting_fetch(url, *, timeout=60.0):
+        error = NewznabApiError(
+            "indexer returned a non-NZB body, not an NZB",
+            details={"status": 200},
+            code=200,
+        )
+        error.content_rejection = True
+        raise error
+
+    monkeypatch.setattr(dc._client, "fetch_nzb", rejecting_fetch)
+    with pytest.raises(NewznabApiError) as exc_info:
+        await dc.enqueue(
+            EnqueueRequest(task_id="t1", source="usenet", nzb_url="https://idx/nzb",
+                           job_name="droppedneedle-t1", category="audio")
+        )
+    # The marker, message, details, and code must survive for the blocklist path.
+    assert exc_info.value.content_rejection is True
+    assert exc_info.value.message == "indexer returned a non-NZB body, not an NZB"
+    assert exc_info.value.details == {"status": 200}
+    assert exc_info.value.code == 200
+    assert mock.add_url_requests == []
+    assert mock.add_file_requests == []
+
+
+@pytest.mark.asyncio
+async def test_enqueue_does_not_fall_back_on_definitive_http_error(monkeypatch):
+    # The indexer answered (401/403/429/5xx): handing the same URL to SABnzbd cannot
+    # help, so fail over without queueing a deterministically-doomed job.
+    mock = sabnzbd_mock.SabnzbdMock()
+    dc = _dc(mock)
+
+    async def http_error_fetch(url, *, timeout=60.0):
+        raise NewznabApiError("NZB fetch returned HTTP 429", details="limit hit", code=429)
+
+    monkeypatch.setattr(dc._client, "fetch_nzb", http_error_fetch)
+    with pytest.raises(NewznabApiError) as exc_info:
+        await dc.enqueue(
+            EnqueueRequest(task_id="t1", source="usenet", nzb_url="https://idx/nzb",
+                           job_name="droppedneedle-t1", category="audio")
+        )
+    assert exc_info.value.message == "NZB fetch returned HTTP 429"
+    assert exc_info.value.details == "limit hit"
+    assert exc_info.value.code == 429
+    assert mock.add_url_requests == []
+    assert mock.add_file_requests == []
 
 
 @pytest.mark.asyncio
@@ -466,6 +609,155 @@ async def test_addfile_is_not_retried():
     assert calls["n"] == 1  # one attempt only - no retry
 
 
+@pytest.mark.asyncio
+async def test_addurl_is_not_retried():
+    # addurl also mutates the queue. An uncertain transport failure must not cause
+    # a second enqueue attempt and a duplicate SABnzbd job.
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        raise httpx.ConnectError("blip")
+
+    client = SabnzbdClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        "http://sab:8080", "key", retry_backoff=0,
+    )
+    with pytest.raises(SabnzbdApiError):
+        await client.add_url("droppedneedle-t1", "https://indexer.example/getnzb/abc")
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_addurl_error_scrubs_echoed_enclosure_credentials():
+    # If SABnzbd echoes the submitted enclosure URL in an error body, the indexer's
+    # apikey must not reach the raised message (the strategy logs it).
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "status": False,
+            "error": "Failed to fetch https://indexer.example/getnzb/abc?apikey=" + _LIVE_SECRET,
+        })
+
+    client = SabnzbdClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        "http://sab:8080", "key", retry_backoff=0,
+    )
+    with pytest.raises(SabnzbdApiError) as exc_info:
+        await client.add_url(
+            "droppedneedle-t1", "https://indexer.example/getnzb/abc?apikey=" + _LIVE_SECRET
+        )
+    assert "apikey=***" in exc_info.value.message
+    _assert_no_secret_leak(exc_info.value, _LIVE_SECRET)
+
+
+def test_redact_query_secrets_precision():
+    # Unit-pins the regex precision properties: both credential forms in any case,
+    # &-termination preserving trailing params, and no mangling of innocent words.
+    assert _redact_query_secrets("https://idx/get?apikey=SECRET&next=1") == (
+        "https://idx/get?apikey=***&next=1"
+    )
+    assert _redact_query_secrets("APIKEY=SECRET") == "APIKEY=***"
+    assert _redact_query_secrets("https://idx/get?api_key=SECRET") == (
+        "https://idx/get?api_key=***"
+    )
+    assert _redact_query_secrets("API_KEY=SECRET") == "API_KEY=***"
+    assert _redact_query_secrets("https://idx/get?t=get&i=7&R=SECRET") == (
+        "https://idx/get?t=get&i=7&R=***"
+    )
+    assert _redact_query_secrets("error=boom&filter=x") == "error=boom&filter=x"
+    assert _redact_query_secrets("https://idx/get?t=get&id=abc&i=7") == (
+        "https://idx/get?t=get&id=abc&i=7"
+    )
+
+
+@pytest.mark.asyncio
+async def test_addurl_error_redaction_preserves_auth_flag():
+    # The auth flag is detected before redaction and must survive the rebuild.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "status": False,
+            "error": "API Key Incorrect for https://indexer.example/getnzb?apikey=" + _LIVE_SECRET,
+        })
+
+    client = SabnzbdClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        "http://sab:8080", "key", retry_backoff=0,
+    )
+    with pytest.raises(SabnzbdApiError) as exc_info:
+        await client.add_url(
+            "droppedneedle-t1", "https://indexer.example/getnzb?apikey=" + _LIVE_SECRET
+        )
+    assert exc_info.value.auth is True
+    assert "apikey=***" in exc_info.value.message
+    _assert_no_secret_leak(exc_info.value, _LIVE_SECRET)
+
+
+@pytest.mark.asyncio
+async def test_addurl_http_error_details_scrubbed():
+    # HTTP-status failures carry the SABnzbd body in details - also scrubbed.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            content=b"error: cannot fetch https://indexer.example/getnzb?apikey=" + _LIVE_SECRET.encode(),
+        )
+
+    client = SabnzbdClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        "http://sab:8080", "key", retry_backoff=0,
+    )
+    with pytest.raises(SabnzbdApiError) as exc_info:
+        await client.add_url(
+            "droppedneedle-t1", "https://indexer.example/getnzb?apikey=" + _LIVE_SECRET
+        )
+    assert "apikey=***" in exc_info.value.details
+    _assert_no_secret_leak(exc_info.value, _LIVE_SECRET)
+
+
+@pytest.mark.asyncio
+async def test_addurl_plaintext_error_scrubs_echoed_credentials():
+    # The plain-text `error: ...` form, echoing a DrunkenSlug-style URL: the `r=`
+    # per-user key is scrubbed while the `i=` user id stays visible.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"error: Failed to fetch https://indexer.example/get?t=get&id=abc&i=7&r=" + _LIVE_SECRET.encode(),
+        )
+
+    client = SabnzbdClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        "http://sab:8080", "key", retry_backoff=0,
+    )
+    with pytest.raises(SabnzbdApiError) as exc_info:
+        await client.add_url(
+            "droppedneedle-t1", "https://indexer.example/get?t=get&id=abc&i=7&r=" + _LIVE_SECRET
+        )
+    assert "r=***" in exc_info.value.message
+    assert "i=7" in exc_info.value.message
+    _assert_no_secret_leak(exc_info.value, _LIVE_SECRET)
+
+
+@pytest.mark.asyncio
+async def test_addurl_non_json_error_scrubs_echoed_credentials():
+    # A non-JSON body embeds in the message - scrubbed the same way.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"<html>fetch of https://indexer.example/getnzb?apikey=" + _LIVE_SECRET.encode() + b" failed</html>",
+            headers={"Content-Type": "text/html"},
+        )
+
+    client = SabnzbdClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        "http://sab:8080", "key", retry_backoff=0,
+    )
+    with pytest.raises(SabnzbdApiError) as exc_info:
+        await client.add_url(
+            "droppedneedle-t1", "https://indexer.example/getnzb?apikey=" + _LIVE_SECRET
+        )
+    assert "apikey=***" in exc_info.value.message
+    _assert_no_secret_leak(exc_info.value, _LIVE_SECRET)
+
+
 # --- fetch_nzb: indexer error/limit page vs real NZB (issue #266) ------------------
 
 
@@ -508,6 +800,7 @@ async def test_fetch_nzb_html_error_page_raises_with_details():
     }
     assert len(exc.details["snippet"]) <= 200
     assert getattr(exc, "content_rejection", False) is True
+    assert getattr(exc, "transport_failure", False) is False
 
 
 @pytest.mark.asyncio
@@ -518,3 +811,31 @@ async def test_fetch_nzb_valid_nzb_returns_bytes():
     )
     client = _nzb_client(nzb, content_type="application/x-nzb")
     assert await client.fetch_nzb("http://indexer.example/getnzb/abc") == nzb
+
+
+@pytest.mark.asyncio
+async def test_fetch_nzb_transport_failure_marks_for_addurl_fallback():
+    # A no-response transport failure (DNS/refused/timeout) carries the marker the
+    # enqueue fallback gates on - unlike content rejections and HTTP errors.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("down")
+
+    client = SabnzbdClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        "http://sab:8080", "key", retry_backoff=0,
+    )
+    with pytest.raises(NewznabApiError) as exc_info:
+        await client.fetch_nzb("http://indexer.example/getnzb/abc")
+    assert getattr(exc_info.value, "transport_failure", False) is True
+    assert getattr(exc_info.value, "content_rejection", False) is False
+
+
+@pytest.mark.asyncio
+async def test_fetch_nzb_http_error_carries_neither_marker():
+    # A definitive indexer HTTP answer (401/403/429/5xx) is neither a transport
+    # failure nor a content rejection: enqueue must fail fast, not fall back.
+    client = _nzb_client(b"limit hit", status=429, content_type="text/plain")
+    with pytest.raises(NewznabApiError) as exc_info:
+        await client.fetch_nzb("http://indexer.example/getnzb/abc")
+    assert getattr(exc_info.value, "transport_failure", False) is False
+    assert getattr(exc_info.value, "content_rejection", False) is False
