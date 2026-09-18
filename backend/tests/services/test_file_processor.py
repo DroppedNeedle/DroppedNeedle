@@ -11,6 +11,7 @@ import msgspec
 import pytest
 
 from infrastructure.audio.tagger import AudioTagger
+from infrastructure.persistence.download_store import DownloadStore
 from infrastructure.persistence.library_db import LibraryDB
 from models.audio import AudioInfo, AudioTag, FingerprintResult
 from models.download_manifest import DownloadManifest, ExpectedFile, ExpectedTrack
@@ -22,6 +23,7 @@ from services.native.file_processor import (
     FileProcessor,
     VerifyStatus,
     _FolderCandidate,
+    _PlannedImport,
     _folder_names_wrong_album,
 )
 from services.native.library_manager import LibraryManager
@@ -326,6 +328,63 @@ async def test_process_one_conversion_accepts_later_recording_candidate(
     assert planned.authoritative_mapping is True
     assert planned.recording_mbid == "recording-1"
     assert planned.confidence == 1.0
+
+
+@pytest.mark.asyncio
+async def test_hold_conversion_bundle_passes_required_evidence_kwargs(
+    tmp_path: Path,
+) -> None:
+    """The conversion hold must pass record_held_import()'s required evidence
+    kwargs; omitting them raised TypeError on every verified candidate (#463).
+    The mock accepts any call, so the assertions on the recorded kwargs are
+    what pin the contract."""
+    fp, _manager, _client, _library, downloads = _make_processor(tmp_path, verify=False)
+    source = downloads / "A" / "track.flac"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"fake-audio")
+
+    download_store = AsyncMock(spec=DownloadStore)
+    download_store.get_task.return_value = MagicMock(
+        user_id="user-1", source="soulseek"
+    )
+    download_store.record_held_import.return_value = 1
+    fp._download_store = download_store
+    fp._held_dir = tmp_path / "held"
+
+    manifest = _conversion_manifest()
+    planned = _PlannedImport(
+        source=source,
+        target=tmp_path / "target.flac",
+        tag=AudioTag(
+            title="Airbag", artist="Radiohead", album="OK Computer", track_number=1
+        ),
+        info=AudioInfo(
+            duration_seconds=300.0,
+            bitrate=900,
+            sample_rate=44_100,
+            channels=2,
+            file_format="flac",
+            file_size_bytes=source.stat().st_size,
+        ),
+        release_group_mbid="rg-1",
+        release_mbid="release-1",
+        recording_mbid="recording-1",
+        release_track_mbid="release-track-1",
+        medium_position=1,
+        release_track_position=1,
+        authoritative_mapping=True,
+        confidence=0.97,
+        download_task_id="t1",
+        source_path=str(source),
+    )
+
+    await fp._hold_conversion_bundle([planned], manifest)
+
+    download_store.record_held_import.assert_awaited_once()
+    kwargs = download_store.record_held_import.await_args.kwargs
+    assert kwargs["evidence_title"] == "Airbag"
+    assert kwargs["evidence_artist"] == "Radiohead"
+    assert kwargs["evidence_score"] == 0.97
 
 
 @pytest.mark.asyncio
