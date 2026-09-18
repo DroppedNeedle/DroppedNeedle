@@ -203,7 +203,10 @@ def get_target_cache_service() -> "CacheService":
     from .service_providers import get_target_library_repository
 
     return TargetCacheService(
-        get_cache(), get_target_library_repository(), get_disk_cache()
+        get_cache(),
+        get_target_library_repository(),
+        get_disk_cache(),
+        get_mb_response_store(),
     )
 
 

@@ -92,6 +92,26 @@ class TestSingletonDecorator:
         _singleton_registry.remove(my_provider)
 
 
+class TestTargetCacheServiceWiring:
+    """Regression for #436: get_target_cache_service() omitted the mb_response_store
+    argument TargetCacheService inherits from CacheService, so every request to
+    /api/v1/cache/stats in native/target mode raised a TypeError at construction time.
+    The sibling get_cache_service() passed it correctly, so only the target provider
+    needs pinning here."""
+
+    def test_target_cache_service_constructs_with_mb_response_store(self):
+        from core.dependencies import cache_providers as cp
+        from core.dependencies._registry import clear_all_singletons
+        from services.native.target_cache_service import TargetCacheService
+
+        try:
+            service = cp.get_target_cache_service()
+            assert isinstance(service, TargetCacheService)
+            assert service._mb_response_store is cp.get_mb_response_store()
+        finally:
+            clear_all_singletons()
+
+
 class TestDownloadServiceFreshness:
     """Regression for the stale-scorer bug: the DownloadService singleton is rebuilt on
     a download-policy save, so every long-lived holder must store a GETTER (resolved per
