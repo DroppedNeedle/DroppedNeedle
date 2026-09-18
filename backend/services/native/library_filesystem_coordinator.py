@@ -277,12 +277,22 @@ class LibraryFilesystemCoordinator:
 
 
 MANAGEMENT_ARTIFACT_PREFIX = ".droppedneedle-management-"
+# The default recycle bin directory name (services.native.recycle_bin.resolve_bin_path
+# falls back to "<first library path>/.recycle" when recycle_bin_path isn't configured).
+# An exact name match, not a prefix: recycled files must never surface as library
+# tracks/albums, but a user folder that merely starts with "." should still scan.
+RECYCLE_BIN_DIRECTORY_NAME = ".recycle"
 
 
 def is_management_artifact(path: Path) -> bool:
-    """Return whether a path uses the reserved hidden management namespace."""
+    """Return whether a path uses the reserved hidden management namespace, or is
+    the default recycle bin directory (#465 - recycled files were resurfacing as
+    separate library albums because nothing ever excluded them from scanning)."""
 
-    return any(part.startswith(MANAGEMENT_ARTIFACT_PREFIX) for part in path.parts)
+    return any(
+        part.startswith(MANAGEMENT_ARTIFACT_PREFIX) or part == RECYCLE_BIN_DIRECTORY_NAME
+        for part in path.parts
+    )
 
 
 @contextmanager
