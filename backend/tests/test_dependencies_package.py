@@ -143,3 +143,19 @@ class TestDownloadServiceFreshness:
                 ), f"{type(holder).__name__} is not routing through the shared dispatcher"
         finally:
             clear_all_singletons()
+
+
+class TestCacheProviderConstruction:
+    def test_target_cache_service_provider_constructs(self):
+        """Regression test for #436: get_target_cache_service must pass every
+        CacheService.__init__ arg (it previously omitted mb_response_store,
+        raising TypeError on every target-mode cache-service resolution)."""
+        from core.dependencies import cache_providers as cp
+        from services.native.target_cache_service import TargetCacheService
+
+        try:
+            service = cp.get_target_cache_service()
+            assert isinstance(service, TargetCacheService)
+            assert service._mb_response_store is cp.get_mb_response_store()
+        finally:
+            clear_all_singletons()
