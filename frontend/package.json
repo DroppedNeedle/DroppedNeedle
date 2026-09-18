@@ -39,7 +39,7 @@
 		"@tailwindcss/cli": "^4.3.3",
 		"@tailwindcss/postcss": "^4.3.3",
 		"@tailwindcss/typography": "^0.5.20",
-		"@types/node": "^22",
+		"@types/node": "^26",
 		"@vitest/browser": "^4.1.11",
 		"@vitest/browser-playwright": "^4.1.11",
 		"daisyui": "^5.7.37",
