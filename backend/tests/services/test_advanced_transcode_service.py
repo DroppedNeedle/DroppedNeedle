@@ -47,6 +47,35 @@ def _client(*, samplerate_limit: str = "96000") -> AdvancedClientInfo:
     )
 
 
+def test_zero_bitrate_means_no_limitation_per_opensubsonic_spec(tmp_path, monkeypatch):
+    """Regression for #464: Feishin (and the OpenSubsonic spec) send 0 for
+    maxAudioBitrate/maxTranscodingAudioBitrate to mean "no limitation", not "zero
+    bitrate". The client must not be rejected before the server even evaluates
+    whether the track could be direct-played."""
+    init_crypto(tmp_path / "config")
+    monkeypatch.setattr(
+        "services.compat.advanced_transcode_service.ffmpeg_available", lambda: True
+    )
+    client = AdvancedClientInfo(
+        "client",
+        "linux",
+        0,
+        0,
+        (AdvancedDirectPlayProfile(("flac",), ("flac",), ("http",), 2),),
+        (AdvancedTranscodingProfile("mp3", "mp3", "http", 2),),
+        (),
+    )
+
+    decision = AdvancedTranscodeService().decide(
+        _track(),
+        client,
+        user_id="alice",
+        settings=ConnectAppsSettings(transcoding_enabled=True),
+    )
+
+    assert decision.can_direct_play is True
+
+
 def test_advanced_decision_applies_profiles_and_scoped_opaque_token(tmp_path, monkeypatch):
     init_crypto(tmp_path / "config")
     monkeypatch.setattr(
