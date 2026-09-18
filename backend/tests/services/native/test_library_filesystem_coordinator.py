@@ -10,8 +10,10 @@ import pytest
 from infrastructure.persistence.auth_store import AuthStore
 
 from services.native.library_filesystem_coordinator import (
+    MANAGEMENT_ARTIFACT_PREFIX,
     LibraryFilesystemCoordinator,
     copy_rooted,
+    is_management_artifact,
     replace_rooted,
     unlink_rooted,
 )
@@ -20,6 +22,24 @@ from services.native.library_filesystem_coordinator import (
 @pytest.fixture
 def coordinator() -> LibraryFilesystemCoordinator:
     return LibraryFilesystemCoordinator()
+
+
+class TestIsManagementArtifact:
+    """The scanner and filesystem reconcile skip management artifacts; the
+    default recycle bin directory must be one of them (#465)."""
+
+    def test_recycle_bin_directory_is_excluded(self) -> None:
+        assert is_management_artifact(Path(".recycle"))
+        assert is_management_artifact(Path("music/Artist/.recycle/entry/track.flac"))
+
+    def test_management_namespace_still_excluded(self) -> None:
+        assert is_management_artifact(Path(f"{MANAGEMENT_ARTIFACT_PREFIX}scan-1"))
+
+    def test_ordinary_dot_directory_is_not_excluded(self) -> None:
+        """Only the exact reserved names are excluded - an unrelated
+        dot-prefixed user folder must keep scanning."""
+        assert not is_management_artifact(Path(".config"))
+        assert not is_management_artifact(Path("music/Artist/.recycled-mix/track.flac"))
 
 
 @pytest.mark.asyncio
