@@ -25,12 +25,17 @@ def _track() -> ViewTrack:
     )
 
 
-def _client(*, samplerate_limit: str = "96000") -> AdvancedClientInfo:
+def _client(
+    *,
+    samplerate_limit: str = "96000",
+    max_audio_bitrate: int | None = 1_000_000,
+    max_transcoding_audio_bitrate: int | None = 192_000,
+) -> AdvancedClientInfo:
     return AdvancedClientInfo(
         "client",
         "linux",
-        1_000_000,
-        192_000,
+        max_audio_bitrate,
+        max_transcoding_audio_bitrate,
         (AdvancedDirectPlayProfile(("flac",), ("flac",), ("http",), 2),),
         (AdvancedTranscodingProfile("mp3", "mp3", "http", 2),),
         (
@@ -45,6 +50,47 @@ def _client(*, samplerate_limit: str = "96000") -> AdvancedClientInfo:
             ),
         ),
     )
+
+
+def test_zero_bitrate_means_no_limitation(tmp_path, monkeypatch):
+    """A client sending 0 for the bitrate caps (OpenSubsonic "no limitation",
+    e.g. Feishin with transcoding disabled) must not be rejected (#464)."""
+    init_crypto(tmp_path / "config")
+    monkeypatch.setattr(
+        "services.compat.advanced_transcode_service.ffmpeg_available", lambda: True
+    )
+    decision = AdvancedTranscodeService().decide(
+        _track(),
+        _client(max_audio_bitrate=0, max_transcoding_audio_bitrate=0),
+        user_id="alice",
+        settings=ConnectAppsSettings(transcoding_enabled=True),
+    )
+
+    assert decision.can_direct_play is True
+
+
+def test_zero_bitrate_falls_back_to_server_transcode_ceiling(tmp_path, monkeypatch):
+    """With 0 caps and direct play unavailable, the server ceiling (not a
+    zero-derived floor artifact) bounds the transcode (#464)."""
+    init_crypto(tmp_path / "config")
+    monkeypatch.setattr(
+        "services.compat.advanced_transcode_service.ffmpeg_available", lambda: True
+    )
+    decision = AdvancedTranscodeService().decide(
+        _track(),
+        _client(
+            samplerate_limit="48000",
+            max_audio_bitrate=0,
+            max_transcoding_audio_bitrate=0,
+        ),
+        user_id="alice",
+        settings=ConnectAppsSettings(transcoding_enabled=True),
+    )
+
+    assert decision.can_direct_play is False
+    assert decision.can_transcode is True
+    assert decision.transcode_stream is not None
+    assert decision.transcode_stream.audio_bitrate == 320_000
 
 
 def test_advanced_decision_applies_profiles_and_scoped_opaque_token(tmp_path, monkeypatch):

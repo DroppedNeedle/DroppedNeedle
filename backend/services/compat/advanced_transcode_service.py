@@ -247,7 +247,9 @@ class AdvancedTranscodeService:
         if not client.name or len(client.name) > 256 or not client.platform or len(client.platform) > 256:
             raise ValidationError("Invalid transcode client information")
         for value in (client.max_audio_bitrate, client.max_transcoding_audio_bitrate):
-            if value is not None and not 1 <= value <= 1_000_000_000:
+            # OpenSubsonic: 0 means "no limitation" (Feishin sends this); the
+            # decision logic below already treats it as falsy/unset.
+            if value not in (None, 0) and not 1 <= value <= 1_000_000_000:
                 raise ValidationError("Invalid transcode bitrate")
         if len(client.direct_play_profiles) > 100 or len(client.transcoding_profiles) > 100:
             raise ValidationError("Too many transcode profiles")
