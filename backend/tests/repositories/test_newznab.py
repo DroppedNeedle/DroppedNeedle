@@ -142,6 +142,13 @@ async def test_password_protected_release_parses_nonzero():
 
 
 @pytest.mark.asyncio
+async def test_unknown_password_release_preserves_negative_sentinel():
+    cap = _Capture(body=_PW_FEED.replace('value="2"', 'value="-1"'))
+    [rel], _ = await _client(cap).search("q", [3040])
+    assert rel.password == -1  # Negative values represent an unknown password status.
+
+
+@pytest.mark.asyncio
 async def test_music_search_sends_year_when_provided():
     cap = _Capture()
     client = _client(cap, indexer_id="ax", name="AX")

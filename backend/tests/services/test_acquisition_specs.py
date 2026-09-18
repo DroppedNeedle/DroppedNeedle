@@ -150,14 +150,21 @@ def test_pipeline_wrong_album_before_quality():
 
 # password spec (step 2)
 
-def test_password_rejects_protected():
-    decision = password(Candidate(source="usenet", password=1), _TARGET, _EMPTY, _POLICY)
+@pytest.mark.parametrize("password_value", [1, 2])
+def test_password_rejects_protected(password_value):
+    decision = password(
+        Candidate(source="usenet", password=password_value), _TARGET, _EMPTY, _POLICY
+    )
     assert isinstance(decision, Reject)
     assert decision.code is RejectCode.PASSWORD_PROTECTED
 
 
-def test_password_accepts_unprotected():
-    assert isinstance(password(Candidate(source="usenet"), _TARGET, _EMPTY, _POLICY), Accept)
+@pytest.mark.parametrize("password_value", [-1, 0])
+def test_password_accepts_unprotected_or_unknown(password_value):
+    decision = password(
+        Candidate(source="usenet", password=password_value), _TARGET, _EMPTY, _POLICY
+    )
+    assert isinstance(decision, Accept)
 
 
 # wrong_edition spec (step 2, M3)

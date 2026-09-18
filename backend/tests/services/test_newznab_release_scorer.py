@@ -125,6 +125,13 @@ async def test_password_protected_release_is_rejected():
 
 
 @pytest.mark.asyncio
+async def test_unknown_password_status_is_not_rejected():
+    # Unknown is not evidence that the release is password-protected.
+    rel = _release("Radiohead - In Rainbows [FLAC]", [3040], password=-1)
+    assert len(await _scorer().rank(_TARGET, [rel], snapshot=policy_snapshot())) == 1
+
+
+@pytest.mark.asyncio
 async def test_implausibly_small_lossy_release_is_rejected():
     # A "320" release ~10MB can't hold a 10-track album at 320kbps (~96MB) - it's
     # truncated/fake/sample. Reject before download (Lidarr AcceptableSize).
