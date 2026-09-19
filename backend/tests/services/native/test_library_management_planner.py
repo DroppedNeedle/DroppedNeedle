@@ -3189,3 +3189,102 @@ def test_pinned_profile_holds_private_deep_copies(tmp_path: Path) -> None:
     assert pinned.profile.name != "tampered-name"
     assert pinned.profile.organization.source_cleanup == original_cleanup
     assert pinned.naming_script.source == original_standard_source
+
+
+@pytest.mark.asyncio
+async def test_seal_preview_succeeds_when_unrelated_catalog_revision_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (
+        _root,
+        _source,
+        preferences,
+        store,
+        settings_revision,
+        policy_revision,
+    ) = _configured(tmp_path)
+    planner = _planner(tmp_path, store, preferences)
+    handle = await planner.create_preview(
+        selection=LibraryManagementSelection(kind="tracks", ids=("track-1",)),
+        profile_id=PICARD_ORGANIZER_PROFILE_ID,
+        expected_settings_revision=settings_revision,
+        expected_policy_revision=policy_revision,
+        actor_user_id="admin",
+        idempotency_key=None,
+    )
+    claimed = await store.claim_operation_job(
+        "worker-1", now=100, lease_seconds=60, kind="library_management"
+    )
+    assert claimed is not None
+    original_finalize = store.finalize_library_management_preview
+
+    async def increment_catalog_before_finalize(*args, **kwargs):
+        with sqlite3.connect(tmp_path / "library.db") as connection:
+            connection.execute(
+                "UPDATE library_catalog_revision "
+                "SET value = value + 1 WHERE singleton = 1"
+            )
+        return await original_finalize(*args, **kwargs)
+
+    monkeypatch.setattr(
+        store,
+        "finalize_library_management_preview",
+        increment_catalog_before_finalize,
+    )
+
+    snapshot = await planner.run_claimed_preview(claimed, "worker-1")
+
+    assert snapshot.phase == "ready"
+    plan = await store.list_library_management_plan_items(handle.job_id)
+    assert len(plan) == 1
+    assert plan[0].eligibility in {"eligible", "warning"}
+
+
+@pytest.mark.asyncio
+async def test_seal_preview_rejects_when_selected_track_stat_revision_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (
+        _root,
+        _source,
+        preferences,
+        store,
+        settings_revision,
+        policy_revision,
+    ) = _configured(tmp_path)
+    planner = _planner(tmp_path, store, preferences)
+    handle = await planner.create_preview(
+        selection=LibraryManagementSelection(kind="tracks", ids=("track-1",)),
+        profile_id=PICARD_ORGANIZER_PROFILE_ID,
+        expected_settings_revision=settings_revision,
+        expected_policy_revision=policy_revision,
+        actor_user_id="admin",
+        idempotency_key=None,
+    )
+    claimed = await store.claim_operation_job(
+        "worker-1", now=100, lease_seconds=60, kind="library_management"
+    )
+    assert claimed is not None
+    original_finalize = store.finalize_library_management_preview
+
+    async def mutate_stat_before_finalize(*args, **kwargs):
+        with sqlite3.connect(tmp_path / "library.db") as connection:
+            connection.execute(
+                "UPDATE local_tracks SET stat_revision='changed' WHERE id='track-1'"
+            )
+        return await original_finalize(*args, **kwargs)
+
+    monkeypatch.setattr(
+        store,
+        "finalize_library_management_preview",
+        mutate_stat_before_finalize,
+    )
+
+    with pytest.raises(StaleRevisionError, match="membership changed"):
+        await planner.run_claimed_preview(claimed, "worker-1")
+
+    snapshot = await store.get_library_management_job_snapshot(handle.job_id)
+    assert snapshot is not None
+    assert snapshot.phase == "planning"
