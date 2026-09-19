@@ -976,10 +976,7 @@ class NativeLibraryStore(PersistenceBase):
             self._last_scan_invalidation_at = time.monotonic()
             self._scan_invalidation_pending = False
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = super()._connect()
-        connection.execute("PRAGMA foreign_keys=ON")
-        return connection
+    foreign_keys = True
 
     @staticmethod
     def _repair_resolved_release_alias_identities(

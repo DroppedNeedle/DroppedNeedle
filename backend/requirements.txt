@@ -1,7 +1,7 @@
 aiofiles==24.1.0
 bcrypt>=5.0.0
 cryptography>=50.0.1
-fastapi==0.118.3
+fastapi==0.141.1
 h2>=4.4.1,<5
 httpx[h2]==0.28.1
 msgspec==0.20.0
@@ -12,7 +12,7 @@ pydantic==2.13.5
 pydantic-core==2.46.5
 pydantic-settings==2.15.0
 python-dotenv>=1.2.3
-python-multipart==0.0.31
+python-multipart==0.0.32
 rapidfuzz>=3.14.6,<4
 starlette==0.48.0
 unidecode>=1.4.0,<2

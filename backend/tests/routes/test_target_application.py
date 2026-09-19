@@ -1,5 +1,6 @@
 import ast
 import logging
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -68,7 +69,27 @@ from target_application import (
     create_isolated_target_application,
     create_production_target_application,
 )
-from tests.helpers import build_test_client, override_admin_auth, override_user_auth
+from tests.helpers import (
+    build_test_client,
+    openapi_method_paths,
+    override_admin_auth,
+    override_user_auth,
+)
+
+
+def _iter_leaf_routes(routes: Iterable) -> Iterator:
+    """Yield endpoint-bearing routes, expanding lazily included routers.
+
+    FastAPI>=0.140 stores include_router() entries as lazy wrapper nodes
+    (exposing the sub-router as ``original_router``) instead of merged copies;
+    descend through them so allowlist assertions keep seeing every route.
+    """
+    for route in routes:
+        original = getattr(route, "original_router", None)
+        if original is not None:
+            yield from _iter_leaf_routes(original.routes)
+        else:
+            yield route
 
 
 def test_target_scheduler_uses_configured_iana_timezone(
@@ -129,7 +150,9 @@ def test_isolated_target_application_mounts_target_catalog_and_compat_routes() -
 
     response = build_test_client(app).get("/api/v1/library/albums")
     route_modules = {
-        route.endpoint.__module__ for route in app.routes if hasattr(route, "endpoint")
+        route.endpoint.__module__
+        for route in _iter_leaf_routes(app.routes)
+        if hasattr(route, "endpoint")
     }
 
     assert response.status_code == 200
@@ -273,11 +296,13 @@ def test_target_application_exposes_only_typed_library_root_mutations() -> None:
     override_admin_auth(app)
 
     response = build_test_client(app).get("/api/v1/settings/library")
+    # Sourced from the OpenAPI paths (which FastAPI flattens from the same
+    # route tree, including router prefixes) instead of raw app.routes, whose
+    # entries are lazy include-nodes since FastAPI>=0.140.
     method_paths = [
-        (method, route.path)
-        for route in app.routes
-        for method in getattr(route, "methods", set())
-        if method in {"GET", "PUT", "POST", "DELETE"}
+        pair
+        for pair in openapi_method_paths(app)
+        if pair[0] in {"GET", "PUT", "POST", "DELETE"}
     ]
 
     assert response.status_code == 200
@@ -335,7 +360,9 @@ def test_offline_replacement_entrypoint_is_complete_and_single_worker() -> None:
     backend = Path(__file__).parents[2]
     app = create_production_target_application()
     route_modules = {
-        route.endpoint.__module__ for route in app.routes if hasattr(route, "endpoint")
+        route.endpoint.__module__
+        for route in _iter_leaf_routes(app.routes)
+        if hasattr(route, "endpoint")
     }
     middleware = {item.cls.__name__ for item in app.user_middleware}
 

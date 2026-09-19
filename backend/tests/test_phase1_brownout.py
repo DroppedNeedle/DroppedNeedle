@@ -21,6 +21,7 @@ from models.local_catalog import (
 )
 from services.native.target_library_repository import TargetLibraryRepository
 from target_main import app
+from tests.helpers import openapi_method_paths
 
 
 # TestClient without `with` skips lifespan startup (no background tasks needed for these checks).
@@ -114,9 +115,7 @@ def test_only_sanctioned_lidarr_routes_mounted():
     permitted Lidarr route paths are the read-only migration importer under
     ``/lidarr-import`` - any other ``lidarr`` path would mean the management surface came back."""
     lidarr_paths = [
-        path
-        for route in app.routes
-        if "lidarr" in (path := getattr(route, "path", ""))
+        path for _, path in openapi_method_paths(app) if "lidarr" in path
     ]
     assert lidarr_paths, "expected the lidarr-import routes to be mounted"
     assert all("/lidarr-import" in path for path in lidarr_paths), lidarr_paths
@@ -125,14 +124,18 @@ def test_only_sanctioned_lidarr_routes_mounted():
 def test_download_client_settings_route_mounted():
     # Phase 6 relocated the download-client config from the P1 brownout stub at
     # /settings/download-client to its canonical home at /download-client/config.
-    paths = [getattr(route, "path", "") for route in app.routes]
+    paths = [path for _, path in openapi_method_paths(app)]
     assert any(path.endswith("/download-client/config") for path in paths)
 
 
 def test_legacy_scanner_surface_is_gone():
     """F-NL-03: the old /library/scan/* surface must be ABSENT from the supported
     entrypoint - an absence check, not a compatibility response assertion."""
-    paths = [getattr(route, "path", "") for route in app.routes]
+    paths = [path for _, path in openapi_method_paths(app)]
+    # Positive control: this is a pure absence check, so pin the lens itself -
+    # a blinded (empty) collection must fail loudly instead of passing vacuously.
+    assert paths, "expected a populated route surface"
+    assert any(path.endswith("/download-client/config") for path in paths)
     for legacy in (
         "/library/scan/start",
         "/library/scan/cancel",

@@ -2,8 +2,11 @@
 ``DownloadClientProtocol`` impl over ``SabnzbdClient``.
 
 enqueue = fetch the release NZB → validate → ``addfile`` → ``TaskHandle{job_name,
-nzo_id}`` (job_name = ``droppedneedle-{task_id}`` is the PRE-enqueue key). get_status
-walks queue→history; **only the true ``Downloading`` state sets
+nzo_id}`` (job_name = ``droppedneedle-{task_id}`` is the PRE-enqueue key). If the
+fetch gets no response at all (transport failure - never a content rejection or a
+definitive indexer HTTP error), fall back to ``addurl``: SABnzbd fetches the
+enclosure URL itself, for indexers only it can reach. get_status walks
+queue→history; **only the true ``Downloading`` state sets
 ``has_active_transfer``** (so Grabbing/Queued/Paused/post-processing don't trip the
 orchestrator's stall/queued watchdogs - ``05-…`` §Poll). list_completed_files remaps
 ``storage`` (SABnzbd namespace) onto the DroppedNeedle downloads mount and enumerates
@@ -18,6 +21,7 @@ import asyncio
 import logging
 from pathlib import Path, PurePosixPath
 
+from core.exceptions import NewznabApiError
 from models.common import ServiceStatus
 from repositories.protocols.download_client import (
     DownloadMaterialization,
@@ -97,7 +101,33 @@ class SabnzbdDownloadClient:
         if not request.nzb_url:
             raise SabnzbdApiError("enqueue requires an nzb_url for the usenet source")
         job_name = request.job_name or f"droppedneedle-{request.task_id}"
-        nzb_bytes = await self._client.fetch_nzb(request.nzb_url)
+        try:
+            nzb_bytes = await self._client.fetch_nzb(request.nzb_url)
+        except NewznabApiError as exc:
+            if not getattr(exc, "transport_failure", False):
+                # Either a deterministic content rejection (indexer error/limit page)
+                # or a definitive indexer HTTP error (401/403/429/5xx): the indexer
+                # answered, so handing the same URL to SABnzbd cannot help. Re-raise
+                # for the existing failover/blocklist handling.
+                raise
+            # No-response transport failure (DNS/refused/timeout): this indexer may be
+            # reachable only from the SABnzbd host, so hand SABnzbd the enclosure URL
+            # and let it fetch the NZB itself. The URL is never logged: Newznab
+            # enclosures carry the indexer's apikey.
+            logger.info(
+                "download.usenet_enqueue_addurl_fallback",
+                extra={"task_id": request.task_id, "job_name": job_name},
+            )
+            response = await self._client.add_url(
+                job_name,
+                request.nzb_url,
+                category=request.category,
+                priority=request.priority,
+                post_processing=request.post_processing,
+            )
+            if not response.nzo_ids:
+                raise SabnzbdApiError("SABnzbd rejected the NZB URL (no nzo_id returned)")
+            return TaskHandle(source="usenet", job_name=job_name, nzo_id=response.nzo_ids[0])
         response = await self._client.add_file(
             job_name,
             nzb_bytes,

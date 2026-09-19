@@ -15,9 +15,16 @@
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 pt-2">
 	<fieldset class="fieldset">
 		<legend class="fieldset-legend">AudioDB Enabled</legend>
-		<label class="label cursor-pointer gap-3">
-			<span class="text-sm">Fetch images from TheAudioDB</span>
-			<input type="checkbox" bind:checked={data.audiodb_enabled} class="toggle toggle-primary" />
+		<label
+			class="label w-full cursor-pointer justify-between gap-3"
+			data-testid="audiodb-toggle-enabled"
+		>
+			<span class="text-sm min-w-0">Fetch images from TheAudioDB</span>
+			<input
+				type="checkbox"
+				bind:checked={data.audiodb_enabled}
+				class="toggle toggle-primary shrink-0"
+			/>
 		</label>
 	</fieldset>
 
@@ -38,26 +45,32 @@
 
 	<fieldset class="fieldset">
 		<legend class="fieldset-legend">Name Search Fallback</legend>
-		<label class="label cursor-pointer gap-3">
-			<span class="text-sm"
+		<label
+			class="label w-full cursor-pointer justify-between gap-3"
+			data-testid="audiodb-toggle-name-search"
+		>
+			<span class="text-sm min-w-0"
 				>Try artist/album name search when MusicBrainz ID lookup returns no images</span
 			>
 			<input
 				type="checkbox"
 				bind:checked={data.audiodb_name_search_fallback}
-				class="toggle toggle-primary"
+				class="toggle toggle-primary shrink-0"
 			/>
 		</label>
 	</fieldset>
 
 	<fieldset class="fieldset">
 		<legend class="fieldset-legend">Direct Remote Images</legend>
-		<label class="label cursor-pointer gap-3">
-			<span class="text-sm">Load images directly from TheAudioDB's CDN</span>
+		<label
+			class="label w-full cursor-pointer justify-between gap-3"
+			data-testid="audiodb-toggle-direct-remote"
+		>
+			<span class="text-sm min-w-0">Load images directly from TheAudioDB's CDN</span>
 			<input
 				type="checkbox"
 				bind:checked={data.direct_remote_images_enabled}
-				class="toggle toggle-primary"
+				class="toggle toggle-primary shrink-0"
 			/>
 		</label>
 		<p class="label text-base-content/50">
@@ -68,12 +81,15 @@
 
 	<fieldset class="fieldset">
 		<legend class="fieldset-legend">Prefer Local Cover Art</legend>
-		<label class="label cursor-pointer gap-3">
-			<span class="text-sm">Use cover art from your own files first</span>
+		<label
+			class="label w-full cursor-pointer justify-between gap-3"
+			data-testid="audiodb-toggle-prefer-local"
+		>
+			<span class="text-sm min-w-0">Use cover art from your own files first</span>
 			<input
 				type="checkbox"
 				bind:checked={data.prefer_local_cover_art}
-				class="toggle toggle-primary"
+				class="toggle toggle-primary shrink-0"
 			/>
 		</label>
 		<p class="label text-base-content/50">

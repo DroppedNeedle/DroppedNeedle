@@ -1413,6 +1413,9 @@ class FileProcessor:
                     original_filename=value.source.name,
                     file_format=value.info.file_format,
                     duration_seconds=value.info.duration_seconds,
+                    evidence_title=value.tag.title,
+                    evidence_artist=value.tag.artist,
+                    evidence_score=value.confidence,
                     naming_template=manifest.naming_template,
                 )
                 if held_id is None:

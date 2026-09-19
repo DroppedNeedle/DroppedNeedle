@@ -1,6 +1,6 @@
 """Per-user Follow + auto-download persistence.
 
-``PRAGMA foreign_keys=ON`` in ``_connect`` is what makes the
+``foreign_keys = True`` (``PRAGMA foreign_keys=ON``) is what makes the
 ``ON DELETE CASCADE`` to ``auth_users(id)`` fire when a user is deleted.
 
 Per DD1, follow state lives here and never as a column on ``library_artists`` /
@@ -137,10 +137,7 @@ class FollowStore(PersistenceBase):
     def __init__(self, db_path: Path, write_lock: threading.Lock | None = None):
         super().__init__(db_path, write_lock or threading.Lock())
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = super()._connect()
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+    foreign_keys = True
 
     def _ensure_tables(self) -> None:
         conn = self._connect()

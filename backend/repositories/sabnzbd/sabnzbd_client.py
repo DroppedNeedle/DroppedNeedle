@@ -3,9 +3,11 @@
 
 Verified against the owner's SABnzbd 5.0.4. Every call appends ``output=json`` +
 ``apikey`` as suffix query params (never headers; Lidarr ``SabnzbdProxy``). Adds an
-NZB via ``mode=addfile`` (multipart POST of the fetched+validated NZB bytes), not
-``addurl`` - we validate the bytes are a real NZB (not an indexer error page) before
-handing off. Errors arrive as ``{"status": false, "error": …}`` or plain-text
+NZB via ``mode=addfile`` (multipart POST of the fetched+validated NZB bytes): we
+validate the bytes are a real NZB (not an indexer error page) before handing off.
+``mode=addurl`` (SABnzbd fetches the enclosure URL itself) is the enqueue FALLBACK
+only, for indexers DroppedNeedle cannot reach - it skips pre-validation by design.
+Errors arrive as ``{"status": false, "error": …}`` or plain-text
 ``error: …``; both are handled, auth failures detected by message.
 
 The httpx client is INJECTED (AUD-12). The full ``apikey`` is required (the add-only
@@ -14,6 +16,7 @@ The httpx client is INJECTED (AUD-12). The full ``apikey`` is required (the add-
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -29,6 +32,19 @@ from .sabnzbd_models import (
 
 logger = logging.getLogger(__name__)
 
+# addurl embeds the Newznab enclosure URL - which carries the indexer's apikey - in
+# the SABnzbd request, and SABnzbd may echo the submitted URL in an error body.
+# Scrub credential-looking query values from anything raised past this client so
+# indexer secrets never reach logs via the strategy's exception logging. Covers both
+# Newznab credential forms: ``apikey=`` and DrunkenSlug-style ``r=`` (the per-user
+# key); the ``r`` alternative is anchored so innocent words like ``error=`` don't
+# match, and the ``i=`` user id is left visible (an identifier, not a credential).
+_QUERY_SECRET_RE = re.compile(r"(?i)((?:apikey|api_key|(?<![A-Za-z0-9_])r)=)[^&\s'\"]+")
+
+
+def _redact_query_secrets(text: str) -> str:
+    return _QUERY_SECRET_RE.sub(r"\1***", text)
+
 
 class SabnzbdApiError(ExternalServiceError):
     """Transport/HTTP/SABnzbd error. Mapped to HTTP 503 by the registered handler."""
@@ -36,6 +52,16 @@ class SabnzbdApiError(ExternalServiceError):
     def __init__(self, message: str, details: Any = None, *, auth: bool = False) -> None:
         super().__init__(message, details)
         self.auth = auth
+
+
+def _redacted_addurl_error(exc: SabnzbdApiError) -> SabnzbdApiError:
+    """Rebuild an addurl error with any echoed enclosure credentials scrubbed."""
+    details = exc.details
+    if isinstance(details, str):
+        details = _redact_query_secrets(details)
+    return SabnzbdApiError(
+        _redact_query_secrets(exc.message), details, auth=exc.auth
+    )
 
 
 class SabnzbdClient:
@@ -66,9 +92,10 @@ class SabnzbdClient:
         self, method: str, url: str, *, timeout: float, **kwargs: Any
     ) -> httpx.Response:
         """Send an IDEMPOTENT request, retrying transient transport errors + 5xx responses
-        with exponential backoff. NOT used for ``addfile`` (a non-idempotent POST): re-sending
-        could double-add a job and re-create the ``.1/.2`` orphan. A 4xx / SABnzbd-logical
-        error is returned for the caller to surface (never retried)."""
+        with exponential backoff. NOT used for ``addfile``/``addurl`` (non-idempotent
+        queue mutations): re-sending could double-add a job and re-create the ``.1/.2``
+        orphan. A 4xx / SABnzbd-logical error is returned for the caller to surface
+        (never retried)."""
         last_exc: httpx.HTTPError | None = None
         resp: httpx.Response | None = None
         for attempt in range(self._max_attempts):
@@ -162,6 +189,57 @@ class SabnzbdClient:
 
         return msgspec.convert(data, type=SabnzbdAddResponse, strict=False)
 
+    async def add_url(
+        self,
+        job_name: str,
+        nzb_url: str,
+        *,
+        category: str | None = None,
+        priority: int | None = None,
+        post_processing: int | None = None,
+        timeout: float = 60.0,
+    ) -> SabnzbdAddResponse:
+        """``mode=addurl`` GET: hand SABnzbd the Newznab enclosure URL and let it fetch
+        the NZB itself. ``name`` is the URL, ``nzbname`` the job name (same ``cat`` /
+        ``priority`` / ``pp`` options as ``add_file``; params per the SABnzbd 5.1 API
+        reference, and the ``nzo_ids`` envelope matches the live-verified 5.0.4
+        addfile contract - addurl itself was validated against a live SABnzbd for
+        #457, SABnzbd version unstated there).
+
+        Enqueue FALLBACK only: used when DroppedNeedle itself gets no response
+        fetching the NZB (a no-response transport failure, never a content rejection
+        or definitive indexer HTTP error) - some indexers are reachable only from the
+        SABnzbd host. Bypasses the retry helper like ``add_file``: it mutates the
+        queue, so retrying an uncertain response could double-add the job. SABnzbd
+        errors are scrubbed of echoed enclosure credentials before raising.
+        """
+        params: dict[str, str] = {
+            "mode": "addurl",
+            "name": nzb_url,
+            "nzbname": job_name,
+        }
+        if category:
+            params["cat"] = category
+        if priority is not None:
+            params["priority"] = str(priority)
+        if post_processing is not None:
+            params["pp"] = str(post_processing)
+        try:
+            response = await self._http.get(
+                self._url(), params=self._params(params), timeout=timeout
+            )
+        except httpx.HTTPError as exc:
+            raise SabnzbdApiError(f"SABnzbd addurl failed: {exc}") from exc
+        try:
+            data = self._parse(response)
+        except SabnzbdApiError as exc:
+            # from None: the cause IS the unredacted original - chaining it (explicitly
+            # or implicitly) would print the secret when the strategy logs the chain.
+            raise _redacted_addurl_error(exc) from None
+        import msgspec
+
+        return msgspec.convert(data, type=SabnzbdAddResponse, strict=False)
+
     async def delete_queue(self, nzo_id: str, *, del_files: bool, timeout: float = 30.0) -> bool:
         data = await self._get(
             {"mode": "queue", "name": "delete", "value": nzo_id, "del_files": "1" if del_files else "0"},
@@ -192,7 +270,12 @@ class SabnzbdClient:
                 "GET", url, timeout=timeout, follow_redirects=True
             )
         except httpx.HTTPError as exc:
-            raise NewznabApiError(f"NZB fetch failed: {exc}") from exc
+            error = NewznabApiError(f"NZB fetch failed: {exc}")
+            # No-response transport failure (DNS/refused/timeout - cf.
+            # content_rejection below): the enqueue path falls back to addurl on
+            # this marker. A definitive indexer HTTP error carries neither marker.
+            error.transport_failure = True
+            raise error from exc
         if response.status_code >= 400:
             raise NewznabApiError(
                 f"NZB fetch returned HTTP {response.status_code}", details=response.text[:200]

@@ -84,7 +84,8 @@ class Candidate(msgspec.Struct, frozen=True, kw_only=True):
     - ``tier`` - the quality tier (``""`` / ``"unknown"`` when undetermined).
     - ``size_bytes`` - the unit's total byte size (folder audio sum / release size).
     - ``usenet_date`` - release post time (unix); ``None`` for Soulseek (no age concept).
-    - ``password`` - Newznab password flag (0/absent = none); always 0 for Soulseek.
+    - ``password`` - Newznab password flag (positive = protected, 0/negative = not
+      protected or unknown); always 0 for Soulseek.
     """
 
     source: str
