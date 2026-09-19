@@ -115,6 +115,23 @@ def build_test_client(app: FastAPI) -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
+def openapi_method_paths(app: FastAPI) -> list[tuple[str, str]]:
+    """(METHOD, path) pairs from the app's OpenAPI paths.
+
+    Route-allowlist lens: FastAPI flattens the route tree (including router
+    prefixes) into the schema, which keeps working across the eager (<=0.118)
+    and lazy-include (>=0.140) route-storage layouts. Note the schema omits
+    routes marked ``include_in_schema=False``.
+    """
+    return [
+        (method.upper(), path)
+        for path, operations in app.openapi()["paths"].items()
+        for method in operations
+        if method.upper()
+        in {"GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE"}
+    ]
+
+
 def make_test_import_publisher(library_manager, roots: dict[str, Path]):  # noqa: ANN001
     """Test double for FileProcessor's shared publication boundary.
 
