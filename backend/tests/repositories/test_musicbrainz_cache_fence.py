@@ -198,7 +198,8 @@ async def test_memory_clear_fences_inflight_view_but_allows_new_demand(
     started = asyncio.Event()
     release = asyncio.Event()
     calls = 0
-    payload = {"id": "exact-release", "media": []}
+    release_id = "7e7e7e7e-7e7e-4e7e-8e7e-7e7e7e7e7e7e"
+    payload = {"id": release_id, "media": []}
 
     async def provider(*args, **kwargs):
         nonlocal calls
@@ -209,9 +210,9 @@ async def test_memory_clear_fences_inflight_view_but_allows_new_demand(
         return payload
 
     monkeypatch.setattr(album_module, "mb_api_get", provider)
-    key = mb_release_key("exact-release", ["recordings"])
+    key = mb_release_key(release_id, ["recordings"])
     pending = asyncio.create_task(
-        repo.get_release_by_id("exact-release", includes=["recordings"])
+        repo.get_release_by_id(release_id, includes=["recordings"])
     )
     try:
         await started.wait()
@@ -223,8 +224,8 @@ async def test_memory_clear_fences_inflight_view_but_allows_new_demand(
         assert await pending == payload
         assert await repo._cache.get(key) is None
         assert await old_cache.get(key) is None
-        assert await repo.get_release_by_id("exact-release", includes=["recordings"]) == payload
-        assert await repo.get_release_by_id("exact-release", includes=["recordings"]) == payload
+        assert await repo.get_release_by_id(release_id, includes=["recordings"]) == payload
+        assert await repo.get_release_by_id(release_id, includes=["recordings"]) == payload
         assert calls == 2
     finally:
         release.set()

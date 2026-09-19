@@ -2367,6 +2367,7 @@ def get_spotify_import_service() -> "SpotifyImportService":
         playlist_repo=get_playlist_repository(),
         mb_repo=get_musicbrainz_repository(),
         playlist_service=get_playlist_service(),
+        cache=get_cache(),
         cover_fetcher=cover_fetcher_for(get_spotify_cover_http_client()),
     )
 
@@ -2386,6 +2387,7 @@ def get_target_spotify_import_service() -> "SpotifyImportService":
         playlist_repo=None,
         mb_repo=get_musicbrainz_repository(),
         playlist_service=target.playlists,
+        cache=get_cache(),
         async_playlist_repo=target.playlist_repository,
         cover_fetcher=cover_fetcher_for(get_spotify_cover_http_client()),
     )

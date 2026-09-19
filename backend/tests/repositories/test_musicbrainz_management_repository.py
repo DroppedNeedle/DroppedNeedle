@@ -229,11 +229,15 @@ async def test_recording_redirect_resolution_uses_canonical_provider_identity(
     repo = _Repo()
 
     resolved = await repo.resolve_recording_mbid(
-        "retired-recording", priority=RequestPriority.BACKGROUND_SYNC
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        priority=RequestPriority.BACKGROUND_SYNC,
     )
 
     assert resolved == "canonical-recording"
-    assert await repo.resolve_recording_mbid("retired-recording") == "canonical-recording"
+    assert (
+        await repo.resolve_recording_mbid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        == "canonical-recording"
+    )
     assert api.await_count == 1
 
 
@@ -245,9 +249,15 @@ async def test_missing_recording_identity_is_negative_cached(monkeypatch) -> Non
     monkeypatch.setattr(module, "mb_api_get", api)
     repo = _Repo()
 
-    assert await repo.resolve_recording_mbid("missing-recording") is None
+    assert (
+        await repo.resolve_recording_mbid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+        is None
+    )
     api.reset_mock()
-    assert await repo.resolve_recording_mbid("missing-recording") is None
+    assert (
+        await repo.resolve_recording_mbid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+        is None
+    )
     api.assert_not_awaited()
 
 
@@ -265,7 +275,7 @@ async def test_recording_identity_provider_failure_is_not_cached(
     repo = _Repo()
 
     with pytest.raises(ExternalServiceError, match="temporarily unavailable"):
-        await repo.resolve_recording_mbid("recording-id")
+        await repo.resolve_recording_mbid("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 
     assert repo._cache.size() == 0
 

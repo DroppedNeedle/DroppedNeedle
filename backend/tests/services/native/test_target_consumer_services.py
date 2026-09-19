@@ -1656,6 +1656,7 @@ async def test_spotify_and_personal_mix_write_only_target_playlists(
         playlist_repo=None,
         mb_repo=AsyncMock(),
         playlist_service=playlists,
+        cache=InMemoryCache(),
         async_playlist_repo=repository,
     )
     spotify_playlist_id = await spotify.ensure_playlist_record(
@@ -1730,6 +1731,7 @@ async def test_spotify_import_persists_cover_in_target_store(
         playlist_repo=None,
         mb_repo=AsyncMock(),
         playlist_service=playlists,
+        cache=InMemoryCache(),
         async_playlist_repo=repository,
         cover_fetcher=cover_fetcher_for(cdn.client()),
     )

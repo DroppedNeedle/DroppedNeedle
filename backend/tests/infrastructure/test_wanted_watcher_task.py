@@ -27,6 +27,8 @@ async def test_loop_survives_a_failed_sweep_with_one_sleep_per_iteration(monkeyp
     # initial delay + 2 interval sleeps -> two sweeps, the first one exploding
     sleeps, fake_sleep = _break_after(3)
     monkeypatch.setattr(tasks.asyncio, "sleep", fake_sleep)
+    # midpoint uniform pins the mean: jitter must preserve the 900 s average
+    monkeypatch.setattr(tasks.random, "uniform", lambda a, b: (a + b) / 2)
     svc = AsyncMock()
     svc.run_sweep.side_effect = [RuntimeError("boom"), None]
 
@@ -35,8 +37,35 @@ async def test_loop_survives_a_failed_sweep_with_one_sleep_per_iteration(monkeyp
 
     assert svc.run_sweep.await_count == 2  # the error did not kill the loop
     assert sleeps[0] == tasks._WANTED_WATCHER_INITIAL_DELAY
-    # exactly one sleep per iteration, error path included
-    assert sleeps[1:] == [tasks._WANTED_WATCHER_INTERVAL, tasks._WANTED_WATCHER_INTERVAL]
+    # exactly one sleep per iteration, error path included; mean preserved
+    assert sleeps[1:] == pytest.approx([tasks._WANTED_WATCHER_INTERVAL] * 2)
+
+
+@pytest.mark.asyncio
+async def test_wanted_sweep_sleep_within_jitter_band(monkeypatch):
+    """Step 04-3: the 900 s sweep tick carries +/-20% jitter -> [720, 1080].
+    The fake uniform returns the low edge then the high edge, pinning the
+    derived band and that the loop sleeps the jittered value as-is."""
+    sleeps, fake_sleep = _break_after(3)
+    monkeypatch.setattr(tasks.asyncio, "sleep", fake_sleep)
+    bounds: list = []
+
+    def fake_uniform(a, b):
+        bounds.append((a, b))
+        return a if len(bounds) % 2 == 1 else b
+
+    monkeypatch.setattr(tasks.random, "uniform", fake_uniform)
+    svc = AsyncMock()
+
+    with pytest.raises(asyncio.CancelledError):
+        await tasks.run_wanted_watcher_periodically(lambda: svc)
+
+    assert svc.run_sweep.await_count == 2
+    assert sleeps[0] == tasks._WANTED_WATCHER_INITIAL_DELAY
+    flat = [edge for pair in bounds for edge in pair]
+    assert flat == pytest.approx([720.0, 1080.0, 720.0, 1080.0])
+    assert sleeps[1] == bounds[0][0]
+    assert sleeps[2] == bounds[1][1]
 
 
 @pytest.mark.asyncio

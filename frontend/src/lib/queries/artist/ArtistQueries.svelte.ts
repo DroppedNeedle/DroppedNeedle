@@ -120,35 +120,54 @@ const BATCH_SIZE = 50;
 // (warming=true, source_total_count=null). Poll page 0 until any response reports
 // warming false/absent, then stop. Payloads without the flag never poll.
 const WARMING_POLL_INTERVAL_MS = 2_000;
+const MAX_WARMING_POLLS = 30;
 
 export const getArtistReleasesInfiniteQuery = (getArtistId: Getter<string>) =>
-	createInfiniteQuery(() => ({
-		staleTime: CACHE_TTL.ARTIST_DETAIL_BASIC,
-		queryKey: ArtistQueryKeyFactory.releases(getArtistId()),
-		initialPageParam: 0,
-		queryFn: async ({ pageParam = 0, signal }) => {
-			const response = await api.global.get<ArtistReleases>(
-				API.artist.releases(getArtistId(), pageParam, BATCH_SIZE),
-				{ signal }
-			);
-			// mirrors the basic query: the degraded discography payload
-			// carries service_status and api.global bypasses the
-			// header-recording fetch wrapper
-			extractServiceStatus(response);
-			return response;
-		},
-		getNextPageParam: (lastPage) => {
-			if (!lastPage.has_more) {
+	createInfiniteQuery(() => {
+		// Per-query-instance budget (not module scope): a new mount or
+		// artist key restarts the count; caps a stuck-warming backend at
+		// ~60 s of polling per mount.
+		let warmingPolls = 0;
+		let lastKey: string | null = null;
+		return {
+			staleTime: CACHE_TTL.ARTIST_DETAIL_BASIC,
+			queryKey: ArtistQueryKeyFactory.releases(getArtistId()),
+			initialPageParam: 0,
+			queryFn: async ({ pageParam = 0, signal }) => {
+				const response = await api.global.get<ArtistReleases>(
+					API.artist.releases(getArtistId(), pageParam, BATCH_SIZE),
+					{ signal }
+				);
+				// mirrors the basic query: the degraded discography payload
+				// carries service_status and api.global bypasses the
+				// header-recording fetch wrapper
+				extractServiceStatus(response);
+				return response;
+			},
+			getNextPageParam: (lastPage) => {
+				if (!lastPage.has_more) {
+					return undefined;
+				}
+				if (lastPage.next_offset != null) {
+					return lastPage.next_offset;
+				}
 				return undefined;
+			},
+			refetchInterval: (query: { state: { data?: { pages?: Array<{ warming?: boolean }> } } }) => {
+				const artistId = getArtistId();
+				if (artistId !== lastKey) {
+					lastKey = artistId;
+					warmingPolls = 0;
+				}
+				if (query.state.data?.pages?.[0]?.warming === true) {
+					warmingPolls += 1;
+					return warmingPolls > MAX_WARMING_POLLS ? false : WARMING_POLL_INTERVAL_MS;
+				}
+				warmingPolls = 0;
+				return false;
 			}
-			if (lastPage.next_offset != null) {
-				return lastPage.next_offset;
-			}
-			return undefined;
-		},
-		refetchInterval: (query: { state: { data?: { pages?: Array<{ warming?: boolean }> } } }) =>
-			query.state.data?.pages?.[0]?.warming === true ? WARMING_POLL_INTERVAL_MS : false
-	}));
+		};
+	});
 
 type ArtistReleasesInfiniteQuery = ReturnType<typeof getArtistReleasesInfiniteQuery>;
 

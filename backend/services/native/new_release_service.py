@@ -32,7 +32,7 @@ from infrastructure.persistence.follow_store import (
 from infrastructure.queue.priority_queue import RequestPriority
 from models.release_type_policy import should_include_release
 from services.native.download_service import ALREADY_IN_LIBRARY
-from repositories.musicbrainz_base import capture_mb_source_context, mb_publish_if_current
+from repositories.musicbrainz_base import MbCachePolicy, capture_mb_source_context, mb_publish_if_current
 from infrastructure.observability.provider_counters import ProviderWorkload, provider_workload
 
 logger = logging.getLogger(__name__)
@@ -177,8 +177,20 @@ class NewReleaseService:
                 recorded = False
                 async def fail():
                     nonlocal recorded
+                    snapshot = state or {}
+                    # A failed mid-walk observation must not re-walk within the
+                    # hour; fresh observations keep the ladder (a pure 429 rides
+                    # retry_after through max() with no floor).
+                    walk_failure = (
+                        snapshot.get("phase") == "verifying"
+                        or (snapshot.get("offset") or 0) > 0
+                        or (snapshot.get("diverge_count") or 0) > 0
+                    )
                     recorded = await self._store.fail_inventory(
-                        state, str(exc), float(getattr(exc, "retry_after_seconds", 0) or 0),
+                        state,
+                        str(exc),
+                        float(getattr(exc, "retry_after_seconds", 0) or 0),
+                        min_delay=3600 if walk_failure else 0,
                     )
                 if not await mb_publish_if_current(context, fail) or not recorded:
                     raise InventoryInvalidated() from exc
@@ -190,6 +202,10 @@ class NewReleaseService:
                 artist.artist_mbid, offset=state["offset"], limit=_MB_PAGE_LIMIT,
                 priority=RequestPriority.BACKGROUND_SYNC,
                 preserve_fetch_width=True, source_context=context,
+                # Detection freshness: the poller must see live pages, never
+                # L1-cached ones. Cadence stays bounded by tick jitter plus
+                # the 1 h fail-path re-walk floor.
+                cache_policy=MbCachePolicy.BYPASS,
             ), timeout=_MB_FETCH_TIMEOUT,
         )
         if response_context != context:

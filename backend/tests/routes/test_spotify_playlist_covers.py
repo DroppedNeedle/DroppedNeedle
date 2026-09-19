@@ -13,6 +13,7 @@ from fastapi import FastAPI
 
 from api.v1.routes.playlists import router as playlists_router
 from core.dependencies import get_playlist_service
+from infrastructure.cache.memory_cache import InMemoryCache
 from infrastructure.persistence.auth_store import AuthStore
 from repositories.playlist_repository import PlaylistRepository
 from services.playlist_service import PlaylistService
@@ -47,6 +48,7 @@ def env(tmp_path):
         playlist_repo=repo,
         mb_repo=AsyncMock(),
         playlist_service=service,
+        cache=InMemoryCache(),
         cover_fetcher=cover_fetcher_for(cdn.client()),
     )
     return SimpleNamespace(

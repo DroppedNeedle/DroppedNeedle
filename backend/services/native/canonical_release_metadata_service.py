@@ -249,6 +249,14 @@ def _work_values(track: MbManagementTrack) -> tuple[str | None, tuple[str, ...]]
 
 def _required_includes(profile: LibraryManagementProfile) -> tuple[str, ...]:
     includes = set(_BASE_INCLUDES)
+    # Labels, ISRCs, and work values feed tags AND naming: project() gates
+    # on per-field modes (never metadata.enabled) and the planner renders
+    # naming scripts from desired_metadata, so modes alone imply
+    # consumption. The legacy path-only seed keeps its saving through empty
+    # fields (unlisted modes default to disabled, so the projector ignores
+    # every candidate). Relationship credits are the one metadata.enabled-
+    # gated projection (_track_relationships returns () with metadata off),
+    # hence the work-mode carve-out on the rels below.
     fields = {
         field.field
         for field in profile.metadata.fields
@@ -264,7 +272,14 @@ def _required_includes(profile: LibraryManagementProfile) -> tuple[str, ...]:
         and profile.metadata.artist_credits.preferred_locales
     ):
         includes.add("aliases")
-    if profile.metadata.relationships.enabled and profile.metadata.relationships.types:
+    if (
+        profile.metadata.relationships.enabled
+        and profile.metadata.relationships.types
+        and (
+            profile.metadata.enabled
+            or fields.intersection({"work", "musicbrainz_work_id"})
+        )
+    ):
         includes.update(_RELATIONSHIP_INCLUDES)
     if profile.genres.enabled and "musicbrainz" in profile.genres.sources:
         includes.add("genres")

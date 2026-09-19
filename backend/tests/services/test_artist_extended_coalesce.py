@@ -105,6 +105,9 @@ def _make_service(*, relations_slow: float = 0.0) -> tuple[ArtistService, dict]:
 
     memory_cache = InMemoryCacheStub()
     disk_cache = AsyncMock()
+    # capture_clear_token is sync on real caches; an AsyncMock child leaves
+    # a dangling coroutine (RuntimeWarning) on every _begin_projection.
+    disk_cache.capture_clear_token = MagicMock(return_value=("test-disk", 0))
     disk_cache.get_artist = AsyncMock(return_value=None)
     disk_cache.set_artist = AsyncMock()
 
@@ -167,9 +170,19 @@ class TestExtendedCoalescing:
 
     @pytest.mark.asyncio
     async def test_warm_described_entry_short_circuits(self):
+        from repositories.musicbrainz_base import (
+            capture_mb_source_context,
+            namespace_mb_cache_key,
+        )
+
         svc, probes = _make_service()
+        # Production reads the source-namespaced key (the real cache also
+        # namespaces on write, so this round-trips there); the stub does no
+        # namespacing, so the seed must carry it explicitly.
         await probes["memory_cache"].set(
-            f"artist_info:{ARTIST_MBID}",
+            namespace_mb_cache_key(
+                f"artist_info:{ARTIST_MBID}", capture_mb_source_context()
+            ),
             ArtistInfo(
                 name="Test Artist",
                 musicbrainz_id=ARTIST_MBID,

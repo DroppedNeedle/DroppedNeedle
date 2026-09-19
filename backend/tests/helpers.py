@@ -19,6 +19,7 @@ from core.exception_handlers import (
     external_service_error_handler,
     general_exception_handler,
     http_exception_handler,
+    rate_limited_error_handler,
     request_validation_error_handler,
     resource_not_found_handler,
     source_resolution_error_handler,
@@ -38,6 +39,7 @@ from core.exceptions import (
     ConflictError,
     ExternalServiceError,
     PermissionDeniedError,
+    RateLimitedError,
     ResourceNotFoundError,
     RevisionOverflowError,
     SourceResolutionError,
@@ -91,6 +93,7 @@ def override_user_auth(
 def add_production_exception_handlers(app: FastAPI) -> FastAPI:
     app.add_exception_handler(ClientDisconnectedError, client_disconnected_handler)
     app.add_exception_handler(ResourceNotFoundError, resource_not_found_handler)
+    app.add_exception_handler(RateLimitedError, rate_limited_error_handler)
     app.add_exception_handler(ExternalServiceError, external_service_error_handler)
     app.add_exception_handler(CircuitOpenError, circuit_open_error_handler)
     app.add_exception_handler(ValidationError, validation_error_handler)

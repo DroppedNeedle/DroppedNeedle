@@ -13,10 +13,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from infrastructure.cache.memory_cache import InMemoryCache
 from infrastructure.degradation import (
     clear_degradation_context,
     init_degradation_context,
 )
+from infrastructure.queue.priority_queue import RequestPriority
 from repositories.playlist_repository import PlaylistRepository
 from services.playlist_service import PlaylistService
 from services.spotify_import_service import (
@@ -45,6 +47,7 @@ def _service(client) -> SpotifyImportService:
         playlist_repo=MagicMock(),
         mb_repo=AsyncMock(),
         playlist_service=AsyncMock(),
+        cache=InMemoryCache(),
     )
 
 
@@ -167,7 +170,11 @@ async def test_album_fallback_searches_artist_and_release_title_separately():
 
     assert result == "clairo-originals-rg"
     svc._mb_repo.search_release_groups.assert_awaited_once_with(
-        "Clairo", "Originals", limit=3, include_all_types=False
+        "Clairo",
+        "Originals",
+        limit=3,
+        include_all_types=False,
+        priority=RequestPriority.BACKGROUND_SYNC,
     )
 
 def _mb_credit(name: str) -> list[dict]:
@@ -228,10 +235,10 @@ async def test_isrc_pooled_fallback_prefers_requested_artist_over_compilation(
     )
     monkeypatch.setattr(spotify_module, "mb_api_get", provider)
 
-    result = await svc._resolve_mbid("GBABC123", "PinkPantheress", "Fancy That")
+    result = await svc._resolve_mbid("GBABC1234567", "PinkPantheress", "Fancy That")
 
     assert result == "rg-fancy-that"
-    assert provider.await_args.args[0] == "/isrc/GBABC123"
+    assert provider.await_args.args[0] == "/isrc/GBABC1234567"
     assert provider.await_count == 1
 
 
@@ -264,7 +271,7 @@ async def test_isrc_tries_artist_matching_recording_first(monkeypatch):
     )
     monkeypatch.setattr(spotify_module, "mb_api_get", provider)
 
-    result = await svc._resolve_mbid("GBABC123", "PinkPantheress", "Fancy That")
+    result = await svc._resolve_mbid("GBABC1234567", "PinkPantheress", "Fancy That")
 
     assert result == "rg-fancy-that"
     first = svc._mb_repo.resolve_recording_to_release_group.await_args_list[0]
@@ -294,7 +301,7 @@ async def test_isrc_various_artists_request_keeps_compilation_pick(monkeypatch):
     )
     monkeypatch.setattr(spotify_module, "mb_api_get", provider)
 
-    result = await svc._resolve_mbid("GBXYZ999", "Various Artists", "Bravo Hits 130")
+    result = await svc._resolve_mbid("GBXYZ9990000", "Various Artists", "Bravo Hits 130")
 
     assert result == "rg-bravo-130"
 
@@ -373,6 +380,7 @@ def _real_service(tmp_path, cdn: SpotifyCdnMock, *, images=_SPOTIFY_IMAGES):
         playlist_repo=repo,
         mb_repo=AsyncMock(),
         playlist_service=playlists,
+        cache=InMemoryCache(),
         cover_fetcher=cover_fetcher_for(cdn.client()),
     )
     return svc, playlists
@@ -458,6 +466,7 @@ async def test_fetcher_exception_degrades_and_keeps_tracks(tmp_path):
         playlist_repo=repo,
         mb_repo=AsyncMock(),
         playlist_service=playlists,
+        cache=InMemoryCache(),
         cover_fetcher=broken,
     )
 

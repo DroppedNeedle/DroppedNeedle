@@ -196,6 +196,7 @@ async def test_spotify_imported_cover_advertised_and_served(
     import threading
     from unittest.mock import AsyncMock
 
+    from infrastructure.cache.memory_cache import InMemoryCache
     from repositories.async_playlist_repository import AsyncPlaylistRepository
     from repositories.playlist_repository import PlaylistRepository
     from services.spotify_import_service import (
@@ -219,6 +220,7 @@ async def test_spotify_imported_cover_advertised_and_served(
         playlist_repo=None,
         mb_repo=AsyncMock(),
         playlist_service=compat_env.playlists,
+        cache=InMemoryCache(),
         async_playlist_repo=AsyncPlaylistRepository(
             PlaylistRepository(db_path=db_path, write_lock=write_lock)
         ),

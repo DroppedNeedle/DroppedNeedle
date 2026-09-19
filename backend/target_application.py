@@ -174,6 +174,7 @@ from core.exception_handlers import (
     general_exception_handler,
     http_exception_handler,
     permission_denied_handler,
+    rate_limited_error_handler,
     request_validation_error_handler,
     resource_not_found_handler,
     revision_overflow_error_handler,
@@ -189,6 +190,7 @@ from core.exceptions import (
     AutomaticManagementHoldError,
     ExternalServiceError,
     PermissionDeniedError,
+    RateLimitedError,
     ResourceNotFoundError,
     RevisionOverflowError,
     SourceResolutionError,
@@ -840,6 +842,7 @@ def create_production_target_application() -> FastAPI:
     for exception, handler in (
         (ClientDisconnectedError, client_disconnected_handler),
         (ResourceNotFoundError, resource_not_found_handler),
+        (RateLimitedError, rate_limited_error_handler),
         (ExternalServiceError, external_service_error_handler),
         (SourceResolutionError, source_resolution_error_handler),
         (ValidationError, validation_error_handler),

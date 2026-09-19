@@ -2,6 +2,7 @@
 
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -651,3 +652,377 @@ async def test_error_cursor_retains_prior_successful_timestamp(store: FollowStor
     assert after is not None
     assert after.last_status == "error"
     assert after.last_checked_at == before.last_checked_at
+
+
+_OLD_FOLLOW_TABLES_DDL = """
+CREATE TABLE follow_due (
+    artist_mbid_lower TEXT PRIMARY KEY,
+    due_at REAL NOT NULL DEFAULT 0,
+    failures INTEGER NOT NULL DEFAULT 0,
+    last_serviced REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE follow_inventory (
+    artist_mbid_lower TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    policy INTEGER NOT NULL,
+    phase TEXT NOT NULL DEFAULT 'collecting',
+    offset INTEGER NOT NULL DEFAULT 0,
+    total INTEGER,
+    process TEXT NOT NULL,
+    inflight INTEGER NOT NULL DEFAULT 0,
+    progressed_at REAL NOT NULL
+);
+CREATE TABLE follow_inventory_rows (
+    artist_mbid_lower TEXT NOT NULL REFERENCES follow_inventory
+        ON DELETE CASCADE,
+    phase TEXT NOT NULL,
+    rg TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY(artist_mbid_lower, phase, rg)
+);
+CREATE TABLE follow_inventory_pages (
+    artist_mbid_lower TEXT NOT NULL REFERENCES follow_inventory
+        ON DELETE CASCADE,
+    phase TEXT NOT NULL,
+    offset INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL,
+    PRIMARY KEY(artist_mbid_lower, phase, offset)
+);
+"""
+
+
+def _seed_follow_inventory(
+    db_path: Path,
+    artist: str = "mbid-x",
+    *,
+    source: str = "src",
+    policy: int = 0,
+    phase: str = "collecting",
+    offset: int = 0,
+    total: int | None = None,
+    process: str = "proc",
+    inflight: int = 0,
+    diverge_count: int = 0,
+    observation: str = "obs-seed",
+    staged_rows: tuple[str, ...] = (),
+    staged_pages: tuple[int, ...] = (),
+) -> None:
+    """Prerequisite rows via raw sqlite3, never store behavior."""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO follow_inventory (artist_mbid_lower, source, policy, phase,"
+            " offset, total, process, inflight, progressed_at, observation, diverge_count)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                artist,
+                source,
+                policy,
+                phase,
+                offset,
+                total,
+                process,
+                inflight,
+                time.time(),
+                observation,
+                diverge_count,
+            ),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO follow_due"
+            " (artist_mbid_lower, due_at, failures, last_serviced)"
+            " VALUES (?, 0, 0, 0)",
+            (artist,),
+        )
+        conn.executemany(
+            "INSERT INTO follow_inventory_rows (artist_mbid_lower, phase, rg, payload)"
+            " VALUES (?, ?, ?, ?)",
+            [(artist, phase, rg, '{"id":"%s"}' % rg) for rg in staged_rows],
+        )
+        conn.executemany(
+            "INSERT INTO follow_inventory_pages"
+            " (artist_mbid_lower, phase, offset, fingerprint) VALUES (?, ?, ?, ?)",
+            [
+                (artist, phase, page_offset, "fp-%d" % page_offset)
+                for page_offset in staged_pages
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _read_inventory(db_path: Path, artist: str = "mbid-x"):
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM follow_inventory WHERE artist_mbid_lower = ?", (artist,)
+        ).fetchone()
+        row_count = conn.execute(
+            "SELECT COUNT(*) FROM follow_inventory_rows WHERE artist_mbid_lower = ?",
+            (artist,),
+        ).fetchone()[0]
+        page_count = conn.execute(
+            "SELECT COUNT(*) FROM follow_inventory_pages WHERE artist_mbid_lower = ?",
+            (artist,),
+        ).fetchone()[0]
+        return (dict(row) if row is not None else None, row_count, page_count)
+    finally:
+        conn.close()
+
+
+def _read_due(db_path: Path, artist: str):
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute(
+            "SELECT due_at, failures FROM follow_due WHERE artist_mbid_lower = ?",
+            (artist,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+@pytest.mark.asyncio
+async def test_inventory_total_mismatch_once_keeps_pages_and_records_divergence(
+    store: FollowStore, tmp_path: Path
+):
+    db_path = tmp_path / "library.db"
+    _seed_follow_inventory(
+        db_path, offset=2, total=4, staged_rows=("rg1", "rg2"), staged_pages=(0,)
+    )
+    state = await store.prepare_inventory("mbid-x", "src", 0, "proc")
+    assert state["offset"] == 2
+
+    assert await store.stage_inventory_page(state, [{"id": "RG3"}], 5) is None
+
+    row, row_count, page_count = _read_inventory(db_path)
+    assert row is not None
+    assert row["offset"] == 2
+    assert row["total"] == 4
+    assert row["diverge_count"] == 1
+    assert row["inflight"] == 0
+    assert (row_count, page_count) == (2, 1)
+
+    resumed = await store.prepare_inventory("mbid-x", "src", 0, "proc")
+    assert resumed["offset"] == 2
+    assert resumed["diverge_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_inventory_second_consecutive_mismatch_deletes_inventory(
+    store: FollowStore, tmp_path: Path
+):
+    db_path = tmp_path / "library.db"
+    _seed_follow_inventory(
+        db_path,
+        offset=2,
+        total=4,
+        diverge_count=1,
+        staged_rows=("rg1", "rg2"),
+        staged_pages=(0,),
+    )
+    state = await store.prepare_inventory("mbid-x", "src", 0, "proc")
+    assert state["diverge_count"] == 1  # durable count survives the per-poll rebuild
+
+    assert await store.stage_inventory_page(state, [{"id": "RG3"}], 5) is None
+
+    row, row_count, page_count = _read_inventory(db_path)
+    assert row is None
+    assert row_count == 0
+    assert page_count == 0
+
+
+@pytest.mark.asyncio
+async def test_inventory_count_shortfall_tolerated_once_then_deleted(
+    store: FollowStore, tmp_path: Path
+):
+    db_path = tmp_path / "library.db"
+    _seed_follow_inventory(db_path)
+    state = await store.prepare_inventory("mbid-x", "src", 0, "proc")
+
+    # duplicate RG ids stage but leave the row count short of the total
+    assert (
+        await store.stage_inventory_page(state, [{"id": "RG1"}, {"id": "rg1"}], 2)
+        is None
+    )
+    row, _, _ = _read_inventory(db_path)
+    assert row is not None
+    assert row["offset"] == 2
+    assert row["diverge_count"] == 1
+
+    resumed = await store.prepare_inventory("mbid-x", "src", 0, "proc")
+    assert await store.stage_inventory_page(resumed, [], 2) is None
+
+    row, row_count, page_count = _read_inventory(db_path)
+    assert row is None
+    assert row_count == 0
+    assert page_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["source", "policy"])
+async def test_inventory_source_or_policy_change_deletes_despite_diverge_budget(
+    store: FollowStore, tmp_path: Path, field: str
+):
+    db_path = tmp_path / "library.db"
+    _seed_follow_inventory(
+        db_path,
+        offset=2,
+        total=4,
+        diverge_count=1,
+        staged_rows=("rg1", "rg2"),
+        staged_pages=(0,),
+    )
+    source, policy = ("other-src", 0) if field == "source" else ("src", 1)
+
+    fresh = await store.prepare_inventory("mbid-x", source, policy, "proc")
+
+    assert fresh["offset"] == 0
+    assert fresh["diverge_count"] == 0
+    row, row_count, page_count = _read_inventory(db_path)
+    assert row is not None  # fresh row, staged progress dropped
+    assert row_count == 0
+    assert page_count == 0
+
+
+@pytest.mark.asyncio
+async def test_inventory_successful_stage_resets_diverge_count(
+    store: FollowStore, tmp_path: Path
+):
+    db_path = tmp_path / "library.db"
+    _seed_follow_inventory(
+        db_path,
+        offset=2,
+        total=4,
+        diverge_count=1,
+        staged_rows=("rg1", "rg2"),
+        staged_pages=(0,),
+    )
+    state = await store.prepare_inventory("mbid-x", "src", 0, "proc")
+
+    assert await store.stage_inventory_page(state, [{"id": "RG3"}], 4) is None
+
+    row, row_count, _ = _read_inventory(db_path)
+    assert row is not None
+    assert row["offset"] == 3
+    assert row["diverge_count"] == 0
+    assert row_count == 3
+
+    # the next mismatch starts a fresh budget instead of deleting
+    resumed = await store.prepare_inventory("mbid-x", "src", 0, "proc")
+    assert await store.stage_inventory_page(resumed, [{"id": "RG4"}], 5) is None
+    row, _, _ = _read_inventory(db_path)
+    assert row is not None
+    assert row["offset"] == 3
+    assert row["diverge_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_inventory_diverge_count_migrates_legacy_schema(tmp_path: Path):
+    db_path = tmp_path / "library.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(_OLD_FOLLOW_TABLES_DDL)
+        conn.execute(
+            "INSERT INTO follow_inventory (artist_mbid_lower, source, policy, phase,"
+            " offset, total, process, inflight, progressed_at)"
+            " VALUES ('mbid-x', 'src', 0, 'collecting', 2, 4, 'proc', 0, ?)",
+            (time.time(),),
+        )
+        conn.executemany(
+            "INSERT INTO follow_inventory_rows VALUES (?, 'collecting', ?, ?)",
+            [
+                ("mbid-x", "rg1", '{"id":"RG1"}'),
+                ("mbid-x", "rg2", '{"id":"RG2"}'),
+            ],
+        )
+        conn.execute(
+            "INSERT INTO follow_inventory_pages"
+            " VALUES ('mbid-x', 'collecting', 0, 'fp-0')"
+        )
+        conn.execute("INSERT INTO follow_due (artist_mbid_lower) VALUES ('mbid-x')")
+        conn.commit()
+    finally:
+        conn.close()
+
+    FollowStore(db_path=db_path, write_lock=threading.Lock())
+    store = FollowStore(db_path=db_path, write_lock=threading.Lock())
+
+    conn = sqlite3.connect(db_path)
+    try:
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(follow_inventory)")
+        }
+    finally:
+        conn.close()
+    assert {"diverge_count", "observation"} <= columns
+
+    state = await store.prepare_inventory("mbid-x", "src", 0, "proc")
+    assert state["offset"] == 2
+    assert state["diverge_count"] == 0
+    assert await store.stage_inventory_page(state, [{"id": "RG3"}], 5) is None
+    row, row_count, page_count = _read_inventory(db_path)
+    assert row is not None
+    assert (row["offset"], row["total"], row["diverge_count"]) == (2, 4, 1)
+    assert (row_count, page_count) == (2, 1)
+
+
+@pytest.mark.asyncio
+async def test_fail_inventory_min_delay_floor_and_ladder(
+    store: FollowStore, tmp_path: Path
+):
+    db_path = tmp_path / "library.db"
+    for artist in ("mbid-floor", "mbid-ladder", "mbid-retry"):
+        _seed_follow_inventory(db_path, artist=artist)
+
+    floored = await store.prepare_inventory("mbid-floor", "src", 0, "proc")
+    before = time.time()
+    assert (
+        await store.fail_inventory(floored, "walk failed", 0, min_delay=3600) is True
+    )
+    due, failures = _read_due(db_path, "mbid-floor")
+    assert failures == 1
+    assert due >= before + 3600
+
+    ladder = await store.prepare_inventory("mbid-ladder", "src", 0, "proc")
+    before = time.time()
+    assert await store.fail_inventory(ladder, "provider down") is True
+    after = time.time()
+    due, failures = _read_due(db_path, "mbid-ladder")
+    assert failures == 1
+    assert before + 900 <= due <= after + 900
+
+    limited = await store.prepare_inventory("mbid-retry", "src", 0, "proc")
+    before = time.time()
+    assert await store.fail_inventory(limited, "rate limited", 60) is True
+    due, failures = _read_due(db_path, "mbid-retry")
+    assert failures == 1
+    assert due >= before + 900  # ladder wins over a small retry_after with no floor
+
+    limited = await store.prepare_inventory("mbid-retry", "src", 0, "proc")
+    before = time.time()
+    assert await store.fail_inventory(limited, "rate limited", 5000) is True
+    after = time.time()
+    due, failures = _read_due(db_path, "mbid-retry")
+    assert failures == 2
+    assert before + 5000 <= due <= after + 5000  # large retry_after still honored
+
+
+@pytest.mark.asyncio
+async def test_success_rearms_due_in_24h_and_clears_inventory(
+    store: FollowStore, tmp_path: Path
+):
+    db_path = tmp_path / "library.db"
+    await store.follow_artist("user-a", "MBID-X", "Artist")
+    _seed_follow_inventory(db_path, artist="mbid-x")
+    await store.seed_baseline("mbid-x", ["rg1"], policy_revision=0)
+
+    state = await store.get_release_check_state("mbid-x")
+    assert state is not None
+    assert state.last_status == "ok"
+    due, failures = _read_due(db_path, "mbid-x")
+    assert failures == 0
+    assert due == pytest.approx(state.last_checked_at + 86400)
+    row, _, _ = _read_inventory(db_path, "mbid-x")
+    assert row is None

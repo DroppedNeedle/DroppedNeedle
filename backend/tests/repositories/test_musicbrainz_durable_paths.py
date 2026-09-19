@@ -23,15 +23,25 @@ class _Repo(MusicBrainzAlbumMixin):
 async def test_release_to_group_reads_durable_hit_before_wire(monkeypatch):
     repo = _Repo()
     store = MagicMock()
-    store.get_release_to_rg_batch = AsyncMock(return_value={"rel-1": "rg-1"})
+    store.get_release_to_rg_batch = AsyncMock(
+        return_value={"11111111-1111-4111-8111-111111111111": "rg-1"}
+    )
+    store.get_canonical_redirect = AsyncMock(return_value={})
     repo._mb_canonical_store = store
     provider = AsyncMock(side_effect=AssertionError("durable hit reached wire"))
     monkeypatch.setattr(mb_album, "mb_api_get", provider)
 
-    result = await repo.get_release_group_id_from_release("REL-1")
+    result = await repo.get_release_group_id_from_release(
+        "11111111-1111-4111-8111-111111111111".upper()
+    )
 
     assert result == "rg-1"
-    assert await repo._cache.get(f"{MB_RELEASE_TO_RG_PREFIX}rel-1") == "rg-1"
+    assert (
+        await repo._cache.get(
+            f"{MB_RELEASE_TO_RG_PREFIX}11111111-1111-4111-8111-111111111111"
+        )
+        == "rg-1"
+    )
 
 
 @pytest.mark.asyncio
@@ -39,6 +49,7 @@ async def test_release_to_group_wire_miss_writes_durable_mapping(monkeypatch):
     repo = _Repo()
     store = MagicMock()
     store.get_release_to_rg_batch = AsyncMock(return_value={})
+    store.get_canonical_redirect = AsyncMock(return_value={})
     store.save_release_to_rg = AsyncMock()
     repo._mb_canonical_store = store
     monkeypatch.setattr(
@@ -47,12 +58,14 @@ async def test_release_to_group_wire_miss_writes_durable_mapping(monkeypatch):
         AsyncMock(return_value=SimpleNamespace(release_group={"id": "rg-2"}, media=[])),
     )
 
-    result = await repo.get_release_group_id_from_release("rel-2")
+    result = await repo.get_release_group_id_from_release(
+        "22222222-2222-4222-8222-222222222222"
+    )
 
     assert result == "rg-2"
     store.save_release_to_rg.assert_awaited_once()
     mapping = store.save_release_to_rg.await_args.args[0]
-    assert mapping == {"rel-2": "rg-2"}
+    assert mapping == {"22222222-2222-4222-8222-222222222222": "rg-2"}
     source_context = store.save_release_to_rg.await_args.kwargs["source_context"]
     assert source_context.source_url == mb_base.OFFICIAL_MB_API_BASE
     assert source_context.source_mode == "official"
@@ -107,7 +120,8 @@ async def test_stale_release_mapping_does_not_write_after_source_switch(monkeypa
 
     try:
         result = await repo._fetch_release_group_id_from_release(
-            "rel-stale", "mb:release_to_rg:rel-stale",
+            "33333333-3333-4333-8333-333333333333",
+            "mb:release_to_rg:33333333-3333-4333-8333-333333333333",
             cache_token=mb_base.capture_mb_cache_token(repo._cache),
         )
     finally:
@@ -121,4 +135,9 @@ async def test_stale_release_mapping_does_not_write_after_source_switch(monkeypa
         )
 
     assert result == "rg-stale"
-    assert await repo._cache.get("mb:release_to_rg:rel-stale") is None
+    assert (
+        await repo._cache.get(
+            "mb:release_to_rg:33333333-3333-4333-8333-333333333333"
+        )
+        is None
+    )

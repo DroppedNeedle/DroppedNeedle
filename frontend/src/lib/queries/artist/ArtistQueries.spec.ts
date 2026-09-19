@@ -119,6 +119,35 @@ describe('artist release pagination query', () => {
 		expect(query.refetchInterval({ state: { data: undefined } })).toBe(false);
 		expect(query.refetchInterval({ state: {} })).toBe(false);
 	});
+
+	it('caps warming polls at 30 per artist key, resetting on cool-down or key change (T9)', () => {
+		let artistId = 'artist-1';
+		const query = getArtistReleasesInfiniteQuery(() => artistId) as unknown as {
+			refetchInterval: (q: {
+				state: { data?: { pages?: Array<{ warming?: boolean }> } };
+			}) => number | false;
+		};
+
+		const state = (warming?: boolean) => ({
+			state: { data: { pages: [{ warming }] } }
+		});
+
+		for (let i = 0; i < 30; i += 1) {
+			expect(query.refetchInterval(state(true))).toBe(2_000);
+		}
+		expect(query.refetchInterval(state(true))).toBe(false);
+
+		// warming:false resets the budget
+		expect(query.refetchInterval(state(false))).toBe(false);
+		expect(query.refetchInterval(state(true))).toBe(2_000);
+
+		// artist-key change resets the budget
+		artistId = 'artist-2';
+		for (let i = 0; i < 30; i += 1) {
+			expect(query.refetchInterval(state(true))).toBe(2_000);
+		}
+		expect(query.refetchInterval(state(true))).toBe(false);
+	});
 });
 
 describe('source-dependent artist discovery queries', () => {

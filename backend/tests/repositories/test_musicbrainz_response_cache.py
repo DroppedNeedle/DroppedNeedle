@@ -20,9 +20,9 @@ from infrastructure.queue.priority_queue import RequestPriority
 from repositories.musicbrainz_response_cache import MbCachePolicy, request_key
 
 
-_PATH = "/artist/artist-one"
+_PATH = "/artist/a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e"
 _PARAMS = {"inc": "tags+aliases+url-rels"}
-_PAYLOAD = {"id": "artist-one", "name": "Fixture Artist"}
+_PAYLOAD = {"id": "a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e", "name": "Fixture Artist"}
 
 
 @pytest_asyncio.fixture
@@ -125,7 +125,7 @@ async def test_clear_while_admission_waits_rejects_old_epoch(response_runtime, m
 
 @pytest.mark.asyncio
 async def test_oversized_valid_response_returns_without_admission(response_runtime):
-    body = b'{"id":"artist-one","blob":"' + b"x" * MAX_PAYLOAD_BYTES + b'"}'
+    body = b'{"id":"a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e","blob":"' + b"x" * MAX_PAYLOAD_BYTES + b'"}'
 
     async def oversized(_request):
         return httpx.Response(200, content=body)
@@ -391,7 +391,7 @@ async def test_near_expiry_artist_projection_survives_gather_l1_and_disk_restart
     response_runtime.handler = transport
     repo = MusicBrainzArtistMixin()
     repo._cache = InMemoryCache()
-    await repo.get_artist_by_id("artist-one")
+    await repo.get_artist_by_id("a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e")
     deadline = time.time() + 20
     await response_runtime.store._write(
         lambda conn: conn.execute(
@@ -399,7 +399,7 @@ async def test_near_expiry_artist_projection_survives_gather_l1_and_disk_restart
         )
     )
     await repo._cache.clear()
-    await repo.get_artist_by_id("artist-one")
+    await repo.get_artist_by_id("a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e")
     assert len(response_runtime.calls) == 2
     assert mb.get_mb_response_metadata().fresh_until == deadline
 
@@ -417,9 +417,9 @@ async def test_near_expiry_artist_projection_survives_gather_l1_and_disk_restart
     source = mb.capture_mb_source_context()
     _artist_source_context.set(source)
     service._begin_projection()
-    artist, *_ = await service._fetch_artist_data("artist-one", source_context=source)
+    artist, *_ = await service._fetch_artist_data("a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e", source_context=source)
     assert mb.get_mb_response_metadata().fresh_until == deadline
-    info = ArtistInfo(name=artist["name"], musicbrainz_id="artist-one", in_library=True)
+    info = ArtistInfo(name=artist["name"], musicbrainz_id="a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e", in_library=True)
     written = asyncio.Event()
     original_set = disk.set_artist
 
@@ -428,16 +428,16 @@ async def test_near_expiry_artist_projection_survives_gather_l1_and_disk_restart
         written.set()
 
     monkeypatch.setattr(disk, "set_artist", record_write)
-    await service._save_artist_to_cache("artist-one", info)
+    await service._save_artist_to_cache("a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e", info)
     await asyncio.wait_for(written.wait(), timeout=2)
-    assert await service._get_cached_artist("artist-one") == info
+    assert await service._get_cached_artist("a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e") == info
     assert mb.get_mb_response_metadata().fresh_until == deadline
     await cache.clear()
     service._disk_cache = DiskMetadataCache(tmp_path / "artist-cache")
-    assert await service._get_cached_artist("artist-one") == info
+    assert await service._get_cached_artist("a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e") == info
     assert mb.get_mb_response_metadata().fresh_until == deadline
     monkeypatch.setattr(time, "time", lambda: deadline + 1)
-    assert await service._get_cached_artist("artist-one") is None
+    assert await service._get_cached_artist("a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e") is None
 
 
 @pytest.mark.asyncio
@@ -454,7 +454,7 @@ async def test_artist_projection_combines_unequal_payload_deadlines(response_run
     response_runtime.handler = transport
     repo = MusicBrainzArtistMixin()
     repo._cache = InMemoryCache()
-    await repo.get_artist_by_id("artist-one")
+    await repo.get_artist_by_id("a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e")
     source = mb.capture_mb_source_context()
     core_key = request_key(_PATH, _PARAMS, None, source)
     earliest = time.time() + 10
@@ -463,9 +463,9 @@ async def test_artist_projection_combines_unequal_payload_deadlines(response_run
         (core_key, earliest + 30, earliest),
     ))
     await repo._cache.clear()
-    await repo.get_artist_by_id("artist-one")
+    await repo.get_artist_by_id("a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e")
     assert mb.get_mb_response_metadata().fresh_until == earliest
-    await repo.get_artist_by_id("artist-one")
+    await repo.get_artist_by_id("a3cb0e2e-6f3a-4b2c-9d1e-5f8a7b6c4d3e")
     assert mb.get_mb_response_metadata().fresh_until == earliest
     assert len(response_runtime.calls) == 2
 

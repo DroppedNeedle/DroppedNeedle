@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from core.exceptions import ValidationError as AppValidationError
 
 MBID_PATTERN = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+ISRC_PATTERN = re.compile(r'^[A-Z0-9]{12}$')
 
 _ALLOWED_SERVICE_SCHEMES = frozenset({"http", "https"})
 
@@ -138,6 +139,15 @@ def validate_mbid(mbid: Optional[str], entity_type: str = "entity") -> str:
 
 def is_unknown_mbid(mbid: Optional[str]) -> bool:
     return not mbid or not isinstance(mbid, str) or mbid.startswith('unknown_') or not mbid.strip()
+
+
+def is_valid_isrc(value: Optional[str]) -> bool:
+    if not value or not isinstance(value, str):
+        return False
+
+    normalized = value.strip().upper()
+
+    return len(normalized) == 12 and bool(ISRC_PATTERN.match(normalized))
 
 
 def sanitize_optional_string(value: Optional[str]) -> Optional[str]:

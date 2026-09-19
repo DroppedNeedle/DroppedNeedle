@@ -3,6 +3,7 @@
 import asyncio
 import os
 import tempfile
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -21,6 +22,10 @@ from services.artist_service import ArtistService
 
 
 ARTIST_MBID = "f4a31f0a-51dd-4fa7-986d-3095c40c5ed9"
+# Valid-UUID artist for the embedded-seed test: the repo D6 gate returns
+# absence for non-UUID ids, so the "artist-id" placeholder never reaches
+# the seeding path. Distinct from ARTIST_MBID to avoid TaskRegistry coupling.
+SEEDED_ARTIST_MBID = "8a2b4c6d-9e0f-4a1b-8c3d-5e6f7a8b9c0d"
 
 
 def _make_release_group(
@@ -168,7 +173,7 @@ async def _cancel_artist_warm_tasks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_warm_seed_reuses_page_zero_and_clears_after_cancellation():
+async def test_warm_seed_cancel_writes_cooldown(monkeypatch):
     await _cancel_artist_warm_tasks()
     page = [
         _make_release_group(f"rg-{i}", f"Album {i}", "Album")
@@ -200,21 +205,38 @@ async def test_warm_seed_reuses_page_zero_and_clears_after_cancellation():
 
         await _cancel_artist_warm_tasks()
         await asyncio.sleep(0)
-        assert not svc._release_group_warm_seeds
-        assert mb_artist_release_groups_key(ARTIST_MBID) not in store
+        # A cancelled walker leaves a 60 s cooldown seed (never cleared
+        # while fresh); the shared complete-catalog key stays unwritten.
+        assert len(svc._release_group_warm_seeds) == 1
+        seed = next(iter(svc._release_group_warm_seeds.values()))
+        assert seed.metadata is not None
+        assert seed.metadata.fresh_until == pytest.approx(time.time() + 60, abs=5)
+        assert _namespaced(mb_artist_release_groups_key(ARTIST_MBID)) not in store
+
+        third = await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        assert third.warming is True
+        assert calls == [0, 100]
+
+        # Past 60 s the cooldown expires and a re-walk is allowed.
+        base = time.time()
+        monkeypatch.setattr(time, "time", lambda: base + 61)
+        release.set()
+        fourth = await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        assert fourth.warming is True
+        assert calls.count(0) == 2
     finally:
         release.set()
         await _cancel_artist_warm_tasks()
 
 
 @pytest.mark.asyncio
-async def test_warm_seed_clears_after_failure_and_retries_page_zero():
+async def test_warm_seed_failure_cooldown_suppresses_rewalk(monkeypatch):
     await _cancel_artist_warm_tasks()
     page = [
         _make_release_group(f"rg-{i}", f"Album {i}", "Album")
         for i in range(100)
     ]
-    cache, _store = _make_dict_cache()
+    cache, store = _make_dict_cache()
     svc = _make_service(memory_cache=cache)
     calls: list[int] = []
 
@@ -225,14 +247,108 @@ async def test_warm_seed_clears_after_failure_and_retries_page_zero():
         raise RuntimeError("warm failed")
 
     svc.test_mb_repo.get_artist_release_groups = AsyncMock(side_effect=fail_warm)
+    spawn_count = 0
+    orig_spawn = svc._spawn_release_group_warm
+
+    def counting_spawn(*args, **kwargs):
+        nonlocal spawn_count
+        spawn_count += 1
+        return orig_spawn(*args, **kwargs)
+
+    monkeypatch.setattr(svc, "_spawn_release_group_warm", counting_spawn)
     try:
         first = await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
         assert first.warming is True
+        assert spawn_count == 1
         await asyncio.sleep(0)
         await asyncio.sleep(0)
-        assert not svc._release_group_warm_seeds
+        # A failed walker leaves a 60 s cooldown seed (never cleared
+        # while fresh); the shared complete-catalog key stays unwritten.
+        assert len(svc._release_group_warm_seeds) == 1
+        seed = next(iter(svc._release_group_warm_seeds.values()))
+        assert seed.metadata is not None
+        assert seed.metadata.fresh_until == pytest.approx(time.time() + 60, abs=5)
+        assert _namespaced(mb_artist_release_groups_key(ARTIST_MBID)) not in store
 
-        await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        second = await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        assert second.warming is True
+        assert calls == [0, 100]
+        assert spawn_count == 1
+
+        # Past 60 s the cooldown expires and a respawn is allowed.
+        base = time.time()
+        monkeypatch.setattr(time, "time", lambda: base + 61)
+        third = await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        assert third.warming is True
+        assert calls.count(0) == 2
+        assert spawn_count == 2
+    finally:
+        await _cancel_artist_warm_tasks()
+
+
+@pytest.mark.asyncio
+async def test_cap_exit_partial_seed_serves_without_rewire(monkeypatch):
+    await _cancel_artist_warm_tasks()
+    from core.task_registry import TaskRegistry
+    from repositories import musicbrainz_base as mb_base
+
+    total = 1500
+    cache, store = _make_dict_cache()
+    svc = _make_service(memory_cache=cache)
+    calls: list[int] = []
+
+    async def fetch(_artist, offset, _limit, **_kwargs):
+        calls.append(offset)
+        return (
+            [
+                _make_release_group(f"rg-{i}", f"Album {i}", "Album")
+                for i in range(offset, min(offset + 100, total))
+            ],
+            total,
+        )
+
+    svc.test_mb_repo.get_artist_release_groups = AsyncMock(side_effect=fetch)
+    source_context = mb_base.capture_mb_source_context()
+    task_name = f"mb-rg-warm-{ARTIST_MBID.casefold()}:{source_context.generation}"
+    try:
+        first = await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        assert first.warming is True
+        assert first.returned_count == 50
+
+        registry = TaskRegistry.get_instance()
+        for _ in range(100):
+            if not registry.is_running(task_name):
+                break
+            await asyncio.sleep(0)
+        assert not registry.is_running(task_name)
+
+        # Cap exit: one 10-page walk (offset 0 + 100..900), then the
+        # 1000-item partial seed is kept for 600 s - never the shared key.
+        assert calls == [0, 100, 200, 300, 400, 500, 600, 700, 800, 900]
+        assert len(svc._release_group_warm_seeds) == 1
+        seed = next(iter(svc._release_group_warm_seeds.values()))
+        assert len(seed.items) == 1000
+        assert seed.metadata is not None
+        assert seed.metadata.fresh_until == pytest.approx(time.time() + 600, abs=10)
+        assert _namespaced(mb_artist_release_groups_key(ARTIST_MBID)) not in store
+
+        second = await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        assert second.warming is True
+        assert second.source_total_count is None
+        assert second.returned_count == 50
+        assert [a.title for a in second.albums] == [f"Album {i}" for i in range(50)]
+        assert calls == [0, 100, 200, 300, 400, 500, 600, 700, 800, 900]
+
+        # The partial seed carries walked pages, not just the spawn slice.
+        deep = await svc.get_artist_releases(ARTIST_MBID, offset=950, limit=50)
+        assert [a.title for a in deep.albums] == [f"Album {i}" for i in range(950, 1000)]
+        assert calls == [0, 100, 200, 300, 400, 500, 600, 700, 800, 900]
+
+        # Past 600 s the partial expires and a re-walk is allowed.
+        base = time.time()
+        monkeypatch.setattr(time, "time", lambda: base + 601)
+        third = await svc.get_artist_releases(ARTIST_MBID, offset=0, limit=50)
+        assert third.warming is True
         assert calls.count(0) == 2
     finally:
         await _cancel_artist_warm_tasks()
@@ -359,9 +475,9 @@ async def test_full_artist_profile_seeds_warm_from_fetched_width(monkeypatch):
     continuation_done = asyncio.Event()
 
     async def provider(path, params=None, **_kwargs):
-        if path == "/artist/artist-id":
+        if path == f"/artist/{SEEDED_ARTIST_MBID}":
             return {
-                "id": "artist-id",
+                "id": SEEDED_ARTIST_MBID,
                 "name": "Test Artist",
                 "release-group-count": 200,
             }
@@ -385,7 +501,7 @@ async def test_full_artist_profile_seeds_warm_from_fetched_width(monkeypatch):
     )
 
     result, _library, _albums, _requested = await service._fetch_artist_data(
-        "artist-id",
+        SEEDED_ARTIST_MBID,
         include_releases=True,
         source_context=source_context,
     )

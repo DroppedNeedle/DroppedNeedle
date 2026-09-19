@@ -94,6 +94,22 @@ def provider_workload(workload: ProviderWorkload) -> Iterator[None]:
         _workload.reset(token)
 
 
+UNKNOWN_ROUTE = "unknown"
+
+provider_route: ContextVar[str] = ContextVar(
+    "provider_route", default=UNKNOWN_ROUTE
+)
+
+
+@contextmanager
+def route_scope(name: str) -> Iterator[None]:
+    token = provider_route.set(name)
+    try:
+        yield
+    finally:
+        provider_route.reset(token)
+
+
 class ProviderCounterMap:
     """Bound detailed series without losing overflow attempts or body totals."""
 
@@ -123,6 +139,10 @@ class ProviderCounterMap:
 
 
 _counters = ProviderCounterMap()
+# Per-route side map, keyed (provider, route, category). Windowed like the
+# main map but deliberately separate: route labels never join the
+# MAX_PROVIDER_SERIES-capped main key.
+_route_counters = WindowedCounterMap()
 _started_at = int(time.time())
 _process_epoch = uuid4().hex
 
@@ -171,6 +191,13 @@ def record_provider_call(
         _workload.get().value,
     )
     _counters.record(key, response, decoded_body_bytes)
+    _route_counters.increment(
+        (
+            provider if provider in PROVIDER_NAMES else "other",
+            provider_route.get(),
+            category if category in {"lookup", "browse", "search", "probe", "other"} else "other",
+        )
+    )
 
 
 def snapshot_provider_rows(
@@ -210,6 +237,34 @@ def snapshot_provider_rows(
                 }
             )
         rows.append(row)
+    return rows
+
+
+def snapshot_provider_route_rows(
+    window_seconds: int | None = None,
+) -> list[dict[str, Any]]:
+    """Side-map rows sorted by (provider, route, category) for stable rendering.
+
+    Routes are templates stamped by route_scope (MsgSpecRoute handler plus
+    compat dispatcher overrides); unstamped calls record route="unknown".
+    Windowed exactly like the main snapshot.
+    """
+    window = DEFAULT_WINDOW_SECONDS if window_seconds is None else int(window_seconds)
+    snapshot = _route_counters.snapshot(window)
+    totals = _route_counters.totals()
+    per_minute_divisor = max(1, window) / 60
+    rows: list[dict[str, Any]] = []
+    for key, window_count in sorted(snapshot.items()):
+        provider, route, category = key
+        rows.append(
+            {
+                "provider": provider,
+                "route": route,
+                "request_category": category,
+                "count_total": totals.get(key, 0),
+                "rate_per_min_window": round(window_count / per_minute_divisor, 2),
+            }
+        )
     return rows
 
 

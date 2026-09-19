@@ -15,6 +15,7 @@ from api.v1.schemas.settings import UserPreferences
 from core.exceptions import ConfigurationError, ExternalServiceError
 from infrastructure.persistence.follow_store import FollowStore
 from infrastructure.queue.priority_queue import RequestPriority
+from repositories.musicbrainz_response_cache import MbCachePolicy
 from services.native.download_service import ALREADY_IN_LIBRARY
 from services.native.new_release_service import NewReleaseService
 from tests.helpers import make_builtin_dispatcher
@@ -863,3 +864,179 @@ async def test_current_inventory_failure_backs_off_without_losing_progress(svc):
         assert due_at - serviced >= 3600
     resumed = await svc.store.prepare_inventory(ARTIST_LOWER, "source", 0, "process")
     assert resumed["offset"] == 1
+
+
+class _FailCapturingStore:
+    """Stubbed inventory store: fixed prepare state, captures fail kwargs."""
+
+    def __init__(self, state: dict):
+        self._state = state
+        self.fail_kwargs: dict | None = None
+
+    async def prepare_inventory(self, artist, source, policy, process):
+        return dict(self._state)
+
+    async def fail_inventory(self, state, error, retry_after=0, *, min_delay=0):
+        self.fail_kwargs = {"retry_after": retry_after, "min_delay": min_delay}
+        return True
+
+
+_WALK_MIN_DELAY_CASES = {
+    "fresh": (
+        {"phase": "collecting", "offset": 0, "total": None, "diverge_count": 0},
+        0,
+    ),
+    "verifying": (
+        {"phase": "verifying", "offset": 100, "total": 250, "diverge_count": 0},
+        3600,
+    ),
+    "mid_collecting": (
+        {"phase": "collecting", "offset": 100, "total": 250, "diverge_count": 0},
+        3600,
+    ),
+    "diverged": (
+        {"phase": "collecting", "offset": 0, "total": None, "diverge_count": 1},
+        3600,
+    ),
+}
+
+
+def _stub_state(patch: dict) -> dict:
+    return {
+        "artist_mbid_lower": ARTIST_LOWER,
+        "source": "stub",
+        "policy": 0,
+        "observation": "stub-obs",
+        **patch,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["fresh", "verifying", "mid_collecting", "diverged"])
+async def test_process_artist_walk_failure_min_delay(svc, kind):
+    patch, expected = _WALK_MIN_DELAY_CASES[kind]
+    stub = _FailCapturingStore(_stub_state(patch))
+    svc.service._store = stub
+    svc.mb.get_artist_release_groups_with_context.side_effect = ExternalServiceError(
+        "MB down"
+    )
+    artist = SimpleNamespace(
+        artist_mbid=ARTIST, artist_mbid_lower=ARTIST_LOWER, artist_name="Radiohead"
+    )
+    with pytest.raises(ExternalServiceError):
+        await svc.service._process_artist(artist)
+    assert stub.fail_kwargs == {"retry_after": 0, "min_delay": expected}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("kind", "expected"), [("fresh", 0), ("verifying", 3600)])
+async def test_process_artist_rate_limit_floor_only_on_walk(svc, kind, expected):
+    from core.exceptions import RateLimitedError
+
+    patch, _ = _WALK_MIN_DELAY_CASES[kind]
+    stub = _FailCapturingStore(_stub_state(patch))
+    svc.service._store = stub
+    svc.mb.get_artist_release_groups_with_context.side_effect = RateLimitedError(
+        "slow down", retry_after_seconds=45
+    )
+    artist = SimpleNamespace(
+        artist_mbid=ARTIST, artist_mbid_lower=ARTIST_LOWER, artist_name="Radiohead"
+    )
+    with pytest.raises(RateLimitedError):
+        await svc.service._process_artist(artist)
+    # retry_after is always forwarded; the 1h floor binds only walk failures
+    assert stub.fail_kwargs == {"retry_after": 45, "min_delay": expected}
+
+
+@pytest.mark.asyncio
+async def test_mid_walk_failure_backs_off_one_hour(svc):
+    import json
+    import time
+
+    from repositories.musicbrainz_base import capture_mb_source_context
+
+    await _follow_with_auto(svc.store, "user-a")
+    await svc.store.seed_baseline(ARTIST_LOWER, ["rg1"], policy_revision=0)
+    await svc.store.enqueue_due_all()
+    context = capture_mb_source_context()
+    source = json.dumps([context.source_mode, context.source_id, context.generation])
+    staged = await svc.store.prepare_inventory(ARTIST_LOWER, source, 0, "seed-proc")
+    await svc.store.stage_inventory_page(staged, [_rg("RG2", "Second")], 3)
+    svc.mb.get_artist_release_groups_or_raise.side_effect = ExternalServiceError(
+        "MB down"
+    )
+
+    before = time.time()
+    summary = await svc.service.run_poll()
+
+    assert summary.errors == 1
+    with sqlite3.connect(svc.db) as conn:
+        due, failures = conn.execute(
+            "SELECT due_at, failures FROM follow_due WHERE artist_mbid_lower = ?",
+            (ARTIST_LOWER,),
+        ).fetchone()
+    assert failures == 1
+    assert due >= before + 3600
+
+
+@pytest.mark.asyncio
+async def test_fresh_observation_failure_keeps_900s_ladder(svc):
+    import time
+
+    await _follow_with_auto(svc.store, "user-a")
+    await svc.store.seed_baseline(ARTIST_LOWER, ["rg1"], policy_revision=0)
+    svc.mb.get_artist_release_groups_or_raise.side_effect = ExternalServiceError(
+        "MB down"
+    )
+    await svc.store.enqueue_due_all()
+
+    before = time.time()
+    summary = await svc.service.run_poll()
+    after = time.time()
+
+    assert summary.errors == 1
+    with sqlite3.connect(svc.db) as conn:
+        due, failures = conn.execute(
+            "SELECT due_at, failures FROM follow_due WHERE artist_mbid_lower = ?",
+            (ARTIST_LOWER,),
+        ).fetchone()
+    assert failures == 1
+    assert before + 900 <= due <= after + 900
+
+
+@pytest.mark.asyncio
+async def test_fresh_rate_limit_honors_retry_after_without_floor(svc):
+    import time
+
+    from core.exceptions import RateLimitedError
+
+    await _follow_with_auto(svc.store, "user-a")
+    await svc.store.seed_baseline(ARTIST_LOWER, ["rg1"], policy_revision=0)
+    svc.mb.get_artist_release_groups_or_raise.side_effect = RateLimitedError(
+        "slow down", retry_after_seconds=60
+    )
+    await svc.store.enqueue_due_all()
+
+    before = time.time()
+    summary = await svc.service.run_poll()
+    after = time.time()
+
+    assert summary.errors == 1
+    with sqlite3.connect(svc.db) as conn:
+        due, failures = conn.execute(
+            "SELECT due_at, failures FROM follow_due WHERE artist_mbid_lower = ?",
+            (ARTIST_LOWER,),
+        ).fetchone()
+    assert failures == 1
+    # ladder wins over the small retry_after; no 1h floor on a pure 429
+    assert before + 900 <= due <= after + 900
+
+
+@pytest.mark.asyncio
+async def test_detection_page_bypasses_cache(svc):
+    await _follow_with_auto(svc.store, "user-a")
+    await _poll_due(svc)
+    calls = svc.mb.get_artist_release_groups_with_context.await_args_list
+    assert calls, "expected at least one detection page fetch"
+    for call in calls:
+        assert call.kwargs.get("cache_policy") is MbCachePolicy.BYPASS

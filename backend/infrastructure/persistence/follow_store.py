@@ -257,7 +257,8 @@ class FollowStore(PersistenceBase):
                     total INTEGER,
                     process TEXT NOT NULL,
                     inflight INTEGER NOT NULL DEFAULT 0,
-                    progressed_at REAL NOT NULL
+                    progressed_at REAL NOT NULL,
+                    diverge_count INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS follow_inventory_rows (
                     artist_mbid_lower TEXT NOT NULL REFERENCES follow_inventory
@@ -332,6 +333,7 @@ class FollowStore(PersistenceBase):
                 END;
             """)
             _safe_alter(conn, "ALTER TABLE follow_inventory ADD COLUMN observation TEXT")
+            _safe_alter(conn, "ALTER TABLE follow_inventory ADD COLUMN diverge_count INTEGER NOT NULL DEFAULT 0")
             conn.commit()
         finally:
             conn.close()
@@ -354,7 +356,7 @@ class FollowStore(PersistenceBase):
             """, (now, limit)).fetchall()
         return [DistinctFollowedArtist(**dict(row)) for row in await self._read(operation)]
 
-    async def fail_inventory(self, state: dict, error: str, retry_after: float = 0) -> bool:
+    async def fail_inventory(self, state: dict, error: str, retry_after: float = 0, *, min_delay: float = 0) -> bool:
         artist = state["artist_mbid_lower"]
         now = time.time()
         def operation(conn):
@@ -364,7 +366,7 @@ class FollowStore(PersistenceBase):
             row = conn.execute("SELECT failures FROM follow_due WHERE artist_mbid_lower=?", (artist,)).fetchone()
             if row is None:
                 return False
-            delay = max(min(900 * 2 ** min(row["failures"], 5), 21600), retry_after)
+            delay = max(min(900 * 2 ** min(row["failures"], 5), 21600), retry_after, min_delay)
             conn.execute("UPDATE follow_due SET failures=failures+1,due_at=?,last_serviced=? WHERE artist_mbid_lower=?",
                          (now+delay, now, artist))
             conn.execute("UPDATE artist_release_check SET last_status='error',last_error=? WHERE artist_mbid_lower=?", (error, artist))
@@ -384,7 +386,7 @@ class FollowStore(PersistenceBase):
             elif (row["process"] != process or row["inflight"]) and row["phase"] == "verifying":
                 conn.execute("DELETE FROM follow_inventory_rows WHERE artist_mbid_lower=? AND phase='verifying'", (artist,))
                 conn.execute("DELETE FROM follow_inventory_pages WHERE artist_mbid_lower=? AND phase='verifying'", (artist,))
-                conn.execute("UPDATE follow_inventory SET offset=0,total=NULL WHERE artist_mbid_lower=?", (artist,))
+                conn.execute("UPDATE follow_inventory SET offset=0,total=NULL,diverge_count=0 WHERE artist_mbid_lower=?", (artist,))
             conn.execute("UPDATE follow_inventory SET process=?,inflight=1,observation=? WHERE artist_mbid_lower=?", (process, uuid.uuid4().hex, artist))
             return dict(conn.execute("SELECT * FROM follow_inventory WHERE artist_mbid_lower=?", (artist,)).fetchone())
         return await self._write(operation)
@@ -399,19 +401,26 @@ class FollowStore(PersistenceBase):
             if current is None or any(current[key] != state[key] for key in ("source", "policy", "process", "phase", "offset", "observation")):
                 return None
             conn.execute("UPDATE follow_due SET last_serviced=? WHERE artist_mbid_lower=?", (now, artist))
+            prior_diverges = current["diverge_count"] or 0
             if total < 0 or (not rows and state["offset"] < total) or (state["total"] is not None and state["total"] != total):
-                conn.execute("DELETE FROM follow_inventory WHERE artist_mbid_lower=?", (artist,))
+                if prior_diverges + 1 >= 2:
+                    conn.execute("DELETE FROM follow_inventory WHERE artist_mbid_lower=?", (artist,))
+                    return None
+                conn.execute("UPDATE follow_inventory SET diverge_count=?,inflight=0 WHERE artist_mbid_lower=?", (prior_diverges + 1, artist))
                 return None
             conn.executemany("INSERT INTO follow_inventory_rows VALUES(?,?,?,?) ON CONFLICT(artist_mbid_lower,phase,rg) DO UPDATE SET payload=excluded.payload",
                              [(artist, phase, rg, payload) for rg,payload in payloads])
             conn.execute("INSERT OR REPLACE INTO follow_inventory_pages VALUES(?,?,?,?)", (artist,phase,state["offset"],fingerprint))
             offset = state["offset"]+len(rows)
-            conn.execute("UPDATE follow_inventory SET offset=?,total=?,progressed_at=?,inflight=0 WHERE artist_mbid_lower=?", (offset,total,now,artist))
+            conn.execute("UPDATE follow_inventory SET offset=?,total=?,progressed_at=?,inflight=0,diverge_count=0 WHERE artist_mbid_lower=?", (offset,total,now,artist))
             if offset < total:
                 return None
             count = conn.execute("SELECT COUNT(*) FROM follow_inventory_rows WHERE artist_mbid_lower=? AND phase=?", (artist,phase)).fetchone()[0]
             if count != total:
-                conn.execute("DELETE FROM follow_inventory WHERE artist_mbid_lower=?", (artist,))
+                if prior_diverges + 1 >= 2:
+                    conn.execute("DELETE FROM follow_inventory WHERE artist_mbid_lower=?", (artist,))
+                    return None
+                conn.execute("UPDATE follow_inventory SET diverge_count=? WHERE artist_mbid_lower=?", (prior_diverges + 1, artist))
                 return None
             if phase == "verifying":
                 mismatch = conn.execute("""

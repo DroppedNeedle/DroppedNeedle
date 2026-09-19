@@ -44,6 +44,7 @@ from core.exceptions import (
 from core.base_path import application_path, scope_base_path
 from infrastructure.constants import JELLYFIN_TICKS_PER_SECOND
 from infrastructure.msgspec_fastapi import MsgSpecRoute
+from infrastructure.observability.provider_counters import route_scope
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +103,12 @@ async def _handle(
             retry_after = await compat_rate_limits.public_retry_after(client_ip)
             if retry_after is not None:
                 return reject_jellyfin(retry_after)
-        result = fn(request, services, user, **extra)
-        if inspect.isawaitable(result):
-            result = await result
+        # Override the MsgSpecRoute stamp: named handlers use fn.__name__;
+        # lambda routes collapse to "<lambda>" (they issue no provider calls).
+        with route_scope(getattr(fn, "__name__", "unknown")):
+            result = fn(request, services, user, **extra)
+            if inspect.isawaitable(result):
+                result = await result
         return _to_response(result)
     except Exception as exc:  # noqa: BLE001 - boundary: never reach global handlers
         if fn is _authenticate and isinstance(exc, JellyfinError) and exc.status == 401:

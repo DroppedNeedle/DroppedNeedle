@@ -6,7 +6,15 @@ from unittest.mock import AsyncMock
 import msgspec
 import pytest
 
-from api.v1.schemas.library_management import picard_style_organizer_profile
+from api.v1.schemas.library_management import (
+    ArtistCreditSettings,
+    GenreManagementSettings,
+    LibraryManagementProfile,
+    ManagedFieldSettings,
+    MetadataManagementSettings,
+    RelationshipCreditSettings,
+    picard_style_organizer_profile,
+)
 from core.exceptions import ProviderIdentityRequiredError, ResourceNotFoundError
 from infrastructure.queue.priority_queue import RequestPriority
 from models.library_management_canonical import (
@@ -16,7 +24,10 @@ from models.library_management_canonical import (
 from repositories.musicbrainz_management_models import MbManagementRelease
 from services.native.canonical_release_metadata_service import (
     CanonicalReleaseMetadataService,
+    _BASE_INCLUDES,
+    _RELATIONSHIP_INCLUDES,
     _organization_audio_medium_count,
+    _required_includes,
 )
 
 _FIXTURE = (
@@ -295,3 +306,239 @@ async def test_snapshot_identity_and_payload_are_deterministic() -> None:
         first_snapshot.canonical_payload_json == second_snapshot.canonical_payload_json
     )
     assert first_snapshot.fetched_at != second_snapshot.fetched_at
+
+
+# Step 05-3 audit: shipped defaults are deliberate (picard preset wires 12
+# parts with aliases off; user JSON profiles and root overrides are genuine
+# user choice). Labels, ISRCs, and work values feed tags AND naming:
+# project() gates on per-field modes (never metadata.enabled) and the
+# planner renders naming scripts from desired_metadata, so modes alone imply
+# consumption. Only the legacy path-only seed shape (metadata off, empty
+# fields) skips parts: unlisted modes default to disabled, so the projector
+# ignores every candidate. Relationship credits are the one
+# metadata.enabled-gated projection (_track_relationships returns () with
+# metadata off); the rels still flow for metadata-off profiles with work
+# modes on. The table below pins profile -> includes, consumer per part.
+def _includes_profile(
+    *,
+    metadata_enabled: bool = True,
+    fields: tuple[ManagedFieldSettings, ...] = (),
+    preserve_fields: tuple[str, ...] = (),
+    relationships_enabled: bool = False,
+    relationship_types: tuple[str, ...] = (),
+    translate_names: bool = False,
+    preferred_locales: tuple[str, ...] = (),
+    genres_enabled: bool = False,
+    genre_sources: tuple[str, ...] = ("musicbrainz", "listenbrainz"),
+) -> LibraryManagementProfile:
+    return LibraryManagementProfile(
+        id="includes-audit",
+        name="includes-audit",
+        metadata=MetadataManagementSettings(
+            enabled=metadata_enabled,
+            fields=list(fields),
+            artist_credits=ArtistCreditSettings(
+                translate_names=translate_names,
+                preferred_locales=list(preferred_locales),
+            ),
+            relationships=RelationshipCreditSettings(
+                enabled=relationships_enabled,
+                types=list(relationship_types),
+            ),
+            preserve_fields=list(preserve_fields),
+        ),
+        genres=GenreManagementSettings(
+            enabled=genres_enabled,
+            sources=list(genre_sources),
+        ),
+    )
+
+
+def _everything_profile() -> LibraryManagementProfile:
+    profile = picard_style_organizer_profile()
+    profile.metadata.artist_credits.translate_names = True
+    profile.metadata.artist_credits.preferred_locales = ["en"]
+    return profile
+
+
+_INCLUDES_CASES = [
+        ("empty-profile-base-only", _includes_profile(), set(_BASE_INCLUDES)),
+        (
+            "metadata-off-with-modes-off-base-only-for-legacy-path-only-seed",
+            _includes_profile(
+                metadata_enabled=False,
+                relationships_enabled=True,
+                relationship_types=("composer", "performer"),
+                translate_names=False,
+                genres_enabled=False,
+            ),
+            set(_BASE_INCLUDES),
+        ),
+        (
+            "metadata-off-with-label-isrc-work-modes-on-requests-parts-for-naming",
+            _includes_profile(
+                metadata_enabled=False,
+                fields=(
+                    ManagedFieldSettings(field="label"),
+                    ManagedFieldSettings(field="isrc"),
+                    ManagedFieldSettings(field="work"),
+                ),
+                relationships_enabled=True,
+                relationship_types=("composer", "performer"),
+                translate_names=False,
+                genres_enabled=False,
+            ),
+            set(_BASE_INCLUDES)
+            | {"labels", "isrcs"}
+            | set(_RELATIONSHIP_INCLUDES),
+        ),
+        (
+            "metadata-off-with-work-mode-on-requests-rels-for-naming",
+            _includes_profile(
+                metadata_enabled=False,
+                fields=(ManagedFieldSettings(field="work"),),
+                relationships_enabled=True,
+                relationship_types=("composer", "performer"),
+            ),
+            set(_BASE_INCLUDES) | set(_RELATIONSHIP_INCLUDES),
+        ),
+        (
+            "metadata-off-with-label-mode-on-requests-labels-for-naming",
+            _includes_profile(
+                metadata_enabled=False,
+                fields=(ManagedFieldSettings(field="label"),),
+            ),
+            set(_BASE_INCLUDES) | {"labels"},
+        ),
+        (
+            "tag-edit-shape-with-narrow-fields-requests-only-consumed-parts",
+            _includes_profile(
+                metadata_enabled=True,
+                fields=(ManagedFieldSettings(field="label"),),
+                relationships_enabled=True,
+                relationship_types=("composer", "performer"),
+            ),
+            set(_BASE_INCLUDES) | {"labels"} | set(_RELATIONSHIP_INCLUDES),
+        ),
+        (
+            "label-field-adds-labels-for-tags-and-naming",
+            _includes_profile(fields=(ManagedFieldSettings(field="label"),)),
+            set(_BASE_INCLUDES) | {"labels"},
+        ),
+        (
+            "catalog-number-field-adds-labels-for-tags-and-naming",
+            _includes_profile(
+                fields=(ManagedFieldSettings(field="catalog_number"),)
+            ),
+            set(_BASE_INCLUDES) | {"labels"},
+        ),
+        (
+            "isrc-field-adds-isrcs-for-tags-and-naming",
+            _includes_profile(fields=(ManagedFieldSettings(field="isrc"),)),
+            set(_BASE_INCLUDES) | {"isrcs"},
+        ),
+        (
+            "disabled-mode-field-adds-nothing",
+            _includes_profile(
+                fields=(ManagedFieldSettings(field="label", mode="disabled"),)
+            ),
+            set(_BASE_INCLUDES),
+        ),
+        (
+            "preserved-field-adds-nothing",
+            _includes_profile(
+                fields=(ManagedFieldSettings(field="isrc"),),
+                preserve_fields=("isrc",),
+            ),
+            set(_BASE_INCLUDES),
+        ),
+        (
+            "translate-with-locales-adds-aliases-for-naming-and-artist-credits",
+            _includes_profile(
+                translate_names=True, preferred_locales=("en-GB",)
+            ),
+            set(_BASE_INCLUDES) | {"aliases"},
+        ),
+        (
+            "translate-without-locales-adds-nothing",
+            _includes_profile(translate_names=True),
+            set(_BASE_INCLUDES),
+        ),
+        (
+            "locales-without-translate-add-nothing",
+            _includes_profile(preferred_locales=("en-GB",)),
+            set(_BASE_INCLUDES),
+        ),
+        (
+            "relationships-add-6-rels-for-credits-and-work-fields",
+            _includes_profile(
+                relationships_enabled=True,
+                relationship_types=("composer", "performer"),
+            ),
+            set(_BASE_INCLUDES) | set(_RELATIONSHIP_INCLUDES),
+        ),
+        (
+            "relationships-without-types-add-nothing",
+            _includes_profile(relationships_enabled=True),
+            set(_BASE_INCLUDES),
+        ),
+        (
+            "musicbrainz-genres-add-genres-for-genre-projection",
+            _includes_profile(genres_enabled=True),
+            set(_BASE_INCLUDES) | {"genres"},
+        ),
+        (
+            "genres-without-musicbrainz-source-add-nothing",
+            _includes_profile(
+                genres_enabled=True, genre_sources=("listenbrainz",)
+            ),
+            set(_BASE_INCLUDES),
+        ),
+        (
+            "everything-adds-all-13",
+            _everything_profile(),
+            set(_BASE_INCLUDES)
+            | {"labels", "isrcs", "aliases", "genres"}
+            | set(_RELATIONSHIP_INCLUDES),
+        ),
+        (
+            "metadata-off-keeps-aliases-and-genres-for-naming-and-genre-projection",
+            _includes_profile(
+                metadata_enabled=False,
+                translate_names=True,
+                preferred_locales=("en",),
+                genres_enabled=True,
+            ),
+            set(_BASE_INCLUDES) | {"aliases", "genres"},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("case", "profile", "expected"),
+    _INCLUDES_CASES,
+    ids=[case[0] for case in _INCLUDES_CASES],
+)
+def test_required_includes_table(case, profile, expected) -> None:
+    includes = set(_required_includes(profile))
+    assert includes == expected
+    if case == "everything-adds-all-13":
+        assert len(includes) == 13
+
+
+@pytest.mark.asyncio
+async def test_metadata_disabled_build_still_wires_mode_consumed_parts_for_naming() -> (
+    None
+):
+    profile = picard_style_organizer_profile()
+    profile.metadata.enabled = False
+    service, _, musicbrainz = _service(_identity())
+
+    await service.build(local_album_id="album-1", profile=profile)
+
+    includes = set(musicbrainz.get_canonical_release.await_args.kwargs["includes"])
+    assert includes == (
+        set(_BASE_INCLUDES)
+        | {"labels", "isrcs", "genres"}
+        | set(_RELATIONSHIP_INCLUDES)
+    )

@@ -11,6 +11,8 @@ from fastapi.responses import JSONResponse
 from starlette.requests import Request
 from starlette.responses import Response
 
+from infrastructure.observability.provider_counters import route_scope
+
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
 
@@ -111,7 +113,13 @@ class MsgSpecRoute(APIRoute):
 
         async def custom_route_handler(request: Request) -> Response:
             request = MsgSpecJSONRequest(request.scope, request.receive)
-            return await original_route_handler(request)
+            # Post-match: scope["route"].path is the template, never the raw
+            # path. Unmatched requests stamp "unknown"; pure ContextVar work,
+            # never raises.
+            route = request.scope.get("route")
+            template = getattr(route, "path", None) or "unknown"
+            with route_scope(template):
+                return await original_route_handler(request)
 
         return custom_route_handler
 

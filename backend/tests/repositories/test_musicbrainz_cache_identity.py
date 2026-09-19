@@ -137,12 +137,17 @@ async def test_cached_release_group_miss_returns_none_without_wire(monkeypatch):
     )
 
     source_context = capture_mb_source_context()
-    raw_key = mb_release_group_key("missing", includes)
+    raw_key = mb_release_group_key(
+        "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d", includes
+    )
     repo._cache.values[namespace_mb_cache_key(raw_key, source_context)] = {}
     provider = AsyncMock()
     monkeypatch.setattr(mb_album, "mb_api_get", provider)
 
-    assert await repo.get_release_group_by_id("missing") is None
+    assert (
+        await repo.get_release_group_by_id("9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d")
+        is None
+    )
     assert provider.await_count == 0
 
 
@@ -155,13 +160,16 @@ async def test_case_variants_share_detail_wire_and_release_to_rg_batch_identity(
     started = asyncio.Event()
     release = asyncio.Event()
 
+    rg_id = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1"
+    rel_id = "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2"
+
     async def provider(path, *_args, **_kwargs):
         calls.append(path)
-        if path == "/release-group/artist-rg":
+        if path == f"/release-group/{rg_id}":
             started.set()
             await release.wait()
-            return {"id": "artist-rg", "title": "RG"}
-        if path == "/release/release-a":
+            return {"id": rg_id, "title": "RG"}
+        if path == f"/release/{rel_id}":
             return SimpleNamespace(
                 release_group={"id": "group-a"},
                 media=[],
@@ -169,15 +177,15 @@ async def test_case_variants_share_detail_wire_and_release_to_rg_batch_identity(
         raise AssertionError(f"unexpected MusicBrainz path: {path}")
 
     monkeypatch.setattr(mb_album, "mb_api_get", provider)
-    first = asyncio.create_task(repo.get_release_group_by_id("ARTIST-RG"))
+    first = asyncio.create_task(repo.get_release_group_by_id(rg_id.upper()))
     await started.wait()
-    second = asyncio.create_task(repo.get_release_group_by_id("artist-rg"))
+    second = asyncio.create_task(repo.get_release_group_by_id(rg_id))
     await asyncio.sleep(0)
     release.set()
     detail_one, detail_two = await asyncio.gather(first, second)
 
-    batch = await repo.get_release_group_ids_batch(["RELEASE-A", "release-a"])
+    batch = await repo.get_release_group_ids_batch([rel_id.upper(), rel_id])
 
-    assert detail_one == detail_two == {"id": "artist-rg", "title": "RG"}
-    assert batch == {"RELEASE-A": "group-a", "release-a": "group-a"}
-    assert calls == ["/release-group/artist-rg", "/release/release-a"]
+    assert detail_one == detail_two == {"id": rg_id, "title": "RG"}
+    assert batch == {rel_id.upper(): "group-a", rel_id: "group-a"}
+    assert calls == [f"/release-group/{rg_id}", f"/release/{rel_id}"]

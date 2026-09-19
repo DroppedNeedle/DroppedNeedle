@@ -1410,7 +1410,7 @@ class ArtistDiscoveryService:
                 # response; USER_INITIATED avoids the 2 s inactivity gate that
                 # this same page load keeps resetting (BACKGROUND_SYNC/
                 # PREFETCH_VISIBLE both route into the gated branch).
-                release_groups, _total, _context = await self._mb_repo.get_artist_release_groups_with_context(
+                release_groups = await self._mb_repo.get_release_groups_by_artist(
                     artist_mbid, limit=100, priority=RequestPriority.USER_INITIATED
                 )
             except OptionalWorkDeferred:

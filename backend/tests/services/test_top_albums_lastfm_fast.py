@@ -59,15 +59,11 @@ def _make_service() -> tuple[ArtistDiscoveryService, AsyncMock]:
             "MusicBrainz resolution should NOT be called for Last.fm top-albums"
         )
     )
-    mb_repo.get_artist_release_groups_with_context = AsyncMock(
-        return_value=(
-            [
-                {"id": RELEASE_GROUP_MBID_1, "title": "Album A"},
-                {"id": RELEASE_GROUP_MBID_2, "title": "Album B"},
-            ],
-            2,
-            None,
-        )
+    mb_repo.get_release_groups_by_artist = AsyncMock(
+        return_value=[
+            {"id": RELEASE_GROUP_MBID_1, "title": "Album A"},
+            {"id": RELEASE_GROUP_MBID_2, "title": "Album B"},
+        ]
     )
 
     library_repo = AsyncMock()
@@ -95,9 +91,10 @@ class TestLastFmTopAlbumsCanonicalization:
 
         assert len(result.albums) == 3
         mb_repo.get_release_group_id_from_release.assert_not_awaited()
-        mb_repo.get_artist_release_groups_with_context.assert_awaited_once_with(
+        mb_repo.get_release_groups_by_artist.assert_awaited_once_with(
             ARTIST_MBID, limit=100, priority=RequestPriority.USER_INITIATED
         )
+        mb_repo.get_artist_release_groups_with_context.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_uses_canonical_discography_mbid(self):
@@ -125,14 +122,10 @@ class TestLastFmTopAlbumsCanonicalization:
     @pytest.mark.asyncio
     async def test_ambiguous_title_keeps_lastfm_mbid(self):
         svc, mb_repo = _make_service()
-        mb_repo.get_artist_release_groups_with_context.return_value = (
-            [
-                {"id": RELEASE_GROUP_MBID_1, "title": "Album A"},
-                {"id": RELEASE_GROUP_MBID_2, "title": " album   a "},
-            ],
-            2,
-            None,
-        )
+        mb_repo.get_release_groups_by_artist.return_value = [
+            {"id": RELEASE_GROUP_MBID_1, "title": "Album A"},
+            {"id": RELEASE_GROUP_MBID_2, "title": " album   a "},
+        ]
 
         result = await svc.get_top_albums(ARTIST_MBID, count=10, source="lastfm")
 
@@ -180,9 +173,7 @@ class TestLastFmTopAlbumsCanonicalization:
     @pytest.mark.asyncio
     async def test_discography_failure_keeps_lastfm_result(self):
         svc, mb_repo = _make_service()
-        mb_repo.get_artist_release_groups_with_context.side_effect = RuntimeError(
-            "unavailable"
-        )
+        mb_repo.get_release_groups_by_artist.side_effect = RuntimeError("unavailable")
 
         result = await svc.get_top_albums(ARTIST_MBID, count=10, source="lastfm")
 

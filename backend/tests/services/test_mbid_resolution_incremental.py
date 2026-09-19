@@ -142,6 +142,11 @@ async def test_cancelled_head_does_not_starve_next_input(tmp_path):
 
 @pytest.mark.asyncio
 async def test_deferred_fallback_never_banks_absence_and_keeps_completed_hit(tmp_path):
+    # release_b must be lookup-shaped: the RG fallback probe pre-filters
+    # invalid ids, so only a valid MBID reaches get_release_group_by_id
+    # and raises OptionalWorkDeferred. Leading 'b' preserves the sorted
+    # input order ["a", release_b, "c"] the cursor assertions depend on.
+    release_b = "b3e9c1a4-7f2d-4b6e-9d0a-1c5f8e2a4b7d"
     progress = DiscoverySnapshotStore(tmp_path / "progress.db", threading.Lock())
     canonical, saved = _store()
     mb = MagicMock()
@@ -155,7 +160,7 @@ async def test_deferred_fallback_never_banks_absence_and_keeps_completed_hit(tmp
     cache = {}
     with pytest.raises(OptionalWorkDeferred):
         await svc.resolve_lastfm_release_group_mbids(
-            ["a", "b", "c"], user_id="u1", resolver_cache=cache, allow_passthrough=False
+            ["a", release_b, "c"], user_id="u1", resolver_cache=cache, allow_passthrough=False
         )
     assert cache == {"a": "rg-a"}
     assert saved == [{"a": "rg-a"}]
@@ -163,7 +168,7 @@ async def test_deferred_fallback_never_banks_absence_and_keeps_completed_hit(tmp
         side_effect=lambda m, **kwargs: f"rg-{m}"
     )
     assert await svc.resolve_lastfm_release_group_mbids(
-        ["a", "b", "c"], user_id="u1", max_lookups=1,
+        ["a", release_b, "c"], user_id="u1", max_lookups=1,
         resolver_cache=cache, allow_passthrough=False
     ) == {"a": "rg-a", "c": "rg-c"}
 
@@ -385,3 +390,38 @@ async def test_delayed_leader_and_follower_without_response_context_skip_stale_w
     assert leader_result == {}
     assert follower_result == {}
     assert _saved == []
+
+
+@pytest.mark.asyncio
+async def test_invalid_input_skips_release_group_fallback_probe():
+    store, _saved = _store()
+    mb = MagicMock()
+    mb.get_release_group_id_from_release = AsyncMock(return_value=None)
+    mb.get_release_group_by_id = AsyncMock(return_value={"id": "rg-should-not-wire"})
+    svc = MbidResolutionService(mb, MagicMock(), MagicMock(), mb_canonical_store=store)
+
+    result = await svc.resolve_lastfm_release_group_mbids(["not-a-mbid"])
+
+    assert mb.get_release_group_id_from_release.await_count == 1
+    mb.get_release_group_by_id.assert_not_called()
+    assert result == {"not-a-mbid": "not-a-mbid"}
+
+
+@pytest.mark.asyncio
+async def test_valid_mbid_still_probes_release_group_fallback():
+    store, _saved = _store()
+    mb = MagicMock()
+    mb.get_release_group_id_from_release = AsyncMock(return_value=None)
+    mb.get_release_group_by_id = AsyncMock(
+        return_value={"id": "6a221da8-ecdb-4bd3-a563-9a59a4303c6e"}
+    )
+    svc = MbidResolutionService(mb, MagicMock(), MagicMock(), mb_canonical_store=store)
+
+    result = await svc.resolve_lastfm_release_group_mbids(
+        ["6A221DA8-ECDB-4BD3-A563-9A59A4303C6E"]
+    )
+
+    mb.get_release_group_by_id.assert_awaited_once()
+    assert result == {
+        "6a221da8-ecdb-4bd3-a563-9a59a4303c6e": "6a221da8-ecdb-4bd3-a563-9a59a4303c6e"
+    }

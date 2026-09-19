@@ -465,6 +465,32 @@ backend-test-usenet: $(BACKEND_VENV_STAMP) ## Usenet/SABnzbd: protocol split, Ne
 		tests/services/test_newznab_release_scorer.py \
 		tests/infrastructure/test_e2e_usenet.py -v
 
+# Frontend warming-bound spec (frontend has no per-feature make convention):
+# cd frontend && pnpm exec vitest run --project server src/lib/queries/artist/ArtistQueries.spec.ts
+.PHONY: backend-test-mb-efficiency
+backend-test-mb-efficiency: $(BACKEND_VENV_STAMP) ## BrainzMashEfficiency: pagination, follow poll, MB transport, caches, validators, telemetry
+	$(PYTEST) tests/services/test_artist_release_pagination.py \
+		tests/infrastructure/test_follow_store.py \
+		tests/services/test_new_release_service.py \
+		tests/infrastructure/test_wanted_watcher_task.py \
+		tests/infrastructure/test_follow_poll_task.py \
+		tests/services/test_artist_discovery_service.py \
+		tests/services/native/test_canonical_release_metadata_service.py \
+		tests/repositories/test_musicbrainz_transport_resilience.py \
+		tests/infrastructure/test_mb_canonical_store.py \
+		tests/repositories/test_musicbrainz_artist_rgs_cache.py \
+		tests/repositories/test_musicbrainz_album_release_group.py \
+		tests/repositories/test_musicbrainz_response_cache.py \
+		tests/repositories/test_musicbrainz_contribution_repository.py \
+		tests/infrastructure/test_validators.py \
+		tests/services/test_spotify_import_service.py \
+		tests/services/test_spotify_import_mbid_cache.py \
+		tests/infrastructure/test_provider_route_attribution.py \
+		tests/test_cache_key_contracts.py \
+		tests/test_error_leakage.py \
+		tests/services/test_target_library_repository_artist_paging.py \
+		tests/services/test_mbid_resolution_incremental.py -v
+
 backend-test-e2e-download: $(BACKEND_VENV_STAMP) ## Phase 7: blocking E2E gate (search -> import -> library_files)
 	$(PYTEST) tests/infrastructure/test_e2e_download.py -v
 

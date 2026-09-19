@@ -656,3 +656,226 @@ class TestWriteThroughPersistence:
             [], source_context=_LEGACY_SOURCE_CONTEXT
         )
         assert len(result) == initial_count
+
+
+class TestRedirectKinds:
+    """06-T4 (album half): the generic canonical_redirect table carries
+    release/release-group/artist mappings with source-gated reads and the
+    official-evidence overwrite guard."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["release", "release-group", "artist"])
+    async def test_redirect_kind_round_trip(self, store, kind):
+        before = capture_mb_source_context()
+        ctx = MbSourceContext(
+            "https://mirror.example/ws/2",
+            before.generation + 1,
+            source_mode="mirror",
+            source_id=f"redirect-round-trip-{kind}",
+        )
+        set_mb_api_base(
+            ctx.source_url,
+            source_mode=ctx.source_mode,
+            source_id=ctx.source_id,
+            generation=ctx.generation,
+        )
+        try:
+            await store.save_canonical_redirect(
+                [
+                    {
+                        "entity_kind": kind,
+                        "from_mbid": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                        "to_mbid": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                        "source": "mb-redirect-follow",
+                    }
+                ],
+                source_context=ctx,
+            )
+        finally:
+            set_mb_api_base(
+                before.source_url,
+                source_mode=before.source_mode,
+                source_id=before.source_id,
+                generation=before.generation,
+            )
+
+        result = await store.get_canonical_redirect(
+            kind,
+            ["AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"],
+            source_context=ctx,
+        )
+        assert result == {
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa": (
+                "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+            )
+        }
+
+        # Kinds are isolated: the same from-MBID under another kind misses.
+        other_kind = "artist" if kind != "artist" else "release"
+        assert (
+            await store.get_canonical_redirect(
+                other_kind,
+                ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+                source_context=ctx,
+            )
+            == {}
+        )
+
+    @pytest.mark.asyncio
+    async def test_source_gating_isolates_generations(self, store):
+        before = capture_mb_source_context()
+        saved = MbSourceContext(
+            "https://mirror.example/ws/2",
+            before.generation + 1,
+            source_mode="mirror",
+            source_id="gen-gate",
+        )
+        set_mb_api_base(
+            saved.source_url,
+            source_mode=saved.source_mode,
+            source_id=saved.source_id,
+            generation=saved.generation,
+        )
+        try:
+            await store.save_canonical_redirect(
+                [
+                    {
+                        "entity_kind": "release",
+                        "from_mbid": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                        "to_mbid": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                        "source": "mb-redirect-follow",
+                    }
+                ],
+                source_context=saved,
+            )
+        finally:
+            set_mb_api_base(
+                before.source_url,
+                source_mode=before.source_mode,
+                source_id=before.source_id,
+                generation=before.generation,
+            )
+
+        foreign_generation = MbSourceContext(
+            "https://mirror.example/ws/2",
+            saved.generation + 1,
+            source_mode="mirror",
+            source_id="gen-gate",
+        )
+        assert (
+            await store.get_canonical_redirect(
+                "release",
+                ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+                source_context=foreign_generation,
+            )
+            == {}
+        )
+        foreign_source = MbSourceContext(
+            "https://mirror.example/ws/2",
+            saved.generation,
+            source_mode="mirror",
+            source_id="other-source",
+        )
+        assert (
+            await store.get_canonical_redirect(
+                "release",
+                ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+                source_context=foreign_source,
+            )
+            == {}
+        )
+        assert await store.get_canonical_redirect(
+            "release",
+            ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+            source_context=saved,
+        ) == {
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa": (
+                "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+            )
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["release", "release-group", "artist"])
+    async def test_official_evidence_survives_non_official_overwrite(
+        self, store, kind
+    ):
+        """A current non-official write reaches SQL but the overwrite guard
+        keeps the official row (provenance included) intact."""
+        before = capture_mb_source_context()
+        official = MbSourceContext(
+            "https://musicbrainz.org/ws/2",
+            before.generation + 1,
+            source_mode="official",
+            source_id="official-guard",
+        )
+        mirror = MbSourceContext(
+            "https://mirror.example/ws/2",
+            official.generation + 1,
+            source_mode="mirror",
+            source_id="mirror-guard",
+        )
+        set_mb_api_base(
+            official.source_url,
+            source_mode=official.source_mode,
+            source_id=official.source_id,
+            generation=official.generation,
+        )
+        try:
+            await store.save_canonical_redirect(
+                [
+                    {
+                        "entity_kind": kind,
+                        "from_mbid": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                        "to_mbid": "c0c0c0c0-c0c0-4c0c-8c0c-c0c0c0c0c0c0",
+                    }
+                ],
+                source_context=official,
+            )
+            set_mb_api_base(
+                mirror.source_url,
+                source_mode=mirror.source_mode,
+                source_id=mirror.source_id,
+                generation=mirror.generation,
+            )
+            await store.save_canonical_redirect(
+                [
+                    {
+                        "entity_kind": kind,
+                        "from_mbid": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                        "to_mbid": "d0d0d0d0-d0d0-4d0d-8d0d-d0d0d0d0d0d0",
+                    }
+                ],
+                source_context=mirror,
+            )
+        finally:
+            set_mb_api_base(
+                before.source_url,
+                source_mode=before.source_mode,
+                source_id=before.source_id,
+                generation=before.generation,
+            )
+
+        with sqlite3.connect(str(store.db_path)) as conn:
+            row = conn.execute(
+                "SELECT to_mbid_lower, source_mode, source_id, "
+                "source_generation, official_evidence "
+                "FROM canonical_redirect WHERE entity_kind = ? "
+                "AND from_mbid_lower = ?",
+                (kind, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            ).fetchone()
+        assert row == (
+            "c0c0c0c0-c0c0-4c0c-8c0c-c0c0c0c0c0c0",
+            "official",
+            "official-guard",
+            official.generation,
+            1,
+        )
+        assert await store.get_canonical_redirect(
+            kind,
+            ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+            source_context=official,
+        ) == {
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa": (
+                "c0c0c0c0-c0c0-4c0c-8c0c-c0c0c0c0c0c0"
+            )
+        }

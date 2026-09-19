@@ -13,6 +13,7 @@ from core.exceptions import ConfigurationError
 from infrastructure.persistence import LibraryDB, MBIDStore
 from infrastructure.observability.optional_work import OptionalWorkDeferred, check_optional_dispatch
 from infrastructure.queue.priority_queue import RequestPriority
+from infrastructure.validators import is_valid_mbid
 from repositories.musicbrainz_base import (
     capture_mb_source_context,
     clear_mb_response_context,
@@ -249,16 +250,21 @@ class MbidResolutionService:
                 rg_mbid = self.normalize_mbid(result)
                 if not rg_mbid:
                     clear_mb_response_context()
-                    try:
-                        checked = await self._mb_repo.get_release_group_by_id(
-                            mbid, includes=["artist-credits"],
-                            priority=RequestPriority.BACKGROUND_SYNC,
-                            source_context=operation_context,
-                        )
-                    except (OptionalWorkDeferred, ConfigurationError):
-                        raise
-                    except Exception:  # noqa: BLE001
-                        checked = None
+                    # The release probe above accepts arbitrary Last.fm input,
+                    # but this RG fallback probe needs a lookup-shaped id:
+                    # invalid strings skip the wire.
+                    checked = None
+                    if is_valid_mbid(mbid):
+                        try:
+                            checked = await self._mb_repo.get_release_group_by_id(
+                                mbid, includes=["artist-credits"],
+                                priority=RequestPriority.BACKGROUND_SYNC,
+                                source_context=operation_context,
+                            )
+                        except (OptionalWorkDeferred, ConfigurationError):
+                            raise
+                        except Exception:  # noqa: BLE001
+                            checked = None
                     response_context = get_mb_response_context() or operation_context
                     if response_context != operation_context or not is_mb_source_current(operation_context):
                         return abort_for_source_change()

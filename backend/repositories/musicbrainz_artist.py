@@ -13,6 +13,7 @@ from infrastructure.cache.cache_keys import (
     mb_artist_search_key,
     mb_artist_detail_key,
     mb_artist_rgs_browse_key,
+    mb_artist_rgs_page_key,
     MB_ARTISTS_BY_TAG_PREFIX,
     MB_ARTIST_RELS_PREFIX,
 )
@@ -32,21 +33,33 @@ from repositories.musicbrainz_base import (
     dedupe_by_id,
     get_mb_response_context,
     normalize_mb_id,
+    resolve_redirect_mbid,
     get_score,
     build_musicbrainz_tag_query,
     is_mb_source_current,
 )
 from infrastructure.degradation import try_get_degradation_context
 from infrastructure.integration_result import IntegrationResult
+from infrastructure.validators import is_valid_mbid
 from repositories.musicbrainz_response_cache import merge_mb_metadata, response_metadata
 
 logger = logging.getLogger(__name__)
 
 
-def _record_mb_degradation(msg: str) -> None:
+def _record_mb_degradation(msg: str, *, deterministic: bool = False) -> None:
+    """Bank a MusicBrainz degradation; deterministic=True marks caller-input
+    failures (invalid MBIDs) for UNMAPPABLE_PROVIDER_PAYLOAD classification
+    (F-IDENT-02). Failure/exception records keep the transient default."""
     ctx = try_get_degradation_context()
     if ctx:
-        ctx.record(IntegrationResult.error(source="musicbrainz", msg=msg))
+        if deterministic:
+            ctx.record(
+                IntegrationResult.deterministic_error(
+                    source="musicbrainz", msg=msg
+                )
+            )
+        else:
+            ctx.record(IntegrationResult.error(source="musicbrainz", msg=msg))
 
 
 class _ArtistSearchPayload(msgspec.Struct):
@@ -225,6 +238,15 @@ class MusicBrainzArtistMixin:
         source_context = capture_mb_source_context()
         cache_token = capture_mb_cache_token(self._cache)
         mbid = normalize_mb_id(mbid)
+        if not is_valid_mbid(mbid):
+            _record_mb_degradation("artist invalid mbid", deterministic=True)
+            return None
+        # Pre-resolution orphans old-MBID cache entries until TTL (bounded,
+        # acceptable); everything below keys off the rewritten MBID.
+        mbid = await resolve_redirect_mbid(
+            "artist", mbid, source_context, self._cache,
+            getattr(self, "_mb_canonical_store", None),
+        )
         cache_key = mb_artist_detail_key(mbid, profile="core")
         cached = await mb_cache_get_if_current(self._cache, cache_key, source_context)
         if cached is not None:
@@ -292,7 +314,7 @@ class MusicBrainzArtistMixin:
             self._cache, rels_key, source_context
         )
         if cached_rels is not None:
-            return cached_rels
+            return cached_rels or None
 
         dedupe_key = f"{MB_ARTIST_RELS_PREFIX}{mbid}"
         return await mb_deduplicator.dedupe(
@@ -308,6 +330,15 @@ class MusicBrainzArtistMixin:
         source_context: MbSourceContext,
         cache_token: tuple[object, int],
     ) -> dict | None:
+        mbid = normalize_mb_id(mbid)
+        if not is_valid_mbid(mbid):
+            _record_mb_degradation("artist invalid mbid", deterministic=True)
+            return None
+        # Keyed by the caller's pre-resolve MBID; the wire call uses the rewritten MBID.
+        mbid = await resolve_redirect_mbid(
+            "artist", mbid, source_context, self._cache,
+            getattr(self, "_mb_canonical_store", None),
+        )
         try:
             result = await mb_api_get(
                 f"/artist/{mbid}",
@@ -318,6 +349,16 @@ class MusicBrainzArtistMixin:
             )
             response_context = get_mb_response_context() or source_context
             if not result:
+                # Definitive miss: mb_api_get returns {} only on 404 (503/5xx
+                # raise into the except below). Negative-cache briefly so a
+                # merged/deleted artist mbid isn't re-fetched every tick;
+                # short TTL bounds staleness and self-heals. The transient
+                # except path stays uncached on purpose.
+                await mb_cache_set_if_current(self._cache,
+                cache_key,
+                {},
+                ttl_seconds=600,
+                context=response_context, cache_token=cache_token)
                 return None
             await mb_cache_set_if_current(self._cache,
             cache_key,
@@ -344,6 +385,15 @@ class MusicBrainzArtistMixin:
         cache_token: tuple[object, int],
     ) -> dict[str, Any] | None:
         clear_mb_response_context()
+        mbid = normalize_mb_id(mbid)
+        if not is_valid_mbid(mbid):
+            _record_mb_degradation("artist invalid mbid", deterministic=True)
+            return None
+        # Keyed by the caller's pre-resolve MBID; the wire calls use the rewritten MBID.
+        mbid = await resolve_redirect_mbid(
+            "artist", mbid, source_context, self._cache,
+            getattr(self, "_mb_canonical_store", None),
+        )
         limit = max(int(release_group_limit), 1)
         artist_includes = "tags+aliases+url-rels"
         if not include_releases:
@@ -362,18 +412,46 @@ class MusicBrainzArtistMixin:
             return result, get_mb_response_context() or source_context, get_mb_response_metadata()
 
         async def fetch_browse():
-            (
-                release_groups,
-                total_count,
-                response_context,
-            ) = await self._get_artist_release_groups_or_raise_with_context(
-                mbid,
-                offset=0,
-                limit=limit,
-                priority=priority,
-                source_context=source_context,
-                cache_policy=MbCachePolicy.DISPLAY_FRESH,
-            )
+            try:
+                (
+                    release_groups,
+                    total_count,
+                    response_context,
+                ) = await self._get_artist_release_groups_or_raise_with_context(
+                    mbid,
+                    offset=0,
+                    limit=limit,
+                    priority=priority,
+                    source_context=source_context,
+                    cache_policy=MbCachePolicy.DISPLAY_FRESH,
+                )
+            except ExternalServiceError:
+                # The Step 04-1 page cache-aside raises this both for a
+                # mid-flight source change (QW1 shape) and for genuine
+                # provider failure; the merge below drops mixed-generation
+                # browse data instead of failing, so disambiguate via the
+                # task-local browse response context (this leg's wire call
+                # only): stale or mismatched means the source changed ->
+                # feed the drop-on-mismatch path an empty payload; missing
+                # or current means genuine failure -> re-raise. 5xx leaves
+                # the context equal to the caller source (or unset under
+                # mocks), 429s re-raise via the check; transport/breaker
+                # bypass this handler.
+                browse_response_context = get_mb_response_context()
+                if browse_response_context is not None and (
+                    browse_response_context != source_context
+                    or not is_mb_source_current(browse_response_context)
+                ):
+                    dropped = _ArtistReleaseGroupsPayload(
+                        release_groups=[],
+                        release_group_count=0,
+                    )
+                    return (
+                        dropped,
+                        browse_response_context,
+                        get_mb_response_metadata(),
+                    )
+                raise
             result = _ArtistReleaseGroupsPayload(
                 release_groups=release_groups,
                 release_group_count=total_count,
@@ -528,11 +606,103 @@ class MusicBrainzArtistMixin:
         """Fetch only the requested page; complete inventory callers bypass L2."""
         artist_mbid = normalize_mb_id(artist_mbid)
         source_context = source_context or capture_mb_source_context()
-        fetch_limit = min(100, max(1, limit))
-        release_groups, total_count, response_context = await self._fetch_artist_release_groups_page(
-            artist_mbid, offset, fetch_limit, priority,
-            source_context=source_context, cache_policy=cache_policy,
+        if not is_valid_mbid(artist_mbid):
+            _record_mb_degradation("artist invalid mbid", deterministic=True)
+            return [], 0, source_context
+        # Pre-resolution orphans old-MBID cache entries until TTL (bounded,
+        # acceptable); everything below keys off the rewritten MBID.
+        artist_mbid = await resolve_redirect_mbid(
+            "artist", artist_mbid, source_context, self._cache,
+            getattr(self, "_mb_canonical_store", None),
         )
+        fetch_limit = min(100, max(1, limit))
+        if cache_policy is MbCachePolicy.BYPASS:
+            # BYPASS callers (e.g. the follow poller) never read or publish
+            # cached pages: detection freshness wins over reuse.
+            release_groups, total_count, response_context = await self._fetch_artist_release_groups_page(
+                artist_mbid, offset, fetch_limit, priority,
+                source_context=source_context, cache_policy=cache_policy,
+            )
+            if preserve_fetch_width:
+                return release_groups, total_count, response_context
+            return release_groups[:limit], total_count, response_context
+        cache_token = capture_mb_cache_token(self._cache)
+        cache_key = mb_artist_rgs_page_key(artist_mbid, fetch_limit, offset)
+        cached = await mb_cache_get_if_current(self._cache, cache_key, source_context)
+        if cached is not None:
+            # Stored value is the module-private (items, total) tuple; the
+            # context is always the caller's, never None (_fetch_artist_by_id
+            # drops browse data on a None/mismatched context).
+            items, total = cached
+            if preserve_fetch_width:
+                return items, total, source_context
+            return items[:limit], total, source_context
+        dedupe_key = (
+            f"{cache_key}:priority={int(priority)}:g{source_context.generation}"
+        )
+        return await mb_deduplicator.dedupe(
+            dedupe_key,
+            lambda: self._fetch_artist_rgs_page_cached(
+                artist_mbid, offset, fetch_limit, limit, priority,
+                cache_key, source_context, cache_policy,
+                cache_token=cache_token,
+                preserve_fetch_width=preserve_fetch_width,
+            ),
+        )
+
+    async def _fetch_artist_rgs_page_cached(
+        self,
+        artist_mbid: str,
+        offset: int,
+        fetch_limit: int,
+        limit: int,
+        priority: RequestPriority,
+        cache_key: str,
+        source_context: MbSourceContext,
+        cache_policy: MbCachePolicy,
+        *,
+        cache_token: tuple[object, int],
+        preserve_fetch_width: bool = False,
+    ) -> tuple[list[dict[str, Any]], int, MbSourceContext | None]:
+        try:
+            (
+                release_groups,
+                total_count,
+                response_context,
+            ) = await self._fetch_artist_release_groups_page(
+                artist_mbid, offset, fetch_limit, priority,
+                source_context=source_context, cache_policy=cache_policy,
+            )
+            if (
+                not is_mb_source_current(source_context)
+                or response_context is not None
+                and response_context != source_context
+            ):
+                raise ExternalServiceError(
+                    "MusicBrainz source changed during release-group browse"
+                )
+        except Exception as e:  # noqa: BLE001 - telemetry then re-raise (page cache)
+            # Failures are never cached; propagation keeps them distinct from
+            # "genuinely zero RGs" (QW1). Two-level recording is intentional:
+            # page-leg signal under the QW1 aggregate. Stale-source raises
+            # are control flow, not provider failure: they propagate silently
+            # while genuine failures still record.
+            if is_mb_source_current(source_context):
+                logger.error("MusicBrainz artist release-group page fetch failed")
+                _record_mb_degradation("release groups page failed")
+            raise
+        publication_context = response_context or source_context
+        published = await mb_cache_set_if_current(self._cache,
+        cache_key,
+        (release_groups, total_count),
+        ttl_seconds=600 if (total_count == 0 and not release_groups) else 3600,
+        context=publication_context, cache_token=cache_token)
+        if not published:
+            logger.debug(
+                "Release-group page cache publication fenced for %s; "
+                "returning the original caller result",
+                artist_mbid,
+            )
         if preserve_fetch_width:
             return release_groups, total_count, response_context
         return release_groups[:limit], total_count, response_context
@@ -546,6 +716,7 @@ class MusicBrainzArtistMixin:
         *,
         preserve_fetch_width: bool = False,
         source_context: MbSourceContext | None = None,
+        cache_policy: MbCachePolicy = MbCachePolicy.BYPASS,
     ) -> tuple[list[dict[str, Any]], int, MbSourceContext | None]:
         return await self._get_artist_release_groups_or_raise_with_context(
             artist_mbid,
@@ -554,6 +725,7 @@ class MusicBrainzArtistMixin:
             priority,
             preserve_fetch_width=preserve_fetch_width,
             source_context=source_context,
+            cache_policy=cache_policy,
         )
 
     async def get_artist_release_groups(
@@ -640,7 +812,16 @@ class MusicBrainzArtistMixin:
         musicbrainz_album._fetch_release_group_by_id).
         """
         artist_mbid = normalize_mb_id(artist_mbid)
+        if not is_valid_mbid(artist_mbid):
+            _record_mb_degradation("artist invalid mbid", deterministic=True)
+            return []
         source_context = capture_mb_source_context()
+        # Pre-resolution orphans old-MBID cache entries until TTL (bounded,
+        # acceptable); everything below keys off the rewritten MBID.
+        artist_mbid = await resolve_redirect_mbid(
+            "artist", artist_mbid, source_context, self._cache,
+            getattr(self, "_mb_canonical_store", None),
+        )
         cache_token = capture_mb_cache_token(self._cache)
         cache_key = mb_artist_rgs_browse_key(artist_mbid, limit)
 
@@ -689,6 +870,7 @@ class MusicBrainzArtistMixin:
         except Exception as e:  # noqa: BLE001 - telemetry then re-raise (QW1)
             # Same message site as the old swallowing variant; propagation is
             # what keeps failures distinguishable from "genuinely zero RGs".
+            # Two-level recording is intentional: aggregate signal over the page-leg record.
             logger.error("MusicBrainz artist release-group fetch failed")
             _record_mb_degradation("release groups failed")
             raise

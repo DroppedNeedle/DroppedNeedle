@@ -11,11 +11,13 @@ import httpx
 
 from rapidfuzz.fuzz import token_set_ratio
 
+from infrastructure.cache.cache_keys import mb_isrc_key
+from infrastructure.cache.memory_cache import CacheInterface
 from infrastructure.degradation import try_get_degradation_context
 from infrastructure.http.client import get_spotify_cover_http_client
 from infrastructure.integration_result import IntegrationResult
 from infrastructure.queue.priority_queue import RequestPriority
-from infrastructure.validators import validate_spotify_cover_url
+from infrastructure.validators import is_valid_isrc, validate_spotify_cover_url
 from repositories.musicbrainz_album import (
     _artist_name_matches,
     _artist_preference_active,
@@ -28,6 +30,9 @@ from repositories.musicbrainz_base import (
     get_mb_response_context,
     is_mb_source_current,
     mb_api_get,
+    mb_cache_get_if_current,
+    mb_cache_set_if_current,
+    mb_deduplicator,
 )
 from services.native.musicbrainz_matcher import MusicBrainzMatcher
 from repositories.async_playlist_repository import AsyncPlaylistRepository
@@ -210,10 +215,12 @@ class SpotifyImportService:
         playlist_repo: PlaylistRepository | None,
         mb_repo: MusicBrainzRepository,
         playlist_service: PlaylistService,
+        cache: CacheInterface,
         async_playlist_repo: Any | None = None,
         cover_fetcher: CoverFetcher | None = None,
     ) -> None:
         self._client_factory = client_factory
+        self._cache = cache
         if async_playlist_repo is None and playlist_repo is None:
             raise ValueError("A playlist repository is required.")
         self._async_repo = (
@@ -420,12 +427,27 @@ class SpotifyImportService:
     ) -> str | None:
         clear_mb_response_context()
         operation_context = capture_mb_source_context()
-        if isrc:
+        # Gate before the durable read: a malformed ISRC is caller-data shape,
+        # not a provider failure, so it skips to the title-search fallback
+        # like a missing ISRC (no degradation recorded). MusicBrainz wants
+        # uppercase; Spotify may hand us lowercase.
+        normalized_isrc = (isrc or "").strip().upper()
+        isrc_usable = is_valid_isrc(normalized_isrc)
+        cache_key = mb_isrc_key(normalized_isrc) if isrc_usable else ""
+        cache_token = self._cache.capture_clear_token()
+        if isrc_usable and (
+            await mb_cache_get_if_current(self._cache, cache_key, operation_context)
+            == []
+        ):
+            # [] means a recent 404/empty wire response proved this ISRC
+            # absent: skip the durable read and the wire, straight to fallback.
+            isrc_usable = False
+        if isrc_usable:
             canonical_store = getattr(self._mb_repo, "mb_canonical_store", None)
             if canonical_store is not None:
                 try:
                     existing = await canonical_store.get_recordings_by_isrc(
-                        isrc,
+                        normalized_isrc,
                         source_context=operation_context,
                     )
                     if not is_mb_source_current(operation_context):
@@ -454,10 +476,14 @@ class SpotifyImportService:
 
             operation_context = capture_mb_source_context()
             try:
-                data = await mb_api_get(
-                    f"/isrc/{isrc}",
-                    priority=RequestPriority.BACKGROUND_SYNC,
-                    source_context=operation_context,
+                dedupe_key = f"{cache_key}:g{operation_context.generation}"
+                data = await mb_deduplicator.dedupe(
+                    dedupe_key,
+                    lambda: mb_api_get(
+                        f"/isrc/{normalized_isrc}",
+                        priority=RequestPriority.BACKGROUND_SYNC,
+                        source_context=operation_context,
+                    ),
                 )
                 response_context = get_mb_response_context() or operation_context
                 if response_context != operation_context or not is_mb_source_current(
@@ -467,12 +493,27 @@ class SpotifyImportService:
                 recordings: list[dict] = data.get("recordings") or []
                 if isinstance(recordings, dict):
                     recordings = [recordings]
+                if not recordings:
+                    # 404/empty: proven absence gets a 600 s memory-only negative
+                    # entry so repeat imports skip the wire; never banked durably.
+                    await mb_cache_set_if_current(
+                        self._cache,
+                        cache_key,
+                        [],
+                        ttl_seconds=600,
+                        context=response_context,
+                        cache_token=cache_token,
+                    )
                 # ST2 P1: bank ISRC -> recording ids durably (write-through)
                 # only for the source generation that answered.
                 if canonical_store is not None and operation_context is not None:
                     try:
                         await canonical_store.save_isrc_recordings(
-                            [(isrc, rec["id"]) for rec in recordings if rec.get("id")],
+                            [
+                                (normalized_isrc, rec["id"])
+                                for rec in recordings
+                                if rec.get("id")
+                            ],
                             source_context=operation_context,
                         )
                     except Exception:  # noqa: BLE001
@@ -510,6 +551,7 @@ class SpotifyImportService:
                     album_name,
                     limit=3,
                     include_all_types=False,
+                    priority=RequestPriority.BACKGROUND_SYNC,
                 )
                 if results:
                     return _select_import_search_result(

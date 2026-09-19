@@ -12,6 +12,7 @@ from api.v1.schemas.discovery import (
     TopSong,
     TopSongsResponse,
 )
+from infrastructure.queue.priority_queue import RequestPriority
 from repositories.lastfm_models import LastFmAlbum, LastFmSimilarArtist, LastFmTrack
 from repositories.listenbrainz_models import (
     ListenBrainzRecording,
@@ -577,6 +578,36 @@ class TestGetTopAlbumsSource:
         result = await svc.get_top_albums("mbid-123", count=10, source="lastfm")
 
         assert result.albums[0].release_group_mbid == "already-rg-mbid"
+
+    @pytest.mark.asyncio
+    async def test_lastfm_top_albums_qw1_browse_cached_within_ttl(self):
+        # 03-step-5: the Last.fm canonicalization leg uses the cached QW1
+        # browse; a second call within the discovery TTL serves the whole
+        # response from cache (zero repo calls).
+        svc, _, lastfm_repo, _ = _make_service()
+        svc._cache = _DictCache()
+        lastfm_repo.get_artist_top_albums.return_value = [
+            LastFmAlbum(
+                name="Album A", artist_name="Artist", mbid=None, playcount=100
+            ),
+        ]
+        svc._library_repo.get_library_mbids = AsyncMock(return_value=set())
+        svc._library_repo.get_requested_mbids = AsyncMock(return_value=set())
+        svc._mb_repo.get_release_groups_by_artist = AsyncMock(
+            return_value=[{"id": "rg-a", "title": "Album A"}]
+        )
+
+        first = await svc.get_top_albums("mbid-123", count=10, source="lastfm")
+        second = await svc.get_top_albums("mbid-123", count=10, source="lastfm")
+
+        # title canonicalization still resolves through the QW1 list shape
+        assert first.albums[0].release_group_mbid == "rg-a"
+        assert second.albums[0].release_group_mbid == "rg-a"
+        svc._mb_repo.get_release_groups_by_artist.assert_awaited_once_with(
+            "mbid-123", limit=100, priority=RequestPriority.USER_INITIATED
+        )
+        svc._mb_repo.get_artist_release_groups_with_context.assert_not_called()
+        lastfm_repo.get_artist_top_albums.assert_awaited_once()
 
 
 class TestGetTopSongsLastFmNoAlbumResolution:

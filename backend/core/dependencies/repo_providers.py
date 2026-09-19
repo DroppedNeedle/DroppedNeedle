@@ -54,10 +54,14 @@ def get_library_repository() -> "LibraryRepositoryProtocol":
 @singleton
 def get_musicbrainz_repository() -> "MusicBrainzRepository":
     from repositories.musicbrainz_repository import MusicBrainzRepository
-    from repositories.musicbrainz_base import set_mb_response_store
+    from repositories.musicbrainz_base import (
+        set_mb_canonical_store,
+        set_mb_response_store,
+    )
     from .cache_providers import get_mb_response_store
 
     set_mb_response_store(get_mb_response_store())
+    set_mb_canonical_store(get_mb_canonical_store())
 
     cache = get_cache()
     preferences_service = get_preferences_service()

@@ -197,7 +197,8 @@ async def test_durable_publication_commits_before_source_switch(
     monkeypatch.setattr(mb_album, "mb_api_get", provider)
     lookup = asyncio.create_task(
         repo._fetch_release_group_id_from_release(
-            "rel-fence", "mb:release_to_rg:rel-fence",
+            "44444444-4444-4444-8444-444444444444",
+            "mb:release_to_rg:44444444-4444-4444-8444-444444444444",
             cache_token=mb_base.capture_mb_cache_token(cache),
         )
     )
@@ -214,8 +215,15 @@ async def test_durable_publication_commits_before_source_switch(
 
     assert events == [("store", old_source)]
     assert source_events == [("source", new_source)]
-    assert store.saved == [({"rel-fence": "rg-old"}, "https://old.example")]
-    assert await cache.get("mb:release_to_rg:rel-fence") is None
+    assert store.saved == [
+        ({"44444444-4444-4444-8444-444444444444": "rg-old"}, "https://old.example")
+    ]
+    assert (
+        await cache.get(
+            "mb:release_to_rg:44444444-4444-4444-8444-444444444444"
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio

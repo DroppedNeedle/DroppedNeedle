@@ -60,7 +60,7 @@ from repositories.musicbrainz_base import (
     mb_cache_set_if_current, mb_cache_get_if_current,
 )
 from repositories.musicbrainz_response_cache import (
-    MbResponseMetadata, capture_mb_projection, restore_mb_projection,
+    MbCachePolicy, MbResponseMetadata, capture_mb_projection, restore_mb_projection,
     get_mb_response_metadata, response_metadata, merge_mb_metadata, bound_mb_metadata,
 )
 from services.audiodb_image_service import AudioDBImageService
@@ -95,12 +95,16 @@ def _clear_release_group_warm_seed(
     task: "asyncio.Task[None]",
     seeds: dict[str, ReleaseGroupWarmSeed],
     cache_key: str,
-    source_context: MbSourceContext,
+    original: ReleaseGroupWarmSeed,
 ) -> None:
-    """Drop a partial seed after its generation-specific walker settles."""
+    """Drop an untouched seed after its generation-specific walker settles.
+
+    Identity-compared against the seed captured at spawn: a walker that
+    extended its seed (cap-exit partial / failure cooldown) replaced the
+    object, and that extension survives task settlement.
+    """
     del task
-    state = seeds.get(cache_key)
-    if state is not None and state.context == source_context:
+    if seeds.get(cache_key) is original:
         seeds.pop(cache_key, None)
 
 
@@ -127,6 +131,11 @@ def _log_deferred_disk_write_failure(task: "asyncio.Task[None]") -> None:
 
 # (1000 release groups) so pathological artists don't hog the limiter.
 _MAX_RG_PAGES = 10
+# Cap-exit partial seeds stay servable (warming) for 10 minutes: at most one
+# walk per 600 s per instance for catalogs exceeding _MAX_RG_PAGES.
+_RG_PARTIAL_TTL_SECONDS = 600
+# Failed/cancelled walks suppress respawn for 60 s (cooldown, not data).
+_RG_WARM_COOLDOWN_SECONDS = 60
 # Keep every retained first-page seed bounded to the repository's canonical
 # browse width; the full catalog lives only in the completion cache.
 _MAX_RG_SEED_ITEMS = 100
@@ -1181,6 +1190,9 @@ class ArtistService:
             limit,
             priority=priority,
             preserve_fetch_width=preserve_fetch_width,
+            # Page reads go through the L1 page entry; detection freshness
+            # is the follow poller's job (BYPASS there), not the page's.
+            cache_policy=MbCachePolicy.DISPLAY_FRESH,
         )
 
     async def _fetch_all_release_groups(
@@ -1337,17 +1349,65 @@ class ArtistService:
             return
         cache_key = mb_artist_release_groups_key(normalize_mb_id(artist_id))
         state_key = _release_group_warm_state_key(cache_key, source_context)
-        self._release_group_warm_seeds[state_key] = ReleaseGroupWarmSeed(
+        original_seed = ReleaseGroupWarmSeed(
             source_context, list(bounded_seed), total, get_mb_response_metadata(),
             self._cache.capture_clear_token(),
         )
+        self._release_group_warm_seeds[state_key] = original_seed
         task.add_done_callback(
             lambda done: _clear_release_group_warm_seed(
                 done,
                 self._release_group_warm_seeds,
                 state_key,
-                source_context,
+                original_seed,
             )
+        )
+
+    def _extend_release_group_warm_seed(
+        self,
+        artist_id: str,
+        collected: dict[str, dict[str, Any]],
+        total: int,
+        metadata: MbResponseMetadata | None,
+        cache_token: tuple[object, int],
+        source_context: MbSourceContext,
+        ttl_seconds: int,
+    ) -> None:
+        """Replace the warm seed with collected items + a fresh TTL (D1).
+
+        Seeds-only: the shared complete-catalog key is never written here
+        (any shared-key hit reads as complete). Skipped unless the walker's
+        source is still current, so a stale walk can neither pin data nor
+        block the new source's walker.
+        """
+        if not is_mb_source_current(source_context):
+            return
+        now = time.time()
+        fresh_until = now + ttl_seconds
+        fresh_metadata = MbResponseMetadata(
+            origin=metadata.origin if metadata is not None else "provider",
+            fetched_at=now,
+            fresh_until=fresh_until,
+            retention_until=(
+                max(metadata.retention_until, fresh_until)
+                if metadata is not None
+                else fresh_until
+            ),
+            source_mode=source_context.source_mode,
+            source_id=source_context.source_id,
+            generation=source_context.generation,
+            clear_epoch=metadata.clear_epoch if metadata is not None else 0,
+            profile=metadata.profile if metadata is not None else "artist-rg-page-v1",
+            decoder_version=metadata.decoder_version if metadata is not None else "1",
+        )
+        cache_key = mb_artist_release_groups_key(artist_id)
+        state_key = _release_group_warm_state_key(cache_key, source_context)
+        self._release_group_warm_seeds[state_key] = ReleaseGroupWarmSeed(
+            source_context,
+            list(collected.values()),
+            total,
+            fresh_metadata,
+            cache_token,
         )
 
     async def _warm_release_group_pages(
@@ -1374,12 +1434,14 @@ class ArtistService:
         tokens = _artist_cache_tokens.get()
         cache_token = tokens[0] if tokens is not None else self._cache.capture_clear_token()
         if not is_mb_source_current(source_context):
+            # The seed-extension guard would no-op on a stale source.
             return
         cache_key = mb_artist_release_groups_key(artist_id)
         pages_done = 1 if raw_offset else 0
 
         while pages_done < _MAX_RG_PAGES and raw_offset < max(total, 1):
             if not is_mb_source_current(source_context):
+                # The seed-extension guard would no-op on a stale source.
                 return
             try:
                 (
@@ -1394,10 +1456,18 @@ class ArtistService:
                 )
             except asyncio.CancelledError:
                 logger.info("Release-group warm cancelled for %s", artist_id[:8])
+                self._extend_release_group_warm_seed(
+                    artist_id, collected, total, metadata, cache_token,
+                    source_context, _RG_WARM_COOLDOWN_SECONDS,
+                )
                 return
             except Exception:  # noqa: BLE001 - best-effort warming degrades to empty
                 logger.error(
                     "Release-group warm failed for %s", artist_id[:8], exc_info=True
+                )
+                self._extend_release_group_warm_seed(
+                    artist_id, collected, total, metadata, cache_token,
+                    source_context, _RG_WARM_COOLDOWN_SECONDS,
                 )
                 return
             if (
@@ -1405,6 +1475,10 @@ class ArtistService:
                 or response_context is not None
                 and response_context != source_context
             ):
+                self._extend_release_group_warm_seed(
+                    artist_id, collected, total, metadata, cache_token,
+                    source_context, _RG_WARM_COOLDOWN_SECONDS,
+                )
                 return
 
             metadata = merge_mb_metadata(metadata, get_mb_response_metadata())
@@ -1428,6 +1502,13 @@ class ArtistService:
                 self._cache, cache_key, full_list,
                 ttl_seconds=self._get_artist_ttl(in_library=False),
                 context=source_context, cache_token=cache_token,
+            )
+        elif total > 0 and raw_offset < total:
+            # Cap exit or empty-page break: keep the walked slice servable
+            # (warming) for 600 s. Seeds-only, never the shared key.
+            self._extend_release_group_warm_seed(
+                artist_id, collected, total, metadata, cache_token,
+                source_context, _RG_PARTIAL_TTL_SECONDS,
             )
 
     async def _fetch_artist_data(

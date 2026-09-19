@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.exceptions import ExternalServiceError, ResourceNotFoundError
+from repositories.musicbrainz_base import capture_mb_source_context
 
 
 from services.album_service import AlbumService
@@ -112,6 +113,27 @@ def _artist_service_with_store(artist_rows, *, provider_error: Exception | None 
     )
     service._get_library_cache_mbids = AsyncMock(return_value=set())
     return service
+
+
+def _stub_release_browse_empty(mb_repo: MagicMock, memory_cache: MagicMock) -> None:
+    """Model an outage-collapsed empty browse against the current call path.
+
+    Production reads the fenced ``get_with_metadata`` entry and browses via
+    the ``..._with_context`` variant; the swallowing 2-tuple stub stays the
+    data source so the collapsed-into-([], 0) intent is preserved.
+    """
+    memory_cache.capture_clear_token = MagicMock(return_value=("test-cache", 0))
+    memory_cache.get_with_metadata = AsyncMock(return_value=(None, None))
+    memory_cache.set_if_token = AsyncMock(return_value=True)
+
+    async def get_artist_release_groups_with_context(*args, **kwargs):
+        kwargs.pop("preserve_fetch_width", None)
+        groups, total = await mb_repo.get_artist_release_groups(*args, **kwargs)
+        return groups, total, capture_mb_source_context()
+
+    mb_repo.get_artist_release_groups_with_context = AsyncMock(
+        side_effect=get_artist_release_groups_with_context
+    )
 
 
 @pytest.mark.asyncio
@@ -256,6 +278,7 @@ async def test_artist_releases_fall_back_to_local_discography():
     memory_cache.get = AsyncMock(return_value=None)
     disk_cache = MagicMock()
     disk_cache.get_artist = AsyncMock(return_value=None)
+    _stub_release_browse_empty(mb_repo, memory_cache)
     prefs = MagicMock()
     prefs.get_preferences.return_value = SimpleNamespace(
         primary_types=["Album", "Single", "EP"],
@@ -301,6 +324,7 @@ async def test_artist_releases_stay_empty_for_non_library_artist():
     memory_cache.get = AsyncMock(return_value=None)
     disk_cache = MagicMock()
     disk_cache.get_artist = AsyncMock(return_value=None)
+    _stub_release_browse_empty(mb_repo, memory_cache)
     prefs = MagicMock()
     prefs.get_preferences.return_value = SimpleNamespace(
         primary_types=["Album", "Single", "EP"],
