@@ -51,10 +51,7 @@ class UserListeningPrefsStore(PersistenceBase):
     def __init__(self, db_path: Path, write_lock: threading.Lock | None = None):
         super().__init__(db_path, write_lock or threading.Lock())
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = super()._connect()
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+    foreign_keys = True
 
     def _ensure_tables(self) -> None:
         conn = self._connect()

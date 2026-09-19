@@ -22,12 +22,9 @@ class UserQuota(AppStruct):
 
 
 class UserQuotaStore(PersistenceBase):
-    def _connect(self) -> sqlite3.Connection:
-        # enforce user_id -> auth_users(id): rejects quota rows for nonexistent
-        # users and lets the ON DELETE CASCADE fire from this connection too
-        conn = super()._connect()
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+    # enforce user_id -> auth_users(id): rejects quota rows for nonexistent
+    # users and lets the ON DELETE CASCADE fire from this connection too
+    foreign_keys = True
 
     def _ensure_tables(self) -> None:
         conn = self._connect()

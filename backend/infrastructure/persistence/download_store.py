@@ -1,7 +1,8 @@
 """``DownloadStore`` - persistence for download tasks, search jobs, and quarantine.
 
 (AUD-5/6/7) Subclasses ``PersistenceBase``, lives in ``library.db``, takes the
-SHARED write lock, and sets ``PRAGMA foreign_keys=ON`` so
+SHARED write lock, and sets ``foreign_keys = True``
+(``PRAGMA foreign_keys=ON`` on every connection) so
 ``download_tasks.user_id -> auth_users(id) ON DELETE CASCADE`` is enforced.
 (AUD-9) ``search_jobs.candidates_blob`` stores ``list[ScoredCandidate]`` via the
 house JSON codec (``to_jsonable`` + ``json.dumps``), decoded with
@@ -561,11 +562,8 @@ class DownloadStore(PersistenceBase):
             tuple[str, bool], DownloadActivitySummary
         ] = OrderedDict()
 
-    def _connect(self) -> sqlite3.Connection:
-        # (AUD-6) Enforce download_tasks.user_id -> auth_users(id) ON DELETE CASCADE.
-        conn = super()._connect()
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+    # (AUD-6) Enforce download_tasks.user_id -> auth_users(id) ON DELETE CASCADE.
+    foreign_keys = True
 
     def _ensure_tables(self) -> None:
         conn = self._connect()
