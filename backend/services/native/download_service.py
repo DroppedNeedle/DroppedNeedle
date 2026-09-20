@@ -2460,14 +2460,14 @@ class DownloadService:
         return stopped
 
     async def retry_all_failed(self, user_id: str, user_role: str) -> int:
-        """Re-dispatch every terminally-failed task the user has that will NOT auto-retry
-        (the "Retry all failed" bulk action): ``status == failed`` AND no pending
-        ``next_retry_at`` (auto-retry off, or attempts exhausted). Tasks still scheduled
-        to auto-retry are "wanted" and left for ``stop_all_retries``. Each is retried via
-        the same path as the per-task retry. Returns the number retried."""
-        tasks = await self._store.list_tasks_by_status(
-            user_id, user_role, [DownloadStatus.FAILED]
-        )
+        """Re-dispatch the newest terminally-failed task per download target that will
+        NOT auto-retry (the "Retry all failed" bulk action): ``status == failed`` AND
+        no pending ``next_retry_at`` (auto-retry off, or attempts exhausted). Historical
+        failures superseded by a newer task for the same target are skipped, so one
+        click retries each album/track once. Tasks still scheduled to auto-retry are
+        "wanted" and left for ``stop_all_retries``. Each is retried via the same path
+        as the per-task retry. Returns the number retried."""
+        tasks = await self._store.list_newest_failed_tasks(user_id, user_role)
         retried = 0
         for task in tasks:
             if self.next_retry_at(task) is not None:

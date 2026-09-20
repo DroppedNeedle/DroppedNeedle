@@ -885,6 +885,131 @@ async def test_list_retryable_tasks_excludes_target_whose_latest_succeeded(store
     assert result == []
 
 
+def _set_created_at(db_path: Path, task_id: str, created_at: float) -> None:
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE download_tasks SET created_at = ? WHERE id = ?",
+            (created_at, task_id),
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_newest_failed_tasks_returns_newest_per_target(store, tmp_path):
+    """Only the newest failed task per (user, download_type, rg, recording) target is
+    returned; older failures for the same target and failures superseded by a newer
+    task of ANY status (queued/cancelled/completed) are suppressed."""
+    db_path = tmp_path / "library.db"
+
+    old = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-1", artist_name="A",
+        album_title="B", status="failed",
+    )
+    mid = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-1", artist_name="A",
+        album_title="B", status="failed",
+    )
+    newest = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-1", artist_name="A",
+        album_title="B", status="failed",
+    )
+    other_target = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-2", artist_name="A",
+        album_title="C", status="failed",
+    )
+    queued_suppressed = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-3", artist_name="A",
+        album_title="D", status="failed",
+    )
+    queued_newer = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-3", artist_name="A",
+        album_title="D", status="queued",
+    )
+    cancelled_suppressed = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-4", artist_name="A",
+        album_title="E", status="failed",
+    )
+    cancelled_newer = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-4", artist_name="A",
+        album_title="E", status="cancelled",
+    )
+    completed_suppressed = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-5", artist_name="A",
+        album_title="F", status="failed",
+    )
+    completed_newer = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-5", artist_name="A",
+        album_title="F", status="completed",
+    )
+    track = await store.create_task(
+        user_id="user-a", download_type="track", release_group_mbid="rg-1",
+        recording_mbid="rec-1", artist_name="A", album_title="B",
+        track_title="T", status="failed",
+    )
+    upgrade = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-6", artist_name="A",
+        album_title="G", status="failed", origin="upgrade",
+    )
+    tie_first = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-7", artist_name="A",
+        album_title="H", status="failed",
+    )
+    tie_second = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-7", artist_name="A",
+        album_title="H", status="failed",
+    )
+    user_suppressed_by_upgrade = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-8", artist_name="A",
+        album_title="I", status="failed",
+    )
+    upgrade_suppressor = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-8", artist_name="A",
+        album_title="I", status="queued", origin="upgrade",
+    )
+
+    stamps = {
+        old.id: 100.0, mid.id: 200.0, newest.id: 300.0,
+        other_target.id: 150.0,
+        queued_suppressed.id: 100.0, queued_newer.id: 400.0,
+        cancelled_suppressed.id: 100.0, cancelled_newer.id: 400.0,
+        completed_suppressed.id: 100.0, completed_newer.id: 400.0,
+        track.id: 250.0, upgrade.id: 350.0,
+        tie_first.id: 500.0, tie_second.id: 500.0,
+        user_suppressed_by_upgrade.id: 100.0, upgrade_suppressor.id: 600.0,
+    }
+    for task_id, ts in stamps.items():
+        _set_created_at(db_path, task_id, ts)
+
+    result = await store.list_newest_failed_tasks("user-a", "user")
+    # Same-rg track is its own target; the newest failed upgrade stays retryable.
+    # Equal created_at breaks the tie by rowid (insertion order); suppression
+    # crosses origins, so the queued upgrade hides the older user failure.
+    assert {t.id for t in result} == {
+        newest.id, other_target.id, track.id, upgrade.id, tie_second.id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_newest_failed_tasks_is_user_scoped(store):
+    """Non-admins see only their own newest failures; admins span all users; a
+    missing user_id fails closed with no query."""
+    mine = await store.create_task(
+        user_id="user-a", release_group_mbid="rg-1", artist_name="A",
+        album_title="B", status="failed",
+    )
+    theirs = await store.create_task(
+        user_id="user-b", release_group_mbid="rg-2", artist_name="A",
+        album_title="C", status="failed",
+    )
+
+    assert {t.id for t in await store.list_newest_failed_tasks("user-a", "user")} == {
+        mine.id
+    }
+    assert {
+        t.id for t in await store.list_newest_failed_tasks("admin-1", "admin")
+    } == {mine.id, theirs.id}
+    assert await store.list_newest_failed_tasks(None, "user") == []
+
+
 # -- held imports ("import anyway" review queue) --
 
 

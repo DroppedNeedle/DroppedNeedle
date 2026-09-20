@@ -772,14 +772,51 @@ async def test_retry_all_failed_retries_only_exhausted_failures():
     service, store, _bus, _client, _scorer, orch = _make_service()
     exhausted = DownloadTask(id="e", user_id="u1", status="failed", retry_count=6)
     wanted = DownloadTask(id="w", user_id="u1", status="failed", retry_count=1)
-    store.list_tasks_by_status.return_value = [exhausted, wanted]
+    store.list_newest_failed_tasks.return_value = [exhausted, wanted]
     orch.next_retry_at = lambda task: None if task.id == "e" else 123.0
 
     retried = await service.retry_all_failed("u1", "user")
 
     assert retried == 1
-    store.list_tasks_by_status.assert_awaited_once_with("u1", "user", ["failed"])
+    store.list_newest_failed_tasks.assert_awaited_once_with("u1", "user")
     assert [c.args[0] for c in orch.retry_task.await_args_list] == ["e"]
+
+
+@pytest.mark.asyncio
+async def test_retry_all_failed_retries_only_newest_per_target():
+    # Three exhausted failures for the same album exist, but the store's newest-per-
+    # target query hands retry-all only the newest one - exactly one retry results.
+    service, store, _bus, _client, _scorer, orch = _make_service()
+    kwargs = dict(
+        user_id="u1",
+        status="failed",
+        retry_count=6,
+        download_type="album",
+        release_group_mbid="rg",
+    )
+    newest = DownloadTask(id="newest", created_at=300.0, **kwargs)
+    store.list_newest_failed_tasks.return_value = [newest]
+    orch.next_retry_at = lambda task: None
+
+    retried = await service.retry_all_failed("u1", "user")
+
+    assert retried == 1
+    assert [c.args[0] for c in orch.retry_task.await_args_list] == ["newest"]
+
+
+@pytest.mark.asyncio
+async def test_retry_all_failed_retries_each_target_once():
+    # Two different targets each get their own retry.
+    service, store, _bus, _client, _scorer, orch = _make_service()
+    first = DownloadTask(id="t1", user_id="u1", status="failed", retry_count=6)
+    second = DownloadTask(id="t2", user_id="u1", status="failed", retry_count=6)
+    store.list_newest_failed_tasks.return_value = [first, second]
+    orch.next_retry_at = lambda task: None
+
+    retried = await service.retry_all_failed("u1", "user")
+
+    assert retried == 2
+    assert [c.args[0] for c in orch.retry_task.await_args_list] == ["t1", "t2"]
 
 
 @pytest.mark.asyncio

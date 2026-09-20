@@ -3200,6 +3200,47 @@ class DownloadStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def list_newest_failed_tasks(
+        self, user_id: str | None, user_role: str | None
+    ) -> list[DownloadTask]:
+        """The newest ``failed`` task per download target ((user_id, download_type,
+        release_group_mbid, recording_mbid)), user-scoped exactly like
+        ``list_tasks``: non-admins see only their own (fail closed if no user_id),
+        admins span all users. "Newest" is suppressed by ANY newer task for the same
+        target regardless of status (same NOT EXISTS shape as ``list_retryable_tasks``,
+        but with NO origin filter - a newest failed upgrade stays retryable as an
+        upgrade). Backs the "Retry all failed" bulk action so one click retries each
+        album/track once instead of re-dispatching every historical failure."""
+        if user_role != "admin":
+            if user_id is None:
+                return []
+            user_clause = "AND t.user_id = ?"
+            params: tuple[Any, ...] = (user_id,)
+        else:
+            user_clause = ""
+            params = ()
+
+        def operation(conn: sqlite3.Connection) -> list[DownloadTask]:
+            rows = conn.execute(
+                f"""SELECT * FROM download_tasks t
+                   WHERE t.status = 'failed'
+                     {user_clause}
+                     AND NOT EXISTS (
+                         SELECT 1 FROM download_tasks n
+                         WHERE n.user_id = t.user_id
+                           AND n.download_type = t.download_type
+                           AND n.release_group_mbid = t.release_group_mbid
+                           AND COALESCE(n.recording_mbid, '') = COALESCE(t.recording_mbid, '')
+                           AND (n.created_at > t.created_at
+                                OR (n.created_at = t.created_at AND n.rowid > t.rowid))
+                     )
+                   ORDER BY t.created_at DESC""",
+                params,
+            ).fetchall()
+            return [t for t in (_row_to_task(r) for r in rows) if t is not None]
+
+        return await self._read(operation)
+
     async def delete_tasks_by_status(
         self, user_id: str | None, user_role: str | None, statuses: list[str]
     ) -> int:
