@@ -1653,6 +1653,192 @@ async def test_repeated_stalled_walkers_all_tracked_and_warned(
     assert not scanner._detached_walkers
 
 
+def _walk_timeout_retry_store(run: ScanRun) -> AsyncMock:
+    """Mock store surface for the discover()-level GH-444 retry tests."""
+    store = AsyncMock()
+    store.get_scan_scope_discovery_state.return_value = "pending"
+    store.get_scan_scope_discovery_generation.return_value = 1
+    store.get_scan_run.return_value = (run, [], {})
+    store.classify_scan_paths.return_value = {"track.flac": ("new", None)}
+    store.add_scan_inventory_batch.return_value = (2, 1)
+    store.cleanup_stale_scan_inventory.return_value = 0
+    store.transition_scan_run.return_value = ScanRun(
+        id=run.id,
+        kind="incremental",
+        trigger="manual",
+        state="failed",
+        phase="discovering",
+        row_revision=3,
+    )
+    return store
+
+
+@pytest.mark.asyncio
+async def test_discover_walk_timeout_once_then_green_retries_scope(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """GH-444: a transient mid-walk WALK_TIMEOUT re-walks the scope instead
+    of failing the run terminally."""
+    root = tmp_path / "music"
+    root.mkdir()
+    (root / "track.flac").touch()
+    wedged = threading.Event()
+    calls = 0
+
+    def walker(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            yield (str(root), [], ["track.flac"])
+            wedged.wait()
+            return
+        yield (str(root), [], ["track.flac"])
+
+    run = _scan_run()
+    store = _walk_timeout_retry_store(run)
+    scanner = LibraryInventoryScanner(
+        store,
+        directory_walker=walker,
+        walk_deadline_seconds=0.05,
+    )
+    scope = ScanScope(root_id="root", policy_revision="policy-1")
+    resolver = SimpleNamespace(resolve=lambda _path: None)
+    checkpoint = AsyncMock(return_value=True)
+
+    try:
+        with caplog.at_level(logging.WARNING, logger="services.native.library_inventory_scanner"):
+            result = await scanner.discover(
+                run, [scope], {scope.root_id: root}, resolver, checkpoint
+            )
+    finally:
+        wedged.set()
+        deadline = time.monotonic() + 2.0
+        while scanner._detached_walkers and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+
+    assert calls == 2
+    store.restart_scan_scope_discovery.assert_awaited_once_with(
+        "run-1", "root", "."
+    )
+    # Attempt 1 records the honest partial row; the retry completes cleanly.
+    assert store.complete_scan_scope_discovery.await_count == 2
+    assert store.complete_scan_scope_discovery.await_args.kwargs["state"] == "completed"
+    # The transient stall stays visible as failure evidence on the green run.
+    timeout_records = [
+        record
+        for call in store.record_scan_failures.await_args_list
+        for record in call.args[1]
+        if record.failure_code == "WALK_TIMEOUT"
+    ]
+    assert len(timeout_records) == 1
+    store.transition_scan_run.assert_not_awaited()
+    assert "walk_timeout_retry" in caplog.text
+    assert result.state == "discovering"
+    assert not scanner._detached_walkers
+
+
+@pytest.mark.asyncio
+async def test_discover_persistent_walk_timeout_retries_twice_then_fails(
+    tmp_path: Path,
+) -> None:
+    """GH-444: a still-wedged producer exhausts the bounded budget (initial
+    walk + 2 retries) and fails honestly with WALK_TIMEOUT."""
+    root = tmp_path / "music"
+    root.mkdir()
+    (root / "track.flac").touch()
+    wedged = threading.Event()
+    calls = 0
+
+    def walker(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        yield (str(root), [], ["track.flac"])
+        wedged.wait()
+        return
+
+    run = _scan_run()
+    store = _walk_timeout_retry_store(run)
+    scanner = LibraryInventoryScanner(
+        store,
+        directory_walker=walker,
+        walk_deadline_seconds=0.05,
+    )
+    scope = ScanScope(root_id="root", policy_revision="policy-1")
+    resolver = SimpleNamespace(resolve=lambda _path: None)
+    checkpoint = AsyncMock(return_value=True)
+
+    try:
+        result = await scanner.discover(
+            run, [scope], {scope.root_id: root}, resolver, checkpoint
+        )
+    finally:
+        wedged.set()
+        deadline = time.monotonic() + 2.0
+        while scanner._detached_walkers and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+
+    assert calls == 3
+    assert store.restart_scan_scope_discovery.await_count == 2
+    assert result.state == "failed"
+    assert store.transition_scan_run.await_args.kwargs["terminal_code"] == "WALK_TIMEOUT"
+    assert not scanner._detached_walkers
+
+
+@pytest.mark.asyncio
+async def test_discover_walk_timeout_with_paused_checkpoint_does_not_retry(
+    tmp_path: Path,
+) -> None:
+    """GH-444: a coordinator pause (checkpoint false) during a wedged walk
+    wins over retry - the scope fails once through the existing path."""
+    root = tmp_path / "music"
+    root.mkdir()
+    (root / "track.flac").touch()
+    wedged = threading.Event()
+    calls = 0
+
+    def walker(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        yield (str(root), [], ["track.flac"])
+        wedged.wait()
+        return
+
+    run = _scan_run()
+    store = _walk_timeout_retry_store(run)
+    scanner = LibraryInventoryScanner(
+        store,
+        directory_walker=walker,
+        walk_deadline_seconds=0.05,
+    )
+    scope = ScanScope(root_id="root", policy_revision="policy-1")
+    resolver = SimpleNamespace(resolve=lambda _path: None)
+    checkpoint_calls = 0
+
+    async def checkpoint(_run_id: str, _revision: str) -> bool:
+        nonlocal checkpoint_calls
+        checkpoint_calls += 1
+        # The discover-top checkpoint passes so the walk starts; the retry
+        # gate then observes the pause and declines the re-walk.
+        return checkpoint_calls == 1
+
+    try:
+        result = await scanner.discover(
+            run, [scope], {scope.root_id: root}, resolver, checkpoint
+        )
+    finally:
+        wedged.set()
+        deadline = time.monotonic() + 2.0
+        while scanner._detached_walkers and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+
+    assert calls == 1
+    store.restart_scan_scope_discovery.assert_not_awaited()
+    assert result.state == "failed"
+    assert store.transition_scan_run.await_args.kwargs["terminal_code"] == "WALK_TIMEOUT"
+    assert not scanner._detached_walkers
+
+
 @pytest.mark.asyncio
 async def test_probe_does_not_block_default_executor(
     tmp_path: Path,

@@ -633,6 +633,43 @@ class LibraryInventoryScanner:
                     checkpoint,
                     discovery_generation,
                 )
+                # GH-444: a transient mid-walk stall (contended disk, a wedged
+                # syscall that clears) must not fail the whole run. Re-walk
+                # the scope boundedly, sharing the F-030 restart budget (worst
+                # case 3 walks + 2 inter-retry sleeps before honest terminal
+                # failure); a still-wedged producer fails honestly after the
+                # cap, and a coordinator pause/stop/supersede (or failed
+                # checkpoint) wins over retry. Only the exact WALK_TIMEOUT
+                # code retries - never WALKER_UNAVAILABLE, permission codes,
+                # or control exits.
+                if not completed and walk_failure_code == "WALK_TIMEOUT":
+                    current = (await self._store.get_scan_run(run.id))[0]
+                    if (
+                        restarts < 2
+                        and current.state == "discovering"
+                        and await checkpoint(run.id, scope.policy_revision)
+                    ):
+                        restarts += 1
+                        await asyncio.sleep(self._walk_deadline_seconds)
+                        current = (await self._store.get_scan_run(run.id))[0]
+                        if current.state != "discovering" or not await checkpoint(
+                            run.id, scope.policy_revision
+                        ):
+                            break
+                        logger.warning(
+                            "library_scan event=walk_timeout_retry run_id=%s "
+                            "root_id=%s path=%s attempt=%d",
+                            run.id,
+                            scope.root_id,
+                            scope.relative_path,
+                            restarts,
+                        )
+                        await self._store.restart_scan_scope_discovery(
+                            run.id, scope.root_id, scope.relative_path
+                        )
+                        current = (await self._store.get_scan_run(run.id))[0]
+                        await self._store.cleanup_stale_scan_inventory(run.id)
+                        continue
                 if not completed or self._filesystem is None:
                     break
                 async with self._filesystem.read(scope.root_id):
