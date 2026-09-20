@@ -23412,15 +23412,94 @@ class NativeLibraryStore(PersistenceBase):
                 raise StaleRevisionError(
                     "The management preview has a pending control request."
                 )
-            catalog_revision = int(
-                connection.execute(
-                    "SELECT value FROM library_catalog_revision WHERE singleton = 1"
-                ).fetchone()[0]
-            )
-            if catalog_revision != int(snapshot["catalog_revision"]):
-                raise StaleRevisionError(
-                    "The library catalog changed while the preview was being built."
+            try:
+                selection = msgspec.json.decode(
+                    str(snapshot["selection_json"]).encode("utf-8"),
+                    type=NormalizedLibraryManagementSelection,
                 )
+                selection_clauses, selection_params = (
+                    self._library_management_selection_predicate(selection)
+                )
+            except (msgspec.DecodeError, msgspec.ValidationError, ValidationError):
+                catalog_revision = int(
+                    connection.execute(
+                        "SELECT value FROM library_catalog_revision "
+                        "WHERE singleton = 1"
+                    ).fetchone()[0]
+                )
+                if catalog_revision != int(snapshot["catalog_revision"]):
+                    raise StaleRevisionError(
+                        "The library catalog changed while the preview was "
+                        "being built."
+                    )
+            else:
+                stale_track = connection.execute(
+                    """
+                    SELECT 1 FROM library_management_plan_items item
+                    LEFT JOIN local_tracks track
+                      ON track.id = item.local_track_id
+                    LEFT JOIN local_albums album
+                      ON album.id = track.local_album_id
+                    WHERE item.job_id = ?
+                      AND item.local_track_id IS NOT NULL
+                      AND (
+                          track.id IS NULL
+                          OR COALESCE(track.tag_revision, '')
+                              != item.expected_tag_revision
+                          OR track.stat_revision != item.expected_stat_revision
+                          OR track.root_id != item.expected_root_id
+                          OR track.relative_path != item.expected_relative_path
+                          OR track.availability != 'indexed'
+                          OR (item.expected_album_revision IS NOT NULL
+                              AND album.row_revision
+                                  != item.expected_album_revision)
+                          OR (item.expected_track_revision IS NOT NULL
+                              AND track.row_revision
+                                  != item.expected_track_revision)
+                      )
+                    LIMIT 1
+                    """,
+                    (job_id,),
+                ).fetchone()
+                if stale_track is not None:
+                    raise StaleRevisionError(
+                        "A selected library management input or selection "
+                        "membership changed while the preview was being built."
+                    )
+                where_clause = " AND ".join(selection_clauses)
+                new_member = connection.execute(
+                    "SELECT 1 FROM local_tracks track "
+                    "JOIN local_albums album "
+                    "ON album.id = track.local_album_id "
+                    "WHERE "
+                    + where_clause
+                    + " AND NOT EXISTS ("
+                    "SELECT 1 FROM library_management_plan_items "
+                    "WHERE job_id = ? AND local_track_id = track.id)",
+                    (*selection_params, job_id),
+                ).fetchone()
+                if new_member is not None:
+                    raise StaleRevisionError(
+                        "A selected library management input or selection "
+                        "membership changed while the preview was being built."
+                    )
+                missing_member = connection.execute(
+                    "SELECT 1 FROM library_management_plan_items item "
+                    "WHERE item.job_id = ? AND item.local_track_id IS NOT NULL "
+                    "AND NOT EXISTS ("
+                    "SELECT 1 FROM local_tracks track "
+                    "JOIN local_albums album "
+                    "ON album.id = track.local_album_id "
+                    "WHERE "
+                    + where_clause
+                    + " AND track.id = item.local_track_id)",
+                    (job_id, *selection_params),
+                ).fetchone()
+                if missing_member is not None:
+                    raise StaleRevisionError(
+                        "A selected library management input or selection "
+                        "membership changed while the preview was being built."
+                    )
 
             collision_groups = connection.execute(
                 "SELECT destination_root_id, destination_collision_key, "
