@@ -9,6 +9,7 @@ import msgspec
 import pytest
 
 from infrastructure.persistence.download_store import DownloadStore
+from infrastructure.plugins.adapters import PluginClientAdapter
 from infrastructure.service_health import service_health
 from models.audio import AudioInfo, AudioTag
 from models.library_management import (
@@ -63,6 +64,48 @@ class _Client:
         self.discarded += 1
         if self.discard_error:
             raise RuntimeError("history unavailable")
+        return True
+
+
+class _PluginClient(_Client):
+    def __init__(self, workspace: Path, *, state: str = "completed") -> None:
+        super().__init__(
+            DownloadMaterialization(
+                state=state,
+                workspace_path=str(workspace),
+                file_paths=[str(workspace / "track.flac")],
+            )
+        )
+        self.workspace = workspace
+        self.calls: list[str] = []
+        self.abort_result = True
+        self.abort_error = False
+        self.discard_result = True
+        self.inspection_error = False
+
+    async def inspect_materialization(
+        self, handle: TaskHandle
+    ) -> DownloadMaterialization:
+        self.calls.append("inspect")
+        if self.inspection_error:
+            raise RuntimeError("plugin inspection unavailable")
+        return await super().inspect_materialization(handle)
+
+    async def abort(self, handle: TaskHandle) -> bool:
+        self.calls.append("abort")
+        await super().abort(handle)
+        if self.abort_error:
+            raise RuntimeError("plugin abort unavailable")
+        return self.abort_result
+
+    async def discard_client_artifacts(self, handle: TaskHandle) -> bool:
+        self.calls.append("discard")
+        await super().discard_client_artifacts(handle)
+        if not self.discard_result:
+            return False
+        (self.workspace / "track.flac").unlink(missing_ok=True)
+        if self.workspace.exists():
+            self.workspace.rmdir()
         return True
 
 
@@ -121,6 +164,326 @@ def _clear_health():
     service_health.clear()
     yield
     service_health.clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["completed", "active"])
+async def test_plugin_removes_owned_workspace_without_mount_or_fingerprints(
+    tmp_path: Path, state: str
+):
+    workspace = tmp_path / "plugin-private"
+    workspace.mkdir()
+    (workspace / "track.flac").write_bytes(b"source")
+    library_copy = tmp_path / "library.flac"
+    library_copy.write_bytes(b"published")
+    store = _store(tmp_path)
+    attempt = await _attempt(
+        store, tmp_path, source="plugin:example", bundle_ids=["bundle"]
+    )
+    library = _LibraryStore()
+    library.bundles["bundle"] = "completed"
+    client = _PluginClient(workspace, state=state)
+    service = AcquisitionCleanupService(
+        store, library, lambda source: client, lambda: tmp_path
+    )
+
+    await service.cleanup_now(attempt.id, worker_id="test")
+
+    cleaned = await store.get_download_attempt(attempt.id)
+    assert cleaned.state == "complete"
+    assert cleaned.mount_root is None
+    assert cleaned.materialized_fingerprints == {}
+    assert cleaned.workspace_path == str(workspace)
+    assert cleaned.materialized_paths == [str(workspace / "track.flac")]
+    assert client.calls == (
+        ["inspect", "abort", "discard"] if state == "active" else ["inspect", "discard"]
+    )
+    assert not workspace.exists()
+    assert library_copy.read_bytes() == b"published"
+    assert await service.cleanup_now(attempt.id, worker_id="repeat") is False
+    assert client.discarded == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "state", ["cleanup_pending", "needs_attention", "rolled_back", None]
+)
+@pytest.mark.parametrize("resolved_state", ["completed", "resolved"])
+async def test_plugin_publisher_barriers_preserve_active_work_until_resolved(
+    tmp_path: Path, state: str | None, resolved_state: str
+):
+    workspace = tmp_path / "plugin-private"
+    workspace.mkdir()
+    source = workspace / "track.flac"
+    source.write_bytes(b"keep")
+    store = _store(tmp_path)
+    attempt = await _attempt(
+        store, tmp_path, source="plugin:example", bundle_ids=["bundle"]
+    )
+    library = _LibraryStore()
+    if state is not None:
+        library.bundles["bundle"] = state
+    client = _PluginClient(workspace, state="active")
+    now = [10.0]
+    service = AcquisitionCleanupService(
+        store, library, lambda source: client, lambda: tmp_path, clock=lambda: now[0]
+    )
+
+    await service.cleanup_now(attempt.id, worker_id="blocked")
+
+    blocked = await store.get_download_attempt(attempt.id)
+    assert blocked.state == (
+        "cleanup_pending" if state == "cleanup_pending" else "needs_attention"
+    )
+    assert blocked.cleanup_failures == 0
+    assert client.calls == []
+    assert source.read_bytes() == b"keep"
+    library.bundles["bundle"] = resolved_state
+    now[0] = blocked.next_retry_at
+    if state != "cleanup_pending":
+        await service.cleanup_now(attempt.id, worker_id="attention-recheck")
+        pending = await store.get_download_attempt(attempt.id)
+        assert pending.state == "cleanup_pending"
+        assert pending.disposition == "discard"
+        assert pending.error_code is None
+        assert client.calls == ["inspect"]
+        assert client.aborted == 0
+        assert client.discarded == 0
+        assert source.read_bytes() == b"keep"
+        client.calls.clear()
+
+    await service.cleanup_now(attempt.id, worker_id="resolved")
+    assert (await store.get_download_attempt(attempt.id)).state == "complete"
+    assert client.calls == ["inspect", "abort", "discard"]
+    assert not workspace.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("publisher_attention", [False, True])
+async def test_plugin_adapter_inspection_failure_preserves_workspace_until_retry(
+    tmp_path: Path, publisher_attention: bool
+):
+    workspace = tmp_path / "plugin-private"
+    workspace.mkdir()
+    source = workspace / "track.flac"
+    source.write_bytes(b"keep")
+    store = _store(tmp_path)
+    attempt = await _attempt(
+        store, tmp_path, source="plugin:example", bundle_ids=["bundle"]
+    )
+    library = _LibraryStore()
+    client = _PluginClient(workspace)
+    adapter = PluginClientAdapter("example", client)
+    now = [10.0]
+    service = AcquisitionCleanupService(
+        store, library, lambda source: adapter, lambda: tmp_path, clock=lambda: now[0]
+    )
+    if publisher_attention:
+        await service.cleanup_now(attempt.id, worker_id="missing-publisher")
+        blocked = await store.get_download_attempt(attempt.id)
+        assert blocked.state == "needs_attention"
+        assert blocked.error_code == "publisher_barrier_missing"
+        now[0] = blocked.next_retry_at
+    library.bundles["bundle"] = "completed"
+    client.inspection_error = True
+
+    await service.cleanup_now(attempt.id, worker_id="inspection-failed")
+
+    failed = await store.get_download_attempt(attempt.id)
+    assert failed.state == (
+        "needs_attention" if publisher_attention else "cleanup_pending"
+    )
+    assert failed.error_code == (
+        "publisher_barrier_missing"
+        if publisher_attention
+        else "materialization_inspection_failed"
+    )
+    assert failed.cleanup_failures == (0 if publisher_attention else 1)
+    assert failed.next_retry_at > now[0]
+    assert client.calls == ["inspect"]
+    assert client.discarded == 0
+    assert source.read_bytes() == b"keep"
+
+    client.inspection_error = False
+    now[0] = failed.next_retry_at
+    if publisher_attention:
+        await service.cleanup_now(attempt.id, worker_id="attention-recheck")
+        assert (await store.get_download_attempt(attempt.id)).state == "cleanup_pending"
+        assert client.discarded == 0
+        assert source.read_bytes() == b"keep"
+    await service.cleanup_now(attempt.id, worker_id="inspection-recovered")
+    assert (await store.get_download_attempt(attempt.id)).state == "complete"
+    assert client.discarded == 1
+    assert not workspace.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raises", [False, True])
+async def test_plugin_abort_failure_preserves_workspace(tmp_path: Path, raises: bool):
+    workspace = tmp_path / "plugin-private"
+    workspace.mkdir()
+    source = workspace / "track.flac"
+    source.write_bytes(b"keep")
+    store = _store(tmp_path)
+    attempt = await _attempt(store, tmp_path, source="plugin:example")
+    client = _PluginClient(workspace, state="active")
+    client.abort_result = False
+    client.abort_error = raises
+    service = AcquisitionCleanupService(
+        store, _LibraryStore(), lambda source: client, lambda: tmp_path
+    )
+
+    await service.cleanup_now(attempt.id, worker_id="test")
+
+    failed = await store.get_download_attempt(attempt.id)
+    assert failed.state == "cleanup_pending"
+    assert failed.error_code == "active_abort_failed"
+    assert failed.cleanup_failures == 1
+    assert client.calls == ["inspect", "abort"]
+    assert source.read_bytes() == b"keep"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raises", [False, True])
+async def test_plugin_discard_failure_retries(tmp_path: Path, raises: bool):
+    workspace = tmp_path / "plugin-private"
+    workspace.mkdir()
+    source = workspace / "track.flac"
+    source.write_bytes(b"keep")
+    store = _store(tmp_path)
+    attempt = await _attempt(store, tmp_path, source="plugin:example")
+    client = _PluginClient(workspace)
+    client.discard_error = raises
+    client.discard_result = False
+    now = [10.0]
+    service = AcquisitionCleanupService(
+        store,
+        _LibraryStore(),
+        lambda source: client,
+        lambda: tmp_path,
+        clock=lambda: now[0],
+    )
+
+    await service.cleanup_now(attempt.id, worker_id="first")
+
+    failed = await store.get_download_attempt(attempt.id)
+    assert failed.state == "cleanup_pending"
+    assert failed.error_code == "client_artifact_discard_failed"
+    assert failed.cleanup_failures == 1
+    assert source.read_bytes() == b"keep"
+    client.discard_error = False
+    client.discard_result = True
+    now[0] = failed.next_retry_at
+    await service.cleanup_now(attempt.id, worker_id="retry")
+    assert (await store.get_download_attempt(attempt.id)).state == "complete"
+    assert client.discarded == 2
+    assert not workspace.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["workspace_path", "materialized_paths_json"])
+@pytest.mark.parametrize("mount_healthy", [False, True])
+async def test_plugin_conflicting_evidence_preserves_workspace(
+    tmp_path: Path, field: str, mount_healthy: bool
+):
+    workspace = tmp_path / "plugin-private"
+    workspace.mkdir()
+    source = workspace / "track.flac"
+    source.write_bytes(b"keep")
+    store = _store(tmp_path)
+    attempt = await _attempt(store, tmp_path, source="plugin:example")
+    other = str(tmp_path / "other")
+    await store.transition_download_attempt(
+        attempt.id,
+        expected_row_revision=attempt.row_revision,
+        new_state=attempt.state,
+        now=3.0,
+        **{
+            field: msgspec.json.encode([other]).decode()
+            if field.endswith("_json")
+            else other
+        },
+    )
+    client = _PluginClient(workspace, state="active")
+    now = [10.0]
+    service = AcquisitionCleanupService(
+        store,
+        _LibraryStore(),
+        lambda source: client,
+        lambda: tmp_path,
+        clock=lambda: now[0],
+    )
+
+    await service.cleanup_now(attempt.id, worker_id="test")
+
+    blocked = await store.get_download_attempt(attempt.id)
+    assert blocked.state == "needs_attention"
+    assert blocked.disposition == "preserve"
+    assert blocked.error_code == "materialization_evidence_conflict"
+    assert client.calls == ["inspect"]
+    assert source.read_bytes() == b"keep"
+
+    # Missing plugin client records are not host-verifiable proof that its
+    # private materialization vanished, even if it reports a healthy mount.
+    client.materialization = DownloadMaterialization(
+        state="missing", mount_healthy=mount_healthy
+    )
+    now[0] = blocked.next_retry_at
+    await service.cleanup_now(attempt.id, worker_id="attention-recheck")
+    deferred = await store.get_download_attempt(attempt.id)
+    assert deferred.state == "needs_attention"
+    assert deferred.disposition == "preserve"
+    assert deferred.error_code == "materialization_evidence_conflict"
+    assert deferred.next_retry_at > blocked.next_retry_at
+    assert client.calls == ["inspect", "inspect"]
+    assert client.aborted == 0
+    assert client.discarded == 0
+    assert source.read_bytes() == b"keep"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source", ["torrent", "plugin:", "plugin:Example", "plugin:../other"]
+)
+@pytest.mark.parametrize(
+    "state", ["cleanup_pending", "workspace_removed", "needs_attention"]
+)
+async def test_unsupported_cleanup_source_is_preserved(
+    tmp_path: Path, source: str, state: str
+):
+    workspace = tmp_path / "private"
+    workspace.mkdir()
+    local_file = workspace / "track.flac"
+    local_file.write_bytes(b"keep")
+    store = _store(tmp_path)
+    attempt = await _attempt(store, tmp_path, source="plugin:example")
+    attempt = await store.claim_download_cleanup_attempt(
+        attempt.id, "test", now=10.0, lease_seconds=300.0
+    )
+    # Exercise the worker's fail-closed boundary even for names rejected by the
+    # current database CHECK constraint (e.g. a future client source).
+    attempt = msgspec.structs.replace(
+        attempt, source=source, state=state, handle=TaskHandle(source=source)
+    )
+    client = _PluginClient(workspace, state="active")
+    requested_sources: list[str] = []
+
+    def get_client(source: str):
+        requested_sources.append(source)
+        return client
+
+    service = AcquisitionCleanupService(
+        store, _LibraryStore(), get_client, lambda: tmp_path
+    )
+    await service._process_claimed(attempt)
+
+    blocked = await store.get_download_attempt(attempt.id)
+    assert blocked.state == "needs_attention"
+    assert blocked.disposition == "preserve"
+    assert blocked.error_code == "unsupported_cleanup_source"
+    assert requested_sources == []
+    assert client.calls == []
+    assert local_file.read_bytes() == b"keep"
 
 
 @pytest.mark.asyncio

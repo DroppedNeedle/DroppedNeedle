@@ -35,6 +35,8 @@ _JOB_NAME = re.compile(rf"^{_JOB_NAME_BODY}$")
 # so orphan reconciliation matches the suffixed variants while journal identity
 # validation keeps using _JOB_NAME.
 _JOB_NAME_ORPHAN = re.compile(rf"^{_JOB_NAME_BODY}(\.[1-9][0-9]*)?$")
+# Match the v1 plugin manifest name accepted by the acquisition host.
+_PLUGIN_SOURCE = re.compile(r"plugin:[a-z0-9][a-z0-9-]{0,31}")
 _TERMINAL_CLEANABLE = frozenset({"completed", "partial", "cancelled"})
 _ACTIVE_TASK_STATES = frozenset({"queued", "downloading", "processing"})
 _HEALTH_SERVICE = "acquisition_cleanup"
@@ -115,6 +117,11 @@ class AcquisitionCleanupService:
 
     async def _process_claimed(self, attempt: DownloadAttempt) -> None:
         try:
+            if (
+                attempt.source not in {"usenet", "soulseek"}
+                and _PLUGIN_SOURCE.fullmatch(attempt.source) is None
+            ):
+                raise _UnsafeCleanup("unsupported_cleanup_source")
             if attempt.state == "needs_attention":
                 await self._recheck_attention(attempt)
                 return
@@ -203,11 +210,17 @@ class AcquisitionCleanupService:
         except Exception:  # noqa: BLE001 - attention debt remains safely preserved
             await self._defer_attention(attempt)
             return
-        if not materialization.mount_healthy:
+        plugin_owned = _PLUGIN_SOURCE.fullmatch(attempt.source) is not None
+        if not plugin_owned and not materialization.mount_healthy:
             await self._defer_attention(attempt)
             return
 
-        if await asyncio.to_thread(_attention_source_absent, attempt, materialization):
+        # Only mounted sources have a host-verifiable absence check. Plugin
+        # publisher barriers may recover below, but other attention debt stays
+        # preserved until its ownership/evidence problem is resolved.
+        if not plugin_owned and await asyncio.to_thread(
+            _attention_source_absent, attempt, materialization
+        ):
             try:
                 discarded = await client.discard_client_artifacts(attempt.handle)
             except Exception:  # noqa: BLE001 - attention debt remains safely preserved
@@ -330,10 +343,13 @@ class AcquisitionCleanupService:
             )
             return
 
-        await self._cleanup_slskd_files(
-            attempt,
-            mount_healthy=materialization.mount_healthy,
-        )
+        if attempt.source == "soulseek":
+            await self._cleanup_slskd_files(
+                attempt,
+                mount_healthy=materialization.mount_healthy,
+            )
+        # Plugins own their private materialization. Only their client can remove
+        # it safely, after publication barriers, evidence validation and abort.
         try:
             discarded = await client.discard_client_artifacts(handle)
         except Exception as error:  # noqa: BLE001 - repository errors stay internal
