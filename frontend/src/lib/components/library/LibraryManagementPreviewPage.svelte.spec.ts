@@ -97,6 +97,8 @@ function detail(overrides: Record<string, unknown> = {}): Record<string, unknown
 		expired: false,
 		stale: false,
 		stale_reasons: [],
+		stale_input_count: 0,
+		stale_sample_relative_paths: [],
 		ready_for_confirmation: true,
 		operation_row_revision: 7,
 		operation_event_revision: 8,
@@ -1103,6 +1105,51 @@ describe('LibraryManagementPreviewPage', () => {
 		await expect
 			.element(page.getByRole('button', { name: 'Generate resolution preview' }))
 			.toBeDisabled();
+	});
+
+	it('names changed files in the stale banner instead of the bare reason code', async () => {
+		h.preview = {
+			data: detail({
+				stale: true,
+				stale_reasons: ['FILE_CHANGED'],
+				stale_input_count: 3,
+				stale_sample_relative_paths: ['a/first.flac', 'b/second.flac'],
+				ready_for_confirmation: false
+			}),
+			isLoading: false,
+			isError: false
+		};
+		await render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect.element(page.getByText('This preview cannot be applied.')).toBeVisible();
+		await expect
+			.element(page.getByRole('alert'))
+			.toHaveTextContent(/File changed after this preview was planned/);
+		await expect
+			.element(page.getByRole('alert'))
+			.toHaveTextContent(
+				/3 files changed since planning: a\/first\.flac, b\/second\.flac \(\+1 more\)\. Generate a fresh preview\./
+			);
+	});
+
+	it('keeps the stale banner to friendly labels when the changed count is unknown', async () => {
+		h.preview = {
+			data: detail({
+				stale: true,
+				stale_reasons: ['FILE_CHANGED'],
+				stale_input_count: 0,
+				stale_sample_relative_paths: [],
+				ready_for_confirmation: false
+			}),
+			isLoading: false,
+			isError: false
+		};
+		await render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect
+			.element(page.getByRole('alert'))
+			.toHaveTextContent(/File changed after this preview was planned/);
+		await expect.element(page.getByText(/changed since planning/)).not.toBeInTheDocument();
 	});
 
 	it('makes stale and expired plans impossible to apply', async () => {

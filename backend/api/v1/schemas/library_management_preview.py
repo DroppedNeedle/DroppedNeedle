@@ -241,6 +241,8 @@ class LibraryManagementPreviewDetailResponse(AppStruct):
     expired: bool = False
     stale: bool = False
     stale_reasons: list[str] = msgspec.field(default_factory=list)
+    stale_input_count: int = 0
+    stale_sample_relative_paths: list[str] = msgspec.field(default_factory=list)
     ready_for_confirmation: bool = False
     operation_row_revision: int = 1
     operation_event_revision: int = 0

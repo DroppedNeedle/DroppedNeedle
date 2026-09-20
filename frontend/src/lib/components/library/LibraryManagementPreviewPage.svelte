@@ -196,6 +196,23 @@
 		return qualifiedReasonLabel(code);
 	}
 
+	function staleBannerDetail(): string {
+		if (!preview) return '';
+		const labels = preview.stale_reasons.map((code) => qualifiedReasonLabel(code)).join(' · ');
+		// Persisted query-cache entries from before this fix lack the new keys.
+		const staleInputCount = preview.stale_input_count ?? 0;
+		if (!preview.stale_reasons.includes('FILE_CHANGED') || staleInputCount <= 0) return labels;
+		// Mirrors backend _STALE_INPUT_SAMPLE_LIMIT; the backend already caps.
+		const samples = (preview.stale_sample_relative_paths ?? []).slice(0, 5);
+		const shown = samples.join(', ');
+		const remaining = staleInputCount - samples.length;
+		const sampleText = shown
+			? `${shown}${remaining > 0 ? ` (+${remaining.toLocaleString()} more)` : ''}`
+			: '';
+		const fileText = `${staleInputCount.toLocaleString()} ${staleInputCount === 1 ? 'file' : 'files'}`;
+		return `${labels}. ${fileText} changed since planning${sampleText ? `: ${sampleText}` : ''}. Generate a fresh preview.`;
+	}
+
 	const culpritRelease = $derived.by(() => {
 		const top = topBlockers[0]?.[0];
 		if (!top) return null;
@@ -448,7 +465,7 @@
 	const applyDisabledReason = $derived.by((): string | null => {
 		if (canApply || activationPreview || preview?.state !== 'ready') return null;
 		if (preview.stale)
-			return `Apply is disabled: this preview is stale (${preview.stale_reasons.map(titleManagementValue).join(' · ') || 'inputs changed'}). Generate a fresh preview.`;
+			return `Apply is disabled: this preview is stale (${preview.stale_reasons.map(qualifiedReasonLabel).join(' · ') || 'inputs changed'}). Generate a fresh preview.`;
 		if (preview.expired)
 			return 'Apply is disabled: this preview expired. Generate a fresh preview.';
 		if (!preview.ready_for_confirmation)
@@ -658,7 +675,7 @@
 					<ShieldAlert class="mt-0.5 h-5 w-5" /><span
 						><strong>This preview cannot be applied.</strong><br />{preview.expired
 							? 'It expired. Generate a fresh preview.'
-							: preview.stale_reasons.map(titleManagementValue).join(' · ')}</span
+							: staleBannerDetail()}</span
 					>
 				</div>
 			{:else if preview.state === 'failed'}

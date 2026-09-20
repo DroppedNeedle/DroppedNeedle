@@ -1077,6 +1077,7 @@ def _scoped_plan_item(
     track_revision: int = 3,
     stat_revision: str = "100:200",
     tag_revision: str = "tag-1",
+    relative_path: str = "Album/track.flac",
 ) -> LibraryManagementPlanItem:
     return LibraryManagementPlanItem(
         job_id="job-1",
@@ -1086,7 +1087,7 @@ def _scoped_plan_item(
         expected_policy_revision="policy",
         expected_profile_revision="profile",
         expected_root_id="root-1",
-        expected_relative_path="Album/track.flac",
+        expected_relative_path=relative_path,
         expected_stat_revision=stat_revision,
         expected_tag_revision=tag_revision,
         expected_file_fingerprint="fingerprint",
@@ -1110,6 +1111,7 @@ def _scoped_subject(
     track_revision: int = 3,
     stat_revision: str = "100:200",
     tag_revision: str = "tag-1",
+    relative_path: str = "Album/track.flac",
 ) -> LibraryManagementSelectionSubject:
     return LibraryManagementSelectionSubject(
         ordinal=0,
@@ -1120,7 +1122,7 @@ def _scoped_subject(
         album_revision=album_revision,
         track_revision=track_revision,
         root_id="root-1",
-        relative_path="Album/track.flac",
+        relative_path=relative_path,
         file_path="/music/Album/track.flac",
         file_size_bytes=100,
         file_mtime_ns=200,
@@ -1234,8 +1236,9 @@ async def test_detail_refuses_preview_when_selection_grew_mid_preview(
 async def test_detail_falls_back_to_global_revision_without_captured_inputs(
     tmp_path: Path,
 ) -> None:
-    # Previews with no plan items yet (still planning, or snapshots predating
-    # per-input capture) behave exactly as today. Pre-fix behavior: identical.
+    # Previews with no plan items yet (snapshots predating per-input capture;
+    # planning short-circuits fresh before this) behave exactly as today.
+    # Pre-fix behavior: identical.
     service, store, _preferences, _snapshot = _service_fixture(tmp_path)
     store.list_library_management_plan_items.return_value = []
 
@@ -1248,3 +1251,120 @@ async def test_detail_falls_back_to_global_revision_without_captured_inputs(
     quiet = await service.detail("job-1")
     assert quiet.stale_reasons == []
     assert quiet.ready_for_confirmation is True
+
+
+@pytest.mark.asyncio
+async def test_detail_never_marks_planning_preview_stale(tmp_path: Path) -> None:
+    service, store, _preferences, snapshot = _service_fixture(tmp_path)
+    snapshot.phase = "planning"
+    store.get_operation_job.return_value = _operation(state="running")
+
+    # Partial plan items: only a prefix of the selection is planned, so the
+    # unplanned live subject must not read as FILE_CHANGED.
+    store.list_library_management_plan_items.return_value = [_scoped_plan_item()]
+    store.list_library_management_selection_page.return_value = _scoped_page(
+        _scoped_subject(),
+        _scoped_subject(track_id="track-2", album_id="album-2"),
+    )
+    store.get_catalog_revision.return_value = 7
+
+    partial = await service.detail("job-1")
+
+    assert partial.stale is False
+    assert partial.stale_reasons == []
+    assert partial.stale_input_count == 0
+    assert partial.stale_sample_relative_paths == []
+
+    # Nothing captured yet plus a moved global catalog revision: still fresh.
+    store.list_library_management_plan_items.return_value = []
+
+    unsealed = await service.detail("job-1")
+
+    assert unsealed.stale is False
+    assert unsealed.stale_reasons == []
+    assert unsealed.stale_input_count == 0
+    assert unsealed.stale_sample_relative_paths == []
+
+
+@pytest.mark.asyncio
+async def test_detail_reports_moved_input_count_and_sample(tmp_path: Path) -> None:
+    service, store, _preferences, _snapshot = _service_fixture(tmp_path)
+    store.list_library_management_plan_items.return_value = [_scoped_plan_item()]
+    store.list_library_management_selection_page.return_value = _scoped_page(
+        _scoped_subject(tag_revision="tag-2", track_revision=4)
+    )
+
+    detail = await service.detail("job-1")
+
+    assert detail.stale is True
+    assert detail.stale_reasons == ["FILE_CHANGED"]
+    assert detail.stale_input_count == 1
+    assert detail.stale_sample_relative_paths == ["Album/track.flac"]
+
+
+@pytest.mark.asyncio
+async def test_detail_counts_grown_selection_member(tmp_path: Path) -> None:
+    service, store, _preferences, _snapshot = _service_fixture(tmp_path)
+    store.list_library_management_plan_items.return_value = [_scoped_plan_item()]
+    store.list_library_management_selection_page.return_value = _scoped_page(
+        _scoped_subject(),
+        _scoped_subject(
+            track_id="track-2",
+            album_id="album-2",
+            relative_path="Album/new-track.flac",
+        ),
+    )
+
+    detail = await service.detail("job-1")
+
+    assert detail.stale is True
+    assert detail.stale_reasons == ["FILE_CHANGED"]
+    assert detail.stale_input_count == 1
+    assert detail.stale_sample_relative_paths == ["Album/new-track.flac"]
+
+
+@pytest.mark.asyncio
+async def test_detail_counts_shrunk_selection_member(tmp_path: Path) -> None:
+    service, store, _preferences, _snapshot = _service_fixture(tmp_path)
+    store.list_library_management_plan_items.return_value = [
+        _scoped_plan_item(),
+        _scoped_plan_item(
+            ordinal=1,
+            track_id="track-2",
+            album_id="album-2",
+            relative_path="Album/removed.flac",
+        ),
+    ]
+    store.list_library_management_selection_page.return_value = _scoped_page(
+        _scoped_subject()
+    )
+
+    detail = await service.detail("job-1")
+
+    assert detail.stale is True
+    assert detail.stale_reasons == ["FILE_CHANGED"]
+    assert detail.stale_input_count == 1
+    assert detail.stale_sample_relative_paths == ["Album/removed.flac"]
+
+
+@pytest.mark.asyncio
+async def test_apply_rejects_stale_preview_without_starting_apply(
+    tmp_path: Path,
+) -> None:
+    service, store, _preferences, _snapshot = _service_fixture(tmp_path)
+    store.list_library_management_plan_items.return_value = [_scoped_plan_item()]
+    store.list_library_management_selection_page.return_value = _scoped_page(
+        _scoped_subject(tag_revision="tag-2", track_revision=4)
+    )
+
+    with pytest.raises(StaleRevisionError, match="not current and ready"):
+        await service.apply(
+            "job-1",
+            LibraryManagementApplyRequest(
+                preview_token="activation-token",
+                expected_operation_row_revision=2,
+                idempotency_key="apply-once",
+                confirmation=True,
+            ),
+        )
+    store.begin_library_management_apply.assert_not_awaited()

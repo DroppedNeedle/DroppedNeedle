@@ -380,6 +380,8 @@ export interface LibraryManagementPreviewDetailResponse {
 	expired: boolean;
 	stale: boolean;
 	stale_reasons: string[];
+	stale_input_count: number;
+	stale_sample_relative_paths: string[];
 	ready_for_confirmation: boolean;
 	operation_row_revision: number;
 	operation_event_revision: number;
