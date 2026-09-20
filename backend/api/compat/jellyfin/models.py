@@ -206,6 +206,12 @@ class MediaStream(msgspec.Struct, kw_only=True):
     SampleRate: int | None = None
     BitDepth: int | None = None
     IsDefault: bool = True
+    # Finamp hard-casts these too (issue #438) - honest audio-stream defaults.
+    IsInterlaced: bool = False
+    IsForced: bool = False
+    IsExternal: bool = False
+    IsTextSubtitleStream: bool = False
+    SupportsExternalStream: bool = False
 
 
 class MediaSourceInfo(msgspec.Struct, kw_only=True):
@@ -228,6 +234,20 @@ class MediaSourceInfo(msgspec.Struct, kw_only=True):
     TranscodingUrl: str | None = None
     TranscodingSubProtocol: str | None = None
     TranscodingContainer: str | None = None
+    # Finamp's generated parser hard-casts these (non-nullable `json['X'] as T`),
+    # so a missing key crashes playback (issue #438). Values are honest
+    # direct-play local-file semantics (Finamp only parses these; required-ness
+    # verified against Finamp main lib/models/jellyfin_models.g.dart).
+    Type: str = "Default"
+    IsInfiniteStream: bool = False
+    RequiresOpening: bool = False
+    RequiresClosing: bool = False
+    RequiresLooping: bool = False
+    SupportsProbing: bool = False
+    ReadAtNativeFramerate: bool = False
+    IgnoreDts: bool = False
+    IgnoreIndex: bool = False
+    GenPtsInput: bool = False
 
 
 class PlaybackInfoResponse(msgspec.Struct, kw_only=True):

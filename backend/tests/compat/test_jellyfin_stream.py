@@ -41,6 +41,25 @@ async def test_image_unknown_item_404(compat_env):
 
 # ----- PlaybackInfo (compat_env) -----
 
+# Finamp hard-casts these; a missing key throws in its generated parser and
+# playback never starts (issue #438). Field lists verified against Finamp main
+# lib/models/jellyfin_models.g.dart (_$MediaSourceInfoFromJson / _$MediaStreamFromJson).
+_FINAMP_REQUIRED_SOURCE = {
+    "Protocol": str, "Type": str, "IsRemote": bool,
+    "SupportsTranscoding": bool, "SupportsDirectStream": bool,
+    "SupportsDirectPlay": bool, "IsInfiniteStream": bool,
+    "RequiresOpening": bool, "RequiresClosing": bool,
+    "RequiresLooping": bool, "SupportsProbing": bool,
+    "MediaStreams": list, "ReadAtNativeFramerate": bool,
+    "IgnoreDts": bool, "IgnoreIndex": bool, "GenPtsInput": bool,
+}
+_FINAMP_REQUIRED_STREAM = {
+    "IsInterlaced": bool, "IsDefault": bool, "IsForced": bool,
+    "Type": str, "Index": int, "IsExternal": bool,
+    "IsTextSubtitleStream": bool, "SupportsExternalStream": bool,
+}
+
+
 def _track_id(env):
     album_id = _jget(env, "/Items", IncludeItemTypes="MusicAlbum")["Items"][0]["Id"]
     return _jget(env, "/Items", ParentId=album_id)["Items"][0]["Id"]
@@ -73,6 +92,22 @@ async def test_playback_info_post_with_device_profile(compat_env):
     body = json.loads(r.content)
     assert body["MediaSources"][0]["Id"] == tid
     assert body["PlaySessionId"]
+
+
+async def test_playback_info_survives_finamp_parsing(compat_env):
+    # Strict-client simulation: Finamp json_serializable hard-casts these source
+    # and stream fields, so a missing key (KeyError/None here) is the playback
+    # crash (issue #438).
+    tid = _track_id(compat_env)
+    r = compat_env.client.get(f"/jellyfin/Items/{tid}/PlaybackInfo",
+                              params={"userId": "user-alice"}, headers=_h(compat_env))
+    assert r.status_code == 200
+    src = json.loads(r.content)["MediaSources"][0]
+    for field, typ in _FINAMP_REQUIRED_SOURCE.items():
+        assert isinstance(src.get(field), typ), field
+    assert src["MediaStreams"], "expected at least one audio stream"
+    for field, typ in _FINAMP_REQUIRED_STREAM.items():
+        assert isinstance(src["MediaStreams"][0].get(field), typ), field
 
 
 # ----- streaming (streaming_env: real FLAC on disk) -----
