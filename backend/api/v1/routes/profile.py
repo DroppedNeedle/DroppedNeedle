@@ -25,6 +25,7 @@ from core.dependencies import (
 )
 from core.dependencies.auth_providers import get_auth_service
 from core.config import get_settings
+from core.password_policy import require_password_login_enabled
 from core.exceptions import AuthenticationError, RegistrationError
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from middleware import CurrentUserDep
@@ -216,7 +217,11 @@ async def update_email(
     return await _user_response(auth, user)
 
 
-@router.post("/password", response_model=UserResponse)
+@router.post(
+    "/password",
+    response_model=UserResponse,
+    dependencies=[Depends(require_password_login_enabled)],
+)
 async def change_password(
     current_user: CurrentUserDep,
     body: ChangePasswordRequest = MsgSpecBody(ChangePasswordRequest),
@@ -229,7 +234,11 @@ async def change_password(
     return await _user_response(auth, user)
 
 
-@router.post("/set-password", response_model=UserResponse)
+@router.post(
+    "/set-password",
+    response_model=UserResponse,
+    dependencies=[Depends(require_password_login_enabled)],
+)
 async def set_local_password(
     current_user: CurrentUserDep,
     body: SetPasswordRequest = MsgSpecBody(SetPasswordRequest),

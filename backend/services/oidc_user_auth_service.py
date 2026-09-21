@@ -13,6 +13,7 @@ from typing import Any
 from api.v1.schemas.auth import AuthProvidersResponse
 from api.v1.schemas.settings import OIDCConnectionSettings
 from core.exceptions import AuthenticationError, ConfigurationError, ExternalServiceError
+from core.password_policy import password_login_enabled
 from infrastructure.cache.memory_cache import CacheInterface
 from infrastructure.crypto import encrypt
 from infrastructure.persistence.auth_store import AuthStore, UserRecord, _derive_username
@@ -47,7 +48,7 @@ class OIDCUserAuthService:
         oidc_cfg = self.get_config()
 
         return AuthProvidersResponse(
-            local = True,
+            local = password_login_enabled(),
             plex = plex_cfg.login_enabled,
             jellyfin = jellyfin_cfg.login_enabled,
             oidc = oidc_cfg.enabled and bool(oidc_cfg.issuer) and bool(oidc_cfg.client_id),

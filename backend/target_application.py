@@ -609,6 +609,13 @@ async def production_target_lifespan(app: FastAPI):
         logger.info("target_startup.configuration_started")
         migrate_legacy_config()
         await init_app_state(app)
+        if not settings.allow_password_login:
+            logger.warning(
+                "target_startup.password_login_disabled ALLOW_PASSWORD_LOGIN=false - "
+                "local username/password sign-in is refused; an external provider "
+                "(OIDC/Jellyfin/Plex) must be configured. Set ALLOW_PASSWORD_LOGIN=true "
+                "and restart to restore password sign-in."
+            )
         logger.info("target_startup.configuration_completed")
     async with target_startup_progress(settings, "policy_recovery"):
         await get_target_library_policy_service().recover_pending_transition()
