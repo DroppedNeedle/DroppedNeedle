@@ -630,6 +630,37 @@ def _brainzmash_source(source_id: str):
     )
     return before
 
+@pytest.mark.asyncio
+async def test_brainzmash_places_fmt_before_other_query_params(monkeypatch):
+    requests: list[httpx.Request] = []
+
+    class _CaptureClient:
+        async def get(self, url: str, params=None):
+            request = httpx.Request("GET", url, params=params)
+            requests.append(request)
+            return httpx.Response(
+                200,
+                json={"artist": []},
+                request=request,
+            )
+
+    limiter = SimpleNamespace(acquire=AsyncMock())
+    monkeypatch.setattr(mb_base, "_brainzmash_http_client", _CaptureClient())
+    monkeypatch.setattr(mb_base, "brainzmash_rate_limiter", limiter)
+
+    before = _brainzmash_source("brainzmash-query-order")
+    try:
+        assert await mb_base.mb_api_get(
+            "/release/test-release",
+            params={"inc": "artist-credits+recordings"},
+        ) == {"artist": []}
+    finally:
+        _restore_source(before)
+
+    assert len(requests) == 1
+    assert str(requests[0].url).endswith(
+        "/release/test-release?fmt=json&inc=artist-credits%2Brecordings"
+    )
 
 MERGED_RELEASE = "77a698a8-98da-401d-a59b-1ae4bc28df56"
 SURVIVING_RELEASE = "9cb4af06-32db-4985-9bb2-4f8793428869"
