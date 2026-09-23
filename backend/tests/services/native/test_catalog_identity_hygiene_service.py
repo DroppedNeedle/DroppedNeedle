@@ -836,6 +836,31 @@ async def test_scan_gate_defers_same_durable_hygiene_work(
 
 
 @pytest.mark.asyncio
+async def test_pin_stale_job_rebases_and_completes_in_one_claim(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await _seed_split(store)
+    service = CatalogIdentityHygieneService(store, clock=lambda: 3)
+    await service.enqueue_backfill()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_catalog_revision SET value = value + 1 "
+            "WHERE singleton = 1"
+        )
+    claimed = await store.claim_operation_job(
+        "worker", now=3, lease_seconds=60, kind="repair"
+    )
+    assert claimed is not None
+
+    result = await service.run_claimed(claimed, "worker")
+
+    # Before the fix a pin-stale job was rebased and yielded back to 'queued'
+    # (behind every other queued repair job), so it never sealed while the
+    # catalog kept changing.
+    assert result["state"] == "succeeded"
+
+
+@pytest.mark.asyncio
 async def test_shared_operation_supervisor_dispatches_catalog_hygiene_repair() -> None:
     store = AsyncMock()
     job = {"id": "catalog-hygiene-job", "kind": "repair"}

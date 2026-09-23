@@ -245,11 +245,12 @@ async def test_yield_persists_cooldown_and_prevents_immediate_reclaim(
 
 
 @pytest.mark.asyncio
-async def test_stale_pin_rebase_caught_by_worker_resumes_later_pass(
+async def test_stale_pin_rebase_caught_by_worker_completes_in_same_claim(
     store: NativeLibraryStore, db_path: Path,
 ) -> None:
     """The hygiene worker catches the stale-pin failure, rebases the SAME job,
-    and yields to a later bounded pass instead of looping on lease errors."""
+    and re-materializes in the same claim instead of yielding to the back of
+    the queue (where the pin would be stale again by its next turn)."""
     from core.exceptions import StaleRevisionError
 
     from services.native.catalog_identity_hygiene_service import (
@@ -279,31 +280,54 @@ async def test_stale_pin_rebase_caught_by_worker_resumes_later_pass(
     result = await service.run_claimed(
         {"id": created["id"], "kind": "repair"}, "worker"
     )
-    # The worker rebased and yielded with the cooldown (no immediate reclaim).
-    assert result["state"] == "queued"
+    # The worker rebased onto the current revision and completed in this claim.
+    assert result["state"] == "succeeded"
+    assert result["id"] == created["id"]  # same static job, no fresh id
     with sqlite3.connect(db_path) as connection:
-        next_attempt = connection.execute(
-            "SELECT next_attempt_at FROM library_operation_jobs WHERE id = ?",
-            (created["id"],),
-        ).fetchone()[0]
         pin = connection.execute(
-            "SELECT pinned_catalog_revision, sealed, staged_count "
+            "SELECT pinned_catalog_revision, sealed "
             "FROM library_repair_materialization WHERE job_id = ?",
             (created["id"],),
         ).fetchone()
         current = connection.execute(
             "SELECT value FROM library_catalog_revision WHERE singleton = 1"
         ).fetchone()[0]
-    assert next_attempt is not None and next_attempt > 3
-    assert pin[0] == current and pin[1] == 0 and pin[2] == 0
-    assert result["id"] == created["id"]  # same static job, no fresh id
-    # Later pass (after cooldown) completes the same job.
-    resumed = await store.claim_operation_job("worker", now=4, lease_seconds=60, kind="repair")
-    assert resumed is not None and resumed["id"] == created["id"]
-    terminal = await service.run_claimed(
+    assert pin[0] == current and pin[1] == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_pin_rebase_yields_when_catalog_keeps_moving(
+    store: NativeLibraryStore, db_path: Path,
+) -> None:
+    """If the catalog changes on every retry the inline rebase is bounded: the
+    worker yields with the cooldown instead of looping inside one claim."""
+    from core.exceptions import StaleRevisionError
+
+    from services.native.catalog_identity_hygiene_service import (
+        _MAX_INLINE_REBASES,
+    )
+
+    created = await _create_and_claim(store)
+    materialize = AsyncMock(side_effect=StaleRevisionError("pin moved again"))
+    store.materialize_repair_operation_batch = materialize  # type: ignore[method-assign]
+    service = _service(
+        store,
+        wal=_ToggleWalCheckpoint(suspended=False),
+        demand=_RecordingDemand(),
+    )
+
+    result = await service.run_claimed(
         {"id": created["id"], "kind": "repair"}, "worker"
     )
-    assert terminal["state"] == "succeeded"
+
+    assert result["state"] == "queued"
+    assert materialize.await_count == _MAX_INLINE_REBASES + 1
+    with sqlite3.connect(db_path) as connection:
+        next_attempt = connection.execute(
+            "SELECT next_attempt_at FROM library_operation_jobs WHERE id = ?",
+            (created["id"],),
+        ).fetchone()[0]
+    assert next_attempt is not None and next_attempt > 3
 
 
 @pytest.mark.asyncio

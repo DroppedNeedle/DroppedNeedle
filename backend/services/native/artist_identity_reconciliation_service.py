@@ -59,6 +59,7 @@ _BACKFILL_IDEMPOTENCY_KEY = "artist-identity-reconciliation:v3:backfill"
 # item and hot-spins against an open circuit breaker. 120 s gives the shared
 # MusicBrainz breaker (60 s timeout) a recovery window between attempts.
 _PROVIDER_DEFER_RETRY_SECONDS = 120.0
+_MAX_INLINE_REBASES = 3
 _GROUP_NAMESPACE = uuid.UUID("4f2de7c1-3e43-53bf-9d04-0e0f7755394e")
 
 
@@ -264,6 +265,7 @@ class ArtistIdentityReconciliationService:
         started = time.monotonic()
         while True:
             now = self._clock()
+            inline_rebases = 0
             while True:
                 try:
                     staged = await self._store.materialize_repair_operation_batch(
@@ -272,16 +274,29 @@ class ArtistIdentityReconciliationService:
                 except StaleRevisionError:
                     # A catalog change while the worklist is unsealed rebases the
                     # SAME static-key job onto the current revision (or fails
-                    # closed when progress exists) and resumes next pass.
+                    # closed when progress exists).
                     rebased = await self._store.rebase_repair_operation(
                         job_id, worker_id, now=now
                     )
-                    return await self._store.yield_operation_job(
-                        job_id,
-                        worker_id,
-                        now=now,
-                        reason_code="PIN_REBASED",
-                    ) if rebased["rebased"] else rebased["job"]
+                    if not rebased["rebased"]:
+                        return rebased["job"]
+                    # Retry materialization in this same claim: the pin was just
+                    # moved to the current revision, so the retry normally seals.
+                    # Yielding here instead re-queues the job (rebase bumps its
+                    # updated_at) behind every other queued repair job; with tens
+                    # of thousands of per-album jobs the catalog revision moves
+                    # again long before the job's next turn, so it is stale on
+                    # every pass and never seals (see GH-486). The retry is
+                    # bounded so a continuously changing catalog still yields.
+                    inline_rebases += 1
+                    if inline_rebases > _MAX_INLINE_REBASES:
+                        return await self._store.yield_operation_job(
+                            job_id,
+                            worker_id,
+                            now=now,
+                            reason_code="PIN_REBASED",
+                        )
+                    continue
                 if staged["complete"]:
                     break
                 if time.monotonic() - started >= BACKGROUND_TIMESLICE_SECONDS:
