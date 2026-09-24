@@ -683,6 +683,25 @@ class LastFmRepository:
         await self._cache.set(cache_key, info, ttl_seconds=LASTFM_ENTITY_CACHE_TTL)
         return info
 
+    async def get_track_album(self, artist: str, track: str) -> str | None:
+        """Return the album title Last.fm attributes a track to (track.getInfo)."""
+        cache_key = f"{LFM_PREFIX}track_album:{artist}:{track}"
+        cached = await self._cache.get(cache_key)
+        if cached is not None:
+            return cached or None
+        try:
+            data = await self._request(
+                "track.getInfo",
+                params={"artist": artist, "track": track, "autocorrect": "1"},
+            )
+        except ResourceNotFoundError:
+            data = {}
+        album = (data.get("track") or {}).get("album")
+        title = album.get("title") if isinstance(album, dict) else None
+        title = title if isinstance(title, str) and title.strip() else None
+        await self._cache.set(cache_key, title or "", ttl_seconds=LASTFM_ENTITY_CACHE_TTL)
+        return title
+
     async def get_similar_artists(
         self, artist: str, mbid: str | None = None, limit: int = 30
     ) -> list[LastFmSimilarArtist]:

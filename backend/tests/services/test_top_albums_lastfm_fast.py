@@ -188,3 +188,100 @@ class TestLastFmTopAlbumsCanonicalization:
         result = await svc.get_top_albums(ARTIST_MBID, count=10, source="lastfm")
 
         assert result.source == "lastfm"
+
+    @pytest.mark.asyncio
+    async def test_edition_suffix_title_uses_base_release_group(self):
+        svc, _ = _make_service()
+        svc._lastfm_repo.get_artist_top_albums.return_value = [
+            LastFmAlbum(name="Album A (2011 Remaster)", artist_name="Test Artist", mbid=None),
+            LastFmAlbum(
+                name="Album B - 40th Anniversary Edition [Bonus Tracks]",
+                artist_name="Test Artist",
+                mbid=None,
+            ),
+        ]
+
+        result = await svc.get_top_albums(ARTIST_MBID, count=10, source="lastfm")
+
+        assert [a.release_group_mbid for a in result.albums] == [
+            RELEASE_GROUP_MBID_1,
+            RELEASE_GROUP_MBID_2,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_same_title_prefers_original_studio_album(self):
+        svc, mb_repo = _make_service()
+        mb_repo.get_release_groups_by_artist.return_value = [
+            {"id": "ep", "title": "Album A", "primary-type": "EP", "first-release-date": "1999"},
+            {
+                "id": "remix",
+                "title": "Album A",
+                "primary-type": "Album",
+                "secondary-types": ["Remix"],
+                "first-release-date": "2023-07-21",
+            },
+            {
+                "id": RELEASE_GROUP_MBID_1,
+                "title": "Album A",
+                "primary-type": "Album",
+                "secondary-types": [],
+                "first-release-date": "2000-05-07",
+            },
+        ]
+        svc._lastfm_repo.get_artist_top_albums.return_value = [
+            LastFmAlbum(name="Album A", artist_name="Test Artist", mbid=None)
+        ]
+
+        result = await svc.get_top_albums(ARTIST_MBID, count=10, source="lastfm")
+
+        assert result.albums[0].release_group_mbid == RELEASE_GROUP_MBID_1
+
+    @pytest.mark.asyncio
+    async def test_typographic_apostrophe_matches_plain_apostrophe(self):
+        svc, mb_repo = _make_service()
+        mb_repo.get_release_groups_by_artist.return_value = [
+            {"id": RELEASE_GROUP_MBID_1, "title": "I Ain’t Worried"}
+        ]
+        svc._lastfm_repo.get_artist_top_albums.return_value = [
+            LastFmAlbum(name="I Ain't Worried", artist_name="Test Artist", mbid=None)
+        ]
+
+        result = await svc.get_top_albums(ARTIST_MBID, count=10, source="lastfm")
+
+        assert result.albums[0].release_group_mbid == RELEASE_GROUP_MBID_1
+
+    @pytest.mark.asyncio
+    async def test_unmatched_release_mbid_is_not_resolved_per_album(self):
+        svc, mb_repo = _make_service()
+        svc._lastfm_repo.get_artist_top_albums.return_value = [
+            LastFmAlbum(name="Unknown Compilation", artist_name="Test Artist", mbid=RELEASE_MBID_1)
+        ]
+
+        result = await svc.get_top_albums(ARTIST_MBID, count=10, source="lastfm")
+
+        assert result.albums[0].release_group_mbid == RELEASE_MBID_1
+        mb_repo.get_release_group_id_from_release.assert_not_awaited()
+
+
+class TestAlbumTitleCandidates:
+    @pytest.mark.parametrize(
+        ("title", "expected"),
+        [
+            ("Album A (Deluxe)", ["album a (deluxe)", "album a"]),
+            ("Jazz (2011 Remaster)", ["jazz (2011 remaster)", "jazz"]),
+            (
+                "Back in Black - 2003 Remaster (Deluxe)",
+                ["back in black - 2003 remaster (deluxe)", "back in black - 2003 remaster", "back in black"],
+            ),
+            ("Hunky Dory (2015 Remastered Version)", ["hunky dory (2015 remastered version)", "hunky dory"]),
+            # Non-edition parentheticals and hyphenated titles are left intact.
+            ("Bohemian Rhapsody (The Original Soundtrack)", ["bohemian rhapsody (the original soundtrack)"]),
+            ("Hi-Fi Serious", ["hi-fi serious"]),
+            ("X - Y (Remastered)", ["x - y (remastered)", "x - y"]),
+            ("(Deluxe)", ["(deluxe)"]),
+            ("", []),
+            (None, []),
+        ],
+    )
+    def test_peels_edition_qualifiers_one_at_a_time(self, title, expected):
+        assert ArtistDiscoveryService._album_title_candidates(title) == expected
