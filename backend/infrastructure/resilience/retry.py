@@ -279,7 +279,10 @@ def with_retry(
 
             last_exception = None
             attempts_made = 0
-            started_at = time.monotonic()
+            # The retry budget limits additional retry pacing, not time spent
+            # executing an attempt. Otherwise an HTTP timeout longer than the
+            # retry budget makes that timeout effectively non-retriable.
+            retry_delay_spent = 0.0
             should_log_failure = False
 
             for attempt in range(1, max_attempts + 1):
@@ -323,11 +326,11 @@ def with_retry(
                             ):
                                 managed_delay = None
                             if managed_delay is not None:
-                                elapsed = time.monotonic() - started_at
-                                remaining = retry_budget_seconds - elapsed
+                                remaining = retry_budget_seconds - retry_delay_spent
                                 if remaining <= 0 or managed_delay >= remaining:
                                     should_log_failure = True
                                     break
+                                retry_delay_spent += managed_delay
                         # A shared provider scheduler already admitted and
                         # paced the next attempt; do not sleep twice here.
                         continue
@@ -343,13 +346,13 @@ def with_retry(
                             delay *= 0.5 + random.random()
 
                     if retry_budget_seconds is not None:
-                        elapsed = time.monotonic() - started_at
-                        remaining = retry_budget_seconds - elapsed
+                        remaining = retry_budget_seconds - retry_delay_spent
                         if remaining <= 0 or delay >= remaining:
                             should_log_failure = True
                             break
 
                     await asyncio.sleep(delay)
+                    retry_delay_spent += delay
 
             if last_exception is None:
                 raise RuntimeError(f"{func_name} retry loop ended without an exception")

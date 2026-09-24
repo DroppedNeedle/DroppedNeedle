@@ -73,6 +73,37 @@ async def test_connect_and_protocol_errors_fail_after_one_attempt(
         priority=int(RequestPriority.USER_INITIATED)
     )
 
+@pytest.mark.asyncio
+async def test_read_timeout_retries_after_slow_first_attempt(
+    reset_musicbrainz_transport, monkeypatch
+) -> None:
+    now = 0.0
+
+    class _SlowThenSuccessClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def get(self, url: str, params=None):
+            nonlocal now
+            self.calls += 1
+            request = httpx.Request("GET", url, params=params)
+
+            if self.calls == 1:
+                now += 10.0
+                raise httpx.ReadTimeout("timed out", request=request)
+
+            return httpx.Response(
+                200,
+                json={"artist": []},
+                request=request,
+            )
+
+    client = _SlowThenSuccessClient()
+    monkeypatch.setattr(mb_base, "_http_client", client)
+    monkeypatch.setattr(retry_module.time, "monotonic", lambda: now)
+
+    assert await mb_base.mb_api_get("/artist") == {"artist": []}
+    assert client.calls == 2
 
 @pytest.mark.asyncio
 async def test_503_remains_retryable_within_budget(

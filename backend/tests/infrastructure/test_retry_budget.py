@@ -91,6 +91,40 @@ async def test_retry_log_names_exception_with_empty_message(caplog) -> None:
 
     assert "failed after 1 attempt (BlankError):" in caplog.text
 
+@pytest.mark.asyncio
+async def test_retry_budget_does_not_count_time_spent_inside_attempt(
+    monkeypatch,
+) -> None:
+    now = 0.0
+    sleeps: list[float] = []
+    calls = 0
+
+    async def fake_sleep(delay: float) -> None:
+        nonlocal now
+        sleeps.append(delay)
+        now += delay
+
+    monkeypatch.setattr(retry_module.time, "monotonic", lambda: now)
+    monkeypatch.setattr(retry_module.asyncio, "sleep", fake_sleep)
+
+    @with_retry(
+        max_attempts=2,
+        base_delay=1.0,
+        jitter=False,
+        retry_budget_seconds=1.5,
+        retriable_exceptions=(RuntimeError,),
+    )
+    async def slow_then_succeed() -> str:
+        nonlocal calls, now
+        calls += 1
+        if calls == 1:
+            now += 10.0
+            raise RuntimeError("slow failure")
+        return "ok"
+
+    assert await slow_then_succeed() == "ok"
+    assert calls == 2
+    assert sleeps == [1.0]
 
 @pytest.mark.parametrize("budget", [0, -1, float("inf"), float("nan")])
 def test_retry_budget_must_be_positive_and_finite(budget: float) -> None:
