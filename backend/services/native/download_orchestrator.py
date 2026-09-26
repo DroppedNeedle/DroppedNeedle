@@ -2701,6 +2701,11 @@ class DownloadOrchestrator:
         fallback: at least ``track_count`` distinct positions present."""
         if task.download_type == "track":
             return imported_any
+        if task.origin == "upgrade":
+            # An album upgrade only replaces the positions already held (#509), so
+            # tracklist coverage is not its goal: a partially-held album would never
+            # reach it and would fail over into another whole-album grab.
+            return imported_any
         coverage = await self._coverage(task, context="completeness")
         if coverage is not None:
             covered, expected_total, _orphans = coverage

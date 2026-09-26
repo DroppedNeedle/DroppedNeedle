@@ -4191,6 +4191,23 @@ async def test_usenet_short_delivery_does_not_complete(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_partially_held_album_upgrade_completes_without_full_coverage(
+    tmp_path: Path,
+):
+    """#509: an album upgrade replaces only the held positions, so holding 1 of 17
+    tracks must not read as an under-delivery (which would fail over into another
+    whole-album grab)."""
+    store, orch, _fp, _lib = _build(tmp_path, imported_rows=[])
+    task = await _new_task(store, track_count=17, origin="upgrade")
+    orch._coverage = AsyncMock(return_value=(1, 17, []))
+    result = ProcessResult(succeeded=["/lib/01.flac"], failed=[])
+
+    assert await orch._download_is_complete(task, True, result) is True
+    assert await orch._download_is_complete(task, False, result) is False
+    orch._coverage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_soulseek_short_manifest_still_fails_over(tmp_path: Path):
     """Soulseek path unchanged: a clean delivery of a short manifest still trips
     the whole-album-repull veto when target_files < track_count."""

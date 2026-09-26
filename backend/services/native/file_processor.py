@@ -132,6 +132,19 @@ class AlreadyImported(Exception):
         self.filename = filename
 
 
+class UpgradeSlotNotHeld(Exception):
+    """An album upgrade delivered a file for a position the library does not hold.
+
+    An upgrade replaces what is already owned; it never adds tracks (#509). The
+    file is skipped - neither a success nor a failure - so a partially-held album
+    is not expanded into the whole release.
+    """
+
+    def __init__(self, *, filename: str | None = None) -> None:
+        super().__init__(f"upgrade position not held: {filename}")
+        self.filename = filename
+
+
 class FileFailure(AppStruct):
     """One failed file in a ``ProcessResult``."""
 
@@ -1001,6 +1014,14 @@ class FileProcessor:
                 # prior run already imported this file: count its library path a
                 # success, do not quarantine
                 succeeded.append(str(already.path))
+            except UpgradeSlotNotHeld as skipped:
+                logger.info(
+                    "process.upgrade_position_not_held",
+                    extra={
+                        "task_id": manifest.task_id,
+                        "file": _basename(skipped.filename or expected.filename),
+                    },
+                )
             except VerificationFailed as failure:
                 failed.append(
                     FileFailure(
@@ -1191,6 +1212,14 @@ class FileProcessor:
                     succeeded.append(str(target))
             except AlreadyImported as already:
                 succeeded.append(str(already.path))
+            except UpgradeSlotNotHeld as skipped:
+                logger.info(
+                    "process.upgrade_position_not_held",
+                    extra={
+                        "task_id": manifest.task_id,
+                        "file": _basename(skipped.filename or candidate.path.name),
+                    },
+                )
             except VerificationFailed as failure:
                 failed.append(
                     FileFailure(
@@ -1462,12 +1491,18 @@ class FileProcessor:
         # Upgrade runs are exempt: replace-at-position is their OWNED semantics
         # (CollectionMgmt D4/D18), and the strictly-better rule already governs.
         replacement: dict | None = None
+        present: dict | None = None
         if target_tag.track_number:
             present = await self._library.get_file_at_position(
                 manifest.release_group_mbid,
                 target_tag.disc_number or 1,
                 target_tag.track_number,
             )
+        if present is None and self._upgrade_limited_to_held(manifest):
+            # An album upgrade only replaces held positions; an empty slot is a
+            # track the user never had, so it is not added (#509).
+            raise UpgradeSlotNotHeld(filename=source.name)
+        if target_tag.track_number:
             occupied_by_other = (
                 manifest.origin != "upgrade"
                 and present is not None
@@ -1618,6 +1653,13 @@ class FileProcessor:
     # shapes: same-path (mp3_192 -> mp3_320, identical filename - recycle BEFORE the
     # in-place publish) and different-path (mp3 -> flac - publish, soft-delete the
     # old row, recycle the old file). Everything else keeps today's add-only skips.
+
+    @staticmethod
+    def _upgrade_limited_to_held(manifest: DownloadManifest) -> bool:
+        """Whether this import may only replace positions the album already holds:
+        an album upgrade (#509). Track upgrades target one owned recording, and
+        legacy manifests (no ``download_type``) keep their previous behaviour."""
+        return manifest.origin == "upgrade" and manifest.download_type == "album"
 
     def _position_upgrade_target(
         self, origin: str, present: dict, info: AudioInfo
@@ -2268,13 +2310,19 @@ class FileProcessor:
         # review (D5: never auto-delete). Without this, the correct re-download was
         # unlinked as a "duplicate" of the wrong file, forever. Upgrade runs are
         # exempt: replace-at-position is their owned semantics (CollectionMgmt D4/D18).
+        # An album upgrade only replaces held positions: a file for an empty (or
+        # unknown) slot is a track the user never had, so it is skipped (#509).
         replacement: dict | None = None
+        present: dict | None = None
         if target_tag.track_number:
             present = await self._library.get_file_at_position(
                 manifest.release_group_mbid,
                 target_tag.disc_number or 1,
                 target_tag.track_number,
             )
+        if present is None and self._upgrade_limited_to_held(manifest):
+            raise UpgradeSlotNotHeld(filename=expected.filename)
+        if target_tag.track_number:
             occupied_by_other = (
                 manifest.origin != "upgrade"
                 and expected_track is not None
