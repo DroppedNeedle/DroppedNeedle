@@ -95,7 +95,7 @@ def _make(tmp_path: Path, *, with_bin: bool = True, store: DownloadStore | None 
 
 
 def _manifest(
-    *files: ExpectedFile, origin="user", rg="rg-1", tracks=None
+    *files: ExpectedFile, origin="user", rg="rg-1", tracks=None, download_type=None
 ) -> DownloadManifest:
     return DownloadManifest(
         task_id="t1",
@@ -108,6 +108,7 @@ def _manifest(
         expected_tracks=tracks or [],
         year=1997,
         origin=origin,
+        download_type=download_type,
     )
 
 
@@ -320,6 +321,112 @@ async def test_folder_import_upgrade_replaces_at_position(tmp_path: Path):
     assert len(_bin_files(bin_path)) == 1
     present = await manager.get_file_at_position("rg-1", 1, 1)
     assert present is not None and present["file_path"] == str(library / _NEW_REL)
+
+
+_FLAC_2 = FIXTURES / "flac_full_02.flac"  # Paranoid Android, disc 1 track 2
+_NEW_REL_2 = "Radiohead/OK Computer (1997)/0102 Paranoid Android.flac"
+
+
+def _stage(downloads: Path, *sources: tuple[Path, str]) -> list[ExpectedFile]:
+    files = []
+    for source, name in sources:
+        shutil.copy(source, downloads / name)
+        size = (downloads / name).stat().st_size
+        files.append(ExpectedFile(filename=name, size=size))
+    return files
+
+
+@pytest.mark.asyncio
+async def test_album_upgrade_skips_positions_not_held(tmp_path: Path):
+    # #509: holding track 1 only, an album upgrade replaces track 1 and never
+    # adds track 2 - the upgrade must not expand a partial album.
+    fp, manager, library, downloads, bin_path = _make(tmp_path)
+    old = await _seed_existing(
+        manager, library / "Radiohead/OK Computer (1997)/old-copy.mp3"
+    )
+    files = _stage(
+        downloads, (_FLAC, "01 Airbag.flac"), (_FLAC_2, "02 Paranoid Android.flac")
+    )
+
+    result = await fp.process_downloaded(
+        _manifest(*files, origin="upgrade", download_type="album")
+    )
+
+    assert result.failed == []  # skipped, not a failure to quarantine
+    assert result.succeeded == [str(library / _NEW_REL)]
+    assert not old.exists()
+    assert len(_bin_files(bin_path)) == 1
+    assert not (library / _NEW_REL_2).exists()
+    assert await manager.get_file_at_position("rg-1", 1, 2) is None
+
+
+@pytest.mark.asyncio
+async def test_folder_album_upgrade_skips_positions_not_held(tmp_path: Path):
+    fp, manager, library, _downloads, _bin_path = _make(tmp_path)
+    await _seed_existing(
+        manager, library / "Radiohead/OK Computer (1997)/old-copy.mp3"
+    )
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    shutil.copy(_FLAC, job_dir / "airbag.flac")
+    shutil.copy(_FLAC_2, job_dir / "paranoid.flac")
+    manifest = _manifest(
+        origin="upgrade",
+        download_type="album",
+        tracks=[
+            ExpectedTrack(
+                track_number=1, disc_number=1, duration_seconds=0.3, title="Airbag"
+            ),
+            ExpectedTrack(
+                track_number=2,
+                disc_number=1,
+                duration_seconds=0.3,
+                title="Paranoid Android",
+            ),
+        ],
+    )
+
+    result = await fp.process_downloaded_folder(
+        manifest, [job_dir / "airbag.flac", job_dir / "paranoid.flac"]
+    )
+
+    assert result.failed == []
+    assert result.succeeded == [str(library / _NEW_REL)]
+    assert not (library / _NEW_REL_2).exists()
+    assert await manager.get_file_at_position("rg-1", 1, 2) is None
+
+
+@pytest.mark.asyncio
+async def test_album_upgrade_with_nothing_held_imports_nothing(tmp_path: Path):
+    fp, manager, library, downloads, _bin_path = _make(tmp_path)
+    files = _stage(downloads, (_FLAC, "01 Airbag.flac"))
+
+    result = await fp.process_downloaded(
+        _manifest(*files, origin="upgrade", download_type="album")
+    )
+
+    assert result.succeeded == [] and result.failed == []
+    assert not (library / _NEW_REL).exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("origin", "download_type"),
+    [("user", "album"), ("upgrade", "track"), ("upgrade", None)],
+)
+async def test_held_only_filter_is_scoped_to_album_upgrades(
+    tmp_path: Path, origin: str, download_type: str | None
+):
+    # user requests add tracks; a track upgrade targets one owned recording; a
+    # legacy manifest (no download_type) keeps its previous behaviour.
+    fp, _manager, library, downloads, _bin_path = _make(tmp_path)
+    files = _stage(downloads, (_FLAC_2, "02 Paranoid Android.flac"))
+
+    result = await fp.process_downloaded(
+        _manifest(*files, origin=origin, download_type=download_type)
+    )
+
+    assert result.succeeded == [str(library / _NEW_REL_2)]
 
 
 def _seed_auth_and_store(tmp_path: Path) -> DownloadStore:
