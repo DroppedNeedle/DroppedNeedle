@@ -81,6 +81,10 @@ class DownloadManifest(AppStruct):
     # The owning task's origin ('user' | 'retry' | 'upgrade'). Replace-on-import fires
     # only for 'upgrade' (D18); legacy manifests decode as 'user' (add-only, unchanged).
     origin: str = "user"
+    # The owning task's download type ('album' | 'track'). An album upgrade imports
+    # only the positions the library already holds (#509); ``None`` (legacy
+    # manifests) keeps the previous behaviour.
+    download_type: str | None = None
     # Free Music uses a separate task store. Conversion holding therefore carries
     # the administrator explicitly instead of looking up a built-in download task.
     requested_by_user_id: str | None = None
