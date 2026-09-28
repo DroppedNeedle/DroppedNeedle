@@ -11,13 +11,16 @@ description = "DroppedNeedle v3 backend"
 license = "AGPL-3.0-or-later"
 
 [dependencies]
+argon2 = { version = "0.5", features = ["alloc"] }
 axum = { version = "0.8", features = ["json", "query", "http1", "matched-path"] }
 base64 = "0.22"
+bcrypt = "0.17"
 caseless = "0.2"
 chacha20poly1305 = "0.10"
 futures-util = "0.3"
 getrandom = "0.3"
 libc = "0.2"
+md5 = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 rusqlite = { version = "0.32", features = ["bundled", "backup", "functions"] }
 serde = { version = "1", features = ["derive"] }
@@ -27,6 +30,7 @@ sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runti
 thiserror = "2"
 unicode-normalization = "0.1"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 utoipa = "5"

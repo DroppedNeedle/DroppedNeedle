@@ -14,6 +14,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod app;
+pub mod auth;
 pub mod config;
 pub mod db;
 pub mod docs;

@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use crate::{
-    config::AppConfig, http_client::HttpClientFactory, ids::IdGenerator,
+    auth::wiring::AuthSetup, config::AppConfig, http_client::HttpClientFactory, ids::IdGenerator,
     provider_policy::ProviderPolicy,
 };
 
@@ -20,13 +20,25 @@ pub struct AppState {
     pub http: HttpClientFactory,
     /// Deployment configuration.
     pub config: AppConfig,
+    /// Auth bundle: stores, gates, and route states for `/api/v3`.
+    pub auth: AuthSetup,
 }
 
 impl AppState {
     /// Wire the state from its parts. Callers pass the production generator
     /// or a fake; nothing here reaches globals.
-    pub fn new(ids: Arc<dyn IdGenerator>, http: HttpClientFactory, config: AppConfig) -> Self {
-        Self { ids, http, config }
+    pub fn new(
+        ids: Arc<dyn IdGenerator>,
+        http: HttpClientFactory,
+        config: AppConfig,
+        auth: AuthSetup,
+    ) -> Self {
+        Self {
+            ids,
+            http,
+            config,
+            auth,
+        }
     }
 
     /// Verified per-provider rate policy table.

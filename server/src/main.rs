@@ -6,8 +6,16 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use droppedneedle::{
-    AppConfig, AppState, create_app, docs::ApiDoc, http_client::HttpClientFactory,
-    ids::UuidGenerator, observability::init_tracing,
+    AppConfig, AppState,
+    auth::{prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup},
+    create_app,
+    db::{DbConfig, open_runtime},
+    docs::ApiDoc,
+    http_client::HttpClientFactory,
+    ids::UuidGenerator,
+    observability::init_tracing,
+    runtime_config::{ConfigStore, Crypto},
+    schema::apply_migrations,
 };
 use utoipa::OpenApi as _;
 
@@ -57,9 +65,51 @@ fn print_openapi() {
 
 /// Boot state, bind, and serve until SIGTERM or Ctrl-C.
 async fn serve() -> Result<(), String> {
-    let config = AppConfig::load().map_err(|error| error.to_string())?;
+    let mut config = AppConfig::load().map_err(|error| error.to_string())?;
+    #[cfg(debug_assertions)]
+    {
+        config.debug_cors = true;
+    }
     let http = HttpClientFactory::new().map_err(|error| error.to_string())?;
-    let state = AppState::new(Arc::new(UuidGenerator), http, config.clone());
+    let runtime = open_runtime(&DbConfig::new(&config.library_db_path))
+        .await
+        .map_err(|error| error.to_string())?;
+    apply_migrations(runtime.pool())
+        .await
+        .map_err(|error| error.to_string())?;
+    // Two handles over one key file: the store owns its copy outright, so
+    // the adapters load a second handle rather than sharing state.
+    let crypto = Arc::new(
+        Crypto::load_or_generate(&config.config_dir()).map_err(|error| error.to_string())?,
+    );
+    let config_store = Arc::new(
+        ConfigStore::open(
+            &config.config_file,
+            Crypto::load_or_generate(&config.config_dir()).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?,
+    );
+    let ids = Arc::new(UuidGenerator);
+    let clock = Arc::new(SystemClock);
+    let auth_bundle = ProdAuth::new(
+        runtime.pool(),
+        runtime.lane(),
+        crypto.clone(),
+        ids.clone(),
+        clock.clone(),
+        &config.cache_dir,
+    );
+    let auth = AuthSetup::build(
+        auth_bundle,
+        config_store,
+        crypto,
+        http.shared().clone(),
+        ids.clone(),
+        clock,
+        &config.base_path,
+    )
+    .map_err(|error| error.to_string())?;
+    let state = AppState::new(ids, http, config.clone(), auth);
     let app = create_app(state);
 
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), config.port);
@@ -71,6 +121,7 @@ async fn serve() -> Result<(), String> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|error| format!("server fault: {error}"))?;
+    runtime.shutdown().await;
     tracing::info!("shutdown complete");
     Ok(())
 }

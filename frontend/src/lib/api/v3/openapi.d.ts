@@ -4,6 +4,724 @@
  */
 
 export interface paths {
+    "/api/v3/admin/app-passwords": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every live app password across users, with owners. */
+        get: operations["admin_list_app_passwords"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/app-passwords/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke any user's app password. */
+        delete: operations["admin_revoke_app_password"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import a batch of accounts from one provider. The catalog is re-read
+         *     server-side; unknown, already-bound, and failed uids land in `skipped`.
+         */
+        post: operations["admin_import_users"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/import/jellyfin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Jellyfin accounts available for import. Honest 503 until the live
+         *     Jellyfin client lands (same posture as the login flows).
+         */
+        get: operations["admin_import_list_jellyfin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/import/plex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Plex accounts available for import. Honest 503 until the live Plex
+         *     client lands (same posture as the login flows).
+         */
+        get: operations["admin_import_list_plex"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admin user listing, paged. */
+        get: operations["admin_list_users"];
+        put?: never;
+        /** Create a local account. */
+        post: operations["admin_create_user"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/users/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch one user. */
+        get: operations["admin_get_user"];
+        put?: never;
+        post?: never;
+        /** Delete one user. */
+        delete: operations["admin_delete_user"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/users/{id}/recovery-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mint a recovery code for one user. The code returns once. */
+        post: operations["admin_mint_recovery_code"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/users/{id}/role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Change one user's role. */
+        put: operations["admin_set_role"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/users/{id}/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke every session of one user. */
+        delete: operations["admin_revoke_sessions"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/device-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mint a named companion Bearer [REDACTED] Standard sessions only. */
+        post: operations["mint_device_session"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/jellyfin/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Jellyfin login: checks credentials against the configured server, imports
+         *     the user, and mints a session. Transport rule matches local login.
+         */
+        post: operations["jellyfin_login_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Local login. Cookie mode (default) sets the session cookie and the body
+         *     carries no token; Bearer mode returns the raw token once and sets no
+         *     cookie. Failures are one uniform 401 with a dummy-hash verify behind it.
+         */
+        post: operations["login_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Logout. Public so a stale client can always clear its cookie: revokes the
+         *     presented token when it resolves, always clears the cookie, always 204.
+         */
+        post: operations["logout_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/logout-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke every own session. */
+        post: operations["logout_all"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/oidc/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start an OIDC login: returns the browser URL (PKCE + state baked in). */
+        post: operations["oidc_authorize_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/oidc/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * OIDC callback: consumes the IdP code/state and redirects (relative
+         *     Location, same-site hand-off, v2 parity) to the SPA callback carrying the
+         *     one-time exchange code. Always `no-store`.
+         */
+        get: operations["oidc_callback_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/oidc/exchange": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * OIDC exchange: swaps the one-time callback code for a session. Cookie
+         *     mode (default) sets the session cookie and the body carries no token;
+         *     Bearer [REDACTED] the raw token once.
+         */
+        post: operations["oidc_exchange_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/password-recovery/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset a password with a recovery code. Public: a locked-out user holds
+         *     no session.
+         */
+        post: operations["reset_password"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/plex/poll/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Plex settings completion: polls the PIN and returns the raw auth token
+         *     untouched. Requires a session (the token is an account credential).
+         */
+        post: operations["plex_poll_connect_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/plex/poll/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Plex link completion: polls the PIN and returns the verified profile.
+         *     Requires a session (the profile carries account tokens); no login side
+         *     effects, the caller attaches the profile to its own account.
+         */
+        post: operations["plex_poll_link_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/plex/poll/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Plex login completion: polls the PIN, and once authorized imports the
+         *     user and mints a session. Pending polls carry only the flag.
+         */
+        post: operations["plex_poll_login_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/plex/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start any Plex flow: mints a PIN and its browser URL. Link and connect
+         *     starts 400 without a configured Plex server; login starts never gate.
+         */
+        post: operations["plex_start_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the caller's sessions for the R6 UI. */
+        get: operations["list_sessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke one own session. */
+        delete: operations["revoke_session"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * First-admin setup. Creates the admin and logs them in (201 + session,
+         *     v2 parity) iff no users exist; otherwise 409. Concurrent setups serialize
+         *     on the state guard: the loser probes after the winner commits and lands
+         *     on 409. (The users slice has no empty-table constraint, so without the
+         *     guard two distinct usernames would both succeed.)
+         */
+        post: operations["setup_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/setup/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Setup-required probe for the SPA first-run gate. */
+        get: operations["setup_status_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Profile of the caller. */
+        get: operations["get_profile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change the caller's display name. */
+        patch: operations["patch_profile"];
+        trace?: never;
+    };
+    "/api/v3/me/app-passwords": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Caller's app passwords. */
+        get: operations["list_app_passwords"];
+        put?: never;
+        /** Create an app password. The secret returns once. */
+        post: operations["create_app_password"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/app-passwords/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke one own app password. */
+        delete: operations["revoke_app_password"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload a new avatar from base64 bytes. */
+        post: operations["post_avatar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/connections/lastfm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Per-user Last.fm link status. */
+        get: operations["lastfm_status"];
+        /** Store the caller's own Last.fm API credentials. */
+        put: operations["lastfm_set_credentials"];
+        post?: never;
+        /** Unlink Last.fm (drops credentials and session). */
+        delete: operations["lastfm_unlink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/connections/lastfm/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Exchange an approved token for a linked session. */
+        post: operations["lastfm_session"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/connections/lastfm/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fetch a Last.fm sign-in token plus approval URL. */
+        post: operations["lastfm_token"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set or clear the caller's email. */
+        put: operations["put_email"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/local-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set the first local password on an account without one. */
+        post: operations["post_local_password"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change the caller's password. */
+        post: operations["post_password"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/username": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Rename the caller. */
+        put: operations["put_username"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/users/{id}/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Serve one user's avatar. Self-or-admin; the `v` query is ignored. */
+        get: operations["get_avatar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -25,6 +743,147 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Every active app password across users. */
+        AdminAppPasswordListResponse: {
+            /** @description Active app passwords, by owner then age. */
+            app_passwords: components["schemas"]["AdminAppPasswordView"][];
+        };
+        /** @description One app password with its owner, for admin oversight. */
+        AdminAppPasswordView: {
+            /**
+             * Format: int64
+             * @description Creation time, unix seconds.
+             */
+            created_at: number;
+            /** @description Row id. */
+            id: string;
+            /** @description Client label from the last verification, when sent. */
+            last_client?: string | null;
+            /**
+             * Format: int64
+             * @description Last verification time, unix seconds.
+             */
+            last_used_at?: number | null;
+            /** @description Name. */
+            name: string;
+            /** @description Owner display name. */
+            owner_display_name: string;
+            /** @description Owner username or display fallback. */
+            owner_username: string;
+            /** @description Owning user id. */
+            user_id: string;
+        };
+        /** @description Admin user creation. */
+        AdminUserCreate: {
+            /** @description Display name; defaults to the username casing. */
+            display_name?: string | null;
+            /** @description Optional email. */
+            email?: string | null;
+            /** @description Initial password, at least 12 chars. */
+            password: string;
+            role?: null | components["schemas"]["Role"];
+            /** @description Login username, 3-32 chars. */
+            username: string;
+        };
+        /** @description Admin user listing. */
+        AdminUserListResponse: {
+            /**
+             * Format: int64
+             * @description Total user count.
+             */
+            total: number;
+            /** @description One page of users. */
+            users: components["schemas"]["UserResponse"][];
+        };
+        /** @description Create an app password. */
+        AppPasswordCreate: {
+            /** @description Name; defaults to `App password`. */
+            name?: string | null;
+        };
+        /** @description A created app password. The secret appears here once, never again. */
+        AppPasswordCreatedResponse: {
+            /**
+             * Format: int64
+             * @description Creation time, unix seconds.
+             */
+            created_at: number;
+            /** @description Row id. */
+            id: string;
+            /** @description Name. */
+            name: string;
+            /** @description Raw secret. Shown once. */
+            secret: string;
+        };
+        /** @description Own app passwords. */
+        AppPasswordListResponse: {
+            /** @description Active app passwords, oldest first. */
+            app_passwords: components["schemas"]["AppPasswordView"][];
+        };
+        /** @description One app password, without secret material. */
+        AppPasswordView: {
+            /**
+             * Format: int64
+             * @description Creation time, unix seconds.
+             */
+            created_at: number;
+            /** @description Row id. */
+            id: string;
+            /** @description Client label from the last verification, when sent. */
+            last_client?: string | null;
+            /**
+             * Format: int64
+             * @description Last verification time, unix seconds.
+             */
+            last_used_at?: number | null;
+            /** @description User-given name. */
+            name: string;
+        };
+        /**
+         * @description Avatar upload. JSON with base64 bytes: the server has no multipart
+         *     support, and one JSON shape keeps every client on the same parser.
+         */
+        AvatarUpload: {
+            /** @description `image/jpeg`, `image/png`, `image/webp`, or `image/gif`. */
+            content_type: string;
+            /** @description Base64 image bytes, at most 5 MiB decoded. */
+            image_base64: string;
+        };
+        /** @description Avatar upload payload (parsed manually so the body cap applies). */
+        AvatarUploadBody: {
+            /** @description Image content type. */
+            content_type: string;
+            /** @description Base64 image bytes. */
+            image_base64: string;
+        };
+        /** @description Mint a named companion token. */
+        DeviceSessionMint: {
+            /** @description Device label, 1-80 chars. Reminting a label revokes the prior token. */
+            label: string;
+        };
+        /** @description A minted companion token. The raw token appears here once, never again. */
+        DeviceSessionResponse: {
+            /**
+             * Format: int64
+             * @description Absolute expiry, unix seconds.
+             */
+            expires_at: number;
+            /** @description Session id. */
+            id: string;
+            /** @description Device label. */
+            label: string;
+            /** @description Raw Bearer [REDACTED] Shown once. */
+            token: string;
+        };
+        /** @description Change display name. */
+        DisplayNameUpdate: {
+            /** @description New display name, 1-64 chars after trimming. */
+            display_name: string;
+        };
+        /** @description Change email. Null or blank clears it. */
+        EmailUpdate: {
+            /** @description New email, or null to clear. */
+            email?: string | null;
+        };
         /** @description The `error` object inside every error response. */
         ErrorBody: {
             /** @description SCREAMING_SNAKE machine code. */
@@ -39,12 +898,366 @@ export interface components {
             /** @description The single error payload. */
             error: components["schemas"]["ErrorBody"];
         };
+        /**
+         * @description Authenticated user, federated view. Stored provider rows never surface;
+         *     only the profile fields the SPA renders.
+         */
+        FederatedUserView: {
+            /** @description Avatar URL from the provider. */
+            avatar_url?: string | null;
+            /** @description Display name from the provider. */
+            display_name: string;
+            /** @description Lowercased email, when the provider supplies one. */
+            email?: string | null;
+            /** @description User id. */
+            id: string;
+            /** @description `user`, `trusted`, or `admin`. */
+            role: string;
+            /** @description Lowercased login identifier. */
+            username: string;
+            /** @description Preferred casing for display. */
+            username_display: string;
+        };
         /** @description Health payload. Shape kept from v2: `status` plus the running message. */
         HealthResponse: {
             /** @description Human-readable running message. */
             message: string;
             /** @description Service state, `ok` when serving. */
             status: string;
+        };
+        /** @description Importable accounts on one provider. */
+        ImportCandidateListResponse: {
+            /** @description Every account the directory enumerated. */
+            candidates: components["schemas"]["ImportCandidateView"][];
+        };
+        /**
+         * @description One media-server account offered for import. Display only: the import
+         *     re-reads the directory server-side and never trusts echoed fields.
+         */
+        ImportCandidateView: {
+            /** @description True when a binding for this `(provider, provider_uid)` exists. */
+            already_imported: boolean;
+            /** @description Account image URL, when the provider exposes one. */
+            avatar_url?: string | null;
+            /** @description Display name on the provider. */
+            display_name: string;
+            /** @description Account email, when the provider exposes one. */
+            email?: string | null;
+            /** @description `jellyfin` or `plex`. */
+            provider: string;
+            /** @description Provider-side id (Jellyfin user id, Plex account uuid). */
+            provider_uid: string;
+        };
+        /** @description Import a batch of accounts from one provider. */
+        ImportUsersRequest: {
+            /** @description `jellyfin` or `plex`. */
+            provider: string;
+            /** @description Provider uids to import, matched against a fresh directory listing. */
+            provider_uids: string[];
+        };
+        /** @description A finished import batch. */
+        ImportUsersResponse: {
+            /** @description Newly created accounts, in request order. */
+            imported: components["schemas"]["UserResponse"][];
+            /** @description Existing accounts the provider was linked to (email match). */
+            linked: components["schemas"]["UserResponse"][];
+            /** @description Uids skipped: unknown, already bound, or failed. */
+            skipped: string[];
+            /**
+             * Format: int64
+             * @description Count of `imported`, for the admin summary line.
+             */
+            total_imported: number;
+        };
+        /** @description Jellyfin login body. */
+        JellyfinLoginBody: {
+            /** @description Jellyfin password. */
+            password: string;
+            /** @description Credential handoff; defaults to cookie. */
+            transport?: components["schemas"]["TransportDto"];
+            /** @description Jellyfin username. */
+            username: string;
+        };
+        /** @description Confirmation that credentials were stored. */
+        LastFmConfiguredResponse: {
+            /** @description Always true when this response is returned. */
+            configured: boolean;
+            /** @description Whether a session is still linked (a key change unlinks). */
+            linked: boolean;
+        };
+        /**
+         * @description Store per-user Last.fm API credentials. Either field may be the
+         *     `lastfm****` mask sentinel, meaning keep the stored value.
+         */
+        LastFmCredentialsSet: {
+            /** @description Last.fm API key, or the mask sentinel to keep it. */
+            api_key: string;
+            /** @description Last.fm shared secret, or the mask sentinel to keep it. */
+            shared_secret: string;
+        };
+        /** @description Exchange an approved token for a session. */
+        LastFmSessionExchange: {
+            /** @description The token from the token step, after browser approval. */
+            token: string;
+        };
+        /** @description A linked Last.fm session. */
+        LastFmSessionResponse: {
+            /** @description Always true when this response is returned. */
+            linked: boolean;
+            /** @description Linked Last.fm username. */
+            username: string;
+        };
+        /** @description Per-user Last.fm link status. Never carries secrets. */
+        LastFmStatusResponse: {
+            /** @description Whether API credentials are stored. */
+            configured: boolean;
+            /** @description Whether a session is linked. */
+            linked: boolean;
+            /** @description Linked Last.fm username, when linked. */
+            username?: string | null;
+        };
+        /** @description A Last.fm sign-in token plus the URL to approve it at. */
+        LastFmTokenResponse: {
+            /** @description Approval URL to open in a browser. */
+            auth_url: string;
+            /** @description Single-use token for the session exchange. */
+            token: string;
+        };
+        /** @description Set the first local password on an account without one. */
+        LocalPasswordSet: {
+            /** @description New password, at least 12 chars. */
+            new_password: string;
+        };
+        /** @description Local login body. */
+        LoginBody: {
+            /** @description Account password. */
+            password: string;
+            /** @description Credential handoff; defaults to cookie. */
+            transport?: components["schemas"]["TransportDto"];
+            /** @description Username, matched case-insensitively. */
+            username: string;
+        };
+        /** @description OIDC authorize answer: the browser URL for this login. */
+        OidcAuthorizeBody: {
+            /** @description IdP authorize URL (PKCE + state baked in). */
+            authorize_url: string;
+        };
+        /** @description OIDC callback query (IdP redirect target). */
+        OidcCallbackQuery: {
+            /** @description Authorization code from the IdP. */
+            code: string;
+            /** @description State echoed from the authorize step. */
+            state: string;
+        };
+        /** @description OIDC exchange body: swap the one-time callback code for a session. */
+        OidcExchangeBody: {
+            /** @description Single-use code from the callback redirect. */
+            code: string;
+            /** @description Credential handoff; defaults to cookie. */
+            transport?: components["schemas"]["TransportDto"];
+        };
+        /** @description Change password on an account that already has one. */
+        PasswordChange: {
+            /** @description Current password, proving ownership. */
+            current_password: string;
+            /** @description New password, at least 12 chars. */
+            new_password: string;
+        };
+        /** @description Public password reset with a recovery code. */
+        PasswordReset: {
+            /** @description New password, at least 12 chars. */
+            new_password: string;
+            /** @description Recovery code from the admin (dashes and case ignored). */
+            recovery_code: string;
+            /** @description Account username. */
+            username: string;
+        };
+        /** @description Settings-completion poll answer: the raw auth token, untouched. */
+        PlexConnectPollResult: {
+            /** @description Present only when completed. */
+            auth_token?: string | null;
+            /** @description True once the user authorized the PIN. */
+            completed: boolean;
+        };
+        /** @description Link-completion poll answer. */
+        PlexLinkPollResult: {
+            /** @description True once the user authorized the PIN. */
+            completed: boolean;
+            profile?: null | components["schemas"]["PlexProfileView"];
+        };
+        /** @description Login-completion poll body. */
+        PlexLoginPollBody: {
+            /**
+             * Format: int64
+             * @description PIN id from the start step.
+             */
+            pin_id: number;
+            /** @description Credential handoff; defaults to cookie. */
+            transport?: components["schemas"]["TransportDto"];
+        };
+        /**
+         * @description Login-completion poll answer. Pending carries only the flag; a completed
+         *     poll carries the user (plus the token in Bearer [REDACTED] the session cookie
+         *     in cookie mode, like every login).
+         */
+        PlexLoginPollResult: {
+            /** @description True once the user authorized the PIN. */
+            completed: boolean;
+            /** @description Present only when completed in Bearer [REDACTED] */
+            token?: string | null;
+            user?: null | components["schemas"]["FederatedUserView"];
+        };
+        /** @description One PIN to poll. */
+        PlexPinBody: {
+            /**
+             * Format: int64
+             * @description PIN id from the start step.
+             */
+            pin_id: number;
+        };
+        /**
+         * @description Verified Plex profile for the link flow. No login side effects; the
+         *     caller attaches it to its account on an authenticated route.
+         */
+        PlexProfileView: {
+            /** @description The authorized account token. */
+            auth_token: string;
+            /** @description Account display name. */
+            display_name: string;
+            /** @description Account email; empty when the API omits it. */
+            email: string;
+            /** @description Server-scoped token; empty when no server is configured. */
+            server_access_token: string;
+            /** @description Account avatar URL. */
+            thumb?: string | null;
+            /** @description Plex uuid; the provider uid. */
+            uuid: string;
+        };
+        /** @description Plex journey start answer. */
+        PlexStartBody: {
+            /** @description `app.plex.tv` URL the user authorizes at. */
+            authorize_url: string;
+            /**
+             * Format: int64
+             * @description PIN id for the poll steps.
+             */
+            pin_id: number;
+        };
+        /**
+         * @description Own profile. Identity only; connected services and library stats belong
+         *     to the connections and library slices.
+         */
+        ProfileResponse: components["schemas"]["UserResponse"];
+        /** @description A minted recovery code. The code appears here once, never again. */
+        RecoveryCodeResponse: {
+            /**
+             * Format: int64
+             * @description Expiry time, unix seconds.
+             */
+            expires_at: number;
+            /** @description Display code (`XXXX-XXXX-XXXX-XXXX-XXXX`). */
+            recovery_code: string;
+        };
+        /**
+         * @description Account role. Meanings are unchanged from v2: `user` requests await
+         *     approval; `trusted` and `admin` auto-approve and are quota-exempt.
+         * @enum {string}
+         */
+        Role: "user" | "trusted" | "admin";
+        /** @description Admin role change. */
+        RoleUpdate: {
+            /** @description New role. */
+            role: components["schemas"]["Role"];
+        };
+        /** @description Own sessions. */
+        SessionListResponse: {
+            /** @description All live sessions, current first. */
+            sessions: components["schemas"]["SessionView"][];
+        };
+        /** @description One session row for the sessions UI. */
+        SessionView: {
+            /**
+             * Format: int64
+             * @description Issue time, unix seconds.
+             */
+            created_at: number;
+            /** @description True for the session making this request. */
+            current: boolean;
+            /**
+             * Format: int64
+             * @description Absolute expiry, unix seconds.
+             */
+            expires_at: number;
+            /** @description Session id. */
+            id: string;
+            /** @description `standard` or `companion`. */
+            kind: string;
+            /** @description Companion device name, or the browser user agent. */
+            label: string;
+            /**
+             * Format: int64
+             * @description Last use time, unix seconds.
+             */
+            last_seen_at: number;
+        };
+        /** @description First-admin setup body. Runs only against an empty user table. */
+        SetupBody: {
+            /** @description Display name; defaults to the username casing. */
+            display_name?: string | null;
+            /** @description Optional email. */
+            email?: string | null;
+            /** @description Initial password, at least 12 chars. */
+            password: string;
+            /** @description Credential handoff; defaults to cookie. */
+            transport?: components["schemas"]["TransportDto"];
+            /** @description Login username, 3-32 chars. */
+            username: string;
+        };
+        /** @description Setup-required probe for the SPA first-run gate. */
+        SetupStatusBody: {
+            /** @description True when no users exist yet and setup must run. */
+            setup_required: boolean;
+        };
+        /**
+         * @description Credential handoff for session-issuing routes. Mirrors the sibling
+         *     `TransportParam` (which owns the mechanism) so this layer stays the only
+         *     place that needs `ToSchema`.
+         * @enum {string}
+         */
+        TransportDto: "cookie" | "bearer";
+        /** @description Public account shape. */
+        UserResponse: {
+            /** @description Served avatar URL, when an avatar is set. */
+            avatar_url?: string | null;
+            /**
+             * Format: int64
+             * @description Creation time, unix seconds.
+             */
+            created_at: number;
+            /** @description Display name. */
+            display_name: string;
+            /** @description Email, when set. */
+            email?: string | null;
+            /** @description User id. */
+            id: string;
+            /**
+             * Format: int64
+             * @description Last login time, unix seconds.
+             */
+            last_login_at?: number | null;
+            /** @description Bound provider names (e.g. `local`). */
+            providers: string[];
+            /** @description Account role. */
+            role: components["schemas"]["Role"];
+            /** @description Lowercased login identifier, when set. */
+            username?: string | null;
+            /** @description Preferred username casing, when set. */
+            username_display?: string | null;
+        };
+        /** @description Change username. */
+        UsernameUpdate: {
+            /** @description New username: 3-32 chars of letters, digits, `.`, `_`, `-`. */
+            username: string;
         };
     };
     responses: never;
@@ -55,6 +1268,1142 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    admin_list_app_passwords: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All live app passwords */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAppPasswordListResponse"];
+                };
+            };
+        };
+    };
+    admin_revoke_app_password: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description App-password id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_import_users: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportUsersRequest"];
+            };
+        };
+        responses: {
+            /** @description Finished batch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportUsersResponse"];
+                };
+            };
+        };
+    };
+    admin_import_list_jellyfin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Importable accounts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportCandidateListResponse"];
+                };
+            };
+        };
+    };
+    admin_import_list_plex: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Importable accounts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportCandidateListResponse"];
+                };
+            };
+        };
+    };
+    admin_list_users: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description User page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserListResponse"];
+                };
+            };
+        };
+    };
+    admin_create_user: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminUserCreate"];
+            };
+        };
+        responses: {
+            /** @description Created account */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    admin_get_user: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    admin_delete_user: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_mint_recovery_code: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Minted code (shown once) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodeResponse"];
+                };
+            };
+        };
+    };
+    admin_set_role: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoleUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    admin_revoke_sessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sessions revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    mint_device_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeviceSessionMint"];
+            };
+        };
+        responses: {
+            /** @description Minted token (raw value shown once) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceSessionResponse"];
+                };
+            };
+        };
+    };
+    jellyfin_login_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JellyfinLoginBody"];
+            };
+        };
+        responses: {
+            /** @description Authenticated user; token only in Bearer [REDACTED] */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid credentials */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Jellyfin unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    login_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginBody"];
+            };
+        };
+        responses: {
+            /** @description Authenticated user; token only in Bearer mode */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Raw session token; present only in Bearer mode. */
+                        token?: string | null;
+                        /** @description Authenticated user. */
+                        user: components["schemas"]["UserResponse"];
+                    };
+                };
+            };
+            /** @description Invalid username or password */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    logout_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Logged out; cookie cleared */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    logout_all: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All own sessions revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    oidc_authorize_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Browser URL for this login */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OidcAuthorizeBody"];
+                };
+            };
+            /** @description OIDC not configured or unreachable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    oidc_callback_handler: {
+        parameters: {
+            query: {
+                /** @description Authorization code from the IdP */
+                code: string;
+                /** @description State echoed from the authorize step */
+                state: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to the SPA callback with the exchange code */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OIDC authentication failed */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OIDC provider unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    oidc_exchange_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OidcExchangeBody"];
+            };
+        };
+        responses: {
+            /** @description Authenticated user; token only in Bearer [REDACTED] */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or expired code */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reset_password: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordReset"];
+            };
+        };
+        responses: {
+            /** @description Password reset */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    plex_poll_connect_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlexPinBody"];
+            };
+        };
+        responses: {
+            /** @description Pending flag, or the raw auth token */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexConnectPollResult"];
+                };
+            };
+            /** @description Missing or invalid session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Plex unreachable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    plex_poll_link_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlexPinBody"];
+            };
+        };
+        responses: {
+            /** @description Pending flag, or the verified profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexLinkPollResult"];
+                };
+            };
+            /** @description Missing or invalid session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Plex unreachable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    plex_poll_login_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlexLoginPollBody"];
+            };
+        };
+        responses: {
+            /** @description Pending flag, or the user once authorized */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexLoginPollResult"];
+                };
+            };
+            /** @description Access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Plex unreachable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    plex_start_handler: {
+        parameters: {
+            query?: {
+                /** @description Which flow this PIN serves: login (default), link, or connect */
+                purpose?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fresh PIN and browser URL */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexStartBody"];
+                };
+            };
+            /** @description Link/connect start without a configured Plex server */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Plex unreachable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_sessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Own sessions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionListResponse"];
+                };
+            };
+        };
+    };
+    revoke_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    setup_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupBody"];
+            };
+        };
+        responses: {
+            /** @description First admin created and logged in */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Raw session token; present only in Bearer mode. */
+                        token?: string | null;
+                        /** @description Authenticated user. */
+                        user: components["schemas"]["UserResponse"];
+                    };
+                };
+            };
+            /** @description Invalid username, password, or email */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Setup has already been completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    setup_status_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether setup must run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupStatusBody"];
+                };
+            };
+        };
+    };
+    get_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Own profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponse"];
+                };
+            };
+        };
+    };
+    patch_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DisplayNameUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    list_app_passwords: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Own app passwords */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppPasswordListResponse"];
+                };
+            };
+        };
+    };
+    create_app_password: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppPasswordCreate"];
+            };
+        };
+        responses: {
+            /** @description Created (secret shown once) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppPasswordCreatedResponse"];
+                };
+            };
+        };
+    };
+    revoke_app_password: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description App-password id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    post_avatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AvatarUploadBody"];
+            };
+        };
+        responses: {
+            /** @description Updated account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    lastfm_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Link status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LastFmStatusResponse"];
+                };
+            };
+        };
+    };
+    lastfm_set_credentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LastFmCredentialsSet"];
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LastFmConfiguredResponse"];
+                };
+            };
+        };
+    };
+    lastfm_unlink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unlinked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    lastfm_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LastFmSessionExchange"];
+            };
+        };
+        responses: {
+            /** @description Linked session */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LastFmSessionResponse"];
+                };
+            };
+        };
+    };
+    lastfm_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Token and approval URL */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LastFmTokenResponse"];
+                };
+            };
+        };
+    };
+    put_email: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    post_local_password: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocalPasswordSet"];
+            };
+        };
+        responses: {
+            /** @description Updated account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    post_password: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordChange"];
+            };
+        };
+        responses: {
+            /** @description Updated account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    put_username: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UsernameUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    get_avatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Avatar bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     health: {
         parameters: {
             query?: never;

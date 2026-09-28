@@ -10,6 +10,1279 @@
     "version": "3.0.0"
   },
   "paths": {
+    "/api/v3/admin/app-passwords": {
+      "get": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Every live app password across users, with owners.",
+        "operationId": "admin_list_app_passwords",
+        "responses": {
+          "200": {
+            "description": "All live app passwords",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAppPasswordListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/admin/app-passwords/{id}": {
+      "delete": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Revoke any user's app password.",
+        "operationId": "admin_revoke_app_password",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "App-password id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          }
+        }
+      }
+    },
+    "/api/v3/admin/import": {
+      "post": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Import a batch of accounts from one provider. The catalog is re-read\nserver-side; unknown, already-bound, and failed uids land in `skipped`.",
+        "operationId": "admin_import_users",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportUsersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Finished batch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportUsersResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/admin/import/jellyfin": {
+      "get": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "List Jellyfin accounts available for import. Honest 503 until the live\nJellyfin client lands (same posture as the login flows).",
+        "operationId": "admin_import_list_jellyfin",
+        "responses": {
+          "200": {
+            "description": "Importable accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportCandidateListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/admin/import/plex": {
+      "get": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "List Plex accounts available for import. Honest 503 until the live Plex\nclient lands (same posture as the login flows).",
+        "operationId": "admin_import_list_plex",
+        "responses": {
+          "200": {
+            "description": "Importable accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportCandidateListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/admin/users": {
+      "get": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Admin user listing, paged.",
+        "operationId": "admin_list_users",
+        "responses": {
+          "200": {
+            "description": "User page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUserListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Create a local account.",
+        "operationId": "admin_create_user",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUserCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/admin/users/{id}": {
+      "get": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Fetch one user.",
+        "operationId": "admin_get_user",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Delete one user.",
+        "operationId": "admin_delete_user",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          }
+        }
+      }
+    },
+    "/api/v3/admin/users/{id}/recovery-code": {
+      "post": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Mint a recovery code for one user. The code returns once.",
+        "operationId": "admin_mint_recovery_code",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Minted code (shown once)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/admin/users/{id}/role": {
+      "put": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Change one user's role.",
+        "operationId": "admin_set_role",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/admin/users/{id}/sessions": {
+      "delete": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Revoke every session of one user.",
+        "operationId": "admin_revoke_sessions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Sessions revoked"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/device-sessions": {
+      "post": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Mint a named companion Bearer [REDACTED] Standard sessions only.",
+        "operationId": "mint_device_session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceSessionMint"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Minted token (raw value shown once)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceSessionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/auth/jellyfin/login": {
+      "post": {
+        "tags": [
+          "crate::auth::routes::federated"
+        ],
+        "summary": "Jellyfin login: checks credentials against the configured server, imports\nthe user, and mints a session. Transport rule matches local login.",
+        "operationId": "jellyfin_login_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JellyfinLoginBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated user; token only in Bearer [REDACTED]"
+          },
+          "401": {
+            "description": "Invalid credentials"
+          },
+          "503": {
+            "description": "Jellyfin unavailable"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/login": {
+      "post": {
+        "tags": [
+          "crate::auth::routes::native"
+        ],
+        "summary": "Local login. Cookie mode (default) sets the session cookie and the body\ncarries no token; Bearer mode returns the raw token once and sets no\ncookie. Failures are one uniform 401 with a dummy-hash verify behind it.",
+        "operationId": "login_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated user; token only in Bearer mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Login/setup success body: the authenticated user, plus the raw session\ntoken only in Bearer mode (cookie mode carries it in `Set-Cookie`).",
+                  "required": [
+                    "user"
+                  ],
+                  "properties": {
+                    "token": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Raw session token; present only in Bearer mode."
+                    },
+                    "user": {
+                      "$ref": "#/components/schemas/UserResponse",
+                      "description": "Authenticated user."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid username or password"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/logout": {
+      "post": {
+        "tags": [
+          "crate::auth::routes::native"
+        ],
+        "summary": "Logout. Public so a stale client can always clear its cookie: revokes the\npresented token when it resolves, always clears the cookie, always 204.",
+        "operationId": "logout_handler",
+        "responses": {
+          "204": {
+            "description": "Logged out; cookie cleared"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/logout-all": {
+      "post": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Revoke every own session.",
+        "operationId": "logout_all",
+        "responses": {
+          "204": {
+            "description": "All own sessions revoked"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/oidc/authorize": {
+      "post": {
+        "tags": [
+          "crate::auth::routes::federated"
+        ],
+        "summary": "Start an OIDC login: returns the browser URL (PKCE + state baked in).",
+        "operationId": "oidc_authorize_handler",
+        "responses": {
+          "200": {
+            "description": "Browser URL for this login",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcAuthorizeBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "OIDC not configured or unreachable"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/oidc/callback": {
+      "get": {
+        "tags": [
+          "crate::auth::routes::federated"
+        ],
+        "summary": "OIDC callback: consumes the IdP code/state and redirects (relative\nLocation, same-site hand-off, v2 parity) to the SPA callback carrying the\none-time exchange code. Always `no-store`.",
+        "operationId": "oidc_callback_handler",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "description": "Authorization code from the IdP",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "State echoed from the authorize step",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to the SPA callback with the exchange code"
+          },
+          "401": {
+            "description": "OIDC authentication failed"
+          },
+          "503": {
+            "description": "OIDC provider unavailable"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/oidc/exchange": {
+      "post": {
+        "tags": [
+          "crate::auth::routes::federated"
+        ],
+        "summary": "OIDC exchange: swaps the one-time callback code for a session. Cookie\nmode (default) sets the session cookie and the body carries no token;\nBearer [REDACTED] the raw token once.",
+        "operationId": "oidc_exchange_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OidcExchangeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated user; token only in Bearer [REDACTED]"
+          },
+          "401": {
+            "description": "Invalid or expired code"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/password-recovery/reset": {
+      "post": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Reset a password with a recovery code. Public: a locked-out user holds\nno session.",
+        "operationId": "reset_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordReset"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Password reset"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/plex/poll/connect": {
+      "post": {
+        "tags": [
+          "crate::auth::routes::federated"
+        ],
+        "summary": "Plex settings completion: polls the PIN and returns the raw auth token\nuntouched. Requires a session (the token is an account credential).",
+        "operationId": "plex_poll_connect_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlexPinBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Pending flag, or the raw auth token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlexConnectPollResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid session"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "503": {
+            "description": "Plex unreachable"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/plex/poll/link": {
+      "post": {
+        "tags": [
+          "crate::auth::routes::federated"
+        ],
+        "summary": "Plex link completion: polls the PIN and returns the verified profile.\nRequires a session (the profile carries account tokens); no login side\neffects, the caller attaches the profile to its own account.",
+        "operationId": "plex_poll_link_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlexPinBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Pending flag, or the verified profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlexLinkPollResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid session"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "503": {
+            "description": "Plex unreachable"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/plex/poll/login": {
+      "post": {
+        "tags": [
+          "crate::auth::routes::federated"
+        ],
+        "summary": "Plex login completion: polls the PIN, and once authorized imports the\nuser and mints a session. Pending polls carry only the flag.",
+        "operationId": "plex_poll_login_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlexLoginPollBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Pending flag, or the user once authorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlexLoginPollResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "503": {
+            "description": "Plex unreachable"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/plex/start": {
+      "post": {
+        "tags": [
+          "crate::auth::routes::federated"
+        ],
+        "summary": "Start any Plex flow: mints a PIN and its browser URL. Link and connect\nstarts 400 without a configured Plex server; login starts never gate.",
+        "operationId": "plex_start_handler",
+        "parameters": [
+          {
+            "name": "purpose",
+            "in": "query",
+            "description": "Which flow this PIN serves: login (default), link, or connect",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fresh PIN and browser URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlexStartBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Link/connect start without a configured Plex server"
+          },
+          "503": {
+            "description": "Plex unreachable"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/sessions": {
+      "get": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "List the caller's sessions for the R6 UI.",
+        "operationId": "list_sessions",
+        "responses": {
+          "200": {
+            "description": "Own sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/auth/sessions/{id}": {
+      "delete": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Revoke one own session.",
+        "operationId": "revoke_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/setup": {
+      "post": {
+        "tags": [
+          "crate::auth::routes::native"
+        ],
+        "summary": "First-admin setup. Creates the admin and logs them in (201 + session,\nv2 parity) iff no users exist; otherwise 409. Concurrent setups serialize\non the state guard: the loser probes after the winner commits and lands\non 409. (The users slice has no empty-table constraint, so without the\nguard two distinct usernames would both succeed.)",
+        "operationId": "setup_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "First admin created and logged in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Login/setup success body: the authenticated user, plus the raw session\ntoken only in Bearer mode (cookie mode carries it in `Set-Cookie`).",
+                  "required": [
+                    "user"
+                  ],
+                  "properties": {
+                    "token": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Raw session token; present only in Bearer mode."
+                    },
+                    "user": {
+                      "$ref": "#/components/schemas/UserResponse",
+                      "description": "Authenticated user."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid username, password, or email"
+          },
+          "409": {
+            "description": "Setup has already been completed"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/setup/status": {
+      "get": {
+        "tags": [
+          "crate::auth::routes::native"
+        ],
+        "summary": "Setup-required probe for the SPA first-run gate.",
+        "operationId": "setup_status_handler",
+        "responses": {
+          "200": {
+            "description": "Whether setup must run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatusBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/me": {
+      "get": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Profile of the caller.",
+        "operationId": "get_profile",
+        "responses": {
+          "200": {
+            "description": "Own profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Change the caller's display name.",
+        "operationId": "patch_profile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DisplayNameUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/me/app-passwords": {
+      "get": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Caller's app passwords.",
+        "operationId": "list_app_passwords",
+        "responses": {
+          "200": {
+            "description": "Own app passwords",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppPasswordListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Create an app password. The secret returns once.",
+        "operationId": "create_app_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppPasswordCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created (secret shown once)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppPasswordCreatedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/me/app-passwords/{id}": {
+      "delete": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Revoke one own app password.",
+        "operationId": "revoke_app_password",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "App-password id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          }
+        }
+      }
+    },
+    "/api/v3/me/avatar": {
+      "post": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Upload a new avatar from base64 bytes.",
+        "operationId": "post_avatar",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AvatarUploadBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/me/connections/lastfm": {
+      "get": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Per-user Last.fm link status.",
+        "operationId": "lastfm_status",
+        "responses": {
+          "200": {
+            "description": "Link status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LastFmStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Store the caller's own Last.fm API credentials.",
+        "operationId": "lastfm_set_credentials",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LastFmCredentialsSet"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LastFmConfiguredResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Unlink Last.fm (drops credentials and session).",
+        "operationId": "lastfm_unlink",
+        "responses": {
+          "204": {
+            "description": "Unlinked"
+          }
+        }
+      }
+    },
+    "/api/v3/me/connections/lastfm/session": {
+      "post": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Exchange an approved token for a linked session.",
+        "operationId": "lastfm_session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LastFmSessionExchange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Linked session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LastFmSessionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/me/connections/lastfm/token": {
+      "post": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Fetch a Last.fm sign-in token plus approval URL.",
+        "operationId": "lastfm_token",
+        "responses": {
+          "200": {
+            "description": "Token and approval URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LastFmTokenResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/me/email": {
+      "put": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Set or clear the caller's email.",
+        "operationId": "put_email",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/me/local-password": {
+      "post": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Set the first local password on an account without one.",
+        "operationId": "post_local_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalPasswordSet"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/me/password": {
+      "post": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Change the caller's password.",
+        "operationId": "post_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/me/username": {
+      "put": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Rename the caller.",
+        "operationId": "put_username",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UsernameUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/users/{id}/avatar": {
+      "get": {
+        "tags": [
+          "crate::auth::users::handlers"
+        ],
+        "summary": "Serve one user's avatar. Self-or-admin; the `v` query is ignored.",
+        "operationId": "get_avatar",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Avatar bytes"
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -34,6 +1307,343 @@
   },
   "components": {
     "schemas": {
+      "AdminAppPasswordListResponse": {
+        "type": "object",
+        "description": "Every active app password across users.",
+        "required": [
+          "app_passwords"
+        ],
+        "properties": {
+          "app_passwords": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminAppPasswordView"
+            },
+            "description": "Active app passwords, by owner then age."
+          }
+        }
+      },
+      "AdminAppPasswordView": {
+        "type": "object",
+        "description": "One app password with its owner, for admin oversight.",
+        "required": [
+          "id",
+          "user_id",
+          "owner_username",
+          "owner_display_name",
+          "name",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Creation time, unix seconds."
+          },
+          "id": {
+            "type": "string",
+            "description": "Row id."
+          },
+          "last_client": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Client label from the last verification, when sent."
+          },
+          "last_used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Last verification time, unix seconds."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name."
+          },
+          "owner_display_name": {
+            "type": "string",
+            "description": "Owner display name."
+          },
+          "owner_username": {
+            "type": "string",
+            "description": "Owner username or display fallback."
+          },
+          "user_id": {
+            "type": "string",
+            "description": "Owning user id."
+          }
+        }
+      },
+      "AdminUserCreate": {
+        "type": "object",
+        "description": "Admin user creation.",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display name; defaults to the username casing."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional email."
+          },
+          "password": {
+            "type": "string",
+            "description": "Initial password, at least 12 chars."
+          },
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Role",
+                "description": "Defaults to `user`."
+              }
+            ]
+          },
+          "username": {
+            "type": "string",
+            "description": "Login username, 3-32 chars."
+          }
+        }
+      },
+      "AdminUserListResponse": {
+        "type": "object",
+        "description": "Admin user listing.",
+        "required": [
+          "users",
+          "total"
+        ],
+        "properties": {
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total user count.",
+            "minimum": 0
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserResponse"
+            },
+            "description": "One page of users."
+          }
+        }
+      },
+      "AppPasswordCreate": {
+        "type": "object",
+        "description": "Create an app password.",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name; defaults to `App password`."
+          }
+        }
+      },
+      "AppPasswordCreatedResponse": {
+        "type": "object",
+        "description": "A created app password. The secret appears here once, never again.",
+        "required": [
+          "id",
+          "name",
+          "secret",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Creation time, unix seconds."
+          },
+          "id": {
+            "type": "string",
+            "description": "Row id."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name."
+          },
+          "secret": {
+            "type": "string",
+            "description": "Raw secret. Shown once."
+          }
+        }
+      },
+      "AppPasswordListResponse": {
+        "type": "object",
+        "description": "Own app passwords.",
+        "required": [
+          "app_passwords"
+        ],
+        "properties": {
+          "app_passwords": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppPasswordView"
+            },
+            "description": "Active app passwords, oldest first."
+          }
+        }
+      },
+      "AppPasswordView": {
+        "type": "object",
+        "description": "One app password, without secret material.",
+        "required": [
+          "id",
+          "name",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Creation time, unix seconds."
+          },
+          "id": {
+            "type": "string",
+            "description": "Row id."
+          },
+          "last_client": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Client label from the last verification, when sent."
+          },
+          "last_used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Last verification time, unix seconds."
+          },
+          "name": {
+            "type": "string",
+            "description": "User-given name."
+          }
+        }
+      },
+      "AvatarUpload": {
+        "type": "object",
+        "description": "Avatar upload. JSON with base64 bytes: the server has no multipart\nsupport, and one JSON shape keeps every client on the same parser.",
+        "required": [
+          "content_type",
+          "image_base64"
+        ],
+        "properties": {
+          "content_type": {
+            "type": "string",
+            "description": "`image/jpeg`, `image/png`, `image/webp`, or `image/gif`."
+          },
+          "image_base64": {
+            "type": "string",
+            "description": "Base64 image bytes, at most 5 MiB decoded."
+          }
+        }
+      },
+      "AvatarUploadBody": {
+        "type": "object",
+        "description": "Avatar upload payload (parsed manually so the body cap applies).",
+        "required": [
+          "content_type",
+          "image_base64"
+        ],
+        "properties": {
+          "content_type": {
+            "type": "string",
+            "description": "Image content type."
+          },
+          "image_base64": {
+            "type": "string",
+            "description": "Base64 image bytes."
+          }
+        }
+      },
+      "DeviceSessionMint": {
+        "type": "object",
+        "description": "Mint a named companion token.",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Device label, 1-80 chars. Reminting a label revokes the prior token."
+          }
+        }
+      },
+      "DeviceSessionResponse": {
+        "type": "object",
+        "description": "A minted companion token. The raw token appears here once, never again.",
+        "required": [
+          "id",
+          "label",
+          "token",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Absolute expiry, unix seconds."
+          },
+          "id": {
+            "type": "string",
+            "description": "Session id."
+          },
+          "label": {
+            "type": "string",
+            "description": "Device label."
+          },
+          "token": {
+            "type": "string",
+            "description": "Raw Bearer [REDACTED] Shown once."
+          }
+        }
+      },
+      "DisplayNameUpdate": {
+        "type": "object",
+        "description": "Change display name.",
+        "required": [
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "description": "New display name, 1-64 chars after trimming."
+          }
+        }
+      },
+      "EmailUpdate": {
+        "type": "object",
+        "description": "Change email. Null or blank clears it.",
+        "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New email, or null to clear."
+          }
+        }
+      },
       "ErrorBody": {
         "type": "object",
         "description": "The `error` object inside every error response.",
@@ -68,6 +1678,53 @@
           }
         }
       },
+      "FederatedUserView": {
+        "type": "object",
+        "description": "Authenticated user, federated view. Stored provider rows never surface;\nonly the profile fields the SPA renders.",
+        "required": [
+          "id",
+          "display_name",
+          "role",
+          "username",
+          "username_display"
+        ],
+        "properties": {
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Avatar URL from the provider."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Display name from the provider."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lowercased email, when the provider supplies one."
+          },
+          "id": {
+            "type": "string",
+            "description": "User id."
+          },
+          "role": {
+            "type": "string",
+            "description": "`user`, `trusted`, or `admin`."
+          },
+          "username": {
+            "type": "string",
+            "description": "Lowercased login identifier."
+          },
+          "username_display": {
+            "type": "string",
+            "description": "Preferred casing for display."
+          }
+        }
+      },
       "HealthResponse": {
         "type": "object",
         "description": "Health payload. Shape kept from v2: `status` plus the running message.",
@@ -83,6 +1740,801 @@
           "status": {
             "type": "string",
             "description": "Service state, `ok` when serving."
+          }
+        }
+      },
+      "ImportCandidateListResponse": {
+        "type": "object",
+        "description": "Importable accounts on one provider.",
+        "required": [
+          "candidates"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportCandidateView"
+            },
+            "description": "Every account the directory enumerated."
+          }
+        }
+      },
+      "ImportCandidateView": {
+        "type": "object",
+        "description": "One media-server account offered for import. Display only: the import\nre-reads the directory server-side and never trusts echoed fields.",
+        "required": [
+          "provider",
+          "provider_uid",
+          "display_name",
+          "already_imported"
+        ],
+        "properties": {
+          "already_imported": {
+            "type": "boolean",
+            "description": "True when a binding for this `(provider, provider_uid)` exists."
+          },
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Account image URL, when the provider exposes one."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Display name on the provider."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Account email, when the provider exposes one."
+          },
+          "provider": {
+            "type": "string",
+            "description": "`jellyfin` or `plex`."
+          },
+          "provider_uid": {
+            "type": "string",
+            "description": "Provider-side id (Jellyfin user id, Plex account uuid)."
+          }
+        }
+      },
+      "ImportUsersRequest": {
+        "type": "object",
+        "description": "Import a batch of accounts from one provider.",
+        "required": [
+          "provider",
+          "provider_uids"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "description": "`jellyfin` or `plex`."
+          },
+          "provider_uids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Provider uids to import, matched against a fresh directory listing."
+          }
+        }
+      },
+      "ImportUsersResponse": {
+        "type": "object",
+        "description": "A finished import batch.",
+        "required": [
+          "imported",
+          "linked",
+          "skipped",
+          "total_imported"
+        ],
+        "properties": {
+          "imported": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserResponse"
+            },
+            "description": "Newly created accounts, in request order."
+          },
+          "linked": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserResponse"
+            },
+            "description": "Existing accounts the provider was linked to (email match)."
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Uids skipped: unknown, already bound, or failed."
+          },
+          "total_imported": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Count of `imported`, for the admin summary line.",
+            "minimum": 0
+          }
+        }
+      },
+      "JellyfinLoginBody": {
+        "type": "object",
+        "description": "Jellyfin login body.",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "Jellyfin password."
+          },
+          "transport": {
+            "$ref": "#/components/schemas/TransportDto",
+            "description": "Credential handoff; defaults to cookie."
+          },
+          "username": {
+            "type": "string",
+            "description": "Jellyfin username."
+          }
+        }
+      },
+      "LastFmConfiguredResponse": {
+        "type": "object",
+        "description": "Confirmation that credentials were stored.",
+        "required": [
+          "configured",
+          "linked"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "Always true when this response is returned."
+          },
+          "linked": {
+            "type": "boolean",
+            "description": "Whether a session is still linked (a key change unlinks)."
+          }
+        }
+      },
+      "LastFmCredentialsSet": {
+        "type": "object",
+        "description": "Store per-user Last.fm API credentials. Either field may be the\n`lastfm****` mask sentinel, meaning keep the stored value.",
+        "required": [
+          "api_key",
+          "shared_secret"
+        ],
+        "properties": {
+          "api_key": {
+            "type": "string",
+            "description": "Last.fm API key, or the mask sentinel to keep it."
+          },
+          "shared_secret": {
+            "type": "string",
+            "description": "Last.fm shared secret, or the mask sentinel to keep it."
+          }
+        }
+      },
+      "LastFmSessionExchange": {
+        "type": "object",
+        "description": "Exchange an approved token for a session.",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "The token from the token step, after browser approval."
+          }
+        }
+      },
+      "LastFmSessionResponse": {
+        "type": "object",
+        "description": "A linked Last.fm session.",
+        "required": [
+          "username",
+          "linked"
+        ],
+        "properties": {
+          "linked": {
+            "type": "boolean",
+            "description": "Always true when this response is returned."
+          },
+          "username": {
+            "type": "string",
+            "description": "Linked Last.fm username."
+          }
+        }
+      },
+      "LastFmStatusResponse": {
+        "type": "object",
+        "description": "Per-user Last.fm link status. Never carries secrets.",
+        "required": [
+          "configured",
+          "linked"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "Whether API credentials are stored."
+          },
+          "linked": {
+            "type": "boolean",
+            "description": "Whether a session is linked."
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked Last.fm username, when linked."
+          }
+        }
+      },
+      "LastFmTokenResponse": {
+        "type": "object",
+        "description": "A Last.fm sign-in token plus the URL to approve it at.",
+        "required": [
+          "token",
+          "auth_url"
+        ],
+        "properties": {
+          "auth_url": {
+            "type": "string",
+            "description": "Approval URL to open in a browser."
+          },
+          "token": {
+            "type": "string",
+            "description": "Single-use token for the session exchange."
+          }
+        }
+      },
+      "LocalPasswordSet": {
+        "type": "object",
+        "description": "Set the first local password on an account without one.",
+        "required": [
+          "new_password"
+        ],
+        "properties": {
+          "new_password": {
+            "type": "string",
+            "description": "New password, at least 12 chars."
+          }
+        }
+      },
+      "LoginBody": {
+        "type": "object",
+        "description": "Local login body.",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "Account password."
+          },
+          "transport": {
+            "$ref": "#/components/schemas/TransportDto",
+            "description": "Credential handoff; defaults to cookie."
+          },
+          "username": {
+            "type": "string",
+            "description": "Username, matched case-insensitively."
+          }
+        }
+      },
+      "OidcAuthorizeBody": {
+        "type": "object",
+        "description": "OIDC authorize answer: the browser URL for this login.",
+        "required": [
+          "authorize_url"
+        ],
+        "properties": {
+          "authorize_url": {
+            "type": "string",
+            "description": "IdP authorize URL (PKCE + state baked in)."
+          }
+        }
+      },
+      "OidcCallbackQuery": {
+        "type": "object",
+        "description": "OIDC callback query (IdP redirect target).",
+        "required": [
+          "code",
+          "state"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Authorization code from the IdP."
+          },
+          "state": {
+            "type": "string",
+            "description": "State echoed from the authorize step."
+          }
+        }
+      },
+      "OidcExchangeBody": {
+        "type": "object",
+        "description": "OIDC exchange body: swap the one-time callback code for a session.",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Single-use code from the callback redirect."
+          },
+          "transport": {
+            "$ref": "#/components/schemas/TransportDto",
+            "description": "Credential handoff; defaults to cookie."
+          }
+        }
+      },
+      "PasswordChange": {
+        "type": "object",
+        "description": "Change password on an account that already has one.",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "description": "Current password, proving ownership."
+          },
+          "new_password": {
+            "type": "string",
+            "description": "New password, at least 12 chars."
+          }
+        }
+      },
+      "PasswordReset": {
+        "type": "object",
+        "description": "Public password reset with a recovery code.",
+        "required": [
+          "username",
+          "recovery_code",
+          "new_password"
+        ],
+        "properties": {
+          "new_password": {
+            "type": "string",
+            "description": "New password, at least 12 chars."
+          },
+          "recovery_code": {
+            "type": "string",
+            "description": "Recovery code from the admin (dashes and case ignored)."
+          },
+          "username": {
+            "type": "string",
+            "description": "Account username."
+          }
+        }
+      },
+      "PlexConnectPollResult": {
+        "type": "object",
+        "description": "Settings-completion poll answer: the raw auth token, untouched.",
+        "required": [
+          "completed"
+        ],
+        "properties": {
+          "auth_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Present only when completed."
+          },
+          "completed": {
+            "type": "boolean",
+            "description": "True once the user authorized the PIN."
+          }
+        }
+      },
+      "PlexLinkPollResult": {
+        "type": "object",
+        "description": "Link-completion poll answer.",
+        "required": [
+          "completed"
+        ],
+        "properties": {
+          "completed": {
+            "type": "boolean",
+            "description": "True once the user authorized the PIN."
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PlexProfileView",
+                "description": "Present only when completed."
+              }
+            ]
+          }
+        }
+      },
+      "PlexLoginPollBody": {
+        "type": "object",
+        "description": "Login-completion poll body.",
+        "required": [
+          "pin_id"
+        ],
+        "properties": {
+          "pin_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "PIN id from the start step."
+          },
+          "transport": {
+            "$ref": "#/components/schemas/TransportDto",
+            "description": "Credential handoff; defaults to cookie."
+          }
+        }
+      },
+      "PlexLoginPollResult": {
+        "type": "object",
+        "description": "Login-completion poll answer. Pending carries only the flag; a completed\npoll carries the user (plus the token in Bearer [REDACTED] the session cookie\nin cookie mode, like every login).",
+        "required": [
+          "completed"
+        ],
+        "properties": {
+          "completed": {
+            "type": "boolean",
+            "description": "True once the user authorized the PIN."
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Present only when completed in Bearer [REDACTED]"
+          },
+          "user": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FederatedUserView",
+                "description": "Present only when completed."
+              }
+            ]
+          }
+        }
+      },
+      "PlexPinBody": {
+        "type": "object",
+        "description": "One PIN to poll.",
+        "required": [
+          "pin_id"
+        ],
+        "properties": {
+          "pin_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "PIN id from the start step."
+          }
+        }
+      },
+      "PlexProfileView": {
+        "type": "object",
+        "description": "Verified Plex profile for the link flow. No login side effects; the\ncaller attaches it to its account on an authenticated route.",
+        "required": [
+          "uuid",
+          "email",
+          "display_name",
+          "auth_token",
+          "server_access_token"
+        ],
+        "properties": {
+          "auth_token": {
+            "type": "string",
+            "description": "The authorized account token."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Account display name."
+          },
+          "email": {
+            "type": "string",
+            "description": "Account email; empty when the API omits it."
+          },
+          "server_access_token": {
+            "type": "string",
+            "description": "Server-scoped token; empty when no server is configured."
+          },
+          "thumb": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Account avatar URL."
+          },
+          "uuid": {
+            "type": "string",
+            "description": "Plex uuid; the provider uid."
+          }
+        }
+      },
+      "PlexStartBody": {
+        "type": "object",
+        "description": "Plex journey start answer.",
+        "required": [
+          "pin_id",
+          "authorize_url"
+        ],
+        "properties": {
+          "authorize_url": {
+            "type": "string",
+            "description": "`app.plex.tv` URL the user authorizes at."
+          },
+          "pin_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "PIN id for the poll steps."
+          }
+        }
+      },
+      "ProfileResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/UserResponse",
+            "description": "The account."
+          }
+        ],
+        "description": "Own profile. Identity only; connected services and library stats belong\nto the connections and library slices."
+      },
+      "RecoveryCodeResponse": {
+        "type": "object",
+        "description": "A minted recovery code. The code appears here once, never again.",
+        "required": [
+          "recovery_code",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Expiry time, unix seconds."
+          },
+          "recovery_code": {
+            "type": "string",
+            "description": "Display code (`XXXX-XXXX-XXXX-XXXX-XXXX`)."
+          }
+        }
+      },
+      "Role": {
+        "type": "string",
+        "description": "Account role. Meanings are unchanged from v2: `user` requests await\napproval; `trusted` and `admin` auto-approve and are quota-exempt.",
+        "enum": [
+          "user",
+          "trusted",
+          "admin"
+        ]
+      },
+      "RoleUpdate": {
+        "type": "object",
+        "description": "Admin role change.",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "New role."
+          }
+        }
+      },
+      "SessionListResponse": {
+        "type": "object",
+        "description": "Own sessions.",
+        "required": [
+          "sessions"
+        ],
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionView"
+            },
+            "description": "All live sessions, current first."
+          }
+        }
+      },
+      "SessionView": {
+        "type": "object",
+        "description": "One session row for the sessions UI.",
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "created_at",
+          "last_seen_at",
+          "expires_at",
+          "current"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issue time, unix seconds."
+          },
+          "current": {
+            "type": "boolean",
+            "description": "True for the session making this request."
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Absolute expiry, unix seconds."
+          },
+          "id": {
+            "type": "string",
+            "description": "Session id."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`standard` or `companion`."
+          },
+          "label": {
+            "type": "string",
+            "description": "Companion device name, or the browser user agent."
+          },
+          "last_seen_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Last use time, unix seconds."
+          }
+        }
+      },
+      "SetupBody": {
+        "type": "object",
+        "description": "First-admin setup body. Runs only against an empty user table.",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display name; defaults to the username casing."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional email."
+          },
+          "password": {
+            "type": "string",
+            "description": "Initial password, at least 12 chars."
+          },
+          "transport": {
+            "$ref": "#/components/schemas/TransportDto",
+            "description": "Credential handoff; defaults to cookie."
+          },
+          "username": {
+            "type": "string",
+            "description": "Login username, 3-32 chars."
+          }
+        }
+      },
+      "SetupStatusBody": {
+        "type": "object",
+        "description": "Setup-required probe for the SPA first-run gate.",
+        "required": [
+          "setup_required"
+        ],
+        "properties": {
+          "setup_required": {
+            "type": "boolean",
+            "description": "True when no users exist yet and setup must run."
+          }
+        }
+      },
+      "TransportDto": {
+        "type": "string",
+        "description": "Credential handoff for session-issuing routes. Mirrors the sibling\n`TransportParam` (which owns the mechanism) so this layer stays the only\nplace that needs `ToSchema`.",
+        "enum": [
+          "cookie",
+          "bearer"
+        ]
+      },
+      "UserResponse": {
+        "type": "object",
+        "description": "Public account shape.",
+        "required": [
+          "id",
+          "display_name",
+          "role",
+          "providers",
+          "created_at"
+        ],
+        "properties": {
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Served avatar URL, when an avatar is set."
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Creation time, unix seconds."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Email, when set."
+          },
+          "id": {
+            "type": "string",
+            "description": "User id."
+          },
+          "last_login_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Last login time, unix seconds."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Bound provider names (e.g. `local`)."
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "Account role."
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lowercased login identifier, when set."
+          },
+          "username_display": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Preferred username casing, when set."
+          }
+        }
+      },
+      "UsernameUpdate": {
+        "type": "object",
+        "description": "Change username.",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "New username: 3-32 chars of letters, digits, `.`, `_`, `-`."
           }
         }
       }

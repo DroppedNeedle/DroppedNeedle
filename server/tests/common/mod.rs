@@ -38,6 +38,7 @@ pub fn hooked_state() -> AppState {
         Arc::new(FixedIdGenerator::new(FIXED_ID)),
         test_http(),
         AppConfig::new(DEFAULT_PORT).with_test_hooks(),
+        test_auth(),
     )
 }
 
@@ -49,5 +50,12 @@ pub fn prod_like_state() -> AppState {
         Arc::new(droppedneedle::ids::UuidGenerator),
         test_http(),
         AppConfig::new(DEFAULT_PORT),
+        test_auth(),
     )
+}
+
+/// Unwired auth bundle: every adapter fails closed, which is what non-auth
+/// tests need (the gate passes non-v3 paths through untouched).
+fn test_auth() -> droppedneedle::auth::wiring::AuthSetup {
+    droppedneedle::auth::wiring::AuthSetup::for_tests().expect("test auth bundle builds")
 }

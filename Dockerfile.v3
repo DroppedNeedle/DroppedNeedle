@@ -1,4 +1,4 @@
-# DroppedNeedle v3 image (stage-1 skeleton). Single-process by design: the
+# DroppedNeedle v3 image (stage-3 auth service). Single-process by design: the
 # binary is one tokio runtime and compose must never scale it past 1, because
 # durable-operation ownership lives in-process.
 FROM rust:1.89-bookworm AS builder
@@ -15,7 +15,7 @@ ARG COMMIT_TAG=dev
 ARG BUILD_DATE=unknown
 
 LABEL org.opencontainers.image.title="DroppedNeedle v3" \
-      org.opencontainers.image.description="DroppedNeedle v3 backend (Rust skeleton)" \
+      org.opencontainers.image.description="DroppedNeedle v3 backend (Rust auth service)" \
       org.opencontainers.image.url="https://github.com/DroppedNeedle/DroppedNeedle" \
       org.opencontainers.image.source="https://github.com/DroppedNeedle/DroppedNeedle" \
       org.opencontainers.image.version="${COMMIT_TAG}" \
@@ -34,7 +34,8 @@ RUN apt-get update \
     && useradd -r -u 1000 -g droppedneedle -d /app -s /sbin/nologin droppedneedle
 
 COPY --from=builder /app/server/target/release/droppedneedle /app/droppedneedle
-RUN chown droppedneedle:droppedneedle /app/droppedneedle
+RUN mkdir -p /app/cache /app/config \
+    && chown -R droppedneedle:droppedneedle /app/droppedneedle /app/cache /app/config
 
 USER droppedneedle
 
