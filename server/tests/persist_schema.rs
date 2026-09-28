@@ -1,0 +1,378 @@
+//! Schema briefs: migration idempotency, gate checks, boot assertion,
+//! legacy exclusions, and dual-owner merges for migration 0001.
+//!
+//! Each brief pins one behavior of the baseline schema. The scratch
+//! databases live only in memory; no fixture files, no network.
+
+use droppedneedle::schema::{SchemaError, apply_migrations, assert_migrated, latest_version};
+use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
+
+/// One-connection in-memory pool. A single connection keeps `:memory:`
+/// on one database; the pool exists so the briefs exercise the same
+/// `SqlitePool` surface the runtime uses.
+async fn scratch_pool() -> SqlitePool {
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap()
+}
+
+async fn migrated_pool() -> SqlitePool {
+    let pool = scratch_pool().await;
+    apply_migrations(&pool).await.unwrap();
+    pool
+}
+
+async fn table_names(pool: &SqlitePool) -> Vec<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' \
+         AND name NOT LIKE 'sqlite_%' AND name <> '_sqlx_migrations' \
+         ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+async fn column_names(pool: &SqlitePool, table: &str) -> Vec<String> {
+    sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info(?) ORDER BY cid")
+        .bind(table)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// Fresh migrate stamps version 1, records one migration row, and seeds the
+/// singleton and sentinel rows the services expect to exist.
+#[tokio::test]
+async fn fresh_migrate_marks_version_and_seeds() {
+    let pool = migrated_pool().await;
+
+    assert_eq!(latest_version(), 1);
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(version, 1);
+    let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(applied, 1);
+
+    assert_eq!(table_names(&pool).await.len(), 181);
+    let triggers: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(triggers, 43);
+
+    let catalog: (i64, i64) =
+        sqlx::query_as("SELECT singleton, value FROM library_catalog_revision")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(catalog, (1, 0));
+    let sentinels: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, kind FROM local_artists ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        sentinels,
+        vec![
+            (
+                "00000000-0000-4000-8000-000000000001".to_owned(),
+                "various_artists".to_owned(),
+            ),
+            (
+                "00000000-0000-4000-8000-000000000002".to_owned(),
+                "unknown".to_owned(),
+            ),
+        ]
+    );
+    let wakeups: Vec<String> =
+        sqlx::query_scalar("SELECT channel FROM durable_work_wakeups ORDER BY channel")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        wakeups,
+        vec!["contribution", "identification", "operation", "scan"]
+    );
+    for (table, want) in [
+        ("library_enqueue_sequence", 1),
+        ("library_event_stream_revisions", 3),
+        ("mb_response_epoch", 1),
+        ("download_activity_global_revision", 1),
+    ] {
+        let rows: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(rows, want, "seed rows in {table}");
+    }
+}
+
+/// Re-running the migrator is a clean no-op: version stable, seeds single.
+#[tokio::test]
+async fn migrate_rerun_is_clean() {
+    let pool = migrated_pool().await;
+    apply_migrations(&pool).await.unwrap();
+
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(version, 1);
+    let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(applied, 1);
+    let artists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_artists")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(artists, 2);
+}
+
+/// `foreign_key_check` and `integrity_check` are green after migrate.
+#[tokio::test]
+async fn gates_are_green_after_migrate() {
+    let pool = migrated_pool().await;
+
+    let violations: Vec<(i64, i64, String, i64, String)> =
+        sqlx::query_as("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(violations.is_empty(), "foreign_key_check: {violations:?}");
+    let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(integrity, "ok");
+}
+
+/// The boot assertion refuses an unmigrated or wrong-version database and
+/// passes a migrated one. The runtime calls this before binding its socket.
+#[tokio::test]
+async fn boot_assertion_refuses_version_mismatch() {
+    let pool = scratch_pool().await;
+    match assert_migrated(&pool).await {
+        Err(SchemaError::VersionMismatch { found, expected }) => {
+            assert_eq!((found, expected), (0, 1));
+        }
+        other => panic!("unmigrated database must refuse, got {other:?}"),
+    }
+
+    sqlx::query("PRAGMA user_version = 999")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        assert_migrated(&pool).await,
+        Err(SchemaError::VersionMismatch {
+            found: 999,
+            expected: 1
+        })
+    ));
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+}
+
+/// D1/D13/D14 exclusions: no lidarr marker, no rebuild leftovers, no legacy
+/// catalog tables, no transient swap tables.
+#[tokio::test]
+async fn legacy_and_swap_tables_are_absent() {
+    let pool = migrated_pool().await;
+    let tables = table_names(&pool).await;
+
+    for name in [
+        "download_quarantine_legacy",
+        "download_attempts_new",
+        "youtube_links_old",
+        "youtube_track_links_old",
+        "ignored_releases_legacy",
+        "cache_meta",
+        "library_artists",
+        "library_albums",
+        "library_files",
+        "manual_review_queue",
+        "library_album_meta",
+    ] {
+        assert!(!tables.contains(&name.to_owned()), "{name} must be absent");
+    }
+    for name in &tables {
+        assert!(
+            !name.ends_with("__management_v1")
+                && !name.ends_with("__edition_tier_v1")
+                && !name.ends_with("__resolved_v1"),
+            "{name} is a transient rebuild name"
+        );
+    }
+    assert!(
+        !tables.iter().any(|name| name.contains("lidarr")),
+        "no lidarr tombstone"
+    );
+}
+
+/// Each dual-owner table exists once with the merged shape: the store side
+/// won on auth FKs, CHECKs merged, ratchets folded in.
+#[tokio::test]
+async fn dual_owner_tables_carry_the_merged_shape() {
+    let pool = migrated_pool().await;
+
+    for (table, columns) in [
+        (("playlists"), vec!["source_ref", "user_id", "is_public"]),
+        (("auth_users"), vec!["username", "username_display"]),
+        (("auth_tokens"), vec!["last_seen_at", "session_kind"]),
+        (
+            ("library_identification_jobs"),
+            vec!["provider_reset_count", "attention_cause"],
+        ),
+        (("local_albums"), vec!["management_schedule_pending"]),
+        (
+            ("local_tracks"),
+            vec!["release_type", "tag_album_title", "tag_album_artist_name"],
+        ),
+        (
+            ("library_identity_repair_findings"),
+            vec![
+                "suggested_release_mbid",
+                "suggested_release_group_mbid",
+                "suggested_edition_json",
+            ],
+        ),
+        (
+            ("library_scan_runs"),
+            vec!["phase_started_at", "phase_timings_json"],
+        ),
+        (
+            ("library_management_operation_snapshots"),
+            vec!["ancillary_snapshot_json", "before_management_state_json"],
+        ),
+        (("follow_inventory"), vec!["observation"]),
+        (("user_listening_prefs"), vec!["auto_request_personal_mix"]),
+        (
+            ("request_history"),
+            vec!["dispatch_authorized", "generation", "request_kind"],
+        ),
+        (
+            ("canonical_redirect"),
+            vec![
+                "source_mode",
+                "source_id",
+                "source_generation",
+                "official_evidence",
+            ],
+        ),
+    ] {
+        let have = column_names(&pool, table).await;
+        for column in columns {
+            assert!(
+                have.contains(&column.to_owned()),
+                "{table}.{column} missing"
+            );
+        }
+    }
+    for table in [
+        "local_album_external_identities",
+        "local_track_external_identities",
+    ] {
+        assert!(
+            column_names(&pool, table)
+                .await
+                .contains(&"provider_base_url".to_owned()),
+            "{table}.provider_base_url missing"
+        );
+    }
+
+    // Store-side auth FKs won the merge.
+    for (table, column) in [
+        ("user_favorites", "user_id"),
+        ("play_history", "user_id"),
+        ("compat_bookmarks", "user_id"),
+        ("compat_play_queues", "user_id"),
+    ] {
+        let parents: Vec<(i64, i64, String)> =
+            sqlx::query_as("SELECT id, seq, \"table\" FROM pragma_foreign_key_list(?)")
+                .bind(table)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(
+            parents.iter().any(|parent| parent.2 == "auth_users"),
+            "{table}.{column} must reference auth_users"
+        );
+    }
+
+    // Merged revision row: discovery DEFAULT 0 plus native range CHECK.
+    let default: Option<String> = sqlx::query_scalar(
+        "SELECT dflt_value FROM pragma_table_info('library_catalog_revision') \
+         WHERE name = 'value'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(default.as_deref(), Some("0"));
+    let sql: String =
+        sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE name = 'library_catalog_revision'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(sql.contains("BETWEEN 0 AND 9223372036854775807"), "{sql}");
+
+    // Per-user playlist uniqueness survived the merge.
+    let index_sql: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE name = 'idx_playlists_user_source_ref'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(index_sql.contains("UNIQUE"), "{index_sql}");
+}
+
+/// Declared FKs bite under enforcement: orphans fail, cascades clean up.
+#[tokio::test]
+async fn foreign_keys_bite_under_enforcement() {
+    let pool = migrated_pool().await;
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let orphan = sqlx::query(
+        "INSERT INTO play_history (id, user_id, track_name, artist_name, played_at) \
+         VALUES ('orphan', 'ghost', 't', 'a', 'now')",
+    )
+    .execute(&pool)
+    .await;
+    assert!(orphan.is_err(), "orphan row must fail with FKs on");
+
+    sqlx::query("INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'T', 'now')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO play_history (id, user_id, track_name, artist_name, played_at) \
+         VALUES ('h1', 'u1', 't', 'a', 'now')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM auth_users WHERE id = 'u1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM play_history")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "history rows cascade with their user");
+}

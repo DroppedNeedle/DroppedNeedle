@@ -1,0 +1,128 @@
+//! Typed runtime config (tier 2 of 2) plus the secrets core.
+//!
+//! Deployment values live in tier 1 (the environment via `AppConfig::load`;
+//! see [`deployment`] for the kept/dropped registry). Everything
+//! user-editable at runtime lives here as a typed section with a schema and
+//! a getter on [`ConfigStore`](store::ConfigStore). Secrets follow the
+//! exact-match mask-sentinel rule ([`mask`]) and are encrypted at rest by
+//! [`Crypto`](crypto::Crypto); they are never logged (brief-enforced).
+//!
+//! No HTTP surface lives here; stage 10 owns the settings routes, stage 11
+//! the v2 importer (which re-encrypts under this key), and stage 5 the
+//! YouTube client around [`QuotaStore`](quota::QuotaStore).
+
+pub mod crypto;
+pub mod deployment;
+pub mod error;
+pub mod mask;
+pub mod quota;
+pub mod secret;
+pub mod secret_sections;
+pub mod sections;
+pub mod store;
+
+pub use crypto::Crypto;
+pub use error::ConfigError;
+pub use quota::{QuotaStatus, QuotaStore};
+pub use secret::Secret;
+pub use secret_sections::SecretSection;
+pub use sections::Section;
+pub use store::ConfigStore;
+
+/// Every top-level key v3 owns in `config.json`: kept sections plus the
+/// instance id. Anything else is reported by
+/// [`ConfigStore::unknown_top_level_keys`](store::ConfigStore::unknown_top_level_keys).
+pub const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
+    "user_preferences",
+    "library_scan_schedule",
+    "library_scan_filesystem_watcher",
+    "advanced_settings",
+    "download_client",
+    "download_clients",
+    "download_policy",
+    "wanted",
+    "source_priority",
+    "usenet_search_backend",
+    "indexers",
+    "prowlarr",
+    "lidarr_import",
+    "jellyfin_settings",
+    "navidrome_settings",
+    "plex_settings",
+    "listenbrainz_settings",
+    "youtube_settings",
+    "lastfm_settings",
+    "spotify_settings",
+    "events",
+    "wrapped_settings",
+    "oidc_settings",
+    "security_settings",
+    "connect_apps",
+    "library_settings",
+    "library_management",
+    "musicbrainz_settings",
+    "scrobble_settings",
+    "primary_music_source",
+    "free_music",
+    "get_it",
+    "plugins",
+    "instance_id",
+    "_internal",
+];
+
+/// One dropped section with its decision ref.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DroppedSection {
+    /// Former config-file key.
+    pub key: &'static str,
+    /// Decision ref (D-list, R-answer, or export spec section).
+    pub decision: &'static str,
+    /// Why it is gone.
+    pub note: &'static str,
+}
+
+/// Sections v3 dropped. The stage-11 validator rejects these in exports;
+/// [`ConfigStore::dropped_sections_present`](store::ConfigStore::dropped_sections_present)
+/// reports them when a v2 file is opened directly.
+pub const DROPPED_SECTIONS: &[DroppedSection] = &[
+    DroppedSection {
+        key: "library_sync_settings",
+        decision: "D2/R8",
+        note: "Legacy catalog; one-shot sync_frequency import only.",
+    },
+    DroppedSection {
+        key: "library_scan_dirty_scopes",
+        decision: "D15",
+        note: "Transient hints; mechanism stays runtime-only.",
+    },
+    DroppedSection {
+        key: "local_files_settings",
+        decision: "D3",
+        note: "Vestigial; zero consumers, no routes.",
+    },
+    DroppedSection {
+        key: "home_settings",
+        decision: "D4",
+        note: "Dead routes (500s); section prefs live elsewhere.",
+    },
+    DroppedSection {
+        key: "_legacy_lidarr",
+        decision: "D5",
+        note: "One-time backup; its plaintext key never carries forward.",
+    },
+    DroppedSection {
+        key: "jellyfin_url",
+        decision: "D8",
+        note: "Top-level mirror; the section URL wins.",
+    },
+];
+
+/// Dropped section keys, for presence checks.
+pub const DROPPED_SECTION_KEYS: &[&str] = &[
+    "library_sync_settings",
+    "library_scan_dirty_scopes",
+    "local_files_settings",
+    "home_settings",
+    "_legacy_lidarr",
+    "jellyfin_url",
+];

@@ -15,6 +15,7 @@
 
 pub mod app;
 pub mod config;
+pub mod db;
 pub mod docs;
 pub mod error;
 pub mod handlers;
@@ -24,6 +25,9 @@ pub mod media;
 pub mod middleware;
 pub mod observability;
 pub mod provider_policy;
+#[path = "config/facade.rs"]
+pub mod runtime_config;
+pub mod schema;
 pub mod state;
 
 pub use app::create_app;
