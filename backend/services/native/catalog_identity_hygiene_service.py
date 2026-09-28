@@ -22,6 +22,7 @@ from services.native.wal_checkpoint_service import WalCheckpointService
 CATALOG_IDENTITY_HYGIENE_PURPOSE = "catalog_identity_hygiene"
 CATALOG_IDENTITY_HYGIENE_VERSION = "catalog-identity-hygiene-v1"
 _BACKFILL_IDEMPOTENCY_KEY = "catalog-identity-hygiene:v1:backfill"
+_MAX_INLINE_REBASES = 3
 
 
 def _input_revision(context: dict) -> str:
@@ -130,6 +131,7 @@ class CatalogIdentityHygieneService:
             now = self._clock()
             # (GH-293) Hoisted: materialization runs to seal before any subject
             # claim; once sealed the probe is a read, never a write transaction.
+            inline_rebases = 0
             while True:
                 try:
                     staged = await self._store.materialize_repair_operation_batch(
@@ -138,16 +140,29 @@ class CatalogIdentityHygieneService:
                 except StaleRevisionError:
                     # A catalog change while the worklist is unsealed rebases the
                     # SAME static-key job onto the current revision (or fails
-                    # closed when progress exists) and resumes next pass.
+                    # closed when progress exists).
                     rebased = await self._store.rebase_repair_operation(
                         job_id, worker_id, now=now
                     )
-                    return await self._store.yield_operation_job(
-                        job_id,
-                        worker_id,
-                        now=now,
-                        reason_code="PIN_REBASED",
-                    ) if rebased["rebased"] else rebased["job"]
+                    if not rebased["rebased"]:
+                        return rebased["job"]
+                    # Retry materialization in this same claim: the pin was just
+                    # moved to the current revision, so the retry normally seals.
+                    # Yielding here instead re-queues the job (rebase bumps its
+                    # updated_at) behind every other queued repair job; with tens
+                    # of thousands of per-album jobs the catalog revision moves
+                    # again long before the job's next turn, so it is stale on
+                    # every pass and never seals (see GH-486). The retry is
+                    # bounded so a continuously changing catalog still yields.
+                    inline_rebases += 1
+                    if inline_rebases > _MAX_INLINE_REBASES:
+                        return await self._store.yield_operation_job(
+                            job_id,
+                            worker_id,
+                            now=now,
+                            reason_code="PIN_REBASED",
+                        )
+                    continue
                 if staged["complete"]:
                     break
                 if time.monotonic() - started >= BACKGROUND_TIMESLICE_SECONDS:
