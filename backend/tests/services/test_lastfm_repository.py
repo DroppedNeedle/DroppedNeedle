@@ -864,3 +864,64 @@ class TestCacheBehavior:
         result = await repo.get_album_info("A", "Cached Album")
         assert result.name == "Cached Album"
         assert repo._client.get.call_count == 0
+
+
+class TestGetTrackAlbum:
+    @staticmethod
+    def _repo_with_response(payload: dict, cache: AsyncMock | None = None) -> LastFmRepository:
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.get = AsyncMock(
+            return_value=MagicMock(status_code=200, json=lambda: payload, text="")
+        )
+        return LastFmRepository(http_client=http_client, cache=cache or _make_cache(), api_key="k")
+
+    @pytest.mark.asyncio
+    async def test_returns_album_title_and_caches_it(self):
+        cache = _make_cache()
+        repo = self._repo_with_response(
+            {"track": {"name": "Crawling", "album": {"title": "Hybrid Theory"}}}, cache
+        )
+
+        result = await repo.get_track_album("Linkin Park", "Crawling")
+
+        assert result == "Hybrid Theory"
+        call_params = repo._client.get.call_args.kwargs.get("params", {})
+        assert call_params["method"] == "track.getInfo"
+        assert call_params["artist"] == "Linkin Park"
+        assert call_params["track"] == "Crawling"
+        assert call_params["autocorrect"] == "1"
+        assert cache.set.call_args.args[1] == "Hybrid Theory"
+
+    @pytest.mark.asyncio
+    async def test_track_without_album_returns_none_and_caches_miss(self):
+        cache = _make_cache()
+        repo = self._repo_with_response({"track": {"name": "Demo"}}, cache)
+
+        result = await repo.get_track_album("Artist", "Demo")
+
+        assert result is None
+        assert cache.set.call_args.args[1] == ""
+
+    @pytest.mark.asyncio
+    async def test_not_found_returns_none(self):
+        repo = self._repo_with_response({"error": 6, "message": "Track not found"})
+
+        assert await repo.get_track_album("Artist", "Missing") is None
+
+    @pytest.mark.asyncio
+    async def test_cached_title_skips_request(self):
+        cache = _make_cache()
+        cache.get = AsyncMock(return_value="Meteora")
+        repo = _make_repo(cache=cache)
+
+        assert await repo.get_track_album("Linkin Park", "Numb") == "Meteora"
+        assert repo._client.get.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_cached_miss_skips_request(self):
+        cache = _make_cache()
+        cache.get = AsyncMock(return_value="")
+        repo = _make_repo(cache=cache)
+
+        assert await repo.get_track_album("Artist", "Demo") is None
+        assert repo._client.get.call_count == 0

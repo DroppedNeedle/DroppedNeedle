@@ -115,6 +115,9 @@ class LastFmRepositoryProtocol(Protocol):
     ) -> LastFmAlbumInfo | None:
         ...
 
+    async def get_track_album(self, artist: str, track: str) -> str | None:
+        ...
+
     async def get_similar_artists(
         self, artist: str, mbid: str | None = None, limit: int = 30
     ) -> list[LastFmSimilarArtist]:

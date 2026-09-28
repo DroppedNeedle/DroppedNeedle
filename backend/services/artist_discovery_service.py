@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import re
+from collections.abc import Callable
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
@@ -51,6 +53,14 @@ if TYPE_CHECKING:
     from services.native.background_workload_gate import BackgroundWorkloadGate
 
 logger = logging.getLogger(__name__)
+
+# One trailing edition qualifier on a casefolded album title, e.g.
+# "(2011 remaster)", "[deluxe edition]", " - 40th anniversary edition".
+_EDITION_SUFFIX_RE = re.compile(
+    r"(?:\s*[(\[][^()\[\]]*\b(?:remaster(?:ed)?|deluxe|edition|expanded|anniversary"
+    r"|bonus|reissue|version)\b[^()\[\]]*[)\]]|\s+-\s[^-()\[\]]*\b(?:remaster(?:ed)?"
+    r"|deluxe|edition|anniversary|version)\b[^-()\[\]]*)$"
+)
 
 DISCOVERY_CACHE_TTL_LIBRARY = 21600
 DISCOVERY_CACHE_TTL_NON_LIBRARY = 3600
@@ -1365,19 +1375,35 @@ class ArtistDiscoveryService:
                 artist="", mbid=artist_mbid, limit=count
             )
             trimmed = tracks[:count]
+            # Last.fm track MBIDs are often stale; resolve each track's album via
+            # track.getInfo so the UI can show its cover.
+            lookups = await asyncio.gather(
+                *(lastfm_repo.get_track_album(t.artist_name, t.name) for t in trimmed),
+                return_exceptions=True,
+            )
+            match = await self._lastfm_release_group_matcher(artist_mbid)
 
-            songs = [
-                TopSong(
-                    recording_mbid=t.mbid,
-                    title=t.name,
-                    artist_name=t.artist_name,
-                    release_group_mbid=None,
-                    original_release_mbid=None,
-                    release_name=None,
-                    listen_count=t.playcount,
+            songs = []
+            for t, album_title in zip(trimmed, lookups):
+                album_title = album_title if isinstance(album_title, str) else None
+                release_group_mbid = match(album_title)
+                if not release_group_mbid:
+                    # Last.fm may attribute a track to a compilation or a Various
+                    # Artists soundtrack; fall back to the same-titled single.
+                    release_group_mbid = match(t.name)
+                    if release_group_mbid:
+                        album_title = None
+                songs.append(
+                    TopSong(
+                        recording_mbid=t.mbid,
+                        title=t.name,
+                        artist_name=t.artist_name,
+                        release_group_mbid=release_group_mbid,
+                        original_release_mbid=None,
+                        release_name=album_title,
+                        listen_count=t.playcount,
+                    )
                 )
-                for t in trimmed
-            ]
             return TopSongsResponse(songs=songs, source="lastfm")
         except OptionalWorkDeferred:
             raise
@@ -1405,39 +1431,7 @@ class ArtistDiscoveryService:
             )
 
             trimmed = lfm_albums[:count]
-            try:
-                # QW1 Part B: synchronous leg of the user-facing top-albums
-                # response; USER_INITIATED avoids the 2 s inactivity gate that
-                # this same page load keeps resetting (BACKGROUND_SYNC/
-                # PREFETCH_VISIBLE both route into the gated branch).
-                release_groups = await self._mb_repo.get_release_groups_by_artist(
-                    artist_mbid, limit=100, priority=RequestPriority.USER_INITIATED
-                )
-            except OptionalWorkDeferred:
-                raise
-            except Exception as exc:  # noqa: BLE001 - optional canonicalization must degrade
-                logger.warning(
-                    "Could not canonicalize Last.fm albums for %s: %s",
-                    artist_mbid[:8],
-                    type(exc).__name__,
-                )
-                release_groups = []
-            release_group_ids = {
-                str(group.get("id", "")).strip().lower()
-                for group in release_groups
-                if group.get("id")
-            }
-            release_groups_by_title: dict[str, str | None] = {}
-            for group in release_groups:
-                release_group_mbid = str(group.get("id", "")).strip().lower()
-                title_key = self._normalized_album_title(group.get("title"))
-                if not release_group_mbid or not title_key:
-                    continue
-                previous = release_groups_by_title.get(title_key)
-                if previous is None and title_key not in release_groups_by_title:
-                    release_groups_by_title[title_key] = release_group_mbid
-                elif previous != release_group_mbid:
-                    release_groups_by_title[title_key] = None
+            match = await self._lastfm_release_group_matcher(artist_mbid)
 
             library_album_mbids = {
                 mbid.strip().lower()
@@ -1454,17 +1448,7 @@ class ArtistDiscoveryService:
             seen_release_groups: set[str] = set()
             for a in trimmed:
                 raw_mbid = a.mbid.strip().lower() if a.mbid and a.mbid.strip() else None
-                title_match = None
-                for title_key in self._album_title_candidates(a.name):
-                    if title_key not in release_groups_by_title:
-                        continue
-                    title_match = release_groups_by_title[title_key]
-                    break
-                release_group_mbid = (
-                    raw_mbid
-                    if raw_mbid in release_group_ids
-                    else title_match or raw_mbid
-                )
+                release_group_mbid = match(a.name, raw_mbid) or raw_mbid
                 if release_group_mbid and release_group_mbid in seen_release_groups:
                     continue
                 if release_group_mbid:
@@ -1496,10 +1480,69 @@ class ArtistDiscoveryService:
             )
             raise
 
+    async def _lastfm_release_group_matcher(
+        self, artist_mbid: str
+    ) -> Callable[..., str | None]:
+        """Return ``match(title, mbid=None)`` mapping Last.fm albums to release groups.
+
+        Uses one artist discography browse (no per-album MusicBrainz lookups):
+        match by release group id, then by normalized title; None when unknown.
+        """
+        try:
+            # QW1 Part B: synchronous leg of the user-facing top-albums
+            # response; USER_INITIATED avoids the 2 s inactivity gate that
+            # this same page load keeps resetting (BACKGROUND_SYNC/
+            # PREFETCH_VISIBLE both route into the gated branch).
+            release_groups = await self._mb_repo.get_release_groups_by_artist(
+                artist_mbid, limit=100, priority=RequestPriority.USER_INITIATED
+            )
+        except OptionalWorkDeferred:
+            raise
+        except Exception as exc:  # noqa: BLE001 - optional canonicalization must degrade
+            logger.warning(
+                "Could not canonicalize Last.fm albums for %s: %s",
+                artist_mbid[:8],
+                type(exc).__name__,
+            )
+            release_groups = []
+        release_group_ids = {
+            str(group.get("id", "")).strip().lower()
+            for group in release_groups
+            if group.get("id")
+        }
+        # Same-titled release groups are common ("Hybrid Theory" album, EP, live
+        # and compilation): keep the studio album, then any album, then the
+        # earliest release; an exact tie stays ambiguous (None).
+        by_title: dict[str, tuple[tuple[int, str], str | None]] = {}
+        for group in release_groups:
+            release_group_mbid = str(group.get("id", "")).strip().lower()
+            title_key = self._normalized_album_title(group.get("title"))
+            if not release_group_mbid or not title_key:
+                continue
+            is_album = str(group.get("primary-type") or "").lower() == "album"
+            rank = (0 if not group.get("secondary-types") else 1) if is_album else 2
+            key = (rank, group.get("first-release-date") or "9999")
+            best = by_title.get(title_key)
+            if best is None or key < best[0]:
+                by_title[title_key] = (key, release_group_mbid)
+            elif key == best[0] and best[1] != release_group_mbid:
+                by_title[title_key] = (key, None)
+
+        def match(title: str | None, mbid: str | None = None) -> str | None:
+            if mbid and mbid in release_group_ids:
+                return mbid
+            for title_key in self._album_title_candidates(title):
+                if title_key in by_title:
+                    return by_title[title_key][1]
+            return None
+
+        return match
+
     @staticmethod
     def _normalized_album_title(title: object) -> str:
         if not isinstance(title, str):
             return ""
+        title = title.replace("’", "'").replace("‘", "'")
         return " ".join(title.casefold().split())
 
     @classmethod
@@ -1507,14 +1550,9 @@ class ArtistDiscoveryService:
         normalized = cls._normalized_album_title(title)
         if not normalized:
             return []
+        # Peel trailing edition qualifiers one at a time, most specific first:
+        # "jazz (2011 remaster) [deluxe]" -> "jazz (2011 remaster)" -> "jazz".
         candidates = [normalized]
-        for suffix in (
-            " (deluxe)",
-            " (deluxe edition)",
-            " [deluxe]",
-            " [deluxe edition]",
-        ):
-            if normalized.endswith(suffix):
-                candidates.append(normalized[: -len(suffix)].rstrip())
-                break
+        while (stripped := _EDITION_SUFFIX_RE.sub("", candidates[-1])) and stripped != candidates[-1]:
+            candidates.append(stripped)
         return candidates
