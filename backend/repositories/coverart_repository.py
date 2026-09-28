@@ -626,6 +626,10 @@ class CoverArtRepository:
             try:
                 decoded = msgspec.json.decode(content, type=CaaManagementResponse)
             except msgspec.DecodeError as error:
+                logger.warning(
+                    f"Cover Art Archive {entity_kind} metadata for {mbid} "
+                    f"could not be decoded: {error}"
+                )
                 raise ExternalServiceError(
                     "Cover Art Archive returned invalid artwork metadata."
                 ) from error

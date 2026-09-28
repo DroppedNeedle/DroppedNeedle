@@ -14,7 +14,7 @@ class CaaManagementImage(msgspec.Struct):
     back: bool = False
     comment: str = ""
     front: bool = False
-    id: int = 0
+    id: int | str = 0
     image: str = ""
     thumbnails: CaaManagementThumbnails = msgspec.field(
         default_factory=CaaManagementThumbnails
