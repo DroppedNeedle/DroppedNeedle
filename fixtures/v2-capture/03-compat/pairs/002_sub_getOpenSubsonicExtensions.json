@@ -1,0 +1,68 @@
+{
+  "name": "sub_getOpenSubsonicExtensions",
+  "normalization": [
+    "<APP_PASSWORD>",
+    "<SUB_ARTIST_ID>",
+    "<SUB_ALBUM_ID>",
+    "<SUB_SONG_ID>",
+    "<FILE_ID>",
+    "<JF_TRACK_ID>",
+    "<JF_ALBUM_ID>",
+    "<SESSION>"
+  ],
+  "request": {
+    "headers": {},
+    "json": null,
+    "method": "GET",
+    "params": {
+      "apiKey": "<APP_PASSWORD>",
+      "c": "capture",
+      "f": "json",
+      "v": "1.16.1"
+    },
+    "path": "/subsonic/rest/getOpenSubsonicExtensions"
+  },
+  "response": {
+    "body": {
+      "subsonic-response": {
+        "openSubsonic": true,
+        "openSubsonicExtensions": [
+          {
+            "name": "apiKeyAuthentication",
+            "versions": [
+              1
+            ]
+          },
+          {
+            "name": "formPost",
+            "versions": [
+              1
+            ]
+          },
+          {
+            "name": "transcodeOffset",
+            "versions": [
+              1
+            ]
+          },
+          {
+            "name": "transcoding",
+            "versions": [
+              1
+            ]
+          }
+        ],
+        "serverVersion": "dev",
+        "status": "ok",
+        "type": "DroppedNeedle",
+        "version": "1.16.1"
+      }
+    },
+    "body_kind": "json",
+    "headers": {
+      "content-length": "310",
+      "content-type": "application/json"
+    },
+    "status": 200
+  }
+}

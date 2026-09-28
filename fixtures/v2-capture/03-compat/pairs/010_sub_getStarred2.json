@@ -1,0 +1,47 @@
+{
+  "name": "sub_getStarred2",
+  "normalization": [
+    "<APP_PASSWORD>",
+    "<SUB_ARTIST_ID>",
+    "<SUB_ALBUM_ID>",
+    "<SUB_SONG_ID>",
+    "<FILE_ID>",
+    "<JF_TRACK_ID>",
+    "<JF_ALBUM_ID>",
+    "<SESSION>"
+  ],
+  "request": {
+    "headers": {},
+    "json": null,
+    "method": "GET",
+    "params": {
+      "apiKey": "<APP_PASSWORD>",
+      "c": "capture",
+      "f": "json",
+      "v": "1.16.1"
+    },
+    "path": "/subsonic/rest/getStarred2"
+  },
+  "response": {
+    "body": {
+      "subsonic-response": {
+        "openSubsonic": true,
+        "serverVersion": "dev",
+        "starred2": {
+          "album": [],
+          "artist": [],
+          "song": []
+        },
+        "status": "ok",
+        "type": "DroppedNeedle",
+        "version": "1.16.1"
+      }
+    },
+    "body_kind": "json",
+    "headers": {
+      "content-length": "167",
+      "content-type": "application/json"
+    },
+    "status": 200
+  }
+}

@@ -7,3 +7,6 @@ bun.lockb
 
 # Miscellaneous
 /static/
+
+# Generated contract types (v3 pipeline owns the bytes; drift fails CI instead)
+src/lib/api/v3/

@@ -1,0 +1,37 @@
+# cargo-deny policy for the v3 backend (cargo-deny 0.20 schema: checks deny
+# by default, no lint levels). CI runs `cargo deny check`, which covers
+# advisories, licenses, bans, and sources from this one file.
+[graph]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[advisories]
+ignore = []
+
+[licenses]
+# Copyleft applies to our own crate only; every dependency must be permissive
+# or a data license.
+# The graph is scoped to the Linux target below, so target-gated crates
+# (wasi, r-efi) never appear here. A new target or a license outside this
+# list fails the check until it is reviewed and added deliberately.
+allow = [
+  "AGPL-3.0-or-later",
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "Unicode-3.0",
+  "Unlicense",
+]
+exceptions = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

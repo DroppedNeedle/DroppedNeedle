@@ -1,0 +1,81 @@
+{
+  "name": "jf_playback_info_get",
+  "normalization": [
+    "<APP_PASSWORD>",
+    "<SUB_ARTIST_ID>",
+    "<SUB_ALBUM_ID>",
+    "<SUB_SONG_ID>",
+    "<FILE_ID>",
+    "<JF_TRACK_ID>",
+    "<JF_ALBUM_ID>",
+    "<SESSION>"
+  ],
+  "request": {
+    "headers": {
+      "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+    },
+    "json": null,
+    "method": "GET",
+    "params": {
+      "userId": "user-alice"
+    },
+    "path": "/jellyfin/Items/<JF_TRACK_ID>/PlaybackInfo"
+  },
+  "response": {
+    "body": {
+      "MediaSources": [
+        {
+          "Bitrate": 900000,
+          "Container": "flac",
+          "DefaultAudioStreamIndex": 0,
+          "DirectStreamUrl": "http://testserver/jellyfin/Audio/<JF_TRACK_ID>/stream.flac?static=true&mediaSourceId=<JF_TRACK_ID>&api_key=<APP_PASSWORD>",
+          "GenPtsInput": false,
+          "Id": "<JF_TRACK_ID>",
+          "IgnoreDts": false,
+          "IgnoreIndex": false,
+          "IsInfiniteStream": false,
+          "IsRemote": false,
+          "MediaStreams": [
+            {
+              "BitDepth": 16,
+              "BitRate": 900000,
+              "ChannelLayout": "stereo",
+              "Channels": 2,
+              "Codec": "flac",
+              "Index": 0,
+              "IsDefault": true,
+              "IsExternal": false,
+              "IsForced": false,
+              "IsInterlaced": false,
+              "IsTextSubtitleStream": false,
+              "SampleRate": 44100,
+              "SupportsExternalStream": false,
+              "Type": "Audio"
+            }
+          ],
+          "Protocol": "File",
+          "ReadAtNativeFramerate": false,
+          "RequiresClosing": false,
+          "RequiresLooping": false,
+          "RequiresOpening": false,
+          "RunTimeTicks": 3000000,
+          "Size": 1567,
+          "SupportsDirectPlay": true,
+          "SupportsDirectStream": true,
+          "SupportsProbing": false,
+          "SupportsTranscoding": false,
+          "Type": "Default"
+        }
+      ],
+      "PlaySessionId": "<SESSION>"
+    },
+    "body_kind": "json",
+    "headers": {
+      "content-encoding": "gzip",
+      "content-length": "544",
+      "content-type": "application/json",
+      "vary": "Accept-Encoding"
+    },
+    "status": 200
+  }
+}

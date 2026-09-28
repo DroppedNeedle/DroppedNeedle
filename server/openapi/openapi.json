@@ -1,0 +1,91 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "DroppedNeedle v3",
+    "description": "Native API contract. Generated clients must never be hand-edited.",
+    "license": {
+      "name": "AGPL-3.0-or-later",
+      "identifier": "AGPL-3.0-or-later"
+    },
+    "version": "3.0.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "crate::handlers"
+        ],
+        "summary": "Liveness probe. Public, unauthenticated, cheap.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Server is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ErrorBody": {
+        "type": "object",
+        "description": "The `error` object inside every error response.",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "SCREAMING_SNAKE machine code."
+          },
+          "details": {
+            "description": "Extra detail, or null when there is none."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human message. Fixed for 5xx, descriptive for 4xx."
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "description": "Top-level error envelope.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody",
+            "description": "The single error payload."
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "description": "Health payload. Shape kept from v2: `status` plus the running message.",
+        "required": [
+          "status",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Human-readable running message."
+          },
+          "status": {
+            "type": "string",
+            "description": "Service state, `ok` when serving."
+          }
+        }
+      }
+    }
+  }
+}

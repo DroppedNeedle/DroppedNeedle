@@ -1,0 +1,62 @@
+{
+  "name": "jf_views",
+  "normalization": [
+    "<APP_PASSWORD>",
+    "<SUB_ARTIST_ID>",
+    "<SUB_ALBUM_ID>",
+    "<SUB_SONG_ID>",
+    "<FILE_ID>",
+    "<JF_TRACK_ID>",
+    "<JF_ALBUM_ID>",
+    "<SESSION>"
+  ],
+  "request": {
+    "headers": {
+      "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+    },
+    "json": null,
+    "method": "GET",
+    "params": {},
+    "path": "/jellyfin/Users/user-alice/Views"
+  },
+  "response": {
+    "body": {
+      "Items": [
+        {
+          "BackdropImageTags": [],
+          "CollectionType": "music",
+          "Id": "a48038f4b1237e908e5440732ced3298",
+          "ImageBlurHashes": {},
+          "ImageTags": {
+            "Primary": "a48038f4b1237e908e5440732ced3298"
+          },
+          "IsFolder": true,
+          "LocationType": "FileSystem",
+          "MediaType": "Unknown",
+          "Name": "Music",
+          "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+          "SortName": "Music",
+          "Type": "CollectionFolder",
+          "UserData": {
+            "IsFavorite": false,
+            "ItemId": "a48038f4b1237e908e5440732ced3298",
+            "Key": "a48038f4b1237e908e5440732ced3298",
+            "PlayCount": 0,
+            "PlaybackPositionTicks": 0,
+            "Played": false
+          }
+        }
+      ],
+      "StartIndex": 0,
+      "TotalRecordCount": 1
+    },
+    "body_kind": "json",
+    "headers": {
+      "content-encoding": "gzip",
+      "content-length": "316",
+      "content-type": "application/json",
+      "vary": "Accept-Encoding"
+    },
+    "status": 200
+  }
+}

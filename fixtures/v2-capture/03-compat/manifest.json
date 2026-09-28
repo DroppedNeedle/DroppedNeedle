@@ -1,0 +1,1045 @@
+{
+  "capture": "03-compat",
+  "captured_at": "2026-09-28T14:08:13.438693+00:00",
+  "method": "live-run read-only against temp-DB streaming_env equivalent (both shims + GZipMiddleware); MUST-MATCH entries self-verified by double-issue",
+  "must_match": [
+    {
+      "expect_body_sha256": "d60d40d99c1a3af908af24500adee6d9bebcf3f869915e5ebfb6a012bc2c111c",
+      "expect_status": 200,
+      "file": "pairs/000_sub_ping.json",
+      "name": "sub_ping",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/ping"
+      }
+    },
+    {
+      "expect_body_sha256": "c60cf7efc7ae733a206afadb87c41799c4c382483cb1c08edf20211caade954f",
+      "expect_status": 200,
+      "file": "pairs/001_sub_getLicense.json",
+      "name": "sub_getLicense",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getLicense"
+      }
+    },
+    {
+      "expect_body_sha256": "c9175e899df49d29b8fc6253ee007a079706ad786ff672dda7582b412f53f77e",
+      "expect_status": 200,
+      "file": "pairs/002_sub_getOpenSubsonicExtensions.json",
+      "name": "sub_getOpenSubsonicExtensions",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getOpenSubsonicExtensions"
+      }
+    },
+    {
+      "expect_body_sha256": "95829f145e6e61575b27291df1ad3154581c214b68e87969a3715b5d09543559",
+      "expect_status": 200,
+      "file": "pairs/003_sub_getMusicFolders.json",
+      "name": "sub_getMusicFolders",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getMusicFolders"
+      }
+    },
+    {
+      "expect_body_sha256": "63870defc5d66be3a4941bc8636a2175721cf7db8962e7273b97052610495a9a",
+      "expect_status": 200,
+      "file": "pairs/004_sub_getArtists.json",
+      "name": "sub_getArtists",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getArtists"
+      }
+    },
+    {
+      "expect_body_sha256": "c879b31fcbb925cb5437761f8aadc24542f2e04abe700d7aead0fecb013cbcda",
+      "expect_status": 200,
+      "file": "pairs/005_sub_getIndexes.json",
+      "name": "sub_getIndexes",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getIndexes"
+      }
+    },
+    {
+      "expect_body_sha256": "ea895e38f80943a025f0653a85a9f9007416d6df7448bfdf865cfa0f763deaa2",
+      "expect_status": 200,
+      "file": "pairs/006_sub_getGenres.json",
+      "name": "sub_getGenres",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getGenres"
+      }
+    },
+    {
+      "expect_body_sha256": "c375c49d9555362898e93c6eb685b6ce3cf2a567c356aefd5db7006a9a7d56b0",
+      "expect_status": 200,
+      "file": "pairs/007_sub_getAlbumList2_newest.json",
+      "name": "sub_getAlbumList2_newest",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "offset": 0,
+          "size": 10,
+          "type": "newest",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getAlbumList2"
+      }
+    },
+    {
+      "expect_body_sha256": "03c87c5988e283466f8d028cf0ecabf060c704875b0b95df091b29350e4744d6",
+      "expect_status": 200,
+      "file": "pairs/008_sub_getRandomSongs.json",
+      "name": "sub_getRandomSongs",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "size": 2,
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getRandomSongs"
+      }
+    },
+    {
+      "expect_body_sha256": "bdc0a9582eb1eeef195252043cee1755155ffb418ef4d86c82a4374b1e885dd5",
+      "expect_status": 200,
+      "file": "pairs/009_sub_search3.json",
+      "name": "sub_search3",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "query": "Radiohead",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/search3"
+      }
+    },
+    {
+      "expect_body_sha256": "517f6f576612170ba7bc78144cd59c18bba5e7f74979aaffa0913089e7a6f51d",
+      "expect_status": 200,
+      "file": "pairs/010_sub_getStarred2.json",
+      "name": "sub_getStarred2",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getStarred2"
+      }
+    },
+    {
+      "expect_body_sha256": "0efffeaa4ea1ddec21359a485d77c6ba867e9fba0d475bafde5687e0af509d22",
+      "expect_status": 200,
+      "file": "pairs/011_sub_getNowPlaying.json",
+      "name": "sub_getNowPlaying",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getNowPlaying"
+      }
+    },
+    {
+      "expect_body_sha256": "a06596585fa36ae5dd2ffbafe43f07fcb5827492c763a12774e4b0ea0fd1851c",
+      "expect_status": 200,
+      "file": "pairs/012_sub_getScanStatus.json",
+      "name": "sub_getScanStatus",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getScanStatus"
+      }
+    },
+    {
+      "expect_body_sha256": "6afa19013a6e410054c27ad067d905e4ddf56c63d6c281a3e260ccc169779440",
+      "expect_status": 200,
+      "file": "pairs/013_sub_getPlaylists.json",
+      "name": "sub_getPlaylists",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getPlaylists"
+      }
+    },
+    {
+      "expect_body_sha256": "752387c7928a92b716afbfcc4bbcde485bbb912c36a6c6518271f34eb3da0f85",
+      "expect_status": 200,
+      "file": "pairs/014_sub_getBookmarks.json",
+      "name": "sub_getBookmarks",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getBookmarks"
+      }
+    },
+    {
+      "expect_body_sha256": "74baa31ea8a25a56210ddf5dd136e755163def71c1d275aa2eb554b4dd1281cf",
+      "expect_status": 200,
+      "file": "pairs/015_sub_getArtist.json",
+      "name": "sub_getArtist",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "id": "<SUB_ARTIST_ID>",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getArtist"
+      }
+    },
+    {
+      "expect_body_sha256": "34c8537bdb6f4289c701d58e54c59170d82f43167a478693cbc669c78f68fda9",
+      "expect_status": 200,
+      "file": "pairs/016_sub_getAlbum.json",
+      "name": "sub_getAlbum",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "id": "<SUB_ALBUM_ID>",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getAlbum"
+      }
+    },
+    {
+      "expect_body_sha256": "a35a709f1470cb6d97e3a8e5f82ae2b1321319e5d422a89f39bceebc3c360745",
+      "expect_status": 200,
+      "file": "pairs/017_sub_getMusicDirectory.json",
+      "name": "sub_getMusicDirectory",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "id": "<SUB_ALBUM_ID>",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getMusicDirectory"
+      }
+    },
+    {
+      "expect_body_sha256": "0820577174949b33a914a57464be31a5fe23a310f85f012b114fc73f021015e8",
+      "expect_status": 200,
+      "file": "pairs/018_sub_getCoverArt.json",
+      "name": "sub_getCoverArt",
+      "pinned_headers": {
+        "content-type": "image/svg+xml"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "id": "<SUB_ALBUM_ID>",
+          "size": 300,
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getCoverArt"
+      }
+    },
+    {
+      "expect_body_sha256": "9a7e45a7331282d8908f72e744f51460ec3726c31e535d0d9f1b200b28f404a3",
+      "expect_status": 200,
+      "file": "pairs/019_sub_getSong.json",
+      "name": "sub_getSong",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "id": "<SUB_SONG_ID>",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/getSong"
+      }
+    },
+    {
+      "expect_body_sha256": "794e7e20a16eb87aeef8024674d2314592f528f4471aed5464a3ca8e5f9fb049",
+      "expect_status": 200,
+      "file": "pairs/020_sub_stream_full.json",
+      "name": "sub_stream_full",
+      "pinned_headers": {
+        "accept-ranges": "bytes",
+        "content-encoding": "identity",
+        "content-type": "audio/flac"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "id": "<SUB_SONG_ID>",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/stream"
+      }
+    },
+    {
+      "expect_body_sha256": "794e7e20a16eb87aeef8024674d2314592f528f4471aed5464a3ca8e5f9fb049",
+      "expect_status": 200,
+      "file": "pairs/021_sub_download.json",
+      "name": "sub_download",
+      "pinned_headers": {
+        "accept-ranges": "bytes",
+        "content-disposition": "attachment; filename=\"Airbag.flac\"",
+        "content-encoding": "identity",
+        "content-type": "audio/flac"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "id": "<SUB_SONG_ID>",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/download"
+      }
+    },
+    {
+      "expect_body_sha256": "ac6b20f1b80888a9bcf4068e77c8702fd1b5ec925c895a30078c76696e76475e",
+      "expect_status": 206,
+      "file": "pairs/022_sub_stream_range_0_99.json",
+      "name": "sub_stream_range_0_99",
+      "pinned_headers": {
+        "accept-ranges": "bytes",
+        "content-encoding": "identity",
+        "content-range": "bytes 0-99/1567",
+        "content-type": "audio/flac"
+      },
+      "request": {
+        "headers": {
+          "Range": "bytes=0-99"
+        },
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "id": "<SUB_SONG_ID>",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/stream"
+      }
+    },
+    {
+      "expect_body_sha256": "ae67f7a2579ce9b945ffef2c70453b23a85de12e7df64b12caf760a28c0bfc60",
+      "expect_status": 206,
+      "file": "pairs/023_sub_stream_range_suffix.json",
+      "name": "sub_stream_range_suffix",
+      "pinned_headers": {
+        "accept-ranges": "bytes",
+        "content-encoding": "identity",
+        "content-range": "bytes 1467-1566/1567",
+        "content-type": "audio/flac"
+      },
+      "request": {
+        "headers": {
+          "Range": "bytes=1467-"
+        },
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "id": "<SUB_SONG_ID>",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/stream"
+      }
+    },
+    {
+      "expect_body_sha256": "794e7e20a16eb87aeef8024674d2314592f528f4471aed5464a3ca8e5f9fb049",
+      "expect_status": 200,
+      "file": "pairs/024_sub_stream_gzip_offered.json",
+      "name": "sub_stream_gzip_offered",
+      "pinned_headers": {
+        "accept-ranges": "bytes",
+        "content-encoding": "identity",
+        "content-type": "audio/flac"
+      },
+      "request": {
+        "headers": {
+          "Accept-Encoding": "gzip"
+        },
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "id": "<SUB_SONG_ID>",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/stream"
+      }
+    },
+    {
+      "expect_body_sha256": "c87d320ad71ea5d66bc43b1c2c8289b446fb42cc197352dd5c3bb4a9264e06cc",
+      "expect_status": 200,
+      "file": "pairs/025_sub_ping_xml.json",
+      "name": "sub_ping_xml",
+      "pinned_headers": {
+        "content-type": "application/xml"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/ping"
+      }
+    },
+    {
+      "expect_body_sha256": "97f57405871601cb767ff986cb0a7aff7e7caa2fa835ddd052abd66a356a0e0f",
+      "expect_status": 404,
+      "file": "pairs/026_sub_stream_bad_id.json",
+      "name": "sub_stream_bad_id",
+      "pinned_headers": {
+        "content-type": "text/plain; charset=utf-8"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "id": "tr-does-not-exist",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/stream"
+      }
+    },
+    {
+      "expect_body_sha256": "21277252ca1012f2cbe62733dff1d14a5cf608ae6b8f803eb8b9c9d108ce7d54",
+      "expect_status": 200,
+      "file": "pairs/027_sub_ping_bad_auth.json",
+      "name": "sub_ping_bad_auth",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "wrong",
+          "c": "capture",
+          "f": "json",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/ping"
+      }
+    },
+    {
+      "expect_body_sha256": "d60d40d99c1a3af908af24500adee6d9bebcf3f869915e5ebfb6a012bc2c111c",
+      "expect_status": 200,
+      "file": "pairs/028_sub_star.json",
+      "name": "sub_star",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "id": "<SUB_SONG_ID>",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/star"
+      }
+    },
+    {
+      "expect_body_sha256": "d60d40d99c1a3af908af24500adee6d9bebcf3f869915e5ebfb6a012bc2c111c",
+      "expect_status": 200,
+      "file": "pairs/029_sub_unstar.json",
+      "name": "sub_unstar",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "apiKey": "<APP_PASSWORD>",
+          "c": "capture",
+          "f": "json",
+          "id": "<SUB_SONG_ID>",
+          "v": "1.16.1"
+        },
+        "path": "/subsonic/rest/unstar"
+      }
+    },
+    {
+      "expect_body_sha256": "647d3293e23fa1ae006125f2452214938c0d4b25e4e481f5c1e386db6a8efa0b",
+      "expect_status": 200,
+      "file": "pairs/030_jf_system_info_public.json",
+      "name": "jf_system_info_public",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {},
+        "path": "/jellyfin/System/Info/Public"
+      }
+    },
+    {
+      "expect_body_sha256": "71a2edeabd2a9ce51f1f61f71ef3d02dc66359d33fb64d0bb2508b4d7837920c",
+      "expect_status": 200,
+      "file": "pairs/031_jf_system_info.json",
+      "name": "jf_system_info",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {
+          "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+        },
+        "json": null,
+        "method": "GET",
+        "params": {},
+        "path": "/jellyfin/System/Info"
+      }
+    },
+    {
+      "expect_body_sha256": "54f53988b4565113e24e68a88294e979b3ffa1acf785633fa924b98aa1839ce6",
+      "expect_status": 200,
+      "file": "pairs/032_jf_users_me.json",
+      "name": "jf_users_me",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {
+          "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+        },
+        "json": null,
+        "method": "GET",
+        "params": {},
+        "path": "/jellyfin/Users/Me"
+      }
+    },
+    {
+      "expect_body_sha256": "bea5b1b0a8b32bcddec1da4efc330468160af95589fe4d02b3ba7d79e613e3ee",
+      "expect_status": 200,
+      "file": "pairs/033_jf_views.json",
+      "name": "jf_views",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {
+          "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+        },
+        "json": null,
+        "method": "GET",
+        "params": {},
+        "path": "/jellyfin/Users/user-alice/Views"
+      }
+    },
+    {
+      "expect_body_sha256": "165482edd46806c41715f9faae838e236884c737aaa7d45484dff4096b2ac410",
+      "expect_status": 200,
+      "file": "pairs/034_jf_items_albums.json",
+      "name": "jf_items_albums",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {
+          "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+        },
+        "json": null,
+        "method": "GET",
+        "params": {
+          "IncludeItemTypes": "MusicAlbum",
+          "Recursive": "true",
+          "userId": "user-alice"
+        },
+        "path": "/jellyfin/Items"
+      }
+    },
+    {
+      "expect_body_sha256": "c1a47140b8a2f141f9247aee1df2fdba6ab7b43b44c82f77234f951a029a2a3f",
+      "expect_status": 200,
+      "file": "pairs/035_jf_album_artists.json",
+      "name": "jf_album_artists",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {
+          "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+        },
+        "json": null,
+        "method": "GET",
+        "params": {
+          "userId": "user-alice"
+        },
+        "path": "/jellyfin/Artists/AlbumArtists"
+      }
+    },
+    {
+      "expect_body_sha256": "ca522d8c7828f2f1fe704d4e0f255b805962b95cd1fb8b86055614d033090758",
+      "expect_status": 200,
+      "file": "pairs/036_jf_genres.json",
+      "name": "jf_genres",
+      "pinned_headers": {
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {
+          "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+        },
+        "json": null,
+        "method": "GET",
+        "params": {
+          "userId": "user-alice"
+        },
+        "path": "/jellyfin/Genres"
+      }
+    },
+    {
+      "expect_body_sha256": "36586d7222cd39362f901ba764c3ebfbdbc6c29c492591ad1aef49a96e70cccd",
+      "expect_status": 200,
+      "file": "pairs/037_jf_item_album.json",
+      "name": "jf_item_album",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {
+          "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+        },
+        "json": null,
+        "method": "GET",
+        "params": {
+          "userId": "user-alice"
+        },
+        "path": "/jellyfin/Items/<JF_ALBUM_ID>"
+      }
+    },
+    {
+      "expect_body_sha256": "9f48afff16c30ce7f32e6506dcad8eb20eabf56a879bd2e95ce67262e5435549",
+      "expect_status": 404,
+      "file": "pairs/038_jf_item_image_primary.json",
+      "name": "jf_item_image_primary",
+      "pinned_headers": {},
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {},
+        "path": "/jellyfin/Items/<JF_ALBUM_ID>/Images/Primary"
+      }
+    },
+    {
+      "expect_body_sha256": "6b01335f0aacc33f572c6f8b6e22322f51f0cbb64f33768d090837668473ce88",
+      "expect_status": 200,
+      "file": "pairs/039_jf_items_album_children.json",
+      "name": "jf_items_album_children",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {
+          "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+        },
+        "json": null,
+        "method": "GET",
+        "params": {
+          "ParentId": "<JF_ALBUM_ID>",
+          "userId": "user-alice"
+        },
+        "path": "/jellyfin/Items"
+      }
+    },
+    {
+      "expect_body_sha256": "026b72e3704c20bdb8bf469566ebc9a0f7537b4608c3d2531a1d9da8397c7359",
+      "expect_status": 200,
+      "file": "pairs/040_jf_playback_info_get.json",
+      "name": "jf_playback_info_get",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {
+          "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+        },
+        "json": null,
+        "method": "GET",
+        "params": {
+          "userId": "user-alice"
+        },
+        "path": "/jellyfin/Items/<JF_TRACK_ID>/PlaybackInfo"
+      }
+    },
+    {
+      "expect_body_sha256": "026b72e3704c20bdb8bf469566ebc9a0f7537b4608c3d2531a1d9da8397c7359",
+      "expect_status": 200,
+      "file": "pairs/041_jf_playback_info_post.json",
+      "name": "jf_playback_info_post",
+      "pinned_headers": {
+        "content-encoding": "gzip",
+        "content-type": "application/json"
+      },
+      "request": {
+        "headers": {
+          "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+        },
+        "json": {
+          "DeviceProfile": {
+            "Name": "capture"
+          },
+          "MaxStreamingBitrate": 999999999
+        },
+        "method": "POST",
+        "params": {},
+        "path": "/jellyfin/Items/<JF_TRACK_ID>/PlaybackInfo"
+      }
+    },
+    {
+      "expect_body_sha256": "794e7e20a16eb87aeef8024674d2314592f528f4471aed5464a3ca8e5f9fb049",
+      "expect_status": 200,
+      "file": "pairs/042_jf_audio_universal.json",
+      "name": "jf_audio_universal",
+      "pinned_headers": {
+        "accept-ranges": "bytes",
+        "content-encoding": "identity",
+        "content-type": "audio/flac"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "ApiKey": "<APP_PASSWORD>",
+          "MaxStreamingBitrate": "999999999"
+        },
+        "path": "/jellyfin/Audio/<JF_TRACK_ID>/universal"
+      }
+    },
+    {
+      "expect_body_sha256": "794e7e20a16eb87aeef8024674d2314592f528f4471aed5464a3ca8e5f9fb049",
+      "expect_status": 200,
+      "file": "pairs/043_jf_audio_stream.json",
+      "name": "jf_audio_stream",
+      "pinned_headers": {
+        "accept-ranges": "bytes",
+        "content-encoding": "identity",
+        "content-type": "audio/flac"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "ApiKey": "<APP_PASSWORD>",
+          "static": "true"
+        },
+        "path": "/jellyfin/Audio/<JF_TRACK_ID>/stream"
+      }
+    },
+    {
+      "expect_body_sha256": "ac6b20f1b80888a9bcf4068e77c8702fd1b5ec925c895a30078c76696e76475e",
+      "expect_status": 206,
+      "file": "pairs/044_jf_audio_stream_range.json",
+      "name": "jf_audio_stream_range",
+      "pinned_headers": {
+        "accept-ranges": "bytes",
+        "content-encoding": "identity",
+        "content-range": "bytes 0-99/1567",
+        "content-type": "audio/flac"
+      },
+      "request": {
+        "headers": {
+          "Range": "bytes=0-99"
+        },
+        "json": null,
+        "method": "GET",
+        "params": {
+          "ApiKey": "<APP_PASSWORD>",
+          "static": "true"
+        },
+        "path": "/jellyfin/Audio/<JF_TRACK_ID>/stream"
+      }
+    },
+    {
+      "expect_body_sha256": "9f48afff16c30ce7f32e6506dcad8eb20eabf56a879bd2e95ce67262e5435549",
+      "expect_status": 200,
+      "file": "pairs/045_jf_audio_stream_head.json",
+      "name": "jf_audio_stream_head",
+      "pinned_headers": {
+        "accept-ranges": "bytes",
+        "content-encoding": "identity",
+        "content-type": "audio/flac"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "HEAD",
+        "params": {
+          "ApiKey": "<APP_PASSWORD>",
+          "static": "true"
+        },
+        "path": "/jellyfin/Audio/<JF_TRACK_ID>/stream"
+      }
+    },
+    {
+      "expect_body_sha256": "794e7e20a16eb87aeef8024674d2314592f528f4471aed5464a3ca8e5f9fb049",
+      "expect_status": 200,
+      "file": "pairs/046_jf_audio_stream_noauth.json",
+      "name": "jf_audio_stream_noauth",
+      "pinned_headers": {
+        "accept-ranges": "bytes",
+        "content-encoding": "identity",
+        "content-type": "audio/flac"
+      },
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {
+          "static": "true"
+        },
+        "path": "/jellyfin/Audio/<JF_TRACK_ID>/stream"
+      }
+    },
+    {
+      "expect_body_sha256": "9f48afff16c30ce7f32e6506dcad8eb20eabf56a879bd2e95ce67262e5435549",
+      "expect_status": 404,
+      "file": "pairs/047_jf_item_unknown_404.json",
+      "name": "jf_item_unknown_404",
+      "pinned_headers": {},
+      "request": {
+        "headers": {},
+        "json": null,
+        "method": "GET",
+        "params": {},
+        "path": "/jellyfin/Items/00000000000000000000000000000000/Images/Primary"
+      }
+    }
+  ],
+  "self_verify": {
+    "mismatches": [],
+    "reissued": 48,
+    "verdict": "MUST-MATCH"
+  },
+  "v2_sha": "cf7278a1"
+}

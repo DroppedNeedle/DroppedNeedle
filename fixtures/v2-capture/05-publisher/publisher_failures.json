@@ -1,0 +1,743 @@
+{
+  "capture": "05-publisher",
+  "captured_at": "2026-09-28T14:05:28.869232+00:00",
+  "exception_inventory": {
+    "services/native/library_management_preview_service.py": {
+      "defined_exceptions": [],
+      "raised_names": [
+        "ConfigurationError",
+        "PermissionDeniedError",
+        "ResourceNotFoundError",
+        "StaleRevisionError",
+        "ValidationError"
+      ]
+    },
+    "services/native/library_management_publisher.py": {
+      "defined_exceptions": [],
+      "raised_names": [
+        "CancelledError",
+        "ConflictError",
+        "LibraryManagementDestinationConflictError",
+        "LibraryManagementPolicyChangedError",
+        "OSError",
+        "StaleRevisionError",
+        "ValidationError"
+      ]
+    },
+    "services/native/library_management_recovery_service.py": {
+      "defined_exceptions": [],
+      "raised_names": [
+        "CancelledError",
+        "ConflictError",
+        "ResourceNotFoundError",
+        "StaleRevisionError",
+        "ValidationError",
+        "_RecoveryUncertainError"
+      ]
+    },
+    "services/native/library_management_undo_service.py": {
+      "defined_exceptions": [],
+      "raised_names": [
+        "ConflictError",
+        "OSError",
+        "ResourceNotFoundError",
+        "StaleRevisionError",
+        "ValidationError"
+      ]
+    }
+  },
+  "gate_vocabulary": {
+    "publisher_module_all": [
+      "MANAGEMENT_ARTIFACT_PREFIX",
+      "MANAGEMENT_RECYCLE_ROOT_ID",
+      "_BASELINE_NAMESPACE",
+      "_IMPORT_BUNDLE_NAMESPACE",
+      "_JOURNAL_NAMESPACE",
+      "_MAX_DIRECTORY_COLLISION_ENTRIES",
+      "_SNAPSHOT_NAMESPACE"
+    ],
+    "undo_token_deterministic": true,
+    "undo_token_differs_from_preview": false
+  },
+  "method": "live-run pure functions (_sealed_preview_token, _stable_json, undo._token) + static scenario catalog + static exception inventory; no bundle was published (publisher flows need a live library DB + music files)",
+  "scenario_catalog": {
+    "tests/services/native/test_library_management_mutation_boundary.py": [
+      {
+        "doc_first_line": "Functional replacement for the retired source-substring checks: every",
+        "test": "test_download_and_drop_providers_converge_on_target_publication"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_import_services_have_no_legacy_publication_implementation"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_obsolete_scalar_audio_mutators_are_not_public"
+      }
+    ],
+    "tests/services/native/test_library_management_preview_service.py": [
+      {
+        "doc_first_line": "",
+        "test": "test_activation_confirmation_binds_exact_proposed_settings_and_token"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_activation_confirmation_rejects_changed_proposal_and_bad_token"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_activation_confirmation_validates_all_roots_before_saving"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_apply_rejects_missing_confirmation_and_wrong_token"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_apply_rejects_stale_preview_without_starting_apply"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_apply_requires_exact_current_token_and_is_idempotent"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_artwork_preview_serves_only_a_blob_referenced_by_the_item"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_artwork_preview_uses_promoted_metadata_for_sidecar_first_recovery"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_detail_counts_grown_selection_member"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_detail_counts_shrunk_selection_member"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_detail_falls_back_to_global_revision_without_captured_inputs"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_detail_ignores_unrelated_catalog_churn_when_inputs_unchanged"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_detail_marks_an_expired_planning_lease_as_stalled"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_detail_never_marks_planning_preview_stale"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_detail_refuses_preview_when_selection_grew_mid_preview"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_detail_refuses_preview_whose_own_input_was_retagged"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_detail_refuses_retagged_input_even_when_catalog_is_quiet"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_detail_reports_expiry_and_current_staleness"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_detail_reports_moved_input_count_and_sample"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_discard_cancels_exact_ready_preview_and_returns_its_audit_detail"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_history_marks_activation_dry_runs"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_item_page_never_exposes_absolute_source_identity"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_manual_preview_pins_temporary_profile_overrides"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_reissue_denies_expired_and_terminal_previews"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_reissue_denies_non_owner_admin_and_unknown_preview"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_reissue_denies_stale_activation_and_unsealable_previews"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_reissue_returns_sealed_token_to_owner_with_matching_hash"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_tag_edit_preview_normalizes_lists_and_expands_album_scope"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_tag_edit_reset_requires_an_existing_override"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_tag_editor_context_exposes_lists_and_mapping_gate"
+      }
+    ],
+    "tests/services/native/test_library_management_publisher.py": [
+      {
+        "doc_first_line": "",
+        "test": "test_automatic_import_commits_identity_baseline_undo_and_history"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_automatic_import_conflicts_become_truthful_management_holds"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_automatic_managed_upgrade_preserves_baseline_and_undo_state"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_automatic_publication_carries_activation_across_default_migration"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_automatic_publication_rejects_a_tampered_pinned_profile"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_automatic_publication_still_holds_migration_plus_real_change"
+      },
+      {
+        "doc_first_line": "F-147: the hot-path cleanup must persist the removed source's directory",
+        "test": "test_cleanup_fsyncs_source_parent_after_unlink"
+      },
+      {
+        "doc_first_line": "F-175: a second caller with the same idempotency key awaits the per-bundle",
+        "test": "test_concurrent_duplicate_import_publications_serialize_per_bundle"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_conversion_final_preview_is_not_born_stale"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_conversion_final_preview_normalizes_null_tag_revision"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_copy_temp_copystat_failure_logs_errno_and_basenames"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_copy_temp_fsync_failure_still_fails"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_copy_temp_survives_copystat_eperm"
+      },
+      {
+        "doc_first_line": "Embedded artwork choices must merge into the desired document's artwork.",
+        "test": "test_desired_document_merges_embedded_artwork_choices"
+      },
+      {
+        "doc_first_line": "Without embedded choices the pinned artwork must pass through untouched.",
+        "test": "test_desired_document_without_embedded_choices_keeps_pinned_artwork"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_edition_conversion_apply_and_undo_restore_a_different_track_set"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_import_album_catalog_commit_adopts_every_track_in_one_revision"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_import_anyway_upgrade_replaces_better_file_with_reviewed_identity"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_import_anyway_with_automatic_assignment_publishes_unmanaged"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_import_bundle_catalog_failure_restores_every_source"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_import_bundle_prepares_every_file_before_any_publish"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_import_bundle_publishes_once_and_commits_catalog_atomically"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_import_bundle_resumes_publish_after_process_stops_before_journal_update"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_import_bundle_same_path_upgrade_recycles_original_after_commit"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_import_catalog_commit_atomically_settles_matching_management_hold"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_import_preparation_failure_rolls_back_the_in_progress_journal"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_import_publisher_defers_repeated_cancellation_through_catalog_commit"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_import_recovery_skips_a_bundle_owned_by_the_active_publisher"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_legacy_standard_only_request_compensates_after_a_late_settings_change"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_m4a_staging_mutates_a_local_scratch_copy"
+      },
+      {
+        "doc_first_line": "Manual-lane mirror of the import lane's preparation-failure drill: an",
+        "test": "test_manual_bundle_staging_failure_mid_album_rolls_back_every_journal"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_minimal_import_document_adds_only_reviewed_recording_identity"
+      },
+      {
+        "doc_first_line": "F-106: when a failure bypasses the inner critical-section handler, the",
+        "test": "test_outer_compensation_mutates_roots_only_under_the_writer_fence"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_partial_tags_only_selection_rejects_duplicate_sibling_mapping"
+      },
+      {
+        "doc_first_line": "F-145: a throwing hook never fails a committed bundle; the warning keeps",
+        "test": "test_post_commit_hook_failure_is_swallowed_with_exc_info"
+      },
+      {
+        "doc_first_line": "F-146: a directory-fsync failure must be observable while availability",
+        "test": "test_publish_logs_directory_fsync_failures_but_still_commits"
+      },
+      {
+        "doc_first_line": "F-112: an out-of-model writer creating the destination inside the",
+        "test": "test_publish_refuses_destination_created_in_replace_window"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_published_import_retry_does_not_restage_artifact_temporaries"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_applies_case_only_rename_of_source"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_breaks_hardlinks_without_mutating_the_other_name"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_defers_repeated_cancellation_until_publish_is_durable"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_fails_closed_on_nfd_normalized_sibling_directory"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_honors_configured_keep_source_mode"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_marks_cleanup_pending_without_rolling_back_catalog"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_moves_sidecar_and_publishes_external_artwork"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_moves_validated_real_audio_and_is_idempotent"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_never_overwrites_late_external_artwork"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_prepares_and_commits_multi_file_album_as_one_bundle"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_preserves_destination_changed_before_immediate_rollback"
+      },
+      {
+        "doc_first_line": "F-152a/F-152c: CJK+accent names publish end to end and every journal",
+        "test": "test_publisher_publishes_cjk_album_with_destination_side_temps"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_publishes_nfd_sources_to_nfc_cjk_destinations"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_refuses_destination_created_after_preview_and_records_it"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_rejects_identity_changed_after_preview"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_rejects_settings_changed_after_preview"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_rejects_tampered_catalog_projection"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_removes_empty_source_directories_when_enabled"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_replaces_same_path_through_verified_backup"
+      },
+      {
+        "doc_first_line": "F-145 window 1: an all-terminal bundle replay re-runs the guarded",
+        "test": "test_publisher_replays_post_commit_hook_on_committed_replay"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_rolls_back_published_move_when_catalog_cas_fails"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_publisher_supports_explicit_cross_root_move"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_restoration_catalog_projection_falls_back_to_path"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_restoration_catalog_projection_prefers_explicit_native_defaults"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_restoration_catalog_projection_uses_pinned_values_for_empty_tags"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_reviewed_recording_identity_accepts_unmanaged_acquisition"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_reviewed_recording_identity_rejects_contradictory_requests"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_reviewed_recording_identity_rejects_release_track_in_target_tag"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_reviewed_recording_identity_requires_matching_recording_ids"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_safe_child_create_parent_stats_new_directory"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_tags_only_selected_siblings_publish_as_one_album_bundle"
+      }
+    ],
+    "tests/services/native/test_library_management_recovery_service.py": [
+      {
+        "doc_first_line": "",
+        "test": "test_committed_delete_cleanup_resumes_from_monotonic_substates"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_corrupt_delete_evidence_fails_closed_instead_of_move_rules"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_periodic_recovery_reserves_manual_bundles_behind_import_backlog"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_periodic_recovery_skips_live_operation_lease"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recover_import_bundle_skips_while_publication_lock_held"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_attention_on_last_bundle_still_fails_the_job"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_blocks_on_mixed_commit_state"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_blocks_on_unknown_journal_state"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_catalog_destination_mismatch_preserves_all_files"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_defers_repeated_cancellation_until_commit_is_durable"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_failure_is_bundle_scoped_and_job_settles_after_last"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_finishes_move_after_publish_before_journal_transition"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_finishes_partial_audio_artwork_and_sidecar_bundle"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_finishes_partially_published_album_bundle"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_finishes_same_path_after_backup_before_journal_transition"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_finishes_same_path_after_source_backup"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_marks_changed_published_destination_attention_without_deletion"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_marks_duplicate_staged_fingerprint_attention"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_marks_missing_committed_destination_and_catalog_missing"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_marks_operation_state_mismatch_when_work_row_is_terminal"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_never_republishes_an_interrupted_delete"
+      },
+      {
+        "doc_first_line": "F-145: recovery finishing a published bundle must replay the guarded",
+        "test": "test_recovery_replays_post_commit_hook_after_completing_bundle"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_restages_owned_prepublication_temp"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_restores_missing_committed_destination_from_exact_copy"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_resumes_rollback_pending_and_is_idempotent"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_resumes_validated_bundle_and_second_run_is_noop"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_retries_committed_cleanup_after_settings_change"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_recovery_rolls_back_when_configuration_changed"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_startup_drains_import_committed_without_cleanup"
+      },
+      {
+        "doc_first_line": "A huge stuck-cleanup backlog boots after one bounded drain pass (#387).",
+        "test": "test_startup_escalates_a_stuck_import_backlog_past_the_bundle_cap"
+      },
+      {
+        "doc_first_line": "Persistent import source-cleanup failures boot instead of bricking (#387).",
+        "test": "test_startup_escalates_stuck_import_cleanup_to_needs_attention"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_startup_recovery_rolls_back_import_interrupted_after_publish"
+      },
+      {
+        "doc_first_line": "The manual lane keeps the old refuse-to-boot contract (#387).",
+        "test": "test_startup_still_blocks_when_manual_bundles_remain"
+      }
+    ],
+    "tests/services/native/test_library_management_undo_service.py": [
+      {
+        "doc_first_line": "",
+        "test": "test_legacy_snapshot_options_remain_decodable_for_undo"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_undo_external_artwork_choice_previews_publisher_snapshot"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_undo_preview_counts_embedded_artwork_restoration"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_undo_preview_marks_expired_snapshot_stale"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_undo_restores_real_audio_path_tags_and_management_state"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_undo_restores_sidecar_and_removes_generated_external_artwork"
+      }
+    ],
+    "tests/services/native/test_library_management_worker.py": [
+      {
+        "doc_first_line": "F-107: CancelledError stays a BaseException - no durable failed marking,",
+        "test": "test_apply_worker_cancellation_propagates_without_marking"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_apply_worker_honours_control_only_outside_critical_publish"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_apply_worker_logs_staged_write_failure"
+      },
+      {
+        "doc_first_line": "F-107: an unclassified exception must terminate the work row durably",
+        "test": "test_apply_worker_marks_unknown_failures_as_durable_failures"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_apply_worker_preserves_publication_conflict_classification"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_apply_worker_publishes_each_bundle_then_finishes"
+      },
+      {
+        "doc_first_line": "F-105: one heartbeat per loop iteration keeps the 60 s lease alive.",
+        "test": "test_apply_worker_renews_the_operation_lease_per_bundle"
+      },
+      {
+        "doc_first_line": "F-105: a failed heartbeat records the bundle outcome and the zombie",
+        "test": "test_apply_worker_stops_when_the_lease_is_lost"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_baseline_restore_preview_dispatches_to_baseline_planner"
+      },
+      {
+        "doc_first_line": "Two workers drive run_claimed on the SAME claimed job concurrently. The",
+        "test": "test_concurrent_appliers_publish_one_bundle_without_duplicate_work"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_duplicate_preview_dispatches_to_duplicate_planner"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_keep_existing_duplicate_is_durable_without_filesystem_publish"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_preview_conflict_finishes_instead_of_repeating_after_lease_expiry"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_scan_preview_begins_automatic_apply_without_browser_confirmation"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_scan_preview_with_blockers_remains_held_and_inert"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_stale_manual_preview_terminals_immediately_without_requeue"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_stale_scan_preview_before_settle_terminals_without_requeue"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_stale_scan_preview_cap_exhaustion_terminals_honestly"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_stale_scan_preview_requeues_then_succeeds_after_settle"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_stale_scan_preview_with_deleted_profile_terminals_without_requeue"
+      }
+    ],
+    "tests/services/native/test_target_application_lifecycle.py": [
+      {
+        "doc_first_line": "",
+        "test": "test_register_task_ignores_cancelled_tasks"
+      },
+      {
+        "doc_first_line": "",
+        "test": "test_register_task_logs_startup_task_failure"
+      }
+    ]
+  },
+  "sealed_preview_token": {
+    "deterministic": true,
+    "sensitive_to_idempotency_key": true,
+    "sensitive_to_job_id": true,
+    "token_length": 43,
+    "token_sha256": "60ba4154c59e1d4744d5a52da00afa3b96805464244f6597f2346219be457ec0"
+  },
+  "stable_json": {
+    "canonical_sample": "{\"a\":[3,2],\"b\":1,\"c\":{\"x\":2,\"y\":1}}",
+    "key_order_insensitive": true
+  },
+  "v2_sha": "cf7278a1"
+}

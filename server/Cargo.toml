@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = ["."]
+
+[package]
+name = "droppedneedle"
+version = "3.0.0"
+edition = "2024"
+rust-version = "1.89"
+description = "DroppedNeedle v3 backend"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+axum = { version = "0.8", features = ["json", "query", "http1", "matched-path"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+utoipa = "5"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

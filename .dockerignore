@@ -46,3 +46,4 @@ manage.sh
 *.swp
 .DS_Store
 Thumbs.db
+server/target/

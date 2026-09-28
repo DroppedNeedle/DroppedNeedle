@@ -1,0 +1,40 @@
+{
+  "name": "sub_stream_bad_id",
+  "normalization": [
+    "<APP_PASSWORD>",
+    "<SUB_ARTIST_ID>",
+    "<SUB_ALBUM_ID>",
+    "<SUB_SONG_ID>",
+    "<FILE_ID>",
+    "<JF_TRACK_ID>",
+    "<JF_ALBUM_ID>",
+    "<SESSION>"
+  ],
+  "request": {
+    "headers": {},
+    "json": null,
+    "method": "GET",
+    "params": {
+      "apiKey": "<APP_PASSWORD>",
+      "c": "capture",
+      "f": "json",
+      "id": "tr-does-not-exist",
+      "v": "1.16.1"
+    },
+    "path": "/subsonic/rest/stream"
+  },
+  "response": {
+    "body": {
+      "head_hex": "536f6e67206e6f7420666f756e64",
+      "length": 14,
+      "sha256": "0eea223a79c9cf7adbaca7268e2305ac529c13560d118ef3c7d920bc663810b1",
+      "tail_hex": "536f6e67206e6f7420666f756e64"
+    },
+    "body_kind": "bytes",
+    "headers": {
+      "content-length": "14",
+      "content-type": "text/plain; charset=utf-8"
+    },
+    "status": 404
+  }
+}

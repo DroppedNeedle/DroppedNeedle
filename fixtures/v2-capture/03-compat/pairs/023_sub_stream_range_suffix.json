@@ -1,0 +1,45 @@
+{
+  "name": "sub_stream_range_suffix",
+  "normalization": [
+    "<APP_PASSWORD>",
+    "<SUB_ARTIST_ID>",
+    "<SUB_ALBUM_ID>",
+    "<SUB_SONG_ID>",
+    "<FILE_ID>",
+    "<JF_TRACK_ID>",
+    "<JF_ALBUM_ID>",
+    "<SESSION>"
+  ],
+  "request": {
+    "headers": {
+      "Range": "bytes=1467-"
+    },
+    "json": null,
+    "method": "GET",
+    "params": {
+      "apiKey": "<APP_PASSWORD>",
+      "c": "capture",
+      "f": "json",
+      "id": "<SUB_SONG_ID>",
+      "v": "1.16.1"
+    },
+    "path": "/subsonic/rest/stream"
+  },
+  "response": {
+    "body": {
+      "head_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000fff85918006b0000",
+      "length": 100,
+      "sha256": "48ac8a674562208553a81607506c52e576a76aeaa2031d887d710d79de870448",
+      "tail_hex": "0000000000000000000000000000000000000000fff85918006b000000000000108afff85918016c00000000000087fffff87918020fad590000000000006e20"
+    },
+    "body_kind": "bytes",
+    "headers": {
+      "accept-ranges": "bytes",
+      "content-encoding": "identity",
+      "content-length": "100",
+      "content-range": "bytes 1467-1566/1567",
+      "content-type": "audio/flac"
+    },
+    "status": 206
+  }
+}

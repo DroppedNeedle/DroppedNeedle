@@ -1,0 +1,87 @@
+{
+  "name": "jf_items_albums",
+  "normalization": [
+    "<APP_PASSWORD>",
+    "<SUB_ARTIST_ID>",
+    "<SUB_ALBUM_ID>",
+    "<SUB_SONG_ID>",
+    "<FILE_ID>",
+    "<JF_TRACK_ID>",
+    "<JF_ALBUM_ID>",
+    "<SESSION>"
+  ],
+  "request": {
+    "headers": {
+      "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+    },
+    "json": null,
+    "method": "GET",
+    "params": {
+      "IncludeItemTypes": "MusicAlbum",
+      "Recursive": "true",
+      "userId": "user-alice"
+    },
+    "path": "/jellyfin/Items"
+  },
+  "response": {
+    "body": {
+      "Items": [
+        {
+          "AlbumArtist": "Radiohead",
+          "AlbumArtists": [
+            {
+              "Id": "c267ef83715449222289b63695b29443",
+              "Name": "Radiohead"
+            }
+          ],
+          "ArtistItems": [
+            {
+              "Id": "c267ef83715449222289b63695b29443",
+              "Name": "Radiohead"
+            }
+          ],
+          "Artists": [
+            "Radiohead"
+          ],
+          "BackdropImageTags": [],
+          "ChildCount": 1,
+          "DateCreated": "2026-09-28T14:08:13.0000000Z",
+          "Genres": [],
+          "Id": "<JF_ALBUM_ID>",
+          "ImageBlurHashes": {},
+          "ImageTags": {},
+          "IsFolder": true,
+          "LocationType": "FileSystem",
+          "MediaType": "Unknown",
+          "Name": "OK Computer",
+          "ProductionYear": 1997,
+          "ProviderIds": {
+            "MusicBrainzReleaseGroup": "b1392450-e666-3926-a536-22c65f834433"
+          },
+          "RunTimeTicks": 3000000,
+          "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+          "SortName": "OK Computer",
+          "Type": "MusicAlbum",
+          "UserData": {
+            "IsFavorite": false,
+            "ItemId": "<JF_ALBUM_ID>",
+            "Key": "<JF_ALBUM_ID>",
+            "PlayCount": 0,
+            "PlaybackPositionTicks": 0,
+            "Played": false
+          }
+        }
+      ],
+      "StartIndex": 0,
+      "TotalRecordCount": 1
+    },
+    "body_kind": "json",
+    "headers": {
+      "content-encoding": "gzip",
+      "content-length": "500",
+      "content-type": "application/json",
+      "vary": "Accept-Encoding"
+    },
+    "status": 200
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "name": "sub_getScanStatus",
+  "normalization": [
+    "<APP_PASSWORD>",
+    "<SUB_ARTIST_ID>",
+    "<SUB_ALBUM_ID>",
+    "<SUB_SONG_ID>",
+    "<FILE_ID>",
+    "<JF_TRACK_ID>",
+    "<JF_ALBUM_ID>",
+    "<SESSION>"
+  ],
+  "request": {
+    "headers": {},
+    "json": null,
+    "method": "GET",
+    "params": {
+      "apiKey": "<APP_PASSWORD>",
+      "c": "capture",
+      "f": "json",
+      "v": "1.16.1"
+    },
+    "path": "/subsonic/rest/getScanStatus"
+  },
+  "response": {
+    "body": {
+      "subsonic-response": {
+        "openSubsonic": true,
+        "scanStatus": {
+          "count": 0,
+          "scanning": false
+        },
+        "serverVersion": "dev",
+        "status": "ok",
+        "type": "DroppedNeedle",
+        "version": "1.16.1"
+      }
+    },
+    "body_kind": "json",
+    "headers": {
+      "content-length": "163",
+      "content-type": "application/json"
+    },
+    "status": 200
+  }
+}

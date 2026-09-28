@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<caps>
+ <server appversion="0.8.21.0" version="0.1" title="DS" strapline="DrunkenSlug"/>
+ <limits max="100" default="100"/>
+ <searching>
+  <search available="yes" supportedParams="q"/>
+  <tv-search available="yes" supportedParams="q,season,ep"/>
+  <movie-search available="yes" supportedParams="q,imdbid"/>
+  <audio-search available="no" supportedParams=""/>
+ </searching>
+ <categories>
+  <category id="3000" name="Audio">
+   <subcat id="3030" name="Audiobook"/>
+   <subcat id="3060" name="Foreign"/>
+   <subcat id="3040" name="Lossless"/>
+   <subcat id="3010" name="MP3"/>
+   <subcat id="3999" name="Other"/>
+   <subcat id="3020" name="Video"/>
+  </category>
+  <category id="5000" name="TV">
+   <subcat id="5040" name="HD"/>
+  </category>
+ </categories>
+</caps>

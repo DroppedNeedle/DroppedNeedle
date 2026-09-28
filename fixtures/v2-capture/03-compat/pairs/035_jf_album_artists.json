@@ -1,0 +1,67 @@
+{
+  "name": "jf_album_artists",
+  "normalization": [
+    "<APP_PASSWORD>",
+    "<SUB_ARTIST_ID>",
+    "<SUB_ALBUM_ID>",
+    "<SUB_SONG_ID>",
+    "<FILE_ID>",
+    "<JF_TRACK_ID>",
+    "<JF_ALBUM_ID>",
+    "<SESSION>"
+  ],
+  "request": {
+    "headers": {
+      "Authorization": "MediaBrowser Token=\"<APP_PASSWORD>\", Client=\"capture\""
+    },
+    "json": null,
+    "method": "GET",
+    "params": {
+      "userId": "user-alice"
+    },
+    "path": "/jellyfin/Artists/AlbumArtists"
+  },
+  "response": {
+    "body": {
+      "Items": [
+        {
+          "BackdropImageTags": [],
+          "ChildCount": 1,
+          "DateCreated": "2026-09-28T14:08:13.0000000Z",
+          "Genres": [],
+          "Id": "c267ef83715449222289b63695b29443",
+          "ImageBlurHashes": {},
+          "ImageTags": {},
+          "IsFolder": true,
+          "LocationType": "FileSystem",
+          "MediaType": "Unknown",
+          "Name": "Radiohead",
+          "ProviderIds": {
+            "MusicBrainzArtist": "ef13eca66417c36b8d5aaaf6f0f72c3e"
+          },
+          "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+          "SortName": "Radiohead",
+          "Type": "MusicArtist",
+          "UserData": {
+            "IsFavorite": false,
+            "ItemId": "c267ef83715449222289b63695b29443",
+            "Key": "c267ef83715449222289b63695b29443",
+            "PlayCount": 0,
+            "PlaybackPositionTicks": 0,
+            "Played": false
+          }
+        }
+      ],
+      "StartIndex": 0,
+      "TotalRecordCount": 1
+    },
+    "body_kind": "json",
+    "headers": {
+      "content-encoding": "gzip",
+      "content-length": "397",
+      "content-type": "application/json",
+      "vary": "Accept-Encoding"
+    },
+    "status": 200
+  }
+}
