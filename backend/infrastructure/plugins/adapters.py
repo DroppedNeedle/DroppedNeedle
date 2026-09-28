@@ -131,13 +131,14 @@ class PluginClientAdapter:
         self._attach_token(handle)
         try:
             return await self._instance.inspect_materialization(handle)  # type: ignore[union-attr]
-        except Exception as exc:  # noqa: BLE001 - no evidence, not a crash
+        except Exception as exc:  # noqa: BLE001 - cleanup retries without evidence
             logger.warning(
-                "plugins.client_failed name=%s op=inspect_materialization: %s",
+                "plugins.client_failed name=%s op=inspect_materialization",
                 self._plugin_name,
-                exc,
             )
-            return DownloadMaterialization(state="missing", mount_healthy=False)
+            raise _orchestration_error(
+                f"plugin {self._plugin_name} materialization inspection failed"
+            ) from exc
 
     async def discard_client_artifacts(self, handle: TaskHandle) -> bool:
         self._attach_token(handle)

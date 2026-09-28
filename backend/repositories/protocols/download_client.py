@@ -179,7 +179,10 @@ class DownloadClientProtocol(Protocol):
     async def inspect_materialization(
         self, handle: TaskHandle
     ) -> DownloadMaterialization:
-        """Resolve current client state and exact local source evidence."""
+        """Resolve current client state and exact local source evidence.
+
+        Inspection failures must raise, never masquerade as missing artifacts.
+        """
         ...
 
     async def discard_client_artifacts(self, handle: TaskHandle) -> bool:
@@ -187,6 +190,10 @@ class DownloadClientProtocol(Protocol):
 
         Failed SABnzbd jobs may remove their incomplete bytes here. Completed SABnzbd
         history must use ``del_files=0``; slskd removes only matching transfer records.
+        Plugin clients also remove their private materialization/workspace here,
+        after publication barriers clear and active work is aborted. They must
+        confine removal to the handle's owned artifacts and tolerate repeat calls;
+        returning False or raising leaves cleanup pending for retry.
         """
         ...
 
