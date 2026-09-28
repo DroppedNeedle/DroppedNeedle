@@ -1090,7 +1090,10 @@ async def _mb_api_get_attempt(
     semaphore = await priority_mgr.acquire_slot(priority)
     async with semaphore:
         url = f"{source_context.source_url.rstrip('/')}{safe_path}"
-        request_params = dict(params) if params else {}
+        # BrainzMash can return an empty HTTP 200 response when fmt follows
+        # other query parameters, so keep fmt first while still forcing JSON.
+        request_params = {"fmt": "json"}
+        request_params.update(dict(params) if params else {})
         request_params["fmt"] = "json"
 
         async def dispatch(target_url: str) -> httpx.Response:
