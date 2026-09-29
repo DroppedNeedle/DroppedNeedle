@@ -4242,9 +4242,9 @@
     "/api/v3/now-playing": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "crate::playback::handlers"
         ],
-        "summary": "The live now-playing snapshot across users. Presence writes\n(POST/DELETE) land in stage 6; this slice only reads.",
+        "summary": "The live now-playing snapshot across users.",
         "operationId": "now_playing",
         "responses": {
           "200": {
@@ -4259,6 +4259,183 @@
           },
           "401": {
             "description": "Not authenticated"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crate::playback::handlers"
+        ],
+        "summary": "Record a native heartbeat (upsert presence).",
+        "operationId": "heartbeat",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NowPlayingHeartbeat"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Heartbeat recorded"
+          },
+          "400": {
+            "description": "Bad request body"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "crate::playback::handlers"
+        ],
+        "summary": "Clear one native device (stop presence).",
+        "operationId": "clear_now_playing",
+        "parameters": [
+          {
+            "name": "device",
+            "in": "query",
+            "description": "Device slug, `web` default",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Presence cleared"
+          },
+          "400": {
+            "description": "Bad query string"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/playback/progress": {
+      "post": {
+        "tags": [
+          "crate::playback::handlers"
+        ],
+        "summary": "Record a heartbeat for a live session.",
+        "operationId": "report_progress",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackProgressRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Heartbeat recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackProgressResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown track"
+          }
+        }
+      }
+    },
+    "/api/v3/playback/start": {
+      "post": {
+        "tags": [
+          "crate::playback::handlers"
+        ],
+        "summary": "Open a playback session for one catalog track.",
+        "operationId": "start_playback",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Session opened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackStartResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown track"
+          }
+        }
+      }
+    },
+    "/api/v3/playback/stop": {
+      "post": {
+        "tags": [
+          "crate::playback::handlers"
+        ],
+        "summary": "Close a session, counting the play past threshold.",
+        "operationId": "stop_playback",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackStopRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Session closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackStopResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown track"
           }
         }
       }
@@ -4975,6 +5152,665 @@
         }
       }
     },
+    "/api/v3/remotes/navidrome/folders": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Navidrome folder preference resolution for the caller.",
+        "operationId": "get_folders",
+        "responses": {
+          "200": {
+            "description": "Folder resolution",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderResolutionView"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Save the Navidrome folder preference.",
+        "operationId": "put_folders",
+        "responses": {
+          "200": {
+            "description": "Folder resolution",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderResolutionView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/albums": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "One page of albums.",
+        "operationId": "list_albums",
+        "responses": {
+          "200": {
+            "description": "Album page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesAlbumPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/albums/{id}": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "One album by id.",
+        "operationId": "get_album",
+        "responses": {
+          "200": {
+            "description": "Album detail"
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/albums/{id}/tracks": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Tracks of one album.",
+        "operationId": "list_album_tracks",
+        "responses": {
+          "200": {
+            "description": "Album tracks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesTrackPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/artists": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "One page of artists.",
+        "operationId": "list_artists",
+        "responses": {
+          "200": {
+            "description": "Artist page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesArtistPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/artists/index": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Full alphabetic artist index.",
+        "operationId": "get_artist_index",
+        "responses": {
+          "200": {
+            "description": "Artist index",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistIndex"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/artists/{id}": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "One artist by id.",
+        "operationId": "get_artist",
+        "responses": {
+          "200": {
+            "description": "Artist detail"
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/connection": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Connection status for one source. Never carries credential material.",
+        "operationId": "get_connection",
+        "responses": {
+          "200": {
+            "description": "Connection status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Save one source connection. Secrets stay write-only.",
+        "operationId": "put_connection",
+        "responses": {
+          "200": {
+            "description": "Connection status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Delete one source connection.",
+        "operationId": "delete_connection",
+        "responses": {
+          "200": {
+            "description": "Connection status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/covers/playlists/{id}": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Playlist cover bytes. Never cached: playlist art follows membership.",
+        "operationId": "get_playlist_cover",
+        "responses": {
+          "200": {
+            "description": "Playlist cover bytes"
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/favorites": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Favorites grouped by kind.",
+        "operationId": "get_favorites",
+        "responses": {
+          "200": {
+            "description": "Favorites",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoritesView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/genres": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Genre labels.",
+        "operationId": "list_genres",
+        "responses": {
+          "200": {
+            "description": "Genre labels"
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/genres/songs": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Tracks carrying one genre label.",
+        "operationId": "list_genre_songs",
+        "responses": {
+          "200": {
+            "description": "Genre tracks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesTrackPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/history": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Listening history, newest first.",
+        "operationId": "list_history",
+        "responses": {
+          "200": {
+            "description": "History page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/hub": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Hub highlights for one source.",
+        "operationId": "get_hub",
+        "responses": {
+          "200": {
+            "description": "Hub highlights",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/images/{id}": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Item image bytes. Immutable and cacheable for a year: image URLs carry\nthe upstream tag, so a new tag is a new URL.",
+        "operationId": "get_image",
+        "responses": {
+          "200": {
+            "description": "Image bytes"
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/info/albums/{id}": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Album info passthrough.",
+        "operationId": "get_album_info",
+        "responses": {
+          "200": {
+            "description": "Album info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InfoView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/info/artists/{id}": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Artist info passthrough.",
+        "operationId": "get_artist_info",
+        "responses": {
+          "200": {
+            "description": "Artist info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InfoView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/lyrics/{id}": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Lyrics passthrough.",
+        "operationId": "get_lyrics",
+        "responses": {
+          "200": {
+            "description": "Lyrics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesLyricsView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/match": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "MBID match for one source.",
+        "operationId": "match_album",
+        "responses": {
+          "200": {
+            "description": "Match result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/mix/{id}": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Instant mix for an item, artist, or genre id (Jellyfin only).",
+        "operationId": "get_mix",
+        "responses": {
+          "200": {
+            "description": "Instant mix",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesTrackPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/playlists": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Playlists.",
+        "operationId": "list_playlists",
+        "responses": {
+          "200": {
+            "description": "Playlists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistCollection"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/playlists/{id}": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "One playlist with its tracks.",
+        "operationId": "get_playlist",
+        "responses": {
+          "200": {
+            "description": "Playlist detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesPlaylistDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/playlists/{id}/import": {
+      "post": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Import one remote playlist into the local catalog.",
+        "operationId": "import_playlist",
+        "responses": {
+          "200": {
+            "description": "Import receipt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/recent": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Recently played albums.",
+        "operationId": "get_recent",
+        "responses": {
+          "200": {
+            "description": "Recently played"
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/recently-added": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Recently added albums.",
+        "operationId": "get_recently_added",
+        "responses": {
+          "200": {
+            "description": "Recently added"
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/search": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Unified search across artists, albums, and tracks.",
+        "operationId": "search",
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesSearchResults"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/sessions": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Active audio sessions.",
+        "operationId": "list_sessions",
+        "responses": {
+          "200": {
+            "description": "Sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionsView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/similar/{id}": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Tracks similar to one track.",
+        "operationId": "get_similar",
+        "responses": {
+          "200": {
+            "description": "Similar tracks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesTrackPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/stats": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Library totals for one source.",
+        "operationId": "get_stats",
+        "responses": {
+          "200": {
+            "description": "Library totals",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesStatsView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/top/{artist}": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Top songs for one artist name.",
+        "operationId": "get_top_songs",
+        "responses": {
+          "200": {
+            "description": "Top songs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesTrackPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/tracks": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "One page of tracks.",
+        "operationId": "list_tracks",
+        "responses": {
+          "200": {
+            "description": "Track page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesTrackPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/requests/auto-download-approval-batches": {
       "get": {
         "tags": [
@@ -5025,6 +5861,80 @@
           },
           "403": {
             "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/scrobble/now-playing": {
+      "post": {
+        "tags": [
+          "crate::playback::handlers"
+        ],
+        "summary": "Forward one native now-playing report to the linked accounts.",
+        "operationId": "forward_now_playing",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScrobbleNowPlayingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Forward outcome",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScrobbleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/scrobble/submit": {
+      "post": {
+        "tags": [
+          "crate::playback::handlers"
+        ],
+        "summary": "Submit one native scrobble by name.",
+        "operationId": "submit_scrobble",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScrobbleSubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Scrobble counted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScrobbleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body"
+          },
+          "401": {
+            "description": "Not authenticated"
           }
         }
       }
@@ -5275,6 +6185,142 @@
           },
           "404": {
             "description": "Unknown bucket"
+          }
+        }
+      }
+    },
+    "/api/v3/stream/{source}/{key}": {
+      "get": {
+        "tags": [
+          "crate::stream::routes"
+        ],
+        "summary": "Full or ranged audio bytes.",
+        "operationId": "doc_stream_get",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Audio source: local, jellyfin, navidrome, or plex",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "description": "Local file id, remote item id, or Plex part key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Requested output codec: mp3, opus, or raw",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "max_bitrate",
+            "in": "query",
+            "description": "Client bitrate cap in kbps (0 or unset means uncapped)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "estimate_content_length",
+            "in": "query",
+            "description": "Ask a transcode landing for its estimated Content-Length",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Full audio bytes or transcode output"
+          },
+          "206": {
+            "description": "Ranged audio bytes"
+          },
+          "400": {
+            "description": "Unknown source or unsupported format"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Playback refused"
+          },
+          "404": {
+            "description": "Unknown audio id"
+          },
+          "416": {
+            "description": "Range not satisfiable"
+          },
+          "429": {
+            "description": "Stream capacity exhausted"
+          },
+          "502": {
+            "description": "Remote source failed the read"
+          }
+        }
+      },
+      "head": {
+        "tags": [
+          "crate::stream::routes"
+        ],
+        "summary": "Same headers as GET, no body.",
+        "operationId": "doc_stream_head",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Audio source: local, jellyfin, navidrome, or plex",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "description": "Local file id, remote item id, or Plex part key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stream headers, no body"
+          },
+          "400": {
+            "description": "Unknown source or unsupported format"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Playback refused"
+          },
+          "404": {
+            "description": "Unknown audio id"
+          },
+          "429": {
+            "description": "Stream capacity exhausted"
+          },
+          "502": {
+            "description": "Remote source failed the read"
           }
         }
       }
@@ -6204,6 +7250,43 @@
           }
         }
       },
+      "ArtistIndex": {
+        "type": "object",
+        "description": "Full artist index.",
+        "required": [
+          "index"
+        ],
+        "properties": {
+          "index": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtistIndexEntry"
+            },
+            "description": "Alphabetic buckets."
+          }
+        }
+      },
+      "ArtistIndexEntry": {
+        "type": "object",
+        "description": "One alphabetic bucket of the artist index.",
+        "required": [
+          "name",
+          "artists"
+        ],
+        "properties": {
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesArtistView"
+            },
+            "description": "Artists in this bucket."
+          },
+          "name": {
+            "type": "string",
+            "description": "Bucket label, e.g. \"A\"."
+          }
+        }
+      },
       "ArtistPage": {
         "type": "object",
         "description": "One page of catalog artists, with scope totals.",
@@ -6819,6 +7902,82 @@
             "propertyNames": {
               "type": "string"
             }
+          }
+        }
+      },
+      "ConnectionSave": {
+        "type": "object",
+        "description": "Save payload for one source connection. Secrets stay write-only.",
+        "properties": {
+          "base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Server base URL. Empty keeps the stored URL."
+          },
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Plex client identifier, Plex only."
+          },
+          "credential": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Password, API key, or token. Never echoed back."
+          },
+          "section_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Plex music section id, Plex only."
+          },
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Jellyfin user id hint, Jellyfin only."
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Login name or API-key label, depending on the source."
+          }
+        }
+      },
+      "ConnectionStatus": {
+        "type": "object",
+        "description": "Connection status for one source. Never carries credential material.",
+        "required": [
+          "source",
+          "connected",
+          "account_mode",
+          "account_label"
+        ],
+        "properties": {
+          "account_label": {
+            "type": "string",
+            "description": "Display label, e.g. the login name."
+          },
+          "account_mode": {
+            "type": "string",
+            "description": "\"linked\" (own credential) or \"shared\" (admin credential)."
+          },
+          "connected": {
+            "type": "boolean",
+            "description": "True when a credential is stored and the source is enabled."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceName",
+            "description": "Owning source."
           }
         }
       },
@@ -7947,6 +9106,38 @@
           }
         }
       },
+      "FavoritesView": {
+        "type": "object",
+        "description": "Favorites grouped by kind.",
+        "required": [
+          "artists",
+          "albums",
+          "tracks"
+        ],
+        "properties": {
+          "albums": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesAlbumView"
+            },
+            "description": "Favorite albums."
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesArtistView"
+            },
+            "description": "Favorite artists."
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesTrackView"
+            },
+            "description": "Favorite tracks."
+          }
+        }
+      },
       "FederatedUserView": {
         "type": "object",
         "description": "Authenticated user, federated view. Stored provider rows never surface;\nonly the profile fields the SPA renders.",
@@ -7991,6 +9182,69 @@
           "username_display": {
             "type": "string",
             "description": "Preferred casing for display."
+          }
+        }
+      },
+      "FolderResolutionView": {
+        "type": "object",
+        "description": "Navidrome folder preference resolution for the caller.",
+        "required": [
+          "mode",
+          "folder_ids",
+          "available_folders",
+          "stale_folder_ids",
+          "source_available"
+        ],
+        "properties": {
+          "available_folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MusicFolderView"
+            },
+            "description": "Folders the server currently exposes."
+          },
+          "folder_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Effective folder ids (\"all\" means upstream default scoping)."
+          },
+          "mode": {
+            "type": "string",
+            "description": "\"all\" or \"selected\"."
+          },
+          "source_available": {
+            "type": "boolean",
+            "description": "False when the source is down; the scope still echoes the preference."
+          },
+          "stale_folder_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Selected ids the server no longer exposes."
+          }
+        }
+      },
+      "FolderSave": {
+        "type": "object",
+        "description": "Save payload for the Navidrome folder preference.",
+        "required": [
+          "mode",
+          "selected_folder_ids"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "description": "\"all\" or \"selected\"."
+          },
+          "selected_folder_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Selected folder ids. Must be empty for \"all\", non-empty for \"selected\"."
           }
         }
       },
@@ -8373,6 +9627,73 @@
           }
         }
       },
+      "HistoryEntry": {
+        "type": "object",
+        "description": "One listening-history entry.",
+        "required": [
+          "id",
+          "track_title",
+          "artist_name",
+          "album_name",
+          "viewed_at",
+          "duration_ms"
+        ],
+        "properties": {
+          "album_name": {
+            "type": "string",
+            "description": "Track album."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Track artist."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Track length in milliseconds."
+          },
+          "id": {
+            "type": "string",
+            "description": "Opaque remote track id."
+          },
+          "track_title": {
+            "type": "string",
+            "description": "Track title."
+          },
+          "viewed_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix time the play ended."
+          }
+        }
+      },
+      "HistoryPage": {
+        "type": "object",
+        "description": "Listening history page.",
+        "required": [
+          "source",
+          "items",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryEntry"
+            },
+            "description": "Page items, newest first."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceName",
+            "description": "Owning source."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total matching records upstream."
+          }
+        }
+      },
       "HomeResponse": {
         "type": "object",
         "description": "Home shelves. Every shelf is optional: absence means the shelf has no\ndata, never a failure.",
@@ -8585,6 +9906,86 @@
           }
         }
       },
+      "HubView": {
+        "type": "object",
+        "description": "The hub: one screen of highlights per source. Sections a source lacks\nstay empty rather than erroring.",
+        "required": [
+          "source",
+          "recently_played",
+          "recently_added",
+          "favorites",
+          "favorite_artists",
+          "most_played_artists",
+          "all_albums_preview",
+          "genres"
+        ],
+        "properties": {
+          "all_albums_preview": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesAlbumView"
+            },
+            "description": "Preview of the full album catalog."
+          },
+          "favorite_artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesArtistView"
+            },
+            "description": "Favorite artists (sources with artist favorites)."
+          },
+          "favorites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesAlbumView"
+            },
+            "description": "Favorite albums."
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Genre labels."
+          },
+          "most_played_artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesArtistView"
+            },
+            "description": "Most-played artists (sources reporting play counts)."
+          },
+          "recently_added": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesAlbumView"
+            },
+            "description": "Recently added albums."
+          },
+          "recently_played": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesAlbumView"
+            },
+            "description": "Recently played albums."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceName",
+            "description": "Owning source."
+          },
+          "stats": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RemotesStatsView",
+                "description": "Library totals, when the source can count cheaply."
+              }
+            ]
+          }
+        }
+      },
       "IgnoredRelease": {
         "type": "object",
         "description": "One ignored release.",
@@ -8693,6 +10094,36 @@
           }
         }
       },
+      "ImportResult": {
+        "type": "object",
+        "description": "Receipt for a playlist import into the local catalog.",
+        "required": [
+          "local_playlist_id",
+          "tracks_imported",
+          "tracks_failed",
+          "already_imported"
+        ],
+        "properties": {
+          "already_imported": {
+            "type": "boolean",
+            "description": "True when this exact playlist was already imported."
+          },
+          "local_playlist_id": {
+            "type": "string",
+            "description": "Local playlist id that now holds the tracks."
+          },
+          "tracks_failed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tracks that failed to resolve."
+          },
+          "tracks_imported": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tracks imported."
+          }
+        }
+      },
       "ImportUsersRequest": {
         "type": "object",
         "description": "Import a batch of accounts from one provider.",
@@ -8750,6 +10181,47 @@
             "format": "int64",
             "description": "Count of `imported`, for the admin summary line.",
             "minimum": 0
+          }
+        }
+      },
+      "InfoView": {
+        "type": "object",
+        "description": "Unified artist/album info passthrough (Last.fm-sourced upstream).",
+        "required": [
+          "source",
+          "id",
+          "biography",
+          "musicbrainz_id",
+          "image_url",
+          "similar_artists"
+        ],
+        "properties": {
+          "biography": {
+            "type": "string",
+            "description": "Biography or release notes."
+          },
+          "id": {
+            "type": "string",
+            "description": "Opaque remote id the info belongs to."
+          },
+          "image_url": {
+            "type": "string",
+            "description": "Best upstream image URL, when offered."
+          },
+          "musicbrainz_id": {
+            "type": "string",
+            "description": "Linked MusicBrainz id."
+          },
+          "similar_artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesArtistView"
+            },
+            "description": "Similar artists (artist info only)."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceName",
+            "description": "Owning source."
           }
         }
       },
@@ -9020,6 +10492,57 @@
           }
         }
       },
+      "MatchView": {
+        "type": "object",
+        "description": "MBID match result: the remote album behind a MusicBrainz id.",
+        "required": [
+          "source",
+          "found",
+          "tracks"
+        ],
+        "properties": {
+          "found": {
+            "type": "boolean",
+            "description": "True when the MBID resolved to a remote album."
+          },
+          "remote_album_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque remote album id, when found."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceName",
+            "description": "Owning source."
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesTrackView"
+            },
+            "description": "Album tracks, when found."
+          }
+        }
+      },
+      "MusicFolderView": {
+        "type": "object",
+        "description": "One Navidrome music folder.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Folder id."
+          },
+          "name": {
+            "type": "string",
+            "description": "Folder name."
+          }
+        }
+      },
       "NewReleaseItem": {
         "type": "object",
         "description": "One new-release sighting.",
@@ -9084,9 +10607,22 @@
           }
         }
       },
+      "NowPlayingDeleteQuery": {
+        "type": "object",
+        "description": "Query for clearing presence: which device stopped.",
+        "properties": {
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Device slug (`web` default, the v2 spelling)."
+          }
+        }
+      },
       "NowPlayingEntry": {
         "type": "object",
-        "description": "One live listening session. Redacted rows keep identity and progress\nbut carry empty song fields (the owner chose `track_hidden`).",
+        "description": "One live session, already privacy-projected (same JSON as the stage-4\nread shape so the integrator swap stays transparent).",
         "required": [
           "id",
           "user_name",
@@ -9147,7 +10683,7 @@
           },
           "source": {
             "type": "string",
-            "description": "Playback source (`local`, `youtube`, `jellyfin`, `navidrome`, `plex`)."
+            "description": "Playback source."
           },
           "track_name": {
             "type": "string",
@@ -9159,16 +10695,76 @@
           }
         }
       },
+      "NowPlayingHeartbeat": {
+        "type": "object",
+        "description": "Native heartbeat (v2 `NowPlayingReport` fields).",
+        "required": [
+          "track_name",
+          "artist_name"
+        ],
+        "properties": {
+          "album_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Album title."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "cover_url": {
+            "type": "string",
+            "description": "Cover art URL."
+          },
+          "device": {
+            "type": "string",
+            "description": "Reporting device slug."
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Track length in milliseconds, when known."
+          },
+          "is_paused": {
+            "type": "boolean",
+            "description": "True while paused."
+          },
+          "progress_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Position in milliseconds, when known."
+          },
+          "source": {
+            "type": "string",
+            "description": "Playback source."
+          },
+          "track_name": {
+            "type": "string",
+            "description": "Track title."
+          }
+        }
+      },
       "NowPlayingSnapshot": {
         "type": "object",
-        "description": "The live listening snapshot across users.",
+        "description": "The live presence snapshot.",
+        "required": [
+          "sessions"
+        ],
         "properties": {
           "sessions": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/NowPlayingEntry"
             },
-            "description": "Live sessions."
+            "description": "Projected live sessions."
           }
         }
       },
@@ -9258,6 +10854,158 @@
           "username": {
             "type": "string",
             "description": "Account username."
+          }
+        }
+      },
+      "PlaybackProgressRequest": {
+        "type": "object",
+        "description": "Heartbeat for a live session: keeps presence alive and the scrubber live.",
+        "required": [
+          "track_id"
+        ],
+        "properties": {
+          "device": {
+            "type": "string",
+            "description": "Reporting device slug."
+          },
+          "is_paused": {
+            "type": "boolean",
+            "description": "True while paused."
+          },
+          "position_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Position in milliseconds, when the player knows it."
+          },
+          "source": {
+            "type": "string",
+            "description": "Playback source."
+          },
+          "track_id": {
+            "type": "string",
+            "description": "Catalog track id."
+          }
+        }
+      },
+      "PlaybackProgressResponse": {
+        "type": "object",
+        "description": "Answer to a progress heartbeat.",
+        "required": [
+          "accepted"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "description": "Always true: reporting never fails the player."
+          }
+        }
+      },
+      "PlaybackStartRequest": {
+        "type": "object",
+        "description": "Open a playback session for one catalog track.",
+        "required": [
+          "track_id"
+        ],
+        "properties": {
+          "device": {
+            "type": "string",
+            "description": "Reporting device slug."
+          },
+          "source": {
+            "type": "string",
+            "description": "Playback source (`local`, `youtube`, `jellyfin`, `navidrome`, `plex`)."
+          },
+          "track_id": {
+            "type": "string",
+            "description": "Catalog track id."
+          }
+        }
+      },
+      "PlaybackStartResponse": {
+        "type": "object",
+        "description": "Answer to a session start.",
+        "required": [
+          "accepted",
+          "session"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "description": "Always true: reporting never fails the player."
+          },
+          "session": {
+            "type": "string",
+            "description": "Session key (`user_id:device:track_id`), for log correlation."
+          }
+        }
+      },
+      "PlaybackStopRequest": {
+        "type": "object",
+        "description": "Close a session. A stop past the scrobble threshold counts the play.",
+        "required": [
+          "track_id"
+        ],
+        "properties": {
+          "device": {
+            "type": "string",
+            "description": "Reporting device slug."
+          },
+          "ignore_scrobble": {
+            "type": "boolean",
+            "description": "Skip the scrobble even past threshold (private session)."
+          },
+          "position_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Final position in milliseconds, when the player knows it."
+          },
+          "source": {
+            "type": "string",
+            "description": "Playback source."
+          },
+          "track_id": {
+            "type": "string",
+            "description": "Catalog track id."
+          }
+        }
+      },
+      "PlaybackStopResponse": {
+        "type": "object",
+        "description": "Answer to a stop report.",
+        "required": [
+          "accepted",
+          "scrobbled"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "description": "Always true: reporting never fails the player."
+          },
+          "scrobbled": {
+            "type": "boolean",
+            "description": "True when the play counted (history recorded, forwarding attempted)."
+          }
+        }
+      },
+      "PlaylistCollection": {
+        "type": "object",
+        "description": "Playlist list.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesPlaylistSummary"
+            },
+            "description": "Playlists."
           }
         }
       },
@@ -10492,6 +12240,565 @@
           }
         }
       },
+      "RemotesAlbumPage": {
+        "type": "object",
+        "description": "One page of albums.",
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesAlbumView"
+            },
+            "description": "Page items."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Echoed limit."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Echoed offset."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total matching records upstream."
+          }
+        }
+      },
+      "RemotesAlbumView": {
+        "type": "object",
+        "description": "One remote album in list and detail views.",
+        "required": [
+          "source",
+          "id",
+          "title",
+          "artist_name"
+        ],
+        "properties": {
+          "artist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque remote artist id, when the source links one."
+          },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked MusicBrainz artist id."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Album artist display name."
+          },
+          "genre": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Genre label, when the source reports one."
+          },
+          "id": {
+            "type": "string",
+            "description": "Opaque remote id (Jellyfin item id, Subsonic id, Plex rating key)."
+          },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Relative images URL under `/api/v3`, when art exists."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked MusicBrainz release-group id."
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked MusicBrainz release id."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceName",
+            "description": "Owning source."
+          },
+          "title": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "track_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Track count, when the source reports one."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Release year, when known."
+          }
+        }
+      },
+      "RemotesArtistPage": {
+        "type": "object",
+        "description": "One page of artists.",
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesArtistView"
+            },
+            "description": "Page items."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Echoed limit."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Echoed offset."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total matching records upstream."
+          }
+        }
+      },
+      "RemotesArtistView": {
+        "type": "object",
+        "description": "One remote artist.",
+        "required": [
+          "source",
+          "id",
+          "name"
+        ],
+        "properties": {
+          "album_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Album count, when the source reports one."
+          },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked MusicBrainz artist id."
+          },
+          "id": {
+            "type": "string",
+            "description": "Opaque remote id."
+          },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Relative images URL under `/api/v3`, when art exists."
+          },
+          "name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceName",
+            "description": "Owning source."
+          }
+        }
+      },
+      "RemotesLyricLine": {
+        "type": "object",
+        "description": "One lyric line, with an optional sync offset in milliseconds.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "start_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Start offset in milliseconds, when synced."
+          },
+          "text": {
+            "type": "string",
+            "description": "Line text."
+          }
+        }
+      },
+      "RemotesLyricsView": {
+        "type": "object",
+        "description": "Unified lyrics passthrough.",
+        "required": [
+          "source",
+          "text",
+          "is_synced",
+          "lines"
+        ],
+        "properties": {
+          "is_synced": {
+            "type": "boolean",
+            "description": "True when line timings are present."
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesLyricLine"
+            },
+            "description": "Timed lines, when the source provides them."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceName",
+            "description": "Owning source."
+          },
+          "text": {
+            "type": "string",
+            "description": "Full text."
+          }
+        }
+      },
+      "RemotesPlaylistDetail": {
+        "type": "object",
+        "description": "Playlist with its tracks.",
+        "required": [
+          "playlist",
+          "tracks"
+        ],
+        "properties": {
+          "playlist": {
+            "$ref": "#/components/schemas/RemotesPlaylistSummary",
+            "description": "Playlist header."
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesTrackView"
+            },
+            "description": "Playlist tracks in order."
+          }
+        }
+      },
+      "RemotesPlaylistSummary": {
+        "type": "object",
+        "description": "One remote playlist.",
+        "required": [
+          "source",
+          "id",
+          "name",
+          "track_count",
+          "duration_secs"
+        ],
+        "properties": {
+          "duration_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total duration in seconds."
+          },
+          "id": {
+            "type": "string",
+            "description": "Opaque remote id."
+          },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Relative covers URL under `/api/v3`, when art exists."
+          },
+          "name": {
+            "type": "string",
+            "description": "Playlist name."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceName",
+            "description": "Owning source."
+          },
+          "track_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Track count."
+          }
+        }
+      },
+      "RemotesSearchResults": {
+        "type": "object",
+        "description": "Unified search results across the three buckets.",
+        "required": [
+          "artists",
+          "albums",
+          "tracks"
+        ],
+        "properties": {
+          "albums": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesAlbumView"
+            },
+            "description": "Matching albums."
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesArtistView"
+            },
+            "description": "Matching artists."
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesTrackView"
+            },
+            "description": "Matching tracks."
+          }
+        }
+      },
+      "RemotesSessionView": {
+        "type": "object",
+        "description": "One active remote listening session.",
+        "required": [
+          "source",
+          "session_id",
+          "user_name",
+          "device_name",
+          "track_title",
+          "artist_name",
+          "album_name",
+          "progress_ms",
+          "duration_ms",
+          "is_paused"
+        ],
+        "properties": {
+          "album_name": {
+            "type": "string",
+            "description": "Track album."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Track artist."
+          },
+          "device_name": {
+            "type": "string",
+            "description": "Player or device label."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Track length in milliseconds."
+          },
+          "is_paused": {
+            "type": "boolean",
+            "description": "True when paused."
+          },
+          "progress_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Playback position in milliseconds."
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Remote session id."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceName",
+            "description": "Owning source."
+          },
+          "track_title": {
+            "type": "string",
+            "description": "Track title."
+          },
+          "user_name": {
+            "type": "string",
+            "description": "Listening user."
+          }
+        }
+      },
+      "RemotesStatsView": {
+        "type": "object",
+        "description": "Library totals for one source.",
+        "required": [
+          "total_albums",
+          "total_artists",
+          "total_tracks"
+        ],
+        "properties": {
+          "total_albums": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Album count."
+          },
+          "total_artists": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Artist count."
+          },
+          "total_tracks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Track count."
+          }
+        }
+      },
+      "RemotesTrackPage": {
+        "type": "object",
+        "description": "One page of tracks.",
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesTrackView"
+            },
+            "description": "Page items."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Echoed limit."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Echoed offset."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total matching records upstream."
+          }
+        }
+      },
+      "RemotesTrackView": {
+        "type": "object",
+        "description": "One remote track.",
+        "required": [
+          "source",
+          "id",
+          "title",
+          "album_name",
+          "artist_name"
+        ],
+        "properties": {
+          "album_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque remote album id, when the source links one."
+          },
+          "album_name": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "artist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque remote artist id, when the source links one."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Track artist display name."
+          },
+          "disc_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Disc number."
+          },
+          "duration_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Duration in seconds."
+          },
+          "id": {
+            "type": "string",
+            "description": "Opaque remote id."
+          },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Relative images URL under `/api/v3`, when art exists."
+          },
+          "recording_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked MusicBrainz recording id."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceName",
+            "description": "Owning source."
+          },
+          "title": {
+            "type": "string",
+            "description": "Track title."
+          },
+          "track_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Track number within the disc."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Release year, when known."
+          }
+        }
+      },
       "RemoveTracksBody": {
         "type": "object",
         "description": "Bulk-remove body.",
@@ -10616,6 +12923,143 @@
           "role": {
             "$ref": "#/components/schemas/Role",
             "description": "New role."
+          }
+        }
+      },
+      "ScrobbleNowPlayingRequest": {
+        "type": "object",
+        "description": "One native now-playing forward, by name (v2 `NowPlayingRequest` fields).",
+        "required": [
+          "track_name",
+          "artist_name"
+        ],
+        "properties": {
+          "album_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Album title."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Track length in milliseconds, when known."
+          },
+          "mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Recording MBID, when known."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release-group MBID, when known."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Playback source."
+          },
+          "track_name": {
+            "type": "string",
+            "description": "Track title."
+          }
+        }
+      },
+      "ScrobbleResponse": {
+        "type": "object",
+        "description": "Answer to a scrobble or now-playing forward (v2 `ScrobbleResponse`).",
+        "required": [
+          "accepted"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "description": "Whether the play counted. Submit is true whenever history recorded,\neven with no linked account; now-playing is true only when at least\none service accepted (the v2 accepted-quirk, kept)."
+          },
+          "services": {
+            "type": "object",
+            "description": "Per-service outcomes, keyed by service name.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ServiceResult"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ScrobbleSubmitRequest": {
+        "type": "object",
+        "description": "One native scrobble, by name (v2 `ScrobbleRequest` fields).",
+        "required": [
+          "track_name",
+          "artist_name",
+          "timestamp"
+        ],
+        "properties": {
+          "album_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Album title."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Track length in milliseconds, when known."
+          },
+          "mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Recording MBID, when known."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release-group MBID, when known."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Playback source."
+          },
+          "timestamp": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Play time, unix seconds."
+          },
+          "track_name": {
+            "type": "string",
+            "description": "Track title."
           }
         }
       },
@@ -10941,6 +13385,26 @@
           }
         }
       },
+      "ServiceResult": {
+        "type": "object",
+        "description": "Per-service forwarding outcome (v2 `ServiceResult`).",
+        "required": [
+          "success"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Failure text, when the service refused or errored."
+          },
+          "success": {
+            "type": "boolean",
+            "description": "True when that service accepted the report."
+          }
+        }
+      },
       "SessionListResponse": {
         "type": "object",
         "description": "Own sessions.",
@@ -11000,6 +13464,27 @@
             "type": "integer",
             "format": "int64",
             "description": "Last use time, unix seconds."
+          }
+        }
+      },
+      "SessionsView": {
+        "type": "object",
+        "description": "Active sessions for one source.",
+        "required": [
+          "source",
+          "sessions"
+        ],
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesSessionView"
+            },
+            "description": "Active audio sessions."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceName",
+            "description": "Owning source."
           }
         }
       },
@@ -11071,6 +13556,15 @@
             "description": "True when no users exist yet and setup must run."
           }
         }
+      },
+      "SourceName": {
+        "type": "string",
+        "description": "Which remote source a view or id belongs to.",
+        "enum": [
+          "jellyfin",
+          "navidrome",
+          "plex"
+        ]
       },
       "StatsView": {
         "type": "object",

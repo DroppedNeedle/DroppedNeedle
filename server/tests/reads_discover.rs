@@ -147,10 +147,11 @@ fn error_code(body: &Value) -> &str {
 #[tokio::test]
 async fn anonymous_discover_read_is_401_with_bearer_challenge() {
     let rig = rig();
+    // GET /now-playing is deliberately absent: stage 6 serves it from the
+    // live playback registry, and the standing auth matrix pins its 401.
     for (method, uri, body) in [
         ("GET", "/api/v3/discover", None),
         ("GET", "/api/v3/home", None),
-        ("GET", "/api/v3/now-playing", None),
         (
             "POST",
             "/api/v3/discover/batches",
@@ -854,14 +855,16 @@ async fn youtube_search_misses_when_unconfigured() {
 
 #[tokio::test]
 async fn now_playing_snapshot_keeps_redacted_rows() {
+    // Stage-6 note: the app mounts GET /now-playing from the playback
+    // slice now, so this pins the retired reads handler through its own
+    // router until the dead plumbing is deleted.
     let rig = rig();
-    let (status, body, _) = call(
-        app(&rig, Some("user-1")),
-        "GET",
-        "/api/v3/now-playing",
-        None,
-    )
-    .await;
+    let router = Router::new().nest(
+        "/api/v3",
+        droppedneedle::reads::discover::now_playing_router(rig.deps.clone()),
+    );
+    let router = with_test_principal(router, principal("user-1"));
+    let (status, body, _) = call(router, "GET", "/api/v3/now-playing", None).await;
     assert_eq!(status, StatusCode::OK);
     let sessions = body["sessions"].as_array().unwrap();
     assert_eq!(sessions.len(), 2);

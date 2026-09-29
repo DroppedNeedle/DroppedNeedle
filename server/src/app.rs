@@ -26,7 +26,11 @@ pub fn create_app(state: AppState) -> Router {
     let mut v3 = Router::new()
         .nest(
             "/api/v3",
-            state.auth.router().merge(state.reads.gated_router()),
+            state
+                .auth
+                .router()
+                .merge(state.reads.gated_router())
+                .merge(state.stage6.gated_router()),
         )
         .merge(state.reads.search_router())
         .layer(middleware::from_fn_with_state(

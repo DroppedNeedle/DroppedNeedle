@@ -86,6 +86,7 @@ struct E2e {
     http: HttpClientFactory,
     ids: Arc<UuidGenerator>,
     clock: Arc<SystemClock>,
+    db_path: std::path::PathBuf,
 }
 
 impl E2e {
@@ -128,6 +129,7 @@ impl E2e {
             &dir.join("avatars"),
         );
         let http = HttpClientFactory::new().expect("http factory builds");
+        let db_path = dir.join("app.db");
         Self {
             runtime,
             bundle,
@@ -136,6 +138,7 @@ impl E2e {
             http,
             ids,
             clock,
+            db_path,
         }
     }
 
@@ -166,6 +169,18 @@ impl E2e {
             wrapped_api_key,
             None,
         );
+        let connect_apps: droppedneedle::runtime_config::sections::ConnectApps =
+            self.store.get().unwrap_or_default();
+        let (stage6, _worker) = droppedneedle::stage6::Stage6Setup::build(
+            &self.db_path,
+            &AppConfig::new(DEFAULT_PORT),
+            auth.users.clone(),
+            Arc::clone(&self.crypto),
+            self.http.shared().clone(),
+            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
+            connect_apps,
+        )
+        .expect("stage6 bundle builds");
         let state = AppState::new(
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             self.http.clone(),
@@ -173,6 +188,7 @@ impl E2e {
             auth,
             reads,
             Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
+            stage6,
         );
         create_app(state)
     }
@@ -1173,6 +1189,105 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/wrapped/users", Posture::WrappedKey),
     ("GET", "/api/v3/wrapped/user/{user_id}", Posture::WrappedKey),
     ("GET", "/api/v3/wrapped/server", Posture::WrappedKey),
+    // Stage-6 remote sources.
+    ("GET", "/api/v3/remotes/{source}/hub", Posture::User),
+    ("GET", "/api/v3/remotes/{source}/stats", Posture::User),
+    ("GET", "/api/v3/remotes/{source}/albums", Posture::User),
+    ("GET", "/api/v3/remotes/{source}/albums/{id}", Posture::User),
+    (
+        "GET",
+        "/api/v3/remotes/{source}/albums/{id}/tracks",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/remotes/{source}/artists", Posture::User),
+    (
+        "GET",
+        "/api/v3/remotes/{source}/artists/index",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/remotes/{source}/artists/{id}",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/remotes/{source}/tracks", Posture::User),
+    ("GET", "/api/v3/remotes/{source}/search", Posture::User),
+    ("GET", "/api/v3/remotes/{source}/recent", Posture::User),
+    (
+        "GET",
+        "/api/v3/remotes/{source}/recently-added",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/remotes/{source}/favorites", Posture::User),
+    ("GET", "/api/v3/remotes/{source}/genres", Posture::User),
+    (
+        "GET",
+        "/api/v3/remotes/{source}/genres/songs",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/remotes/{source}/playlists", Posture::User),
+    (
+        "GET",
+        "/api/v3/remotes/{source}/playlists/{id}",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/remotes/{source}/playlists/{id}/import",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/remotes/{source}/info/artists/{id}",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/remotes/{source}/info/albums/{id}",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/remotes/{source}/lyrics/{id}", Posture::User),
+    (
+        "GET",
+        "/api/v3/remotes/{source}/top/{artist}",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/remotes/{source}/similar/{id}",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/remotes/{source}/mix/{id}", Posture::User),
+    ("GET", "/api/v3/remotes/{source}/sessions", Posture::User),
+    ("GET", "/api/v3/remotes/{source}/history", Posture::User),
+    ("GET", "/api/v3/remotes/{source}/images/{id}", Posture::User),
+    (
+        "GET",
+        "/api/v3/remotes/{source}/covers/playlists/{id}",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/remotes/{source}/match", Posture::User),
+    ("GET", "/api/v3/remotes/{source}/connection", Posture::User),
+    ("PUT", "/api/v3/remotes/{source}/connection", Posture::User),
+    (
+        "DELETE",
+        "/api/v3/remotes/{source}/connection",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/remotes/navidrome/folders", Posture::User),
+    ("PUT", "/api/v3/remotes/navidrome/folders", Posture::User),
+    // Stage-6 stream gateway.
+    ("GET", "/api/v3/stream/{source}/{key}", Posture::User),
+    ("HEAD", "/api/v3/stream/{source}/{key}", Posture::User),
+    // Stage-6 playback reporting (GET /now-playing keeps its stage-4 row;
+    // stage 6 serves it from the live registry now).
+    ("POST", "/api/v3/playback/start", Posture::User),
+    ("POST", "/api/v3/playback/progress", Posture::User),
+    ("POST", "/api/v3/playback/stop", Posture::User),
+    ("POST", "/api/v3/scrobble/submit", Posture::User),
+    ("POST", "/api/v3/scrobble/now-playing", Posture::User),
+    ("POST", "/api/v3/now-playing", Posture::User),
+    ("DELETE", "/api/v3/now-playing", Posture::User),
 ];
 
 /// Fill `{param}` segments with a dummy id.
@@ -1201,6 +1316,7 @@ fn documented_routes() -> Vec<(String, String)> {
             ("PUT", &item.put),
             ("DELETE", &item.delete),
             ("PATCH", &item.patch),
+            ("HEAD", &item.head),
         ] {
             if op.is_some() {
                 routes.push((method.to_owned(), path.clone()));
@@ -1272,11 +1388,15 @@ async fn auth_on_every_endpoint() {
                     StatusCode::UNAUTHORIZED,
                     "{method} {uri} must 401 anonymously, got {status}: {response_body}"
                 );
-                assert_eq!(
-                    error_code(&response_body),
-                    "UNAUTHORIZED",
-                    "{method} {uri}: envelope code"
-                );
+                // HEAD answers carry no body (the router strips it), so only
+                // methods with a body pin the envelope code here.
+                if *method != "HEAD" {
+                    assert_eq!(
+                        error_code(&response_body),
+                        "UNAUTHORIZED",
+                        "{method} {uri}: envelope code"
+                    );
+                }
                 assert_eq!(
                     headers
                         .get("www-authenticate")
@@ -1547,7 +1667,8 @@ async fn reads_routes_are_mounted() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["artists"].as_array().expect("artists").len(), 0);
 
-    // Discover, home, and now playing run the stage-4 fakes.
+    // Discover and home run the stage-4 fakes; now playing answers from
+    // the stage-6 live registry (empty here, still 200).
     for uri in ["/api/v3/discover", "/api/v3/home", "/api/v3/now-playing"] {
         let (status, body, _) = call(
             e2e.router(),

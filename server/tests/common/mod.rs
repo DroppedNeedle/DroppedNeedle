@@ -41,8 +41,9 @@ pub fn hooked_state() -> AppState {
         test_http(),
         AppConfig::new(DEFAULT_PORT).with_test_hooks(),
         auth.clone(),
-        test_reads(&auth, ids),
+        test_reads(&auth, ids.clone()),
         Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
+        test_stage6(&auth, ids),
     )
 }
 
@@ -57,9 +58,19 @@ pub fn prod_like_state() -> AppState {
         test_http(),
         AppConfig::new(DEFAULT_PORT),
         auth.clone(),
-        test_reads(&auth, ids),
+        test_reads(&auth, ids.clone()),
         Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
+        test_stage6(&auth, ids),
     )
+}
+
+/// Unwired stage-6 bundle over the test auth deps.
+fn test_stage6(
+    auth: &droppedneedle::auth::wiring::AuthSetup,
+    ids: Arc<dyn IdGenerator>,
+) -> droppedneedle::stage6::Stage6Setup {
+    droppedneedle::stage6::Stage6Setup::for_tests(auth.users.clone(), ids)
+        .expect("test stage6 bundle builds")
 }
 
 /// Unwired reads bundle over the test auth deps.

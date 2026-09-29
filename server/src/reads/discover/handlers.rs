@@ -969,9 +969,12 @@ pub fn now_playing_router(deps: ReadsDeps) -> axum::Router {
 
 /// Every route in this slice. Mount under `/api/v3` behind the session
 /// gate; see `mod.rs` for the wiring note.
+///
+/// `GET /now-playing` is deliberately absent: stage 6 serves it from the
+/// live presence registry (same JSON shape), and merging both routers
+/// would panic on the duplicate route.
 pub fn reads_router(deps: ReadsDeps) -> axum::Router {
     axum::Router::new()
         .merge(discover_router(deps.clone()))
-        .merge(home_router(deps.clone()))
-        .merge(now_playing_router(deps))
+        .merge(home_router(deps))
 }

@@ -19,9 +19,10 @@ use droppedneedle::{
     runtime_config::{
         ConfigStore, Crypto,
         secret_sections::{ListenBrainzConnection, WrappedSettings},
-        sections::LyricsSettings,
+        sections::{ConnectApps, LyricsSettings},
     },
     schema::apply_migrations,
+    stage6::Stage6Setup,
 };
 use utoipa::OpenApi as _;
 
@@ -108,7 +109,7 @@ async fn serve() -> Result<(), String> {
     let auth = AuthSetup::build(
         auth_bundle,
         config_store.clone(),
-        crypto,
+        crypto.clone(),
         http.shared().clone(),
         ids.clone(),
         clock,
@@ -149,7 +150,24 @@ async fn serve() -> Result<(), String> {
         wrapped_api_key,
         Some(enrichment),
     );
-    let state = AppState::new(ids, http, config.clone(), auth, reads, providers);
+    let connect_apps = match config_store.get::<ConnectApps>() {
+        Ok(settings) => settings,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read connect_apps settings; transcode defaults apply");
+            ConnectApps::default()
+        }
+    };
+    let (stage6, report_worker) = Stage6Setup::build(
+        &config.library_db_path,
+        &config,
+        auth.users.clone(),
+        crypto,
+        http.shared().clone(),
+        ids.clone(),
+        connect_apps,
+    )
+    .map_err(|error| error.to_string())?;
+    let state = AppState::new(ids, http, config.clone(), auth, reads, providers, stage6);
     let app = create_app(state);
 
     // Stage-5 refresh loops (M4 follow-up): the discover and home loops
@@ -177,7 +195,8 @@ async fn serve() -> Result<(), String> {
     };
     let home_loop = {
         let registry = refresh_registry.clone();
-        let sleeper = droppedneedle::reads::discover::refresh::TokioSleeper::new(shutdown_rx);
+        let sleeper =
+            droppedneedle::reads::discover::refresh::TokioSleeper::new(shutdown_rx.clone());
         tokio::spawn(async move {
             droppedneedle::reads::discover::refresh::run_refresh_loop(
                 registry,
@@ -189,6 +208,53 @@ async fn serve() -> Result<(), String> {
         })
     };
 
+    // Stage-6 MBID warmup loops (Jellyfin one-shot + Navidrome/Plex 4h
+    // cadence) over the same shutdown watch. The loop bodies are provider
+    // index rebuild hooks: no rebuildable index exists yet, so each tick
+    // is a guarded no-op until the warmup slice lands its work here.
+    // Plumbing (cadences, single-flight, shutdown, await) is live now.
+    let warmup = {
+        use droppedneedle::playback::{TokioSleeper, WarmupStats, spawn_warmup_loops};
+
+        let sleeper = TokioSleeper::new(shutdown_rx.clone());
+        spawn_warmup_loops(
+            sleeper,
+            || {
+                Box::pin(async {
+                    Ok::<_, String>(WarmupStats {
+                        scope: "jellyfin",
+                        warmed: 0,
+                        pruned: 0,
+                    })
+                })
+            },
+            || {
+                Box::pin(async {
+                    Ok::<_, String>(WarmupStats {
+                        scope: "navidrome",
+                        warmed: 0,
+                        pruned: 0,
+                    })
+                })
+            },
+            || {
+                Box::pin(async {
+                    Ok::<_, String>(WarmupStats {
+                        scope: "plex",
+                        warmed: 0,
+                        pruned: 0,
+                    })
+                })
+            },
+        )
+    };
+
+    // Stage-6 attribution drain: remote session reports queued by playback
+    // handlers. The worker exits once the app drops its queue handles.
+    let report_loop = tokio::spawn(async move {
+        report_worker.run().await;
+    });
+
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), config.port);
     let listener = tokio::net::TcpListener::bind(address)
         .await
@@ -199,9 +265,17 @@ async fn serve() -> Result<(), String> {
         .await
         .map_err(|error| format!("server fault: {error}"))?;
     let _ = shutdown_tx.send(true);
-    for (scope, handle) in [("discover", discover_loop), ("home", home_loop)] {
+    let mut loops = vec![("discover", discover_loop), ("home", home_loop)];
+    for (scope, task) in ["warmup-jellyfin", "warmup-navidrome", "warmup-plex"]
+        .into_iter()
+        .zip(warmup.tasks)
+    {
+        loops.push((scope, task));
+    }
+    loops.push(("report-worker", report_loop));
+    for (scope, handle) in loops {
         if let Err(error) = handle.await {
-            tracing::warn!(scope, %error, "refresh loop ended early");
+            tracing::warn!(scope, %error, "background loop ended early");
         }
     }
     runtime.shutdown().await;

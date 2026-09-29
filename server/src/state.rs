@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::{
     auth::wiring::AuthSetup, config::AppConfig, http_client::HttpClientFactory, ids::IdGenerator,
-    provider_policy::ProviderPolicy, providers::Providers, reads::ReadsSetup,
+    provider_policy::ProviderPolicy, providers::Providers, reads::ReadsSetup, stage6::Stage6Setup,
 };
 
 /// All long-lived server dependencies.
@@ -28,6 +28,8 @@ pub struct AppState {
     /// Built once at boot (in-memory cache) and shared with the reads
     /// enrichment pair so production pacing runs through one limiter set.
     pub providers: Arc<Providers>,
+    /// Stage-6 bundle: remote sources, stream gateway, playback reporting.
+    pub stage6: Stage6Setup,
 }
 
 impl AppState {
@@ -40,6 +42,7 @@ impl AppState {
         auth: AuthSetup,
         reads: ReadsSetup,
         providers: Arc<Providers>,
+        stage6: Stage6Setup,
     ) -> Self {
         Self {
             ids,
@@ -48,6 +51,7 @@ impl AppState {
             auth,
             reads,
             providers,
+            stage6,
         }
     }
 
