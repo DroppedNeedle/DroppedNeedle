@@ -52,6 +52,7 @@ pub const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
     "listenbrainz_settings",
     "youtube_settings",
     "lastfm_settings",
+    "lyrics_settings",
     "spotify_settings",
     "events",
     "wrapped_settings",

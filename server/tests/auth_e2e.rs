@@ -164,6 +164,7 @@ impl E2e {
             auth.users.clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             wrapped_api_key,
+            None,
         );
         let state = AppState::new(
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
@@ -171,6 +172,7 @@ impl E2e {
             AppConfig::new(DEFAULT_PORT),
             auth,
             reads,
+            Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
         );
         create_app(state)
     }

@@ -14,8 +14,13 @@ use droppedneedle::{
     http_client::HttpClientFactory,
     ids::UuidGenerator,
     observability::init_tracing,
+    providers::{Providers, adapters::production_enrichment},
     reads::ReadsSetup,
-    runtime_config::{ConfigStore, Crypto, secret_sections::WrappedSettings},
+    runtime_config::{
+        ConfigStore, Crypto,
+        secret_sections::{ListenBrainzConnection, WrappedSettings},
+        sections::LyricsSettings,
+    },
     schema::apply_migrations,
 };
 use utoipa::OpenApi as _;
@@ -114,20 +119,75 @@ async fn serve() -> Result<(), String> {
         .get_raw::<WrappedSettings>()
         .map(|settings| settings.api_key.expose().to_owned())
         .map_err(|error| error.to_string())?;
+    // Shared provider deps first: the reads enrichment pair paces through
+    // these same limiters, so production holds one limiter set, not two.
+    let providers = Arc::new(Providers::with_memory_cache());
+    let listenbrainz_enabled = match config_store.get_raw::<ListenBrainzConnection>() {
+        Ok(settings) => settings.enabled,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read listenbrainz settings; popularity enrichment disabled");
+            false
+        }
+    };
+    let lyrics_enabled = match config_store.get::<LyricsSettings>() {
+        Ok(settings) => settings.enabled,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read lyrics settings; lyrics enrichment disabled");
+            false
+        }
+    };
+    let enrichment = production_enrichment(
+        http.shared(),
+        &providers,
+        listenbrainz_enabled,
+        lyrics_enabled,
+    );
     let reads = ReadsSetup::build(
         runtime.pool(),
         auth.users.clone(),
         ids.clone(),
         wrapped_api_key,
+        Some(enrichment),
     );
-    let state = AppState::new(ids, http, config.clone(), auth, reads);
+    let state = AppState::new(ids, http, config.clone(), auth, reads, providers);
     let app = create_app(state);
 
-    // No refresh loops yet: the stage-4 discover ports are static scripted
-    // fakes with no rebuild work to run, so there is nothing to schedule.
-    // Stage 5 spawns the discover/home loops here (TokioSleeper over a
-    // shutdown watch; see reads::discover::refresh) and awaits them after
-    // the server below returns.
+    // Stage-5 refresh loops (M4 follow-up): the discover and home loops
+    // sleep on their honest intervals behind one shutdown watch. The loop
+    // bodies are provider-cache rebuild hooks: no rebuildable provider
+    // cache exists yet, so each tick is a guarded no-op until the cache
+    // slice lands its work here. Plumbing (intervals, single-flight,
+    // shutdown, await) is live now.
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let refresh_registry =
+        Arc::new(droppedneedle::reads::discover::refresh::RefreshRegistry::new());
+    let discover_loop = {
+        let registry = refresh_registry.clone();
+        let sleeper =
+            droppedneedle::reads::discover::refresh::TokioSleeper::new(shutdown_rx.clone());
+        tokio::spawn(async move {
+            droppedneedle::reads::discover::refresh::run_refresh_loop(
+                registry,
+                sleeper,
+                droppedneedle::reads::discover::refresh::RefreshScope::Discover,
+                || async { Ok::<(), String>(()) },
+            )
+            .await;
+        })
+    };
+    let home_loop = {
+        let registry = refresh_registry.clone();
+        let sleeper = droppedneedle::reads::discover::refresh::TokioSleeper::new(shutdown_rx);
+        tokio::spawn(async move {
+            droppedneedle::reads::discover::refresh::run_refresh_loop(
+                registry,
+                sleeper,
+                droppedneedle::reads::discover::refresh::RefreshScope::Home,
+                || async { Ok::<(), String>(()) },
+            )
+            .await;
+        })
+    };
 
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), config.port);
     let listener = tokio::net::TcpListener::bind(address)
@@ -138,6 +198,12 @@ async fn serve() -> Result<(), String> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|error| format!("server fault: {error}"))?;
+    let _ = shutdown_tx.send(true);
+    for (scope, handle) in [("discover", discover_loop), ("home", home_loop)] {
+        if let Err(error) = handle.await {
+            tracing::warn!(scope, %error, "refresh loop ended early");
+        }
+    }
     runtime.shutdown().await;
     tracing::info!("shutdown complete");
     Ok(())

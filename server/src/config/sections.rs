@@ -61,6 +61,7 @@ impl PlainSection for ConnectApps {}
 impl PlainSection for DownloadPolicy {}
 impl PlainSection for MusicBrainzSettings {}
 impl PlainSection for LastFmSettings {}
+impl PlainSection for LyricsSettings {}
 impl PlainSection for InternalState {}
 impl PlainSection for LibraryManagement {}
 
@@ -1865,6 +1866,24 @@ pub struct LastFmSettings {
 
 impl Section for LastFmSettings {
     const KEY: &'static str = "lastfm_settings";
+}
+
+// --- lyrics_settings (stage 5: read-path lyrics provider) -------------------
+// The master switch for live LRCLIB lyrics on the library read path. This is
+// the read-path provider toggle, not the library-management write block
+// (`LyricsManagementSettings`): with this off, lyrics reads stay on the
+// empty memory port and the server makes no lyrics network calls.
+
+/// Lyrics settings: master switch for the live LRCLIB read path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct LyricsSettings {
+    /// Master switch for live LRCLIB lyrics fan-out.
+    pub enabled: bool,
+}
+
+impl Section for LyricsSettings {
+    const KEY: &'static str = "lyrics_settings";
 }
 
 // --- plugins --------------------------------------------------------------

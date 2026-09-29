@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::{
     auth::wiring::AuthSetup, config::AppConfig, http_client::HttpClientFactory, ids::IdGenerator,
-    provider_policy::ProviderPolicy, reads::ReadsSetup,
+    provider_policy::ProviderPolicy, providers::Providers, reads::ReadsSetup,
 };
 
 /// All long-lived server dependencies.
@@ -24,6 +24,10 @@ pub struct AppState {
     pub auth: AuthSetup,
     /// Reads bundle: library, search, discover, collections, platform.
     pub reads: ReadsSetup,
+    /// Shared provider deps: verified limiters, slot lanes, byte cache.
+    /// Built once at boot (in-memory cache) and shared with the reads
+    /// enrichment pair so production pacing runs through one limiter set.
+    pub providers: Arc<Providers>,
 }
 
 impl AppState {
@@ -35,6 +39,7 @@ impl AppState {
         config: AppConfig,
         auth: AuthSetup,
         reads: ReadsSetup,
+        providers: Arc<Providers>,
     ) -> Self {
         Self {
             ids,
@@ -42,6 +47,7 @@ impl AppState {
             config,
             auth,
             reads,
+            providers,
         }
     }
 

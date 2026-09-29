@@ -6,14 +6,13 @@
 //! failures and continues. Time and sleep are injected so tests drive loops
 //! with no real waits.
 //!
-//! Production wiring is deferred to stage 5: `serve()` spawns no loops yet.
-//! Stage-4 ports are static scripted fakes with no rebuild work to run (a
+//! Production wiring: `serve()` spawns the discover and home loops with
+//! [`TokioSleeper`] over a shutdown watch, flips the watch after axum
+//! serves, and awaits both tasks. The loop bodies are still guarded no-ops:
+//! stage-4 ports are static scripted fakes with no rebuild work to run (a
 //! rebuild needs provider fetches plus user enumeration, neither of which
-//! exists behind these traits), so spawned loops would only burn wakeups.
-//! Stage 5 spawns [`spawn_refresh_loops`] in `serve()` with [`TokioSleeper`]
-//! over a shutdown watch, flips the watch after axum serves, and awaits the
-//! [`RefreshHandles::tasks`]. The loop body, registry, and both sleepers
-//! stay covered by the tests below until then.
+//! exists behind these traits), so each tick waits out its honest interval
+//! and runs an empty rebuild until provider caches land their work here.
 
 use std::{
     collections::HashSet,

@@ -54,27 +54,48 @@ impl ReadsSetup {
     /// Build the production bundle. `pool` serves library and search reads;
     /// `users` resolves library favorites and collections roles;
     /// `wrapped_api_key` is the decrypted `wrapped_settings` secret (empty
-    /// denies every wrapped request, the fail-closed rule).
+    /// denies every wrapped request, the fail-closed rule); `enrichment`
+    /// carries the live stage-5 provider pair (`None` keeps the honest
+    /// unconfigured ports: bare enrichment echoes and empty lyrics).
     pub fn build(
         pool: &sqlx::SqlitePool,
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
         wrapped_api_key: String,
+        enrichment: Option<crate::providers::adapters::ProductionEnrichment>,
     ) -> Self {
         let library_db = library::sqlite::LibraryDb::new(pool);
+        let catalog: Arc<dyn library::stores::LibraryCatalog> =
+            Arc::new(library::sqlite::SqliteCatalog::new(&library_db));
+        // No stored-lyrics table exists in the stage-2 schema, so without
+        // the provider pair lyrics reads stay on the empty port (honest
+        // 404s); with it, catalog tracks resolve through live LRCLIB when
+        // lyrics are enabled, and stay on the empty port otherwise.
+        let lyrics: Arc<dyn library::stores::LyricsPort> = match &enrichment {
+            Some(pair) => match pair.lyrics.clone() {
+                Some(live) => Arc::new(crate::providers::enrich::ProviderLyrics::new(
+                    catalog.clone(),
+                    live,
+                    crate::providers::enrich::SourceBudgets::default(),
+                )),
+                None => Arc::new(library::memory::MemoryLyrics::new()),
+            },
+            None => Arc::new(library::memory::MemoryLyrics::new()),
+        };
         let library = library::LibraryDeps {
-            catalog: Arc::new(library::sqlite::SqliteCatalog::new(&library_db)),
+            catalog,
             favorites: Arc::new(library::sqlite::SqliteFavorites::new(&library_db)),
-            // No stored-lyrics table exists in the stage-2 schema, so stage 4
-            // answers lyrics reads from an empty port (honest 404s) until
-            // stage 5 hangs provider fetch behind it.
-            lyrics: Arc::new(library::memory::MemoryLyrics::new()),
+            lyrics,
             auth: users,
             ids: ids.clone(),
         };
+        let search_enrichment: Arc<dyn search::ports::EnrichmentPort> = match &enrichment {
+            Some(pair) => pair.search.clone(),
+            None => Arc::new(search::ports::UnconfiguredEnrichment),
+        };
         let search = search::SearchDeps::new(
             search::service::SearchService::new(pool.clone()),
-            Arc::new(search::ports::UnconfiguredEnrichment),
+            search_enrichment,
             ids.clone(),
         );
         Self {

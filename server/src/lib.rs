@@ -31,6 +31,7 @@ pub mod media;
 pub mod middleware;
 pub mod observability;
 pub mod provider_policy;
+pub mod providers;
 pub mod reads;
 #[path = "config/facade.rs"]
 pub mod runtime_config;

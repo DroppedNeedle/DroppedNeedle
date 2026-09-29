@@ -42,6 +42,7 @@ pub fn hooked_state() -> AppState {
         AppConfig::new(DEFAULT_PORT).with_test_hooks(),
         auth.clone(),
         test_reads(&auth, ids),
+        Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
     )
 }
 
@@ -57,6 +58,7 @@ pub fn prod_like_state() -> AppState {
         AppConfig::new(DEFAULT_PORT),
         auth.clone(),
         test_reads(&auth, ids),
+        Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
     )
 }
 
