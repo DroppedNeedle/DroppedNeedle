@@ -1,0 +1,167 @@
+//! Slice-local principal and auth gate.
+//!
+//! The app wiring replaces this seam: the integrator mounts the bare routes
+//! inside the session gate with a principal-translation layer that resolves
+//! the role fresh from the user store (mirroring the reads collections
+//! slice). The gate below reads a `x-slice-principal` header of the form
+//! `<user-id>:<role>[:<username>]` so the standalone briefs can still drive
+//! the auth matrix. Response shapes mirror the session slice: 401 carries
+//! `WWW-Authenticate: Bearer`, role denials are 403.
+
+use axum::{
+    extract::{FromRequestParts, Request},
+    http::request::Parts,
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
+
+use super::error::RequestsError;
+
+/// Account role. Meanings match v2 and stage-3 roles: `user` requests wait
+/// for approval; `trusted` and `admin` auto-approve and skip quotas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// Regular account.
+    User,
+    /// Approved account with moderation-adjacent rights.
+    Trusted,
+    /// Full administration.
+    Admin,
+}
+
+impl Role {
+    /// Parse a submitted role string. Unknown strings fail closed to `None`.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "user" => Some(Self::User),
+            "trusted" => Some(Self::Trusted),
+            "admin" => Some(Self::Admin),
+            _ => None,
+        }
+    }
+
+    /// Storage/wire form.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Trusted => "trusted",
+            Self::Admin => "admin",
+        }
+    }
+
+    /// Whether this role passes admin gating.
+    pub fn is_admin(self) -> bool {
+        matches!(self, Self::Admin)
+    }
+
+    /// Whether this role passes curator gating (admin or trusted).
+    pub fn is_curator(self) -> bool {
+        matches!(self, Self::Admin | Self::Trusted)
+    }
+
+    /// Whether intake auto-dispatches for this role (v2: trusted/admin skip
+    /// the approval queue; user waits).
+    pub fn auto_approves(self) -> bool {
+        self.is_curator()
+    }
+}
+
+/// The authenticated principal for one request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Principal {
+    /// Owning user id.
+    pub user_id: String,
+    /// Login username, when the account has one.
+    pub username: Option<String>,
+    /// Account role.
+    pub role: Role,
+}
+
+impl Principal {
+    /// Display name for ownership fields. Falls back to the user id.
+    pub fn display_name(&self) -> String {
+        self.username
+            .clone()
+            .unwrap_or_else(|| self.user_id.clone())
+    }
+
+    /// Reject non-admins with 403.
+    pub fn require_admin(&self) -> Result<(), RequestsError> {
+        if self.role.is_admin() {
+            Ok(())
+        } else {
+            Err(RequestsError::Forbidden {
+                message: "Admin role required".to_owned(),
+            })
+        }
+    }
+
+    /// Reject non-curators with 403.
+    pub fn require_curator(&self) -> Result<(), RequestsError> {
+        if self.role.is_curator() {
+            Ok(())
+        } else {
+            Err(RequestsError::Forbidden {
+                message: "Curator role required".to_owned(),
+            })
+        }
+    }
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for Principal {
+    type Rejection = RequestsError;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        parts
+            .extensions
+            .get::<Principal>()
+            .cloned()
+            .ok_or_else(|| RequestsError::Unauthorized {
+                message: "Authentication required".to_owned(),
+            })
+    }
+}
+
+/// Header carrying the slice-local credential. Wiring deletes this gate.
+pub const PRINCIPAL_HEADER: &str = "x-slice-principal";
+
+/// Parse one header value into a principal. Anything malformed fails closed.
+fn parse_header(value: &str) -> Option<Principal> {
+    let mut parts = value.splitn(3, ':');
+    let user_id = parts.next().unwrap_or_default().trim();
+    let role = parts.next().unwrap_or_default().trim();
+    if user_id.is_empty() {
+        return None;
+    }
+    let role = Role::parse(role)?;
+    let username = parts
+        .next()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned);
+    Some(Principal {
+        user_id: user_id.to_owned(),
+        username,
+        role,
+    })
+}
+
+/// Slice-local auth gate. Missing or malformed credentials are 401; the
+/// principal lands in the request extensions for the extractor.
+pub async fn gate(mut req: Request, next: Next) -> Response {
+    let principal = req
+        .headers()
+        .get(PRINCIPAL_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_header);
+    match principal {
+        Some(principal) => {
+            req.extensions_mut().insert(principal);
+            next.run(req).await
+        }
+        None => RequestsError::Unauthorized {
+            message: "Authentication required".to_owned(),
+        }
+        .into_response(),
+    }
+}

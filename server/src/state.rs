@@ -7,8 +7,9 @@
 use std::sync::Arc;
 
 use crate::{
-    auth::wiring::AuthSetup, config::AppConfig, http_client::HttpClientFactory, ids::IdGenerator,
-    provider_policy::ProviderPolicy, providers::Providers, reads::ReadsSetup, stage6::Stage6Setup,
+    acquire::AcquireSetup, auth::wiring::AuthSetup, config::AppConfig,
+    http_client::HttpClientFactory, ids::IdGenerator, provider_policy::ProviderPolicy,
+    providers::Providers, reads::ReadsSetup, stage6::Stage6Setup,
 };
 
 /// All long-lived server dependencies.
@@ -30,11 +31,14 @@ pub struct AppState {
     pub providers: Arc<Providers>,
     /// Stage-6 bundle: remote sources, stream gateway, playback reporting.
     pub stage6: Stage6Setup,
+    /// Stage-7 bundle: requests, downloads, flows, imports.
+    pub acquire: AcquireSetup,
 }
 
 impl AppState {
     /// Wire the state from its parts. Callers pass the production generator
-    /// or a fake; nothing here reaches globals.
+    /// or a fake; nothing here reaches globals. One argument per bundle.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ids: Arc<dyn IdGenerator>,
         http: HttpClientFactory,
@@ -43,6 +47,7 @@ impl AppState {
         reads: ReadsSetup,
         providers: Arc<Providers>,
         stage6: Stage6Setup,
+        acquire: AcquireSetup,
     ) -> Self {
         Self {
             ids,
@@ -52,6 +57,7 @@ impl AppState {
             reads,
             providers,
             stage6,
+            acquire,
         }
     }
 

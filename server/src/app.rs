@@ -30,7 +30,8 @@ pub fn create_app(state: AppState) -> Router {
                 .auth
                 .router()
                 .merge(state.reads.gated_router())
-                .merge(state.stage6.gated_router()),
+                .merge(state.stage6.gated_router())
+                .merge(state.acquire.gated_router()),
         )
         .merge(state.reads.search_router())
         .layer(middleware::from_fn_with_state(
@@ -50,11 +51,20 @@ pub fn create_app(state: AppState) -> Router {
             state.auth.limits.clone(),
             rate_limit,
         ));
+    // Spotify OAuth callback: outside the session gate (state-token
+    // identified), still rate-limited like the wrapped trio.
+    let acquire_public = Router::new()
+        .nest("/api/v3", state.acquire.callback_router())
+        .layer(middleware::from_fn_with_state(
+            state.auth.limits.clone(),
+            rate_limit,
+        ));
     let mut app = Router::new()
         .route("/health", get(handlers::health))
         .route("/openapi.json", get(handlers::openapi_json))
         .merge(v3)
-        .merge(wrapped);
+        .merge(wrapped)
+        .merge(acquire_public);
     if state.config.test_hooks {
         app = app
             .route(

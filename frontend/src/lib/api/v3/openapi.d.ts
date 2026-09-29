@@ -4,6 +4,273 @@
  */
 
 export interface paths {
+    "/api/v3/acquire/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Acquisition health smoke: Free OR slskd OR Usenet readiness plus the
+         *     independent per-source release gates.
+         */
+        get: operations["get_health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/lidarr-import/artists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Monitored Lidarr artists annotated for the caller. */
+        get: operations["list_lidarr_artists"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/lidarr-import/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Masked Lidarr connection settings. */
+        get: operations["get_lidarr_config"];
+        /** Save the Lidarr connection. A masked key preserves the stored one. */
+        put: operations["put_lidarr_config"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/lidarr-import/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import selected Lidarr artists into the caller's follows. */
+        post: operations["import_lidarr"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/lidarr-import/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test submitted Lidarr credentials against `system/status` (v2 Test
+         *     route): the SUBMITTED url/key are probed so Test works before the first
+         *     save, a masked key resolves to the stored one, and reachable/bad-key
+         *     verdicts travel in the body, never as a leaked 5xx, never echoing the
+         *     URL or host.
+         */
+        post: operations["test_lidarr"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/sabnzbd/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Live SABnzbd status against the saved config (v2: admin-only). */
+        get: operations["get_sabnzbd_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/slskd/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Live slskd client status (v2: any authenticated user may read it). */
+        get: operations["get_slskd_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/spotify/auth/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Spotify OAuth callback (v2 `spotify_auth_callback`). State-identified,
+         *     so it sits outside the session gate like v2's ungated route: every
+         *     outcome redirects to the profile page with the v2 query contract
+         *     (`spotify=connected`, or `spotify=error` with an optional `reason`).
+         */
+        get: operations["spotify_callback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/spotify/auth/url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Authorize URL for the caller's Spotify link flow. Requires the admin
+         *     app to be enabled and complete (v2 400 text kept).
+         */
+        get: operations["get_spotify_auth_url"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/spotify/jobs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Latest known state of one `spotify:import` job. */
+        get: operations["get_spotify_job"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/spotify/playlists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's owned Spotify playlists. Unlinked reads as the v2 400;
+         *     upstream failures as the v2 502.
+         */
+        get: operations["list_spotify_playlists"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/spotify/playlists/{id}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a Spotify playlist import: ensure the internal record, queue the
+         *     `spotify:import` durable job unless it already runs, and answer the id
+         *     immediately (v2 answer-fast shape).
+         */
+        post: operations["import_spotify_playlist"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/spotify/redirect-uri": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The computed OAuth redirect URI (v2 admin display endpoint). */
+        get: operations["get_spotify_redirect_uri"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/spotify/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Masked Spotify app settings. */
+        get: operations["get_spotify_settings"];
+        /**
+         * Save the Spotify app settings. A masked secret preserves the stored
+         *     one; a non-absolute redirect origin is a 400 (v2 text kept).
+         */
+        put: operations["put_spotify_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/admin/app-passwords": {
         parameters: {
             query?: never;
@@ -180,6 +447,27 @@ export interface paths {
         post?: never;
         /** Revoke every session of one user. */
         delete: operations["admin_revoke_sessions"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/albums/{album_id}/edition/acquire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fill the selected edition's missing tracks and upgrade its below-cutoff
+         *     owned tracks (A:12). `POST /api/v3/albums/{album_id}/edition/acquire`.
+         *     Curator only. Never retags existing files.
+         */
+        post: operations["acquire_edition_handler"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2545,6 +2833,158 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/requests/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Live asks. `GET /api/v3/requests/active`. Admins see every row. */
+        get: operations["active_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/active/count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Live-ask count. `GET /api/v3/requests/active/count`. */
+        get: operations["active_count_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/active/{musicbrainz_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Cancel one ask. `DELETE /api/v3/requests/active/{musicbrainz_id}`.
+         *     Co-requesters detach with the shared row continuing; owners cancel.
+         */
+        delete: operations["cancel_one_handler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/albums": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask for one album. `POST /api/v3/requests/albums`. Users wait for
+         *     approval; curators dispatch at once. Duplicate asks attach to the live
+         *     row and report its status. Answers 202.
+         */
+        post: operations["request_album_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Rows waiting for review. `GET /api/v3/requests/approvals`. Admin only. */
+        get: operations["approvals_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/approvals/count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pending-review badge count across all three queues.
+         *     `GET /api/v3/requests/approvals/count`. Admin only.
+         */
+        get: operations["approvals_count_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/approvals/{musicbrainz_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve one waiting ask and dispatch it.
+         *     `POST /api/v3/requests/approvals/{musicbrainz_id}/approve`. Admin only.
+         */
+        post: operations["approve_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/approvals/{musicbrainz_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject one waiting ask.
+         *     `POST /api/v3/requests/approvals/{musicbrainz_id}/reject`. Admin only.
+         */
+        post: operations["reject_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/requests/auto-download-approval-batches": {
         parameters: {
             query?: never;
@@ -2562,6 +3002,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/requests/auto-download-approval-batches/{batch_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve one bulk batch.
+         *     `POST /api/v3/requests/auto-download-approval-batches/{batch_id}/approve`.
+         *     Admin only.
+         */
+        post: operations["approve_auto_download_batch_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/auto-download-approval-batches/{batch_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject one bulk batch.
+         *     `POST /api/v3/requests/auto-download-approval-batches/{batch_id}/reject`.
+         *     Admin only.
+         */
+        post: operations["reject_auto_download_batch_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/requests/auto-download-approvals": {
         parameters: {
             query?: never;
@@ -2573,6 +3055,389 @@ export interface paths {
         get: operations["list_approvals_handler"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve one auto-download grant.
+         *     `POST /api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve`.
+         *     Admin only.
+         */
+        post: operations["approve_auto_download_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject one auto-download ask, keeping the follow.
+         *     `POST /api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject`.
+         *     Admin only.
+         */
+        post: operations["reject_auto_download_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke one auto-download grant, keeping the follow.
+         *     `POST /api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke`.
+         *     Admin only.
+         */
+        post: operations["revoke_auto_download_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask for a batch of albums. `POST /api/v3/requests/batches`. At most 500
+         *     rows; dupes, live rows, and unresolvable rows skip. Answers 202.
+         */
+        post: operations["request_batch_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/batches/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a batch of asks (R10). `POST /api/v3/requests/batches/cancel`.
+         *     Non-admins detach from shared rows and cancel their own; admins cancel
+         *     anything live.
+         */
+        post: operations["cancel_batch_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Paged history. `GET /api/v3/requests/history`. Admins see every row. */
+        get: operations["history_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/history/{musicbrainz_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Clear one history row. `DELETE /api/v3/requests/history/{musicbrainz_id}`.
+         *     Admins delete the row; users dismiss it from their own view.
+         */
+        delete: operations["clear_history_handler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/personal-mix-approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pending personal-mix approvals.
+         *     `GET /api/v3/requests/personal-mix-approvals`. Admin only.
+         */
+        get: operations["mix_approvals_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/personal-mix-approvals/{user_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve one mix auto-request grant.
+         *     `POST /api/v3/requests/personal-mix-approvals/{user_id}/approve`.
+         *     Admin only.
+         */
+        post: operations["approve_mix_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/personal-mix-approvals/{user_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject one mix auto-request ask.
+         *     `POST /api/v3/requests/personal-mix-approvals/{user_id}/reject`.
+         *     Admin only.
+         */
+        post: operations["reject_mix_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/personal-mix-approvals/{user_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke one mix auto-request grant.
+         *     `POST /api/v3/requests/personal-mix-approvals/{user_id}/revoke`.
+         *     Admin only.
+         */
+        post: operations["revoke_mix_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/personal-mix/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh one user's personal mix (A:393).
+         *     `POST /api/v3/requests/personal-mix/refresh`. Repeat calls while a build
+         *     runs answer `already_running`; unlinked users get 400.
+         */
+        post: operations["refresh_mix_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/retry/{musicbrainz_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry one terminal ask. `POST /api/v3/requests/retry/{musicbrainz_id}`.
+         *     Plain users rejoin the queue unless the generation already carries
+         *     approval provenance.
+         */
+        post: operations["retry_one_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reconcile live rows with their linked tasks.
+         *     `POST /api/v3/requests/sync`. One bad row never stops the sweep.
+         */
+        post: operations["sync_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask for one exact recording. `POST /api/v3/requests/tracks`. Same
+         *     approval gate as albums. Answers 202.
+         */
+        post: operations["request_track_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/wanted": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Wanted watches plus the still-retrying set.
+         *     `GET /api/v3/requests/wanted`. Admins see every row.
+         */
+        get: operations["wanted_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/wanted/{musicbrainz_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume one wanted watch.
+         *     `POST /api/v3/requests/wanted/{musicbrainz_id}/resume`.
+         */
+        post: operations["wanted_resume_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/wanted/{musicbrainz_id}/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear one watch's unseen candidates.
+         *     `POST /api/v3/requests/wanted/{musicbrainz_id}/seen`.
+         */
+        post: operations["wanted_seen_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/wanted/{musicbrainz_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause one wanted watch. `POST /api/v3/requests/wanted/{musicbrainz_id}/stop`. */
+        post: operations["wanted_stop_handler"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2849,6 +3714,45 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`
+         *     is Free OR slskd OR Usenet readiness; the gates unpack per source.
+         */
+        AcquireHealth: {
+            /** @description Independent per-source release gates. */
+            gates: components["schemas"]["SourceGate"][];
+            /** @description True when at least one acquisition path can serve releases. */
+            ready: boolean;
+            /** @description Paths currently ready: any of `free`, `slskd`, `usenet`. */
+            ready_via: string[];
+            /** @description Overall verdict: `ok`, `degraded`, or `error`. */
+            status: string;
+        };
+        /** @description Mutation outcome for approve/reject/cancel/retry/clear. */
+        ActionResponse: {
+            /** @description Human outcome. */
+            message: string;
+            /** @description Whether the action applied. */
+            success: boolean;
+        };
+        /** @description Bare count shape for badges. */
+        ActiveCountResponse: {
+            /**
+             * Format: int32
+             * @description Row count.
+             */
+            count: number;
+        };
+        /** @description Active-requests list. */
+        ActiveRequestsResponse: {
+            /**
+             * Format: int32
+             * @description Row count.
+             */
+            count: number;
+            /** @description Active rows. */
+            items: components["schemas"]["RequestItem"][];
+        };
         /** @description Add-tracks body. */
         AddTracksBody: {
             /** @description Insert position. Missing appends; past-the-end clamps. */
@@ -2991,6 +3895,30 @@ export interface components {
             artist_name?: string;
             /** @description Provider release-group id. */
             musicbrainz_id: string;
+        };
+        /**
+         * @description Album intake body. Names may be omitted only when they resolve; this
+         *     slice has no catalog lookup, so blank or literal-"Unknown" names are
+         *     rejected (v2 `request_service._meaningful_name` quirk).
+         */
+        AlbumIntake: {
+            /** @description Album title. */
+            album?: string | null;
+            /** @description Artist name. */
+            artist?: string | null;
+            /** @description Artist MBID. */
+            artist_mbid?: string | null;
+            /** @description Auto-download the artist's future releases (approval-gated for users). */
+            auto_download_artist?: boolean;
+            /** @description Follow the artist for new releases. */
+            monitor_artist?: boolean;
+            /** @description Release-group MBID. */
+            musicbrainz_id: string;
+            /**
+             * Format: int32
+             * @description Release year.
+             */
+            year?: number | null;
         };
         /** @description One page of catalog albums. */
         AlbumPage: {
@@ -3283,6 +4211,82 @@ export interface components {
             /** @description Base64 image bytes. */
             image_base64: string;
         };
+        /** @description Batch-cancel body (R10). Dedupe is by exact string before lookup. */
+        BatchCancelBody: {
+            /** @description Request kind; defaults to album. */
+            kind?: string | null;
+            /** @description MBIDs to cancel. */
+            musicbrainz_ids: string[];
+        };
+        /** @description Batch-cancel response (R10). */
+        BatchCancelResponse: {
+            /**
+             * Format: int32
+             * @description Rows cancelled or detached.
+             */
+            cancelled: number;
+            /**
+             * Format: int32
+             * @description Rows that failed.
+             */
+            failed: number;
+            /** @description Human outcome. */
+            message: string;
+            /** @description Whether anything was cancelled. */
+            success: boolean;
+        };
+        /** @description Batch intake body (v2 caps batches at 500 rows). */
+        BatchIntake: {
+            /** @description Auto-download future releases (approval-gated for users). */
+            auto_download_artist?: boolean;
+            /** @description Rows to request. */
+            items: components["schemas"]["BatchItem"][];
+            /** @description Follow each artist for new releases. */
+            monitor_artist?: boolean;
+        };
+        /** @description Batch intake response. */
+        BatchIntakeResponse: {
+            /** @description Human outcome. */
+            message: string;
+            /**
+             * Format: int32
+             * @description Rows over the batch cap; always zero (cap rejects the batch instead).
+             */
+            overflow: number;
+            /**
+             * Format: int32
+             * @description Rows recorded (auto roles: rows dispatched).
+             */
+            requested: number;
+            /**
+             * Format: int32
+             * @description Rows skipped (duplicates, in-progress, unresolvable).
+             */
+            skipped: number;
+            /**
+             * @description Batch decision: `pending`, `awaiting_approval`, `already_requested`,
+             *     or `failed`.
+             */
+            status: string;
+            /** @description Whether the batch recorded anything. */
+            success: boolean;
+        };
+        /** @description One batch row. */
+        BatchItem: {
+            /** @description Album title. */
+            album_title?: string | null;
+            /** @description Artist MBID. */
+            artist_mbid?: string | null;
+            /** @description Artist name. */
+            artist_name?: string | null;
+            /** @description Release-group MBID. */
+            musicbrainz_id: string;
+            /**
+             * Format: int32
+             * @description Release year.
+             */
+            year?: number | null;
+        };
         /** @description One "because you listen to" shelf: seed plus similar albums. */
         BecauseYouListenTo: {
             /** @description Banner art URL, when resolved. */
@@ -3435,6 +4439,11 @@ export interface components {
             membership: {
                 [key: string]: string[];
             };
+        };
+        /** @description Clear-history outcome. */
+        ClearHistoryResponse: {
+            /** @description Whether a row was cleared. */
+            success: boolean;
         };
         /** @description Save payload for one source connection. Secrets stay write-only. */
         ConnectionSave: {
@@ -3783,6 +4792,15 @@ export interface components {
             /** @description New display name, 1-64 chars after trimming. */
             display_name: string;
         };
+        /** @description Edition-acquire outcome (A:12). */
+        EditionAcquireResponse: {
+            /** @description Human outcome. */
+            message: string;
+            /** @description `started`, `already_in_progress`, or `already_complete`. */
+            status: string;
+            /** @description Linked download task, when dispatched. */
+            task_id?: string | null;
+        };
         /** @description Pin-set body. */
         EditionPinBody: {
             /** @description Release MBID to pin. Must be a known edition of the album. */
@@ -4119,6 +5137,50 @@ export interface components {
              */
             total: number;
         };
+        /** @description History paging and filter query. */
+        HistoryQuery: {
+            /** @description `album` or `track`; unset means both. */
+            kind?: string | null;
+            /**
+             * Format: int32
+             * @description 1-based page.
+             */
+            page?: number | null;
+            /**
+             * Format: int32
+             * @description Rows per page (1..=100).
+             */
+            page_size?: number | null;
+            /** @description `newest` (default), `oldest`, or `status`. */
+            sort?: string | null;
+            /** @description Status filter. */
+            status?: string | null;
+        };
+        /** @description Paged history list. */
+        HistoryResponse: {
+            /** @description Page rows. */
+            items: components["schemas"]["RequestItem"][];
+            /**
+             * Format: int32
+             * @description Current page.
+             */
+            page: number;
+            /**
+             * Format: int32
+             * @description Rows per page.
+             */
+            page_size: number;
+            /**
+             * Format: int32
+             * @description Total rows.
+             */
+            total: number;
+            /**
+             * Format: int32
+             * @description Total pages (at least 1).
+             */
+            total_pages: number;
+        };
         /**
          * @description Home shelves. Every shelf is optional: absence means the shelf has no
          *     data, never a failure.
@@ -4274,6 +5336,19 @@ export interface components {
             /** @description Owning source. */
             source: components["schemas"]["SourceName"];
         };
+        /** @description Intake response. Clients render this decision, never infer from roles. */
+        IntakeResponse: {
+            /** @description Human outcome. */
+            message: string;
+            /** @description Canonical MBID. */
+            musicbrainz_id: string;
+            /** @description Row status after this call. */
+            status: string;
+            /** @description Whether the ask was recorded. */
+            success: boolean;
+            /** @description Linked download task, when dispatched. */
+            task_id?: string | null;
+        };
         /** @description Which integrations back the shelves right now. */
         IntegrationStatus: {
             /** @description A download client is configured. */
@@ -4305,6 +5380,11 @@ export interface components {
             transport?: components["schemas"]["TransportDto"];
             /** @description Jellyfin username. */
             username: string;
+        };
+        /** @description `kind` query shared by the per-request mutations. */
+        KindQuery: {
+            /** @description `album` (default) or `track`. */
+            kind?: string | null;
         };
         /** @description Confirmation that credentials were stored. */
         LastFmConfiguredResponse: {
@@ -4350,6 +5430,85 @@ export interface components {
             auth_url: string;
             /** @description Single-use token for the session exchange. */
             token: string;
+        };
+        /**
+         * @description One monitored Lidarr artist annotated for the requesting user (v2
+         *     `LidarrArtistCandidate`).
+         */
+        LidarrArtistCandidate: {
+            /** @description True when the user already follows this MBID. */
+            already_following: boolean;
+            /** @description MusicBrainz artist MBID (`foreignArtistId`). */
+            mbid: string;
+            /** @description Lidarr `monitorNewItems`: `none` or `all`. */
+            monitor_new_items: string;
+            /** @description Artist name as Lidarr reports it. */
+            name: string;
+            /** @description True when importing would arm auto-download (`all`). */
+            would_auto_download: boolean;
+        };
+        /** @description Candidate list (v2 `LidarrArtistListResponse`). */
+        LidarrArtistListResponse: {
+            /** @description Monitored artists with valid MBIDs. */
+            artists: components["schemas"]["LidarrArtistCandidate"][];
+            /**
+             * Format: int64
+             * @description Count of `artists`.
+             */
+            total: number;
+        };
+        /**
+         * @description Admin-configured read-only Lidarr import connection (v2
+         *     `LidarrImportConnectionSettings`, D5). NOT a management integration.
+         */
+        LidarrConnectionSettings: {
+            /** @description API key, Fernet-encrypted at rest, masked on read. */
+            api_key: string;
+            /** @description Lidarr base URL, normalised to a bare origin. */
+            url: string;
+        };
+        /** @description Import selection (v2 `LidarrImportRequest`). */
+        LidarrImportRequest: {
+            /** @description MBIDs to import; unknown or unmonitored entries are ignored. */
+            selected_mbids: string[];
+        };
+        /**
+         * @description Import summary (v2 `LidarrImportResponse`). `imported` counts brand-new
+         *     follows only; `already_following` is the disjoint pre-existing subset;
+         *     `auto_download_enabled` counts brand-new auto-download follows only (D9).
+         */
+        LidarrImportResponse: {
+            /**
+             * Format: int64
+             * @description Selected MBIDs already followed before this import.
+             */
+            already_following: number;
+            /** @description Approval batch for a non-admin auto-download mirror; else null. */
+            approval_batch_id?: string | null;
+            /**
+             * Format: int64
+             * @description Brand-new follows with auto-download armed.
+             */
+            auto_download_enabled: number;
+            /**
+             * Format: int64
+             * @description Brand-new follows created.
+             */
+            imported: number;
+            /**
+             * Format: int64
+             * @description Selected entries that were not valid MBIDs.
+             */
+            skipped_invalid: number;
+        };
+        /** @description Result of testing submitted Lidarr credentials (v2 `LidarrTestResponse`). */
+        LidarrTestResponse: {
+            /** @description User-safe summary. Never echoes the URL or host. */
+            message: string;
+            /** @description True when the probe authenticated. */
+            valid: boolean;
+            /** @description Lidarr version from `system/status`, when the probe reached it. */
+            version?: string | null;
         };
         /** @description Set the first local password on an account without one. */
         LocalPasswordSet: {
@@ -4531,6 +5690,28 @@ export interface components {
             recovery_code: string;
             /** @description Account username. */
             username: string;
+        };
+        /** @description One pending personal-mix auto-request approval. */
+        PersonalMixApprovalItem: {
+            /**
+             * Format: int64
+             * @description Epoch seconds when asked.
+             */
+            requested_at: number;
+            /** @description Requesting user id. */
+            user_id: string;
+            /** @description Requesting display name. */
+            user_name: string;
+        };
+        /** @description Pending personal-mix approvals. */
+        PersonalMixApprovalsResponse: {
+            /**
+             * Format: int32
+             * @description Row count.
+             */
+            count: number;
+            /** @description Pending rows. */
+            items: components["schemas"]["PersonalMixApprovalItem"][];
         };
         /** @description Heartbeat for a live session: keeps presence alive and the scrubber live. */
         PlaybackProgressRequest: {
@@ -5392,6 +6573,64 @@ export interface components {
             /** @description Always "ok". */
             status: string;
         };
+        /** @description One request row in list views. */
+        RequestItem: {
+            /** @description Album title. */
+            album_title: string;
+            /** @description Artist MBID. */
+            artist_mbid?: string | null;
+            /** @description Artist name. */
+            artist_name: string;
+            /**
+             * Format: int64
+             * @description Epoch seconds when terminal, when terminal.
+             */
+            completed_at?: number | null;
+            /**
+             * Format: int64
+             * @description Track length for exact-track rows.
+             */
+            duration_seconds?: number | null;
+            /** @description Album or recording MBID. */
+            musicbrainz_id: string;
+            /** @description `album` or `track`. */
+            request_kind: string;
+            /**
+             * Format: int64
+             * @description Epoch seconds when asked.
+             */
+            requested_at: number;
+            /** @description Owner display name. */
+            requested_by_name?: string | null;
+            /**
+             * Format: int32
+             * @description Co-requester count beyond the owner.
+             */
+            requester_count: number;
+            /** @description Reviewer display name. */
+            reviewed_by_name?: string | null;
+            /** @description Row status. */
+            status: string;
+            /** @description Linked download task. */
+            task_id?: string | null;
+            /** @description Track title for exact-track rows. */
+            track_title?: string | null;
+            /** @description Primary owner id. */
+            user_id?: string | null;
+            /**
+             * Format: int32
+             * @description Release year.
+             */
+            year?: number | null;
+        };
+        /**
+         * @description Personal-mix refresh outcome (A:393). The schema renames to avoid the
+         *     discover slice's unrelated `RefreshResponse` in the shared document.
+         */
+        RequestsRefreshResponse: {
+            /** @description `started` or `already_running`. */
+            status: string;
+        };
         /** @description Source-resolution answer: each track id maps to its known sources. */
         ResolveSourcesResponse: {
             /** @description Track id to sources. */
@@ -5409,6 +6648,22 @@ export interface components {
         RoleUpdate: {
             /** @description New role. */
             role: components["schemas"]["Role"];
+        };
+        /**
+         * @description Live SABnzbd status against the saved config (v2 `SabnzbdTestResponse`,
+         *     status half).
+         */
+        SabnzbdStatusResponse: {
+            /** @description Category list, when the probe reached it. */
+            categories: string[];
+            /** @description Completed dir (the mount hint), when the probe reached it. */
+            complete_dir?: string | null;
+            /** @description User-safe summary. */
+            message: string;
+            /** @description True when the saved config probes clean. */
+            valid: boolean;
+            /** @description SABnzbd version, when the probe reached it. */
+            version?: string | null;
         };
         /** @description One native now-playing forward, by name (v2 `NowPlayingRequest` fields). */
         ScrobbleNowPlayingRequest: {
@@ -5660,10 +6915,118 @@ export interface components {
             setup_required: boolean;
         };
         /**
+         * @description Live slskd client status (v2 `DownloadClientStatusResponse`, trimmed to
+         *     the client half; the mount half belongs to the downloads slice).
+         */
+        SlskdStatusResponse: {
+            /** @description Credentials/URL present. */
+            configured: boolean;
+            /** @description User-safe summary. */
+            message: string;
+            /** @description Live probe answered. */
+            reachable: boolean;
+            /** @description slskd version, when the probe reached it. */
+            version?: string | null;
+        };
+        /**
+         * @description Per-source release gate verdict. Each source gates independently: one
+         *     red gate never flips another.
+         */
+        SourceGate: {
+            /** @description Credentials/URL present. */
+            configured: boolean;
+            /** @description Admin master switch for this source. */
+            enabled: boolean;
+            /** @description User-safe summary. */
+            message: string;
+            /** @description True when releases may flow from this source. */
+            open: boolean;
+            /** @description Live probe answered. */
+            reachable: boolean;
+            /** @description `slskd`, `sabnzbd`, `newznab`, or `lidarr_import`. */
+            source: string;
+        };
+        /**
          * @description Which remote source a view or id belongs to.
          * @enum {string}
          */
         SourceName: "jellyfin" | "navidrome" | "plex";
+        /**
+         * @description Authorize URL for the caller's Spotify link flow (v2
+         *     `SpotifyAuthUrlResponse`).
+         */
+        SpotifyAuthUrlResponse: {
+            /** @description `accounts.spotify.com/authorize` URL with state. */
+            auth_url: string;
+        };
+        /** @description Import start (v2 `SpotifyImportRequest`). */
+        SpotifyImportRequest: {
+            /** @description Name for the internal playlist record. */
+            name: string;
+        };
+        /**
+         * @description Import acknowledgement (v2 `SpotifyImportResponse`). The populate runs
+         *     as the `spotify:import` durable job; the id is usable immediately.
+         */
+        SpotifyImportResponse: {
+            /** @description Internal playlist id. */
+            playlist_id: string;
+        };
+        /** @description Terminal-or-live state of one `spotify:import` job. */
+        SpotifyJobStatus: {
+            /** @description User-safe failure summary, else null. */
+            message?: string | null;
+            /** @description Internal playlist id the job populates. */
+            playlist_id: string;
+            /** @description `running`, `done`, or `error`. */
+            state: string;
+            /**
+             * Format: int64
+             * @description Tracks written on success.
+             */
+            track_count?: number | null;
+        };
+        /** @description One owned Spotify playlist (v2 `SpotifyPlaylistItem`). */
+        SpotifyPlaylistItem: {
+            /** @description Picked cover URL, smallest image at least 250 wide. */
+            cover_url?: string | null;
+            /** @description Playlist description. */
+            description: string;
+            /** @description Spotify playlist id. */
+            id: string;
+            /** @description Internal playlist id when already imported, else null. */
+            imported_playlist_id?: string | null;
+            /** @description Playlist name. */
+            name: string;
+            /** @description Owner display name. */
+            owner: string;
+            /**
+             * Format: int64
+             * @description Track total from the `items`/`tracks` dict quirk.
+             */
+            track_count: number;
+        };
+        /** @description Owned playlists (v2 `SpotifyPlaylistListResponse`). */
+        SpotifyPlaylistListResponse: {
+            /** @description Playlists owned by the caller's Spotify account. */
+            playlists: components["schemas"]["SpotifyPlaylistItem"][];
+        };
+        /** @description The computed OAuth redirect URI (v2 `GET /spotify/redirect-uri`). */
+        SpotifyRedirectUri: {
+            /** @description Byte-exact URI registered in the Spotify dashboard. */
+            redirect_uri: string;
+        };
+        /** @description Admin Spotify app settings (v2 `SpotifySettings`, GH-298). */
+        SpotifySettings: {
+            /** @description Spotify app client id, returned unmasked. */
+            client_id: string;
+            /** @description Spotify app secret, encrypted at rest, masked on read. */
+            client_secret: string;
+            /** @description Master switch for Spotify OAuth. */
+            enabled: boolean;
+            /** @description Optional absolute origin the OAuth redirect URI is built from. */
+            spotify_redirect_origin: string;
+        };
         /** @description Library totals. Track and size totals count streamable tracks only. */
         StatsView: {
             /**
@@ -5770,6 +7133,14 @@ export interface components {
             /** @description Reason-tagged tracks, pools interleaved. */
             items: components["schemas"]["SuggestionTrack"][];
         };
+        /** @description Status-sync outcome. */
+        SyncResponse: {
+            /**
+             * Format: int32
+             * @description Rows reconciled.
+             */
+            reconciled: number;
+        };
         /** @description One personalized top pick. */
         TopPickItem: {
             /** @description Picked album. */
@@ -5872,6 +7243,35 @@ export interface components {
             track_number?: number | null;
             /** @description Library track source id, when known. */
             track_source_id?: string | null;
+        };
+        /** @description Exact-track intake body. */
+        TrackIntake: {
+            /** @description Album title, when known. */
+            album_title?: string | null;
+            /** @description Artist MBID. */
+            artist_mbid?: string | null;
+            /** @description Artist name. */
+            artist_name: string;
+            /**
+             * Format: int64
+             * @description Track length in seconds.
+             */
+            duration_seconds?: number | null;
+            /** @description Recording MBID. */
+            recording_mbid: string;
+            /** @description Containing release-group MBID, when known. */
+            release_group_mbid?: string | null;
+            /** @description Release MBID. */
+            release_mbid?: string | null;
+            /** @description Track title. */
+            track_title: string;
+        };
+        /** @description Exact-track intake response. */
+        TrackIntakeResponse: {
+            /** @description `queued`, `awaiting_approval`, or `already_in_library`. */
+            status: string;
+            /** @description Linked download task, when dispatched. */
+            task_id?: string | null;
         };
         /** @description One page of catalog tracks. */
         TrackPage: {
@@ -6118,6 +7518,74 @@ export interface components {
             /** @description True makes the playlist public; false makes it private. */
             is_public: boolean;
         };
+        /** @description Wanted mutation outcome. */
+        WantedActionResponse: {
+            /** @description Watch state after this call. */
+            state: string;
+            /** @description Whether the action applied. */
+            success: boolean;
+        };
+        /** @description One wanted watch. */
+        WantedItem: {
+            /** @description Album title. */
+            album_title: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /**
+             * Format: int32
+             * @description Passed checks so far.
+             */
+            check_count: number;
+            /**
+             * Format: int64
+             * @description Epoch seconds when created.
+             */
+            created_at: number;
+            /** @description Release-group MBID. */
+            musicbrainz_id: string;
+            /**
+             * Format: int32
+             * @description Unseen candidate count.
+             */
+            new_candidate_count: number;
+            /** @description Watch state: `watching` or `paused`. */
+            state: string;
+            /** @description Owner id (admins see every row). */
+            user_id?: string | null;
+        };
+        /** @description Wanted list: watches plus the still-retrying set. */
+        WantedResponse: {
+            /**
+             * Format: int32
+             * @description Watch count.
+             */
+            count: number;
+            /** @description Watches. */
+            items: components["schemas"]["WantedItem"][];
+            /** @description Still-scheduled auto-retries. */
+            retrying: components["schemas"]["WantedRetryingItem"][];
+        };
+        /** @description One auto-retry entry behind the wanted view. */
+        WantedRetryingItem: {
+            /** @description Album title. */
+            album_title: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /**
+             * Format: int32
+             * @description Attempts allowed.
+             */
+            max_attempts: number;
+            /** @description Release-group MBID. */
+            musicbrainz_id: string;
+            /**
+             * Format: int32
+             * @description Attempts so far.
+             */
+            retry_count: number;
+            /** @description Owner id (admins see every row). */
+            user_id?: string | null;
+        };
         /** @description The weekly exploration playlist shelf. */
         WeeklyExploration: {
             /** @description Playlist date (`YYYY-MM-DD`). */
@@ -6271,6 +7739,324 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_health: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Acquisition health */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcquireHealth"];
+                };
+            };
+        };
+    };
+    list_lidarr_artists: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Import candidates */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LidarrArtistListResponse"];
+                };
+            };
+        };
+    };
+    get_lidarr_config: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Masked Lidarr settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LidarrConnectionSettings"];
+                };
+            };
+        };
+    };
+    put_lidarr_config: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved Lidarr settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LidarrConnectionSettings"];
+                };
+            };
+        };
+    };
+    import_lidarr: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Import summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LidarrImportResponse"];
+                };
+            };
+        };
+    };
+    test_lidarr: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lidarr probe verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LidarrTestResponse"];
+                };
+            };
+        };
+    };
+    get_sabnzbd_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SABnzbd status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SabnzbdStatusResponse"];
+                };
+            };
+        };
+    };
+    get_slskd_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description slskd status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlskdStatusResponse"];
+                };
+            };
+        };
+    };
+    spotify_callback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to the profile page */
+            307: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_spotify_auth_url: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorize URL */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpotifyAuthUrlResponse"];
+                };
+            };
+        };
+    };
+    get_spotify_job: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Job state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpotifyJobStatus"];
+                };
+            };
+        };
+    };
+    list_spotify_playlists: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owned playlists */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpotifyPlaylistListResponse"];
+                };
+            };
+        };
+    };
+    import_spotify_playlist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Import acknowledgement */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpotifyImportResponse"];
+                };
+            };
+        };
+    };
+    get_spotify_redirect_uri: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OAuth redirect URI */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpotifyRedirectUri"];
+                };
+            };
+        };
+    };
+    get_spotify_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Masked Spotify settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpotifySettings"];
+                };
+            };
+        };
+    };
+    put_spotify_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved Spotify settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpotifySettings"];
+                };
+            };
+        };
+    };
     admin_list_app_passwords: {
         parameters: {
             query?: never;
@@ -6532,6 +8318,28 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    acquire_edition_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionAcquireResponse"];
+                };
             };
         };
     };
@@ -11540,6 +13348,171 @@ export interface operations {
             };
         };
     };
+    active_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActiveRequestsResponse"];
+                };
+            };
+        };
+    };
+    active_count_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActiveCountResponse"];
+                };
+            };
+        };
+    };
+    cancel_one_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Album or recording MBID */
+                musicbrainz_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+        };
+    };
+    request_album_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlbumIntake"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeResponse"];
+                };
+            };
+        };
+    };
+    approvals_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActiveRequestsResponse"];
+                };
+            };
+        };
+    };
+    approvals_count_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActiveCountResponse"];
+                };
+            };
+        };
+    };
+    approve_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Album or recording MBID */
+                musicbrainz_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+        };
+    };
+    reject_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Album or recording MBID */
+                musicbrainz_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+        };
+    };
     list_approval_batches_handler: {
         parameters: {
             query?: never;
@@ -11574,6 +13547,50 @@ export interface operations {
             };
         };
     };
+    approve_auto_download_batch_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Batch id */
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+        };
+    };
+    reject_auto_download_batch_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Batch id */
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+        };
+    };
     list_approvals_handler: {
         parameters: {
             query?: never;
@@ -11605,6 +13622,418 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    approve_auto_download_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Requesting user id */
+                user_id: string;
+                /** @description Artist MBID */
+                artist_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+        };
+    };
+    reject_auto_download_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Requesting user id */
+                user_id: string;
+                /** @description Artist MBID */
+                artist_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+        };
+    };
+    revoke_auto_download_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Requesting user id */
+                user_id: string;
+                /** @description Artist MBID */
+                artist_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+        };
+    };
+    request_batch_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchIntake"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchIntakeResponse"];
+                };
+            };
+        };
+    };
+    cancel_batch_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchCancelBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchCancelResponse"];
+                };
+            };
+        };
+    };
+    history_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryResponse"];
+                };
+            };
+        };
+    };
+    clear_history_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Album or recording MBID */
+                musicbrainz_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClearHistoryResponse"];
+                };
+            };
+        };
+    };
+    mix_approvals_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalMixApprovalsResponse"];
+                };
+            };
+        };
+    };
+    approve_mix_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Requesting user id */
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+        };
+    };
+    reject_mix_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Requesting user id */
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+        };
+    };
+    revoke_mix_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Requesting user id */
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+        };
+    };
+    refresh_mix_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestsRefreshResponse"];
+                };
+            };
+        };
+    };
+    retry_one_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Album or recording MBID */
+                musicbrainz_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+        };
+    };
+    sync_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncResponse"];
+                };
+            };
+        };
+    };
+    request_track_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrackIntake"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackIntakeResponse"];
+                };
+            };
+        };
+    };
+    wanted_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WantedResponse"];
+                };
+            };
+        };
+    };
+    wanted_resume_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                musicbrainz_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WantedActionResponse"];
+                };
+            };
+        };
+    };
+    wanted_seen_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                musicbrainz_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WantedActionResponse"];
+                };
+            };
+        };
+    };
+    wanted_stop_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                musicbrainz_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WantedActionResponse"];
+                };
             };
         };
     };

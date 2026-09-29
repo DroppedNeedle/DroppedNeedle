@@ -36,14 +36,17 @@ fn test_http() -> HttpClientFactory {
 pub fn hooked_state() -> AppState {
     let auth = test_auth();
     let ids = Arc::new(FixedIdGenerator::new(FIXED_ID));
+    let mut reads = test_reads(&auth, ids.clone());
+    let acquire = test_acquire(&auth, ids.clone(), &mut reads);
     AppState::new(
         ids.clone(),
         test_http(),
         AppConfig::new(DEFAULT_PORT).with_test_hooks(),
         auth.clone(),
-        test_reads(&auth, ids.clone()),
+        reads,
         Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
         test_stage6(&auth, ids),
+        acquire,
     )
 }
 
@@ -53,15 +56,28 @@ pub fn hooked_state() -> AppState {
 pub fn prod_like_state() -> AppState {
     let auth = test_auth();
     let ids = Arc::new(droppedneedle::ids::UuidGenerator);
+    let mut reads = test_reads(&auth, ids.clone());
+    let acquire = test_acquire(&auth, ids.clone(), &mut reads);
     AppState::new(
         ids.clone(),
         test_http(),
         AppConfig::new(DEFAULT_PORT),
         auth.clone(),
-        test_reads(&auth, ids.clone()),
+        reads,
         Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
         test_stage6(&auth, ids),
+        acquire,
     )
+}
+
+/// Unwired acquire bundle over the test auth deps.
+fn test_acquire(
+    auth: &droppedneedle::auth::wiring::AuthSetup,
+    ids: Arc<dyn IdGenerator>,
+    reads: &mut droppedneedle::reads::ReadsSetup,
+) -> droppedneedle::acquire::AcquireSetup {
+    droppedneedle::acquire::AcquireSetup::for_tests(auth.users.clone(), ids, &mut reads.collections)
+        .expect("test acquire bundle builds")
 }
 
 /// Unwired stage-6 bundle over the test auth deps.

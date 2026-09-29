@@ -44,25 +44,25 @@ async fn column_names(pool: &SqlitePool, table: &str) -> Vec<String> {
         .unwrap()
 }
 
-/// Fresh migrate stamps version 1, records one migration row, and seeds the
+/// Fresh migrate stamps the latest version, records one row per migration,
 /// singleton and sentinel rows the services expect to exist.
 #[tokio::test]
 async fn fresh_migrate_marks_version_and_seeds() {
     let pool = migrated_pool().await;
 
-    assert_eq!(latest_version(), 1);
+    assert_eq!(latest_version(), 2);
     let version: i64 = sqlx::query_scalar("PRAGMA user_version")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 1);
+    assert_eq!(version, 2);
     let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(applied, 1);
+    assert_eq!(applied, 2);
 
-    assert_eq!(table_names(&pool).await.len(), 181);
+    assert_eq!(table_names(&pool).await.len(), 182);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -127,12 +127,12 @@ async fn migrate_rerun_is_clean() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 1);
+    assert_eq!(version, 2);
     let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(applied, 1);
+    assert_eq!(applied, 2);
     let artists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_artists")
         .fetch_one(&pool)
         .await
@@ -165,7 +165,7 @@ async fn boot_assertion_refuses_version_mismatch() {
     let pool = scratch_pool().await;
     match assert_migrated(&pool).await {
         Err(SchemaError::VersionMismatch { found, expected }) => {
-            assert_eq!((found, expected), (0, 1));
+            assert_eq!((found, expected), (0, 2));
         }
         other => panic!("unmigrated database must refuse, got {other:?}"),
     }
@@ -178,7 +178,7 @@ async fn boot_assertion_refuses_version_mismatch() {
         assert_migrated(&pool).await,
         Err(SchemaError::VersionMismatch {
             found: 999,
-            expected: 1
+            expected: 2
         })
     ));
 

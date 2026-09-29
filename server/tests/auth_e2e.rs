@@ -171,9 +171,15 @@ impl E2e {
         );
         let connect_apps: droppedneedle::runtime_config::sections::ConnectApps =
             self.store.get().unwrap_or_default();
+        let mut app_config = AppConfig::new(DEFAULT_PORT);
+        app_config.root_app_dir = self
+            .db_path
+            .parent()
+            .map(|parent| parent.to_path_buf())
+            .unwrap_or_else(std::env::temp_dir);
         let (stage6, _worker) = droppedneedle::stage6::Stage6Setup::build(
             &self.db_path,
-            &AppConfig::new(DEFAULT_PORT),
+            &app_config,
             auth.users.clone(),
             Arc::clone(&self.crypto),
             self.http.shared().clone(),
@@ -181,14 +187,26 @@ impl E2e {
             connect_apps,
         )
         .expect("stage6 bundle builds");
+        let mut reads = reads;
+        let acquire = droppedneedle::acquire::AcquireSetup::build(
+            &self.db_path,
+            &app_config,
+            auth.users.clone(),
+            self.http.shared().clone(),
+            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
+            Arc::clone(&self.store),
+            &mut reads.collections,
+        )
+        .expect("acquire bundle builds");
         let state = AppState::new(
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             self.http.clone(),
-            AppConfig::new(DEFAULT_PORT),
+            app_config,
             auth,
             reads,
             Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
             stage6,
+            acquire,
         );
         create_app(state)
     }
@@ -1288,6 +1306,158 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("POST", "/api/v3/scrobble/now-playing", Posture::User),
     ("POST", "/api/v3/now-playing", Posture::User),
     ("DELETE", "/api/v3/now-playing", Posture::User),
+    // Stage-7 acquisition requests.
+    ("POST", "/api/v3/requests/albums", Posture::User),
+    ("POST", "/api/v3/requests/tracks", Posture::User),
+    ("POST", "/api/v3/requests/batches", Posture::User),
+    ("POST", "/api/v3/requests/batches/cancel", Posture::User),
+    ("GET", "/api/v3/requests/active", Posture::User),
+    ("GET", "/api/v3/requests/active/count", Posture::User),
+    (
+        "DELETE",
+        "/api/v3/requests/active/{musicbrainz_id}",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/requests/retry/{musicbrainz_id}",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/requests/history", Posture::User),
+    (
+        "DELETE",
+        "/api/v3/requests/history/{musicbrainz_id}",
+        Posture::User,
+    ),
+    ("POST", "/api/v3/requests/sync", Posture::Admin),
+    ("GET", "/api/v3/requests/wanted", Posture::User),
+    (
+        "POST",
+        "/api/v3/requests/wanted/{musicbrainz_id}/stop",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/requests/wanted/{musicbrainz_id}/resume",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/requests/wanted/{musicbrainz_id}/seen",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/requests/approvals", Posture::Admin),
+    ("GET", "/api/v3/requests/approvals/count", Posture::Admin),
+    (
+        "POST",
+        "/api/v3/requests/approvals/{musicbrainz_id}/approve",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/requests/approvals/{musicbrainz_id}/reject",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/requests/auto-download-approval-batches/{batch_id}/approve",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/requests/auto-download-approval-batches/{batch_id}/reject",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/requests/personal-mix-approvals",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/requests/personal-mix-approvals/{user_id}/approve",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/requests/personal-mix-approvals/{user_id}/reject",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/requests/personal-mix-approvals/{user_id}/revoke",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/requests/personal-mix/refresh",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/albums/{album_id}/edition/acquire",
+        Posture::Curator,
+    ),
+    // Stage-7 acquisition imports.
+    (
+        "GET",
+        "/api/v3/acquire/lidarr-import/config",
+        Posture::Admin,
+    ),
+    (
+        "PUT",
+        "/api/v3/acquire/lidarr-import/config",
+        Posture::Admin,
+    ),
+    ("POST", "/api/v3/acquire/lidarr-import/test", Posture::Admin),
+    (
+        "GET",
+        "/api/v3/acquire/lidarr-import/artists",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/acquire/lidarr-import/import",
+        Posture::Admin,
+    ),
+    ("GET", "/api/v3/acquire/spotify/settings", Posture::Admin),
+    ("PUT", "/api/v3/acquire/spotify/settings", Posture::Admin),
+    (
+        "GET",
+        "/api/v3/acquire/spotify/redirect-uri",
+        Posture::Admin,
+    ),
+    ("GET", "/api/v3/acquire/spotify/auth/url", Posture::User),
+    (
+        "GET",
+        "/api/v3/acquire/spotify/auth/callback",
+        Posture::Public,
+    ),
+    ("GET", "/api/v3/acquire/spotify/playlists", Posture::User),
+    (
+        "POST",
+        "/api/v3/acquire/spotify/playlists/{id}/import",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/acquire/spotify/jobs/{id}", Posture::User),
+    ("GET", "/api/v3/acquire/health", Posture::User),
+    ("GET", "/api/v3/acquire/slskd/status", Posture::User),
+    ("GET", "/api/v3/acquire/sabnzbd/status", Posture::Admin),
 ];
 
 /// Fill `{param}` segments with a dummy id.

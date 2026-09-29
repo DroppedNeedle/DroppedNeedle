@@ -120,7 +120,21 @@ pub fn set_auto_download(
         row.auto_download_state = AutoDownloadState::Off;
         row.requested_at = None;
     }
-    Ok(status_for(artist_mbid, Some(row)))
+    let pending_now = row.auto_download_state == AutoDownloadState::Pending;
+    let seed_names = (row.user_name.clone(), row.artist_name.clone());
+    let response = status_for(artist_mbid, Some(row));
+    // Mirror the verdict into the acquire approval store, when wired. The
+    // store guard drops first: the sink locks the acquire store, and the
+    // acquire write-through locks this one, so nesting would invert.
+    drop(rows);
+    if pending_now && let Some(sink) = &state.approval_seeds {
+        sink.seed_approval(&caller.user_id, &seed_names.0, artist_mbid, &seed_names.1);
+    } else if !body.enabled
+        && let Some(sink) = &state.approval_seeds
+    {
+        sink.withdraw_approval(&caller.user_id, artist_mbid);
+    }
+    Ok(response)
 }
 
 /// List the caller's followed artists.

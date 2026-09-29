@@ -167,7 +167,41 @@ async fn serve() -> Result<(), String> {
         connect_apps,
     )
     .map_err(|error| error.to_string())?;
-    let state = AppState::new(ids, http, config.clone(), auth, reads, providers, stage6);
+    let mut reads = reads;
+    let acquire = droppedneedle::acquire::AcquireSetup::build(
+        &config.library_db_path,
+        &config,
+        auth.users.clone(),
+        http.shared().clone(),
+        ids.clone(),
+        config_store.clone(),
+        &mut reads.collections,
+    )
+    .map_err(|error| format!("acquire setup: {error}"))?;
+    acquire.refresh_admins().await;
+    // Startup recovery before serving traffic: journal classification
+    // plus durable-op registration. Re-running after a clean shutdown
+    // is a no-op (nothing destructive repeats).
+    let recovery = acquire
+        .run_recovery(runtime.wakeups(), runtime.lane())
+        .await
+        .map_err(|error| format!("acquire recovery: {error}"))?;
+    tracing::info!(
+        redispatched = recovery.redispatched,
+        resumed = recovery.resumed,
+        restarted = recovery.restarted,
+        "acquire recovery complete"
+    );
+    let state = AppState::new(
+        ids,
+        http,
+        config.clone(),
+        auth,
+        reads,
+        providers,
+        stage6,
+        acquire.clone(),
+    );
     let app = create_app(state);
 
     // Stage-5 refresh loops (M4 follow-up): the discover and home loops
@@ -255,6 +289,17 @@ async fn serve() -> Result<(), String> {
         report_worker.run().await;
     });
 
+    // Stage-7 acquisition loops: the four flows loops, the download
+    // worker, and the probe refresh loop over the same shutdown watch.
+    let acquire_loops = acquire
+        .spawn_loops(
+            runtime.wakeups().clone(),
+            runtime.lane().clone(),
+            shutdown_rx.clone(),
+        )
+        .await
+        .map_err(|error| format!("acquire loops: {error}"))?;
+
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), config.port);
     let listener = tokio::net::TcpListener::bind(address)
         .await
@@ -273,6 +318,9 @@ async fn serve() -> Result<(), String> {
         loops.push((scope, task));
     }
     loops.push(("report-worker", report_loop));
+    for (scope, handle) in acquire_loops {
+        loops.push((scope, handle));
+    }
     for (scope, handle) in loops {
         if let Err(error) = handle.await {
             tracing::warn!(scope, %error, "background loop ended early");

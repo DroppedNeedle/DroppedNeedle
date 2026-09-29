@@ -146,9 +146,15 @@ impl E2e {
         );
         let connect_apps: droppedneedle::runtime_config::sections::ConnectApps =
             self.store.get().unwrap_or_default();
+        let mut app_config = AppConfig::new(DEFAULT_PORT);
+        app_config.root_app_dir = self
+            .db_path
+            .parent()
+            .map(|parent| parent.to_path_buf())
+            .unwrap_or_else(std::env::temp_dir);
         let (stage6, _worker) = droppedneedle::stage6::Stage6Setup::build(
             &self.db_path,
-            &AppConfig::new(DEFAULT_PORT),
+            &app_config,
             auth.users.clone(),
             Arc::clone(&self.crypto),
             self.http.shared().clone(),
@@ -156,14 +162,26 @@ impl E2e {
             connect_apps,
         )
         .expect("stage6 bundle builds");
+        let mut reads = reads;
+        let acquire = droppedneedle::acquire::AcquireSetup::build(
+            &self.db_path,
+            &app_config,
+            auth.users.clone(),
+            self.http.shared().clone(),
+            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
+            Arc::clone(&self.store),
+            &mut reads.collections,
+        )
+        .expect("acquire bundle builds");
         let state = AppState::new(
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             self.http.clone(),
-            AppConfig::new(DEFAULT_PORT),
+            app_config,
             auth,
             reads,
             Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
             stage6,
+            acquire,
         );
         create_app(state)
     }

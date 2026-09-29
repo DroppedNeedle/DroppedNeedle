@@ -10,6 +10,331 @@
     "version": "3.0.0"
   },
   "paths": {
+    "/api/v3/acquire/health": {
+      "get": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Acquisition health smoke: Free OR slskd OR Usenet readiness plus the\nindependent per-source release gates.",
+        "operationId": "get_health",
+        "responses": {
+          "200": {
+            "description": "Acquisition health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcquireHealth"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/acquire/lidarr-import/artists": {
+      "get": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Monitored Lidarr artists annotated for the caller.",
+        "operationId": "list_lidarr_artists",
+        "responses": {
+          "200": {
+            "description": "Import candidates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LidarrArtistListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/acquire/lidarr-import/config": {
+      "get": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Masked Lidarr connection settings.",
+        "operationId": "get_lidarr_config",
+        "responses": {
+          "200": {
+            "description": "Masked Lidarr settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LidarrConnectionSettings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Save the Lidarr connection. A masked key preserves the stored one.",
+        "operationId": "put_lidarr_config",
+        "responses": {
+          "200": {
+            "description": "Saved Lidarr settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LidarrConnectionSettings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/acquire/lidarr-import/import": {
+      "post": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Import selected Lidarr artists into the caller's follows.",
+        "operationId": "import_lidarr",
+        "responses": {
+          "200": {
+            "description": "Import summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LidarrImportResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/acquire/lidarr-import/test": {
+      "post": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Test submitted Lidarr credentials against `system/status` (v2 Test\nroute): the SUBMITTED url/key are probed so Test works before the first\nsave, a masked key resolves to the stored one, and reachable/bad-key\nverdicts travel in the body, never as a leaked 5xx, never echoing the\nURL or host.",
+        "operationId": "test_lidarr",
+        "responses": {
+          "200": {
+            "description": "Lidarr probe verdict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LidarrTestResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/acquire/sabnzbd/status": {
+      "get": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Live SABnzbd status against the saved config (v2: admin-only).",
+        "operationId": "get_sabnzbd_status",
+        "responses": {
+          "200": {
+            "description": "SABnzbd status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SabnzbdStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/acquire/slskd/status": {
+      "get": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Live slskd client status (v2: any authenticated user may read it).",
+        "operationId": "get_slskd_status",
+        "responses": {
+          "200": {
+            "description": "slskd status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlskdStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/acquire/spotify/auth/callback": {
+      "get": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Spotify OAuth callback (v2 `spotify_auth_callback`). State-identified,\nso it sits outside the session gate like v2's ungated route: every\noutcome redirects to the profile page with the v2 query contract\n(`spotify=connected`, or `spotify=error` with an optional `reason`).",
+        "operationId": "spotify_callback",
+        "responses": {
+          "307": {
+            "description": "Redirect to the profile page"
+          }
+        }
+      }
+    },
+    "/api/v3/acquire/spotify/auth/url": {
+      "get": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Authorize URL for the caller's Spotify link flow. Requires the admin\napp to be enabled and complete (v2 400 text kept).",
+        "operationId": "get_spotify_auth_url",
+        "responses": {
+          "200": {
+            "description": "Authorize URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpotifyAuthUrlResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/acquire/spotify/jobs/{id}": {
+      "get": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Latest known state of one `spotify:import` job.",
+        "operationId": "get_spotify_job",
+        "responses": {
+          "200": {
+            "description": "Job state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpotifyJobStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/acquire/spotify/playlists": {
+      "get": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "The caller's owned Spotify playlists. Unlinked reads as the v2 400;\nupstream failures as the v2 502.",
+        "operationId": "list_spotify_playlists",
+        "responses": {
+          "200": {
+            "description": "Owned playlists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpotifyPlaylistListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/acquire/spotify/playlists/{id}/import": {
+      "post": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Start a Spotify playlist import: ensure the internal record, queue the\n`spotify:import` durable job unless it already runs, and answer the id\nimmediately (v2 answer-fast shape).",
+        "operationId": "import_spotify_playlist",
+        "responses": {
+          "200": {
+            "description": "Import acknowledgement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpotifyImportResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/acquire/spotify/redirect-uri": {
+      "get": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "The computed OAuth redirect URI (v2 admin display endpoint).",
+        "operationId": "get_spotify_redirect_uri",
+        "responses": {
+          "200": {
+            "description": "OAuth redirect URI",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpotifyRedirectUri"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/acquire/spotify/settings": {
+      "get": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Masked Spotify app settings.",
+        "operationId": "get_spotify_settings",
+        "responses": {
+          "200": {
+            "description": "Masked Spotify settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpotifySettings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Save the Spotify app settings. A masked secret preserves the stored\none; a non-absolute redirect origin is a 400 (v2 text kept).",
+        "operationId": "put_spotify_settings",
+        "responses": {
+          "200": {
+            "description": "Saved Spotify settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpotifySettings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/admin/app-passwords": {
       "get": {
         "tags": [
@@ -329,6 +654,38 @@
         "responses": {
           "204": {
             "description": "Sessions revoked"
+          }
+        }
+      }
+    },
+    "/api/v3/albums/{album_id}/edition/acquire": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::intake"
+        ],
+        "summary": "Fill the selected edition's missing tracks and upgrade its below-cutoff\nowned tracks (A:12). `POST /api/v3/albums/{album_id}/edition/acquire`.\nCurator only. Never retags existing files.",
+        "operationId": "acquire_edition_handler",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionAcquireResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -5811,6 +6168,217 @@
         }
       }
     },
+    "/api/v3/requests/active": {
+      "get": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Live asks. `GET /api/v3/requests/active`. Admins see every row.",
+        "operationId": "active_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveRequestsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/active/count": {
+      "get": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Live-ask count. `GET /api/v3/requests/active/count`.",
+        "operationId": "active_count_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveCountResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/active/{musicbrainz_id}": {
+      "delete": {
+        "tags": [
+          "crate::acquire::requests::intake"
+        ],
+        "summary": "Cancel one ask. `DELETE /api/v3/requests/active/{musicbrainz_id}`.\nCo-requesters detach with the shared row continuing; owners cancel.",
+        "operationId": "cancel_one_handler",
+        "parameters": [
+          {
+            "name": "musicbrainz_id",
+            "in": "path",
+            "description": "Album or recording MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/albums": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::intake"
+        ],
+        "summary": "Ask for one album. `POST /api/v3/requests/albums`. Users wait for\napproval; curators dispatch at once. Duplicate asks attach to the live\nrow and report its status. Answers 202.",
+        "operationId": "request_album_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlbumIntake"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/approvals": {
+      "get": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Rows waiting for review. `GET /api/v3/requests/approvals`. Admin only.",
+        "operationId": "approvals_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveRequestsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/approvals/count": {
+      "get": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Pending-review badge count across all three queues.\n`GET /api/v3/requests/approvals/count`. Admin only.",
+        "operationId": "approvals_count_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveCountResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/approvals/{musicbrainz_id}/approve": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Approve one waiting ask and dispatch it.\n`POST /api/v3/requests/approvals/{musicbrainz_id}/approve`. Admin only.",
+        "operationId": "approve_handler",
+        "parameters": [
+          {
+            "name": "musicbrainz_id",
+            "in": "path",
+            "description": "Album or recording MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/approvals/{musicbrainz_id}/reject": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Reject one waiting ask.\n`POST /api/v3/requests/approvals/{musicbrainz_id}/reject`. Admin only.",
+        "operationId": "reject_handler",
+        "parameters": [
+          {
+            "name": "musicbrainz_id",
+            "in": "path",
+            "description": "Album or recording MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/requests/auto-download-approval-batches": {
       "get": {
         "tags": [
@@ -5838,6 +6406,70 @@
         }
       }
     },
+    "/api/v3/requests/auto-download-approval-batches/{batch_id}/approve": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Approve one bulk batch.\n`POST /api/v3/requests/auto-download-approval-batches/{batch_id}/approve`.\nAdmin only.",
+        "operationId": "approve_auto_download_batch_handler",
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "path",
+            "description": "Batch id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/auto-download-approval-batches/{batch_id}/reject": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Reject one bulk batch.\n`POST /api/v3/requests/auto-download-approval-batches/{batch_id}/reject`.\nAdmin only.",
+        "operationId": "reject_auto_download_batch_handler",
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "path",
+            "description": "Batch id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/requests/auto-download-approvals": {
       "get": {
         "tags": [
@@ -5861,6 +6493,583 @@
           },
           "403": {
             "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Approve one auto-download grant.\n`POST /api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve`.\nAdmin only.",
+        "operationId": "approve_auto_download_handler",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "Requesting user id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "Artist MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Reject one auto-download ask, keeping the follow.\n`POST /api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject`.\nAdmin only.",
+        "operationId": "reject_auto_download_handler",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "Requesting user id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "Artist MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Revoke one auto-download grant, keeping the follow.\n`POST /api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke`.\nAdmin only.",
+        "operationId": "revoke_auto_download_handler",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "Requesting user id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "Artist MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/batches": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::intake"
+        ],
+        "summary": "Ask for a batch of albums. `POST /api/v3/requests/batches`. At most 500\nrows; dupes, live rows, and unresolvable rows skip. Answers 202.",
+        "operationId": "request_batch_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchIntake"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchIntakeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/batches/cancel": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::intake"
+        ],
+        "summary": "Cancel a batch of asks (R10). `POST /api/v3/requests/batches/cancel`.\nNon-admins detach from shared rows and cancel their own; admins cancel\nanything live.",
+        "operationId": "cancel_batch_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchCancelBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchCancelResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/history": {
+      "get": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Paged history. `GET /api/v3/requests/history`. Admins see every row.",
+        "operationId": "history_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/history/{musicbrainz_id}": {
+      "delete": {
+        "tags": [
+          "crate::acquire::requests::intake"
+        ],
+        "summary": "Clear one history row. `DELETE /api/v3/requests/history/{musicbrainz_id}`.\nAdmins delete the row; users dismiss it from their own view.",
+        "operationId": "clear_history_handler",
+        "parameters": [
+          {
+            "name": "musicbrainz_id",
+            "in": "path",
+            "description": "Album or recording MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearHistoryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/personal-mix-approvals": {
+      "get": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Pending personal-mix approvals.\n`GET /api/v3/requests/personal-mix-approvals`. Admin only.",
+        "operationId": "mix_approvals_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalMixApprovalsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/personal-mix-approvals/{user_id}/approve": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Approve one mix auto-request grant.\n`POST /api/v3/requests/personal-mix-approvals/{user_id}/approve`.\nAdmin only.",
+        "operationId": "approve_mix_handler",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "Requesting user id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/personal-mix-approvals/{user_id}/reject": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Reject one mix auto-request ask.\n`POST /api/v3/requests/personal-mix-approvals/{user_id}/reject`.\nAdmin only.",
+        "operationId": "reject_mix_handler",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "Requesting user id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/personal-mix-approvals/{user_id}/revoke": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Revoke one mix auto-request grant.\n`POST /api/v3/requests/personal-mix-approvals/{user_id}/revoke`.\nAdmin only.",
+        "operationId": "revoke_mix_handler",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "Requesting user id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/personal-mix/refresh": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Refresh one user's personal mix (A:393).\n`POST /api/v3/requests/personal-mix/refresh`. Repeat calls while a build\nruns answer `already_running`; unlinked users get 400.",
+        "operationId": "refresh_mix_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestsRefreshResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/retry/{musicbrainz_id}": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::intake"
+        ],
+        "summary": "Retry one terminal ask. `POST /api/v3/requests/retry/{musicbrainz_id}`.\nPlain users rejoin the queue unless the generation already carries\napproval provenance.",
+        "operationId": "retry_one_handler",
+        "parameters": [
+          {
+            "name": "musicbrainz_id",
+            "in": "path",
+            "description": "Album or recording MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/sync": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Reconcile live rows with their linked tasks.\n`POST /api/v3/requests/sync`. One bad row never stops the sweep.",
+        "operationId": "sync_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/tracks": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::intake"
+        ],
+        "summary": "Ask for one exact recording. `POST /api/v3/requests/tracks`. Same\napproval gate as albums. Answers 202.",
+        "operationId": "request_track_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrackIntake"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackIntakeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/wanted": {
+      "get": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Wanted watches plus the still-retrying set.\n`GET /api/v3/requests/wanted`. Admins see every row.",
+        "operationId": "wanted_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WantedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/wanted/{musicbrainz_id}/resume": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Resume one wanted watch.\n`POST /api/v3/requests/wanted/{musicbrainz_id}/resume`.",
+        "operationId": "wanted_resume_handler",
+        "parameters": [
+          {
+            "name": "musicbrainz_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WantedActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/wanted/{musicbrainz_id}/seen": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Clear one watch's unseen candidates.\n`POST /api/v3/requests/wanted/{musicbrainz_id}/seen`.",
+        "operationId": "wanted_seen_handler",
+        "parameters": [
+          {
+            "name": "musicbrainz_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WantedActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/requests/wanted/{musicbrainz_id}/stop": {
+      "post": {
+        "tags": [
+          "crate::acquire::requests::views"
+        ],
+        "summary": "Pause one wanted watch. `POST /api/v3/requests/wanted/{musicbrainz_id}/stop`.",
+        "operationId": "wanted_stop_handler",
+        "parameters": [
+          {
+            "name": "musicbrainz_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WantedActionResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -6532,6 +7741,96 @@
   },
   "components": {
     "schemas": {
+      "AcquireHealth": {
+        "type": "object",
+        "description": "Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`\nis Free OR slskd OR Usenet readiness; the gates unpack per source.",
+        "required": [
+          "status",
+          "ready",
+          "ready_via",
+          "gates"
+        ],
+        "properties": {
+          "gates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceGate"
+            },
+            "description": "Independent per-source release gates."
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "True when at least one acquisition path can serve releases."
+          },
+          "ready_via": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Paths currently ready: any of `free`, `slskd`, `usenet`."
+          },
+          "status": {
+            "type": "string",
+            "description": "Overall verdict: `ok`, `degraded`, or `error`."
+          }
+        }
+      },
+      "ActionResponse": {
+        "type": "object",
+        "description": "Mutation outcome for approve/reject/cancel/retry/clear.",
+        "required": [
+          "success",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Human outcome."
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether the action applied."
+          }
+        }
+      },
+      "ActiveCountResponse": {
+        "type": "object",
+        "description": "Bare count shape for badges.",
+        "required": [
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Row count.",
+            "minimum": 0
+          }
+        }
+      },
+      "ActiveRequestsResponse": {
+        "type": "object",
+        "description": "Active-requests list.",
+        "required": [
+          "items",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Row count.",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestItem"
+            },
+            "description": "Active rows."
+          }
+        }
+      },
       "AddTracksBody": {
         "type": "object",
         "description": "Add-tracks body.",
@@ -6863,6 +8162,56 @@
           "musicbrainz_id": {
             "type": "string",
             "description": "Provider release-group id."
+          }
+        }
+      },
+      "AlbumIntake": {
+        "type": "object",
+        "description": "Album intake body. Names may be omitted only when they resolve; this\nslice has no catalog lookup, so blank or literal-\"Unknown\" names are\nrejected (v2 `request_service._meaningful_name` quirk).",
+        "required": [
+          "musicbrainz_id"
+        ],
+        "properties": {
+          "album": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Album title."
+          },
+          "artist": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Artist name."
+          },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Artist MBID."
+          },
+          "auto_download_artist": {
+            "type": "boolean",
+            "description": "Auto-download the artist's future releases (approval-gated for users)."
+          },
+          "monitor_artist": {
+            "type": "boolean",
+            "description": "Follow the artist for new releases."
+          },
+          "musicbrainz_id": {
+            "type": "string",
+            "description": "Release-group MBID."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Release year."
           }
         }
       },
@@ -7510,6 +8859,171 @@
           }
         }
       },
+      "BatchCancelBody": {
+        "type": "object",
+        "description": "Batch-cancel body (R10). Dedupe is by exact string before lookup.",
+        "required": [
+          "musicbrainz_ids"
+        ],
+        "properties": {
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Request kind; defaults to album."
+          },
+          "musicbrainz_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "MBIDs to cancel."
+          }
+        }
+      },
+      "BatchCancelResponse": {
+        "type": "object",
+        "description": "Batch-cancel response (R10).",
+        "required": [
+          "success",
+          "cancelled",
+          "failed",
+          "message"
+        ],
+        "properties": {
+          "cancelled": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Rows cancelled or detached.",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Rows that failed.",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string",
+            "description": "Human outcome."
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether anything was cancelled."
+          }
+        }
+      },
+      "BatchIntake": {
+        "type": "object",
+        "description": "Batch intake body (v2 caps batches at 500 rows).",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "auto_download_artist": {
+            "type": "boolean",
+            "description": "Auto-download future releases (approval-gated for users)."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchItem"
+            },
+            "description": "Rows to request."
+          },
+          "monitor_artist": {
+            "type": "boolean",
+            "description": "Follow each artist for new releases."
+          }
+        }
+      },
+      "BatchIntakeResponse": {
+        "type": "object",
+        "description": "Batch intake response.",
+        "required": [
+          "success",
+          "message",
+          "requested",
+          "skipped",
+          "overflow",
+          "status"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Human outcome."
+          },
+          "overflow": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Rows over the batch cap; always zero (cap rejects the batch instead).",
+            "minimum": 0
+          },
+          "requested": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Rows recorded (auto roles: rows dispatched).",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Rows skipped (duplicates, in-progress, unresolvable).",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "description": "Batch decision: `pending`, `awaiting_approval`, `already_requested`,\nor `failed`."
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether the batch recorded anything."
+          }
+        }
+      },
+      "BatchItem": {
+        "type": "object",
+        "description": "One batch row.",
+        "required": [
+          "musicbrainz_id"
+        ],
+        "properties": {
+          "album_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Album title."
+          },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Artist MBID."
+          },
+          "artist_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Artist name."
+          },
+          "musicbrainz_id": {
+            "type": "string",
+            "description": "Release-group MBID."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Release year."
+          }
+        }
+      },
       "BecauseYouListenTo": {
         "type": "object",
         "description": "One \"because you listen to\" shelf: seed plus similar albums.",
@@ -7902,6 +9416,19 @@
             "propertyNames": {
               "type": "string"
             }
+          }
+        }
+      },
+      "ClearHistoryResponse": {
+        "type": "object",
+        "description": "Clear-history outcome.",
+        "required": [
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether a row was cleared."
           }
         }
       },
@@ -8833,6 +10360,31 @@
           }
         }
       },
+      "EditionAcquireResponse": {
+        "type": "object",
+        "description": "Edition-acquire outcome (A:12).",
+        "required": [
+          "status",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Human outcome."
+          },
+          "status": {
+            "type": "string",
+            "description": "`started`, `already_in_progress`, or `already_complete`."
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked download task, when dispatched."
+          }
+        }
+      },
       "EditionPinBody": {
         "type": "object",
         "description": "Pin-set body.",
@@ -9694,6 +11246,95 @@
           }
         }
       },
+      "HistoryQuery": {
+        "type": "object",
+        "description": "History paging and filter query.",
+        "properties": {
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`album` or `track`; unset means both."
+          },
+          "page": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "1-based page.",
+            "minimum": 0
+          },
+          "page_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Rows per page (1..=100).",
+            "minimum": 0
+          },
+          "sort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`newest` (default), `oldest`, or `status`."
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Status filter."
+          }
+        }
+      },
+      "HistoryResponse": {
+        "type": "object",
+        "description": "Paged history list.",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "total_pages"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestItem"
+            },
+            "description": "Page rows."
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Current page.",
+            "minimum": 0
+          },
+          "page_size": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Rows per page.",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Total rows.",
+            "minimum": 0
+          },
+          "total_pages": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Total pages (at least 1).",
+            "minimum": 0
+          }
+        }
+      },
       "HomeResponse": {
         "type": "object",
         "description": "Home shelves. Every shelf is optional: absence means the shelf has no\ndata, never a failure.",
@@ -10225,6 +11866,41 @@
           }
         }
       },
+      "IntakeResponse": {
+        "type": "object",
+        "description": "Intake response. Clients render this decision, never infer from roles.",
+        "required": [
+          "success",
+          "message",
+          "musicbrainz_id",
+          "status"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Human outcome."
+          },
+          "musicbrainz_id": {
+            "type": "string",
+            "description": "Canonical MBID."
+          },
+          "status": {
+            "type": "string",
+            "description": "Row status after this call."
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether the ask was recorded."
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked download task, when dispatched."
+          }
+        }
+      },
       "IntegrationStatus": {
         "type": "object",
         "description": "Which integrations back the shelves right now.",
@@ -10297,6 +11973,19 @@
           "username": {
             "type": "string",
             "description": "Jellyfin username."
+          }
+        }
+      },
+      "KindQuery": {
+        "type": "object",
+        "description": "`kind` query shared by the per-request mutations.",
+        "properties": {
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`album` (default) or `track`."
           }
         }
       },
@@ -10407,6 +12096,159 @@
           "token": {
             "type": "string",
             "description": "Single-use token for the session exchange."
+          }
+        }
+      },
+      "LidarrArtistCandidate": {
+        "type": "object",
+        "description": "One monitored Lidarr artist annotated for the requesting user (v2\n`LidarrArtistCandidate`).",
+        "required": [
+          "mbid",
+          "name",
+          "monitor_new_items",
+          "already_following",
+          "would_auto_download"
+        ],
+        "properties": {
+          "already_following": {
+            "type": "boolean",
+            "description": "True when the user already follows this MBID."
+          },
+          "mbid": {
+            "type": "string",
+            "description": "MusicBrainz artist MBID (`foreignArtistId`)."
+          },
+          "monitor_new_items": {
+            "type": "string",
+            "description": "Lidarr `monitorNewItems`: `none` or `all`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Artist name as Lidarr reports it."
+          },
+          "would_auto_download": {
+            "type": "boolean",
+            "description": "True when importing would arm auto-download (`all`)."
+          }
+        }
+      },
+      "LidarrArtistListResponse": {
+        "type": "object",
+        "description": "Candidate list (v2 `LidarrArtistListResponse`).",
+        "required": [
+          "artists",
+          "total"
+        ],
+        "properties": {
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LidarrArtistCandidate"
+            },
+            "description": "Monitored artists with valid MBIDs."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Count of `artists`."
+          }
+        }
+      },
+      "LidarrConnectionSettings": {
+        "type": "object",
+        "description": "Admin-configured read-only Lidarr import connection (v2\n`LidarrImportConnectionSettings`, D5). NOT a management integration.",
+        "required": [
+          "url",
+          "api_key"
+        ],
+        "properties": {
+          "api_key": {
+            "type": "string",
+            "description": "API key, Fernet-encrypted at rest, masked on read."
+          },
+          "url": {
+            "type": "string",
+            "description": "Lidarr base URL, normalised to a bare origin."
+          }
+        }
+      },
+      "LidarrImportRequest": {
+        "type": "object",
+        "description": "Import selection (v2 `LidarrImportRequest`).",
+        "required": [
+          "selected_mbids"
+        ],
+        "properties": {
+          "selected_mbids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "MBIDs to import; unknown or unmonitored entries are ignored."
+          }
+        }
+      },
+      "LidarrImportResponse": {
+        "type": "object",
+        "description": "Import summary (v2 `LidarrImportResponse`). `imported` counts brand-new\nfollows only; `already_following` is the disjoint pre-existing subset;\n`auto_download_enabled` counts brand-new auto-download follows only (D9).",
+        "required": [
+          "imported",
+          "already_following",
+          "skipped_invalid",
+          "auto_download_enabled"
+        ],
+        "properties": {
+          "already_following": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Selected MBIDs already followed before this import."
+          },
+          "approval_batch_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Approval batch for a non-admin auto-download mirror; else null."
+          },
+          "auto_download_enabled": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Brand-new follows with auto-download armed."
+          },
+          "imported": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Brand-new follows created."
+          },
+          "skipped_invalid": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Selected entries that were not valid MBIDs."
+          }
+        }
+      },
+      "LidarrTestResponse": {
+        "type": "object",
+        "description": "Result of testing submitted Lidarr credentials (v2 `LidarrTestResponse`).",
+        "required": [
+          "valid",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "User-safe summary. Never echoes the URL or host."
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "True when the probe authenticated."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lidarr version from `system/status`, when the probe reached it."
           }
         }
       },
@@ -10854,6 +12696,54 @@
           "username": {
             "type": "string",
             "description": "Account username."
+          }
+        }
+      },
+      "PersonalMixApprovalItem": {
+        "type": "object",
+        "description": "One pending personal-mix auto-request approval.",
+        "required": [
+          "user_id",
+          "user_name",
+          "requested_at"
+        ],
+        "properties": {
+          "requested_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch seconds when asked.",
+            "minimum": 0
+          },
+          "user_id": {
+            "type": "string",
+            "description": "Requesting user id."
+          },
+          "user_name": {
+            "type": "string",
+            "description": "Requesting display name."
+          }
+        }
+      },
+      "PersonalMixApprovalsResponse": {
+        "type": "object",
+        "description": "Pending personal-mix approvals.",
+        "required": [
+          "items",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Row count.",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonalMixApprovalItem"
+            },
+            "description": "Pending rows."
           }
         }
       },
@@ -12882,6 +14772,133 @@
           }
         }
       },
+      "RequestItem": {
+        "type": "object",
+        "description": "One request row in list views.",
+        "required": [
+          "musicbrainz_id",
+          "artist_name",
+          "album_title",
+          "requested_at",
+          "status",
+          "request_kind",
+          "requester_count"
+        ],
+        "properties": {
+          "album_title": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Artist MBID."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "completed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch seconds when terminal, when terminal.",
+            "minimum": 0
+          },
+          "duration_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Track length for exact-track rows."
+          },
+          "musicbrainz_id": {
+            "type": "string",
+            "description": "Album or recording MBID."
+          },
+          "request_kind": {
+            "type": "string",
+            "description": "`album` or `track`."
+          },
+          "requested_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch seconds when asked.",
+            "minimum": 0
+          },
+          "requested_by_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Owner display name."
+          },
+          "requester_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Co-requester count beyond the owner.",
+            "minimum": 0
+          },
+          "reviewed_by_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Reviewer display name."
+          },
+          "status": {
+            "type": "string",
+            "description": "Row status."
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked download task."
+          },
+          "track_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Track title for exact-track rows."
+          },
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Primary owner id."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Release year."
+          }
+        }
+      },
+      "RequestsRefreshResponse": {
+        "type": "object",
+        "description": "Personal-mix refresh outcome (A:393). The schema renames to avoid the\ndiscover slice's unrelated `RefreshResponse` in the shared document.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "`started` or `already_running`."
+          }
+        }
+      },
       "ResolveSourcesResponse": {
         "type": "object",
         "description": "Source-resolution answer: each track id maps to its known sources.",
@@ -12923,6 +14940,46 @@
           "role": {
             "$ref": "#/components/schemas/Role",
             "description": "New role."
+          }
+        }
+      },
+      "SabnzbdStatusResponse": {
+        "type": "object",
+        "description": "Live SABnzbd status against the saved config (v2 `SabnzbdTestResponse`,\nstatus half).",
+        "required": [
+          "valid",
+          "message",
+          "categories"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Category list, when the probe reached it."
+          },
+          "complete_dir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Completed dir (the mount hint), when the probe reached it."
+          },
+          "message": {
+            "type": "string",
+            "description": "User-safe summary."
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "True when the saved config probes clean."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "SABnzbd version, when the probe reached it."
           }
         }
       },
@@ -13557,6 +15614,74 @@
           }
         }
       },
+      "SlskdStatusResponse": {
+        "type": "object",
+        "description": "Live slskd client status (v2 `DownloadClientStatusResponse`, trimmed to\nthe client half; the mount half belongs to the downloads slice).",
+        "required": [
+          "configured",
+          "reachable",
+          "message"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "Credentials/URL present."
+          },
+          "message": {
+            "type": "string",
+            "description": "User-safe summary."
+          },
+          "reachable": {
+            "type": "boolean",
+            "description": "Live probe answered."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "slskd version, when the probe reached it."
+          }
+        }
+      },
+      "SourceGate": {
+        "type": "object",
+        "description": "Per-source release gate verdict. Each source gates independently: one\nred gate never flips another.",
+        "required": [
+          "source",
+          "enabled",
+          "configured",
+          "reachable",
+          "open",
+          "message"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "Credentials/URL present."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Admin master switch for this source."
+          },
+          "message": {
+            "type": "string",
+            "description": "User-safe summary."
+          },
+          "open": {
+            "type": "boolean",
+            "description": "True when releases may flow from this source."
+          },
+          "reachable": {
+            "type": "boolean",
+            "description": "Live probe answered."
+          },
+          "source": {
+            "type": "string",
+            "description": "`slskd`, `sabnzbd`, `newznab`, or `lidarr_import`."
+          }
+        }
+      },
       "SourceName": {
         "type": "string",
         "description": "Which remote source a view or id belongs to.",
@@ -13565,6 +15690,183 @@
           "navidrome",
           "plex"
         ]
+      },
+      "SpotifyAuthUrlResponse": {
+        "type": "object",
+        "description": "Authorize URL for the caller's Spotify link flow (v2\n`SpotifyAuthUrlResponse`).",
+        "required": [
+          "auth_url"
+        ],
+        "properties": {
+          "auth_url": {
+            "type": "string",
+            "description": "`accounts.spotify.com/authorize` URL with state."
+          }
+        }
+      },
+      "SpotifyImportRequest": {
+        "type": "object",
+        "description": "Import start (v2 `SpotifyImportRequest`).",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name for the internal playlist record."
+          }
+        }
+      },
+      "SpotifyImportResponse": {
+        "type": "object",
+        "description": "Import acknowledgement (v2 `SpotifyImportResponse`). The populate runs\nas the `spotify:import` durable job; the id is usable immediately.",
+        "required": [
+          "playlist_id"
+        ],
+        "properties": {
+          "playlist_id": {
+            "type": "string",
+            "description": "Internal playlist id."
+          }
+        }
+      },
+      "SpotifyJobStatus": {
+        "type": "object",
+        "description": "Terminal-or-live state of one `spotify:import` job.",
+        "required": [
+          "state",
+          "playlist_id"
+        ],
+        "properties": {
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "User-safe failure summary, else null."
+          },
+          "playlist_id": {
+            "type": "string",
+            "description": "Internal playlist id the job populates."
+          },
+          "state": {
+            "type": "string",
+            "description": "`running`, `done`, or `error`."
+          },
+          "track_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Tracks written on success."
+          }
+        }
+      },
+      "SpotifyPlaylistItem": {
+        "type": "object",
+        "description": "One owned Spotify playlist (v2 `SpotifyPlaylistItem`).",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "track_count",
+          "owner"
+        ],
+        "properties": {
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Picked cover URL, smallest image at least 250 wide."
+          },
+          "description": {
+            "type": "string",
+            "description": "Playlist description."
+          },
+          "id": {
+            "type": "string",
+            "description": "Spotify playlist id."
+          },
+          "imported_playlist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Internal playlist id when already imported, else null."
+          },
+          "name": {
+            "type": "string",
+            "description": "Playlist name."
+          },
+          "owner": {
+            "type": "string",
+            "description": "Owner display name."
+          },
+          "track_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Track total from the `items`/`tracks` dict quirk."
+          }
+        }
+      },
+      "SpotifyPlaylistListResponse": {
+        "type": "object",
+        "description": "Owned playlists (v2 `SpotifyPlaylistListResponse`).",
+        "required": [
+          "playlists"
+        ],
+        "properties": {
+          "playlists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SpotifyPlaylistItem"
+            },
+            "description": "Playlists owned by the caller's Spotify account."
+          }
+        }
+      },
+      "SpotifyRedirectUri": {
+        "type": "object",
+        "description": "The computed OAuth redirect URI (v2 `GET /spotify/redirect-uri`).",
+        "required": [
+          "redirect_uri"
+        ],
+        "properties": {
+          "redirect_uri": {
+            "type": "string",
+            "description": "Byte-exact URI registered in the Spotify dashboard."
+          }
+        }
+      },
+      "SpotifySettings": {
+        "type": "object",
+        "description": "Admin Spotify app settings (v2 `SpotifySettings`, GH-298).",
+        "required": [
+          "client_id",
+          "client_secret",
+          "enabled",
+          "spotify_redirect_origin"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "description": "Spotify app client id, returned unmasked."
+          },
+          "client_secret": {
+            "type": "string",
+            "description": "Spotify app secret, encrypted at rest, masked on read."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch for Spotify OAuth."
+          },
+          "spotify_redirect_origin": {
+            "type": "string",
+            "description": "Optional absolute origin the OAuth redirect URI is built from."
+          }
+        }
       },
       "StatsView": {
         "type": "object",
@@ -13789,6 +16091,21 @@
               "$ref": "#/components/schemas/SuggestionTrack"
             },
             "description": "Reason-tagged tracks, pools interleaved."
+          }
+        }
+      },
+      "SyncResponse": {
+        "type": "object",
+        "description": "Status-sync outcome.",
+        "required": [
+          "reconciled"
+        ],
+        "properties": {
+          "reconciled": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Rows reconciled.",
+            "minimum": 0
           }
         }
       },
@@ -14045,6 +16362,85 @@
               "null"
             ],
             "description": "Library track source id, when known."
+          }
+        }
+      },
+      "TrackIntake": {
+        "type": "object",
+        "description": "Exact-track intake body.",
+        "required": [
+          "recording_mbid",
+          "artist_name",
+          "track_title"
+        ],
+        "properties": {
+          "album_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Album title, when known."
+          },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Artist MBID."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "duration_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Track length in seconds."
+          },
+          "recording_mbid": {
+            "type": "string",
+            "description": "Recording MBID."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Containing release-group MBID, when known."
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release MBID."
+          },
+          "track_title": {
+            "type": "string",
+            "description": "Track title."
+          }
+        }
+      },
+      "TrackIntakeResponse": {
+        "type": "object",
+        "description": "Exact-track intake response.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "`queued`, `awaiting_approval`, or `already_in_library`."
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked download task, when dispatched."
           }
         }
       },
@@ -14576,6 +16972,155 @@
           "is_public": {
             "type": "boolean",
             "description": "True makes the playlist public; false makes it private."
+          }
+        }
+      },
+      "WantedActionResponse": {
+        "type": "object",
+        "description": "Wanted mutation outcome.",
+        "required": [
+          "success",
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "description": "Watch state after this call."
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether the action applied."
+          }
+        }
+      },
+      "WantedItem": {
+        "type": "object",
+        "description": "One wanted watch.",
+        "required": [
+          "musicbrainz_id",
+          "artist_name",
+          "album_title",
+          "state",
+          "check_count",
+          "new_candidate_count",
+          "created_at"
+        ],
+        "properties": {
+          "album_title": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "check_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Passed checks so far.",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch seconds when created.",
+            "minimum": 0
+          },
+          "musicbrainz_id": {
+            "type": "string",
+            "description": "Release-group MBID."
+          },
+          "new_candidate_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Unseen candidate count.",
+            "minimum": 0
+          },
+          "state": {
+            "type": "string",
+            "description": "Watch state: `watching` or `paused`."
+          },
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Owner id (admins see every row)."
+          }
+        }
+      },
+      "WantedResponse": {
+        "type": "object",
+        "description": "Wanted list: watches plus the still-retrying set.",
+        "required": [
+          "items",
+          "count",
+          "retrying"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Watch count.",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WantedItem"
+            },
+            "description": "Watches."
+          },
+          "retrying": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WantedRetryingItem"
+            },
+            "description": "Still-scheduled auto-retries."
+          }
+        }
+      },
+      "WantedRetryingItem": {
+        "type": "object",
+        "description": "One auto-retry entry behind the wanted view.",
+        "required": [
+          "musicbrainz_id",
+          "artist_name",
+          "album_title",
+          "retry_count",
+          "max_attempts"
+        ],
+        "properties": {
+          "album_title": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "max_attempts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Attempts allowed.",
+            "minimum": 0
+          },
+          "musicbrainz_id": {
+            "type": "string",
+            "description": "Release-group MBID."
+          },
+          "retry_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Attempts so far.",
+            "minimum": 0
+          },
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Owner id (admins see every row)."
           }
         }
       },

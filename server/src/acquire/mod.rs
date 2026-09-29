@@ -1,0 +1,35 @@
+//! Stage-7 acquisition: requests, downloads, sources, flows, imports.
+//!
+//! Six slices plus the integrator's unification layer:
+//!
+//! - [`requests`] serves the user-facing ask/approval/wanted surface.
+//! - [`downloads`] owns the durable task journal, manifests, watchdog
+//!   math, recovery classification, and quarantine.
+//! - [`slskd`] and [`usenet`] own the source clients and indexers.
+//! - [`flows`] runs the wanted watcher, follow poll, upgrade sweep,
+//!   status sync, and the free-music/drop-import operations.
+//! - [`imports`] serves Lidarr/Spotify import plus the health smoke.
+//!
+//! The `dispatch`, `search`, `sources`, `settings`, `probes`, `mirror`,
+//! `worker`, and `wiring` modules are integrator-owned: they unify the
+//! slice-local seams onto one production spelling each (a single
+//! [`dispatch::UnifiedDispatch`] implements both dispatch traits, one
+//! [`search::FanoutSearch`] serves the candidate seam, and so on) and
+//! assemble the [`wiring::AcquireSetup`] bundle the app mounts.
+
+pub mod dispatch;
+pub mod downloads;
+pub mod flows;
+pub mod imports;
+pub mod mirror;
+pub mod probes;
+pub mod requests;
+pub mod search;
+pub mod settings;
+pub mod slskd;
+pub mod sources;
+pub mod usenet;
+pub mod wiring;
+pub mod worker;
+
+pub use wiring::AcquireSetup;

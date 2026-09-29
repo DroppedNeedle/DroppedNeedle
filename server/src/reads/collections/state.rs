@@ -253,6 +253,56 @@ impl IdentityStore {
     }
 }
 
+/// One pending auto-download approval, plain data for the acquire bridge.
+#[derive(Debug, Clone)]
+pub struct PendingApproval {
+    /// Requesting user id.
+    pub user_id: String,
+    /// Requesting display name.
+    pub user_name: String,
+    /// Artist MBID.
+    pub artist_mbid: String,
+    /// Artist name.
+    pub artist_name: String,
+    /// Epoch seconds when asked.
+    pub requested_at: u64,
+}
+
+/// One pending bulk batch, plain data for the acquire bridge.
+#[derive(Debug, Clone)]
+pub struct PendingBatch {
+    /// Batch id.
+    pub batch_id: String,
+    /// Requesting user id.
+    pub user_id: String,
+    /// Requesting display name.
+    pub user_name: String,
+    /// Covered `(artist MBID, artist name)` pairs.
+    pub artists: Vec<(String, String)>,
+    /// Epoch seconds when asked.
+    pub requested_at: u64,
+}
+
+/// Pending approvals owned by the acquire slice. Wiring connects this so
+/// the approval reads share one store with the approval mutations; the
+/// stage-4 briefs leave it empty and read the follow rows.
+pub trait PendingApprovalsSource: Send + Sync {
+    /// Pending approvals, oldest first.
+    fn pending_approvals(&self) -> Vec<PendingApproval>;
+    /// Pending batches, oldest first.
+    fn pending_batches(&self) -> Vec<PendingBatch>;
+}
+
+/// Seed sink into the acquire slice's approval store. Wiring connects this
+/// so follow toggles that land Pending also file the approval the admin
+/// mutations decide; the stage-4 briefs leave it empty.
+pub trait ApprovalSeedSink: Send + Sync {
+    /// File one pending approval.
+    fn seed_approval(&self, user_id: &str, user_name: &str, artist_mbid: &str, artist_name: &str);
+    /// Withdraw a pending ask (the user toggled back off).
+    fn withdraw_approval(&self, user_id: &str, artist_mbid: &str);
+}
+
 /// All slice state. Handlers receive this via the `State` extractor and pass
 /// narrow store references into services.
 #[derive(Clone, Default)]
@@ -273,6 +323,11 @@ pub struct CollectionsState {
     pub identities: Arc<IdentityStore>,
     /// Failure injection for the leak briefs. While set, services fail.
     pub fail_stores: Arc<AtomicBool>,
+    /// Acquire-owned pending approvals, when wired. Reads prefer this over
+    /// the follow rows so reads and mutations share one store.
+    pub acquire_approvals: Option<Arc<dyn PendingApprovalsSource>>,
+    /// Seed sink into the acquire approval store, when wired.
+    pub approval_seeds: Option<Arc<dyn ApprovalSeedSink>>,
 }
 
 impl CollectionsState {

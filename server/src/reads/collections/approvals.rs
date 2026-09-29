@@ -21,13 +21,30 @@ const FOLLOW_SOURCE: &str = "follow_request";
 /// How many artist names a batch card previews.
 const BATCH_SAMPLE_COUNT: usize = 3;
 
-/// List pending auto-download requests across users. Admin only.
+/// List pending auto-download requests across users. Admin only. When
+/// wiring connects the acquire approval store, reads share it with the
+/// approval mutations; otherwise this reads the follow rows.
 pub fn list_approvals(
     state: &CollectionsState,
     caller: &Principal,
 ) -> Result<AutoDownloadApprovalListResponse, CollectionsError> {
     state.check_injection()?;
     caller.require_admin()?;
+    if let Some(source) = &state.acquire_approvals {
+        let items = source
+            .pending_approvals()
+            .into_iter()
+            .map(|row| AutoDownloadApprovalItem {
+                user_id: row.user_id,
+                user_name: Some(row.user_name),
+                artist_mbid: row.artist_mbid,
+                artist_name: row.artist_name,
+                requested_at: row.requested_at,
+            })
+            .collect::<Vec<_>>();
+        let count = items.len();
+        return Ok(AutoDownloadApprovalListResponse { items, count });
+    }
     let rows = read_store(&state.follows.follows, "follow")?;
     let mut items = rows
         .values()
@@ -50,13 +67,46 @@ pub fn list_approvals(
     Ok(AutoDownloadApprovalListResponse { items, count })
 }
 
-/// List pending requests grouped per user as batch cards. Admin only.
+/// What produced an acquire-owned batch card.
+const IMPORT_SOURCE: &str = "import";
+
+/// List pending requests grouped per user as batch cards. Admin only. When
+/// wiring connects the acquire approval store, this lists the acquire
+/// batches (every card actionable through the batch mutations); otherwise
+/// it groups the follow rows per user as before.
 pub fn list_approval_batches(
     state: &CollectionsState,
     caller: &Principal,
 ) -> Result<ApprovalBatchListResponse, CollectionsError> {
     state.check_injection()?;
     caller.require_admin()?;
+    if let Some(source) = &state.acquire_approvals {
+        let mut batches = source
+            .pending_batches()
+            .into_iter()
+            .map(|batch| ApprovalBatchItem {
+                batch_id: batch.batch_id,
+                user_id: batch.user_id,
+                user_name: Some(batch.user_name),
+                artist_count: batch.artists.len(),
+                sample_names: batch
+                    .artists
+                    .iter()
+                    .take(BATCH_SAMPLE_COUNT)
+                    .map(|(_, name)| name.clone())
+                    .collect(),
+                requested_at: batch.requested_at,
+                source: IMPORT_SOURCE.to_owned(),
+            })
+            .collect::<Vec<_>>();
+        batches.sort_by(|a, b| {
+            a.requested_at
+                .cmp(&b.requested_at)
+                .then(a.user_id.cmp(&b.user_id))
+        });
+        let count = batches.len();
+        return Ok(ApprovalBatchListResponse { batches, count });
+    }
     let rows = read_store(&state.follows.follows, "follow")?;
     let mut by_user: std::collections::HashMap<String, Vec<AutoDownloadApprovalItem>> =
         std::collections::HashMap::new();

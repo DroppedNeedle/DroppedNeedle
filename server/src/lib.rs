@@ -18,6 +18,7 @@
 // paths resolve once the slices are wired into the tree.
 extern crate self as droppedneedle;
 
+pub mod acquire;
 pub mod app;
 pub mod auth;
 pub mod config;
