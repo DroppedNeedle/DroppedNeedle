@@ -34,11 +34,14 @@ fn test_http() -> HttpClientFactory {
 
 /// State with the failure hooks mounted and fixed ids.
 pub fn hooked_state() -> AppState {
+    let auth = test_auth();
+    let ids = Arc::new(FixedIdGenerator::new(FIXED_ID));
     AppState::new(
-        Arc::new(FixedIdGenerator::new(FIXED_ID)),
+        ids.clone(),
         test_http(),
         AppConfig::new(DEFAULT_PORT).with_test_hooks(),
-        test_auth(),
+        auth.clone(),
+        test_reads(&auth, ids),
     )
 }
 
@@ -46,12 +49,24 @@ pub fn hooked_state() -> AppState {
 /// targets use it; each target compiles this module separately.
 #[allow(dead_code)]
 pub fn prod_like_state() -> AppState {
+    let auth = test_auth();
+    let ids = Arc::new(droppedneedle::ids::UuidGenerator);
     AppState::new(
-        Arc::new(droppedneedle::ids::UuidGenerator),
+        ids.clone(),
         test_http(),
         AppConfig::new(DEFAULT_PORT),
-        test_auth(),
+        auth.clone(),
+        test_reads(&auth, ids),
     )
+}
+
+/// Unwired reads bundle over the test auth deps.
+fn test_reads(
+    auth: &droppedneedle::auth::wiring::AuthSetup,
+    ids: Arc<dyn IdGenerator>,
+) -> droppedneedle::reads::ReadsSetup {
+    droppedneedle::reads::ReadsSetup::for_tests(auth.users.clone(), ids)
+        .expect("test reads bundle builds")
 }
 
 /// Unwired auth bundle: every adapter fails closed, which is what non-auth

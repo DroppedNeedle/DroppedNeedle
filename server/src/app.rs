@@ -6,6 +6,11 @@
 //! The `/api/v3` router carries two middleware layers, innermost first:
 //! the deny-by-default session gate, then the rate limiter. The debug-only
 //! CORS layer mounts outermost and only when the constructor enables it.
+//!
+//! The wrapped trio nests under `/api/v3` on its own router outside the
+//! session gate: its `X-Wrapped-API-Key` extractor is the only credential,
+//! and allowlisting those paths would wrongly make them public. It keeps
+//! the shared rate limiter.
 
 use axum::{Router, middleware, routing::get};
 
@@ -19,7 +24,11 @@ use crate::{
 /// Build the full application router from explicit state.
 pub fn create_app(state: AppState) -> Router {
     let mut v3 = Router::new()
-        .nest("/api/v3", state.auth.router())
+        .nest(
+            "/api/v3",
+            state.auth.router().merge(state.reads.gated_router()),
+        )
+        .merge(state.reads.search_router())
         .layer(middleware::from_fn_with_state(
             state.auth.session_auth.clone(),
             require_session,
@@ -31,10 +40,17 @@ pub fn create_app(state: AppState) -> Router {
     if state.config.debug_cors {
         v3 = v3.layer(debug_cors_layer());
     }
+    let wrapped = Router::new()
+        .nest("/api/v3", state.reads.wrapped_router())
+        .layer(middleware::from_fn_with_state(
+            state.auth.limits.clone(),
+            rate_limit,
+        ));
     let mut app = Router::new()
         .route("/health", get(handlers::health))
         .route("/openapi.json", get(handlers::openapi_json))
-        .merge(v3);
+        .merge(v3)
+        .merge(wrapped);
     if state.config.test_hooks {
         app = app
             .route(

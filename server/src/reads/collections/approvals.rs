@@ -1,0 +1,145 @@
+//! Auto-download approval reads. Admin only.
+//!
+//! These are the read paths over pending auto-download requests filed through
+//! the follow toggles. Approve, reject, and revoke mutations are out of the
+//! stage-4 slice; they land with acquisition.
+
+use axum::{Json, extract::State};
+
+use super::{
+    auth::Principal,
+    error::CollectionsError,
+    models::{
+        ApprovalBatchItem, ApprovalBatchListResponse, AutoDownloadApprovalItem,
+        AutoDownloadApprovalListResponse,
+    },
+    state::{AutoDownloadState, CollectionsState, read_store},
+};
+
+/// What produced a batch of follow-sourced requests.
+const FOLLOW_SOURCE: &str = "follow_request";
+/// How many artist names a batch card previews.
+const BATCH_SAMPLE_COUNT: usize = 3;
+
+/// List pending auto-download requests across users. Admin only.
+pub fn list_approvals(
+    state: &CollectionsState,
+    caller: &Principal,
+) -> Result<AutoDownloadApprovalListResponse, CollectionsError> {
+    state.check_injection()?;
+    caller.require_admin()?;
+    let rows = read_store(&state.follows.follows, "follow")?;
+    let mut items = rows
+        .values()
+        .filter(|row| row.auto_download_state == AutoDownloadState::Pending)
+        .map(|row| AutoDownloadApprovalItem {
+            user_id: row.user_id.clone(),
+            user_name: Some(row.user_name.clone()),
+            artist_mbid: row.artist_mbid.clone(),
+            artist_name: row.artist_name.clone(),
+            requested_at: row.requested_at.unwrap_or(row.followed_at),
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|a, b| {
+        a.requested_at
+            .cmp(&b.requested_at)
+            .then(a.user_id.cmp(&b.user_id))
+            .then(a.artist_mbid.cmp(&b.artist_mbid))
+    });
+    let count = items.len();
+    Ok(AutoDownloadApprovalListResponse { items, count })
+}
+
+/// List pending requests grouped per user as batch cards. Admin only.
+pub fn list_approval_batches(
+    state: &CollectionsState,
+    caller: &Principal,
+) -> Result<ApprovalBatchListResponse, CollectionsError> {
+    state.check_injection()?;
+    caller.require_admin()?;
+    let rows = read_store(&state.follows.follows, "follow")?;
+    let mut by_user: std::collections::HashMap<String, Vec<AutoDownloadApprovalItem>> =
+        std::collections::HashMap::new();
+    for row in rows
+        .values()
+        .filter(|row| row.auto_download_state == AutoDownloadState::Pending)
+    {
+        by_user
+            .entry(row.user_id.clone())
+            .or_default()
+            .push(AutoDownloadApprovalItem {
+                user_id: row.user_id.clone(),
+                user_name: Some(row.user_name.clone()),
+                artist_mbid: row.artist_mbid.clone(),
+                artist_name: row.artist_name.clone(),
+                requested_at: row.requested_at.unwrap_or(row.followed_at),
+            });
+    }
+    let mut batches = by_user
+        .into_iter()
+        .map(|(user_id, mut items)| {
+            items.sort_by(|a, b| {
+                a.requested_at
+                    .cmp(&b.requested_at)
+                    .then(a.artist_mbid.cmp(&b.artist_mbid))
+            });
+            let user_name = items.first().and_then(|item| item.user_name.clone());
+            let requested_at = items.first().map(|item| item.requested_at).unwrap_or(0);
+            let sample_names = items
+                .iter()
+                .take(BATCH_SAMPLE_COUNT)
+                .map(|item| item.artist_name.clone())
+                .collect::<Vec<_>>();
+            ApprovalBatchItem {
+                batch_id: format!("follow:{user_id}"),
+                user_id,
+                user_name,
+                artist_count: items.len(),
+                sample_names,
+                requested_at,
+                source: FOLLOW_SOURCE.to_owned(),
+            }
+        })
+        .collect::<Vec<_>>();
+    batches.sort_by(|a, b| {
+        a.requested_at
+            .cmp(&b.requested_at)
+            .then(a.user_id.cmp(&b.user_id))
+    });
+    let count = batches.len();
+    Ok(ApprovalBatchListResponse { batches, count })
+}
+
+/// List pending auto-download requests.
+#[utoipa::path(
+    get,
+    path = "/api/v3/requests/auto-download-approvals",
+    responses(
+        (status = 200, description = "Pending approvals", body = AutoDownloadApprovalListResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+    )
+)]
+pub async fn list_approvals_handler(
+    State(state): State<CollectionsState>,
+    caller: Principal,
+) -> Result<Json<AutoDownloadApprovalListResponse>, CollectionsError> {
+    list_approvals(&state, &caller).map(Json)
+}
+
+/// List pending requests grouped per user.
+#[utoipa::path(
+    get,
+    path = "/api/v3/requests/auto-download-approval-batches",
+    responses(
+        (status = 200, description = "Approval batches", body = ApprovalBatchListResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+    )
+)]
+pub async fn list_approval_batches_handler(
+    State(state): State<CollectionsState>,
+    caller: Principal,
+) -> Result<Json<ApprovalBatchListResponse>, CollectionsError> {
+    list_approval_batches(&state, &caller).map(Json)
+}

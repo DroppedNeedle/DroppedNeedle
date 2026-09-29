@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::{
     auth::wiring::AuthSetup, config::AppConfig, http_client::HttpClientFactory, ids::IdGenerator,
-    provider_policy::ProviderPolicy,
+    provider_policy::ProviderPolicy, reads::ReadsSetup,
 };
 
 /// All long-lived server dependencies.
@@ -22,6 +22,8 @@ pub struct AppState {
     pub config: AppConfig,
     /// Auth bundle: stores, gates, and route states for `/api/v3`.
     pub auth: AuthSetup,
+    /// Reads bundle: library, search, discover, collections, platform.
+    pub reads: ReadsSetup,
 }
 
 impl AppState {
@@ -32,12 +34,14 @@ impl AppState {
         http: HttpClientFactory,
         config: AppConfig,
         auth: AuthSetup,
+        reads: ReadsSetup,
     ) -> Self {
         Self {
             ids,
             http,
             config,
             auth,
+            reads,
         }
     }
 

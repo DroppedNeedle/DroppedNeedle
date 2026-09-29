@@ -14,7 +14,8 @@ use droppedneedle::{
     http_client::HttpClientFactory,
     ids::UuidGenerator,
     observability::init_tracing,
-    runtime_config::{ConfigStore, Crypto},
+    reads::ReadsSetup,
+    runtime_config::{ConfigStore, Crypto, secret_sections::WrappedSettings},
     schema::apply_migrations,
 };
 use utoipa::OpenApi as _;
@@ -101,7 +102,7 @@ async fn serve() -> Result<(), String> {
     );
     let auth = AuthSetup::build(
         auth_bundle,
-        config_store,
+        config_store.clone(),
         crypto,
         http.shared().clone(),
         ids.clone(),
@@ -109,8 +110,24 @@ async fn serve() -> Result<(), String> {
         &config.base_path,
     )
     .map_err(|error| error.to_string())?;
-    let state = AppState::new(ids, http, config.clone(), auth);
+    let wrapped_api_key = config_store
+        .get_raw::<WrappedSettings>()
+        .map(|settings| settings.api_key.expose().to_owned())
+        .map_err(|error| error.to_string())?;
+    let reads = ReadsSetup::build(
+        runtime.pool(),
+        auth.users.clone(),
+        ids.clone(),
+        wrapped_api_key,
+    );
+    let state = AppState::new(ids, http, config.clone(), auth, reads);
     let app = create_app(state);
+
+    // No refresh loops yet: the stage-4 discover ports are static scripted
+    // fakes with no rebuild work to run, so there is nothing to schedule.
+    // Stage 5 spawns the discover/home loops here (TokioSleeper over a
+    // shutdown watch; see reads::discover::refresh) and awaits them after
+    // the server below returns.
 
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), config.port);
     let listener = tokio::net::TcpListener::bind(address)

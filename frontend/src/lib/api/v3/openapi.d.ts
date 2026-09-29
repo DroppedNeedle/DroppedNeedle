@@ -185,6 +185,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/artists/{artist_mbid}/auto-download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Turn auto-download on or off for one artist. */
+        put: operations["set_auto_download_handler"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/artists/{artist_mbid}/follow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Follow or unfollow one artist. */
+        put: operations["set_follow_handler"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/artists/{artist_mbid}/follow-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one artist's follow status. */
+        get: operations["get_follow_status_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/auth/device-sessions": {
         parameters: {
             query?: never;
@@ -514,6 +565,1016 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/covers/artist/{artist_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Artist image. */
+        get: operations["artist_cover"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/covers/release-group/{release_group_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Release-group cover art. */
+        get: operations["cover_from_release_group"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/covers/release/{release_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Release cover art. */
+        get: operations["cover_from_release"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Cached discover shelves for the caller. */
+        get: operations["get_discover"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record one discover interaction for personalization. */
+        post: operations["record_activity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/album-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ordered 30-second samples of an album's first tracks. */
+        get: operations["album_preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's batches, newest first. */
+        get: operations["list_batches"];
+        put?: never;
+        /** Create a discovery batch: one request per album. */
+        post: operations["create_batch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/batches/{batch_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One batch. Foreign ids read as missing. */
+        get: operations["get_batch"];
+        put?: never;
+        post?: never;
+        /** Remove one batch. Foreign ids read as missing. */
+        delete: operations["remove_batch"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/playlist-suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Suggest rows extending one playlist. */
+        post: operations["playlist_suggestions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The queue deck: a live build when one exists, else a lightweight build. */
+        get: operations["get_queue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/queue/enrich/{release_group_mbid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Enrichment behind one queue card. */
+        get: operations["enrich_queue_item"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/queue/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Trigger a queue build. */
+        post: operations["queue_generate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/queue/ignore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ignore one release: ledger it, rebuild the queue, refresh discover. */
+        post: operations["ignore_queue_item"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/queue/ignored": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's ignore ledger, newest first. */
+        get: operations["ignored_releases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/queue/preview/{release_group_mbid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** On-demand preview behind one queue card. */
+        post: operations["preview_queue_item"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/queue/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Current queue build status for polling. */
+        get: operations["queue_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/queue/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Library membership behind the given cards. */
+        post: operations["validate_queue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/queue/youtube-cache-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bulk YouTube cache membership. Unconfigured YouTube answers empty. */
+        post: operations["youtube_cache_check"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/queue/youtube-quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** YouTube data-API quota state. 404 when YouTube is unconfigured. */
+        get: operations["youtube_quota"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/queue/youtube-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Album video lookup with the cached flag. */
+        get: operations["youtube_search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/queue/youtube-track-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Track video lookup with the cached flag. */
+        get: operations["youtube_track_search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/radio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate one radio shelf from a seed. */
+        post: operations["discover_radio"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/radio/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Build a complete track-level radio plan. */
+        post: operations["radio_plan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Trigger a background discover rebuild for the caller. */
+        post: operations["refresh_discover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/track-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A 30-second track preview. Empty means no provider had one. */
+        get: operations["track_preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/favorites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the caller's favorites. */
+        get: operations["list_favorites_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/favorites/{kind}/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Favorite or unfavorite one item. */
+        put: operations["set_favorite_handler"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/following/artists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the caller's followed artists. */
+        get: operations["list_followed_artists_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/following/new-releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List new-release sightings for followed artists. */
+        get: operations["list_new_releases_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/following/new-releases/recent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List recent-window sightings for followed artists. */
+        get: operations["list_recent_releases_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/following/new-releases/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark the caller's sightings seen. */
+        post: operations["mark_seen_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/following/new-releases/unseen-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Count unseen sightings for the caller. */
+        get: operations["unseen_count_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/home": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Cached home shelves for the caller. */
+        get: operations["get_home"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/home/genre/{genre_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Genre detail with owned and popular rows. */
+        get: operations["genre_detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/home/integration-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Integration availability behind the shelves. */
+        get: operations["integration_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/home/popular/albums": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One popular-albums page (same range-param redesign). */
+        get: operations["popular_albums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/home/trending/artists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One trending-artists page. Range rides the `range` query param (one
+         *     route replaces the v2 base plus `/{range_key}` pair).
+         */
+        get: operations["trending_artists"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/home/your-top/albums": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One your-top-albums page for the caller (same redesign, per-user). */
+        get: operations["your_top_albums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One page of catalog albums. */
+        get: operations["list_albums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/edition-pin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the pin display lane for one album. */
+        get: operations["get_pin_handler"];
+        /** Pin one edition for an album. */
+        put: operations["set_pin_handler"];
+        post?: never;
+        /** Clear the pin for an album. */
+        delete: operations["clear_pin_handler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One catalog album. */
+        get: operations["get_album"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{id}/copies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Other local albums sharing the album's release group. */
+        get: operations["list_album_copies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{id}/tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One page of an album's streamable tracks. */
+        get: operations["list_album_tracks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/artists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One page of catalog artists. */
+        get: operations["list_artists"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/artists/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One catalog artist. */
+        get: operations["get_artist"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/artists/{id}/albums": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One page of albums led by the artist. */
+        get: operations["list_artist_albums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/artists/{id}/appearances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One page of albums where the artist appears without leading. */
+        get: operations["list_artist_appearances"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/genres": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Full genre listing. */
+        get: operations["list_genres"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/genres/{name}/tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One page of a genre's streamable tracks. */
+        get: operations["list_genre_tracks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/recently-added": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Newest albums first, capped. */
+        get: operations["list_recently_added"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Library totals plus the caller's favorite counts. */
+        get: operations["get_stats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One page of streamable tracks. */
+        get: operations["list_tracks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/tracks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One streamable track. */
+        get: operations["get_track"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/tracks/{id}/lyrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stored lyrics for one track. */
+        get: operations["get_lyrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/local-library/albums": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Album-card browse for the local library. */
+        get: operations["browse_albums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/local-library/decades": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Decade shelves, oldest first. */
+        get: operations["list_decades"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/local-library/recent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Newest album cards first, capped. */
+        get: operations["recent_albums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/local-library/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Album plus track search. */
+        get: operations["search_library"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/local-library/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reason-tagged track suggestions. */
+        get: operations["list_suggestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/me": {
         parameters: {
             query?: never;
@@ -705,6 +1766,311 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/now-playing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The live now-playing snapshot across users. Presence writes
+         *     (POST/DELETE) land in stage 6; this slice only reads.
+         */
+        get: operations["now_playing"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/playlists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List visible playlists. */
+        get: operations["list_playlists_handler"];
+        put?: never;
+        /** Create a playlist. */
+        post: operations["create_playlist_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/playlists/check-tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check which visible playlists hold each queried track. */
+        post: operations["check_tracks_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/playlists/{playlist_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one playlist. */
+        get: operations["get_playlist_handler"];
+        /** Rename a playlist. */
+        put: operations["update_playlist_handler"];
+        post?: never;
+        /** Delete a playlist. */
+        delete: operations["delete_playlist_handler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/playlists/{playlist_id}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Serve playlist cover bytes. */
+        get: operations["get_cover_handler"];
+        put?: never;
+        /** Upload a playlist cover. */
+        post: operations["upload_cover_handler"];
+        /** Delete a playlist cover. */
+        delete: operations["remove_cover_handler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/playlists/{playlist_id}/resolve-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve each track's known sources. */
+        post: operations["resolve_sources_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/playlists/{playlist_id}/tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add tracks to a playlist. */
+        post: operations["add_tracks_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/playlists/{playlist_id}/tracks/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bulk-remove tracks from a playlist. */
+        post: operations["remove_tracks_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/playlists/{playlist_id}/tracks/reorder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Reorder one track inside a playlist. */
+        patch: operations["reorder_track_handler"];
+        trace?: never;
+    };
+    "/api/v3/playlists/{playlist_id}/tracks/{track_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove one track from a playlist. */
+        delete: operations["remove_track_handler"];
+        options?: never;
+        head?: never;
+        /** Update one track's source fields. */
+        patch: operations["update_track_handler"];
+        trace?: never;
+    };
+    "/api/v3/playlists/{playlist_id}/visibility": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Flip playlist visibility. */
+        patch: operations["set_visibility_handler"];
+        trace?: never;
+    };
+    "/api/v3/requests/auto-download-approval-batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List pending requests grouped per user. */
+        get: operations["list_approval_batches_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/auto-download-approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List pending auto-download requests. */
+        get: operations["list_approvals_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ranked hits across the selected buckets plus each bucket's standout. */
+        get: operations["search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/search/enrich/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The single enrich-batch method: one POST enriches a mixed batch of
+         *     artists and albums. v2's duplicate GET form is gone; GET on this path
+         *     is a 405. Provider failures degrade into typed notes, never a 5xx.
+         */
+        post: operations["enrich_batch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/search/suggest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Merged typeahead across buckets. Queries under two characters return
+         *     an empty 200, kept from v2 so typing never errors.
+         */
+        get: operations["suggest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/search/{bucket}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One page of one bucket for drill-down views. */
+        get: operations["search_bucket"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/users/{id}/avatar": {
         parameters: {
             query?: never;
@@ -714,6 +2080,111 @@ export interface paths {
         };
         /** Serve one user's avatar. Self-or-admin; the `v` query is ignored. */
         get: operations["get_avatar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Running version. */
+        get: operations["get_version"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/version/check-update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Update check against the latest known release. */
+        get: operations["check_update"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/version/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Release history, newest first. */
+        get: operations["get_releases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/wrapped/server": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Server-wide year-in-review summary. */
+        get: operations["get_wrapped_server"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/wrapped/user/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Per-user year-in-review summary. */
+        get: operations["get_wrapped_user"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/wrapped/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every user with its ListenBrainz link status. Callers match users by
+         *     email and request `/user/{user_id}` only for `has_listenbrainz` ones.
+         */
+        get: operations["get_wrapped_users"];
         put?: never;
         post?: never;
         delete?: never;
@@ -743,6 +2214,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Add-tracks body. */
+        AddTracksBody: {
+            /** @description Insert position. Missing appends; past-the-end clamps. */
+            position?: number | null;
+            /** @description Tracks to append or insert. */
+            tracks: components["schemas"]["TrackInput"][];
+        };
+        /** @description Added-tracks answer. */
+        AddTracksResponse: {
+            /** @description The added tracks with their ids and positions. */
+            tracks: components["schemas"]["PlaylistTrack"][];
+        };
         /** @description Every active app password across users. */
         AdminAppPasswordListResponse: {
             /** @description Active app passwords, by owner then age. */
@@ -795,6 +2278,164 @@ export interface components {
             /** @description One page of users. */
             users: components["schemas"]["UserResponse"][];
         };
+        /** @description Compact album card for browse surfaces. */
+        AlbumCard: {
+            /** @description Linked MusicBrainz artist id, when the artist is identified. */
+            artist_mbid?: string | null;
+            /** @description Album artist display name. */
+            artist_name: string;
+            /** @description True when an artwork row exists for this album. */
+            cover_available: boolean;
+            /**
+             * Format: double
+             * @description Import time, unix seconds.
+             */
+            date_added?: number | null;
+            /** @description Local album id. */
+            id: string;
+            /** @description Most common track format, when any track exists. */
+            primary_format?: string | null;
+            /** @description Album title. */
+            title: string;
+            /**
+             * Format: int64
+             * @description Summed streamable-track size, bytes.
+             */
+            total_size_bytes: number;
+            /**
+             * Format: int64
+             * @description Streamable tracks on this album.
+             */
+            track_count: number;
+            /**
+             * Format: int64
+             * @description Release year, when known.
+             */
+            year?: number | null;
+        };
+        /** @description One page of album cards. */
+        AlbumCardPage: {
+            /** @description This page of cards. */
+            items: components["schemas"]["AlbumCard"][];
+            /**
+             * Format: int64
+             * @description Echo of the requested limit.
+             */
+            limit: number;
+            /**
+             * Format: int64
+             * @description Echo of the requested offset.
+             */
+            offset: number;
+            /**
+             * Format: int64
+             * @description Cards matching the filter, all pages.
+             */
+            total: number;
+        };
+        /** @description Enriched album counts. Absent counts mean unknown, never zero. */
+        AlbumEnrichment: {
+            /**
+             * Format: int64
+             * @description Listen count, when the provider reported one.
+             */
+            listen_count?: number | null;
+            /** @description Echoed provider release-group id. */
+            musicbrainz_id: string;
+            /**
+             * Format: int64
+             * @description Known track count, when the provider reported one.
+             */
+            track_count?: number | null;
+        };
+        /** @description One album row to enrich. */
+        AlbumEnrichmentRequest: {
+            /** @description Album name, a fallback key for providers without the id. */
+            album_name?: string;
+            /** @description Album artist name, a fallback key for providers without the id. */
+            artist_name?: string;
+            /** @description Provider release-group id. */
+            musicbrainz_id: string;
+        };
+        /** @description One page of catalog albums. */
+        AlbumPage: {
+            /** @description This page of albums. */
+            items: components["schemas"]["AlbumView"][];
+            /**
+             * Format: int64
+             * @description Echo of the requested limit.
+             */
+            limit: number;
+            /**
+             * Format: int64
+             * @description Echo of the requested offset.
+             */
+            offset: number;
+            /**
+             * Format: int64
+             * @description Albums matching the filter, all pages.
+             */
+            total: number;
+        };
+        /** @description Ordered 30-second samples of an album's first tracks. */
+        AlbumPreviewResponse: {
+            /** @description Provider that served the previews, when found. */
+            provider?: string | null;
+            /** @description Sampled tracks in album order. */
+            tracks?: components["schemas"]["PreviewTrackItem"][];
+        };
+        /** @description One catalog album. */
+        AlbumView: {
+            /** @description Local album-artist id. */
+            artist_id: string;
+            /** @description Linked MusicBrainz artist id, when the artist is identified. */
+            artist_mbid?: string | null;
+            /** @description Album artist display name. */
+            artist_name: string;
+            /** @description True when an artwork row exists for this album. */
+            cover_available: boolean;
+            /**
+             * Format: double
+             * @description Import time, unix seconds.
+             */
+            date_added?: number | null;
+            /** @description True when the caller favorited this album. */
+            favorite: boolean;
+            /** @description Most common track format, when any track exists. */
+            format?: string | null;
+            /** @description Local album id. */
+            id: string;
+            /** @description `local_only` or `linked`. */
+            identity_state: string;
+            /** @description True for compilations and various-artists sets. */
+            is_compilation: boolean;
+            /** @description Linked MusicBrainz release group, when identified. */
+            release_group_mbid?: string | null;
+            /** @description Linked MusicBrainz release, when an exact release is known. */
+            release_mbid?: string | null;
+            /** @description Album title. */
+            title: string;
+            /**
+             * Format: double
+             * @description Summed streamable-track duration, seconds.
+             */
+            total_duration_seconds: number;
+            /**
+             * Format: int64
+             * @description Summed streamable-track size, bytes.
+             */
+            total_size_bytes: number;
+            /**
+             * Format: int64
+             * @description Streamable tracks on this album.
+             */
+            track_count: number;
+            /**
+             * Format: int64
+             * @description Release year, when known.
+             */
+            year?: number | null;
+        };
         /** @description Create an app password. */
         AppPasswordCreate: {
             /** @description Name; defaults to `App password`. */
@@ -838,6 +2479,146 @@ export interface components {
             /** @description User-given name. */
             name: string;
         };
+        /** @description One grouped approval card: a user's pending requests as a batch. */
+        ApprovalBatchItem: {
+            /** @description Pending artist count. */
+            artist_count: number;
+            /** @description Batch id, stable per user while requests stay pending. */
+            batch_id: string;
+            /**
+             * Format: int64
+             * @description Oldest request time, epoch seconds.
+             */
+            requested_at: number;
+            /** @description First few artist names for the card preview. */
+            sample_names: string[];
+            /** @description What produced the requests. */
+            source: string;
+            /** @description Requesting user id. */
+            user_id: string;
+            /** @description Requesting user display name. */
+            user_name?: string | null;
+        };
+        /** @description Approval-batch list answer. */
+        ApprovalBatchListResponse: {
+            /** @description Batches. */
+            batches: components["schemas"]["ApprovalBatchItem"][];
+            /** @description Batch count. */
+            count: number;
+        };
+        /** @description Enriched artist counts. Absent counts mean unknown, never zero. */
+        ArtistEnrichment: {
+            /**
+             * Format: int64
+             * @description Listen count, when the provider reported one.
+             */
+            listen_count?: number | null;
+            /** @description Echoed provider artist id. */
+            musicbrainz_id: string;
+            /**
+             * Format: int64
+             * @description Known release-group count, when the provider reported one.
+             */
+            release_group_count?: number | null;
+        };
+        /** @description One artist row to enrich. */
+        ArtistEnrichmentRequest: {
+            /** @description Provider artist id. */
+            musicbrainz_id: string;
+            /** @description Artist name, a fallback key for providers without the id. */
+            name?: string;
+        };
+        /** @description One page of catalog artists, with scope totals. */
+        ArtistPage: {
+            /**
+             * Format: int64
+             * @description Album artists in the catalog (ignores paging, honors `q`).
+             */
+            album_artist_total: number;
+            /**
+             * Format: int64
+             * @description Contributors in the catalog (ignores paging, honors `q`).
+             */
+            contributor_total: number;
+            /** @description This page of artists. */
+            items: components["schemas"]["ArtistView"][];
+            /**
+             * Format: int64
+             * @description Echo of the requested limit.
+             */
+            limit: number;
+            /**
+             * Format: int64
+             * @description Echo of the requested offset.
+             */
+            offset: number;
+            /**
+             * Format: int64
+             * @description Artists matching the scope and filter, all pages.
+             */
+            total: number;
+        };
+        /** @description One catalog artist. */
+        ArtistView: {
+            /**
+             * Format: int64
+             * @description Albums where this artist is the album artist.
+             */
+            album_count: number;
+            /**
+             * Format: int64
+             * @description Albums where this artist appears without leading.
+             */
+            appearance_album_count: number;
+            /** @description Linked MusicBrainz artist id, when identified. */
+            artist_mbid?: string | null;
+            /**
+             * Format: double
+             * @description First import time, unix seconds.
+             */
+            date_added?: number | null;
+            /** @description True when the caller favorited this artist. */
+            favorite: boolean;
+            /** @description Local artist id. */
+            id: string;
+            /** @description `local_only` or `linked`. */
+            identity_state: string;
+            /** @description Display name. */
+            name: string;
+            /**
+             * Format: int64
+             * @description Streamable tracks credited to this artist.
+             */
+            track_count: number;
+        };
+        /** @description One pending auto-download request. */
+        AutoDownloadApprovalItem: {
+            /** @description Artist MBID. */
+            artist_mbid: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /**
+             * Format: int64
+             * @description When it was requested, epoch seconds.
+             */
+            requested_at: number;
+            /** @description Requesting user id. */
+            user_id: string;
+            /** @description Requesting user display name. */
+            user_name?: string | null;
+        };
+        /** @description Pending-approval list answer. */
+        AutoDownloadApprovalListResponse: {
+            /** @description Item count. */
+            count: number;
+            /** @description Pending requests. */
+            items: components["schemas"]["AutoDownloadApprovalItem"][];
+        };
+        /** @description Auto-download-toggle body. */
+        AutoDownloadBody: {
+            /** @description True requests auto-download; false turns it off. */
+            enabled: boolean;
+        };
         /**
          * @description Avatar upload. JSON with base64 bytes: the server has no multipart
          *     support, and one JSON shape keeps every client on the same parser.
@@ -854,6 +2635,214 @@ export interface components {
             content_type: string;
             /** @description Base64 image bytes. */
             image_base64: string;
+        };
+        /** @description One "because you listen to" shelf: seed plus similar albums. */
+        BecauseYouListenTo: {
+            /** @description Banner art URL, when resolved. */
+            banner_url?: string | null;
+            /** @description Fanart URL, when resolved. */
+            fanart_url?: string | null;
+            /**
+             * Format: int64
+             * @description Seed listen count backing the pick.
+             */
+            listen_count?: number;
+            /** @description Similar-albums shelf. */
+            section: components["schemas"]["ChartSection"];
+            /** @description Seed artist name. */
+            seed_artist: string;
+            /** @description Seed MusicBrainz artist id. */
+            seed_artist_mbid: string;
+            /** @description Wide thumbnail URL, when resolved. */
+            wide_thumb_url?: string | null;
+        };
+        /** @description One album inside a section or chart page. */
+        ChartAlbum: {
+            /** @description MusicBrainz artist id, when known. */
+            artist_mbid?: string | null;
+            /** @description Album artist name, when known. */
+            artist_name?: string | null;
+            /** @description Cover art URL, when resolved. */
+            image_url?: string | null;
+            /** @description True when the album has files in the library. */
+            in_library?: boolean;
+            /**
+             * Format: int64
+             * @description Scrobble/listen count backing the rank, when known.
+             */
+            listen_count?: number | null;
+            /** @description Native library id, when the album is owned. */
+            local_id?: string | null;
+            /** @description MusicBrainz release-group id, when known. */
+            mbid?: string | null;
+            /** @description Album title. */
+            name: string;
+            /** @description Release date (`YYYY-MM-DD` or coarser), when known. */
+            release_date?: string | null;
+            /** @description True when the album already has a request. */
+            requested?: boolean;
+            /** @description Provider that ranked this row (`listenbrainz`, `lastfm`). */
+            source?: string | null;
+        };
+        /** @description One artist inside a section or chart page. */
+        ChartArtist: {
+            /** @description Cover art URL, when resolved. */
+            image_url?: string | null;
+            /** @description True when the artist has files in the library. */
+            in_library?: boolean;
+            /**
+             * Format: int64
+             * @description Scrobble/listen count backing the rank, when known.
+             */
+            listen_count?: number | null;
+            /** @description Native library id, when the artist is owned. */
+            local_id?: string | null;
+            /** @description MusicBrainz artist id, when known. */
+            mbid?: string | null;
+            /** @description Display name. */
+            name: string;
+            /** @description Provider that ranked this row (`listenbrainz`, `lastfm`). */
+            source?: string | null;
+        };
+        /** @description One genre inside a section. */
+        ChartGenre: {
+            /**
+             * Format: int64
+             * @description Owned artists tagged with this genre, when counted.
+             */
+            artist_count?: number | null;
+            /** @description Seed artist id behind the row, when there is one. */
+            artist_mbid?: string | null;
+            /**
+             * Format: int64
+             * @description Scrobble/listen count backing the rank, when known.
+             */
+            listen_count?: number | null;
+            /** @description Genre name. */
+            name: string;
+        };
+        /**
+         * @description Valid chart ranges. v2 spelled these as path pairs
+         *     (`/trending/artists` plus `/trending/artists/{range_key}`); v3 takes one
+         *     route with `?range=`. Keys keep the v2 spelling.
+         * @enum {string}
+         */
+        ChartRange: "this_week" | "this_month" | "this_year" | "all_time";
+        /** @description A titled shelf of rows: the unit both home and discover render. */
+        ChartSection: {
+            /** @description Service the user must connect for the full shelf, when gated. */
+            connect_service?: string | null;
+            /** @description Fallback explanation when the shelf degraded, when shown. */
+            fallback_message?: string | null;
+            /** @description Shelf rows. */
+            items?: components["schemas"]["SectionItem"][];
+            /** @description Radio seed id, when playable. */
+            radio_seed_id?: string | null;
+            /** @description Radio seed kind (`artist`, `album`, `genre`), when playable. */
+            radio_seed_type?: string | null;
+            /** @description Provider behind the shelf, when it has one. */
+            source?: string | null;
+            /** @description Shelf title. */
+            title: string;
+            /** @description Row kind (`artist`, `album`, `track`, `genre`). */
+            type: string;
+        };
+        /**
+         * @description Chart provider preference.
+         * @enum {string}
+         */
+        ChartSource: "listenbrainz" | "lastfm";
+        /** @description One track inside a section. */
+        ChartTrack: {
+            /** @description Album title, when known. */
+            album_name?: string | null;
+            /** @description MusicBrainz artist id, when known. */
+            artist_mbid?: string | null;
+            /** @description Artist name, when known. */
+            artist_name?: string | null;
+            /** @description Cover art URL, when resolved. */
+            image_url?: string | null;
+            /**
+             * Format: int64
+             * @description Scrobble/listen count backing the rank, when known.
+             */
+            listen_count?: number | null;
+            /** @description Last listen timestamp (RFC 3339), when known. */
+            listened_at?: string | null;
+            /** @description MusicBrainz recording id, when known. */
+            mbid?: string | null;
+            /** @description Track title. */
+            name: string;
+        };
+        /** @description Membership-check body. */
+        CheckTracksBody: {
+            /** @description Tracks to look up. */
+            tracks: components["schemas"]["TrackIdentifier"][];
+        };
+        /**
+         * @description Membership-check answer: each request index maps to the ids of the
+         *     caller's visible playlists holding that track.
+         */
+        CheckTracksResponse: {
+            /** @description Request index (as a string) to playlist ids. */
+            membership: {
+                [key: string]: string[];
+            };
+        };
+        /**
+         * @description Cover-upload body. Base64 JSON instead of multipart: the app has no
+         *     multipart feature and the frontend regenerates against this contract.
+         */
+        CoverUploadBody: {
+            /** @description Mime type of the image. */
+            content_type: string;
+            /** @description Base64-encoded image bytes (png, jpeg, or webp, max 5 MiB decoded). */
+            image_base64: string;
+        };
+        /** @description Cover-upload answer. */
+        CoverUploadResponse: {
+            /** @description URL serving the uploaded cover. */
+            cover_url: string;
+        };
+        /** @description Create-playlist body. */
+        CreatePlaylistBody: {
+            /** @description Display name. Must not be blank. */
+            name: string;
+        };
+        /**
+         * @description One decade shelf. Shelves carry counts; fetch the shelf's albums
+         *     through browse with the same `decade` value.
+         */
+        DecadeShelf: {
+            /**
+             * Format: int64
+             * @description Albums dated to this decade.
+             */
+            album_count: number;
+            /**
+             * Format: int64
+             * @description Decade start year, e.g. 1990.
+             */
+            decade: number;
+            /** @description Human label, e.g. `1990s`. */
+            label: string;
+        };
+        /** @description Decade listing, ascending. */
+        DecadesResponse: {
+            /** @description Shelves, oldest decade first. */
+            items: components["schemas"]["DecadeShelf"][];
+        };
+        /**
+         * @description One degraded source inside an otherwise successful batch. The recording
+         *     is the error signal: optional enrichment degrades, never fails.
+         */
+        Degradation: {
+            /** @description Fixed machine code; provider detail never reaches the wire. */
+            code: string;
+            /** @description Fixed human message. */
+            message: string;
+            /** @description Source that degraded (`listenbrainz`, `lastfm`). */
+            source: string;
         };
         /** @description Mint a named companion token. */
         DeviceSessionMint: {
@@ -874,16 +2863,301 @@ export interface components {
             /** @description Raw Bearer [REDACTED] Shown once. */
             token: string;
         };
+        /** @description Body recording one discover interaction for personalization. */
+        DiscoverActivityRequest: {
+            /** @description Artist the interaction concerned, when it had one. */
+            artist_mbid?: string | null;
+            /** @description Surface the interaction happened on (`home`, `discover`, `queue`, `artist`). */
+            feature: string;
+            /** @description Provider behind the row (`lastfm`, `listenbrainz`), when it had one. */
+            provider?: string | null;
+            /** @description Artist-page section (`similar`, `top_songs`, `top_albums`), when it had one. */
+            section?: string | null;
+        };
+        /** @description Personalization cursor after recording activity. */
+        DiscoverActivityResponse: {
+            /**
+             * Format: int64
+             * @description Personalization generation (bumps when the profile changes).
+             */
+            generation: number;
+            /** @description Active source id. */
+            source_id: string;
+            /** @description Active source mode. */
+            source_mode: string;
+        };
+        /** @description A discover teaser on home: one seed artist plus similar artists. */
+        DiscoverPreview: {
+            /** @description Similar artists. */
+            items?: components["schemas"]["ChartArtist"][];
+            /** @description Seed artist name. */
+            seed_artist: string;
+            /** @description Seed MusicBrainz artist id. */
+            seed_artist_mbid: string;
+        };
+        /** @description On-demand YouTube preview behind one queue card. */
+        DiscoverQueuePreview: {
+            /** @description `available`, `not_found`, or `unavailable`. */
+            status: string;
+            /** @description Search URL fallback, when there is one. */
+            youtube_search_url?: string | null;
+            /** @description Watch URL, when available. */
+            youtube_url?: string | null;
+        };
+        /** @description The queue deck: cards plus the build they came from. */
+        DiscoverQueueResponse: {
+            /** @description Deck cards in order. */
+            items?: components["schemas"]["QueueItem"][];
+            /** @description Build id behind the deck. */
+            queue_id: string;
+        };
+        /** @description Queue build state for polling. */
+        DiscoverQueueStatusResponse: {
+            /**
+             * Format: int64
+             * @description Build timestamp (unix seconds), when built.
+             */
+            built_at?: number | null;
+            /** @description Build failure, when failed. */
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description Card count, when there is one.
+             */
+            item_count?: number | null;
+            /** @description Build id, when there is one. */
+            queue_id?: string | null;
+            /** @description True when the deck is older than its TTL. */
+            stale?: boolean | null;
+            /** @description `ready`, `building`, `stale`, or `error`. */
+            status: string;
+        };
+        /**
+         * @description Discover shelves. Every shelf is optional: absence means no data, never
+         *     a failure.
+         */
+        DiscoverResponse: {
+            anniversaries?: null | components["schemas"]["ChartSection"];
+            artists_you_might_like?: null | components["schemas"]["ChartSection"];
+            /** @description Seed-driven similar-album shelves. */
+            because_you_listen_to?: components["schemas"]["BecauseYouListenTo"][];
+            /** @description Daily mix shelves. */
+            daily_mixes?: components["schemas"]["ChartSection"][];
+            /** @description Whether the queue deck is enabled for the user. */
+            discover_queue_enabled: boolean;
+            fresh_releases?: null | components["schemas"]["ChartSection"];
+            /**
+             * Format: int64
+             * @description Build timestamp (unix seconds), when built.
+             */
+            generated_at?: number | null;
+            /** @description Mosaic art keyed by genre name. */
+            genre_artwork?: {
+                [key: string]: components["schemas"]["GenreArtwork"];
+            };
+            /** @description Genre artwork schema version. */
+            genre_artwork_schema_version: string;
+            genre_list?: null | components["schemas"]["ChartSection"];
+            globally_trending?: null | components["schemas"]["ChartSection"];
+            integration_status?: null | components["schemas"]["IntegrationStatus"];
+            lastfm_recent_scrobbles?: null | components["schemas"]["ChartSection"];
+            lastfm_weekly_album_chart?: null | components["schemas"]["ChartSection"];
+            lastfm_weekly_artist_chart?: null | components["schemas"]["ChartSection"];
+            listeners_like_you?: null | components["schemas"]["ChartSection"];
+            missing_essentials?: null | components["schemas"]["ChartSection"];
+            new_from_followed?: null | components["schemas"]["ChartSection"];
+            popular_in_your_genres?: null | components["schemas"]["ChartSection"];
+            /** @description Radio shelves. */
+            radio_sections?: components["schemas"]["ChartSection"][];
+            rediscover?: null | components["schemas"]["ChartSection"];
+            /**
+             * Format: int64
+             * @description Refresh-start timestamp (unix seconds), when refreshing.
+             */
+            refresh_started_at?: number | null;
+            /** @description True while a fuller build runs in the background (the UI polls). */
+            refreshing?: boolean;
+            /** @description Per-section build status (`ready`, `building`, `degraded`). */
+            section_status?: {
+                [key: string]: string;
+            };
+            /** @description Connect-a-service cards. */
+            service_prompts?: components["schemas"]["ServicePrompt"][];
+            /** @description Per-service degradation notes (`ok`/`degraded`/`down`). */
+            service_status?: {
+                [key: string]: string;
+            } | null;
+            top_picks?: null | components["schemas"]["TopPicksSection"];
+            unexplored_genres?: null | components["schemas"]["ChartSection"];
+            weekly_exploration?: null | components["schemas"]["WeeklyExploration"];
+        };
+        /** @description Body creating a discovery batch (one request per album). */
+        DiscoveryBatchCreate: {
+            /** @description Albums to request. */
+            items?: components["schemas"]["DiscoveryBatchItemIn"][];
+            /** @description Batch name. */
+            name: string;
+            /** @description Discover section the batch came from. */
+            source_section?: string;
+        };
+        /** @description A batch plus its album outcomes. */
+        DiscoveryBatchDetail: {
+            /** @description Creation timestamp (RFC 3339). */
+            created_at?: string;
+            /** @description Batch id. */
+            id: string;
+            /**
+             * Format: int64
+             * @description Albums already imported.
+             */
+            imported_count: number;
+            /**
+             * Format: int64
+             * @description Album count.
+             */
+            item_count: number;
+            /** @description Per-album outcomes. */
+            items?: components["schemas"]["DiscoveryBatchItemStatus"][];
+            /** @description Batch name. */
+            name: string;
+            /**
+             * Format: int64
+             * @description Albums still pending.
+             */
+            pending_count: number;
+            /** @description Discover section the batch came from. */
+            source_section?: string;
+        };
+        /** @description One album to request inside a new batch. */
+        DiscoveryBatchItemIn: {
+            /** @description Album name. */
+            album_name?: string;
+            /** @description MusicBrainz artist id. */
+            artist_mbid?: string;
+            /** @description Artist name. */
+            artist_name?: string;
+            /** @description MusicBrainz release-group id. */
+            release_group_mbid: string;
+        };
+        /** @description Per-album outcome inside a batch. */
+        DiscoveryBatchItemStatus: {
+            /** @description Album name. */
+            album_name?: string;
+            /** @description MusicBrainz artist id. */
+            artist_mbid?: string;
+            /** @description Artist name. */
+            artist_name?: string;
+            /** @description True when already owned. */
+            in_library?: boolean;
+            /** @description `requested`, `skipped_in_library`, or `skipped_duplicate`. */
+            outcome: string;
+            /** @description MusicBrainz release-group id. */
+            release_group_mbid: string;
+            /** @description Request state, when requested. */
+            request_status?: string | null;
+        };
+        /** @description The user's batches. */
+        DiscoveryBatchListResponse: {
+            /** @description Batches, newest first. */
+            batches: components["schemas"]["DiscoveryBatchSummary"][];
+        };
+        /** @description What removing a batch did. */
+        DiscoveryBatchRemoveResult: {
+            /**
+             * Format: int64
+             * @description Requests cancelled with the batch.
+             */
+            cancelled_requests?: number;
+            /**
+             * Format: int64
+             * @description Albums kept (already landed or owned elsewhere).
+             */
+            kept?: number;
+            /**
+             * Format: int64
+             * @description Albums removed with the batch.
+             */
+            removed_albums?: number;
+        };
+        /** @description A batch without its album outcomes. */
+        DiscoveryBatchSummary: {
+            /** @description Creation timestamp (RFC 3339). */
+            created_at?: string;
+            /** @description Batch id. */
+            id: string;
+            /**
+             * Format: int64
+             * @description Albums already imported.
+             */
+            imported_count: number;
+            /**
+             * Format: int64
+             * @description Album count.
+             */
+            item_count: number;
+            /** @description Batch name. */
+            name: string;
+            /**
+             * Format: int64
+             * @description Albums still pending.
+             */
+            pending_count: number;
+            /** @description Discover section the batch came from. */
+            source_section?: string;
+        };
         /** @description Change display name. */
         DisplayNameUpdate: {
             /** @description New display name, 1-64 chars after trimming. */
             display_name: string;
+        };
+        /** @description Pin-set body. */
+        EditionPinBody: {
+            /** @description Release MBID to pin. Must be a known edition of the album. */
+            release_mbid: string;
+        };
+        /**
+         * @description Edition-pin display answer. `selected_release_mbid` is the soft display
+         *     hint: the pin when set, else the catalog default. It never becomes
+         *     catalog identity.
+         */
+        EditionPinResponse: {
+            /** @description Album id. */
+            album_id: string;
+            /** @description Where the pick came from: pin, default, or none. */
+            hint_source: string;
+            /** @description Pinned release MBID, when pinned. */
+            pinned_release_mbid?: string | null;
+            /** @description Display pick: the pin when set, else the catalog default. */
+            selected_release_mbid?: string | null;
         };
         /** @description Change email. Null or blank clears it. */
         EmailUpdate: {
             /** @description New email, or null to clear. */
             email?: string | null;
         };
+        /** @description The single enrich-batch body: both enrichable buckets in one call. */
+        EnrichmentBatchRequest: {
+            /** @description Albums to enrich (capped per bucket, extras ignored). */
+            albums?: components["schemas"]["AlbumEnrichmentRequest"][];
+            /** @description Artists to enrich (capped per bucket, extras ignored). */
+            artists?: components["schemas"]["ArtistEnrichmentRequest"][];
+        };
+        /** @description Enrich-batch response for both buckets plus degradation notes. */
+        EnrichmentResponse: {
+            /** @description Album counts, same order as the request. */
+            albums: components["schemas"]["AlbumEnrichment"][];
+            /** @description Artist counts, same order as the request. */
+            artists: components["schemas"]["ArtistEnrichment"][];
+            /** @description Sources that degraded while answering; usually empty. */
+            degradations: components["schemas"]["Degradation"][];
+            /** @description Provider that answered. */
+            source: components["schemas"]["EnrichmentSource"];
+        };
+        /**
+         * @description Which provider answered the batch.
+         * @enum {string}
+         */
+        EnrichmentSource: "listenbrainz" | "lastfm" | "none";
         /** @description The `error` object inside every error response. */
         ErrorBody: {
             /** @description SCREAMING_SNAKE machine code. */
@@ -897,6 +3171,50 @@ export interface components {
         ErrorEnvelope: {
             /** @description The single error payload. */
             error: components["schemas"]["ErrorBody"];
+        };
+        /** @description Per-kind counts. */
+        FavoriteCounts: {
+            /** @description Favorited albums. */
+            album: number;
+            /** @description Favorited artists. */
+            artist: number;
+            /** @description Favorited tracks. */
+            track: number;
+        };
+        /** @description One favorite row. */
+        FavoriteItem: {
+            /**
+             * Format: int64
+             * @description When it was favorited, epoch seconds.
+             */
+            favorited_at: number;
+            /** @description Favorited item id. */
+            item_id: string;
+            /** @description Favorited kind: album, artist, or track. */
+            kind: string;
+            /** @description Display name, when the caller sent one. */
+            name?: string | null;
+        };
+        /** @description Favorite-list answer. */
+        FavoriteListResponse: {
+            /** @description Counts across all kinds, ignoring the filter. */
+            counts: components["schemas"]["FavoriteCounts"];
+            /** @description Favorites, optionally filtered by kind. */
+            items: components["schemas"]["FavoriteItem"][];
+        };
+        /** @description Favorite query: optional kind filter. */
+        FavoriteQuery: {
+            /** @description Kind filter: album, artist, or track. */
+            kind?: string | null;
+        };
+        /** @description Favorite-status answer. */
+        FavoriteStatusResponse: {
+            /** @description Current state. */
+            favorited: boolean;
+            /** @description Favorited item id. */
+            item_id: string;
+            /** @description Favorited kind. */
+            kind: string;
         };
         /**
          * @description Authenticated user, federated view. Stored provider rows never surface;
@@ -918,12 +3236,209 @@ export interface components {
             /** @description Preferred casing for display. */
             username_display: string;
         };
+        /** @description Follow-toggle body. */
+        FollowBody: {
+            /** @description Artist name to keep, when following. */
+            artist_name?: string | null;
+            /** @description True follows the artist; false unfollows (and drops auto-download). */
+            followed: boolean;
+        };
+        /** @description Follow-status answer for one artist. */
+        FollowStatusResponse: {
+            /** @description Artist MBID. */
+            artist_mbid: string;
+            /** @description Whether auto-download is wanted. */
+            auto_download: boolean;
+            /** @description Approval state: off, pending, or active. */
+            auto_download_state: string;
+            /** @description Whether the caller follows the artist. */
+            followed: boolean;
+        };
+        /** @description One followed artist. */
+        FollowedArtist: {
+            /** @description Artist MBID. */
+            artist_mbid: string;
+            /** @description Whether auto-download is wanted. */
+            auto_download: boolean;
+            /** @description Approval state: off, pending, or active. */
+            auto_download_state: string;
+            /**
+             * Format: int64
+             * @description When the follow started, epoch seconds.
+             */
+            followed_at: number;
+            /** @description Artist name as known when followed. */
+            name: string;
+        };
+        /** @description Followed-artist list answer. */
+        FollowedArtistListResponse: {
+            /** @description Followed artists. */
+            artists: components["schemas"]["FollowedArtist"][];
+        };
+        /** @description Genre mosaic art: a collage of owned covers or a flat gradient. */
+        GenreArtwork: {
+            /** @description Owned covers composing the collage (empty for gradients). */
+            albums?: components["schemas"]["GenreArtworkAlbum"][];
+            /** @description `collage` or `gradient`. */
+            kind: string;
+            /** @description Artwork schema version. */
+            version: string;
+        };
+        /** @description One cover inside a genre collage. */
+        GenreArtworkAlbum: {
+            /** @description Album artist name, when known. */
+            album_artist_name?: string | null;
+            /** @description Native album id. */
+            album_id: string;
+            /** @description Album title. */
+            album_title: string;
+            /**
+             * Format: int64
+             * @description Cover revision for cache busting.
+             */
+            cover_version: number;
+        };
+        /** @description Owned plus popular rows behind one genre page. */
+        GenreDetailResponse: {
+            /** @description Flat artist rows (legacy consumers). */
+            artists?: components["schemas"]["ChartArtist"][];
+            /** @description Genre name as requested. */
+            genre: string;
+            /** @description Mosaic art for the genre. */
+            genre_artwork: components["schemas"]["GenreArtwork"];
+            library?: null | components["schemas"]["GenreLibrarySection"];
+            popular?: null | components["schemas"]["GenrePopularSection"];
+            /**
+             * Format: int64
+             * @description Total popular rows, when counted.
+             */
+            total_count?: number | null;
+        };
+        /** @description Owned artists and albums for a genre. */
+        GenreLibrarySection: {
+            /**
+             * Format: int64
+             * @description Total owned albums.
+             */
+            album_count: number;
+            /** @description Owned albums. */
+            albums?: components["schemas"]["ChartAlbum"][];
+            /**
+             * Format: int64
+             * @description Total owned artists.
+             */
+            artist_count: number;
+            /** @description Owned artists. */
+            artists?: components["schemas"]["ChartArtist"][];
+        };
+        /** @description Full genre listing. Catalogs hold dozens of genres, so no paging. */
+        GenreList: {
+            /** @description Genres by descending track count, name tiebreak. */
+            items: components["schemas"]["GenreView"][];
+        };
+        /** @description Popular artists and albums for a genre. */
+        GenrePopularSection: {
+            /** @description Popular albums. */
+            albums?: components["schemas"]["ChartAlbum"][];
+            /** @description Popular artists. */
+            artists?: components["schemas"]["ChartArtist"][];
+            /** @description More albums behind the offsets. */
+            has_more_albums: boolean;
+            /** @description More artists behind the offsets. */
+            has_more_artists: boolean;
+        };
+        /** @description One genre with streamable-only counts. */
+        GenreView: {
+            /**
+             * Format: int64
+             * @description Albums holding at least one such track.
+             */
+            album_count: number;
+            /** @description Genre display name, representative casing. */
+            name: string;
+            /**
+             * Format: int64
+             * @description Streamable tracks carrying this tag.
+             */
+            track_count: number;
+        };
+        /** @description One GitHub release row. */
+        GitHubRelease: {
+            /** @description Release notes when set. */
+            body?: string | null;
+            /** @description Release page URL. */
+            html_url: string;
+            /** @description Release title when set. */
+            name?: string | null;
+            /** @description True for prereleases. */
+            prerelease: boolean;
+            /** @description Publish timestamp. */
+            published_at: string;
+            /** @description Release tag. */
+            tag_name: string;
+        };
         /** @description Health payload. Shape kept from v2: `status` plus the running message. */
         HealthResponse: {
             /** @description Human-readable running message. */
             message: string;
             /** @description Service state, `ok` when serving. */
             status: string;
+        };
+        /**
+         * @description Home shelves. Every shelf is optional: absence means the shelf has no
+         *     data, never a failure.
+         */
+        HomeResponse: {
+            discover_preview?: null | components["schemas"]["DiscoverPreview"];
+            favorite_artists?: null | components["schemas"]["ChartSection"];
+            fresh_releases?: null | components["schemas"]["ChartSection"];
+            /** @description Mosaic art keyed by genre name. */
+            genre_artwork?: {
+                [key: string]: components["schemas"]["GenreArtwork"];
+            };
+            /** @description Genre artwork schema version. */
+            genre_artwork_schema_version: string;
+            genre_list?: null | components["schemas"]["ChartSection"];
+            integration_status?: null | components["schemas"]["IntegrationStatus"];
+            library_albums?: null | components["schemas"]["ChartSection"];
+            library_artists?: null | components["schemas"]["ChartSection"];
+            popular_albums?: null | components["schemas"]["ChartSection"];
+            recently_added?: null | components["schemas"]["ChartSection"];
+            recently_played?: null | components["schemas"]["ChartSection"];
+            recommended_artists?: null | components["schemas"]["ChartSection"];
+            /** @description True while a fuller build runs in the background (the UI polls). */
+            refreshing?: boolean;
+            /** @description Connect-a-service cards. */
+            service_prompts?: components["schemas"]["ServicePrompt"][];
+            /** @description Per-service degradation notes (`ok`/`degraded`/`down`). */
+            service_status?: {
+                [key: string]: string;
+            } | null;
+            top_genres?: null | components["schemas"]["ChartSection"];
+            trending_artists?: null | components["schemas"]["ChartSection"];
+            weekly_exploration?: null | components["schemas"]["WeeklyExploration"];
+            your_top_albums?: null | components["schemas"]["ChartSection"];
+        };
+        /** @description One ignored release. */
+        IgnoredRelease: {
+            /** @description MusicBrainz artist id. */
+            artist_mbid: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /**
+             * Format: int64
+             * @description Ignore timestamp (unix seconds).
+             */
+            ignored_at: number;
+            /** @description MusicBrainz release-group id. */
+            release_group_mbid: string;
+            /** @description Release name. */
+            release_name: string;
+        };
+        /** @description The user's ignore ledger. */
+        IgnoredReleasesResponse: {
+            /** @description Ignored releases, newest first. */
+            items: components["schemas"]["IgnoredRelease"][];
         };
         /** @description Importable accounts on one provider. */
         ImportCandidateListResponse: {
@@ -968,6 +3483,29 @@ export interface components {
              * @description Count of `imported`, for the admin summary line.
              */
             total_imported: number;
+        };
+        /** @description Which integrations back the shelves right now. */
+        IntegrationStatus: {
+            /** @description A download client is configured. */
+            download_client: boolean;
+            /** @description A Jellyfin source is connected. */
+            jellyfin: boolean;
+            /** @description Last.fm is connected. */
+            lastfm: boolean;
+            /** @description The native library has files. */
+            library?: boolean;
+            /** @description ListenBrainz charts and history are available. */
+            listenbrainz: boolean;
+            /** @description Local files back playback. Home-only; discover leaves it false. */
+            localfiles?: boolean;
+            /** @description A Navidrome source is connected. */
+            navidrome?: boolean;
+            /** @description A Plex source is connected. */
+            plex?: boolean;
+            /** @description YouTube playback is configured. */
+            youtube: boolean;
+            /** @description The YouTube data API (quota'd) is configured. */
+            youtube_api?: boolean;
         };
         /** @description Jellyfin login body. */
         JellyfinLoginBody: {
@@ -1037,6 +3575,88 @@ export interface components {
             /** @description Username, matched case-insensitively. */
             username: string;
         };
+        /** @description One lyric line. */
+        LyricLine: {
+            /**
+             * Format: double
+             * @description Line start, seconds, for synced lyrics.
+             */
+            start_seconds?: number | null;
+            /** @description Line text. */
+            text: string;
+        };
+        /** @description Stored lyrics for one track. Missing lyrics read as 404, never empty. */
+        LyricsView: {
+            /** @description True when lines carry timestamps. */
+            is_synced: boolean;
+            /** @description Lyric lines in order. */
+            lines: components["schemas"]["LyricLine"][];
+            /** @description Full text, lines joined with newlines. */
+            text: string;
+        };
+        /** @description One new-release sighting. */
+        NewReleaseItem: {
+            /** @description Artist MBID. */
+            artist_mbid: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description First release date, when known. */
+            first_release_date?: string | null;
+            /** @description Release-group primary type, when known. */
+            primary_type?: string | null;
+            /** @description Release-group MBID. */
+            release_group_mbid: string;
+            /** @description Release title. */
+            title: string;
+        };
+        /** @description New-release list answer. */
+        NewReleaseListResponse: {
+            /** @description Sightings for followed artists, newest first. */
+            items: components["schemas"]["NewReleaseItem"][];
+            /** @description Item count. */
+            total: number;
+        };
+        /**
+         * @description One live listening session. Redacted rows keep identity and progress
+         *     but carry empty song fields (the owner chose `track_hidden`).
+         */
+        NowPlayingEntry: {
+            /** @description Album title (none when redacted or unknown). */
+            album_name?: string | null;
+            /** @description Artist name (empty when redacted). */
+            artist_name: string;
+            /** @description Cover art URL (empty when redacted). */
+            cover_url: string;
+            /** @description Device label. */
+            device_name: string;
+            /**
+             * Format: int64
+             * @description Track length in milliseconds, when known.
+             */
+            duration_ms?: number | null;
+            /** @description Session key (`user_id:device`). */
+            id: string;
+            /** @description True when paused. */
+            is_paused: boolean;
+            /**
+             * Format: int64
+             * @description Position in milliseconds, when known.
+             */
+            progress_ms?: number | null;
+            /** @description True when the owner hides the track. */
+            redacted?: boolean;
+            /** @description Playback source (`local`, `youtube`, `jellyfin`, `navidrome`, `plex`). */
+            source: string;
+            /** @description Track title (empty when redacted). */
+            track_name: string;
+            /** @description Display name of the listener. */
+            user_name: string;
+        };
+        /** @description The live listening snapshot across users. */
+        NowPlayingSnapshot: {
+            /** @description Live sessions. */
+            sessions?: components["schemas"]["NowPlayingEntry"][];
+        };
         /** @description OIDC authorize answer: the browser URL for this login. */
         OidcAuthorizeBody: {
             /** @description IdP authorize URL (PKCE + state baked in). */
@@ -1071,6 +3691,173 @@ export interface components {
             recovery_code: string;
             /** @description Account username. */
             username: string;
+        };
+        /** @description Full playlist detail: summary fields plus tracks. */
+        PlaylistDetail: {
+            /** @description Up to four track covers for the header. */
+            cover_urls: string[];
+            /**
+             * Format: int64
+             * @description Creation time, epoch seconds.
+             */
+            created_at: number;
+            /** @description Custom cover URL, when one was uploaded. */
+            custom_cover_url?: string | null;
+            /** @description Playlist id. */
+            id: string;
+            /** @description True when the caller owns the playlist. */
+            is_owner: boolean;
+            /** @description Public playlists are visible to other users. */
+            is_public: boolean;
+            /** @description Always false on a full detail; true on redacted rows. */
+            is_redacted: boolean;
+            /** @description Display name. */
+            name: string;
+            /** @description Owner display name. */
+            owner_name?: string | null;
+            /**
+             * Format: double
+             * @description Total duration in seconds, when any track reports one.
+             */
+            total_duration?: number | null;
+            /** @description Track count. */
+            track_count: number;
+            /** @description Tracks in position order. */
+            tracks: components["schemas"]["PlaylistTrack"][];
+            /**
+             * Format: int64
+             * @description Last mutation time, epoch seconds.
+             */
+            updated_at: number;
+        };
+        /** @description One row of the playlist list: a full summary or a redacted stub. */
+        PlaylistListItem: components["schemas"]["PlaylistSummary"] | components["schemas"]["RedactedPlaylist"];
+        /** @description Playlist list answer. */
+        PlaylistListResponse: {
+            /** @description Playlists visible to the caller. */
+            playlists: components["schemas"]["PlaylistListItem"][];
+        };
+        /** @description Taste profile behind playlist suggestions. */
+        PlaylistProfile: {
+            /** @description Artist mbids the playlist leans on. */
+            artist_mbids?: string[];
+            /** @description Genre distribution (genre to artist names). */
+            genre_distribution?: {
+                [key: string]: string[];
+            };
+            /**
+             * Format: int64
+             * @description Playlist track count.
+             */
+            track_count?: number;
+        };
+        /** @description Body requesting playlist suggestions. */
+        PlaylistSuggestionsRequest: {
+            /**
+             * Format: int64
+             * @description Wanted suggestion count.
+             */
+            count?: number;
+            /** @description Playlist to extend. */
+            playlist_id: string;
+            /** @description Provider preference (`listenbrainz`, `lastfm`). */
+            source?: string | null;
+        };
+        /** @description Suggested rows for a playlist. */
+        PlaylistSuggestionsResponse: {
+            /** @description Playlist the suggestions extend. */
+            playlist_id: string;
+            /** @description Taste profile behind the suggestions. */
+            profile: components["schemas"]["PlaylistProfile"];
+            /** @description Suggestions shelf. */
+            suggestions: components["schemas"]["ChartSection"];
+        };
+        /** @description Playlist summary for lists and visibility answers. */
+        PlaylistSummary: {
+            /** @description Up to four track covers for the list tile. */
+            cover_urls: string[];
+            /**
+             * Format: int64
+             * @description Creation time, epoch seconds.
+             */
+            created_at: number;
+            /** @description Custom cover URL, when one was uploaded. */
+            custom_cover_url?: string | null;
+            /** @description Playlist id. */
+            id: string;
+            /** @description True when the caller owns the playlist. */
+            is_owner: boolean;
+            /** @description Public playlists are visible to other users. */
+            is_public: boolean;
+            /** @description Always false on a full summary; true on redacted rows. */
+            is_redacted: boolean;
+            /** @description Display name. */
+            name: string;
+            /** @description Owner display name. */
+            owner_name?: string | null;
+            /**
+             * Format: double
+             * @description Total duration in seconds, when any track reports one.
+             */
+            total_duration?: number | null;
+            /** @description Track count. */
+            track_count: number;
+            /**
+             * Format: int64
+             * @description Last mutation time, epoch seconds.
+             */
+            updated_at: number;
+        };
+        /** @description One track inside a playlist. */
+        PlaylistTrack: {
+            /** @description Album id, when the track resolved to the library. */
+            album_id?: string | null;
+            /** @description Album name. */
+            album_name: string;
+            /** @description Artist id, when resolved. */
+            artist_id?: string | null;
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description Sources carrying this track, when known. */
+            available_sources?: string[] | null;
+            /** @description Cover art URL, when known. */
+            cover_url?: string | null;
+            /**
+             * Format: int64
+             * @description Row creation time, epoch seconds.
+             */
+            created_at: number;
+            /**
+             * Format: int32
+             * @description Disc number, when known.
+             */
+            disc_number?: number | null;
+            /**
+             * Format: double
+             * @description Duration in seconds, when known.
+             */
+            duration?: number | null;
+            /** @description Audio format, when known. */
+            format?: string | null;
+            /** @description Track row id. */
+            id: string;
+            /** @description Local library file id, when the track resolved locally. */
+            library_file_id?: string | null;
+            /** @description Plex rating key, when the track came from Plex. */
+            plex_rating_key?: string | null;
+            /** @description Zero-based position in the playlist. */
+            position: number;
+            /** @description Preferred source type, empty when unresolved. */
+            source_type: string;
+            /** @description Track title. */
+            track_name: string;
+            /**
+             * Format: int32
+             * @description Track number, when known.
+             */
+            track_number?: number | null;
+            /** @description Library track source id, when resolved. */
+            track_source_id?: string | null;
         };
         /** @description Settings-completion poll answer: the raw auth token, untouched. */
         PlexConnectPollResult: {
@@ -1143,11 +3930,245 @@ export interface components {
              */
             pin_id: number;
         };
+        /** @description One page of a popular-albums or your-top chart. */
+        PopularAlbumsPage: {
+            /** @description True when more rows follow. */
+            has_more: boolean;
+            /** @description Ranked albums for the page. */
+            items: components["schemas"]["ChartAlbum"][];
+            /** @description Human range label. */
+            label: string;
+            /**
+             * Format: int64
+             * @description Limit behind this page.
+             */
+            limit: number;
+            /**
+             * Format: int64
+             * @description Offset behind this page.
+             */
+            offset: number;
+            /** @description Range key behind this page. */
+            range_key: string;
+        };
+        /** @description One previewed track. */
+        PreviewTrackItem: {
+            /** @description Artist name. */
+            artist_name?: string;
+            /**
+             * Format: int64
+             * @description Preview length in seconds, when known.
+             */
+            duration_s?: number | null;
+            /**
+             * Format: int64
+             * @description Album position, when known.
+             */
+            position?: number | null;
+            /** @description Preview audio URL (short-lived, never long-cached). */
+            preview_url?: string;
+            /** @description Track title. */
+            title: string;
+        };
         /**
          * @description Own profile. Identity only; connected services and library stats belong
          *     to the connections and library slices.
          */
         ProfileResponse: components["schemas"]["UserResponse"];
+        /** @description Enrichment behind one queue card. */
+        QueueEnrichment: {
+            /** @description Artist biography snippet, when known. */
+            artist_description?: string | null;
+            /** @description MusicBrainz artist id, when known. */
+            artist_mbid?: string | null;
+            /** @description Release country, when known. */
+            country?: string | null;
+            /**
+             * Format: int64
+             * @description Artist listen count, when known.
+             */
+            listen_count?: number | null;
+            /** @description Release date, when known. */
+            release_date?: string | null;
+            /** @description Genre/style tags. */
+            tags?: string[];
+            /** @description Whether YouTube search is available at all. */
+            youtube_search_available?: boolean;
+            /** @description YouTube search URL fallback. */
+            youtube_search_url?: string;
+            /** @description YouTube URL for the album, when found. */
+            youtube_url?: string | null;
+        };
+        /** @description Body triggering a queue build. */
+        QueueGenerateRequest: {
+            /** @description Rebuild even when a fresh deck exists. */
+            force?: boolean;
+        };
+        /** @description What the generate trigger did, plus current build state. */
+        QueueGenerateResponse: {
+            /** @description `started`, `already_building`, or `fresh`. */
+            action: string;
+            /**
+             * Format: int64
+             * @description Build timestamp (unix seconds), when built.
+             */
+            built_at?: number | null;
+            /** @description Build failure, when failed. */
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description Card count, when there is one.
+             */
+            item_count?: number | null;
+            /** @description Build id, when there is one. */
+            queue_id?: string | null;
+            /** @description True when the deck is older than its TTL. */
+            stale?: boolean | null;
+            /** @description `ready`, `building`, `stale`, or `error`. */
+            status: string;
+        };
+        /** @description Body ignoring one queue card. */
+        QueueIgnoreRequest: {
+            /** @description MusicBrainz artist id behind the card. */
+            artist_mbid: string;
+            /** @description Artist name for the ignore ledger. */
+            artist_name: string;
+            /** @description MusicBrainz release-group id to ignore. */
+            release_group_mbid: string;
+            /** @description Release name for the ignore ledger. */
+            release_name: string;
+        };
+        /** @description One queue card, light or enriched. */
+        QueueItem: components["schemas"]["QueueItemFull"] | components["schemas"]["QueueItemLight"];
+        /** @description One queue card with its enrichment attached. */
+        QueueItemFull: {
+            /** @description Album name. */
+            album_name: string;
+            /** @description MusicBrainz artist id. */
+            artist_mbid: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description Cover art URL, when resolved. */
+            cover_url?: string | null;
+            enrichment?: null | components["schemas"]["QueueEnrichment"];
+            /** @description True when already owned. */
+            in_library?: boolean;
+            /** @description True for wildcard (out-of-profile) picks. */
+            is_wildcard?: boolean;
+            /** @description Human reason behind the pick. */
+            recommendation_reason: string;
+            /** @description MusicBrainz release-group id. */
+            release_group_mbid: string;
+        };
+        /** @description One lightweight queue card: the deck renders these before enrichment. */
+        QueueItemLight: {
+            /** @description Album name. */
+            album_name: string;
+            /** @description MusicBrainz artist id. */
+            artist_mbid: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description Cover art URL, when resolved. */
+            cover_url?: string | null;
+            /** @description True when already owned. */
+            in_library?: boolean;
+            /** @description True for wildcard (out-of-profile) picks. */
+            is_wildcard?: boolean;
+            /** @description Human reason behind the pick. */
+            recommendation_reason: string;
+            /** @description MusicBrainz release-group id. */
+            release_group_mbid: string;
+        };
+        /** @description Body checking which cards already landed in the library. */
+        QueueValidateRequest: {
+            /** @description Release-group ids to check. */
+            release_group_mbids: string[];
+        };
+        /** @description Library membership behind the checked cards. */
+        QueueValidateResponse: {
+            /** @description The checked ids that are already owned. */
+            in_library?: string[];
+        };
+        /**
+         * @description Body planning track-level radio. The UI resolves playback per track
+         *     (library rows use the native stream endpoint, the rest use YouTube or
+         *     30-second previews).
+         */
+        RadioPlanRequest: {
+            /**
+             * Format: int64
+             * @description Wanted track count.
+             */
+            count?: number;
+            /** @description Recording mbids to leave out. */
+            exclude_recording_mbids?: string[];
+            /** @description Seed rows for `items` plans. */
+            items?: components["schemas"]["RadioSeedItem"][];
+            /** @description `library` (owned only) or `hybrid` (owned plus provider picks). */
+            mode: string;
+            /** @description Seed id (mbid or genre name); empty for item seeds. */
+            seed_id?: string | null;
+            /** @description Seed kind (`artist`, `album`, `genre`, `items`). */
+            seed_type: string;
+        };
+        /** @description A complete radio plan. */
+        RadioPlanResponse: {
+            /** @description Plan title. */
+            title: string;
+            /** @description Planned tracks in order. */
+            tracks?: components["schemas"]["RadioPlanTrack"][];
+        };
+        /** @description One planned radio track. */
+        RadioPlanTrack: {
+            /** @description MusicBrainz release id, when known. */
+            album_mbid?: string | null;
+            /** @description Album title, when known. */
+            album_name?: string | null;
+            /** @description MusicBrainz artist id, when known. */
+            artist_mbid?: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /**
+             * Format: double
+             * @description Duration in seconds, when known.
+             */
+            duration_s?: number | null;
+            /** @description File container for owned rows, when known. */
+            file_format?: string | null;
+            /** @description True when owned (resolves to the native stream endpoint). */
+            in_library?: boolean;
+            /** @description Native file id for owned rows, when known. */
+            local_file_id?: string | null;
+            /** @description MusicBrainz recording id, when known. */
+            recording_mbid?: string | null;
+            /** @description Track title. */
+            track_name: string;
+        };
+        /** @description Body generating one radio shelf. */
+        RadioRequest: {
+            /**
+             * Format: int64
+             * @description Wanted row count.
+             */
+            count?: number;
+            /** @description Seed id (mbid or genre name). */
+            seed_id: string;
+            /** @description Seed kind (`artist`, `album`, `genre`). */
+            seed_type: string;
+            /** @description Provider preference (`listenbrainz`, `lastfm`). */
+            source?: string | null;
+        };
+        /** @description One seed row for an item-seeded radio plan. */
+        RadioSeedItem: {
+            /** @description Seed MusicBrainz release id, when seeded by album. */
+            album_mbid?: string | null;
+            /** @description Seed album name. */
+            album_name?: string;
+            /** @description Seed MusicBrainz artist id. */
+            artist_mbid: string;
+            /** @description Seed artist name. */
+            artist_name?: string;
+        };
         /** @description A minted recovery code. The code appears here once, never again. */
         RecoveryCodeResponse: {
             /**
@@ -1159,6 +4180,64 @@ export interface components {
             recovery_code: string;
         };
         /**
+         * @description Another user's private playlist: existence, count, and owner only. Never
+         *     the name, tracks, or covers.
+         */
+        RedactedPlaylist: {
+            /** @description Playlist id. */
+            id: string;
+            /** @description Always true. */
+            is_redacted: boolean;
+            /** @description Owner display name. */
+            owner_name?: string | null;
+            /** @description Track count. */
+            track_count: number;
+        };
+        /** @description Acknowledgement of a triggered background refresh. */
+        RefreshResponse: {
+            /** @description Human message. */
+            message: string;
+            /** @description Always `ok` when the trigger lands. */
+            status: string;
+        };
+        /** @description Bulk-remove body. */
+        RemoveTracksBody: {
+            /** @description Track row ids to remove. */
+            track_ids: string[];
+        };
+        /** @description Bulk-remove answer. */
+        RemoveTracksResponse: {
+            /** @description Human message. */
+            message: string;
+            /** @description How many rows were removed. */
+            removed: number;
+            /** @description Always "ok". */
+            status: string;
+        };
+        /** @description Reorder body. */
+        ReorderBody: {
+            /** @description Desired position. Past-the-end clamps to the last slot. */
+            new_position: number;
+            /** @description Track row id to move. */
+            track_id: string;
+        };
+        /** @description Reorder answer. */
+        ReorderResponse: {
+            /** @description Where the track actually landed. */
+            actual_position: number;
+            /** @description Human message. */
+            message: string;
+            /** @description Always "ok". */
+            status: string;
+        };
+        /** @description Source-resolution answer: each track id maps to its known sources. */
+        ResolveSourcesResponse: {
+            /** @description Track id to sources. */
+            sources: {
+                [key: string]: string[];
+            };
+        };
+        /**
          * @description Account role. Meanings are unchanged from v2: `user` requests await
          *     approval; `trusted` and `admin` auto-approve and are quota-exempt.
          * @enum {string}
@@ -1168,6 +4247,127 @@ export interface components {
         RoleUpdate: {
             /** @description New role. */
             role: components["schemas"]["Role"];
+        };
+        /** @description One bucket drill-down page. */
+        SearchBucketResponse: {
+            /** @description Echoed bucket name. */
+            bucket: string;
+            /**
+             * Format: int32
+             * @description Echoed page size.
+             */
+            limit: number;
+            /**
+             * Format: int32
+             * @description Echoed offset.
+             */
+            offset: number;
+            /** @description This page of hits, best first. */
+            results: components["schemas"]["SearchResultItem"][];
+            top_result?: null | components["schemas"]["SearchResultItem"];
+        };
+        /**
+         * @description Which catalog bucket a result came from.
+         * @enum {string}
+         */
+        SearchKind: "artist" | "album" | "track";
+        /**
+         * @description Unified search response: one ranked list per bucket plus the standout
+         *     hit per bucket, when one earns it.
+         */
+        SearchResponse: {
+            /** @description Matching albums, best first. */
+            albums: components["schemas"]["SearchResultItem"][];
+            /** @description Matching artists, best first. */
+            artists: components["schemas"]["SearchResultItem"][];
+            top_album?: null | components["schemas"]["SearchResultItem"];
+            top_artist?: null | components["schemas"]["SearchResultItem"];
+            top_track?: null | components["schemas"]["SearchResultItem"];
+            /** @description Matching tracks, best first. */
+            tracks: components["schemas"]["SearchResultItem"][];
+        };
+        /**
+         * @description One search hit. Cover art is deliberately absent: the covers endpoints
+         *     serve art by id, so search never duplicates those URLs.
+         */
+        SearchResultItem: {
+            /** @description Owning artist name, when the row has one. */
+            artist?: string | null;
+            /** @description Local catalog id. */
+            id: string;
+            /** @description True for every local hit; provider hits in stage 5 vary. */
+            in_library: boolean;
+            /** @description Result bucket. */
+            kind: components["schemas"]["SearchKind"];
+            /**
+             * @description Provider id from the external-identity tables, when the row has an
+             *     accepted identity. Absent means unidentified, never failure.
+             */
+            musicbrainz_id?: string | null;
+            /** @description Always false in stage 4; the requests slice owns this flag. */
+            requested: boolean;
+            /**
+             * Format: int32
+             * @description Match score, 0-100. Exact folded match is 100, folded prefix is 90,
+             *     folded substring is 70. Ranks hits, never filters them.
+             */
+            score: number;
+            /** @description Display title (artist name, album title, or track title). */
+            title: string;
+            /**
+             * Format: int32
+             * @description Release year, when known.
+             */
+            year?: number | null;
+        };
+        /** @description Matching albums plus playable tracks. */
+        SearchResults: {
+            /** @description Albums matching the query. */
+            albums: components["schemas"]["AlbumCard"][];
+            /** @description Tracks matching the query. */
+            tracks: components["schemas"]["SuggestionTrack"][];
+        };
+        /**
+         * @description One row inside a section. The `type` field on the section names which
+         *     variant the rows hold; untagged so the wire keeps flat v2-style items.
+         */
+        SectionItem: components["schemas"]["ChartArtist"] | components["schemas"]["ChartAlbum"] | components["schemas"]["ChartTrack"] | components["schemas"]["ChartGenre"];
+        /** @description Server-wide year-in-review. */
+        ServerWrappedResponse: {
+            /** @description Per-user listener leaderboard. */
+            leaderboard: components["schemas"]["WrappedLeaderboardEntry"][];
+            top_album_sitewide?: null | components["schemas"]["WrappedAlbum"];
+            top_artist_sitewide?: null | components["schemas"]["WrappedArtist"];
+            /**
+             * Format: int64
+             * @description Estimated total listens.
+             */
+            total_listens_estimated: number;
+            /**
+             * Format: int32
+             * @description Users included in the stats.
+             */
+            total_users_tracked: number;
+            /**
+             * Format: int32
+             * @description Year the stats cover.
+             */
+            year: number;
+        };
+        /** @description A card nudging the user to connect a service. */
+        ServicePrompt: {
+            /** @description Accent color token. */
+            color: string;
+            /** @description Card body. */
+            description: string;
+            /** @description Feature bullets. */
+            features?: string[];
+            /** @description Icon name. */
+            icon: string;
+            /** @description Service key (`listenbrainz`, `lastfm`, ...). */
+            service: string;
+            /** @description Card title. */
+            title: string;
         };
         /** @description Own sessions. */
         SessionListResponse: {
@@ -1200,6 +4400,13 @@ export interface components {
              */
             last_seen_at: number;
         };
+        /** @description Set-favorite body. */
+        SetFavoriteBody: {
+            /** @description True favorites the item; false unfavorites it. */
+            favorited: boolean;
+            /** @description Display name to keep, when favoriting. */
+            name?: string | null;
+        };
         /** @description First-admin setup body. Runs only against an empty user table. */
         SetupBody: {
             /** @description Display name; defaults to the username casing. */
@@ -1218,6 +4425,317 @@ export interface components {
             /** @description True when no users exist yet and setup must run. */
             setup_required: boolean;
         };
+        /** @description Library totals. Track and size totals count streamable tracks only. */
+        StatsView: {
+            /**
+             * Format: int64
+             * @description Albums the caller favorited.
+             */
+            favorite_albums: number;
+            /**
+             * Format: int64
+             * @description Artists the caller favorited.
+             */
+            favorite_artists: number;
+            /**
+             * Format: int64
+             * @description Tracks the caller favorited.
+             */
+            favorite_tracks: number;
+            /** @description Streamable-track counts by format label. */
+            format_breakdown: {
+                [key: string]: number;
+            };
+            /**
+             * Format: int64
+             * @description Albums in the catalog.
+             */
+            total_albums: number;
+            /**
+             * Format: int64
+             * @description Artists in the catalog.
+             */
+            total_artists: number;
+            /**
+             * Format: int64
+             * @description Summed streamable-track size, bytes.
+             */
+            total_size_bytes: number;
+            /**
+             * Format: int64
+             * @description Streamable tracks in the catalog.
+             */
+            total_tracks: number;
+        };
+        /** @description Generic status answer for deletes. */
+        StatusResponse: {
+            /** @description Human message. */
+            message: string;
+            /** @description Always "ok". */
+            status: string;
+        };
+        /** @description Typeahead response: one merged list across buckets, best first. */
+        SuggestResponse: {
+            /** @description Suggestions, best first. */
+            results: components["schemas"]["SuggestResult"][];
+        };
+        /** @description One typeahead suggestion. */
+        SuggestResult: {
+            /** @description Owning artist name, when the row has one. */
+            artist?: string | null;
+            /** @description Local catalog id. */
+            id: string;
+            /** @description Suggestion bucket. */
+            kind: components["schemas"]["SearchKind"];
+            /** @description Provider id, when the row has an accepted identity. */
+            musicbrainz_id?: string | null;
+            /**
+             * Format: int32
+             * @description Match score, 0-100, same scale as full search.
+             */
+            score: number;
+            /** @description Display title. */
+            title: string;
+        };
+        /** @description One suggested track, tagged with why it was picked. */
+        SuggestionTrack: {
+            /** @description Owning local album id. */
+            album_id: string;
+            /** @description Album title. */
+            album_title: string;
+            /** @description Track artist display name. */
+            artist_name: string;
+            /** @description True when the owning album has artwork. */
+            cover_available: boolean;
+            /**
+             * Format: double
+             * @description Duration, seconds.
+             */
+            duration_seconds?: number | null;
+            /** @description Container or codec label. */
+            format: string;
+            /** @description `recent`, `rediscover`, `surprise`, or `same_era`. */
+            reason: string;
+            /** @description Track title. */
+            title: string;
+            /** @description Local track id. */
+            track_id: string;
+            /**
+             * Format: int64
+             * @description Release year, when known.
+             */
+            year?: number | null;
+        };
+        /** @description Suggestion listing. */
+        SuggestionsResponse: {
+            /** @description Reason-tagged tracks, pools interleaved. */
+            items: components["schemas"]["SuggestionTrack"][];
+        };
+        /** @description One personalized top pick. */
+        TopPickItem: {
+            /** @description Picked album. */
+            album: components["schemas"]["ChartAlbum"];
+            /**
+             * Format: int64
+             * @description Match score, 0-100.
+             */
+            match_pct: number;
+            /** @description Human reasons behind the pick. */
+            reasons?: string[];
+            /** @description Seed artist name, when there is one. */
+            seed_artist?: string | null;
+        };
+        /** @description The personalized top-picks shelf. */
+        TopPicksSection: {
+            /** @description Ranked picks. */
+            items?: components["schemas"]["TopPickItem"][];
+            /**
+             * @description True while picks are trending-only because personalization has not
+             *     resolved yet (the UI shows a "still personalising" hint).
+             */
+            personalizing?: boolean;
+            /** @description Provider behind the picks, when it has one. */
+            source?: string | null;
+            /** @description Shelf title. */
+            title: string;
+        };
+        /** @description One artist/track pair to check against the YouTube cache. */
+        TrackCacheCheckItem: {
+            /** @description Artist name. */
+            artist: string;
+            /** @description Track name. */
+            track: string;
+        };
+        /** @description Body checking track cache membership in bulk. */
+        TrackCacheCheckRequest: {
+            /** @description Pairs to check (capped, deduped case-insensitively). */
+            items?: components["schemas"]["TrackCacheCheckItem"][];
+        };
+        /** @description Bulk cache membership. */
+        TrackCacheCheckResponse: {
+            /** @description Membership rows in request order (deduped). */
+            items?: components["schemas"]["TrackCacheCheckResponseItem"][];
+        };
+        /** @description Cache membership behind one pair. */
+        TrackCacheCheckResponseItem: {
+            /** @description Artist name as sent. */
+            artist: string;
+            /** @description True when a cached video covers the pair. */
+            cached?: boolean;
+            /** @description Track name as sent. */
+            track: string;
+        };
+        /** @description Track identity for membership checks. */
+        TrackIdentifier: {
+            /** @description Album name. */
+            album_name: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description Track title. */
+            track_name: string;
+        };
+        /** @description One track to add. */
+        TrackInput: {
+            /** @description Album id, when known. */
+            album_id?: string | null;
+            /** @description Album name. */
+            album_name: string;
+            /** @description Artist id, when known. */
+            artist_id?: string | null;
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description Sources carrying this track, when known. */
+            available_sources?: string[] | null;
+            /** @description Cover art URL, when known. */
+            cover_url?: string | null;
+            /**
+             * Format: int32
+             * @description Disc number, when known.
+             */
+            disc_number?: number | null;
+            /**
+             * Format: double
+             * @description Duration in seconds, when known.
+             */
+            duration?: number | null;
+            /** @description Audio format, when known. */
+            format?: string | null;
+            /** @description Plex rating key, when the track came from Plex. */
+            plex_rating_key?: string | null;
+            /** @description Preferred source type. */
+            source_type?: string;
+            /** @description Track title. */
+            track_name: string;
+            /**
+             * Format: int32
+             * @description Track number, when known.
+             */
+            track_number?: number | null;
+            /** @description Library track source id, when known. */
+            track_source_id?: string | null;
+        };
+        /** @description One page of catalog tracks. */
+        TrackPage: {
+            /** @description This page of tracks. */
+            items: components["schemas"]["TrackView"][];
+            /**
+             * Format: int64
+             * @description Echo of the requested limit.
+             */
+            limit: number;
+            /**
+             * Format: int64
+             * @description Echo of the requested offset.
+             */
+            offset: number;
+            /**
+             * Format: int64
+             * @description Tracks matching the filter, all pages.
+             */
+            total: number;
+        };
+        /** @description A 30-second track preview. Empty (no URL) means no provider had one. */
+        TrackPreviewResponse: {
+            /**
+             * Format: int64
+             * @description Preview length in seconds, when known.
+             */
+            duration_s?: number | null;
+            /** @description Preview audio URL, when found. */
+            preview_url?: string | null;
+            /** @description Provider that served the preview, when found. */
+            provider?: string | null;
+            /** @description Track title, when found. */
+            title?: string | null;
+        };
+        /**
+         * @description One catalog track. Only streamable tracks are listed; missing or
+         *     excluded files read as absent (404 on the detail route).
+         */
+        TrackView: {
+            /** @description Album artist display name. */
+            album_artist_name: string;
+            /** @description Owning local album id. */
+            album_id: string;
+            /** @description Album title. */
+            album_title: string;
+            /** @description Local track-artist id, when credited. */
+            artist_id?: string | null;
+            /** @description Track artist display name. */
+            artist_name: string;
+            /**
+             * Format: int64
+             * @description Bit rate, when probed.
+             */
+            bit_rate?: number | null;
+            /** @description True when the owning album has artwork. */
+            cover_available: boolean;
+            /**
+             * Format: double
+             * @description Import time, unix seconds.
+             */
+            date_added?: number | null;
+            /**
+             * Format: int64
+             * @description Disc number.
+             */
+            disc_number: number;
+            /**
+             * Format: double
+             * @description Duration, seconds.
+             */
+            duration_seconds?: number | null;
+            /** @description True when the caller favorited this track. */
+            favorite: boolean;
+            /**
+             * Format: int64
+             * @description File size, bytes.
+             */
+            file_size_bytes: number;
+            /** @description Container or codec label, e.g. `flac`. */
+            format: string;
+            /** @description First genre tag, when tagged. */
+            genre?: string | null;
+            /** @description Local track id. */
+            id: string;
+            /**
+             * Format: int64
+             * @description Sample rate, when probed.
+             */
+            sample_rate?: number | null;
+            /** @description Track title. */
+            title: string;
+            /**
+             * Format: int64
+             * @description Track number within the disc.
+             */
+            track_number: number;
+            /**
+             * Format: int64
+             * @description Release year, when known.
+             */
+            year?: number | null;
+        };
         /**
          * @description Credential handoff for session-issuing routes. Mirrors the sibling
          *     `TransportParam` (which owns the mechanism) so this layer stays the only
@@ -1225,6 +4743,56 @@ export interface components {
          * @enum {string}
          */
         TransportDto: "cookie" | "bearer";
+        /** @description One page of a trending-artists chart. */
+        TrendingArtistsPage: {
+            /** @description True when more rows follow. */
+            has_more: boolean;
+            /** @description Ranked artists for the page. */
+            items: components["schemas"]["ChartArtist"][];
+            /** @description Human range label. */
+            label: string;
+            /**
+             * Format: int64
+             * @description Limit behind this page.
+             */
+            limit: number;
+            /**
+             * Format: int64
+             * @description Offset behind this page.
+             */
+            offset: number;
+            /** @description Range key behind this page. */
+            range_key: string;
+        };
+        /** @description Unseen-count answer. */
+        UnseenCountResponse: {
+            /** @description Sightings newer than the caller's seen watermark. */
+            count: number;
+        };
+        /** @description Update-check answer. */
+        UpdateCheckResponse: {
+            /** @description True when the two tags could not be compared. */
+            comparison_failed: boolean;
+            /** @description Running version. */
+            current_version: string;
+            latest_release?: null | components["schemas"]["GitHubRelease"];
+            /** @description Latest known tag, absent when the lookup found nothing. */
+            latest_version?: string | null;
+            /** @description True when a newer release exists (or a dev build failed comparison). */
+            update_available: boolean;
+        };
+        /** @description Rename-playlist body. A missing name leaves the playlist unchanged. */
+        UpdatePlaylistBody: {
+            /** @description New display name. Must not be blank when present. */
+            name?: string | null;
+        };
+        /** @description Track source-update body. */
+        UpdateTrackBody: {
+            /** @description Sources carrying this track. */
+            available_sources?: string[] | null;
+            /** @description Preferred source type. */
+            source_type?: string | null;
+        };
         /** @description Public account shape. */
         UserResponse: {
             /** @description Served avatar URL, when an avatar is set. */
@@ -1254,10 +4822,206 @@ export interface components {
             /** @description Preferred username casing, when set. */
             username_display?: string | null;
         };
+        /**
+         * @description Per-user year-in-review. `loved_tracks_count` and `total_listens_estimated`
+         *     are both approximations (v2 caveat kept): ListenBrainz caps the loved
+         *     endpoint at 100 rows per request, and the total sums only the returned
+         *     top artists rather than every play.
+         */
+        UserWrappedResponse: {
+            /** @description Display name. */
+            display_name: string;
+            /**
+             * @description False (with empty lists) when the user has no linked ListenBrainz
+             *     account or no listens for the year.
+             */
+            has_data: boolean;
+            /**
+             * Format: int64
+             * @description Loved-track sample size (capped at 100 by ListenBrainz), not a total.
+             */
+            loved_tracks_count: number;
+            /** @description Top albums. */
+            top_albums: components["schemas"]["WrappedAlbum"][];
+            /** @description Top artists. */
+            top_artists: components["schemas"]["WrappedArtist"][];
+            /** @description Top genres. */
+            top_genres: components["schemas"]["WrappedGenre"][];
+            /** @description Top tracks. */
+            top_tracks: components["schemas"]["WrappedTrack"][];
+            /**
+             * Format: int64
+             * @description Sum over the returned top artists, not the true play count.
+             */
+            total_listens_estimated: number;
+            /** @description User id. */
+            user_id: string;
+            /**
+             * Format: int32
+             * @description Year the stats cover.
+             */
+            year: number;
+        };
         /** @description Change username. */
         UsernameUpdate: {
             /** @description New username: 3-32 chars of letters, digits, `.`, `_`, `-`. */
             username: string;
+        };
+        /** @description Running build identity. */
+        VersionInfo: {
+            /** @description Build timestamp when the image records one. */
+            build_date?: string | null;
+            /** @description Release tag, or `dev` on a checkout build. */
+            version: string;
+        };
+        /** @description Visibility-toggle body. */
+        VisibilityBody: {
+            /** @description True makes the playlist public; false makes it private. */
+            is_public: boolean;
+        };
+        /** @description The weekly exploration playlist shelf. */
+        WeeklyExploration: {
+            /** @description Playlist date (`YYYY-MM-DD`). */
+            playlist_date: string;
+            /** @description Provider playlist URL, when there is one. */
+            source_url?: string;
+            /** @description Shelf title. */
+            title: string;
+            /** @description Playlist tracks in order. */
+            tracks?: components["schemas"]["WeeklyTrack"][];
+        };
+        /** @description One track of the weekly exploration playlist. */
+        WeeklyTrack: {
+            /** @description Album title. */
+            album_name: string;
+            /** @description MusicBrainz artist id, when known. */
+            artist_mbid?: string | null;
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description Cover art URL, when resolved. */
+            cover_url?: string | null;
+            /**
+             * Format: int64
+             * @description Duration in milliseconds, when known.
+             */
+            duration_ms?: number | null;
+            /** @description MusicBrainz recording id, when known. */
+            recording_mbid?: string | null;
+            /** @description MusicBrainz release-group id, when known. */
+            release_group_mbid?: string | null;
+            /** @description Track title. */
+            title: string;
+        };
+        /** @description Top album row. */
+        WrappedAlbum: {
+            /** @description Artist name. */
+            artist_name: string;
+            /**
+             * Format: int64
+             * @description Listen count.
+             */
+            listen_count: number;
+            /** @description MusicBrainz release-group id when known. */
+            mbid?: string | null;
+            /** @description Album name. */
+            name: string;
+        };
+        /** @description Top artist row. */
+        WrappedArtist: {
+            /** @description MusicBrainz artist id when known. */
+            artist_mbid?: string | null;
+            /**
+             * Format: int64
+             * @description Listen count.
+             */
+            listen_count: number;
+            /** @description Artist name. */
+            name: string;
+        };
+        /** @description Top genre row. */
+        WrappedGenre: {
+            /** @description Genre label. */
+            genre: string;
+            /**
+             * Format: int64
+             * @description Listen count.
+             */
+            listen_count: number;
+        };
+        /** @description Server leaderboard row. */
+        WrappedLeaderboardEntry: {
+            /** @description Display name. */
+            display_name: string;
+            /**
+             * Format: int64
+             * @description Listen count.
+             */
+            listen_count: number;
+        };
+        /** @description Top track row. */
+        WrappedTrack: {
+            /** @description Artist name. */
+            artist_name: string;
+            /**
+             * Format: int64
+             * @description Listen count.
+             */
+            listen_count: number;
+            /** @description Track name. */
+            name: string;
+        };
+        /** @description One user row in the listing. */
+        WrappedUserSummary: {
+            /** @description Display name. */
+            display_name: string;
+            /** @description Email when known. */
+            email?: string | null;
+            /** @description True when a ListenBrainz account is linked. */
+            has_listenbrainz: boolean;
+            /** @description User id. */
+            id: string;
+        };
+        /** @description User listing answer. */
+        WrappedUsersResponse: {
+            /** @description Every user with its ListenBrainz link status. */
+            users: components["schemas"]["WrappedUserSummary"][];
+            /**
+             * Format: int32
+             * @description Year the stats cover.
+             */
+            year: number;
+        };
+        /** @description YouTube data-API quota state. */
+        YouTubeQuotaResponse: {
+            /**
+             * Format: int64
+             * @description Quota units available per window.
+             */
+            limit: number;
+            /**
+             * Format: int64
+             * @description Unix seconds when the window resets.
+             */
+            resets_at: number;
+            /**
+             * Format: int64
+             * @description Quota units spent in the current window.
+             */
+            used: number;
+        };
+        /**
+         * @description A resolved YouTube video. `error: "not_found"` means the search ran and
+         *     found nothing; absence of both video and error never happens.
+         */
+        YouTubeSearchResponse: {
+            /** @description True when the answer came from cache. */
+            cached?: boolean;
+            /** @description Embed URL, when found. */
+            embed_url?: string | null;
+            /** @description Failure reason (`not_found`), when the search found nothing. */
+            error?: string | null;
+            /** @description Resolved video id, when found. */
+            video_id?: string | null;
         };
     };
     responses: never;
@@ -1525,6 +5289,132 @@ export interface operations {
         responses: {
             /** @description Sessions revoked */
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    set_auto_download_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Artist MBID */
+                artist_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutoDownloadBody"];
+            };
+        };
+        responses: {
+            /** @description Follow status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FollowStatusResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Artist not followed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Follow before enabling auto-download */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    set_follow_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Artist MBID */
+                artist_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FollowBody"];
+            };
+        };
+        responses: {
+            /** @description Follow status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FollowStatusResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_follow_status_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Artist MBID */
+                artist_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Follow status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FollowStatusResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2048,6 +5938,2402 @@ export interface operations {
             };
         };
     };
+    artist_cover: {
+        parameters: {
+            query?: {
+                /** @description Preferred width in pixels */
+                size?: number;
+            };
+            header?: never;
+            path: {
+                /** @description MusicBrainz artist id */
+                artist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Image bytes or placeholder SVG */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Image is warming; poll again */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Image unchanged */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cover_from_release_group: {
+        parameters: {
+            query?: {
+                /** @description Preferred size: 250, 500, 1200, or original for full size */
+                size?: string;
+            };
+            header?: never;
+            path: {
+                /** @description MusicBrainz release group id */
+                release_group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cover bytes or placeholder SVG */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Cover is warming; poll again */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Cover unchanged */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unsupported size */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cover_from_release: {
+        parameters: {
+            query?: {
+                /** @description Preferred size: 250, 500, 1200, or original for full size */
+                size?: string;
+            };
+            header?: never;
+            path: {
+                /** @description MusicBrainz release id */
+                release_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cover bytes or placeholder SVG */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Cover is warming; poll again */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Cover unchanged */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unsupported size */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_discover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discover shelves */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    record_activity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverActivityRequest"];
+            };
+        };
+        responses: {
+            /** @description Personalization cursor */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverActivityResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    album_preview: {
+        parameters: {
+            query: {
+                /** @description Artist name */
+                artist: string;
+                /** @description Album name */
+                album: string;
+                /** @description Wanted samples, 1-8 */
+                count?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album samples */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumPreviewResponse"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_batches: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Batch list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryBatchListResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_batch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoveryBatchCreate"];
+            };
+        };
+        responses: {
+            /** @description Batch created */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryBatchDetail"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_batch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Batch id */
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Batch detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryBatchDetail"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown batch id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    remove_batch: {
+        parameters: {
+            query?: {
+                /** @description Also remove the batch albums */
+                remove_albums?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Batch id */
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removal outcome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryBatchRemoveResult"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown batch id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    playlist_suggestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaylistSuggestionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Playlist suggestions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistSuggestionsResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_queue: {
+        parameters: {
+            query?: {
+                /** @description Wanted card count, max 20 */
+                count?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Queue deck */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverQueueResponse"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    enrich_queue_item: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group id */
+                release_group_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Card enrichment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueEnrichment"];
+                };
+            };
+            /** @description Bad release-group id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    queue_generate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueueGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Build state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueGenerateResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    ignore_queue_item: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueueIgnoreRequest"];
+            };
+        };
+        responses: {
+            /** @description Release ignored */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    ignored_releases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ignore ledger */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IgnoredReleasesResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    preview_queue_item: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group id */
+                release_group_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Card preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverQueuePreview"];
+                };
+            };
+            /** @description Bad release-group id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    queue_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Queue build status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverQueueStatusResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    validate_queue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueueValidateRequest"];
+            };
+        };
+        responses: {
+            /** @description Library membership */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueValidateResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    youtube_cache_check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrackCacheCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Cache membership */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackCacheCheckResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    youtube_quota: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Quota state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeQuotaResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description YouTube unconfigured */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    youtube_search: {
+        parameters: {
+            query: {
+                /** @description Artist name */
+                artist: string;
+                /** @description Album name */
+                album: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resolved video */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeSearchResponse"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    youtube_track_search: {
+        parameters: {
+            query: {
+                /** @description Artist name */
+                artist: string;
+                /** @description Track name */
+                track: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resolved video */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeSearchResponse"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    discover_radio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RadioRequest"];
+            };
+        };
+        responses: {
+            /** @description Radio shelf */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChartSection"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    radio_plan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RadioPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Radio plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RadioPlanResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    refresh_discover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refresh triggered */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefreshResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    track_preview: {
+        parameters: {
+            query: {
+                /** @description Artist name */
+                artist: string;
+                /** @description Track name */
+                track: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackPreviewResponse"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_favorites_handler: {
+        parameters: {
+            query?: {
+                /** @description Kind filter: album, artist, or track */
+                kind?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Caller favorites */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FavoriteListResponse"];
+                };
+            };
+            /** @description Bad kind filter */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    set_favorite_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Kind: album, artist, or track */
+                kind: string;
+                /** @description Favorited item id */
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetFavoriteBody"];
+            };
+        };
+        responses: {
+            /** @description Favorite status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FavoriteStatusResponse"];
+                };
+            };
+            /** @description Bad kind or body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_followed_artists_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Followed artists */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FollowedArtistListResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_new_releases_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description New releases */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NewReleaseListResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_recent_releases_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent releases */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NewReleaseListResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    mark_seen_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Zeroed count */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnseenCountResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    unseen_count_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unseen count */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnseenCountResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_home: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Home shelves */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    genre_detail: {
+        parameters: {
+            query?: {
+                /** @description Rows per lane */
+                limit?: number;
+                /** @description Artist lane offset */
+                artist_offset?: number;
+                /** @description Album lane offset */
+                album_offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Genre name */
+                genre_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Genre detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenreDetailResponse"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    integration_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Integration availability */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationStatus"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    popular_albums: {
+        parameters: {
+            query?: {
+                /** @description Range key, this_week default */
+                range?: string;
+                /** @description Page size */
+                limit?: number;
+                /** @description Page offset */
+                offset?: number;
+                /** @description listenbrainz or lastfm */
+                source?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Popular albums page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PopularAlbumsPage"];
+                };
+            };
+            /** @description Bad range or source */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    trending_artists: {
+        parameters: {
+            query?: {
+                /** @description Range key, this_week default */
+                range?: string;
+                /** @description Page size */
+                limit?: number;
+                /** @description Page offset */
+                offset?: number;
+                /** @description listenbrainz or lastfm */
+                source?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Trending artists page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrendingArtistsPage"];
+                };
+            };
+            /** @description Bad range or source */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    your_top_albums: {
+        parameters: {
+            query?: {
+                /** @description Range key, this_week default */
+                range?: string;
+                /** @description Page size */
+                limit?: number;
+                /** @description Page offset */
+                offset?: number;
+                /** @description listenbrainz or lastfm */
+                source?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Your-top albums page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PopularAlbumsPage"];
+                };
+            };
+            /** @description Bad range or source */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_albums: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Page size, 1-200. Default 50. */
+                limit: number | null;
+                /** @description Page start. Default 0. */
+                offset: number | null;
+                /** @description `name`, `date_added`, or `year`. Default `name`. */
+                sort: string | null;
+                /** @description `asc` or `desc`. Default `asc`. */
+                order: string | null;
+                /** @description Title/artist substring filter, case folded. */
+                q: string | null;
+                /** @description Restrict to one album artist. */
+                artist_id: string | null;
+                /** @description Restrict to one decade start year, e.g. 1990. */
+                decade: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumPage"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_pin_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pin display */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionPinResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    set_pin_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditionPinBody"];
+            };
+        };
+        responses: {
+            /** @description Pin display */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionPinResponse"];
+                };
+            };
+            /** @description Unknown edition for this album */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    clear_pin_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pin display */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionPinResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_album: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_album_copies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sibling albums */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumPage"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_album_tracks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                id: string;
+                /** @description Page size, 1-1000. Default 200. */
+                limit: number | null;
+                /** @description Page start. Default 0. */
+                offset: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackPage"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_artists: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Page size, 1-200. Default 50. */
+                limit: number | null;
+                /** @description Page start. Default 0. */
+                offset: number | null;
+                /** @description `name`, `album_count`, or `date_added`. Default `name`. */
+                sort: string | null;
+                /** @description `asc` or `desc`. Default `asc`. */
+                order: string | null;
+                /** @description Name substring filter, case folded. */
+                q: string | null;
+                /** @description `all`, `album_artists`, or `contributors`. Default `all`. */
+                scope: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Artist page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistPage"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_artist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local artist id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Artist */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown artist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_artist_albums: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local artist id */
+                id: string;
+                /** @description Page size, 1-1000. Default 200. */
+                limit: number | null;
+                /** @description Page start. Default 0. */
+                offset: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Led albums */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumPage"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown artist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_artist_appearances: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local artist id */
+                id: string;
+                /** @description Page size, 1-1000. Default 200. */
+                limit: number | null;
+                /** @description Page start. Default 0. */
+                offset: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Appearance albums */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumPage"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown artist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_genres: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Genres */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenreList"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_genre_tracks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Genre name */
+                name: string;
+                /** @description Page size, 1-1000. Default 200. */
+                limit: number | null;
+                /** @description Page start. Default 0. */
+                offset: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Genre tracks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackPage"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_recently_added: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Card cap, 1-50. Default 20. */
+                limit: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent albums */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumPage"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_stats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Library totals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatsView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_tracks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Page size, 1-500. Default 50. */
+                limit: number | null;
+                /** @description Page start. Default 0. */
+                offset: number | null;
+                /** @description `title` or `date_added`. Default `title`. */
+                sort: string | null;
+                /** @description `asc` or `desc`. Default `asc`. */
+                order: string | null;
+                /** @description Title/artist/album substring filter, case folded. */
+                q: string | null;
+                /** @description Restrict to one album. */
+                album_id: string | null;
+                /** @description Restrict to one credited artist. */
+                artist_id: string | null;
+                /** @description Restrict to one genre tag, case folded. */
+                genre: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackPage"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_track: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local track id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown track id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_lyrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local track id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lyrics */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LyricsView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown track id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    browse_albums: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Page size, 1-200. Default 50. */
+                limit: number | null;
+                /** @description Page start. Default 0. */
+                offset: number | null;
+                /**
+                 * @description `name`, `date_added`, `year`, `random`, or `rediscover`
+                 *     (oldest first). Default `name`.
+                 */
+                sort: string | null;
+                /** @description `asc` or `desc`. Default `asc`. */
+                order: string | null;
+                /** @description Title/artist substring filter, case folded. */
+                q: string | null;
+                /** @description Restrict to one decade start year, e.g. 1990. */
+                decade: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album cards */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumCardPage"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_decades: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Decades */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecadesResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    recent_albums: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Card cap, 1-50. Default 20. */
+                limit: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent albums */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumCard"][];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    search_library: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Substring query, case folded, at least one character. */
+                q: string | null;
+                /** @description Cap applied per group, 1-50. Default 20. */
+                limit: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Search results */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResults"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_suggestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Track cap, 1-40. Default 12. */
+                limit: number | null;
+                /** @description Era anchor for the `same_era` pool, e.g. 1990. */
+                decade: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Suggestions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestionsResponse"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_profile: {
         parameters: {
             query?: never;
@@ -2383,6 +8669,1007 @@ export interface operations {
             };
         };
     };
+    now_playing: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Live snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NowPlayingSnapshot"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_playlists_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Visible playlists */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistListResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_playlist_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePlaylistBody"];
+            };
+        };
+        responses: {
+            /** @description Created playlist */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistDetail"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    check_tracks_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckTracksBody"];
+            };
+        };
+        responses: {
+            /** @description Membership map */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckTracksResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_playlist_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Playlist detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistDetail"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_playlist_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdatePlaylistBody"];
+            };
+        };
+        responses: {
+            /** @description Renamed playlist */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistDetail"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    delete_playlist_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deletion receipt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_cover_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cover bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    upload_cover_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CoverUploadBody"];
+            };
+        };
+        responses: {
+            /** @description Cover URL */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverUploadResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    remove_cover_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removal receipt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resolve_sources_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Source map */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolveSourcesResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    add_tracks_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddTracksBody"];
+            };
+        };
+        responses: {
+            /** @description Added tracks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddTracksResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    remove_tracks_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoveTracksBody"];
+            };
+        };
+        responses: {
+            /** @description Removal receipt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemoveTracksResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reorder_track_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReorderBody"];
+            };
+        };
+        responses: {
+            /** @description Reorder receipt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReorderResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown playlist or track id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    remove_track_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+                /** @description Track row id */
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removal receipt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown playlist or track id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_track_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+                /** @description Track row id */
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTrackBody"];
+            };
+        };
+        responses: {
+            /** @description Updated track */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistTrack"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown playlist or track id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    set_visibility_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisibilityBody"];
+            };
+        };
+        responses: {
+            /** @description Updated summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistSummary"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_approval_batches_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Approval batches */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalBatchListResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_approvals_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pending approvals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoDownloadApprovalListResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    search: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Search text. Required; blank is a 400. */
+                q: string;
+                /** @description Max artists (0-100, default 10). */
+                limit_artists: number | null;
+                /** @description Max albums (0-100, default 10). */
+                limit_albums: number | null;
+                /** @description Max tracks (0-100, default 10). */
+                limit_tracks: number | null;
+                /** @description Comma-separated subset (`artists,albums,tracks`); absent means all. */
+                buckets: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ranked hits per bucket */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            /** @description Blank query or bad limit */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    enrich_batch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnrichmentBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Batch counts plus degradations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrichmentResponse"];
+                };
+            };
+            /** @description Malformed batch body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    suggest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Search text. Queries shorter than two characters return an empty
+                 *     200, kept from v2 so the typeahead never errors mid-typing.
+                 */
+                q: string;
+                /** @description Max suggestions (1-10, default 5). */
+                limit: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Merged suggestions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestResponse"];
+                };
+            };
+            /** @description Bad limit */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    search_bucket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Search text. Required; blank is a 400. */
+                q: string;
+                /** @description Page size (1-100, default 50). */
+                limit: number | null;
+                /** @description Pagination offset (default 0). */
+                offset: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the bucket */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchBucketResponse"];
+                };
+            };
+            /** @description Blank query or bad limit */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown bucket */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_avatar: {
         parameters: {
             query?: never;
@@ -2397,6 +9684,171 @@ export interface operations {
         responses: {
             /** @description Avatar bytes */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_version: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Running build identity */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionInfo"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    check_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Update check result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateCheckResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_releases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Release history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubRelease"][];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_wrapped_server: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Server summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerWrappedResponse"];
+                };
+            };
+            /** @description Invalid or missing wrapped API key */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_wrapped_user: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-user summary, possibly empty */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserWrappedResponse"];
+                };
+            };
+            /** @description Invalid or missing wrapped API key */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_wrapped_users: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description User listing */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WrappedUsersResponse"];
+                };
+            };
+            /** @description Invalid or missing wrapped API key */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

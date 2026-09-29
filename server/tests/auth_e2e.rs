@@ -18,8 +18,14 @@
 //!   in the OpenAPI doc must have a matrix row; every non-allowlisted route
 //!   401s anonymously with a Bearer [REDACTED] admin routes 403 for plain users,
 //!   and the admin is admitted everywhere. Add a route without a row and this
-//!   fails by name.
+//!   fails by name. Curator rows read as admin rows for plain users; wrapped
+//!   rows take only the shared secret (no Bearer challenge on rejection) and
+//!   sessions never satisfy them.
 //! - `setup_edges`: setup-status flip, once-only setup, login before setup.
+//! - `trusted_tier_*`: trusted promotion admits curator pin writes (404 on
+//!   the empty catalog) while admin approvals still 403.
+//! - `playlist_lifecycle_*`: stateful playlist journey over one router
+//!   clone: create → add tracks → read back → delete → 404.
 //! - `login_p95_*`: 50 sequential logins against the 600ms login budget
 //!   (BUDGETS.md). Argon2id work-factor cost counts - it is the budget.
 
@@ -51,8 +57,10 @@ use droppedneedle::docs::ApiDoc;
 use droppedneedle::http_client::HttpClientFactory;
 use droppedneedle::ids::{IdGenerator, UuidGenerator};
 use droppedneedle::runtime_config::sections::SecuritySettings;
-use droppedneedle::runtime_config::{ConfigStore, Crypto};
-use droppedneedle::{AppConfig, AppState, create_app};
+use droppedneedle::runtime_config::{
+    ConfigStore, Crypto, Secret, secret_sections::WrappedSettings,
+};
+use droppedneedle::{AppConfig, AppState, create_app, reads::ReadsSetup};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 use utoipa::OpenApi as _;
@@ -60,6 +68,8 @@ use utoipa::OpenApi as _;
 /// Fixed host for every request; cookie mutations also send this as Origin.
 const HOST: &str = "e2e.test";
 const ORIGIN: &str = "http://e2e.test";
+/// Wrapped shared secret saved into every scratch config.
+const TEST_WRAPPED_KEY: &str = "e2e-wrapped-key-1";
 
 /// Scratch-dir sequence so parallel tests never share a database.
 static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -101,6 +111,11 @@ impl E2e {
         let mut security: SecuritySettings = store.get().expect("security section reads");
         security.hibp_check = false;
         store.save(security).expect("hibp switch saves");
+        store
+            .save_secret(WrappedSettings {
+                api_key: Secret::new(TEST_WRAPPED_KEY),
+            })
+            .expect("wrapped key saves");
 
         let ids = Arc::new(UuidGenerator);
         let clock = Arc::new(SystemClock);
@@ -137,11 +152,25 @@ impl E2e {
             "",
         )
         .expect("prod auth bundle builds");
+        let wrapped_api_key = self
+            .store
+            .get_raw::<WrappedSettings>()
+            .expect("wrapped settings read")
+            .api_key
+            .expose()
+            .to_owned();
+        let reads = ReadsSetup::build(
+            self.runtime.pool(),
+            auth.users.clone(),
+            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
+            wrapped_api_key,
+        );
         let state = AppState::new(
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             self.http.clone(),
             AppConfig::new(DEFAULT_PORT),
             auth,
+            reads,
         );
         create_app(state)
     }
@@ -203,6 +232,72 @@ async fn call(
         serde_json::from_slice(&bytes).expect("body is json")
     };
     (status, json, headers)
+}
+
+/// One request with a lenient body: JSON when it parses, null otherwise.
+/// Every slice renders failures in the shared envelope, so in practice this
+/// always decodes; the leniency only keeps failure messages readable. The
+/// posture passes assert status only.
+async fn call_lenient(
+    app: Router,
+    method: &str,
+    uri: &str,
+    headers: &[(&str, &str)],
+    body: Option<Value>,
+) -> (StatusCode, Value, HeaderMap) {
+    let mut builder = Request::builder().method(method).uri(uri);
+    builder = builder.header("host", HOST);
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    let body = match body {
+        Some(json) => {
+            builder = builder.header("content-type", "application/json");
+            Body::from(json.to_string())
+        }
+        None => Body::empty(),
+    };
+    let response = app
+        .oneshot(builder.body(body).expect("request builds"))
+        .await
+        .expect("router responds");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
+        .await
+        .expect("body reads");
+    let json = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    };
+    (status, json, headers)
+}
+
+/// One request returning raw bytes. Covers serve SVG/PNG rather than
+/// JSON, so the posture passes read them without the JSON decode.
+async fn call_raw(
+    app: Router,
+    method: &str,
+    uri: &str,
+    headers: &[(&str, &str)],
+) -> (StatusCode, HeaderMap, Vec<u8>) {
+    let mut builder = Request::builder().method(method).uri(uri);
+    builder = builder.header("host", HOST);
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    let response = app
+        .oneshot(builder.body(Body::empty()).expect("request builds"))
+        .await
+        .expect("router responds");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
+        .await
+        .expect("body reads")
+        .to_vec();
+    (status, headers, bytes)
 }
 
 fn bearer(token: &str) -> String {
@@ -784,6 +879,11 @@ enum Posture {
     User,
     /// Admin only; anonymous 401, plain user 403.
     Admin,
+    /// Curator (admin or trusted) only; anonymous 401, plain user 403.
+    Curator,
+    /// Wrapped shared-secret only: anonymous 401 with no Bearer [REDACTED]
+    /// sessions never satisfy these, the key admits (keyed pass below).
+    WrappedKey,
 }
 
 /// One matrix row: method, OpenAPI path template, expected posture. The
@@ -857,6 +957,220 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/admin/import/jellyfin", Posture::Admin),
     ("GET", "/api/v3/admin/import/plex", Posture::Admin),
     ("POST", "/api/v3/admin/import", Posture::Admin),
+    // Stage-4 library reads.
+    ("GET", "/api/v3/library/albums", Posture::User),
+    ("GET", "/api/v3/library/albums/{id}", Posture::User),
+    ("GET", "/api/v3/library/albums/{id}/tracks", Posture::User),
+    ("GET", "/api/v3/library/albums/{id}/copies", Posture::User),
+    ("GET", "/api/v3/library/artists", Posture::User),
+    ("GET", "/api/v3/library/artists/{id}", Posture::User),
+    ("GET", "/api/v3/library/artists/{id}/albums", Posture::User),
+    (
+        "GET",
+        "/api/v3/library/artists/{id}/appearances",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/library/tracks", Posture::User),
+    ("GET", "/api/v3/library/tracks/{id}", Posture::User),
+    ("GET", "/api/v3/library/tracks/{id}/lyrics", Posture::User),
+    ("GET", "/api/v3/library/stats", Posture::User),
+    ("GET", "/api/v3/library/recently-added", Posture::User),
+    ("GET", "/api/v3/library/genres", Posture::User),
+    ("GET", "/api/v3/library/genres/{name}/tracks", Posture::User),
+    ("GET", "/api/v3/local-library/albums", Posture::User),
+    ("GET", "/api/v3/local-library/search", Posture::User),
+    ("GET", "/api/v3/local-library/recent", Posture::User),
+    ("GET", "/api/v3/local-library/decades", Posture::User),
+    ("GET", "/api/v3/local-library/suggestions", Posture::User),
+    // Stage-4 unified search.
+    ("GET", "/api/v3/search", Posture::User),
+    ("GET", "/api/v3/search/{bucket}", Posture::User),
+    ("GET", "/api/v3/search/suggest", Posture::User),
+    ("POST", "/api/v3/search/enrich/batch", Posture::User),
+    // Stage-4 discover + queue + radio + batches.
+    ("GET", "/api/v3/discover", Posture::User),
+    ("POST", "/api/v3/discover/refresh", Posture::User),
+    ("POST", "/api/v3/discover/activity", Posture::User),
+    ("POST", "/api/v3/discover/radio", Posture::User),
+    ("POST", "/api/v3/discover/radio/plan", Posture::User),
+    (
+        "POST",
+        "/api/v3/discover/playlist-suggestions",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/discover/queue", Posture::User),
+    ("GET", "/api/v3/discover/queue/status", Posture::User),
+    ("POST", "/api/v3/discover/queue/generate", Posture::User),
+    (
+        "GET",
+        "/api/v3/discover/queue/enrich/{release_group_mbid}",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/discover/queue/preview/{release_group_mbid}",
+        Posture::User,
+    ),
+    ("POST", "/api/v3/discover/queue/ignore", Posture::User),
+    ("GET", "/api/v3/discover/queue/ignored", Posture::User),
+    ("POST", "/api/v3/discover/queue/validate", Posture::User),
+    (
+        "GET",
+        "/api/v3/discover/queue/youtube-search",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/discover/queue/youtube-track-search",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/discover/queue/youtube-quota", Posture::User),
+    (
+        "POST",
+        "/api/v3/discover/queue/youtube-cache-check",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/discover/track-preview", Posture::User),
+    ("GET", "/api/v3/discover/album-preview", Posture::User),
+    ("POST", "/api/v3/discover/batches", Posture::User),
+    ("GET", "/api/v3/discover/batches", Posture::User),
+    ("GET", "/api/v3/discover/batches/{batch_id}", Posture::User),
+    (
+        "DELETE",
+        "/api/v3/discover/batches/{batch_id}",
+        Posture::User,
+    ),
+    // Stage-4 home + now playing.
+    ("GET", "/api/v3/home", Posture::User),
+    ("GET", "/api/v3/home/integration-status", Posture::User),
+    ("GET", "/api/v3/home/genre/{genre_name}", Posture::User),
+    ("GET", "/api/v3/home/trending/artists", Posture::User),
+    ("GET", "/api/v3/home/popular/albums", Posture::User),
+    ("GET", "/api/v3/home/your-top/albums", Posture::User),
+    ("GET", "/api/v3/now-playing", Posture::User),
+    // Stage-4 collections: playlists.
+    ("GET", "/api/v3/playlists", Posture::User),
+    ("POST", "/api/v3/playlists", Posture::User),
+    ("GET", "/api/v3/playlists/{playlist_id}", Posture::User),
+    ("PUT", "/api/v3/playlists/{playlist_id}", Posture::User),
+    ("DELETE", "/api/v3/playlists/{playlist_id}", Posture::User),
+    (
+        "PATCH",
+        "/api/v3/playlists/{playlist_id}/visibility",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/playlists/{playlist_id}/tracks",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/playlists/{playlist_id}/tracks/remove",
+        Posture::User,
+    ),
+    (
+        "DELETE",
+        "/api/v3/playlists/{playlist_id}/tracks/{track_id}",
+        Posture::User,
+    ),
+    (
+        "PATCH",
+        "/api/v3/playlists/{playlist_id}/tracks/reorder",
+        Posture::User,
+    ),
+    (
+        "PATCH",
+        "/api/v3/playlists/{playlist_id}/tracks/{track_id}",
+        Posture::User,
+    ),
+    ("POST", "/api/v3/playlists/check-tracks", Posture::User),
+    (
+        "POST",
+        "/api/v3/playlists/{playlist_id}/resolve-sources",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/playlists/{playlist_id}/cover",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/playlists/{playlist_id}/cover",
+        Posture::User,
+    ),
+    (
+        "DELETE",
+        "/api/v3/playlists/{playlist_id}/cover",
+        Posture::User,
+    ),
+    // Stage-4 collections: favorites, follows, approvals, pins.
+    ("GET", "/api/v3/favorites", Posture::User),
+    ("PUT", "/api/v3/favorites/{kind}/{item_id}", Posture::User),
+    (
+        "GET",
+        "/api/v3/artists/{artist_mbid}/follow-status",
+        Posture::User,
+    ),
+    ("PUT", "/api/v3/artists/{artist_mbid}/follow", Posture::User),
+    (
+        "PUT",
+        "/api/v3/artists/{artist_mbid}/auto-download",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/following/artists", Posture::User),
+    ("GET", "/api/v3/following/new-releases", Posture::User),
+    (
+        "GET",
+        "/api/v3/following/new-releases/recent",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/following/new-releases/unseen-count",
+        Posture::User,
+    ),
+    ("POST", "/api/v3/following/new-releases/seen", Posture::User),
+    (
+        "GET",
+        "/api/v3/requests/auto-download-approvals",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/requests/auto-download-approval-batches",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/albums/{album_id}/edition-pin",
+        Posture::User,
+    ),
+    (
+        "PUT",
+        "/api/v3/library/albums/{album_id}/edition-pin",
+        Posture::Curator,
+    ),
+    (
+        "DELETE",
+        "/api/v3/library/albums/{album_id}/edition-pin",
+        Posture::Curator,
+    ),
+    // Stage-4 platform: covers, version, wrapped.
+    (
+        "GET",
+        "/api/v3/covers/release-group/{release_group_id}",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/covers/release/{release_id}", Posture::User),
+    ("GET", "/api/v3/covers/artist/{artist_id}", Posture::User),
+    ("GET", "/api/v3/version", Posture::User),
+    ("GET", "/api/v3/version/check-update", Posture::User),
+    ("GET", "/api/v3/version/releases", Posture::User),
+    ("GET", "/api/v3/wrapped/users", Posture::WrappedKey),
+    ("GET", "/api/v3/wrapped/user/{user_id}", Posture::WrappedKey),
+    ("GET", "/api/v3/wrapped/server", Posture::WrappedKey),
 ];
 
 /// Fill `{param}` segments with a dummy id.
@@ -934,7 +1248,23 @@ async fn auth_on_every_endpoint() {
                 StatusCode::UNAUTHORIZED,
                 "{method} {uri} is public but answered 401: {response_body}"
             ),
-            Posture::User | Posture::Admin => {
+            Posture::WrappedKey => {
+                assert_eq!(
+                    status,
+                    StatusCode::UNAUTHORIZED,
+                    "{method} {uri} must 401 anonymously, got {status}: {response_body}"
+                );
+                assert_eq!(
+                    error_code(&response_body),
+                    "UNAUTHORIZED",
+                    "{method} {uri}: envelope code"
+                );
+                assert!(
+                    headers.get("www-authenticate").is_none(),
+                    "{method} {uri}: a shared-secret rejection must not send a Bearer challenge"
+                );
+            }
+            Posture::User | Posture::Admin | Posture::Curator => {
                 assert_eq!(
                     status,
                     StatusCode::UNAUTHORIZED,
@@ -988,7 +1318,10 @@ async fn auth_on_every_endpoint() {
 
     // User pass: admin rows 403, user rows admit (anything but 401/403).
     for (method, template, posture) in MATRIX {
-        if !matches!(posture, Posture::User | Posture::Admin) {
+        if !matches!(
+            posture,
+            Posture::User | Posture::Admin | Posture::Curator | Posture::WrappedKey
+        ) {
             continue;
         }
         // Avatar reads are self-or-admin: the user pass reads the user's
@@ -999,33 +1332,64 @@ async fn auth_on_every_endpoint() {
         } else {
             concretize(template)
         };
-        let body = match *method {
+        let mut body = match *method {
             "POST" | "PUT" | "PATCH" => Some(json!({})),
             _ => None,
         };
-        let (status, response_body, _) = call(
-            e2e.router(),
-            method,
-            &uri,
-            &[("authorization", user_auth.as_str())],
-            body,
-        )
-        .await;
+        // Pin writes gate the role inside the service, after the body
+        // parses: a shaped body reaches the curator check (403 for plain
+        // users) instead of failing body validation first.
+        if *template == "/api/v3/library/albums/{album_id}/edition-pin" && *method == "PUT" {
+            body = Some(json!({"release_mbid": "e2e-dummy-id"}));
+        }
+        // Covers answer SVG/PNG bytes, so the user pass reads them raw;
+        // every other row still decodes JSON for the failure message.
+        let (status, response_body) = if template.starts_with("/api/v3/covers/") {
+            let (status, _, _) = call_raw(
+                e2e.router(),
+                method,
+                &uri,
+                &[("authorization", user_auth.as_str())],
+            )
+            .await;
+            (status, Value::Null)
+        } else {
+            let (status, response_body, _) = call_lenient(
+                e2e.router(),
+                method,
+                &uri,
+                &[("authorization", user_auth.as_str())],
+                body,
+            )
+            .await;
+            (status, response_body)
+        };
         assert_ne!(
             status,
             StatusCode::TOO_MANY_REQUESTS,
             "{method} {uri}: user pass tripped the limiter"
         );
         match posture {
-            Posture::Admin => assert_eq!(
+            Posture::Admin | Posture::Curator => assert_eq!(
                 status,
                 StatusCode::FORBIDDEN,
                 "user {method} {uri} must 403, got {status}: {response_body}"
             ),
-            Posture::User => assert!(
-                status != StatusCode::UNAUTHORIZED && status != StatusCode::FORBIDDEN,
-                "user {method} {uri} must be admitted, got {status}: {response_body}"
+            Posture::WrappedKey => assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "user session must not satisfy {method} {uri}, got {status}: {response_body}"
             ),
+            Posture::User => {
+                assert!(
+                    status != StatusCode::UNAUTHORIZED && status != StatusCode::FORBIDDEN,
+                    "user {method} {uri} must be admitted, got {status}: {response_body}"
+                );
+                assert!(
+                    !status.is_server_error(),
+                    "user {method} {uri} must not 5xx on dummy input, got {status}: {response_body}"
+                );
+            }
             Posture::Public => unreachable!("filtered above"),
         }
         // Logout-all revokes the pass's own token by design; re-login so
@@ -1039,33 +1403,85 @@ async fn auth_on_every_endpoint() {
     }
 
     // Admin pass: admitted everywhere (v2 spirit: auth passed means the body
-    // ran, so 4xx/5xx from dummy input still count).
+    // ran, so 4xx from dummy input still counts; 5xx never does). Wrapped
+    // rows are the exception: no session satisfies the shared-secret gate.
     for (method, template, posture) in MATRIX {
-        if !matches!(posture, Posture::User | Posture::Admin) {
+        if !matches!(
+            posture,
+            Posture::User | Posture::Admin | Posture::Curator | Posture::WrappedKey
+        ) {
             continue;
         }
         let uri = concretize(template);
-        let body = match *method {
+        let mut body = match *method {
             "POST" | "PUT" | "PATCH" => Some(json!({})),
             _ => None,
         };
-        let (status, response_body, _) = call(
-            e2e.router(),
-            method,
-            &uri,
-            &[("authorization", admin_auth.as_str())],
-            body,
-        )
-        .await;
+        // Shaped pin body, as in the user pass: the admin reaches the
+        // service (404 on the empty catalog) instead of failing validation.
+        if *template == "/api/v3/library/albums/{album_id}/edition-pin" && *method == "PUT" {
+            body = Some(json!({"release_mbid": "e2e-dummy-id"}));
+        }
+        let (status, response_body) = if template.starts_with("/api/v3/covers/") {
+            let (status, _, _) = call_raw(
+                e2e.router(),
+                method,
+                &uri,
+                &[("authorization", admin_auth.as_str())],
+            )
+            .await;
+            (status, Value::Null)
+        } else {
+            let (status, response_body, _) = call_lenient(
+                e2e.router(),
+                method,
+                &uri,
+                &[("authorization", admin_auth.as_str())],
+                body,
+            )
+            .await;
+            (status, response_body)
+        };
         assert_ne!(
             status,
             StatusCode::TOO_MANY_REQUESTS,
             "{method} {uri}: admin pass tripped the limiter"
         );
-        assert!(
-            status != StatusCode::UNAUTHORIZED && status != StatusCode::FORBIDDEN,
-            "admin {method} {uri} must be admitted, got {status}: {response_body}"
-        );
+        // Honest-503 rows: the import directories are disabled until the
+        // live clients land (stage-3 posture, documented on the handlers).
+        // The 503 is the contract here, not a failure, so it pins exactly.
+        if *method == "GET"
+            && matches!(
+                *template,
+                "/api/v3/admin/import/jellyfin" | "/api/v3/admin/import/plex"
+            )
+        {
+            assert_eq!(
+                status,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "admin {method} {uri} must 503 while disabled, got {status}: {response_body}"
+            );
+            assert_eq!(
+                error_code(&response_body),
+                "INTERNAL_ERROR",
+                "{method} {uri}: envelope code"
+            );
+        } else if matches!(posture, Posture::WrappedKey) {
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "admin session must not satisfy {method} {uri}, got {status}: {response_body}"
+            );
+        } else {
+            assert!(
+                status != StatusCode::UNAUTHORIZED && status != StatusCode::FORBIDDEN,
+                "admin {method} {uri} must be admitted, got {status}: {response_body}"
+            );
+            assert!(
+                !status.is_server_error(),
+                "admin {method} {uri} must not 5xx on dummy input, got {status}: {response_body}"
+            );
+        }
         if *template == "/api/v3/auth/logout-all" {
             let (status, body, _) =
                 login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
@@ -1073,6 +1489,286 @@ async fn auth_on_every_endpoint() {
             admin_auth = bearer(body["token"].as_str().expect("fresh admin token"));
         }
     }
+
+    // Keyed pass: the wrapped secret admits where sessions cannot.
+    for (method, template, posture) in MATRIX {
+        if !matches!(posture, Posture::WrappedKey) {
+            continue;
+        }
+        let uri = concretize(template);
+        let (status, response_body, _) = call(
+            e2e.router(),
+            method,
+            &uri,
+            &[("x-wrapped-api-key", TEST_WRAPPED_KEY)],
+            None,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "keyed {method} {uri} must pass, got {status}: {response_body}"
+        );
+    }
+}
+
+/// Stage-4 wiring: one live route per reads namespace answers 200 behind
+/// the real gate, and the collections principal translation resolves the
+/// admin role (the approvals read would 403 otherwise).
+#[tokio::test]
+async fn reads_routes_are_mounted() {
+    let e2e = E2e::open("reads-mounted").await;
+    let (_, admin_token) =
+        setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    let auth = bearer(admin_token.as_str().expect("admin token"));
+
+    // Empty scratch catalog: library and search answer shaped empties.
+    let (status, body, _) = call(
+        e2e.router(),
+        "GET",
+        "/api/v3/library/albums",
+        &[("authorization", auth.as_str())],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], 0);
+
+    let (status, body, _) = call(
+        e2e.router(),
+        "GET",
+        "/api/v3/search?q=ab",
+        &[("authorization", auth.as_str())],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["artists"].as_array().expect("artists").len(), 0);
+
+    // Discover, home, and now playing run the stage-4 fakes.
+    for uri in ["/api/v3/discover", "/api/v3/home", "/api/v3/now-playing"] {
+        let (status, body, _) = call(
+            e2e.router(),
+            "GET",
+            uri,
+            &[("authorization", auth.as_str())],
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    }
+
+    // Collections: empty stores plus the translated admin role.
+    for uri in [
+        "/api/v3/playlists",
+        "/api/v3/favorites",
+        "/api/v3/requests/auto-download-approvals",
+    ] {
+        let (status, body, _) = call(
+            e2e.router(),
+            "GET",
+            uri,
+            &[("authorization", auth.as_str())],
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    }
+
+    // Covers answer the placeholder SVG; version reports the build.
+    let (status, headers, bytes) = call_raw(
+        e2e.router(),
+        "GET",
+        "/api/v3/covers/artist/e2e-dummy-id",
+        &[("authorization", auth.as_str())],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get("content-type").and_then(|v| v.to_str().ok()),
+        Some("image/svg+xml")
+    );
+    assert!(bytes.starts_with(b"<svg"));
+
+    let (status, body, _) = call(
+        e2e.router(),
+        "GET",
+        "/api/v3/version",
+        &[("authorization", auth.as_str())],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body["version"].as_str().is_some_and(|v| !v.is_empty()),
+        "{body}"
+    );
+
+    // Wrapped: the key admits, a wrong key 401s without a challenge.
+    let (status, body, _) = call(
+        e2e.router(),
+        "GET",
+        "/api/v3/wrapped/users",
+        &[("x-wrapped-api-key", TEST_WRAPPED_KEY)],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["users"].as_array().expect("users").len(), 0);
+
+    let (status, body, headers) = call(
+        e2e.router(),
+        "GET",
+        "/api/v3/wrapped/users",
+        &[("x-wrapped-api-key", "wrong-key")],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert!(headers.get("www-authenticate").is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Trusted tier: curator writes admit, admin reads still forbid
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn trusted_tier_pins_admitted_approvals_forbidden() {
+    let e2e = E2e::open("trusted-tier").await;
+    let (_, admin_token) =
+        setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    let admin_auth = bearer(admin_token.as_str().expect("admin token"));
+    let admin_headers = [("authorization", admin_auth.as_str())];
+
+    // Admin creates a plain user, then promotes to trusted (journey_b
+    // mechanism: the role change takes effect on the next request).
+    let (status, body, _) = call(
+        e2e.router(),
+        "POST",
+        "/api/v3/admin/users",
+        &admin_headers,
+        Some(json!({"username": "tris", "password": "tris-password-1234"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let tris_id = body["id"].as_str().expect("user id").to_owned();
+    let (status, body, _) = call(
+        e2e.router(),
+        "PUT",
+        &format!("/api/v3/admin/users/{tris_id}/role"),
+        &admin_headers,
+        Some(json!({"role": "trusted"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["role"], json!("trusted"));
+
+    let (status, body, _) = login(e2e.router(), "tris", "tris-password-1234", "bearer").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let tris_auth = bearer(body["token"].as_str().expect("user token"));
+    let tris_headers = [("authorization", tris_auth.as_str())];
+
+    // Curator pin write reaches the service: 404 on the empty edition
+    // catalog proves the role gate admitted (a plain user 403s here).
+    let (status, body, _) = call(
+        e2e.router(),
+        "PUT",
+        "/api/v3/library/albums/e2e-dummy-id/edition-pin",
+        &tris_headers,
+        Some(json!({"release_mbid": "e2e-dummy-id"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(error_code(&body), "NOT_FOUND");
+
+    // Admin-only approvals still forbid trusted callers.
+    let (status, body, _) = call(
+        e2e.router(),
+        "GET",
+        "/api/v3/requests/auto-download-approvals",
+        &tris_headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(error_code(&body), "FORBIDDEN");
+}
+
+// ---------------------------------------------------------------------------
+// Stateful playlist journey over one router clone
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn playlist_lifecycle_persists_across_requests() {
+    let e2e = E2e::open("playlist-journey").await;
+    let (_, admin_token) =
+        setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    let auth = bearer(admin_token.as_str().expect("admin token"));
+    let headers = [("authorization", auth.as_str())];
+    // One router for every step: the collections stores live in the router
+    // state, so each clone shares them and writes read back.
+    let app = e2e.router();
+
+    let (status, body, _) = call(
+        app.clone(),
+        "POST",
+        "/api/v3/playlists",
+        &headers,
+        Some(json!({"name": "Journey mix"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let id = body["id"].as_str().expect("playlist id").to_owned();
+
+    let (status, body, _) = call(
+        app.clone(),
+        "POST",
+        &format!("/api/v3/playlists/{id}/tracks"),
+        &headers,
+        Some(json!({"tracks": [
+            {"track_name": "Roads", "artist_name": "Portishead", "album_name": "Dummy"},
+            {"track_name": "Teardrop", "artist_name": "Massive Attack", "album_name": "Mezzanine"},
+        ]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["tracks"].as_array().expect("added tracks").len(), 2);
+
+    let (status, body, _) = call(
+        app.clone(),
+        "GET",
+        &format!("/api/v3/playlists/{id}"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], json!("Journey mix"));
+    let tracks = body["tracks"].as_array().expect("persisted tracks");
+    assert_eq!(tracks.len(), 2);
+    assert_eq!(tracks[0]["track_name"], json!("Roads"));
+    assert_eq!(tracks[1]["track_name"], json!("Teardrop"));
+
+    let (status, body, _) = call(
+        app.clone(),
+        "DELETE",
+        &format!("/api/v3/playlists/{id}"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, body, _) = call(
+        app.clone(),
+        "GET",
+        &format!("/api/v3/playlists/{id}"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(error_code(&body), "NOT_FOUND");
 }
 
 // ---------------------------------------------------------------------------

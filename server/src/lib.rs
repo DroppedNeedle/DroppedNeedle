@@ -13,6 +13,11 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+// The stage-4 slices address shared items through the crate name so their
+// standalone `#[path]` briefs keep compiling; this alias lets the same
+// paths resolve once the slices are wired into the tree.
+extern crate self as droppedneedle;
+
 pub mod app;
 pub mod auth;
 pub mod config;
@@ -26,6 +31,7 @@ pub mod media;
 pub mod middleware;
 pub mod observability;
 pub mod provider_policy;
+pub mod reads;
 #[path = "config/facade.rs"]
 pub mod runtime_config;
 pub mod schema;
