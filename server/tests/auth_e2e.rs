@@ -177,6 +177,11 @@ impl E2e {
             .parent()
             .map(|parent| parent.to_path_buf())
             .unwrap_or_else(std::env::temp_dir);
+        let library = droppedneedle::library::wiring::LibrarySetup::for_tests(
+            auth.users.clone(),
+            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
+        )
+        .expect("library bundle builds");
         let (stage6, _worker) = droppedneedle::stage6::Stage6Setup::build(
             &self.db_path,
             &app_config,
@@ -185,6 +190,7 @@ impl E2e {
             self.http.shared().clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             connect_apps,
+            Some(library.root_source()),
         )
         .expect("stage6 bundle builds");
         let mut reads = reads;
@@ -207,6 +213,7 @@ impl E2e {
             Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
             stage6,
             acquire,
+            library,
         );
         create_app(state)
     }
@@ -1458,6 +1465,32 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/acquire/health", Posture::User),
     ("GET", "/api/v3/acquire/slskd/status", Posture::User),
     ("GET", "/api/v3/acquire/sabnzbd/status", Posture::Admin),
+    // Stage-8 library engine.
+    ("GET", "/api/v3/library/roots", Posture::User),
+    ("POST", "/api/v3/library/roots", Posture::Admin),
+    ("POST", "/api/v3/library/scan", Posture::Admin),
+    ("GET", "/api/v3/library/scan/runs", Posture::User),
+    ("GET", "/api/v3/library/scan/runs/{id}", Posture::User),
+    ("POST", "/api/v3/library/identify", Posture::Curator),
+    ("GET", "/api/v3/library/reviews", Posture::User),
+    (
+        "POST",
+        "/api/v3/library/reviews/{id}/approve",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/reviews/{id}/reject",
+        Posture::Curator,
+    ),
+    ("POST", "/api/v3/library/manage/preview", Posture::Curator),
+    ("POST", "/api/v3/library/manage/apply", Posture::Curator),
+    ("POST", "/api/v3/library/manage/undo", Posture::Curator),
+    (
+        "POST",
+        "/api/v3/library/manage/baseline/restore",
+        Posture::Curator,
+    ),
 ];
 
 /// Fill `{param}` segments with a dummy id.

@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use crate::{
     acquire::AcquireSetup, auth::wiring::AuthSetup, config::AppConfig,
-    http_client::HttpClientFactory, ids::IdGenerator, provider_policy::ProviderPolicy,
-    providers::Providers, reads::ReadsSetup, stage6::Stage6Setup,
+    http_client::HttpClientFactory, ids::IdGenerator, library::wiring::LibrarySetup,
+    provider_policy::ProviderPolicy, providers::Providers, reads::ReadsSetup, stage6::Stage6Setup,
 };
 
 /// All long-lived server dependencies.
@@ -33,6 +33,8 @@ pub struct AppState {
     pub stage6: Stage6Setup,
     /// Stage-7 bundle: requests, downloads, flows, imports.
     pub acquire: AcquireSetup,
+    /// Stage-8 bundle: library scan, identify, publish, contrib.
+    pub library: LibrarySetup,
 }
 
 impl AppState {
@@ -48,6 +50,7 @@ impl AppState {
         providers: Arc<Providers>,
         stage6: Stage6Setup,
         acquire: AcquireSetup,
+        library: LibrarySetup,
     ) -> Self {
         Self {
             ids,
@@ -58,6 +61,7 @@ impl AppState {
             providers,
             stage6,
             acquire,
+            library,
         }
     }
 

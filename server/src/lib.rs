@@ -28,6 +28,7 @@ pub mod error;
 pub mod handlers;
 pub mod http_client;
 pub mod ids;
+pub mod library;
 pub mod media;
 pub mod middleware;
 pub mod observability;

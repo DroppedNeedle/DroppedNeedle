@@ -138,6 +138,11 @@ impl E2e {
             .unwrap_or_else(std::env::temp_dir);
         let connect_apps: droppedneedle::runtime_config::sections::ConnectApps =
             self.store.get().unwrap_or_default();
+        let library = droppedneedle::library::wiring::LibrarySetup::for_tests(
+            auth.users.clone(),
+            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
+        )
+        .expect("library bundle builds");
         let (stage6, _worker) = droppedneedle::stage6::Stage6Setup::build(
             &self.db_path,
             &app_config,
@@ -146,6 +151,7 @@ impl E2e {
             self.http.shared().clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             connect_apps,
+            Some(library.root_source()),
         )
         .expect("stage6 bundle builds");
         let acquire = AcquireSetup::build(
@@ -167,6 +173,7 @@ impl E2e {
             Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
             stage6,
             acquire.clone(),
+            library,
         );
         (create_app(state), acquire)
     }

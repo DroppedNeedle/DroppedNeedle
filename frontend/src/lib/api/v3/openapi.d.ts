@@ -1693,6 +1693,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/identify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enqueue one album for identification. */
+        post: operations["enqueue_identify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/manage/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply a sealed preview exactly once. */
+        post: operations["manage_apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/manage/baseline/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore tracks to their first-management baselines. */
+        post: operations["baseline_restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/manage/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Build a sealed management preview (`retag` or `organize`). */
+        post: operations["manage_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/manage/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Undo one published bundle as a new operation. */
+        post: operations["manage_undo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/recently-added": {
         parameters: {
             query?: never;
@@ -1702,6 +1787,126 @@ export interface paths {
         };
         /** Newest albums first, capped. */
         get: operations["list_recently_added"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pending reviews for one album. */
+        get: operations["list_reviews"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/reviews/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve a review with the curator's chosen candidate. */
+        post: operations["approve_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/reviews/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject a review: the album keeps its tags, nothing seals. */
+        post: operations["reject_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/roots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List library roots. */
+        get: operations["list_roots"];
+        put?: never;
+        /** Add a library root. Adding the first root enables the library. */
+        post: operations["add_root"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Trigger a manual scan over one root or every scheduled root. */
+        post: operations["trigger_scan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/scan/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List current plus recent scan runs. */
+        get: operations["list_runs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/scan/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one scan run with its scopes and discovered files. */
+        get: operations["get_run"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3753,6 +3958,18 @@ export interface components {
             /** @description Active rows. */
             items: components["schemas"]["RequestItem"][];
         };
+        /**
+         * @description Add a library root. The path must exist and be absolute; the id
+         *     defaults to a fresh uuid.
+         */
+        AddRootBody: {
+            /** @description Stable root id (default: fresh id). */
+            id?: string | null;
+            /** @description Absolute root directory. */
+            path: string;
+            /** @description Effective policy (default: `automatic`). */
+            policy?: string | null;
+        };
         /** @description Add-tracks body. */
         AddTracksBody: {
             /** @description Insert position. Missing appends; past-the-end clamps. */
@@ -4069,6 +4286,11 @@ export interface components {
             /** @description Batch count. */
             count: number;
         };
+        /** @description Approve a review with the curator's chosen candidate. */
+        ApproveBody: {
+            /** @description Candidate key from the review. */
+            candidate_key: string;
+        };
         /** @description Enriched artist counts. Absent counts mean unknown, never zero. */
         ArtistEnrichment: {
             /**
@@ -4211,6 +4433,20 @@ export interface components {
             /** @description Base64 image bytes. */
             image_base64: string;
         };
+        /** @description Restore tracks to their immutable first-management baselines. */
+        BaselineRestoreBody: {
+            /** @description Track ids to restore. */
+            track_ids: string[];
+        };
+        /** @description Baseline restore answer. */
+        BaselineRestoreResponse: {
+            /** @description Restore operation bundle id. */
+            bundle_id: string;
+            /** @description `committed` or `cleanup_pending`. */
+            outcome: string;
+            /** @description Restored track ids. */
+            restored: string[];
+        };
         /** @description Batch-cancel body (R10). Dedupe is by exact string before lookup. */
         BatchCancelBody: {
             /** @description Request kind; defaults to album. */
@@ -4306,6 +4542,30 @@ export interface components {
             seed_artist_mbid: string;
             /** @description Wide thumbnail URL, when resolved. */
             wide_thumb_url?: string | null;
+        };
+        /** @description One scored candidate inside a review. */
+        CandidateView: {
+            /** @description Candidate album artist. */
+            album_artist_name: string;
+            /** @description Candidate album title. */
+            album_title: string;
+            /** @description Candidate key (approve by this). */
+            candidate_key: string;
+            /** @description Contradictory track count. */
+            contradictory_tracks: number;
+            /** @description Reason code. */
+            reason_code: string;
+            /** @description Release-group MBID. */
+            release_group_mbid: string;
+            /** @description Release MBID, when the candidate names an exact edition. */
+            release_mbid?: string | null;
+            /**
+             * Format: double
+             * @description Match score.
+             */
+            score: number;
+            /** @description Supported track count. */
+            supported_tracks: number;
         };
         /** @description One album inside a section or chart page. */
         ChartAlbum: {
@@ -5239,6 +5499,35 @@ export interface components {
             source: components["schemas"]["SourceName"];
             stats?: null | components["schemas"]["RemotesStatsView"];
         };
+        /** @description Enqueue one album for identification. */
+        IdentifyBody: {
+            /** @description Local album id (scan album keys read `root::directory`). */
+            album_id: string;
+            /** @description Album artist hint for albums the scan never saw. */
+            artist?: string | null;
+            /** @description Job kind: `automatic`, `manual`, `historical` (default: `manual`). */
+            kind?: string | null;
+            /** @description Album title hint for albums the scan never saw. */
+            title?: string | null;
+        };
+        /** @description Enqueue answer. */
+        IdentifyResponse: {
+            /** @description Local album id. */
+            album_id: string;
+            /** @description Job id. */
+            job_id: string;
+            /** @description Job state after enqueue. */
+            state: string;
+        };
+        /** @description Sealed identity after a review resolves. */
+        IdentityView: {
+            /** @description Who decided: `automatic`, `manual`, `legacy_import`. */
+            decision_source: string;
+            /** @description Release-group MBID, when sealed. */
+            release_group_mbid?: string | null;
+            /** @description Release MBID, when an exact edition is sealed. */
+            release_mbid?: string | null;
+        };
         /** @description One ignored release. */
         IgnoredRelease: {
             /** @description MusicBrainz artist id. */
@@ -5542,6 +5831,100 @@ export interface components {
             lines: components["schemas"]["LyricLine"][];
             /** @description Full text, lines joined with newlines. */
             text: string;
+        };
+        /** @description One applied file. */
+        ManageAppliedFile: {
+            /** @description Adopted path relative to the root. */
+            rel_path: string;
+            /** @description Adopted root id. */
+            root_id: string;
+            /** @description Stable local track id. */
+            track_id: string;
+        };
+        /** @description Apply a sealed preview. */
+        ManageApplyBody: {
+            /** @description Preview token from the preview answer. */
+            preview_token: string;
+        };
+        /** @description Apply answer. */
+        ManageApplyResponse: {
+            /** @description Published bundle id. */
+            bundle_id: string;
+            /** @description Applied files. */
+            files: components["schemas"]["ManageAppliedFile"][];
+            /** @description `committed` or `cleanup_pending`. */
+            outcome: string;
+        };
+        /** @description One planned file inside a preview. */
+        ManageFileView: {
+            /** @description Destination `root/rel`. */
+            dest: string;
+            /** @description `same_path` or `move`. */
+            kind: string;
+            /** @description Source `root/rel`. */
+            source: string;
+            /** @description Stable local track id. */
+            track_id: string;
+        };
+        /** @description One file inside a management preview. */
+        ManageItemBody: {
+            /**
+             * @description Destination path relative to the root (organize only;
+             *     retag writes in place).
+             */
+            dest_rel?: string | null;
+            /**
+             * @description Managed-field updates: `title`, `artist`, `album`,
+             *     `album_artist`, `genre`.
+             */
+            managed_updates: {
+                [key: string]: string[];
+            };
+            /** @description Source path relative to the root. */
+            rel_path: string;
+            /** @description Source root id. */
+            root_id: string;
+        };
+        /**
+         * @description Build a sealed management preview. Identity always resolves from
+         *     the accepted identify rows for `album_id`; tracks without an
+         *     accepted exact mapping block the preview loudly.
+         */
+        ManagePreviewBody: {
+            /** @description Local album id carrying the accepted identity. */
+            album_id: string;
+            /** @description Files in the bundle. */
+            items: components["schemas"]["ManageItemBody"][];
+            /** @description `retag` (same-path write) or `organize` (move). */
+            kind: string;
+        };
+        /** @description Sealed preview answer. The token is single-use and short-lived. */
+        ManagePreviewResponse: {
+            /** @description Bundle id the apply will publish under. */
+            bundle_id: string;
+            /**
+             * Format: int64
+             * @description Expiry day (unix day, exclusive).
+             */
+            expires_day: number;
+            /** @description Planned files. */
+            files: components["schemas"]["ManageFileView"][];
+            /** @description Single-use confirmation token. */
+            preview_token: string;
+        };
+        /** @description Undo one published bundle as a new previewed operation. */
+        ManageUndoBody: {
+            /** @description Source operation bundle id. */
+            bundle_id: string;
+        };
+        /** @description Undo answer. */
+        ManageUndoResponse: {
+            /** @description Undo operation bundle id. */
+            bundle_id: string;
+            /** @description `committed` or `cleanup_pending`. */
+            outcome: string;
+            /** @description Restored track ids. */
+            restored: string[];
         };
         /** @description MBID match result: the remote album behind a MusicBrainz id. */
         MatchView: {
@@ -6638,6 +7021,34 @@ export interface components {
                 [key: string]: string[];
             };
         };
+        /** @description Review resolution answer. */
+        ReviewResolveResponse: {
+            identity?: null | components["schemas"]["IdentityView"];
+            /** @description The settled review. */
+            review: components["schemas"]["ReviewView"];
+        };
+        /** @description One curator review. */
+        ReviewView: {
+            /** @description Local album id. */
+            album_id: string;
+            /** @description Scored candidates. */
+            candidates: components["schemas"]["CandidateView"][];
+            /** @description Review id. */
+            id: string;
+            /** @description Reason code. */
+            reason_code: string;
+            /** @description Resolving user, once settled. */
+            resolved_by?: string | null;
+            /** @description Selected candidate key, once approved. */
+            selected_candidate_key?: string | null;
+            /** @description Review state. */
+            state: string;
+        };
+        /** @description Pending reviews for one album. */
+        ReviewsResponse: {
+            /** @description Pending reviews. */
+            reviews: components["schemas"]["ReviewView"][];
+        };
         /**
          * @description Account role. Meanings are unchanged from v2: `user` requests await
          *     approval; `trusted` and `admin` auto-approve and are quota-exempt.
@@ -6648,6 +7059,33 @@ export interface components {
         RoleUpdate: {
             /** @description New role. */
             role: components["schemas"]["Role"];
+        };
+        /** @description One library root. */
+        RootView: {
+            /** @description Stable root id. */
+            id: string;
+            /** @description Absolute root directory. */
+            path: string;
+            /** @description Effective policy: `automatic`, `local_metadata`, `excluded`. */
+            policy: string;
+        };
+        /** @description Root registry listing. */
+        RootsResponse: {
+            /** @description Whether the local library is enabled. */
+            enabled: boolean;
+            /** @description Opaque policy revision running scans checkpoint against. */
+            policy_revision: string;
+            /** @description Configured roots. */
+            roots: components["schemas"]["RootView"][];
+        };
+        /** @description Run detail: the run, its scopes, and its discovered files. */
+        RunDetailResponse: {
+            /** @description Discovered files (bounded to the latest 500). */
+            files: components["schemas"]["ScanFileView"][];
+            /** @description The run. */
+            run: components["schemas"]["ScanRunView"];
+            /** @description Scopes in the run. */
+            scopes: components["schemas"]["ScanScopeView"][];
         };
         /**
          * @description Live SABnzbd status against the saved config (v2 `SabnzbdTestResponse`,
@@ -6664,6 +7102,91 @@ export interface components {
             valid: boolean;
             /** @description SABnzbd version, when the probe reached it. */
             version?: string | null;
+        };
+        /** @description Trigger a scan over one root or every scheduled root. */
+        ScanBody: {
+            /** @description Root id to scan (default: every scheduled root). */
+            root_id?: string | null;
+        };
+        /** @description One discovered file inside a run, with its scan-assigned track id. */
+        ScanFileView: {
+            /** @description Path relative to the root. */
+            relative_path: string;
+            /** @description Root id. */
+            root_id: string;
+            /** @description Scan-assigned stable track id, once indexed. */
+            track_id?: string | null;
+            /** @description Classify verdict. */
+            verdict: string;
+        };
+        /** @description Scan request answer. */
+        ScanResponse: {
+            /**
+             * @description Request disposition: `started`, `queued`, `coalesced`,
+             *     `expanded`, `conflict`.
+             */
+            disposition: string;
+            /** @description Run id (fresh or coalesced). */
+            run_id: string;
+            /** @description Run state after the request. */
+            state: string;
+        };
+        /** @description One scan run. */
+        ScanRunView: {
+            /** @description Scope label: `all` or `selected`. */
+            aggregate_scope: string;
+            /** @description Progress counters. */
+            counters: {
+                [key: string]: number;
+            };
+            /** @description Run id. */
+            id: string;
+            /** @description Run kind. */
+            kind: string;
+            /** @description Current phase. */
+            phase: string;
+            /**
+             * Format: double
+             * @description Queue time (unix seconds).
+             */
+            queued_at: number;
+            /**
+             * Format: double
+             * @description Start time, when started.
+             */
+            started_at?: number | null;
+            /** @description Run state. */
+            state: string;
+            /**
+             * Format: double
+             * @description Terminal time, when terminal.
+             */
+            terminal_at?: number | null;
+            /** @description Terminal code, when terminal. */
+            terminal_code?: string | null;
+            /** @description What triggered the run. */
+            trigger: string;
+            /**
+             * Format: double
+             * @description Last update time.
+             */
+            updated_at: number;
+        };
+        /** @description Current plus recent scan runs. */
+        ScanRunsResponse: {
+            /** @description Live runs. */
+            current: components["schemas"]["ScanRunView"][];
+            /** @description Recent terminal runs. */
+            history: components["schemas"]["ScanRunView"][];
+        };
+        /** @description One scope inside a run. */
+        ScanScopeView: {
+            /** @description Effective policy for the scope. */
+            effective_policy: string;
+            /** @description Path relative to the root. */
+            relative_path: string;
+            /** @description Root id. */
+            root_id: string;
         };
         /** @description One native now-playing forward, by name (v2 `NowPlayingRequest` fields). */
         ScrobbleNowPlayingRequest: {
@@ -11000,6 +11523,273 @@ export interface operations {
             };
         };
     };
+    enqueue_identify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentifyBody"];
+            };
+        };
+        responses: {
+            /** @description Enqueue answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentifyResponse"];
+                };
+            };
+            /** @description Bad album id or kind */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    manage_apply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManageApplyBody"];
+            };
+        };
+        responses: {
+            /** @description Apply answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManageApplyResponse"];
+                };
+            };
+            /** @description Missing preview token */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown preview token */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale preview or blocked bundle */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    baseline_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BaselineRestoreBody"];
+            };
+        };
+        responses: {
+            /** @description Restore answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BaselineRestoreResponse"];
+                };
+            };
+            /** @description No tracks listed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Restore blocked for a file */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    manage_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagePreviewBody"];
+            };
+        };
+        responses: {
+            /** @description Sealed preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagePreviewResponse"];
+                };
+            };
+            /** @description Bad kind, fields, or items */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing identity, collision, or no space */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    manage_undo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManageUndoBody"];
+            };
+        };
+        responses: {
+            /** @description Undo answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManageUndoResponse"];
+                };
+            };
+            /** @description Missing bundle id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown bundle id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Undo blocked for a file */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_recently_added: {
         parameters: {
             query?: never;
@@ -11030,6 +11820,358 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_reviews: {
+        parameters: {
+            query: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pending reviews */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewsResponse"];
+                };
+            };
+            /** @description Missing album id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    approve_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Review id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveBody"];
+            };
+        };
+        responses: {
+            /** @description Settled review */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewResolveResponse"];
+                };
+            };
+            /** @description Missing candidate key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown review or candidate */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Review already settled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reject_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Review id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settled review */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewResolveResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown review id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Review already settled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_roots: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Root registry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RootsResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    add_root: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddRootBody"];
+            };
+        };
+        responses: {
+            /** @description Added root */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RootView"];
+                };
+            };
+            /** @description Bad root path or policy */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Root id exists or recovery blocked */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    trigger_scan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScanBody"];
+            };
+        };
+        responses: {
+            /** @description Scan request answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanResponse"];
+                };
+            };
+            /** @description No scopes to scan */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown root id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Library disabled or policy moved */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_runs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scan runs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanRunsResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Scan run id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Run detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDetailResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown run id */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

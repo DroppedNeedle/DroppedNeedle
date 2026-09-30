@@ -38,6 +38,7 @@ pub fn hooked_state() -> AppState {
     let ids = Arc::new(FixedIdGenerator::new(FIXED_ID));
     let mut reads = test_reads(&auth, ids.clone());
     let acquire = test_acquire(&auth, ids.clone(), &mut reads);
+    let library = test_library(&auth, ids.clone());
     AppState::new(
         ids.clone(),
         test_http(),
@@ -47,6 +48,7 @@ pub fn hooked_state() -> AppState {
         Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
         test_stage6(&auth, ids),
         acquire,
+        library,
     )
 }
 
@@ -58,6 +60,7 @@ pub fn prod_like_state() -> AppState {
     let ids = Arc::new(droppedneedle::ids::UuidGenerator);
     let mut reads = test_reads(&auth, ids.clone());
     let acquire = test_acquire(&auth, ids.clone(), &mut reads);
+    let library = test_library(&auth, ids.clone());
     AppState::new(
         ids.clone(),
         test_http(),
@@ -67,6 +70,7 @@ pub fn prod_like_state() -> AppState {
         Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
         test_stage6(&auth, ids),
         acquire,
+        library,
     )
 }
 
@@ -96,6 +100,15 @@ fn test_reads(
 ) -> droppedneedle::reads::ReadsSetup {
     droppedneedle::reads::ReadsSetup::for_tests(auth.users.clone(), ids)
         .expect("test reads bundle builds")
+}
+
+/// Unwired library bundle over the test auth deps.
+fn test_library(
+    auth: &droppedneedle::auth::wiring::AuthSetup,
+    ids: Arc<dyn IdGenerator>,
+) -> droppedneedle::library::wiring::LibrarySetup {
+    droppedneedle::library::wiring::LibrarySetup::for_tests(auth.users.clone(), ids)
+        .expect("test library bundle builds")
 }
 
 /// Unwired auth bundle: every adapter fails closed, which is what non-auth

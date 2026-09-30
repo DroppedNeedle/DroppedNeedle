@@ -157,6 +157,13 @@ async fn serve() -> Result<(), String> {
             ConnectApps::default()
         }
     };
+    let library = droppedneedle::library::wiring::LibrarySetup::build(
+        auth.users.clone(),
+        http.shared().clone(),
+        ids.clone(),
+        providers.clone(),
+    )
+    .map_err(|error| format!("library setup: {error}"))?;
     let (stage6, report_worker) = Stage6Setup::build(
         &config.library_db_path,
         &config,
@@ -165,6 +172,7 @@ async fn serve() -> Result<(), String> {
         http.shared().clone(),
         ids.clone(),
         connect_apps,
+        Some(library.root_source()),
     )
     .map_err(|error| error.to_string())?;
     let mut reads = reads;
@@ -192,6 +200,19 @@ async fn serve() -> Result<(), String> {
         restarted = recovery.restarted,
         "acquire recovery complete"
     );
+    // Library recovery before serving traffic: publish journal
+    // reconciliation (resume-or-compensate) plus contribution lease
+    // recovery. Scan recovery runs in the supervisor preamble.
+    // Re-running after a clean shutdown is a no-op.
+    let library_recovery = library
+        .run_recovery()
+        .await
+        .map_err(|error| format!("library recovery: {error}"))?;
+    tracing::info!(
+        publish_bundles = library_recovery.publish_recoveries.len(),
+        contrib_recovered = library_recovery.contrib_recovered,
+        "library recovery complete"
+    );
     let state = AppState::new(
         ids,
         http,
@@ -201,6 +222,7 @@ async fn serve() -> Result<(), String> {
         providers,
         stage6,
         acquire.clone(),
+        library.clone(),
     );
     let app = create_app(state);
 
@@ -300,6 +322,10 @@ async fn serve() -> Result<(), String> {
         .await
         .map_err(|error| format!("acquire loops: {error}"))?;
 
+    // Stage-8 library loops: scan supervisor, filesystem watcher,
+    // identify queue, contribution verifier, publish maintenance.
+    let library_loops = library.spawn_loops(shutdown_rx.clone());
+
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), config.port);
     let listener = tokio::net::TcpListener::bind(address)
         .await
@@ -319,6 +345,9 @@ async fn serve() -> Result<(), String> {
     }
     loops.push(("report-worker", report_loop));
     for (scope, handle) in acquire_loops {
+        loops.push((scope, handle));
+    }
+    for (scope, handle) in library_loops {
         loops.push((scope, handle));
     }
     for (scope, handle) in loops {

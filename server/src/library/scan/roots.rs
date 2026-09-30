@@ -1,0 +1,293 @@
+//! Library roots: the registry, policy resolution, and the stream seam.
+//!
+//! This stage owns the root registry, replacing the stage-6 provisional
+//! `<root>/music` fallback (`stage6::local_root`). The stream gateway keeps
+//! its single-path constructor; the [`StreamRootSeam`] below is the seam the
+//! integrator wires in so local keys resolve against real roots instead.
+//!
+//! Policy surface is deliberately minimal: roots plus an enabled flag plus a
+//! revision string. Per-subpath rules arrive with the settings slice; until
+//! then every scope inherits its root's policy.
+
+use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use serde_json;
+
+use super::models::{EffectivePolicy, ScanScope};
+
+/// One library root: a stable id, a filesystem path, and a policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LibraryRoot {
+    pub id: String,
+    pub path: PathBuf,
+    pub policy: EffectivePolicy,
+}
+
+impl LibraryRoot {
+    pub fn new(id: &str, path: PathBuf, policy: EffectivePolicy) -> Self {
+        Self {
+            id: id.to_owned(),
+            path,
+            policy,
+        }
+    }
+}
+
+/// Registry of library roots plus the enabled flag. The policy revision is
+/// an opaque string: any settings change bumps it, which supersedes running
+/// scans through the coordinator checkpoint (v2 `policy_revision`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RootRegistry {
+    roots: Vec<LibraryRoot>,
+    enabled: bool,
+    policy_revision: String,
+}
+
+impl RootRegistry {
+    pub fn new(roots: Vec<LibraryRoot>, enabled: bool, policy_revision: &str) -> Self {
+        Self {
+            roots,
+            enabled,
+            policy_revision: policy_revision.to_owned(),
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn policy_revision(&self) -> &str {
+        &self.policy_revision
+    }
+
+    pub fn roots(&self) -> &[LibraryRoot] {
+        &self.roots
+    }
+
+    pub fn resolve(&self, root_id: &str) -> Option<&LibraryRoot> {
+        self.roots.iter().find(|root| root.id == root_id)
+    }
+
+    /// Root paths keyed by root id, the map the coordinator hands the walker.
+    pub fn root_paths(&self) -> HashMap<String, PathBuf> {
+        self.roots
+            .iter()
+            .map(|root| (root.id.clone(), root.path.clone()))
+            .collect()
+    }
+
+    /// Whole-root scopes for every non-excluded root (v2
+    /// `LibraryAutomaticScanScheduler.scheduled_scopes`, root half). The
+    /// excluded-root rule half lives in the scheduler and resolves against
+    /// this same registry.
+    pub fn scheduled_root_scopes(&self) -> Vec<ScanScope> {
+        self.roots
+            .iter()
+            .filter(|root| root.policy != EffectivePolicy::Excluded)
+            .map(|root| {
+                let mut scope = ScanScope::root(
+                    &root.id,
+                    &root.path.to_string_lossy(),
+                    &self.policy_revision,
+                );
+                scope.effective_policy = root.policy;
+                scope
+            })
+            .collect()
+    }
+}
+
+/// Minimal policy resolver over the registry: longest-prefix root match,
+/// root policy wins. Mirrors the v2 `LibraryPolicyResolver.resolve` contract
+/// (returns `None` for paths under no root) without subpath rules.
+#[derive(Debug, Clone)]
+pub struct PolicyResolver {
+    registry: RootRegistry,
+}
+
+impl PolicyResolver {
+    pub fn new(registry: RootRegistry) -> Self {
+        Self { registry }
+    }
+
+    pub fn registry(&self) -> &RootRegistry {
+        &self.registry
+    }
+
+    pub fn policy_revision(&self) -> &str {
+        self.registry.policy_revision()
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.registry.enabled()
+    }
+
+    pub fn resolve(&self, path: &Path) -> Option<EffectivePolicy> {
+        self.registry
+            .roots()
+            .iter()
+            .filter(|root| path.starts_with(&root.path))
+            .max_by_key(|root| root.path.components().count())
+            .map(|root| root.policy)
+    }
+}
+
+/// Why a stream key failed to resolve against the roots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RootSeamError {
+    UnknownRoot { root_id: String },
+    Forbidden,
+}
+
+impl std::fmt::Display for RootSeamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RootSeamError::UnknownRoot { .. } => write!(f, "unknown library root"),
+            RootSeamError::Forbidden => write!(f, "path escapes the library root"),
+        }
+    }
+}
+
+impl std::error::Error for RootSeamError {}
+
+/// Root-resolution seam for the stream gateway (integrator note).
+///
+/// Today `Gateway::new` takes one `local_root` path and
+/// `sandboxed_path(key)` joins a bare key under it. This seam replaces that
+/// single root with per-root resolution: the gateway parses the root id out
+/// of the playback key (format owned by the catalog slice), calls
+/// [`StreamRootSeam::resolve_key`], and keeps its existing refusal
+/// behavior. Sandboxing mirrors `sandboxed_path` exactly: component
+/// screening first, then canonicalize both sides so a symlink inside the
+/// root cannot point outside it; unresolvable paths skip the prefix check
+/// and fall through to the read, which reports them honestly.
+///
+/// Do not construct paths by joining untrusted keys anywhere else; every
+/// local-key join funnels through here.
+#[derive(Debug, Clone)]
+pub struct StreamRootSeam {
+    registry: RootRegistry,
+}
+
+impl StreamRootSeam {
+    pub fn new(registry: RootRegistry) -> Self {
+        Self { registry }
+    }
+
+    pub fn registry(&self) -> &RootRegistry {
+        &self.registry
+    }
+
+    /// Join `key` under root `root_id`, refusing anything that escapes it.
+    pub fn resolve_key(&self, root_id: &str, key: &str) -> Result<PathBuf, RootSeamError> {
+        let root = self
+            .registry
+            .resolve(root_id)
+            .ok_or_else(|| RootSeamError::UnknownRoot {
+                root_id: root_id.to_owned(),
+            })?;
+        if key.is_empty() || Path::new(key).is_absolute() {
+            return Err(RootSeamError::Forbidden);
+        }
+        let mut path = root.path.clone();
+        for component in Path::new(key).components() {
+            match component {
+                Component::Normal(part) => path.push(part),
+                _ => return Err(RootSeamError::Forbidden),
+            }
+        }
+        if let (Ok(canonical_root), Ok(resolved)) = (root.path.canonicalize(), path.canonicalize())
+            && !resolved.starts_with(&canonical_root)
+        {
+            return Err(RootSeamError::Forbidden);
+        }
+        Ok(path)
+    }
+
+    /// First non-excluded root, for callers that still take a single path
+    /// (the stage-6 `<root>/music` stand-in). Returns `None` when no usable
+    /// root is configured, which callers must read as "local reads 404".
+    pub fn primary_music_root(&self) -> Option<PathBuf> {
+        self.registry
+            .roots()
+            .iter()
+            .find(|root| root.policy != EffectivePolicy::Excluded)
+            .map(|root| root.path.clone())
+    }
+}
+
+/// Stable policy-revision fingerprint for a root list, so settings saves
+/// that change nothing do not supersede running scans.
+pub fn fingerprint_roots(roots: &[LibraryRoot], enabled: bool) -> String {
+    let canonical = serde_json::json!({
+        "enabled": enabled,
+        "roots": roots.iter().map(|root| serde_json::json!({
+            "id": root.id,
+            "path": root.path.to_string_lossy(),
+            "policy": match root.policy {
+                EffectivePolicy::LocalMetadata => "local_metadata",
+                EffectivePolicy::Automatic => "automatic",
+                EffectivePolicy::Excluded => "excluded",
+            },
+        })).collect::<Vec<_>>(),
+    });
+    let encoded = serde_json::to_string(&canonical).unwrap_or_default();
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in encoded.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn registry() -> RootRegistry {
+        RootRegistry::new(
+            vec![
+                LibraryRoot::new("a", PathBuf::from("/music/a"), EffectivePolicy::Automatic),
+                LibraryRoot::new("x", PathBuf::from("/music/x"), EffectivePolicy::Excluded),
+            ],
+            true,
+            "rev-1",
+        )
+    }
+
+    #[test]
+    fn scheduled_scopes_skip_excluded_roots() {
+        let scopes = registry().scheduled_root_scopes();
+        assert_eq!(scopes.len(), 1);
+        assert_eq!(scopes[0].root_id, "a");
+        assert_eq!(scopes[0].relative_path, ".");
+    }
+
+    #[test]
+    fn seam_rejects_traversal_and_absolute_keys() {
+        let seam = StreamRootSeam::new(registry());
+        assert_eq!(
+            seam.resolve_key("a", "../etc/passwd"),
+            Err(RootSeamError::Forbidden)
+        );
+        assert_eq!(
+            seam.resolve_key("a", "/etc/passwd"),
+            Err(RootSeamError::Forbidden)
+        );
+        assert_eq!(seam.resolve_key("a", ""), Err(RootSeamError::Forbidden));
+        assert!(matches!(
+            seam.resolve_key("nope", "a.flac"),
+            Err(RootSeamError::UnknownRoot { .. })
+        ));
+    }
+
+    #[test]
+    fn fingerprint_is_stable_and_sensitive() {
+        let roots = registry().roots;
+        let first = fingerprint_roots(&roots, true);
+        assert_eq!(first, fingerprint_roots(&roots, true));
+        assert_ne!(first, fingerprint_roots(&roots, false));
+    }
+}

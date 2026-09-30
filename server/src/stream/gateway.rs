@@ -51,6 +51,7 @@ pub trait RemoteReader: Send + Sync {
 /// and injected ffmpeg execution behind the routes' engine seam.
 pub struct Gateway<R, T> {
     local_root: PathBuf,
+    library_roots: Option<droppedneedle::library::wiring::RootSource>,
     remote: R,
     transcoder: T,
     settings: TranscodeSettings,
@@ -71,12 +72,24 @@ impl<R, T> Gateway<R, T> {
     ) -> Self {
         Self {
             local_root,
+            library_roots: None,
             remote,
             transcoder,
             settings,
             ffmpeg_present,
             direct: DirectGate::new(),
         }
+    }
+
+    /// Resolve local reads against the live library root registry
+    /// instead of the constructor root. The registry re-reads on
+    /// every open, so root changes apply without a restart; with no
+    /// usable root configured, local reads honestly 404. Root ids
+    /// inside playback keys stay a catalog-slice concern: bare keys
+    /// resolve under the primary root.
+    pub fn with_library_roots(mut self, roots: droppedneedle::library::wiring::RootSource) -> Self {
+        self.library_roots = Some(roots);
+        self
     }
 }
 
@@ -202,11 +215,25 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
     /// symlink inside the root cannot point at a file outside it. Paths
     /// that do not resolve (missing files, missing root) skip the prefix
     /// check and fall through to the read, which reports them honestly.
+    /// With library roots wired, the primary registry root replaces the
+    /// constructor root; an empty registry 404s instead of reading the
+    /// stale fallback.
     fn sandboxed_path(&self, key: &str) -> Result<PathBuf, StreamFault> {
         if key.is_empty() || Path::new(key).is_absolute() {
             return Err(forbidden());
         }
-        let mut path = self.local_root.clone();
+        let root = match &self.library_roots {
+            Some(source) => {
+                match droppedneedle::library::scan::roots::StreamRootSeam::new(source())
+                    .primary_music_root()
+                {
+                    Some(primary) => primary,
+                    None => return Err(StreamFault::NotFound),
+                }
+            }
+            None => self.local_root.clone(),
+        };
+        let mut path = root.clone();
         for component in Path::new(key).components() {
             match component {
                 std::path::Component::Normal(part) => path.push(part),
@@ -215,8 +242,8 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                 }
             }
         }
-        if let (Ok(root), Ok(resolved)) = (self.local_root.canonicalize(), path.canonicalize())
-            && !resolved.starts_with(&root)
+        if let (Ok(canonical_root), Ok(resolved)) = (root.canonicalize(), path.canonicalize())
+            && !resolved.starts_with(&canonical_root)
         {
             return Err(forbidden());
         }

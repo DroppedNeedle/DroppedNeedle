@@ -3651,6 +3651,224 @@
         }
       }
     },
+    "/api/v3/library/identify": {
+      "post": {
+        "tags": [
+          "crate::library::http::handlers"
+        ],
+        "summary": "Enqueue one album for identification.",
+        "operationId": "enqueue_identify",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentifyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Enqueue answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentifyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad album id or kind"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          }
+        }
+      }
+    },
+    "/api/v3/library/manage/apply": {
+      "post": {
+        "tags": [
+          "crate::library::http::handlers"
+        ],
+        "summary": "Apply a sealed preview exactly once.",
+        "operationId": "manage_apply",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManageApplyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Apply answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManageApplyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing preview token"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown preview token"
+          },
+          "409": {
+            "description": "Stale preview or blocked bundle"
+          }
+        }
+      }
+    },
+    "/api/v3/library/manage/baseline/restore": {
+      "post": {
+        "tags": [
+          "crate::library::http::handlers"
+        ],
+        "summary": "Restore tracks to their first-management baselines.",
+        "operationId": "baseline_restore",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BaselineRestoreBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Restore answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaselineRestoreResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No tracks listed"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "409": {
+            "description": "Restore blocked for a file"
+          }
+        }
+      }
+    },
+    "/api/v3/library/manage/preview": {
+      "post": {
+        "tags": [
+          "crate::library::http::handlers"
+        ],
+        "summary": "Build a sealed management preview (`retag` or `organize`).",
+        "operationId": "manage_preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagePreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Sealed preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagePreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad kind, fields, or items"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "409": {
+            "description": "Missing identity, collision, or no space"
+          }
+        }
+      }
+    },
+    "/api/v3/library/manage/undo": {
+      "post": {
+        "tags": [
+          "crate::library::http::handlers"
+        ],
+        "summary": "Undo one published bundle as a new operation.",
+        "operationId": "manage_undo",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManageUndoBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Undo answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManageUndoResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing bundle id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown bundle id"
+          },
+          "409": {
+            "description": "Undo blocked for a file"
+          }
+        }
+      }
+    },
     "/api/v3/library/recently-added": {
       "get": {
         "tags": [
@@ -3689,6 +3907,318 @@
           },
           "401": {
             "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/library/reviews": {
+      "get": {
+        "tags": [
+          "crate::library::http::handlers"
+        ],
+        "summary": "Pending reviews for one album.",
+        "operationId": "list_reviews",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "query",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pending reviews",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing album id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/library/reviews/{id}/approve": {
+      "post": {
+        "tags": [
+          "crate::library::http::handlers"
+        ],
+        "summary": "Approve a review with the curator's chosen candidate.",
+        "operationId": "approve_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Review id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Settled review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewResolveResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing candidate key"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown review or candidate"
+          },
+          "409": {
+            "description": "Review already settled"
+          }
+        }
+      }
+    },
+    "/api/v3/library/reviews/{id}/reject": {
+      "post": {
+        "tags": [
+          "crate::library::http::handlers"
+        ],
+        "summary": "Reject a review: the album keeps its tags, nothing seals.",
+        "operationId": "reject_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Review id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settled review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewResolveResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown review id"
+          },
+          "409": {
+            "description": "Review already settled"
+          }
+        }
+      }
+    },
+    "/api/v3/library/roots": {
+      "get": {
+        "tags": [
+          "crate::library::http::handlers"
+        ],
+        "summary": "List library roots.",
+        "operationId": "list_roots",
+        "responses": {
+          "200": {
+            "description": "Root registry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RootsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crate::library::http::handlers"
+        ],
+        "summary": "Add a library root. Adding the first root enables the library.",
+        "operationId": "add_root",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddRootBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Added root",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RootView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad root path or policy"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "409": {
+            "description": "Root id exists or recovery blocked"
+          }
+        }
+      }
+    },
+    "/api/v3/library/scan": {
+      "post": {
+        "tags": [
+          "crate::library::http::handlers"
+        ],
+        "summary": "Trigger a manual scan over one root or every scheduled root.",
+        "operationId": "trigger_scan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Scan request answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No scopes to scan"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown root id"
+          },
+          "409": {
+            "description": "Library disabled or policy moved"
+          }
+        }
+      }
+    },
+    "/api/v3/library/scan/runs": {
+      "get": {
+        "tags": [
+          "crate::library::http::handlers"
+        ],
+        "summary": "List current plus recent scan runs.",
+        "operationId": "list_runs",
+        "responses": {
+          "200": {
+            "description": "Scan runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanRunsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/library/scan/runs/{id}": {
+      "get": {
+        "tags": [
+          "crate::library::http::handlers"
+        ],
+        "summary": "Get one scan run with its scopes and discovered files.",
+        "operationId": "get_run",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scan run id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown run id"
           }
         }
       }
@@ -7831,6 +8361,33 @@
           }
         }
       },
+      "AddRootBody": {
+        "type": "object",
+        "description": "Add a library root. The path must exist and be absolute; the id\ndefaults to a fresh uuid.",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable root id (default: fresh id)."
+          },
+          "path": {
+            "type": "string",
+            "description": "Absolute root directory."
+          },
+          "policy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Effective policy (default: `automatic`)."
+          }
+        }
+      },
       "AddTracksBody": {
         "type": "object",
         "description": "Add-tracks body.",
@@ -8553,6 +9110,19 @@
           }
         }
       },
+      "ApproveBody": {
+        "type": "object",
+        "description": "Approve a review with the curator's chosen candidate.",
+        "required": [
+          "candidate_key"
+        ],
+        "properties": {
+          "candidate_key": {
+            "type": "string",
+            "description": "Candidate key from the review."
+          }
+        }
+      },
       "ArtistEnrichment": {
         "type": "object",
         "description": "Enriched artist counts. Absent counts mean unknown, never zero.",
@@ -8859,6 +9429,48 @@
           }
         }
       },
+      "BaselineRestoreBody": {
+        "type": "object",
+        "description": "Restore tracks to their immutable first-management baselines.",
+        "required": [
+          "track_ids"
+        ],
+        "properties": {
+          "track_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Track ids to restore."
+          }
+        }
+      },
+      "BaselineRestoreResponse": {
+        "type": "object",
+        "description": "Baseline restore answer.",
+        "required": [
+          "bundle_id",
+          "outcome",
+          "restored"
+        ],
+        "properties": {
+          "bundle_id": {
+            "type": "string",
+            "description": "Restore operation bundle id."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`committed` or `cleanup_pending`."
+          },
+          "restored": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Restored track ids."
+          }
+        }
+      },
       "BatchCancelBody": {
         "type": "object",
         "description": "Batch-cancel body (R10). Dedupe is by exact string before lookup.",
@@ -9070,6 +9682,64 @@
               "null"
             ],
             "description": "Wide thumbnail URL, when resolved."
+          }
+        }
+      },
+      "CandidateView": {
+        "type": "object",
+        "description": "One scored candidate inside a review.",
+        "required": [
+          "candidate_key",
+          "release_group_mbid",
+          "album_title",
+          "album_artist_name",
+          "score",
+          "reason_code",
+          "supported_tracks",
+          "contradictory_tracks"
+        ],
+        "properties": {
+          "album_artist_name": {
+            "type": "string",
+            "description": "Candidate album artist."
+          },
+          "album_title": {
+            "type": "string",
+            "description": "Candidate album title."
+          },
+          "candidate_key": {
+            "type": "string",
+            "description": "Candidate key (approve by this)."
+          },
+          "contradictory_tracks": {
+            "type": "integer",
+            "description": "Contradictory track count.",
+            "minimum": 0
+          },
+          "reason_code": {
+            "type": "string",
+            "description": "Reason code."
+          },
+          "release_group_mbid": {
+            "type": "string",
+            "description": "Release-group MBID."
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release MBID, when the candidate names an exact edition."
+          },
+          "score": {
+            "type": "number",
+            "format": "double",
+            "description": "Match score."
+          },
+          "supported_tracks": {
+            "type": "integer",
+            "description": "Supported track count.",
+            "minimum": 0
           }
         }
       },
@@ -11627,6 +12297,90 @@
           }
         }
       },
+      "IdentifyBody": {
+        "type": "object",
+        "description": "Enqueue one album for identification.",
+        "required": [
+          "album_id"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "Local album id (scan album keys read `root::directory`)."
+          },
+          "artist": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Album artist hint for albums the scan never saw."
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Job kind: `automatic`, `manual`, `historical` (default: `manual`)."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Album title hint for albums the scan never saw."
+          }
+        }
+      },
+      "IdentifyResponse": {
+        "type": "object",
+        "description": "Enqueue answer.",
+        "required": [
+          "job_id",
+          "album_id",
+          "state"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "Local album id."
+          },
+          "job_id": {
+            "type": "string",
+            "description": "Job id."
+          },
+          "state": {
+            "type": "string",
+            "description": "Job state after enqueue."
+          }
+        }
+      },
+      "IdentityView": {
+        "type": "object",
+        "description": "Sealed identity after a review resolves.",
+        "required": [
+          "decision_source"
+        ],
+        "properties": {
+          "decision_source": {
+            "type": "string",
+            "description": "Who decided: `automatic`, `manual`, `legacy_import`."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release-group MBID, when sealed."
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release MBID, when an exact edition is sealed."
+          }
+        }
+      },
       "IgnoredRelease": {
         "type": "object",
         "description": "One ignored release.",
@@ -12331,6 +13085,232 @@
           "text": {
             "type": "string",
             "description": "Full text, lines joined with newlines."
+          }
+        }
+      },
+      "ManageAppliedFile": {
+        "type": "object",
+        "description": "One applied file.",
+        "required": [
+          "track_id",
+          "root_id",
+          "rel_path"
+        ],
+        "properties": {
+          "rel_path": {
+            "type": "string",
+            "description": "Adopted path relative to the root."
+          },
+          "root_id": {
+            "type": "string",
+            "description": "Adopted root id."
+          },
+          "track_id": {
+            "type": "string",
+            "description": "Stable local track id."
+          }
+        }
+      },
+      "ManageApplyBody": {
+        "type": "object",
+        "description": "Apply a sealed preview.",
+        "required": [
+          "preview_token"
+        ],
+        "properties": {
+          "preview_token": {
+            "type": "string",
+            "description": "Preview token from the preview answer."
+          }
+        }
+      },
+      "ManageApplyResponse": {
+        "type": "object",
+        "description": "Apply answer.",
+        "required": [
+          "bundle_id",
+          "outcome",
+          "files"
+        ],
+        "properties": {
+          "bundle_id": {
+            "type": "string",
+            "description": "Published bundle id."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManageAppliedFile"
+            },
+            "description": "Applied files."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`committed` or `cleanup_pending`."
+          }
+        }
+      },
+      "ManageFileView": {
+        "type": "object",
+        "description": "One planned file inside a preview.",
+        "required": [
+          "track_id",
+          "source",
+          "dest",
+          "kind"
+        ],
+        "properties": {
+          "dest": {
+            "type": "string",
+            "description": "Destination `root/rel`."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`same_path` or `move`."
+          },
+          "source": {
+            "type": "string",
+            "description": "Source `root/rel`."
+          },
+          "track_id": {
+            "type": "string",
+            "description": "Stable local track id."
+          }
+        }
+      },
+      "ManageItemBody": {
+        "type": "object",
+        "description": "One file inside a management preview.",
+        "required": [
+          "root_id",
+          "rel_path",
+          "managed_updates"
+        ],
+        "properties": {
+          "dest_rel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Destination path relative to the root (organize only;\nretag writes in place)."
+          },
+          "managed_updates": {
+            "type": "object",
+            "description": "Managed-field updates: `title`, `artist`, `album`,\n`album_artist`, `genre`.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "rel_path": {
+            "type": "string",
+            "description": "Source path relative to the root."
+          },
+          "root_id": {
+            "type": "string",
+            "description": "Source root id."
+          }
+        }
+      },
+      "ManagePreviewBody": {
+        "type": "object",
+        "description": "Build a sealed management preview. Identity always resolves from\nthe accepted identify rows for `album_id`; tracks without an\naccepted exact mapping block the preview loudly.",
+        "required": [
+          "kind",
+          "album_id",
+          "items"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "Local album id carrying the accepted identity."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManageItemBody"
+            },
+            "description": "Files in the bundle."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`retag` (same-path write) or `organize` (move)."
+          }
+        }
+      },
+      "ManagePreviewResponse": {
+        "type": "object",
+        "description": "Sealed preview answer. The token is single-use and short-lived.",
+        "required": [
+          "preview_token",
+          "expires_day",
+          "bundle_id",
+          "files"
+        ],
+        "properties": {
+          "bundle_id": {
+            "type": "string",
+            "description": "Bundle id the apply will publish under."
+          },
+          "expires_day": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Expiry day (unix day, exclusive)."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManageFileView"
+            },
+            "description": "Planned files."
+          },
+          "preview_token": {
+            "type": "string",
+            "description": "Single-use confirmation token."
+          }
+        }
+      },
+      "ManageUndoBody": {
+        "type": "object",
+        "description": "Undo one published bundle as a new previewed operation.",
+        "required": [
+          "bundle_id"
+        ],
+        "properties": {
+          "bundle_id": {
+            "type": "string",
+            "description": "Source operation bundle id."
+          }
+        }
+      },
+      "ManageUndoResponse": {
+        "type": "object",
+        "description": "Undo answer.",
+        "required": [
+          "bundle_id",
+          "outcome",
+          "restored"
+        ],
+        "properties": {
+          "bundle_id": {
+            "type": "string",
+            "description": "Undo operation bundle id."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`committed` or `cleanup_pending`."
+          },
+          "restored": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Restored track ids."
           }
         }
       },
@@ -14921,6 +15901,96 @@
           }
         }
       },
+      "ReviewResolveResponse": {
+        "type": "object",
+        "description": "Review resolution answer.",
+        "required": [
+          "review"
+        ],
+        "properties": {
+          "identity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IdentityView",
+                "description": "Sealed identity (approvals only)."
+              }
+            ]
+          },
+          "review": {
+            "$ref": "#/components/schemas/ReviewView",
+            "description": "The settled review."
+          }
+        }
+      },
+      "ReviewView": {
+        "type": "object",
+        "description": "One curator review.",
+        "required": [
+          "id",
+          "album_id",
+          "reason_code",
+          "state",
+          "candidates"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "Local album id."
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CandidateView"
+            },
+            "description": "Scored candidates."
+          },
+          "id": {
+            "type": "string",
+            "description": "Review id."
+          },
+          "reason_code": {
+            "type": "string",
+            "description": "Reason code."
+          },
+          "resolved_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Resolving user, once settled."
+          },
+          "selected_candidate_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Selected candidate key, once approved."
+          },
+          "state": {
+            "type": "string",
+            "description": "Review state."
+          }
+        }
+      },
+      "ReviewsResponse": {
+        "type": "object",
+        "description": "Pending reviews for one album.",
+        "required": [
+          "reviews"
+        ],
+        "properties": {
+          "reviews": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewView"
+            },
+            "description": "Pending reviews."
+          }
+        }
+      },
       "Role": {
         "type": "string",
         "description": "Account role. Meanings are unchanged from v2: `user` requests await\napproval; `trusted` and `admin` auto-approve and are quota-exempt.",
@@ -14940,6 +16010,84 @@
           "role": {
             "$ref": "#/components/schemas/Role",
             "description": "New role."
+          }
+        }
+      },
+      "RootView": {
+        "type": "object",
+        "description": "One library root.",
+        "required": [
+          "id",
+          "path",
+          "policy"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable root id."
+          },
+          "path": {
+            "type": "string",
+            "description": "Absolute root directory."
+          },
+          "policy": {
+            "type": "string",
+            "description": "Effective policy: `automatic`, `local_metadata`, `excluded`."
+          }
+        }
+      },
+      "RootsResponse": {
+        "type": "object",
+        "description": "Root registry listing.",
+        "required": [
+          "roots",
+          "enabled",
+          "policy_revision"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the local library is enabled."
+          },
+          "policy_revision": {
+            "type": "string",
+            "description": "Opaque policy revision running scans checkpoint against."
+          },
+          "roots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RootView"
+            },
+            "description": "Configured roots."
+          }
+        }
+      },
+      "RunDetailResponse": {
+        "type": "object",
+        "description": "Run detail: the run, its scopes, and its discovered files.",
+        "required": [
+          "run",
+          "scopes",
+          "files"
+        ],
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScanFileView"
+            },
+            "description": "Discovered files (bounded to the latest 500)."
+          },
+          "run": {
+            "$ref": "#/components/schemas/ScanRunView",
+            "description": "The run."
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScanScopeView"
+            },
+            "description": "Scopes in the run."
           }
         }
       },
@@ -14980,6 +16128,204 @@
               "null"
             ],
             "description": "SABnzbd version, when the probe reached it."
+          }
+        }
+      },
+      "ScanBody": {
+        "type": "object",
+        "description": "Trigger a scan over one root or every scheduled root.",
+        "properties": {
+          "root_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Root id to scan (default: every scheduled root)."
+          }
+        }
+      },
+      "ScanFileView": {
+        "type": "object",
+        "description": "One discovered file inside a run, with its scan-assigned track id.",
+        "required": [
+          "root_id",
+          "relative_path",
+          "verdict"
+        ],
+        "properties": {
+          "relative_path": {
+            "type": "string",
+            "description": "Path relative to the root."
+          },
+          "root_id": {
+            "type": "string",
+            "description": "Root id."
+          },
+          "track_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Scan-assigned stable track id, once indexed."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "Classify verdict."
+          }
+        }
+      },
+      "ScanResponse": {
+        "type": "object",
+        "description": "Scan request answer.",
+        "required": [
+          "run_id",
+          "disposition",
+          "state"
+        ],
+        "properties": {
+          "disposition": {
+            "type": "string",
+            "description": "Request disposition: `started`, `queued`, `coalesced`,\n`expanded`, `conflict`."
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run id (fresh or coalesced)."
+          },
+          "state": {
+            "type": "string",
+            "description": "Run state after the request."
+          }
+        }
+      },
+      "ScanRunView": {
+        "type": "object",
+        "description": "One scan run.",
+        "required": [
+          "id",
+          "kind",
+          "trigger",
+          "state",
+          "phase",
+          "aggregate_scope",
+          "counters",
+          "queued_at",
+          "updated_at"
+        ],
+        "properties": {
+          "aggregate_scope": {
+            "type": "string",
+            "description": "Scope label: `all` or `selected`."
+          },
+          "counters": {
+            "type": "object",
+            "description": "Progress counters.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string",
+            "description": "Run id."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Run kind."
+          },
+          "phase": {
+            "type": "string",
+            "description": "Current phase."
+          },
+          "queued_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Queue time (unix seconds)."
+          },
+          "started_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Start time, when started."
+          },
+          "state": {
+            "type": "string",
+            "description": "Run state."
+          },
+          "terminal_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Terminal time, when terminal."
+          },
+          "terminal_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Terminal code, when terminal."
+          },
+          "trigger": {
+            "type": "string",
+            "description": "What triggered the run."
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Last update time."
+          }
+        }
+      },
+      "ScanRunsResponse": {
+        "type": "object",
+        "description": "Current plus recent scan runs.",
+        "required": [
+          "current",
+          "history"
+        ],
+        "properties": {
+          "current": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScanRunView"
+            },
+            "description": "Live runs."
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScanRunView"
+            },
+            "description": "Recent terminal runs."
+          }
+        }
+      },
+      "ScanScopeView": {
+        "type": "object",
+        "description": "One scope inside a run.",
+        "required": [
+          "root_id",
+          "relative_path",
+          "effective_policy"
+        ],
+        "properties": {
+          "effective_policy": {
+            "type": "string",
+            "description": "Effective policy for the scope."
+          },
+          "relative_path": {
+            "type": "string",
+            "description": "Path relative to the root."
+          },
+          "root_id": {
+            "type": "string",
+            "description": "Root id."
           }
         }
       },

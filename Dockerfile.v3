@@ -3,6 +3,13 @@
 # durable-operation ownership lives in-process.
 FROM rust:1.89-bookworm AS builder
 
+# Stage-8 audio decode: opusic-sys (via symphonia-adapter-libopus) builds a
+# bundled C library through the `cmake` crate, which shells out to the cmake
+# binary. The rust base image ships gcc but not cmake.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cmake \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY rust-toolchain.toml ./
 COPY server/ ./server/

@@ -75,7 +75,9 @@ impl ReportWorker {
 impl Stage6Setup {
     /// Build the production bundle. `db_path` backs the playback SQLite
     /// stores; `connect_apps` carries the transcode policy; `crypto` seals
-    /// remote credentials.
+    /// remote credentials; `library_roots` resolves local stream reads
+    /// against the live library registry (`None` keeps the constructor
+    /// fallback for unwired builds).
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         db_path: &Path,
@@ -85,6 +87,7 @@ impl Stage6Setup {
         http: reqwest::Client,
         ids: Arc<dyn IdGenerator>,
         connect_apps: ConnectApps,
+        library_roots: Option<crate::library::wiring::RootSource>,
     ) -> Result<(Self, ReportWorker), String> {
         let connections: Arc<MemoryConnectionStore> = Arc::new(MemoryConnectionStore::new());
         let folders: Arc<MemoryFolderStore> = Arc::new(MemoryFolderStore::new());
@@ -103,13 +106,17 @@ impl Stage6Setup {
         let spawner = StdFfmpegSpawner::detect()
             .unwrap_or_else(|| StdFfmpegSpawner::with_path(PathBuf::from("ffmpeg")));
         let transcoder = FfmpegTranscoder::new(spawner, Arc::new(LocalTranscodeGate::new()));
-        let engine = Gateway::new(
+        let gateway = Gateway::new(
             local_root(config),
             reader,
             transcoder,
             transcode_settings(&connect_apps),
             ffmpeg_available(),
         );
+        let engine = match library_roots {
+            Some(roots) => gateway.with_library_roots(roots),
+            None => gateway,
+        };
         let stream = StreamState {
             engine: Arc::new(engine),
             ids: ids.clone(),
@@ -226,9 +233,10 @@ fn transcode_settings(connect_apps: &ConnectApps) -> TranscodeSettings {
     }
 }
 
-/// Local-stream sandbox root. Library roots land with stage 8; until then
-/// local keys resolve under `<root>/music`, which is normally absent, so
-/// local reads honestly 404.
+/// Local-stream sandbox root for unwired builds (`None` roots, test
+/// bundles): local keys resolve under `<root>/music`, which is
+/// normally absent, so local reads honestly 404. Wired builds
+/// resolve against the live library registry instead.
 fn local_root(config: &AppConfig) -> PathBuf {
     config.root_app_dir.join("music")
 }

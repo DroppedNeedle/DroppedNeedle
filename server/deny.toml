@@ -5,14 +5,23 @@
 targets = ["x86_64-unknown-linux-gnu"]
 
 [advisories]
-ignore = []
+# RUSTSEC-2024-0436: `paste` unmaintained, via lofty (stage-8 tag I/O).
+# Build-time proc-macro only, no runtime exposure; the advisory lists no
+# safe upgrade (pastey is not a drop-in for lofty's use). Re-check on
+# lofty upgrades.
+ignore = ["RUSTSEC-2024-0436"]
 
 [licenses]
 # Copyleft applies to our own crate only; every dependency must be permissive
-# or a data license.
+# or a data license, except the reviewed weak-copyleft carve-out below.
 # The graph is scoped to the Linux target below, so target-gated crates
 # (wasi, r-efi) never appear here. A new target or a license outside this
 # list fails the check until it is reviewed and added deliberately.
+# MPL-2.0 (reviewed for stage 8): the symphonia 0.6 family (audio decode
+# for tag probing) is file-scoped weak copyleft. The server links it
+# unmodified over crates.io; no MPL-covered file is modified, so no
+# source-disclosure obligation triggers. Re-check if symphonia is forked,
+# patched, or statically distributed outside this container.
 allow = [
   "AGPL-3.0-or-later",
   "Apache-2.0",
@@ -21,6 +30,7 @@ allow = [
   "CDLA-Permissive-2.0",
   "ISC",
   "MIT",
+  "MPL-2.0",
   "Unicode-3.0",
   "Unlicense",
   "Zlib",
