@@ -24,6 +24,15 @@ const { profile, mutationStub, emptyComponent } = vi.hoisted(() => ({
 	}
 }));
 
+// The password card is gated on this; default to local login enabled so the existing
+// password-control assertions still see the card.
+vi.mock('$lib/queries/auth/AuthProvidersQuery.svelte', () => ({
+	getAuthProvidersQuery: () => ({
+		data: { local: true, plex: false, jellyfin: false, oidc: false },
+		isPending: false,
+		isError: false
+	})
+}));
 vi.mock('$lib/queries/profile/ProfileQuery.svelte', () => ({
 	getProfileQuery: () => ({ data: profile, isPending: false, isError: false, refetch: vi.fn() })
 }));

@@ -19,6 +19,9 @@ services:
       - SLSKD_DOWNLOADS_PATH=/data/slskd/complete  # path inside the common media mount below
       # - BIND_HOST=auto      # dual-stack (IPv4 + IPv6) listener; set 0.0.0.0 to pin IPv4 only
       # - TRUSTED_PROXY_IPS=172.17.0.1  # your reverse proxy's IP/CIDR; defaults to the loopbacks 127.0.0.1,::1
+      # - ALLOW_PASSWORD_LOGIN=false    # SSO-only: hides the Username tab and 403s the password endpoints.
+                                        # Configure and TEST an OIDC/Jellyfin/Plex provider first, or nobody
+                                        # can sign in. Set back to true and restart to recover.
     ports:
       - "8688:8688"          # host:container; publishes on IPv4 and IPv6 when the Docker daemon has IPv6 enabled
     volumes:

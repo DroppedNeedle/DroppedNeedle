@@ -12,6 +12,11 @@ from infrastructure.file_utils import atomic_write_json, read_json
 logger = logging.getLogger(__name__)
 
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+# Security switches that must not be overridable from the on-disk config file.
+# config.json is writable by anyone who can reach the config volume and is loaded
+# *after* the environment, so honouring it here would let a file write silently
+# re-enable password authentication. Environment only.
+_ENV_ONLY_CONFIG_KEYS = frozenset({"allow_password_login"})
 _PREFERENCES_OWNED_CONFIG_KEYS = frozenset(
     {
         "_internal",
@@ -69,6 +74,17 @@ class Settings(BaseSettings):
     discover_warmer_enabled: bool = Field(
         default=True,
         description="Proactively warm per-user Discover/Home in the background through the day (kill switch)."
+    )
+
+    allow_password_login: bool = Field(
+        default=True,
+        description=(
+            "Whether local username/password authentication is accepted. Set false to "
+            "enforce SSO-only sign-in: the login form's Username tab is hidden and the "
+            "login, password-recovery and password-change endpoints return 403. Only "
+            "disable this with a working OIDC/Jellyfin/Plex provider configured, or "
+            "nobody can sign in. Set it back to true and restart to recover."
+        ),
     )
 
     port: int = Field(default=8688)
@@ -191,6 +207,13 @@ class Settings(BaseSettings):
             model_fields = type(self).model_fields
             validated_values: dict[str, object] = {}
             for key, value in config_data.items():
+                if key in _ENV_ONLY_CONFIG_KEYS:
+                    logger.warning(
+                        "Config key '%s' is environment-only and was ignored; "
+                        "set it as an environment variable instead",
+                        key,
+                    )
+                    continue
                 if key not in model_fields:
                     if key not in _PREFERENCES_OWNED_CONFIG_KEYS:
                         logger.warning("Unknown config key '%s', ignoring", key)
