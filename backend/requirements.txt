@@ -6,7 +6,7 @@ h2>=4.4.1,<5
 httpx[h2]==0.28.1
 msgspec==0.21.1
 mutagen>=1.48.1,<2
-packaging>=24.0
+packaging>=26.3
 pillow==12.3.0
 pydantic==2.13.5
 pydantic-core==2.46.5
