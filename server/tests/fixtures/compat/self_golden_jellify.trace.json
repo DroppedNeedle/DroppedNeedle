@@ -1,0 +1,250 @@
+{
+  "steps": [
+    {
+      "body": [
+        {
+          "AlbumArtist": "Blue Giant",
+          "AlbumArtists": [
+            {
+              "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+              "Name": "Blue Giant"
+            }
+          ],
+          "ArtistItems": [
+            {
+              "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+              "Name": "Blue Giant"
+            }
+          ],
+          "Artists": [
+            "Blue Giant"
+          ],
+          "BackdropImageTags": [],
+          "ChildCount": 1,
+          "DateCreated": "1970-01-01T00:33:20.0000000Z",
+          "Genres": [
+            "Rock"
+          ],
+          "Id": "6f43dcd675678c621ef59371a060a637",
+          "ImageBlurHashes": {},
+          "ImageTags": {},
+          "IsFolder": true,
+          "LocationType": "FileSystem",
+          "MediaType": "Unknown",
+          "Name": "Second Dawn",
+          "ProductionYear": 2023,
+          "ProviderIds": {
+            "MusicBrainzReleaseGroup": "rg-2"
+          },
+          "RunTimeTicks": 2400000000,
+          "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+          "SortName": "Second Dawn",
+          "Type": "MusicAlbum",
+          "UserData": {
+            "IsFavorite": false,
+            "ItemId": "6f43dcd675678c621ef59371a060a637",
+            "Key": "6f43dcd675678c621ef59371a060a637",
+            "PlayCount": 0,
+            "PlaybackPositionTicks": 0,
+            "Played": false
+          }
+        },
+        {
+          "AlbumArtist": "Blue Giant",
+          "AlbumArtists": [
+            {
+              "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+              "Name": "Blue Giant"
+            }
+          ],
+          "ArtistItems": [
+            {
+              "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+              "Name": "Blue Giant"
+            }
+          ],
+          "Artists": [
+            "Blue Giant"
+          ],
+          "BackdropImageTags": [],
+          "ChildCount": 2,
+          "DateCreated": "1970-01-01T00:16:40.0000000Z",
+          "Genres": [
+            "Rock"
+          ],
+          "Id": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+          "ImageBlurHashes": {},
+          "ImageTags": {
+            "Primary": "tag-rg-1"
+          },
+          "IsFolder": true,
+          "LocationType": "FileSystem",
+          "MediaType": "Unknown",
+          "Name": "First Light",
+          "ProductionYear": 2021,
+          "ProviderIds": {
+            "MusicBrainzReleaseGroup": "rg-1"
+          },
+          "RunTimeTicks": 3800000000,
+          "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+          "SortName": "First Light",
+          "Type": "MusicAlbum",
+          "UserData": {
+            "IsFavorite": false,
+            "ItemId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+            "Key": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+            "PlayCount": 5,
+            "PlaybackPositionTicks": 0,
+            "Played": true
+          }
+        }
+      ],
+      "headers": {
+        "content-length": "1690",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/UserItems/Latest",
+      "status": 200
+    },
+    {
+      "body": {
+        "Items": [
+          {
+            "Album": "Second Dawn",
+            "AlbumArtist": "Blue Giant",
+            "AlbumArtists": [
+              {
+                "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+                "Name": "Blue Giant"
+              }
+            ],
+            "AlbumId": "6f43dcd675678c621ef59371a060a637",
+            "ArtistItems": [
+              {
+                "Id": "16822349ff3c4565c46c440e6a847007",
+                "Name": "Guest Star"
+              }
+            ],
+            "Artists": [
+              "Guest Star"
+            ],
+            "BackdropImageTags": [],
+            "Container": "mp3",
+            "DateCreated": "1970-01-01T00:33:20.0000000Z",
+            "Genres": [
+              "Rock"
+            ],
+            "Id": "4db941e5bc6fc477f4110c60047a4439",
+            "ImageBlurHashes": {},
+            "ImageTags": {},
+            "IndexNumber": 1,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "Late Bloomer",
+            "ParentId": "6f43dcd675678c621ef59371a060a637",
+            "ParentIndexNumber": 1,
+            "ProductionYear": 2023,
+            "RunTimeTicks": 2400000000,
+            "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+            "SortName": "Late Bloomer",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": false,
+              "ItemId": "4db941e5bc6fc477f4110c60047a4439",
+              "Key": "4db941e5bc6fc477f4110c60047a4439",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          }
+        ],
+        "StartIndex": 0,
+        "TotalRecordCount": 1
+      },
+      "headers": {
+        "content-length": "983",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Users/user-alice/Items?parentId=6f43dcd675678c621ef59371a060a637&includeItemTypes=Audio",
+      "status": 200
+    },
+    {
+      "body": {
+        "byte_len": 256,
+        "head": [
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9
+        ]
+      },
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "256",
+        "content-type": "audio/mpeg"
+      },
+      "request": "GET /jellyfin/Audio/4db941e5bc6fc477f4110c60047a4439/stream.mp3?static=true",
+      "status": 200
+    },
+    {
+      "body": {
+        "byte_len": 100,
+        "head": [
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9
+        ]
+      },
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "100",
+        "content-range": "bytes 100-199/256",
+        "content-type": "audio/mpeg"
+      },
+      "request": "GET /jellyfin/Audio/4db941e5bc6fc477f4110c60047a4439/stream.mp3?static=true",
+      "status": 206
+    },
+    {
+      "body": null,
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "256",
+        "content-type": "audio/mpeg"
+      },
+      "request": "HEAD /jellyfin/Audio/4db941e5bc6fc477f4110c60047a4439/stream.mp3?static=true",
+      "status": 200
+    },
+    {
+      "body": {
+        "byte_len": 256,
+        "head": [
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9
+        ]
+      },
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "256",
+        "content-type": "audio/mpeg"
+      },
+      "request": "GET /jellyfin/Audio/4db941e5bc6fc477f4110c60047a4439/universal?static=true",
+      "status": 200
+    }
+  ]
+}

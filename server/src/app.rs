@@ -11,11 +11,19 @@
 //! session gate: its `X-Wrapped-API-Key` extractor is the only credential,
 //! and allowlisting those paths would wrongly make them public. It keeps
 //! the shared rate limiter.
+//!
+//! The compat shims (`/subsonic`, `/jellyfin`) merge outside the session
+//! gate too: they carry their own app-password auth plus the compat layers
+//! (CORS, limits), and never inherit `/api` session auth. Case-variant
+//! compat paths and preflights match no route, so the 404/405 fallbacks
+//! redispatch them into the compat router (preflight 204, canonical
+//! rewrite) before answering natively.
 
-use axum::{Router, middleware, routing::get};
+use axum::{Router, extract::Request, middleware, response::IntoResponse, routing::get};
 
 use crate::{
     auth::session::{middleware::require_session, rate_limit::rate_limit},
+    compat::http::fallback_redispatch,
     handlers,
     middleware::request_scope,
     state::AppState,
@@ -65,7 +73,8 @@ pub fn create_app(state: AppState) -> Router {
         .route("/openapi.json", get(handlers::openapi_json))
         .merge(v3)
         .merge(wrapped)
-        .merge(acquire_public);
+        .merge(acquire_public)
+        .merge(state.compat.router());
     if state.config.test_hooks {
         app = app
             .route(
@@ -79,8 +88,46 @@ pub fn create_app(state: AppState) -> Router {
             .route("/__test__/raw-500", get(handlers::test_hooks::raw_500))
             .route("/__test__/raw-503", get(handlers::test_hooks::raw_503));
     }
-    app.fallback(handlers::fallback_404)
-        .method_not_allowed_fallback(handlers::fallback_405)
+    // Compat-aware fallbacks: preflights and case-variant compat paths
+    // redispatch into the compat router; everything else answers natively.
+    // Closures carry the compat router (fallbacks take handlers, and the
+    // app router itself stays stateless).
+    let compat_router = state.compat.router();
+    // Native fallbacks on compat paths still stamp compat CORS: a bare
+    // 404 without `*` next to a disabled-protocol 404 with `*` would let
+    // callers enumerate which protocol is enabled.
+    let fallback_404 = {
+        let compat_router = compat_router.clone();
+        move |request: Request| async move {
+            let compat_path =
+                crate::compat::shared::path_case::is_compat_path(request.uri().path());
+            if let Some(redispatch) = fallback_redispatch(&compat_router, request).await {
+                return redispatch;
+            }
+            let mut response = handlers::fallback_404().await.into_response();
+            if compat_path {
+                crate::compat::http::stamp_cors(&mut response);
+            }
+            response
+        }
+    };
+    let fallback_405 = {
+        let compat_router = compat_router.clone();
+        move |request: Request| async move {
+            let compat_path =
+                crate::compat::shared::path_case::is_compat_path(request.uri().path());
+            if let Some(redispatch) = fallback_redispatch(&compat_router, request).await {
+                return redispatch;
+            }
+            let mut response = handlers::fallback_405().await.into_response();
+            if compat_path {
+                crate::compat::http::stamp_cors(&mut response);
+            }
+            response
+        }
+    };
+    app.fallback(fallback_404)
+        .method_not_allowed_fallback(fallback_405)
         .layer(middleware::from_fn_with_state(state, request_scope))
 }
 

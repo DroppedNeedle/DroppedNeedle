@@ -5,10 +5,14 @@
 mod common;
 
 use axum::{
+    Router,
     body::Body,
     http::{Request, StatusCode},
+    middleware,
+    response::IntoResponse,
+    routing::get as route_get,
 };
-use droppedneedle::{create_app, handlers::test_hooks::LEAK_MARKERS};
+use droppedneedle::{create_app, handlers::test_hooks::LEAK_MARKERS, middleware::request_scope};
 use tower::ServiceExt as _;
 
 async fn get(uri: &str, request_id: Option<&str>) -> (StatusCode, String, String) {
@@ -91,6 +95,56 @@ async fn raw_503_keeps_status_and_retry_after_with_generic_body() {
     assert_eq!(headers.get("x-request-id").unwrap(), "leak-503");
     assert_eq!(headers.get("retry-after").unwrap(), "120");
     assert_fixed_envelope(&text, "leak-503");
+}
+
+#[tokio::test]
+async fn compat_5xx_keeps_protocol_body_status_and_retry_after() {
+    // m4: `/subsonic` + `/jellyfin` 5xx responses are exempt from the
+    // native-envelope rewrite (their shapes are protocol-pinned); native
+    // paths still rewrite. Status and `Retry-After` survive on both.
+    async fn raw_503() -> impl IntoResponse {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(axum::http::header::RETRY_AFTER, "7")],
+            "protocol-shaped failure",
+        )
+    }
+    let app = Router::new()
+        .route("/subsonic/rest/__test500", route_get(raw_503))
+        .route("/jellyfin/__test500", route_get(raw_503))
+        .route("/native/__test500", route_get(raw_503))
+        .layer(middleware::from_fn_with_state(
+            common::hooked_state(),
+            request_scope,
+        ));
+    for uri in ["/subsonic/rest/__test500", "/jellyfin/__test500"] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+        assert_eq!(response.headers().get("retry-after").unwrap(), "7", "{uri}");
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(body.as_ref(), b"protocol-shaped failure", "{uri}");
+    }
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/native/__test500")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers().get("retry-after").unwrap(), "7");
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_fixed_envelope(core::str::from_utf8(&body).unwrap(), common::FIXED_ID);
 }
 
 #[tokio::test]

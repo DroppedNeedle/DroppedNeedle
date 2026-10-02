@@ -1,0 +1,45 @@
+{
+  "MediaSources": [
+    {
+      "Bitrate": 128000,
+      "Container": "mp3",
+      "DefaultAudioStreamIndex": 0,
+      "DirectStreamUrl": "http://localhost/jellyfin/Audio/4db941e5bc6fc477f4110c60047a4439/stream.mp3?static=true&mediaSourceId=4db941e5bc6fc477f4110c60047a4439&api_key=***",
+      "GenPtsInput": false,
+      "Id": "4db941e5bc6fc477f4110c60047a4439",
+      "IgnoreDts": false,
+      "IgnoreIndex": false,
+      "IsInfiniteStream": false,
+      "IsRemote": false,
+      "MediaStreams": [
+        {
+          "BitRate": 128000,
+          "ChannelLayout": "stereo",
+          "Channels": 2,
+          "Codec": "mp3",
+          "Index": 0,
+          "IsDefault": true,
+          "IsExternal": false,
+          "IsForced": false,
+          "IsInterlaced": false,
+          "IsTextSubtitleStream": false,
+          "SupportsExternalStream": false,
+          "Type": "Audio"
+        }
+      ],
+      "Protocol": "File",
+      "ReadAtNativeFramerate": false,
+      "RequiresClosing": false,
+      "RequiresLooping": false,
+      "RequiresOpening": false,
+      "RunTimeTicks": 2400000000,
+      "Size": 256,
+      "SupportsDirectPlay": true,
+      "SupportsDirectStream": true,
+      "SupportsProbing": false,
+      "SupportsTranscoding": true,
+      "Type": "Default"
+    }
+  ],
+  "PlaySessionId": "re:[0-9a-f]{32}"
+}

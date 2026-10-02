@@ -1,0 +1,72 @@
+{
+  "subsonic-response": {
+    "openSubsonic": true,
+    "playlist": {
+      "changed": "2023-11-14T22:13:20Z",
+      "created": "2023-11-14T22:13:20Z",
+      "duration": 200,
+      "entry": [
+        {
+          "album": "First Album",
+          "albumArtists": [
+            {
+              "id": "ar-artist-1",
+              "musicBrainzId": "artist-1",
+              "name": "The Testers"
+            }
+          ],
+          "albumId": "al-rg-1",
+          "artist": "The Testers",
+          "artistId": "ar-artist-1",
+          "artists": [
+            {
+              "id": "ar-artist-1",
+              "musicBrainzId": "artist-1",
+              "name": "The Testers"
+            }
+          ],
+          "bitDepth": 16,
+          "bitRate": 320,
+          "channelCount": 2,
+          "contentType": "audio/mpeg",
+          "coverArt": "al-rg-1",
+          "created": "2023-11-13T22:13:20Z",
+          "discNumber": 1,
+          "displayAlbumArtist": "The Testers",
+          "displayArtist": "The Testers",
+          "duration": 200,
+          "genre": "Rock",
+          "genres": [
+            {
+              "name": "Rock"
+            }
+          ],
+          "id": "tr-f1",
+          "isDir": false,
+          "mediaType": "song",
+          "parent": "al-rg-1",
+          "replayGain": {},
+          "samplingRate": 44100,
+          "size": 100,
+          "sortName": "Song One",
+          "suffix": "mp3",
+          "title": "Song One",
+          "track": 1,
+          "transcodedContentType": "audio/mpeg",
+          "transcodedSuffix": "mp3",
+          "type": "music",
+          "year": 2020
+        }
+      ],
+      "id": "pl-p2",
+      "name": "Journey Mix",
+      "owner": "alice",
+      "public": false,
+      "songCount": 1
+    },
+    "serverVersion": "3.0.0-test",
+    "status": "ok",
+    "type": "DroppedNeedle",
+    "version": "1.16.1"
+  }
+}

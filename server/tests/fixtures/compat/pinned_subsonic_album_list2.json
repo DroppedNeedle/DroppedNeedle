@@ -1,0 +1,73 @@
+{
+  "subsonic-response": {
+    "albumList2": {
+      "album": [
+        {
+          "artist": "The Testers",
+          "artistId": "ar-artist-1",
+          "artists": [
+            {
+              "id": "ar-artist-1",
+              "musicBrainzId": "artist-1",
+              "name": "The Testers"
+            }
+          ],
+          "coverArt": "al-rg-2",
+          "created": "2023-11-14T22:11:40Z",
+          "displayArtist": "The Testers",
+          "duration": 180,
+          "genre": "Rock",
+          "genres": [
+            {
+              "name": "Rock"
+            }
+          ],
+          "id": "al-rg-2",
+          "musicBrainzId": "rg-2",
+          "name": "Second Sounds",
+          "releaseTypes": [
+            "album"
+          ],
+          "songCount": 1,
+          "sortName": "Second Sounds",
+          "year": 2021
+        },
+        {
+          "artist": "The Testers",
+          "artistId": "ar-artist-1",
+          "artists": [
+            {
+              "id": "ar-artist-1",
+              "musicBrainzId": "artist-1",
+              "name": "The Testers"
+            }
+          ],
+          "coverArt": "al-rg-1",
+          "created": "2023-11-13T22:13:20Z",
+          "displayArtist": "The Testers",
+          "duration": 400,
+          "genre": "Rock",
+          "genres": [
+            {
+              "name": "Rock"
+            }
+          ],
+          "id": "al-rg-1",
+          "musicBrainzId": "rg-1",
+          "name": "First Album",
+          "releaseTypes": [
+            "album"
+          ],
+          "songCount": 2,
+          "sortName": "First Album",
+          "year": 2020
+        }
+      ]
+    },
+    "openSubsonic": true,
+    "serverVersion": "3.0.0-test",
+    "status": "ok",
+    "type": "DroppedNeedle",
+    "version": "1.16.1"
+  }
+}

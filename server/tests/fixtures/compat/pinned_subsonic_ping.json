@@ -1,0 +1,9 @@
+{
+  "subsonic-response": {
+    "openSubsonic": true,
+    "serverVersion": "3.0.0-test",
+    "status": "ok",
+    "type": "DroppedNeedle",
+    "version": "1.16.1"
+  }
+}

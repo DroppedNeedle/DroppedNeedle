@@ -33,12 +33,19 @@ fn test_http() -> HttpClientFactory {
 }
 
 /// State with the failure hooks mounted and fixed ids.
+#[allow(dead_code)]
 pub fn hooked_state() -> AppState {
     let auth = test_auth();
     let ids = Arc::new(FixedIdGenerator::new(FIXED_ID));
     let mut reads = test_reads(&auth, ids.clone());
     let acquire = test_acquire(&auth, ids.clone(), &mut reads);
     let library = test_library(&auth, ids.clone());
+    let compat = droppedneedle::compat::CompatSetup::for_tests(
+        auth.users.clone(),
+        library.clone(),
+        ids.clone(),
+    )
+    .expect("compat bundle builds");
     AppState::new(
         ids.clone(),
         test_http(),
@@ -46,9 +53,39 @@ pub fn hooked_state() -> AppState {
         auth.clone(),
         reads,
         Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
-        test_stage6(&auth, ids),
+        test_stage6(&auth, ids.clone()),
         acquire,
         library,
+        compat,
+    )
+}
+
+/// State with the compat kill switches set explicitly (wiring tests).
+#[allow(dead_code)]
+pub fn hooked_state_with_compat(subsonic: bool, jellyfin: bool) -> AppState {
+    let auth = test_auth();
+    let ids = Arc::new(FixedIdGenerator::new(FIXED_ID));
+    let mut reads = test_reads(&auth, ids.clone());
+    let acquire = test_acquire(&auth, ids.clone(), &mut reads);
+    let library = test_library(&auth, ids.clone());
+    let compat = droppedneedle::compat::CompatSetup::for_tests(
+        auth.users.clone(),
+        library.clone(),
+        ids.clone(),
+    )
+    .expect("compat bundle builds")
+    .with_enabled(subsonic, jellyfin);
+    AppState::new(
+        ids.clone(),
+        test_http(),
+        AppConfig::new(DEFAULT_PORT).with_test_hooks(),
+        auth.clone(),
+        reads,
+        Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
+        test_stage6(&auth, ids.clone()),
+        acquire,
+        library,
+        compat,
     )
 }
 
@@ -61,6 +98,12 @@ pub fn prod_like_state() -> AppState {
     let mut reads = test_reads(&auth, ids.clone());
     let acquire = test_acquire(&auth, ids.clone(), &mut reads);
     let library = test_library(&auth, ids.clone());
+    let compat = droppedneedle::compat::CompatSetup::for_tests(
+        auth.users.clone(),
+        library.clone(),
+        ids.clone(),
+    )
+    .expect("compat bundle builds");
     AppState::new(
         ids.clone(),
         test_http(),
@@ -68,9 +111,10 @@ pub fn prod_like_state() -> AppState {
         auth.clone(),
         reads,
         Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
-        test_stage6(&auth, ids),
+        test_stage6(&auth, ids.clone()),
         acquire,
         library,
+        compat,
     )
 }
 

@@ -21,6 +21,7 @@ extern crate self as droppedneedle;
 pub mod acquire;
 pub mod app;
 pub mod auth;
+pub mod compat;
 pub mod config;
 pub mod db;
 pub mod docs;

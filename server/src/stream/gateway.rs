@@ -19,11 +19,12 @@ use std::path::{Path, PathBuf};
 
 use super::leases::DirectGate;
 use super::routes::{
-    AudioSource, OpenMedia, StreamEngine, StreamFault, StreamOpen, content_type_for_extension,
+    AudioSource, OpenMedia, StreamEngine, StreamFault, StreamOpen, StreamParams,
+    content_type_for_extension,
 };
 use super::transcode::{
-    StreamPlan, TrackInfo, TranscodeBody as _, TranscodeError, TranscodeSettings, Transcoder,
-    decide, estimate_size, out_media_type,
+    OutFormat, StreamPlan, TrackInfo, TranscodeBody as _, TranscodeError, TranscodeSettings,
+    Transcoder, decide, estimate_size, out_media_type,
 };
 
 /// One proxied remote read: upstream bytes plus the upstream content type.
@@ -132,15 +133,30 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             .format
             .as_deref()
             .is_some_and(|format| format.eq_ignore_ascii_case("raw"));
-        let plan = decide(
+        let start_seconds = request.params.start_seconds;
+        let mut plan = decide(
             &track,
             request.params.format.as_deref(),
             request.params.max_bitrate_kbps,
             force_original,
-            0.0,
+            start_seconds,
             &self.settings,
             self.ffmpeg_present,
         );
+        // Compat verdict carry: the protocol slices decide with real source
+        // bitrate facts, while this re-run sees `bitrate_kbps: None`, so a
+        // bitrate-triggered same-codec plan would land direct here. When the
+        // adapter carries `force_transcode`, honor the compat verdict (codec
+        // + bitrate + offset) instead of re-deciding; the hard outs still
+        // win, since a forced plan must never spawn ffmpeg when the policy
+        // says direct.
+        if request.params.force_transcode
+            && self.settings.transcoding_enabled
+            && self.ffmpeg_present
+            && !force_original
+        {
+            plan = forced_plan(&request.params, &self.settings, start_seconds);
+        }
         match plan {
             StreamPlan::Direct { .. } => {
                 let bytes = tokio::task::spawn_blocking(move || std::fs::read(path))
@@ -248,6 +264,37 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             return Err(forbidden());
         }
         Ok(path)
+    }
+}
+
+/// Build the transcode plan a compat verdict dictates: the adapter's
+/// codec (compat only ever sends `mp3`/`opus`) and its already-decided
+/// bitrate, plus the seek offset. Duration is unknown at this layer, so
+/// the size estimate degrades to zero remaining seconds.
+fn forced_plan(
+    params: &StreamParams,
+    settings: &TranscodeSettings,
+    start_seconds: f64,
+) -> StreamPlan {
+    let out_format = match params
+        .format
+        .as_deref()
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
+        "opus" => OutFormat::Opus,
+        _ => OutFormat::Mp3,
+    };
+    let out_bitrate_kbps = match params.max_bitrate_kbps {
+        Some(bitrate) if bitrate > 0 => bitrate,
+        _ => settings.max_bitrate_kbps,
+    };
+    StreamPlan::Transcode {
+        out_format,
+        out_bitrate_kbps,
+        start_seconds: start_seconds.max(0.0),
+        source_duration_seconds: 0.0,
     }
 }
 

@@ -1,0 +1,631 @@
+{
+  "steps": [
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "3.0.0-test",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/ping?u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "albumList2": {
+            "album": [
+              {
+                "artist": "The Testers",
+                "artistId": "ar-artist-1",
+                "artists": [
+                  {
+                    "id": "ar-artist-1",
+                    "musicBrainzId": "artist-1",
+                    "name": "The Testers"
+                  }
+                ],
+                "coverArt": "al-rg-2",
+                "created": "2023-11-14T22:11:40Z",
+                "displayArtist": "The Testers",
+                "duration": 180,
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "id": "al-rg-2",
+                "musicBrainzId": "rg-2",
+                "name": "Second Sounds",
+                "releaseTypes": [
+                  "album"
+                ],
+                "songCount": 1,
+                "sortName": "Second Sounds",
+                "year": 2021
+              },
+              {
+                "artist": "The Testers",
+                "artistId": "ar-artist-1",
+                "artists": [
+                  {
+                    "id": "ar-artist-1",
+                    "musicBrainzId": "artist-1",
+                    "name": "The Testers"
+                  }
+                ],
+                "coverArt": "al-rg-1",
+                "created": "2023-11-13T22:13:20Z",
+                "displayArtist": "The Testers",
+                "duration": 400,
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "id": "al-rg-1",
+                "musicBrainzId": "rg-1",
+                "name": "First Album",
+                "releaseTypes": [
+                  "album"
+                ],
+                "songCount": 2,
+                "sortName": "First Album",
+                "year": 2020
+              }
+            ]
+          },
+          "openSubsonic": true,
+          "serverVersion": "3.0.0-test",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getAlbumList2?type=newest&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "album": {
+            "artist": "The Testers",
+            "artistId": "ar-artist-1",
+            "artists": [
+              {
+                "id": "ar-artist-1",
+                "musicBrainzId": "artist-1",
+                "name": "The Testers"
+              }
+            ],
+            "coverArt": "al-rg-1",
+            "created": "2023-11-13T22:13:20Z",
+            "displayArtist": "The Testers",
+            "duration": 400,
+            "genre": "Rock",
+            "genres": [
+              {
+                "name": "Rock"
+              }
+            ],
+            "id": "al-rg-1",
+            "musicBrainzId": "rg-1",
+            "name": "First Album",
+            "releaseTypes": [
+              "album"
+            ],
+            "song": [
+              {
+                "album": "First Album",
+                "albumArtists": [
+                  {
+                    "id": "ar-artist-1",
+                    "musicBrainzId": "artist-1",
+                    "name": "The Testers"
+                  }
+                ],
+                "albumId": "al-rg-1",
+                "artist": "The Testers",
+                "artistId": "ar-artist-1",
+                "artists": [
+                  {
+                    "id": "ar-artist-1",
+                    "musicBrainzId": "artist-1",
+                    "name": "The Testers"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 320,
+                "channelCount": 2,
+                "contentType": "audio/mpeg",
+                "coverArt": "al-rg-1",
+                "created": "2023-11-13T22:13:20Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "The Testers",
+                "displayArtist": "The Testers",
+                "duration": 200,
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "id": "tr-f1",
+                "isDir": false,
+                "mediaType": "song",
+                "parent": "al-rg-1",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 100,
+                "sortName": "Song One",
+                "suffix": "mp3",
+                "title": "Song One",
+                "track": 1,
+                "transcodedContentType": "audio/mpeg",
+                "transcodedSuffix": "mp3",
+                "type": "music",
+                "year": 2020
+              },
+              {
+                "album": "First Album",
+                "albumId": "al-rg-1",
+                "artist": "The Testers",
+                "artistId": "ar-artist-1",
+                "artists": [
+                  {
+                    "id": "ar-artist-1",
+                    "musicBrainzId": "artist-1",
+                    "name": "The Testers"
+                  }
+                ],
+                "bitRate": 900,
+                "channelCount": 2,
+                "contentType": "audio/flac",
+                "coverArt": "al-rg-1",
+                "displayArtist": "The Testers",
+                "duration": 200,
+                "genre": "Rock;Indie",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  },
+                  {
+                    "name": "Indie"
+                  }
+                ],
+                "id": "tr-f2",
+                "isDir": false,
+                "mediaType": "song",
+                "parent": "al-rg-1",
+                "replayGain": {},
+                "size": 64,
+                "sortName": "Song Two",
+                "suffix": "flac",
+                "title": "Song Two",
+                "track": 2,
+                "transcodedContentType": "audio/mpeg",
+                "transcodedSuffix": "mp3",
+                "type": "music",
+                "year": 2020
+              }
+            ],
+            "songCount": 2,
+            "sortName": "First Album",
+            "year": 2020
+          },
+          "openSubsonic": true,
+          "serverVersion": "3.0.0-test",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getAlbum?id=al-rg-1&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "byte_len": 100,
+        "head": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "100",
+        "content-type": "audio/mpeg"
+      },
+      "request": "GET /subsonic/rest/stream?id=tr-f1&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "byte_len": 50,
+        "head": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "50",
+        "content-range": "bytes 0-49/100",
+        "content-type": "audio/mpeg"
+      },
+      "request": "GET /subsonic/rest/stream?id=tr-f1&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 206
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "3.0.0-test",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/star?id=tr-f1&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "3.0.0-test",
+          "starred2": {
+            "album": [],
+            "artist": [],
+            "song": [
+              {
+                "album": "First Album",
+                "albumArtists": [
+                  {
+                    "id": "ar-artist-1",
+                    "musicBrainzId": "artist-1",
+                    "name": "The Testers"
+                  }
+                ],
+                "albumId": "al-rg-1",
+                "artist": "The Testers",
+                "artistId": "ar-artist-1",
+                "artists": [
+                  {
+                    "id": "ar-artist-1",
+                    "musicBrainzId": "artist-1",
+                    "name": "The Testers"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 320,
+                "channelCount": 2,
+                "contentType": "audio/mpeg",
+                "coverArt": "al-rg-1",
+                "created": "2023-11-13T22:13:20Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "The Testers",
+                "displayArtist": "The Testers",
+                "duration": 200,
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "id": "tr-f1",
+                "isDir": false,
+                "mediaType": "song",
+                "parent": "al-rg-1",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 100,
+                "sortName": "Song One",
+                "suffix": "mp3",
+                "title": "Song One",
+                "track": 1,
+                "transcodedContentType": "audio/mpeg",
+                "transcodedSuffix": "mp3",
+                "type": "music",
+                "year": 2020
+              }
+            ]
+          },
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getStarred2?u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "playlist": {
+            "changed": "2023-11-14T22:13:20Z",
+            "created": "2023-11-14T22:13:20Z",
+            "duration": 200,
+            "entry": [
+              {
+                "album": "First Album",
+                "albumArtists": [
+                  {
+                    "id": "ar-artist-1",
+                    "musicBrainzId": "artist-1",
+                    "name": "The Testers"
+                  }
+                ],
+                "albumId": "al-rg-1",
+                "artist": "The Testers",
+                "artistId": "ar-artist-1",
+                "artists": [
+                  {
+                    "id": "ar-artist-1",
+                    "musicBrainzId": "artist-1",
+                    "name": "The Testers"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 320,
+                "channelCount": 2,
+                "contentType": "audio/mpeg",
+                "coverArt": "al-rg-1",
+                "created": "2023-11-13T22:13:20Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "The Testers",
+                "displayArtist": "The Testers",
+                "duration": 200,
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "id": "tr-f1",
+                "isDir": false,
+                "mediaType": "song",
+                "parent": "al-rg-1",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 100,
+                "sortName": "Song One",
+                "suffix": "mp3",
+                "title": "Song One",
+                "track": 1,
+                "transcodedContentType": "audio/mpeg",
+                "transcodedSuffix": "mp3",
+                "type": "music",
+                "year": 2020
+              }
+            ],
+            "id": "pl-p2",
+            "name": "Journey Mix",
+            "owner": "alice",
+            "public": false,
+            "songCount": 1
+          },
+          "serverVersion": "3.0.0-test",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/createPlaylist?name=Journey+Mix&songId=tr-f1&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "playlist": {
+            "changed": "2023-11-14T22:13:20Z",
+            "created": "2023-11-14T22:13:20Z",
+            "duration": 200,
+            "entry": [
+              {
+                "album": "First Album",
+                "albumArtists": [
+                  {
+                    "id": "ar-artist-1",
+                    "musicBrainzId": "artist-1",
+                    "name": "The Testers"
+                  }
+                ],
+                "albumId": "al-rg-1",
+                "artist": "The Testers",
+                "artistId": "ar-artist-1",
+                "artists": [
+                  {
+                    "id": "ar-artist-1",
+                    "musicBrainzId": "artist-1",
+                    "name": "The Testers"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 320,
+                "channelCount": 2,
+                "contentType": "audio/mpeg",
+                "coverArt": "al-rg-1",
+                "created": "2023-11-13T22:13:20Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "The Testers",
+                "displayArtist": "The Testers",
+                "duration": 200,
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "id": "tr-f1",
+                "isDir": false,
+                "mediaType": "song",
+                "parent": "al-rg-1",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 100,
+                "sortName": "Song One",
+                "suffix": "mp3",
+                "title": "Song One",
+                "track": 1,
+                "transcodedContentType": "audio/mpeg",
+                "transcodedSuffix": "mp3",
+                "type": "music",
+                "year": 2020
+              }
+            ],
+            "id": "pl-p2",
+            "name": "Journey Mix",
+            "owner": "alice",
+            "public": false,
+            "songCount": 1
+          },
+          "serverVersion": "3.0.0-test",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getPlaylist?id=pl-p2&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "3.0.0-test",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/scrobble?id=tr-f1&submission=false&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "nowPlaying": {
+            "entry": [
+              {
+                "album": "First Album",
+                "albumId": "al-rg-1",
+                "artist": "The Testers",
+                "artistId": "ar-artist-1",
+                "artists": [
+                  {
+                    "id": "ar-artist-1",
+                    "musicBrainzId": "artist-1",
+                    "name": "The Testers"
+                  }
+                ],
+                "bitRate": 900,
+                "channelCount": 2,
+                "contentType": "audio/flac",
+                "coverArt": "al-rg-1",
+                "displayArtist": "The Testers",
+                "duration": 200,
+                "genre": "Rock;Indie",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  },
+                  {
+                    "name": "Indie"
+                  }
+                ],
+                "id": "tr-f2",
+                "isDir": false,
+                "mediaType": "song",
+                "minutesAgo": "__MINUTES_AGO__",
+                "parent": "al-rg-1",
+                "playerId": 0,
+                "playerName": "Symfonium",
+                "replayGain": {},
+                "size": 64,
+                "sortName": "Song Two",
+                "suffix": "flac",
+                "title": "Song Two",
+                "track": 2,
+                "transcodedContentType": "audio/mpeg",
+                "transcodedSuffix": "mp3",
+                "type": "music",
+                "username": "user Display",
+                "year": 2020
+              }
+            ]
+          },
+          "openSubsonic": true,
+          "serverVersion": "3.0.0-test",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getNowPlaying?u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "3.0.0-test",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/scrobble?id=tr-f1&submission=true&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    }
+  ]
+}

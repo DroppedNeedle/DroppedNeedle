@@ -189,7 +189,7 @@ impl E2e {
             Arc::clone(&self.crypto),
             self.http.shared().clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            connect_apps,
+            connect_apps.clone(),
             Some(library.root_source()),
         )
         .expect("stage6 bundle builds");
@@ -204,6 +204,14 @@ impl E2e {
             &mut reads.collections,
         )
         .expect("acquire bundle builds");
+        let compat = droppedneedle::compat::CompatSetup::build(
+            auth.users.clone(),
+            Arc::clone(&self.crypto),
+            stage6.playback.clone(),
+            stage6.stream.engine.clone(),
+            library.clone(),
+            &connect_apps,
+        );
         let state = AppState::new(
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             self.http.clone(),
@@ -214,6 +222,7 @@ impl E2e {
             stage6,
             acquire,
             library,
+            compat,
         );
         create_app(state)
     }

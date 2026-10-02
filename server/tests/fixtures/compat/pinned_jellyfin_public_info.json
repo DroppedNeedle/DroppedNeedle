@@ -1,0 +1,9 @@
+{
+  "Id": "2f54b621b8fde6d933fab26bd6378f85",
+  "LocalAddress": "http://localhost/jellyfin",
+  "OperatingSystem": "",
+  "ProductName": "Jellyfin Server",
+  "ServerName": "DroppedNeedle",
+  "StartupWizardCompleted": true,
+  "Version": "10.10.6"
+}

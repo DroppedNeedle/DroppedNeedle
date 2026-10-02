@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use crate::{
-    acquire::AcquireSetup, auth::wiring::AuthSetup, config::AppConfig,
+    acquire::AcquireSetup, auth::wiring::AuthSetup, compat::CompatSetup, config::AppConfig,
     http_client::HttpClientFactory, ids::IdGenerator, library::wiring::LibrarySetup,
     provider_policy::ProviderPolicy, providers::Providers, reads::ReadsSetup, stage6::Stage6Setup,
 };
@@ -35,6 +35,8 @@ pub struct AppState {
     pub acquire: AcquireSetup,
     /// Stage-8 bundle: library scan, identify, publish, contrib.
     pub library: LibrarySetup,
+    /// Stage-9 bundle: Subsonic/Jellyfin shims (outside the `/api` gate).
+    pub compat: CompatSetup,
 }
 
 impl AppState {
@@ -51,6 +53,7 @@ impl AppState {
         stage6: Stage6Setup,
         acquire: AcquireSetup,
         library: LibrarySetup,
+        compat: CompatSetup,
     ) -> Self {
         Self {
             ids,
@@ -62,6 +65,7 @@ impl AppState {
             stage6,
             acquire,
             library,
+            compat,
         }
     }
 

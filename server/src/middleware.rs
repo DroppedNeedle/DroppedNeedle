@@ -2,11 +2,16 @@
 //!
 //! The middleware resolves the request id (echoing a caller-supplied
 //! `x-request-id` or minting one), serves the request inside a tracing span
-//! carrying that id, and guarantees the leak contract on the way out: any
-//! 5xx response keeps its status and `Retry-After` header but gets the fixed
-//! envelope body naming the request id, and panics become a 500 of that same
-//! envelope. Handler code can therefore return raw 5xx bodies only by
-//! accident, never to the wire.
+//! carrying that id, method, and path only (never the query: compat puts
+//! app-password secrets in the query string, so queries must never reach
+//! the logs — the wiring suite trips on any full-target logging), and
+//! guarantees the leak contract on the way out: any
+//! native 5xx response keeps its status and `Retry-After` header but gets
+//! the fixed envelope body naming the request id, and panics become a 500
+//! of that same envelope. Compat (`/subsonic`, `/jellyfin`) 5xx responses
+//! are exempt from the body rewrite — their shapes are protocol-pinned —
+//! though panics there still become the fixed 500. Handler code can
+//! therefore return raw 5xx bodies only by accident, never to the wire.
 
 use axum::{
     extract::{Request, State},
@@ -23,12 +28,22 @@ use crate::{
     state::AppState,
 };
 
+/// Whether a path belongs to the compat shims (case-insensitive).
+/// Compat 5xx responses keep their protocol-shaped bodies: rewriting
+/// them into the native [`ApiError`](crate::error::ApiError) envelope
+/// would break Subsonic/Jellyfin clients parsing their own shape.
+fn is_compat_path(path: &str) -> bool {
+    let folded = path.to_lowercase();
+    folded.starts_with("/subsonic") || folded.starts_with("/jellyfin")
+}
+
 /// Enforce the request scope described in the module docs.
 pub async fn request_scope(
     State(state): State<AppState>,
     mut request: Request,
     next: Next,
 ) -> Response {
+    let compat_path = is_compat_path(request.uri().path());
     let request_id = incoming_request_id(&request).unwrap_or_else(|| state.ids.new_id());
     request
         .extensions_mut()
@@ -45,7 +60,9 @@ pub async fn request_scope(
         .catch_unwind()
         .await;
     let mut response = match outcome {
-        Ok(response) if response.status().is_server_error() => {
+        // Compat paths keep status, headers (including `Retry-After`),
+        // and body untouched: their 5xx shapes are protocol-pinned.
+        Ok(response) if response.status().is_server_error() && !compat_path => {
             let status = response.status();
             let retry_after = response
                 .headers()
@@ -85,5 +102,19 @@ fn incoming_request_id(request: &Request) -> Option<String> {
 fn set_request_id_header(response: &mut Response, request_id: &str) {
     if let Ok(value) = request_id.parse() {
         response.headers_mut().insert(REQUEST_ID_HEADER, value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_compat_path;
+
+    #[test]
+    fn compat_paths_skip_the_5xx_rewrite() {
+        assert!(is_compat_path("/subsonic/rest/ping"));
+        assert!(is_compat_path("/jellyfin/System/Info/Public"));
+        assert!(is_compat_path("/SUBSONIC/rest/ping"));
+        assert!(!is_compat_path("/api/v3/stream/local/x"));
+        assert!(!is_compat_path("/health"));
     }
 }

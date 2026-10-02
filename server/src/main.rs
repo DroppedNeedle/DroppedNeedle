@@ -8,6 +8,7 @@ use std::sync::Arc;
 use droppedneedle::{
     AppConfig, AppState,
     auth::{prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup},
+    compat::CompatSetup,
     create_app,
     db::{DbConfig, open_runtime},
     docs::ApiDoc,
@@ -164,6 +165,7 @@ async fn serve() -> Result<(), String> {
         providers.clone(),
     )
     .map_err(|error| format!("library setup: {error}"))?;
+    let compat_crypto = crypto.clone();
     let (stage6, report_worker) = Stage6Setup::build(
         &config.library_db_path,
         &config,
@@ -171,7 +173,7 @@ async fn serve() -> Result<(), String> {
         crypto,
         http.shared().clone(),
         ids.clone(),
-        connect_apps,
+        connect_apps.clone(),
         Some(library.root_source()),
     )
     .map_err(|error| error.to_string())?;
@@ -213,6 +215,16 @@ async fn serve() -> Result<(), String> {
         contrib_recovered = library_recovery.contrib_recovered,
         "library recovery complete"
     );
+    // Compat shims: production auth/playback/engine bindings. No new
+    // loops: everything runs inline in the request path.
+    let compat = CompatSetup::build(
+        auth.users.clone(),
+        compat_crypto,
+        stage6.playback.clone(),
+        stage6.stream.engine.clone(),
+        library.clone(),
+        &connect_apps,
+    );
     let state = AppState::new(
         ids,
         http,
@@ -223,6 +235,7 @@ async fn serve() -> Result<(), String> {
         stage6,
         acquire.clone(),
         library.clone(),
+        compat,
     );
     let app = create_app(state);
 

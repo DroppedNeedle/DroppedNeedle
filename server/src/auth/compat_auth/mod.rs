@@ -27,4 +27,5 @@
 
 pub mod fakes;
 pub mod jellyfin;
+pub mod prod;
 pub mod subsonic;

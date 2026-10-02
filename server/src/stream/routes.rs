@@ -160,7 +160,7 @@ impl AudioSource {
 // ---------------------------------------------------------------------------
 
 /// Transcode hints from the query string, mapped 1:1 for the engine.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct StreamParams {
     /// Requested output codec (`mp3`, `opus`, `raw`, or unset). The engine's
     /// `decide()` interprets it, including the `raw` backstop.
@@ -169,10 +169,20 @@ pub struct StreamParams {
     pub max_bitrate_kbps: Option<i64>,
     /// Ask a transcode landing for its estimated `Content-Length`.
     pub estimate_content_length: bool,
+    /// Seek offset in seconds (`-ss`, transcode only). Compat adapters
+    /// forward the protocol plan's offset here; native callers pass the
+    /// `start_seconds` query key (default 0).
+    pub start_seconds: f64,
+    /// Explicit transcode directive from a compat plan. The gateway's own
+    /// `decide()` re-run sees no source bitrate at this layer, so a
+    /// bitrate-triggered same-codec plan would land direct without this
+    /// carry; when set (and transcoding is available) the gateway honors
+    /// the compat verdict instead of re-deciding.
+    pub force_transcode: bool,
 }
 
 /// One engine read: identity, lease principal, and transcode hints.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StreamOpen {
     /// Which source backend to read from.
     pub source: AudioSource,
@@ -292,7 +302,9 @@ pub fn parse_range(header: &str, total_len: u64) -> Option<ByteRange> {
     if total_len == 0 {
         return None;
     }
-    let spec = header.strip_prefix("bytes=")?;
+    // Surrounding whitespace is insignificant (the Subsonic slice trims
+    // too, so `"bytes=0-1 "` is a 206 on every path, never a 416).
+    let spec = header.trim().strip_prefix("bytes=")?;
     let (start_str, end_str) = spec.split_once('-')?;
     if start_str.is_empty() && end_str.is_empty() {
         return None;
@@ -388,6 +400,9 @@ pub struct StreamQuery {
     /// Ask a transcode landing for its estimated `Content-Length`.
     #[serde(default)]
     pub estimate_content_length: bool,
+    /// Seek offset in seconds (`-ss`, transcode only).
+    #[serde(default)]
+    pub start_seconds: f64,
 }
 
 /// Query extractor that renders failures in the shared envelope instead of
@@ -603,6 +618,8 @@ async fn serve<E: StreamEngine>(
                 format: query.format.clone(),
                 max_bitrate_kbps: query.max_bitrate,
                 estimate_content_length: query.estimate_content_length,
+                start_seconds: query.start_seconds,
+                force_transcode: false,
             },
         })
         .await

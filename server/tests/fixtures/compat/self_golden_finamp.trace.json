@@ -1,0 +1,518 @@
+{
+  "steps": [
+    {
+      "body": {
+        "Id": "2f54b621b8fde6d933fab26bd6378f85",
+        "LocalAddress": "http://localhost/jellyfin",
+        "OperatingSystem": "",
+        "ProductName": "Jellyfin Server",
+        "ServerName": "DroppedNeedle",
+        "StartupWizardCompleted": true,
+        "Version": "10.10.6"
+      },
+      "headers": {
+        "content-length": "216",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/System/Info/Public",
+      "status": 200
+    },
+    {
+      "body": {
+        "Items": [
+          {
+            "BackdropImageTags": [],
+            "CollectionType": "music",
+            "Id": "a48038f4b1237e908e5440732ced3298",
+            "ImageBlurHashes": {},
+            "ImageTags": {
+              "Primary": "a48038f4b1237e908e5440732ced3298"
+            },
+            "IsFolder": true,
+            "LocationType": "FileSystem",
+            "MediaType": "Unknown",
+            "Name": "Music",
+            "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+            "SortName": "Music",
+            "Type": "CollectionFolder",
+            "UserData": {
+              "IsFavorite": false,
+              "ItemId": "a48038f4b1237e908e5440732ced3298",
+              "Key": "a48038f4b1237e908e5440732ced3298",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          }
+        ],
+        "StartIndex": 0,
+        "TotalRecordCount": 1
+      },
+      "headers": {
+        "content-length": "561",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Users/user-alice/Views",
+      "status": 200
+    },
+    {
+      "body": {
+        "Items": [
+          {
+            "Album": "First Light",
+            "AlbumArtist": "Blue Giant",
+            "AlbumArtists": [
+              {
+                "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+                "Name": "Blue Giant"
+              }
+            ],
+            "AlbumId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+            "AlbumPrimaryImageTag": "tag-rg-1",
+            "ArtistItems": [
+              {
+                "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+                "Name": "Blue Giant"
+              }
+            ],
+            "Artists": [
+              "Blue Giant"
+            ],
+            "BackdropImageTags": [],
+            "Container": "mp3",
+            "DateCreated": "1970-01-01T00:16:40.0000000Z",
+            "Genres": [
+              "Rock"
+            ],
+            "Id": "2dcdb5c8d11e199ad036df869476ad2e",
+            "ImageBlurHashes": {},
+            "ImageTags": {
+              "Primary": "tag-rg-1"
+            },
+            "IndexNumber": 1,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "Opener",
+            "ParentId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+            "ParentIndexNumber": 1,
+            "ProductionYear": 2021,
+            "ProviderIds": {
+              "MusicBrainzTrack": "rec-1"
+            },
+            "RunTimeTicks": 1800000000,
+            "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+            "SortName": "Opener",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": false,
+              "ItemId": "2dcdb5c8d11e199ad036df869476ad2e",
+              "Key": "2dcdb5c8d11e199ad036df869476ad2e",
+              "PlayCount": 5,
+              "PlaybackPositionTicks": 0,
+              "Played": true
+            }
+          },
+          {
+            "Album": "First Light",
+            "AlbumArtist": "Blue Giant",
+            "AlbumArtists": [
+              {
+                "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+                "Name": "Blue Giant"
+              }
+            ],
+            "AlbumId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+            "AlbumPrimaryImageTag": "tag-rg-1",
+            "ArtistItems": [
+              {
+                "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+                "Name": "Blue Giant"
+              }
+            ],
+            "Artists": [
+              "Blue Giant"
+            ],
+            "BackdropImageTags": [],
+            "Container": "flac",
+            "DateCreated": "1970-01-01T00:18:20.0000000Z",
+            "Genres": [
+              "Rock"
+            ],
+            "Id": "7213d9081fe751fcb09ee6183372b4dc",
+            "ImageBlurHashes": {},
+            "ImageTags": {
+              "Primary": "tag-rg-1"
+            },
+            "IndexNumber": 2,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "Deep Cut",
+            "ParentId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+            "ParentIndexNumber": 1,
+            "ProductionYear": 2021,
+            "RunTimeTicks": 2000000000,
+            "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+            "SortName": "Deep Cut",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": false,
+              "ItemId": "7213d9081fe751fcb09ee6183372b4dc",
+              "Key": "7213d9081fe751fcb09ee6183372b4dc",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          },
+          {
+            "Album": "Second Dawn",
+            "AlbumArtist": "Blue Giant",
+            "AlbumArtists": [
+              {
+                "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+                "Name": "Blue Giant"
+              }
+            ],
+            "AlbumId": "6f43dcd675678c621ef59371a060a637",
+            "ArtistItems": [
+              {
+                "Id": "16822349ff3c4565c46c440e6a847007",
+                "Name": "Guest Star"
+              }
+            ],
+            "Artists": [
+              "Guest Star"
+            ],
+            "BackdropImageTags": [],
+            "Container": "mp3",
+            "DateCreated": "1970-01-01T00:33:20.0000000Z",
+            "Genres": [
+              "Rock"
+            ],
+            "Id": "4db941e5bc6fc477f4110c60047a4439",
+            "ImageBlurHashes": {},
+            "ImageTags": {},
+            "IndexNumber": 1,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "Late Bloomer",
+            "ParentId": "6f43dcd675678c621ef59371a060a637",
+            "ParentIndexNumber": 1,
+            "ProductionYear": 2023,
+            "RunTimeTicks": 2400000000,
+            "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+            "SortName": "Late Bloomer",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": false,
+              "ItemId": "4db941e5bc6fc477f4110c60047a4439",
+              "Key": "4db941e5bc6fc477f4110c60047a4439",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          }
+        ],
+        "StartIndex": 0,
+        "TotalRecordCount": 3
+      },
+      "headers": {
+        "content-length": "2986",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Users/user-alice/Items?includeItemTypes=Audio",
+      "status": 200
+    },
+    {
+      "body": {
+        "MediaSources": [
+          {
+            "Bitrate": 320000,
+            "Container": "mp3",
+            "DefaultAudioStreamIndex": 0,
+            "DirectStreamUrl": "http://localhost/jellyfin/Audio/2dcdb5c8d11e199ad036df869476ad2e/stream.mp3?static=true&mediaSourceId=2dcdb5c8d11e199ad036df869476ad2e&api_key=***",
+            "GenPtsInput": false,
+            "Id": "2dcdb5c8d11e199ad036df869476ad2e",
+            "IgnoreDts": false,
+            "IgnoreIndex": false,
+            "IsInfiniteStream": false,
+            "IsRemote": false,
+            "MediaStreams": [
+              {
+                "BitRate": 320000,
+                "ChannelLayout": "stereo",
+                "Channels": 2,
+                "Codec": "mp3",
+                "Index": 0,
+                "IsDefault": true,
+                "IsExternal": false,
+                "IsForced": false,
+                "IsInterlaced": false,
+                "IsTextSubtitleStream": false,
+                "SampleRate": 44100,
+                "SupportsExternalStream": false,
+                "Type": "Audio"
+              }
+            ],
+            "Protocol": "File",
+            "ReadAtNativeFramerate": false,
+            "RequiresClosing": false,
+            "RequiresLooping": false,
+            "RequiresOpening": false,
+            "RunTimeTicks": 1800000000,
+            "Size": 1024,
+            "SupportsDirectPlay": true,
+            "SupportsDirectStream": true,
+            "SupportsProbing": false,
+            "SupportsTranscoding": true,
+            "Type": "Default"
+          }
+        ],
+        "PlaySessionId": "re:[0-9a-f]{32}"
+      },
+      "headers": {
+        "content-length": "1000",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Items/2dcdb5c8d11e199ad036df869476ad2e/PlaybackInfo",
+      "status": 200
+    },
+    {
+      "body": {
+        "byte_len": 1024,
+        "head": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "1024",
+        "content-type": "audio/mpeg"
+      },
+      "request": "GET /jellyfin/Audio/2dcdb5c8d11e199ad036df869476ad2e/stream.mp3?static=true&mediaSourceId=2dcdb5c8d11e199ad036df869476ad2e&api_key=***",
+      "status": 200
+    },
+    {
+      "body": {
+        "byte_len": 100,
+        "head": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "100",
+        "content-range": "bytes 0-99/1024",
+        "content-type": "audio/mpeg"
+      },
+      "request": "GET /jellyfin/Audio/2dcdb5c8d11e199ad036df869476ad2e/stream.mp3?static=true&mediaSourceId=2dcdb5c8d11e199ad036df869476ad2e&api_key=***",
+      "status": 206
+    },
+    {
+      "body": {
+        "IsFavorite": true,
+        "ItemId": "2dcdb5c8d11e199ad036df869476ad2e",
+        "Key": "2dcdb5c8d11e199ad036df869476ad2e",
+        "PlayCount": 0,
+        "PlaybackPositionTicks": 0,
+        "Played": false
+      },
+      "headers": {
+        "content-length": "159",
+        "content-type": "application/json"
+      },
+      "request": "POST /jellyfin/Users/user-alice/FavoriteItems/2dcdb5c8d11e199ad036df869476ad2e",
+      "status": 200
+    },
+    {
+      "body": {
+        "Items": [
+          {
+            "Album": "First Light",
+            "AlbumArtist": "Blue Giant",
+            "AlbumArtists": [
+              {
+                "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+                "Name": "Blue Giant"
+              }
+            ],
+            "AlbumId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+            "AlbumPrimaryImageTag": "tag-rg-1",
+            "ArtistItems": [
+              {
+                "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+                "Name": "Blue Giant"
+              }
+            ],
+            "Artists": [
+              "Blue Giant"
+            ],
+            "BackdropImageTags": [],
+            "Container": "mp3",
+            "DateCreated": "1970-01-01T00:16:40.0000000Z",
+            "Genres": [
+              "Rock"
+            ],
+            "Id": "2dcdb5c8d11e199ad036df869476ad2e",
+            "ImageBlurHashes": {},
+            "ImageTags": {
+              "Primary": "tag-rg-1"
+            },
+            "IndexNumber": 1,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "Opener",
+            "ParentId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+            "ParentIndexNumber": 1,
+            "ProductionYear": 2021,
+            "ProviderIds": {
+              "MusicBrainzTrack": "rec-1"
+            },
+            "RunTimeTicks": 1800000000,
+            "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+            "SortName": "Opener",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": true,
+              "ItemId": "2dcdb5c8d11e199ad036df869476ad2e",
+              "Key": "2dcdb5c8d11e199ad036df869476ad2e",
+              "PlayCount": 5,
+              "PlaybackPositionTicks": 0,
+              "Played": true
+            }
+          }
+        ],
+        "StartIndex": 0,
+        "TotalRecordCount": 1
+      },
+      "headers": {
+        "content-length": "1066",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Users/user-alice/Items?includeItemTypes=Audio&IsFavorite=true",
+      "status": 200
+    },
+    {
+      "body": {
+        "Id": "0a9350aa48863de03a0040cd77209f02"
+      },
+      "headers": {
+        "content-length": "41",
+        "content-type": "application/json"
+      },
+      "request": "POST /jellyfin/Playlists",
+      "status": 200
+    },
+    {
+      "body": {
+        "Items": [
+          {
+            "Album": "First Light",
+            "AlbumArtist": "Blue Giant",
+            "AlbumArtists": [
+              {
+                "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+                "Name": "Blue Giant"
+              }
+            ],
+            "AlbumId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+            "AlbumPrimaryImageTag": "tag-rg-1",
+            "ArtistItems": [
+              {
+                "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+                "Name": "Blue Giant"
+              }
+            ],
+            "Artists": [
+              "Blue Giant"
+            ],
+            "BackdropImageTags": [],
+            "Container": "mp3",
+            "DateCreated": "1970-01-01T00:16:40.0000000Z",
+            "Genres": [
+              "Rock"
+            ],
+            "Id": "2dcdb5c8d11e199ad036df869476ad2e",
+            "ImageBlurHashes": {},
+            "ImageTags": {
+              "Primary": "tag-rg-1"
+            },
+            "IndexNumber": 1,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "Opener",
+            "ParentId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+            "ParentIndexNumber": 1,
+            "PlaylistItemId": "e1",
+            "ProductionYear": 2021,
+            "ProviderIds": {
+              "MusicBrainzTrack": "rec-1"
+            },
+            "RunTimeTicks": 1800000000,
+            "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+            "SortName": "Opener",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": true,
+              "ItemId": "2dcdb5c8d11e199ad036df869476ad2e",
+              "Key": "2dcdb5c8d11e199ad036df869476ad2e",
+              "PlayCount": 5,
+              "PlaybackPositionTicks": 0,
+              "Played": true
+            }
+          }
+        ],
+        "StartIndex": 0,
+        "TotalRecordCount": 1
+      },
+      "headers": {
+        "content-length": "1088",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Playlists/0a9350aa48863de03a0040cd77209f02/Items",
+      "status": 200
+    },
+    {
+      "body": null,
+      "headers": {
+        "content-length": "0"
+      },
+      "request": "POST /jellyfin/Sessions/Playing",
+      "status": 204
+    },
+    {
+      "body": null,
+      "headers": {
+        "content-length": "0"
+      },
+      "request": "POST /jellyfin/Sessions/Playing/Progress",
+      "status": 204
+    },
+    {
+      "body": null,
+      "headers": {
+        "content-length": "0"
+      },
+      "request": "POST /jellyfin/Sessions/Playing/Stopped",
+      "status": 204
+    }
+  ]
+}

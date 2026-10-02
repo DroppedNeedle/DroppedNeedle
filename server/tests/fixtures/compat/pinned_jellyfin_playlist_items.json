@@ -1,0 +1,56 @@
+{
+  "Items": [
+    {
+      "Album": "Second Dawn",
+      "AlbumArtist": "Blue Giant",
+      "AlbumArtists": [
+        {
+          "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+          "Name": "Blue Giant"
+        }
+      ],
+      "AlbumId": "6f43dcd675678c621ef59371a060a637",
+      "ArtistItems": [
+        {
+          "Id": "16822349ff3c4565c46c440e6a847007",
+          "Name": "Guest Star"
+        }
+      ],
+      "Artists": [
+        "Guest Star"
+      ],
+      "BackdropImageTags": [],
+      "Container": "mp3",
+      "DateCreated": "1970-01-01T00:33:20.0000000Z",
+      "Genres": [
+        "Rock"
+      ],
+      "Id": "4db941e5bc6fc477f4110c60047a4439",
+      "ImageBlurHashes": {},
+      "ImageTags": {},
+      "IndexNumber": 1,
+      "IsFolder": false,
+      "LocationType": "FileSystem",
+      "MediaType": "Audio",
+      "Name": "Late Bloomer",
+      "ParentId": "6f43dcd675678c621ef59371a060a637",
+      "ParentIndexNumber": 1,
+      "PlaylistItemId": "e1",
+      "ProductionYear": 2023,
+      "RunTimeTicks": 2400000000,
+      "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+      "SortName": "Late Bloomer",
+      "Type": "Audio",
+      "UserData": {
+        "IsFavorite": false,
+        "ItemId": "4db941e5bc6fc477f4110c60047a4439",
+        "Key": "4db941e5bc6fc477f4110c60047a4439",
+        "PlayCount": 0,
+        "PlaybackPositionTicks": 0,
+        "Played": false
+      }
+    }
+  ],
+  "StartIndex": 0,
+  "TotalRecordCount": 1
+}

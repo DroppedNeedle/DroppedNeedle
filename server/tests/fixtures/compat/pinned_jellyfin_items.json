@@ -1,0 +1,102 @@
+{
+  "Items": [
+    {
+      "AlbumArtist": "Blue Giant",
+      "AlbumArtists": [
+        {
+          "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+          "Name": "Blue Giant"
+        }
+      ],
+      "ArtistItems": [
+        {
+          "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+          "Name": "Blue Giant"
+        }
+      ],
+      "Artists": [
+        "Blue Giant"
+      ],
+      "BackdropImageTags": [],
+      "ChildCount": 2,
+      "DateCreated": "1970-01-01T00:16:40.0000000Z",
+      "Genres": [
+        "Rock"
+      ],
+      "Id": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+      "ImageBlurHashes": {},
+      "ImageTags": {
+        "Primary": "tag-rg-1"
+      },
+      "IsFolder": true,
+      "LocationType": "FileSystem",
+      "MediaType": "Unknown",
+      "Name": "First Light",
+      "ProductionYear": 2021,
+      "ProviderIds": {
+        "MusicBrainzReleaseGroup": "rg-1"
+      },
+      "RunTimeTicks": 3800000000,
+      "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+      "SortName": "First Light",
+      "Type": "MusicAlbum",
+      "UserData": {
+        "IsFavorite": false,
+        "ItemId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+        "Key": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+        "PlayCount": 5,
+        "PlaybackPositionTicks": 0,
+        "Played": true
+      }
+    },
+    {
+      "AlbumArtist": "Blue Giant",
+      "AlbumArtists": [
+        {
+          "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+          "Name": "Blue Giant"
+        }
+      ],
+      "ArtistItems": [
+        {
+          "Id": "cf56a1f81f99743e9f9b28360ca0a1d4",
+          "Name": "Blue Giant"
+        }
+      ],
+      "Artists": [
+        "Blue Giant"
+      ],
+      "BackdropImageTags": [],
+      "ChildCount": 1,
+      "DateCreated": "1970-01-01T00:33:20.0000000Z",
+      "Genres": [
+        "Rock"
+      ],
+      "Id": "6f43dcd675678c621ef59371a060a637",
+      "ImageBlurHashes": {},
+      "ImageTags": {},
+      "IsFolder": true,
+      "LocationType": "FileSystem",
+      "MediaType": "Unknown",
+      "Name": "Second Dawn",
+      "ProductionYear": 2023,
+      "ProviderIds": {
+        "MusicBrainzReleaseGroup": "rg-2"
+      },
+      "RunTimeTicks": 2400000000,
+      "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
+      "SortName": "Second Dawn",
+      "Type": "MusicAlbum",
+      "UserData": {
+        "IsFavorite": false,
+        "ItemId": "6f43dcd675678c621ef59371a060a637",
+        "Key": "6f43dcd675678c621ef59371a060a637",
+        "PlayCount": 0,
+        "PlaybackPositionTicks": 0,
+        "Played": false
+      }
+    }
+  ],
+  "StartIndex": 0,
+  "TotalRecordCount": 2
+}
