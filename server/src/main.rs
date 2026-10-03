@@ -7,14 +7,17 @@ use std::sync::Arc;
 
 use droppedneedle::{
     AppConfig, AppState,
+    admin::{AdminDb, AdminSetup, backups::ensure_pre_upgrade_backup, quota::reload_overrides},
     auth::{prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup},
     compat::CompatSetup,
     create_app,
-    db::{DbConfig, open_runtime},
+    db::{BackupService, DbConfig, open_runtime},
     docs::ApiDoc,
     http_client::HttpClientFactory,
     ids::UuidGenerator,
+    jobs::wiring::{JobsSetup, SHUTDOWN_GRACE},
     observability::init_tracing,
+    plugins::wiring::PluginsSetup,
     providers::{Providers, adapters::production_enrichment},
     reads::ReadsSetup,
     runtime_config::{
@@ -23,6 +26,12 @@ use droppedneedle::{
         sections::{ConnectApps, LyricsSettings},
     },
     schema::apply_migrations,
+    settings::{
+        effects::{LiveSaveEffects, SaveEffects},
+        section_prefs::{SqliteLinkStatus, SqliteSectionPrefsStore},
+        services::SqliteImpactBuckets,
+        wiring::SettingsSetup,
+    },
     stage6::Stage6Setup,
 };
 use utoipa::OpenApi as _;
@@ -82,6 +91,14 @@ async fn serve() -> Result<(), String> {
     let runtime = open_runtime(&DbConfig::new(&config.library_db_path))
         .await
         .map_err(|error| error.to_string())?;
+    // Pre-upgrade safety net: a verified backup before any schema change.
+    // A failure here is fatal — migrating without one risks the catalog.
+    ensure_pre_upgrade_backup(
+        &config.library_db_path,
+        &config.root_app_dir.join("backups"),
+    )
+    .await
+    .map_err(|error| format!("pre-upgrade backup failed: {error}"))?;
     apply_migrations(runtime.pool())
         .await
         .map_err(|error| error.to_string())?;
@@ -123,7 +140,10 @@ async fn serve() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     // Shared provider deps first: the reads enrichment pair paces through
     // these same limiters, so production holds one limiter set, not two.
-    let providers = Arc::new(Providers::with_memory_cache());
+    // The byte cache stays shared with the admin UX (stats/clear observe
+    // the same entries the clients read).
+    let provider_cache = Arc::new(droppedneedle::providers::InMemoryProviderCache::new());
+    let providers = Arc::new(Providers::new(provider_cache.clone()));
     let listenbrainz_enabled = match config_store.get_raw::<ListenBrainzConnection>() {
         Ok(settings) => settings.enabled,
         Err(error) => {
@@ -166,6 +186,7 @@ async fn serve() -> Result<(), String> {
     )
     .map_err(|error| format!("library setup: {error}"))?;
     let compat_crypto = crypto.clone();
+    let plugins_crypto = crypto.clone();
     let (stage6, report_worker) = Stage6Setup::build(
         &config.library_db_path,
         &config,
@@ -225,6 +246,78 @@ async fn serve() -> Result<(), String> {
         library.clone(),
         &connect_apps,
     );
+    let admin = AdminSetup::new(
+        auth.users.clone(),
+        acquire.requests.quota.clone(),
+        provider_cache.clone(),
+        providers.clone(),
+    )
+    .with_db(AdminDb::new(runtime.pool().clone(), runtime.lane().clone()))
+    .with_backups(BackupService::new(
+        &config.library_db_path,
+        &config.root_app_dir.join("backups"),
+    ))
+    .with_checkpoint(runtime.checkpoint().clone());
+    // Durable quota overrides back into the live ledger. A failure here
+    // warns instead of bricking the boot; the admin can re-save.
+    match reload_overrides(runtime.pool(), &acquire.requests.quota).await {
+        Ok(loaded) => tracing::info!(loaded, "quota overrides reloaded"),
+        Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
+    }
+    // Stage-10 jobs: the one registry every background loop registers on.
+    let jobs = JobsSetup::build(
+        auth.users.clone(),
+        runtime.wakeups().clone(),
+        runtime.lane().clone(),
+        runtime.checkpoint().clone(),
+        config_store.clone(),
+    );
+    // The precache trigger rides the same registry; the admin route is its
+    // only production caller.
+    let admin = admin.with_precache(jobs.precache_trigger());
+    // Stage-10 settings: the section service with its save fan-out —
+    // provider-cache invalidation over the shared cache plus the
+    // jobs-owned events kick — plus the admin-gated HTTP surface, the
+    // per-user section prefs, and the policy-impact buckets.
+    let effects: Arc<dyn SaveEffects> = Arc::new(LiveSaveEffects::new(
+        provider_cache.clone(),
+        jobs.events_kick(),
+    ));
+    let settings = SettingsSetup::build(
+        config_store.clone(),
+        effects,
+        ids.clone(),
+        auth.users.clone(),
+        http.shared().clone(),
+    )
+    .with_section_prefs(
+        Arc::new(SqliteSectionPrefsStore {
+            pool: runtime.pool().clone(),
+            lane: Arc::new(runtime.lane().clone()),
+        }),
+        Arc::new(SqliteLinkStatus {
+            pool: runtime.pool().clone(),
+            lastfm: auth.users.lastfm.clone(),
+        }),
+    )
+    .with_impact_buckets(Arc::new(SqliteImpactBuckets {
+        pool: runtime.pool().clone(),
+    }));
+    // Stage-10 plugins: host, routes, and scrobble backend over the shared
+    // jobs registry (one durable mechanism, no duplicate tick loops).
+    let plugins = PluginsSetup::build(
+        auth.users.clone(),
+        http.shared().clone(),
+        config_store.clone(),
+        ids.clone(),
+        plugins_crypto,
+        config.root_app_dir.join("plugins"),
+        provider_cache.clone(),
+        jobs.registry().clone(),
+        runtime.pool().clone(),
+        runtime.lane().clone(),
+    );
+    plugins.sync_ticks().await;
     let state = AppState::new(
         ids,
         http,
@@ -236,6 +329,10 @@ async fn serve() -> Result<(), String> {
         acquire.clone(),
         library.clone(),
         compat,
+        admin,
+        settings,
+        jobs.clone(),
+        plugins,
     );
     let app = create_app(state);
 
@@ -339,6 +436,13 @@ async fn serve() -> Result<(), String> {
     // identify queue, contribution verifier, publish maintenance.
     let library_loops = library.spawn_loops(shutdown_rx.clone());
 
+    // Stage-10 jobs loops: checkpoint, presence, personal-mix, playlist
+    // sync, and the events watcher on the shared registry. Cancellation
+    // runs through the registry at shutdown (below), not the watch.
+    jobs.spawn_loops()
+        .await
+        .map_err(|error| format!("jobs loops: {error}"))?;
+
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), config.port);
     let listener = tokio::net::TcpListener::bind(address)
         .await
@@ -349,6 +453,10 @@ async fn serve() -> Result<(), String> {
         .await
         .map_err(|error| format!("server fault: {error}"))?;
     let _ = shutdown_tx.send(true);
+    // The registry-owned loops (boot loops, the kick, precache runs, and
+    // plugin ticks) stop through their stop signals, each with the same
+    // grace, before the runtime — and its writer lane — shuts down.
+    jobs.cancel_all(SHUTDOWN_GRACE).await;
     let mut loops = vec![("discover", discover_loop), ("home", home_loop)];
     for (scope, task) in ["warmup-jellyfin", "warmup-navidrome", "warmup-plex"]
         .into_iter()

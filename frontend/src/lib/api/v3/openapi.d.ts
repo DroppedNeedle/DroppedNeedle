@@ -305,6 +305,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/admin/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Backup listing, oldest first. */
+        get: operations["list_backups"];
+        put?: never;
+        /** Run one backup now. */
+        post: operations["run_backup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/backups/{name}/restore-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pre-restore verification report for one backup. Read-only. */
+        get: operations["restore_report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/cache/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clear the provider cache: everything, or one source's keys. */
+        post: operations["clear_cache"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/cache/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Provider-cache counters. */
+        get: operations["cache_stats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/admin/import": {
         parameters: {
             query?: never;
@@ -365,6 +434,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/admin/precache/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start one supervised precache run. The run continues in the background
+         *     under the `precache-library` job name.
+         */
+        post: operations["run_precache"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/provider-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Provider limiter posture plus slot lanes. */
+        get: operations["provider_stats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/queue-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Queue demand plus the job registry. */
+        get: operations["queue_stats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/admin/users": {
         parameters: {
             query?: never;
@@ -396,6 +519,24 @@ export interface paths {
         post?: never;
         /** Delete one user. */
         delete: operations["admin_delete_user"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/users/{id}/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One user's quota standing. */
+        get: operations["get_quota"];
+        /** Set (or, with all-`None`, clear) one user's quota overrides. */
+        put: operations["set_quota"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2191,6 +2332,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/me/connections/listenbrainz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the caller's ListenBrainz link status. Unlinked reads as missing. */
+        get: operations["listenbrainz_status"];
+        /**
+         * Link the caller's ListenBrainz account. The credential verifies first;
+         *     only a verified pair stores.
+         */
+        put: operations["connect_listenbrainz_route"];
+        post?: never;
+        /** Remove the caller's ListenBrainz link. */
+        delete: operations["disconnect_listenbrainz_route"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/me/email": {
         parameters: {
             query?: never;
@@ -2236,6 +2399,48 @@ export interface paths {
         put?: never;
         /** Change the caller's password. */
         post: operations["post_password"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/scrobble-preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the caller's scrobble preferences. */
+        get: operations["get_scrobble_preferences"];
+        /**
+         * Update the caller's scrobble preferences. Absent fields keep their
+         *     stored values.
+         */
+        put: operations["update_scrobble_preferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/section-prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the caller's section visibility prefs (all three pages). */
+        get: operations["get_section_prefs"];
+        /**
+         * Replace one page of the caller's section prefs. Unknown pages and
+         *     unknown keys are a 400; only the updated page is returned.
+         */
+        put: operations["put_section_prefs"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2503,6 +2708,125 @@ export interface paths {
         head?: never;
         /** Flip playlist visibility. */
         patch: operations["set_visibility_handler"];
+        trace?: never;
+    };
+    "/api/v3/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List every discovered plugin, secrets masked. */
+        get: operations["list_plugins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/plugins/ext/{name}/{subpath}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Serve one declared plugin GET route. */
+        get: operations["plugin_ext_get"];
+        put?: never;
+        /** Serve one declared plugin POST route. */
+        post: operations["plugin_ext_post"];
+        /** Serve one declared plugin DELETE route. */
+        delete: operations["plugin_ext_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/plugins/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install a plugin from a public GitHub repository. The code is stored,
+         *     never executed: the plugin arrives disabled and an admin must enable
+         *     it, exactly like a hand-copied folder.
+         */
+        post: operations["install_plugin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/plugins/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List enabled plugin acquisition sources. Any authenticated user may
+         *     read this; only admins manage plugins.
+         */
+        get: operations["list_plugin_sources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/plugins/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Save one plugin's enable switch plus its settings. */
+        put: operations["update_plugin"];
+        post?: never;
+        /**
+         * Remove one plugin's folder. Its saved settings stay in config, so a
+         *     reinstall picks them back up.
+         */
+        delete: operations["uninstall_plugin"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/plugins/{name}/ui/panel.js": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Serve one enabled plugin's panel bundle. Admin-only: panel code runs in
+         *     the admin UI. The entry path resolves inside the plugin's own directory;
+         *     anything escaping it reads as missing.
+         */
+        get: operations["plugin_panel_js"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v3/remotes/navidrome/folders": {
@@ -3758,6 +4082,1050 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/advanced": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the advanced tunables in frontend units. */
+        get: operations["get_advanced"];
+        /**
+         * Save the advanced tunables. Unknown fields are a 400: the shape is
+         *     a closed allowlist.
+         */
+        put: operations["put_advanced"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/cache-ttls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the frontend cache TTLs in backend units (milliseconds). */
+        get: operations["get_cache_ttls"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/connect-apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the inbound Connect Apps config. */
+        get: operations["get_connect_apps"];
+        /** Save the inbound Connect Apps config. */
+        put: operations["put_connect_apps"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/download-client/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the slskd connection (key masked unless unset). */
+        get: operations["get_slskd"];
+        /** Save the slskd connection (a masked key keeps the stored one). */
+        put: operations["put_slskd"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/download-client/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test the submitted slskd values (a masked key tests the stored one). */
+        post: operations["test_slskd"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/download-clients/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the acquisition policy. */
+        get: operations["get_policy"];
+        /** Save the acquisition policy. */
+        put: operations["put_policy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/download-clients/policy-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Safe policy summary for the settings page: the contract sentence
+         *     plus the source-mode label only.
+         */
+        get: operations["get_policy_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/download-clients/policy/impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Impact preview of an UNSAVED policy body against persisted rows.
+         *     Needs the database; unwired states answer 503.
+         */
+        post: operations["post_policy_impact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/download-clients/sabnzbd": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the SABnzbd connection (key masked unless unset). */
+        get: operations["get_sabnzbd"];
+        /** Save the SABnzbd connection (a masked key keeps the stored one). */
+        put: operations["put_sabnzbd"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/download-clients/sabnzbd/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test the submitted SABnzbd values (a masked key tests the stored
+         *     one). The submitted downloads mount is diagnosed, not the stored one.
+         */
+        post: operations["test_sabnzbd"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/download-clients/source-priority": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the acquisition source try-order. */
+        get: operations["get_source_priority"];
+        /** Save the acquisition source try-order. */
+        put: operations["put_source_priority"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/download-clients/wanted": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the wanted watcher toggles. */
+        get: operations["get_wanted"];
+        /** Save the wanted watcher toggles. */
+        put: operations["put_wanted"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the events sources (keys masked unless unset). */
+        get: operations["get_events"];
+        /**
+         * Save the events sources (masked keys keep the stored ones) and kick
+         *     the sweep.
+         */
+        put: operations["put_events"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/events/test-skiddle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test the submitted Skiddle key (a masked key tests the stored one). */
+        post: operations["test_skiddle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/events/test-ticketmaster": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test the submitted Ticketmaster key (a masked key tests the stored one). */
+        post: operations["test_ticketmaster"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/free-music": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the free-music settings. */
+        get: operations["get_free_music"];
+        /** Save the free-music settings. */
+        put: operations["put_free_music"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/get-it": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the store-region settings. */
+        get: operations["get_get_it"];
+        /** Save the store-region settings. */
+        put: operations["put_get_it"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/home": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The vestigial home section is gone. */
+        get: operations["dropped_home"];
+        /** PUT twin of the dropped home route: gone, not moved. */
+        put: operations["dropped_home_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/indexers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the configured Newznab indexers (keys masked unless unset). */
+        get: operations["list_indexers"];
+        put?: never;
+        /** Save one indexer (create when the id is blank, else update). */
+        post: operations["create_indexer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/indexers/reorder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Persist a dragged-card priority order. Unknown or duplicate ids are
+         *     a 400, never a partial reorder.
+         */
+        post: operations["reorder_indexers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/indexers/search-backend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the active Usenet search backend. */
+        get: operations["get_search_backend"];
+        /** Save the active Usenet search backend. */
+        put: operations["put_search_backend"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/indexers/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test one indexer's caps with the submitted url/key (a masked key
+         *     tests the stored one).
+         */
+        post: operations["test_indexer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/indexers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Save one indexer; the path id wins over the body id. */
+        put: operations["update_indexer"];
+        post?: never;
+        /** Delete one indexer. Unknown ids are a silent no-op. */
+        delete: operations["delete_indexer"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/jellyfin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the Jellyfin connection (key masked unless unset). */
+        get: operations["get_jellyfin"];
+        /** Save the Jellyfin connection (a masked key keeps the stored one). */
+        put: operations["put_jellyfin"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/jellyfin/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test the submitted Jellyfin values (a masked key tests the stored
+         *     one). The user list rides along on success for the admin picker.
+         */
+        post: operations["verify_jellyfin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/lastfm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the Last.fm master switch. */
+        get: operations["get_lastfm"];
+        /** Save the Last.fm master switch. */
+        put: operations["put_lastfm"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the typed library settings with the policy revision. */
+        get: operations["get_library"];
+        /**
+         * Save the typed library settings. The expected revision must match
+         *     the stored one or the save is a 409.
+         */
+        put: operations["put_library"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library/paths": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add one library root path. The path must be a directory on this
+         *     machine; re-adding is a silent no-op.
+         */
+        post: operations["add_library_path"];
+        /**
+         * Remove every library root at one path. Unknown paths are a silent
+         *     no-op.
+         */
+        delete: operations["remove_library_path"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the scan schedule plus the server timezone label. */
+        get: operations["get_schedule"];
+        /** Save the scan schedule. */
+        put: operations["put_schedule"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The legacy catalog-sync section is gone (one-shot import only now). */
+        get: operations["dropped_library_sync"];
+        /** PUT twin of the dropped catalog-sync route: gone, not moved. */
+        put: operations["dropped_library_sync_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library/watcher": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the filesystem poller knobs. */
+        get: operations["get_watcher"];
+        /** Save the filesystem poller knobs. */
+        put: operations["put_watcher"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/listenbrainz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the ListenBrainz connection (token masked unless unset). */
+        get: operations["get_listenbrainz"];
+        /** Save the ListenBrainz connection (a masked token keeps the stored one). */
+        put: operations["put_listenbrainz"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/listenbrainz/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test the submitted ListenBrainz values (a masked token tests the
+         *     stored one). Rate limiting answers 429.
+         */
+        post: operations["verify_listenbrainz"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/musicbrainz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the settled MusicBrainz connection plus the transient pending echo. */
+        get: operations["get_musicbrainz"];
+        /**
+         * Persist one normalized source change (BrainzMash moves through the
+         *     consent-bound flow, never a direct update).
+         */
+        put: operations["put_musicbrainz"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/musicbrainz/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Promote the exact verified proposal to the active binding. */
+        post: operations["activate_brainzmash"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/musicbrainz/brainzmash/consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record consent for the exact staged proposal. A stale proposal or
+         *     an outdated disclosure is a 409.
+         */
+        post: operations["consent_brainzmash"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/musicbrainz/brainzmash/stage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stage a BrainzMash proposal without probing upstream. */
+        post: operations["stage_brainzmash"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/musicbrainz/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify a BrainzMash binding or probe a plain tier. A binding names
+         *     the exact consented proposal and probes the pinned endpoint; an
+         *     update probes its own URL (never BrainzMash). A failed probe is a
+         *     502; alternative probes are a 409 while BrainzMash is active.
+         */
+        post: operations["verify_musicbrainz"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/navidrome": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the Navidrome connection (password masked unless unset). */
+        get: operations["get_navidrome"];
+        /** Save the Navidrome connection (a masked password keeps the stored one). */
+        put: operations["put_navidrome"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/navidrome/playlist-sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run one Navidrome playlist sync now. */
+        post: operations["doc_sync_now"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/navidrome/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test the submitted Navidrome values (a masked password tests the
+         *     stored one).
+         */
+        post: operations["verify_navidrome"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/oidc": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the OIDC connection (secret masked unless unset). */
+        get: operations["get_oidc"];
+        /** Save the OIDC connection (a masked secret keeps the stored one). */
+        put: operations["put_oidc"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/oidc/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test the submitted OIDC issuer (fetches its discovery document). */
+        post: operations["verify_oidc"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/plex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the Plex connection (token masked unless unset). */
+        get: operations["get_plex"];
+        /** Save the Plex connection (a masked token keeps the stored one). */
+        put: operations["put_plex"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/plex/libraries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Plex music libraries over the STORED connection. Unconfigured
+         *     is a 400; an unreachable Plex is a 502.
+         */
+        get: operations["get_plex_libraries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/plex/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test the submitted Plex values (a masked token tests the stored
+         *     one). Music libraries ride along on success.
+         */
+        post: operations["verify_plex"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the release-type filters. */
+        get: operations["get_preferences"];
+        /** Save the release-type filters. */
+        put: operations["put_preferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/primary-source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the primary music source. */
+        get: operations["get_primary_source"];
+        /** Save the primary music source. */
+        put: operations["put_primary_source"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/prowlarr/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the Prowlarr connection (key masked unless unset). */
+        get: operations["get_prowlarr"];
+        /** Save the Prowlarr connection (a masked key keeps the stored one). */
+        put: operations["put_prowlarr"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/prowlarr/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test the submitted Prowlarr values (a masked key tests the stored one). */
+        post: operations["test_prowlarr"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/scrobble": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the scrobble targets. */
+        get: operations["get_scrobble"];
+        /** Save the scrobble targets. */
+        put: operations["put_scrobble"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/security": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the security posture settings. */
+        get: operations["get_security"];
+        /** Save the security posture settings. */
+        put: operations["put_security"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/security/verify-hibp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the submitted HIBP hash-list path (must exist and start with
+         *     a `40-char-SHA1:count` line).
+         */
+        post: operations["verify_hibp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/wrapped": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the wrapped settings (key masked unless unset). */
+        get: operations["get_wrapped"];
+        /** Save the wrapped settings (a masked key keeps the stored one). */
+        put: operations["put_wrapped"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/youtube": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the YouTube connection (key masked unless unset). */
+        get: operations["get_youtube"];
+        /** Save the YouTube connection (a masked key keeps the stored one). */
+        put: operations["put_youtube"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/youtube/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test the submitted YouTube key (a masked key tests the stored one). */
+        post: operations["verify_youtube"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/stream/{source}/{key}": {
         parameters: {
             query?: never;
@@ -4033,6 +5401,438 @@ export interface components {
             total: number;
             /** @description One page of users. */
             users: components["schemas"]["UserResponse"][];
+        };
+        /**
+         * @description The wire shape is v2's `AdvancedSettingsFrontend` minus the dropped
+         *     internal-tuning fields: values are human units (hours/minutes/seconds)
+         *     scaled to backend units (seconds/milliseconds) on save, floored back on
+         *     read. This shape is a CLOSED allowlist: unknown JSON fields are
+         *     rejected at decode (400), so a client holding a dropped tuning field
+         *     learns it is gone instead of believing it saved.
+         *     Advanced tunables in frontend units. See the section comment for the
+         *     unit contract and the allowlist rule.
+         */
+        AdvancedSettingsDto: {
+            /**
+             * @description AudioDB API key (masked unless unset).
+             * @default
+             */
+            audiodb_api_key: string;
+            /**
+             * @description AudioDB provider switch.
+             * @default true
+             */
+            audiodb_enabled: boolean;
+            /**
+             * @description AudioDB name-search fallback.
+             * @default false
+             */
+            audiodb_name_search_fallback: boolean;
+            /**
+             * Format: int64
+             * @description Album batch size (1-20).
+             * @default 8
+             */
+            batch_albums: number;
+            /**
+             * Format: int64
+             * @description Artist-image batch size (1-20).
+             * @default 10
+             */
+            batch_artist_images: number;
+            /**
+             * Format: int64
+             * @description Album cache TTL for library albums, hours (1-168).
+             * @default 24
+             */
+            cache_ttl_album_library: number;
+            /**
+             * Format: int64
+             * @description Album cache TTL for non-library albums, hours (1-24).
+             * @default 6
+             */
+            cache_ttl_album_non_library: number;
+            /**
+             * Format: int64
+             * @description Discovery cache TTL for library artists, hours (1-168).
+             * @default 6
+             */
+            cache_ttl_artist_discovery_library: number;
+            /**
+             * Format: int64
+             * @description Discovery cache TTL for non-library artists, hours (1-168).
+             * @default 1
+             */
+            cache_ttl_artist_discovery_non_library: number;
+            /**
+             * Format: int64
+             * @description Artist cache TTL for library artists, hours (1-168).
+             * @default 6
+             */
+            cache_ttl_artist_library: number;
+            /**
+             * Format: int64
+             * @description Artist cache TTL for non-library artists, hours (1-168).
+             * @default 6
+             */
+            cache_ttl_artist_non_library: number;
+            /**
+             * Format: int64
+             * @description AudioDB found TTL, hours (1-720).
+             * @default 168
+             */
+            cache_ttl_audiodb_found: number;
+            /**
+             * Format: int64
+             * @description AudioDB library TTL, hours (24-720).
+             * @default 336
+             */
+            cache_ttl_audiodb_library: number;
+            /**
+             * Format: int64
+             * @description AudioDB not-found TTL, hours (1-168).
+             * @default 24
+             */
+            cache_ttl_audiodb_not_found: number;
+            /**
+             * Format: int64
+             * @description Jellyfin favorites TTL, minutes (1-60).
+             * @default 5
+             */
+            cache_ttl_jellyfin_favorites: number;
+            /**
+             * Format: int64
+             * @description Jellyfin genres TTL, minutes (1-1440).
+             * @default 60
+             */
+            cache_ttl_jellyfin_genres: number;
+            /**
+             * Format: int64
+             * @description Jellyfin library-stats TTL, minutes (1-60).
+             * @default 10
+             */
+            cache_ttl_jellyfin_library_stats: number;
+            /**
+             * Format: int64
+             * @description Jellyfin recently-played TTL, minutes (1-60).
+             * @default 5
+             */
+            cache_ttl_jellyfin_recently_played: number;
+            /**
+             * Format: int64
+             * @description Navidrome albums TTL, minutes (1-60).
+             * @default 5
+             */
+            cache_ttl_navidrome_albums: number;
+            /**
+             * Format: int64
+             * @description Navidrome artists TTL, minutes (1-60).
+             * @default 5
+             */
+            cache_ttl_navidrome_artists: number;
+            /**
+             * Format: int64
+             * @description Navidrome favorites TTL, minutes (1-60).
+             * @default 2
+             */
+            cache_ttl_navidrome_favorites: number;
+            /**
+             * Format: int64
+             * @description Navidrome genres TTL, minutes (1-1440).
+             * @default 60
+             */
+            cache_ttl_navidrome_genres: number;
+            /**
+             * Format: int64
+             * @description Navidrome recent TTL, minutes (1-60).
+             * @default 2
+             */
+            cache_ttl_navidrome_recent: number;
+            /**
+             * Format: int64
+             * @description Navidrome search TTL, minutes (1-60).
+             * @default 2
+             */
+            cache_ttl_navidrome_search: number;
+            /**
+             * Format: int64
+             * @description Navidrome stats TTL, minutes (1-60).
+             * @default 10
+             */
+            cache_ttl_navidrome_stats: number;
+            /**
+             * Format: int64
+             * @description Plex albums TTL, minutes (1-60).
+             * @default 5
+             */
+            cache_ttl_plex_albums: number;
+            /**
+             * Format: int64
+             * @description Plex genres TTL, minutes (1-1440).
+             * @default 60
+             */
+            cache_ttl_plex_genres: number;
+            /**
+             * Format: int64
+             * @description Plex search TTL, minutes (1-60).
+             * @default 2
+             */
+            cache_ttl_plex_search: number;
+            /**
+             * Format: int64
+             * @description Plex stats TTL, minutes (1-60).
+             * @default 10
+             */
+            cache_ttl_plex_stats: number;
+            /**
+             * Format: int64
+             * @description Search cache TTL, minutes (1-1440).
+             * @default 60
+             */
+            cache_ttl_search: number;
+            /**
+             * Format: int64
+             * @description Cover memory-cache entries (16-2048).
+             * @default 128
+             */
+            cover_memory_cache_max_entries: number;
+            /**
+             * Format: int64
+             * @description Cover memory-cache MB (1-1024).
+             * @default 16
+             */
+            cover_memory_cache_max_size_mb: number;
+            /**
+             * Format: double
+             * @description Album delay, seconds (0-5).
+             * @default 0.3
+             */
+            delay_albums: number;
+            /**
+             * Format: double
+             * @description Artist delay, seconds (0-5).
+             * @default 0.5
+             */
+            delay_artist: number;
+            /**
+             * @description Serve remote images directly.
+             * @default true
+             */
+            direct_remote_images_enabled: boolean;
+            /**
+             * Format: int64
+             * @description Discover picks count (4-30).
+             * @default 12
+             */
+            discover_picks_count: number;
+            /**
+             * Format: double
+             * @description Discover genre-affinity weight (0-1).
+             * @default 0.7
+             */
+            discover_picks_genre_affinity_weight: number;
+            /**
+             * @description Discover queue auto-generate.
+             * @default true
+             */
+            discover_queue_auto_generate: boolean;
+            /**
+             * Format: int64
+             * @description Discover queue polling, seconds (1-30).
+             * @default 4
+             */
+            discover_queue_polling_interval: number;
+            /**
+             * Format: int64
+             * @description Discover seed artists (1-10).
+             * @default 3
+             */
+            discover_queue_seed_artists: number;
+            /**
+             * Format: int64
+             * @description Discover queue size (1-20).
+             * @default 10
+             */
+            discover_queue_size: number;
+            /**
+             * Format: int64
+             * @description Discover queue TTL, hours (1-168).
+             * @default 24
+             */
+            discover_queue_ttl: number;
+            /**
+             * Format: int64
+             * @description Discover wildcard slots (0-10).
+             * @default 2
+             */
+            discover_queue_wildcard_slots: number;
+            /**
+             * Format: int64
+             * @description Disk-cache cleanup cadence, minutes (1-60).
+             * @default 10
+             */
+            disk_cache_cleanup_interval: number;
+            /**
+             * Format: int64
+             * @description Discover frontend TTL, minutes (1-1440).
+             * @default 30
+             */
+            frontend_ttl_discover: number;
+            /**
+             * Format: int64
+             * @description Discover-queue frontend TTL, minutes (60-10080).
+             * @default 1440
+             */
+            frontend_ttl_discover_queue: number;
+            /**
+             * Format: int64
+             * @description Home frontend TTL, minutes (1-60).
+             * @default 5
+             */
+            frontend_ttl_home: number;
+            /**
+             * Format: int64
+             * @description Jellyfin sidebar TTL, minutes (1-60).
+             * @default 2
+             */
+            frontend_ttl_jellyfin_sidebar: number;
+            /**
+             * Format: int64
+             * @description Library frontend TTL, minutes (1-60).
+             * @default 5
+             */
+            frontend_ttl_library: number;
+            /**
+             * Format: int64
+             * @description Local-files sidebar TTL, minutes (1-60).
+             * @default 2
+             */
+            frontend_ttl_local_files_sidebar: number;
+            /**
+             * Format: int64
+             * @description Playlist-sources frontend TTL, minutes (1-60).
+             * @default 15
+             */
+            frontend_ttl_playlist_sources: number;
+            /**
+             * Format: int64
+             * @description Plex sidebar TTL, minutes (1-60).
+             * @default 2
+             */
+            frontend_ttl_plex_sidebar: number;
+            /**
+             * Format: int64
+             * @description Recently-added frontend TTL, minutes (1-60).
+             * @default 5
+             */
+            frontend_ttl_recently_added: number;
+            /**
+             * Format: int64
+             * @description Search frontend TTL, minutes (1-60).
+             * @default 5
+             */
+            frontend_ttl_search: number;
+            /**
+             * Format: int64
+             * @description Genre section TTL, hours (1-168).
+             * @default 6
+             */
+            genre_section_ttl: number;
+            /**
+             * Format: int64
+             * @description Outbound connect timeout, seconds (1-30).
+             * @default 5
+             */
+            http_connect_timeout: number;
+            /**
+             * Format: int64
+             * @description Outbound pool size (50-500).
+             * @default 200
+             */
+            http_max_connections: number;
+            /**
+             * Format: int64
+             * @description Outbound HTTP timeout, seconds (5-60).
+             * @default 10
+             */
+            http_timeout: number;
+            /**
+             * Format: int64
+             * @description Ignored-releases retention, days (30-3650).
+             * @default 365
+             */
+            ignored_releases_retention_days: number;
+            /**
+             * Format: int64
+             * @description Memory-cache cleanup cadence, seconds (60-3600).
+             * @default 300
+             */
+            memory_cache_cleanup_interval: number;
+            /**
+             * Format: int64
+             * @description Memory-cache entries (1000-100000).
+             * @default 10000
+             */
+            memory_cache_max_entries: number;
+            /**
+             * Format: int64
+             * @description Orphan-cover demote cadence, hours (1-168).
+             * @default 24
+             */
+            orphan_cover_demote_interval_hours: number;
+            /**
+             * Format: int64
+             * @description Persistent-metadata TTL, hours (1-168).
+             * @default 24
+             */
+            persistent_metadata_ttl_hours: number;
+            /**
+             * @description Prefer local cover art.
+             * @default true
+             */
+            prefer_local_cover_art: boolean;
+            /**
+             * Format: int64
+             * @description Recent-covers cap, MB (100-10000).
+             * @default 1024
+             */
+            recent_covers_max_size_mb: number;
+            /**
+             * Format: int64
+             * @description Recent-metadata cap, MB (100-5000).
+             * @default 500
+             */
+            recent_metadata_max_size_mb: number;
+            /**
+             * Format: int64
+             * @description Request concurrency (1-5).
+             * @default 2
+             */
+            request_concurrency: number;
+            /**
+             * Format: int64
+             * @description Request history retention, days (30-3650).
+             * @default 180
+             */
+            request_history_retention_days: number;
+            /**
+             * Format: int64
+             * @description Store prune cadence, hours (1-168).
+             * @default 6
+             */
+            store_prune_interval_hours: number;
+            /**
+             * Format: int64
+             * @description Sync max timeout, hours (1-48).
+             * @default 8
+             */
+            sync_max_timeout_hours: number;
+            /**
+             * Format: int64
+             * @description Sync stall timeout, minutes (2-30).
+             * @default 10
+             */
+            sync_stall_timeout_minutes: number;
         };
         /** @description Compact album card for browse surfaces. */
         AlbumCard: {
@@ -4388,6 +6188,11 @@ export interface components {
              */
             track_count: number;
         };
+        /**
+         * @description Transcode target for remote playback.
+         * @enum {string}
+         */
+        AudioFormatDto: "flac" | "mp3" | "opus";
         /** @description One pending auto-download request. */
         AutoDownloadApprovalItem: {
             /** @description Artist MBID. */
@@ -4432,6 +6237,60 @@ export interface components {
             content_type: string;
             /** @description Base64 image bytes. */
             image_base64: string;
+        };
+        /** @description Backup listing, oldest first. */
+        BackupListResponse: {
+            /** @description Backups on disk, oldest first. */
+            backups: components["schemas"]["BackupView"][];
+            /**
+             * Format: int32
+             * @description Rolling retention: the directory keeps this many.
+             */
+            keep: number;
+        };
+        /** @description What one backup run produced. */
+        BackupRunResponse: {
+            /**
+             * Format: int64
+             * @description How long the run took, in milliseconds.
+             */
+            duration_ms: number;
+            /** @description File name of the new backup. */
+            name: string;
+            /** @description Hex SHA-256 of the new backup. */
+            sha256: string;
+            /**
+             * Format: int64
+             * @description New backup size in bytes.
+             */
+            size_bytes: number;
+            /**
+             * Format: int64
+             * @description Schema stamp in the new backup.
+             */
+            user_version: number;
+        };
+        /** @description One backup on disk, with its manifest identity when present. */
+        BackupView: {
+            /**
+             * Format: int64
+             * @description Manifest creation time as unix seconds, when present.
+             */
+            created_at_unix?: number | null;
+            /** @description File name inside the backups directory. */
+            name: string;
+            /** @description Hex SHA-256 from the manifest, when a manifest sits beside it. */
+            sha256?: string | null;
+            /**
+             * Format: int64
+             * @description File size in bytes.
+             */
+            size_bytes: number;
+            /**
+             * Format: int64
+             * @description Schema stamp from the manifest, when present.
+             */
+            user_version?: number | null;
         };
         /** @description Restore tracks to their immutable first-management baselines. */
         BaselineRestoreBody: {
@@ -4542,6 +6401,110 @@ export interface components {
             seed_artist_mbid: string;
             /** @description Wide thumbnail URL, when resolved. */
             wide_thumb_url?: string | null;
+        };
+        /** @description Active BrainzMash binding. */
+        BrainzmashActiveBindingDto: {
+            /**
+             * @description Access revision.
+             * @default
+             */
+            access_revision: string;
+            /**
+             * @description Consent recorded.
+             * @default false
+             */
+            consented: boolean;
+            /**
+             * @description Disclosure version.
+             * @default brainzmash-v1
+             */
+            disclosure_version: string;
+            /**
+             * @description Pinned endpoint.
+             * @default https://api.brainzmash.cc/ws/2
+             */
+            endpoint: string;
+            /**
+             * Format: int64
+             * @description Source generation.
+             * @default 0
+             */
+            generation: number;
+            /**
+             * @description Source identity.
+             * @default
+             */
+            source_id: string;
+            /**
+             * @description Endpoint verified.
+             * @default false
+             */
+            verified: boolean;
+        };
+        /**
+         * @description Transient pending BrainzMash proposal (process memory, echoed so the
+         *     UI can drive consent/verify/activate).
+         */
+        BrainzmashPendingProposalDto: {
+            /**
+             * @description Proposed access revision.
+             * @default
+             */
+            access_revision: string;
+            /**
+             * @description Consent recorded.
+             * @default false
+             */
+            consented: boolean;
+            /**
+             * @description Proposed disclosure version.
+             * @default brainzmash-v1
+             */
+            disclosure_version: string;
+            /**
+             * @description Pinned endpoint.
+             * @default https://api.brainzmash.cc/ws/2
+             */
+            endpoint: string;
+            /**
+             * Format: int64
+             * @description Proposed source generation.
+             * @default 1
+             */
+            generation: number;
+            /**
+             * @description Proposed source identity.
+             * @default
+             */
+            source_id: string;
+            /**
+             * @description Endpoint verified.
+             * @default false
+             */
+            verified: boolean;
+        };
+        /** @description Cache-clear request. Empty scope clears everything. */
+        CacheClearBody: {
+            /** @description `all` (default) or `source`. */
+            scope?: string | null;
+            /** @description Source name when `scope` is `source`. */
+            source?: string | null;
+        };
+        /** @description What one cache clear dropped. */
+        CacheClearResponse: {
+            /** @description Entries dropped. */
+            cleared_entries: number;
+            /** @description Plain-language summary. */
+            message: string;
+            /** @description Entries left behind. */
+            remaining_entries: number;
+        };
+        /** @description Provider byte-cache counters. */
+        CacheStatsResponse: {
+            /** @description Entries currently held. */
+            entries: number;
+            /** @description Registered invalidation roots by source. */
+            sources: string[];
         };
         /** @description One scored candidate inside a review. */
         CandidateView: {
@@ -4700,10 +6663,82 @@ export interface components {
                 [key: string]: string[];
             };
         };
+        /**
+         * @description Latest checkpoint pass, for the health payload. `None` on `/health`
+         *     until the checkpoint loop records its first pass.
+         */
+        CheckpointView: {
+            /**
+             * Format: int64
+             * @description Uncheckpointed bytes, or -1 on an unmeasured pass.
+             */
+            active_bytes: number;
+            /**
+             * Format: int64
+             * @description Pass time as unix seconds.
+             */
+            at_unix: number;
+            /** @description True when a lock contender blocked the pass. */
+            busy: boolean;
+            /** @description Non-lock failure text, when the pass failed. */
+            error?: string | null;
+            /** @description `passive` or `truncate`. */
+            mode: string;
+            /** @description True when background producers must yield. */
+            suspended: boolean;
+            /**
+             * Format: int64
+             * @description `-wal` file allocation in bytes.
+             */
+            wal_file_bytes: number;
+        };
         /** @description Clear-history outcome. */
         ClearHistoryResponse: {
             /** @description Whether a row was cleared. */
             success: boolean;
+        };
+        /** @description Inbound Connect Apps config. Both protocols default OFF. */
+        ConnectAppsDto: {
+            /**
+             * @description Advertised server name.
+             * @default DroppedNeedle
+             */
+            advertise_server_name: string;
+            /**
+             * @description Advertised server version.
+             * @default 10.10.6
+             */
+            advertise_server_version: string;
+            /** @default local-only */
+            discover_mode: components["schemas"]["DiscoverModeDto"];
+            /**
+             * @description Capability flag for the approval-safe exact-track endpoint.
+             * @default true
+             */
+            exact_track_approval_supported: boolean;
+            /**
+             * @description Serve the Jellyfin API.
+             * @default false
+             */
+            jellyfin_enabled: boolean;
+            /**
+             * @description Serve the Subsonic API.
+             * @default false
+             */
+            subsonic_enabled: boolean;
+            /** @default mp3 */
+            transcode_default_format: components["schemas"]["AudioFormatDto"];
+            /**
+             * Format: int64
+             * @description Transcode ceiling in kbps (32-1411).
+             * @default 320
+             */
+            transcode_max_bitrate_kbps: number;
+            /**
+             * @description Allow transcoding for compat clients.
+             * @default true
+             */
+            transcoding_enabled: boolean;
         };
         /** @description Save payload for one source connection. Secrets stay write-only. */
         ConnectionSave: {
@@ -4828,6 +6863,11 @@ export interface components {
             /** @description Active source mode. */
             source_mode: string;
         };
+        /**
+         * @description Compat discovery mode.
+         * @enum {string}
+         */
+        DiscoverModeDto: "local-only" | "lazy-mb" | "use-scrobble-targets";
         /** @description A discover teaser on home: one seed artist plus similar artists. */
         DiscoverPreview: {
             /** @description Similar artists. */
@@ -5052,6 +7092,256 @@ export interface components {
             /** @description New display name, 1-64 chars after trimming. */
             display_name: string;
         };
+        /**
+         * @description Who may download library files. `trusted` admits trusted AND admin.
+         * @enum {string}
+         */
+        DownloadAccessDto: "everyone" | "trusted" | "admin";
+        /**
+         * @description Source-agnostic acquisition policy. Lives in its own section so a
+         *     Usenet-only install still has quality/threshold/timeout/retry settings
+         *     to read. Validation is strict on submitted bodies (never silently
+         *     clamped); the read-only recipe-status projection is recomputed at GET
+         *     time instead of persisted.
+         */
+        DownloadPolicyDto: {
+            /**
+             * Format: int64
+             * @description Retry base interval.
+             * @default 15
+             */
+            auto_retry_base_interval_minutes: number;
+            /**
+             * @description Automatic retry switch.
+             * @default true
+             */
+            auto_retry_enabled: boolean;
+            /**
+             * Format: int64
+             * @description Retry attempts.
+             * @default 6
+             */
+            auto_retry_max_attempts: number;
+            /**
+             * Format: int64
+             * @description Sweep upgrades per run.
+             * @default 3
+             */
+            background_upgrade_max_per_run: number;
+            /**
+             * @description Background upgrade sweep switch.
+             * @default false
+             */
+            background_upgrade_scan_enabled: boolean;
+            /**
+             * Format: int64
+             * @description Sweep interval in hours.
+             * @default 12
+             */
+            background_upgrade_scan_interval_hours: number;
+            /**
+             * Format: int64
+             * @description Default per-user request quota (0 unlimited).
+             * @default 0
+             */
+            default_request_quota_count: number;
+            /**
+             * Format: int64
+             * @description Request quota window in days.
+             * @default 7
+             */
+            default_request_quota_days: number;
+            /**
+             * Format: int64
+             * @description Default per-user storage quota in GB (0 unlimited).
+             * @default 0
+             */
+            default_storage_quota_gb: number;
+            /**
+             * Format: int64
+             * @description Remote-queue wait timeout.
+             * @default 120
+             */
+            download_queued_timeout_minutes: number;
+            /**
+             * Format: int64
+             * @description Frozen-transfer stall timeout.
+             * @default 30
+             */
+            download_stall_timeout_minutes: number;
+            /**
+             * @description Reject non-FLAC/MP3 candidates. A v2 recipe requires this on.
+             * @default true
+             */
+            flac_mp3_only: boolean;
+            /**
+             * @description Terms that reject a candidate.
+             * @default []
+             */
+            ignored_terms: string[];
+            /**
+             * Format: int64
+             * @description Lossless bit-depth ceiling.
+             * @default null
+             */
+            lossless_max_bit_depth: number | null;
+            /**
+             * Format: int64
+             * @description Lossless sample-rate ceiling.
+             * @default null
+             */
+            lossless_max_sample_rate_hz: number | null;
+            /**
+             * @description Lossless edition preference.
+             * @default highest
+             */
+            lossless_preference: string;
+            /**
+             * Format: int64
+             * @description Lossy upper bound.
+             * @default null
+             */
+            lossy_max_bitrate_kbps: number | null;
+            /**
+             * Format: int64
+             * @description Lossy lower bound.
+             * @default null
+             */
+            lossy_min_bitrate_kbps: number | null;
+            /**
+             * Format: int64
+             * @description Concurrent downloads.
+             * @default 3
+             */
+            max_concurrent_downloads: number;
+            /**
+             * Format: int64
+             * @description Failover attempts per request.
+             * @default 3
+             */
+            max_failover_attempts: number;
+            /**
+             * Format: int64
+             * @description Library size cap in GB (0 unlimited).
+             * @default 0
+             */
+            max_library_size_gb: number;
+            /**
+             * Format: int64
+             * @description Max download size in MB (0 unlimited).
+             * @default 0
+             */
+            max_size_mb: number;
+            /**
+             * Format: int64
+             * @description Preferred lossy bitrate target.
+             * @default null
+             */
+            preferred_lossy_bitrate_kbps: number | null;
+            /**
+             * Format: int64
+             * @description Preferred-quality wait.
+             * @default 15
+             */
+            preferred_quality_wait_minutes: number;
+            /**
+             * Format: double
+             * @description Preflight auto-accept score.
+             * @default 0.7
+             */
+            preflight_score_auto_accept: number;
+            /**
+             * Format: double
+             * @description Preflight manual-review floor.
+             * @default 0.5
+             */
+            preflight_score_manual_min: number;
+            /**
+             * @description Stop-upgrading tier label.
+             * @default lossless
+             */
+            quality_cutoff: string;
+            /**
+             * @description Best accepted tier label.
+             * @default lossless
+             */
+            quality_max: string;
+            /**
+             * @description Worst accepted tier label.
+             * @default mp3_320
+             */
+            quality_min: string;
+            /**
+             * @description Tier preference order, most preferred first.
+             * @default []
+             */
+            quality_preference_order: string[];
+            /**
+             * @description Closed v2 quality recipe (empty means a v1 policy).
+             * @default []
+             */
+            quality_recipe: components["schemas"]["QualityRecipeEntryDto"][];
+            /**
+             * @description Recipe verdict detail, when any. Read-only, like the status.
+             * @default null
+             */
+            quality_recipe_error: string | null;
+            /**
+             * @description Read-only recipe verdict (`v1`, `v2`, `non_convertible`,
+             *     `invalid`). Recomputed on every read; client values are ignored
+             *     on save.
+             * @default v1
+             */
+            quality_recipe_status: string;
+            /**
+             * @description Recycle-bin path ("" disables).
+             * @default
+             */
+            recycle_bin_path: string;
+            /**
+             * Format: int64
+             * @description Recycle retention in days.
+             * @default 30
+             */
+            recycle_retention_days: number;
+            /**
+             * @description Terms a candidate must carry.
+             * @default []
+             */
+            required_terms: string[];
+            /**
+             * @description Source-vs-quality selection.
+             * @default source_first
+             */
+            source_selection_mode: string;
+            /**
+             * @description Unknown-quality handling.
+             * @default allow_as_fallback
+             */
+            unknown_quality_behavior: string;
+            /**
+             * @description Background upgrades switch.
+             * @default false
+             */
+            upgrade_allowed: boolean;
+            /**
+             * Format: int64
+             * @description Minimum Usenet release age.
+             * @default 30
+             */
+            usenet_min_release_age_minutes: number;
+            /**
+             * Format: int64
+             * @description Usenet retention in days (0 unknown).
+             * @default 0
+             */
+            usenet_retention_days: number;
+            /**
+             * @description Verify downloads after landing.
+             * @default true
+             */
+            verify_downloads: boolean;
+        };
         /** @description Edition-acquire outcome (A:12). */
         EditionAcquireResponse: {
             /** @description Human outcome. */
@@ -5123,6 +7413,46 @@ export interface components {
             /** @description The single error payload. */
             error: components["schemas"]["ErrorBody"];
         };
+        /** @description Upcoming-events sources. The sweep runs daily at `poll_time`. */
+        EventsSettingsDto: {
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * @description Daily sweep time, server-local `HH:MM`.
+             * @default 06:00
+             */
+            poll_time: string;
+            /**
+             * @description Skiddle key (masked unless unset).
+             * @default
+             */
+            skiddle_api_key: string;
+            /**
+             * @description Skiddle switch.
+             * @default false
+             */
+            skiddle_enabled: boolean;
+            /** @default followed */
+            sweep_scope: components["schemas"]["EventsSweepScopeDto"];
+            /**
+             * @description Ticketmaster key (masked unless unset).
+             * @default
+             */
+            ticketmaster_api_key: string;
+            /**
+             * @description Ticketmaster switch.
+             * @default false
+             */
+            ticketmaster_enabled: boolean;
+        };
+        /**
+         * @description Events sweep scope.
+         * @enum {string}
+         */
+        EventsSweepScopeDto: "followed" | "library";
         /** @description Per-kind counts. */
         FavoriteCounts: {
             /** @description Favorited albums. */
@@ -5196,6 +7526,26 @@ export interface components {
             /** @description Preferred casing for display. */
             username_display: string;
         };
+        /** @description Zero-dependency filesystem poller knobs. */
+        FilesystemWatcherDto: {
+            /**
+             * Format: double
+             * @description Burst-collapse window in seconds (minimum 0).
+             * @default 60
+             */
+            batch_window_seconds: number;
+            /**
+             * @description Master switch.
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Format: double
+             * @description Stat-snapshot cadence in seconds (minimum 1).
+             * @default 300
+             */
+            poll_interval_seconds: number;
+        };
         /** @description Navidrome folder preference resolution for the caller. */
         FolderResolutionView: {
             /** @description Folders the server currently exposes. */
@@ -5254,6 +7604,94 @@ export interface components {
         FollowedArtistListResponse: {
             /** @description Followed artists. */
             artists: components["schemas"]["FollowedArtist"][];
+        };
+        /** @description Free-music acquisition settings. */
+        FreeMusicDto: {
+            /**
+             * @description Master switch.
+             * @default true
+             */
+            enabled: boolean;
+            /** @default flac */
+            preferred_format: components["schemas"]["AudioFormatDto"];
+        };
+        /**
+         * @description Frontend cache TTLs in BACKEND units (milliseconds), verbatim from
+         *     the stored advanced section. The SPA reads this one endpoint instead
+         *     of the whole advanced surface.
+         */
+        FrontendCacheTTLs: {
+            /**
+             * Format: int64
+             * @description Discover TTL, ms.
+             * @default 1800000
+             */
+            discover: number;
+            /**
+             * Format: int64
+             * @description Discover-queue TTL, ms.
+             * @default 86400000
+             */
+            discover_queue: number;
+            /**
+             * @description Discover-queue auto-generate switch.
+             * @default true
+             */
+            discover_queue_auto_generate: boolean;
+            /**
+             * Format: int64
+             * @description Discover-queue polling interval, ms.
+             * @default 4000
+             */
+            discover_queue_polling_interval: number;
+            /**
+             * Format: int64
+             * @description Home TTL, ms.
+             * @default 300000
+             */
+            home: number;
+            /**
+             * Format: int64
+             * @description Jellyfin sidebar TTL, ms.
+             * @default 120000
+             */
+            jellyfin_sidebar: number;
+            /**
+             * Format: int64
+             * @description Library TTL, ms.
+             * @default 300000
+             */
+            library: number;
+            /**
+             * Format: int64
+             * @description Local-files sidebar TTL, ms.
+             * @default 120000
+             */
+            local_files_sidebar: number;
+            /**
+             * Format: int64
+             * @description Playlist-sources TTL, ms.
+             * @default 900000
+             */
+            playlist_sources: number;
+            /**
+             * Format: int64
+             * @description Plex sidebar TTL, ms.
+             * @default 120000
+             */
+            plex_sidebar: number;
+            /**
+             * Format: int64
+             * @description Recently-added TTL, ms.
+             * @default 300000
+             */
+            recently_added: number;
+            /**
+             * Format: int64
+             * @description Search TTL, ms.
+             * @default 300000
+             */
+            search: number;
         };
         /** @description Genre mosaic art: a collage of owned covers or a flat gradient. */
         GenreArtwork: {
@@ -5342,6 +7780,14 @@ export interface components {
              */
             track_count: number;
         };
+        /** @description Store-region settings. */
+        GetItDto: {
+            /**
+             * @description Two-letter store region.
+             * @default US
+             */
+            store_region: string;
+        };
         /** @description One GitHub release row. */
         GitHubRelease: {
             /** @description Release notes when set. */
@@ -5357,8 +7803,13 @@ export interface components {
             /** @description Release tag. */
             tag_name: string;
         };
-        /** @description Health payload. Shape kept from v2: `status` plus the running message. */
+        /**
+         * @description Health payload. `status` plus the running message keep the v2 shape;
+         *     stage 10 adds the latest checkpoint pass (`None` until the checkpoint
+         *     loop records one, or on states without a checkpoint service).
+         */
         HealthResponse: {
+            checkpoint?: null | components["schemas"]["CheckpointView"];
             /** @description Human-readable running message. */
             message: string;
             /** @description Service state, `ok` when serving. */
@@ -5499,6 +7950,11 @@ export interface components {
             source: components["schemas"]["SourceName"];
             stats?: null | components["schemas"]["RemotesStatsView"];
         };
+        /**
+         * @description Per-path identification policy.
+         * @enum {string}
+         */
+        IdentificationPolicyDto: "local_metadata" | "automatic" | "excluded";
         /** @description Enqueue one album for identification. */
         IdentifyBody: {
             /** @description Local album id (scan album keys read `root::directory`). */
@@ -5610,6 +8066,39 @@ export interface components {
              */
             total_imported: number;
         };
+        /** @description Dragged-card priority order (1-based on save). */
+        IndexerReorderRequest: {
+            /** @description Indexer ids in the new order. */
+            ordered_ids: string[];
+        };
+        /** @description Indexer save acknowledgement. */
+        IndexerSavedResponse: {
+            /** @description Saved indexer id. */
+            id: string;
+        };
+        /**
+         * @description Indexer caps-test verdict. `supports_audio_search` tells the user
+         *     whether structured music search will be used or the `t=search`
+         *     fallback; `suggested_url` is a one-click fix when the URL looks like
+         *     the site homepage but `/api` answers as a real endpoint.
+         */
+        IndexerTestResponse: {
+            /**
+             * Format: int64
+             * @description Advertised category count.
+             */
+            category_count: number;
+            /** @description Human summary. */
+            message: string;
+            /** @description One-click `/api` fix, when the submitted URL was the homepage. */
+            suggested_url?: string | null;
+            /** @description Whether structured music search is advertised. */
+            supports_audio_search: boolean;
+            /** @description Whether the submitted values checked out. */
+            valid: boolean;
+            /** @description Server version, when known. */
+            version?: string | null;
+        };
         /** @description Unified artist/album info passthrough (Last.fm-sourced upstream). */
         InfoView: {
             /** @description Biography or release notes. */
@@ -5661,6 +8150,34 @@ export interface components {
             /** @description The YouTube data API (quota'd) is configured. */
             youtube_api?: boolean;
         };
+        /** @description Jellyfin connection. */
+        JellyfinConnectionDto: {
+            /**
+             * @description API key (masked unless unset).
+             * @default
+             */
+            api_key: string;
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * @description Jellyfin base URL.
+             * @default http://jellyfin:8096
+             */
+            jellyfin_url: string;
+            /**
+             * @description Jellyfin login switch.
+             * @default false
+             */
+            login_enabled: boolean;
+            /**
+             * @description Jellyfin user id.
+             * @default
+             */
+            user_id: string;
+        };
         /** @description Jellyfin login body. */
         JellyfinLoginBody: {
             /** @description Jellyfin password. */
@@ -5669,6 +8186,38 @@ export interface components {
             transport?: components["schemas"]["TransportDto"];
             /** @description Jellyfin username. */
             username: string;
+        };
+        /** @description One Jellyfin user, for the admin user picker after a verify. */
+        JellyfinUserInfo: {
+            /** @description User id. */
+            id: string;
+            /** @description Display name. */
+            name: string;
+        };
+        /** @description Jellyfin verify verdict, with the user list on success. */
+        JellyfinVerifyResponse: {
+            /** @description Human summary. */
+            message: string;
+            /** @description Whether the connection checked out. */
+            success: boolean;
+            /** @description Server users (empty unless the probe succeeded). */
+            users: components["schemas"]["JellyfinUserInfo"][];
+        };
+        /** @description One registered background job. */
+        JobView: {
+            /** @description `durable` or `ephemeral`. */
+            kind: string;
+            /**
+             * Format: double
+             * @description Last heartbeat as unix seconds, when the job ever beat.
+             */
+            last_heartbeat_at?: number | null;
+            /** @description Job name, the registry key. */
+            name: string;
+            /** @description `idle`, `running`, `stopped`, or `failed`. */
+            state: string;
+            /** @description Waking channel, when the job has one. */
+            wakeup_channel?: string | null;
         };
         /** @description `kind` query shared by the per-request mutations. */
         KindQuery: {
@@ -5704,6 +8253,17 @@ export interface components {
             /** @description Linked Last.fm username. */
             username: string;
         };
+        /**
+         * @description Last.fm master switch. Credentials are per-user (see
+         *     `/me/connections/lastfm`); the admin-global pair is deleted.
+         */
+        LastFmSettingsDto: {
+            /**
+             * @description Master switch for Last.fm fan-out.
+             * @default false
+             */
+            enabled: boolean;
+        };
         /** @description Per-user Last.fm link status. Never carries secrets. */
         LastFmStatusResponse: {
             /** @description Whether API credentials are stored. */
@@ -5719,6 +8279,203 @@ export interface components {
             auth_url: string;
             /** @description Single-use token for the session exchange. */
             token: string;
+        };
+        /** @description Add-one-library-path body. */
+        LibraryPathRequest: {
+            /** @description Directory to add as a library root. */
+            path: string;
+        };
+        /** @description One path-policy rule inside a root (ordered by depth on save). */
+        LibraryPathRuleDto: {
+            /**
+             * @description Rule id.
+             * @default
+             */
+            id: string;
+            /** @default automatic */
+            policy: components["schemas"]["IdentificationPolicyDto"];
+            /**
+             * @description Path relative to the root.
+             * @default
+             */
+            relative_path: string;
+        };
+        /** @description One library root. */
+        LibraryRootDto: {
+            /**
+             * @description Stable root id.
+             * @default
+             */
+            id: string;
+            /**
+             * @description Display label.
+             * @default
+             */
+            label: string;
+            /**
+             * @description Absolute path.
+             * @default
+             */
+            path: string;
+            /** @default automatic */
+            policy: components["schemas"]["IdentificationPolicyDto"];
+            /**
+             * @description Path rules.
+             * @default []
+             */
+            rules: components["schemas"]["LibraryPathRuleDto"][];
+        };
+        /** @description Native automatic-scan schedule. */
+        LibraryScanScheduleDto: {
+            /**
+             * @description Server-local `HH:MM` used when `scan_frequency` is `daily`.
+             * @default 03:00
+             */
+            daily_scan_time: string;
+            /**
+             * Format: int64
+             * @description Unix time of the last scan, if any.
+             * @default null
+             */
+            last_scan: number | null;
+            /**
+             * @description Whether the last scan succeeded.
+             * @default true
+             */
+            last_scan_success: boolean;
+            /** @default 24hr */
+            scan_frequency: components["schemas"]["ScanFrequencyDto"];
+        };
+        /**
+         * @description GET payload: the persisted schedule plus the server's timezone label, so
+         *     the UI can show what "daily at HH:MM" is relative to. The label is
+         *     computed per request and never persisted.
+         */
+        LibraryScanScheduleResponse: {
+            /**
+             * @description Server-local `HH:MM` used when `scan_frequency` is `daily`.
+             * @default 03:00
+             */
+            daily_scan_time: string;
+            /**
+             * Format: int64
+             * @description Unix time of the last scan, if any.
+             * @default null
+             */
+            last_scan: number | null;
+            /**
+             * @description Whether the last scan succeeded.
+             * @default true
+             */
+            last_scan_success: boolean;
+            /** @default 24hr */
+            scan_frequency: components["schemas"]["ScanFrequencyDto"];
+            /**
+             * @description Server-local timezone label for the daily-scan picker.
+             * @default
+             */
+            server_timezone: string;
+        };
+        /** @description Typed library settings: roots, policies, staging, naming, AcoustID. */
+        LibrarySettingsDto: {
+            /**
+             * @description AcoustID key (masked unless unset).
+             * @default
+             */
+            acoustid_api_key: string;
+            /**
+             * @description Master switch (excluded from the revision hash).
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * @description Library roots.
+             * @default []
+             */
+            library_roots: components["schemas"]["LibraryRootDto"][];
+            /**
+             * @description Naming template.
+             * @default {albumartist}/{album} ({year})/{disc:02d}{track:02d} {title}.{ext}
+             */
+            naming_template: string;
+            /**
+             * @description Staging path.
+             * @default
+             */
+            staging_path: string;
+        };
+        /**
+         * @description GET view: settings plus the policy revision, the reconciliation
+         *     projection, and non-blocking warnings.
+         */
+        LibrarySettingsResponse: {
+            /**
+             * @description AcoustID key (masked unless unset).
+             * @default
+             */
+            acoustid_api_key: string;
+            /**
+             * @description Actions the save applied.
+             * @default []
+             */
+            actions_applied: string[];
+            /**
+             * @description Affected scope ids.
+             * @default []
+             */
+            affected_scope_ids: string[];
+            /**
+             * @description Master switch.
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * @description Library roots.
+             * @default []
+             */
+            library_roots: components["schemas"]["LibraryRootDto"][];
+            /**
+             * @description Naming template.
+             * @default {albumartist}/{album} ({year})/{disc:02d}{track:02d} {title}.{ext}
+             */
+            naming_template: string;
+            /**
+             * @description Pending revision, when awaiting reconciliation.
+             * @default null
+             */
+            pending_policy_revision: string | null;
+            /**
+             * @description Content revision (write CAS token).
+             * @default
+             */
+            policy_revision: string;
+            /**
+             * @description Whether reconciliation is still required.
+             * @default false
+             */
+            reconciliation_required: boolean;
+            /**
+             * @description `applied` or `awaiting_reconciliation`.
+             * @default applied
+             */
+            reconciliation_state: string;
+            /**
+             * @description Staging path.
+             * @default
+             */
+            staging_path: string;
+            /**
+             * @description Non-blocking warnings.
+             * @default []
+             */
+            warnings: string[];
+        };
+        /** @description PUT body: full settings plus the required CAS token. */
+        LibrarySettingsSaveRequest: {
+            /** @description Compare-and-swap token from the last GET. */
+            expected_policy_revision: string;
+            /** @description Full candidate settings. */
+            settings: components["schemas"]["LibrarySettingsDto"];
         };
         /**
          * @description One monitored Lidarr artist annotated for the requesting user (v2
@@ -5798,6 +8555,35 @@ export interface components {
             valid: boolean;
             /** @description Lidarr version from `system/status`, when the probe reached it. */
             version?: string | null;
+        };
+        /**
+         * @description ListenBrainz connect request. The username is required: it drives every
+         *     per-user read, and without it a "connected" account yields silently
+         *     empty discovery.
+         */
+        ListenBrainzConnectRequest: {
+            /** @description User token. */
+            user_token: string;
+            /** @description ListenBrainz username. */
+            username?: string;
+        };
+        /** @description ListenBrainz connection. */
+        ListenBrainzConnectionDto: {
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * @description User token (masked unless unset).
+             * @default
+             */
+            user_token: string;
+            /**
+             * @description Username.
+             * @default
+             */
+            username: string;
         };
         /** @description Set the first local password on an account without one. */
         LocalPasswordSet: {
@@ -5937,12 +8723,165 @@ export interface components {
             /** @description Album tracks, when found. */
             tracks: components["schemas"]["RemotesTrackView"][];
         };
+        /**
+         * @description MusicBrainz source tier.
+         * @enum {string}
+         */
+        MbSourceModeDto: "official" | "mirror" | "community" | "brainzmash";
+        /** @description Consent-bound BrainzMash binding request. */
+        MusicBrainzBindingRequest: {
+            /** @description Proposed access revision. */
+            access_revision: string;
+            /** @description Proposed disclosure version. */
+            disclosure_version: string;
+            /**
+             * Format: int64
+             * @description Proposed source generation.
+             */
+            generation: number;
+            /** @description Proposed source identity. */
+            source_id: string;
+        };
+        /** @description MusicBrainz connection settings. */
+        MusicBrainzSettingsDto: {
+            /** @default null */
+            active_brainzmash: null | components["schemas"]["BrainzmashActiveBindingDto"];
+            /**
+             * @description API base (canonicalized for official/brainzmash).
+             * @default https://api.brainzmash.cc/ws/2
+             */
+            api_url: string;
+            /**
+             * @description True when the official-host clamp forced values down (or lifted a
+             *     0 sentinel up). Rendered, never refused.
+             * @default false
+             */
+            clamped_to_official_limits: boolean;
+            /**
+             * @description Community-tier disclosure acknowledged.
+             * @default false
+             */
+            community_acknowledged: boolean;
+            /**
+             * Format: int64
+             * @description Concurrent searches.
+             * @default 1
+             */
+            concurrent_searches: number;
+            /**
+             * Format: int64
+             * @description Source generation.
+             * @default 1
+             */
+            generation: number;
+            /** @default null */
+            pending_brainzmash: null | components["schemas"]["BrainzmashPendingProposalDto"];
+            /**
+             * Format: double
+             * @description Requests per second (0 = Unlimited, off-official only).
+             * @default 10
+             */
+            rate_limit: number;
+            /** @default brainzmash */
+            selected_source_mode: components["schemas"]["MbSourceModeDto"];
+            /**
+             * @description Source identity.
+             * @default
+             */
+            source_id: string;
+            /** @default brainzmash */
+            source_mode: components["schemas"]["MbSourceModeDto"];
+        };
+        /**
+         * @description Client-submitted MusicBrainz source change. BrainzMash is never a
+         *     direct update: it moves through stage/consent/verify/activate.
+         */
+        MusicBrainzSettingsUpdate: {
+            /**
+             * @description API base for mirror/community tiers.
+             * @default null
+             */
+            api_url: string | null;
+            /**
+             * @description Community-tier disclosure acknowledged.
+             * @default false
+             */
+            community_acknowledged: boolean | null;
+            /**
+             * Format: int64
+             * @description Concurrent searches.
+             * @default 6
+             */
+            concurrent_searches: number;
+            /**
+             * Format: double
+             * @description Requests per second.
+             * @default 1
+             */
+            rate_limit: number;
+            /** @default official */
+            source_mode: components["schemas"]["MbSourceModeDto"];
+        };
+        /**
+         * @description Verify payload: a BrainzMash consent binding or a plain source
+         *     update. The binding is tried first: it pins the exact staged
+         *     proposal, while an update only names a tier to probe.
+         */
+        MusicBrainzVerifyRequest: components["schemas"]["MusicBrainzBindingRequest"] | components["schemas"]["MusicBrainzSettingsUpdate"];
         /** @description One Navidrome music folder. */
         MusicFolderView: {
             /** @description Folder id. */
             id: string;
             /** @description Folder name. */
             name: string;
+        };
+        /**
+         * @description Which service backs scrobble-targeted discovery.
+         * @enum {string}
+         */
+        MusicSourceDto: "listenbrainz" | "lastfm";
+        /** @description Navidrome connection. */
+        NavidromeConnectionDto: {
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * @description Navidrome base URL.
+             * @default
+             */
+            navidrome_url: string;
+            /**
+             * @description Password (masked unless unset).
+             * @default
+             */
+            password: string;
+            /**
+             * @description .m3u8 export switch (off by default).
+             * @default false
+             */
+            playlist_sync_enabled: boolean;
+            /**
+             * @description Export directory Navidrome scans.
+             * @default
+             */
+            playlist_sync_path: string;
+            /**
+             * @description Remove exports that stop qualifying.
+             * @default true
+             */
+            playlist_sync_remove_deleted: boolean;
+            /**
+             * @description Export scope (`public`, or opt-in `all`).
+             * @default public
+             */
+            playlist_sync_scope: string;
+            /**
+             * @description Username.
+             * @default
+             */
+            username: string;
         };
         /** @description One new-release sighting. */
         NewReleaseItem: {
@@ -5965,6 +8904,57 @@ export interface components {
             items: components["schemas"]["NewReleaseItem"][];
             /** @description Item count. */
             total: number;
+        };
+        /**
+         * @description One configured Newznab indexer. DroppedNeedle ships none; the user adds
+         *     their own.
+         */
+        NewznabIndexerDto: {
+            /**
+             * @description API key (masked unless unset; per element).
+             * @default
+             */
+            api_key: string;
+            /**
+             * @description Newznab categories.
+             * @default [
+             *       3000,
+             *       3010,
+             *       3040
+             *     ]
+             */
+            categories: number[];
+            /**
+             * @description Master switch.
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * @description Stable id (blank on create; the path wins on update).
+             * @default
+             */
+            id: string;
+            /**
+             * @description Display name.
+             * @default
+             */
+            name: string;
+            /**
+             * Format: int64
+             * @description Priority (lower first).
+             * @default 1
+             */
+            priority: number;
+            /**
+             * @description Indexer type tag.
+             * @default newznab
+             */
+            type: string;
+            /**
+             * @description Indexer base URL.
+             * @default
+             */
+            url: string;
         };
         /** @description Query for clearing presence: which device stopped. */
         NowPlayingDeleteQuery: {
@@ -6051,12 +9041,50 @@ export interface components {
             /** @description State echoed from the authorize step. */
             state: string;
         };
+        /** @description OIDC connection. */
+        OidcConnectionDto: {
+            /**
+             * @description Client id.
+             * @default
+             */
+            client_id: string;
+            /**
+             * @description Client secret (masked unless unset).
+             * @default
+             */
+            client_secret: string;
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * @description Issuer URL.
+             * @default
+             */
+            issuer: string;
+            /**
+             * @description Redirect URI.
+             * @default
+             */
+            redirect_uri: string;
+            /**
+             * @description Scopes.
+             * @default openid email profile
+             */
+            scopes: string;
+        };
         /** @description OIDC exchange body: swap the one-time callback code for a session. */
         OidcExchangeBody: {
             /** @description Single-use code from the callback redirect. */
             code: string;
             /** @description Credential handoff; defaults to cookie. */
             transport?: components["schemas"]["TransportDto"];
+        };
+        /** @description Bare success acknowledgement. */
+        OperationResult: {
+            /** @description Whether the operation succeeded. */
+            success: boolean;
         };
         /** @description Change password on an account that already has one. */
         PasswordChange: {
@@ -6277,6 +9305,53 @@ export interface components {
              */
             updated_at: number;
         };
+        /** @description Sync report, field for field with the v1 result shape. */
+        PlaylistSyncResult: {
+            /** @description Human summary of the run. */
+            message: string;
+            /**
+             * Format: int64
+             * @description Superseded files that could not be removed (retried next cycle).
+             */
+            removal_failures: number;
+            /**
+             * Format: int64
+             * @description Superseded files removed.
+             */
+            removed: number;
+            /**
+             * Format: int64
+             * @description Playlists skipped for having no tracks.
+             */
+            skipped_empty: number;
+            /**
+             * Format: int64
+             * @description Files in the directory that are not ours and were left alone.
+             */
+            skipped_not_ours: number;
+            /** @description False when nothing synced (disabled, or the exporter refused). */
+            success: boolean;
+            /**
+             * Format: int64
+             * @description Tracks skipped for missing audio files.
+             */
+            tracks_missing_files: number;
+            /**
+             * Format: int64
+             * @description Tracks skipped for paths the export format cannot represent.
+             */
+            tracks_unrepresentable: number;
+            /**
+             * Format: int64
+             * @description Files already current and left alone.
+             */
+            unchanged: number;
+            /**
+             * Format: int64
+             * @description Files written or updated.
+             */
+            written: number;
+        };
         /** @description One track inside a playlist. */
         PlaylistTrack: {
             /** @description Album id, when the track resolved to the library. */
@@ -6334,6 +9409,46 @@ export interface components {
             auth_token?: string | null;
             /** @description True once the user authorized the PIN. */
             completed: boolean;
+        };
+        /** @description Plex connection. */
+        PlexConnectionDto: {
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * @description Plex login switch.
+             * @default false
+             */
+            login_enabled: boolean;
+            /**
+             * @description Music library ids.
+             * @default []
+             */
+            music_library_ids: string[];
+            /**
+             * @description Plex token (masked unless unset).
+             * @default
+             */
+            plex_token: string;
+            /**
+             * @description Plex base URL.
+             * @default
+             */
+            plex_url: string;
+            /**
+             * @description Scrobble back to Plex.
+             * @default true
+             */
+            scrobble_to_plex: boolean;
+        };
+        /** @description One Plex music-library section. */
+        PlexLibrarySectionInfo: {
+            /** @description Section key. */
+            key: string;
+            /** @description Section title. */
+            title: string;
         };
         /** @description Link-completion poll answer. */
         PlexLinkPollResult: {
@@ -6399,6 +9514,179 @@ export interface components {
              */
             pin_id: number;
         };
+        /** @description Plex verify verdict, with music libraries on success. */
+        PlexVerifyResponse: {
+            /** @description Music libraries (empty unless the probe succeeded). */
+            libraries: components["schemas"]["PlexLibrarySectionInfo"][];
+            /** @description Human summary. */
+            message: string;
+            /** @description Whether the connection checked out. */
+            valid: boolean;
+        };
+        /**
+         * @description One linked external account. Never carries the secret, only the name.
+         *     The schema rename keeps this distinct from the stage-6 remotes
+         *     `ConnectionStatus` in the one OpenAPI document; the wire shape is
+         *     unchanged.
+         */
+        PluginConnectionStatus: {
+            /** @description Whether the link is active. */
+            enabled?: boolean;
+            /** @description Service name (`listenbrainz` here). */
+            service: string;
+            /** @description Linked username. */
+            username?: string;
+        };
+        /** @description One plugin as the admin UI sees it. */
+        PluginInfo: {
+            /** @description Declared capabilities the module actually implements. */
+            active_capabilities?: string[];
+            /** @description Author string. */
+            author?: string;
+            /** @description Declared capability ids. */
+            capabilities?: string[];
+            /** @description Short description. */
+            description?: string;
+            /** @description Display name. */
+            display_name: string;
+            /** @description Whether the plugin is enabled and loaded. */
+            enabled: boolean;
+            /** @description Load failure, when present. */
+            error?: string | null;
+            /** @description Homepage URL. */
+            homepage?: string;
+            /** @description Manifest name. */
+            name: string;
+            /** @description Declared settings fields. */
+            settings_fields?: components["schemas"]["PluginSettingFieldInfo"][];
+            /** @description Current settings values (secrets masked). */
+            settings_values?: {
+                [key: string]: string;
+            };
+            /** @description Declared download-client sources. */
+            sources?: string[];
+            /** @description Declared indexer targets. */
+            targets?: string[];
+            /** @description Panel bundle path, when the plugin ships UI. */
+            ui_entry?: string;
+            /** @description External panel URL. */
+            ui_external_url?: string;
+            /** @description Panel page ids. */
+            ui_pages?: string[];
+            /** @description Plugin version. */
+            version: string;
+        };
+        /** @description Install request: one public GitHub repository URL. */
+        PluginInstallRequest: {
+            /** @description Repository URL, e.g. `https://github.com/owner/repo`. */
+            repository_url: string;
+        };
+        /** @description Plugin listing. */
+        PluginListResponse: {
+            /** @description Every discovered plugin. */
+            plugins: components["schemas"]["PluginInfo"][];
+        };
+        /** @description One settings field a plugin declares. */
+        PluginSettingFieldInfo: {
+            /** @description Help text. */
+            help?: string;
+            /** @description Setting key. */
+            key: string;
+            /** @description Display label. */
+            label: string;
+            /** @description Whether the value is secret (masked on read, encrypted at rest). */
+            secret?: boolean;
+        };
+        /** @description One enabled plugin acquisition source. */
+        PluginSource: {
+            /** @description Whether the source is ready to use. */
+            configured?: boolean;
+            /** @description Display name. */
+            display_name?: string;
+            /** @description Whether the plugin serves downloads for this source. */
+            has_client?: boolean;
+            /** @description Whether the plugin serves searches for this source. */
+            has_indexer?: boolean;
+            /** @description `ok`, `degraded`, or `unknown`. */
+            health?: string;
+            /** @description Source key (`plugin:<name>` or `usenet`). */
+            key: string;
+            /** @description Owning plugin name. */
+            plugin?: string;
+            /** @description Indexer target source. */
+            target_source?: string;
+        };
+        /** @description Plugin source listing. */
+        PluginSourcesResponse: {
+            /** @description Enabled acquisition sources. */
+            sources: components["schemas"]["PluginSource"][];
+        };
+        /**
+         * @description Enable switch plus settings save. A secret field sent back as the mask
+         *     keeps its stored value.
+         */
+        PluginUpdateRequest: {
+            /** @description New enable switch. */
+            enabled: boolean;
+            /** @description New settings values. */
+            settings?: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * @description Admin preview of an UNSAVED policy against persisted state:
+         *     persisted-state bucket counts only.
+         */
+        PolicyImpactResponse: {
+            /**
+             * Format: int64
+             * @description Rows awaiting review.
+             */
+            awaiting_review: number;
+            /**
+             * Format: int64
+             * @description Held reviews.
+             */
+            held_reviews: number;
+            /** @description Whether a down-level image would preserve acquisition behavior. */
+            legacy_representable: boolean;
+            /**
+             * Format: int64
+             * @description Manual search jobs that would re-resolve.
+             */
+            manual_search_jobs: number;
+            /**
+             * Format: int64
+             * @description Queued rows with no attempts yet.
+             */
+            queued_without_attempts: number;
+            /**
+             * Format: int64
+             * @description Remote-queued zero-byte rows.
+             */
+            remote_queued_zero_byte: number;
+            /**
+             * Format: int64
+             * @description Transferring rows (immutable under the new policy).
+             */
+            transferring_immutable: number;
+        };
+        /**
+         * @description Safe, signed-in-user projection of the acquisition policy: the quality
+         *     summary sentence plus the source-mode label only, no admin internals.
+         */
+        PolicySummaryResponse: {
+            /** @description Whether a down-level image reproduces acquisition behavior. */
+            legacy_rollback_compatible: boolean;
+            /** @description Recipe verdict detail, when any. */
+            quality_recipe_error?: string | null;
+            /** @description Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`. */
+            quality_recipe_status: string;
+            /** @description Source-mode label. */
+            source_mode: string;
+            /** @description Backend-composed contract sentence. */
+            summary: string;
+        };
         /** @description One page of a popular-albums or your-top chart. */
         PopularAlbumsPage: {
             /** @description True when more rows follow. */
@@ -6420,6 +9708,16 @@ export interface components {
             /** @description Range key behind this page. */
             range_key: string;
         };
+        /**
+         * @description One precache run starting. The run continues in the background under
+         *     the `precache-library` job name; a second start while it is live is 409.
+         */
+        PrecacheRunResponse: {
+            /** @description Registered job name of the run. */
+            job: string;
+            /** @description `started`. */
+            status: string;
+        };
         /** @description One previewed track. */
         PreviewTrackItem: {
             /** @description Artist name. */
@@ -6439,11 +9737,111 @@ export interface components {
             /** @description Track title. */
             title: string;
         };
+        /** @description Primary music source selection. */
+        PrimaryMusicSourceDto: {
+            /** @default listenbrainz */
+            source: components["schemas"]["MusicSourceDto"];
+        };
         /**
          * @description Own profile. Identity only; connected services and library stats belong
          *     to the connections and library slices.
          */
         ProfileResponse: components["schemas"]["UserResponse"];
+        /** @description One provider's limiter posture. */
+        ProviderLimiterView: {
+            /**
+             * Format: int32
+             * @description Bucket capacity.
+             */
+            burst: number;
+            /**
+             * Format: double
+             * @description Sustained tokens per second.
+             */
+            per_second: number;
+            /**
+             * Format: int32
+             * @description Whole tokens currently available.
+             */
+            remaining: number;
+            /** @description Provider name, e.g. `musicbrainz`. */
+            source: string;
+        };
+        /** @description Provider limiter and slot snapshot. */
+        ProviderStatsResponse: {
+            /** @description Limiter posture per provider. */
+            providers: components["schemas"]["ProviderLimiterView"][];
+            /** @description Slot-lane posture. */
+            slots: components["schemas"]["SlotView"];
+        };
+        /** @description Single Prowlarr connection (Prowlarr multiplexes its own indexers). */
+        ProwlarrConnectionDto: {
+            /**
+             * @description API key (masked unless unset).
+             * @default
+             */
+            api_key: string;
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * @description Prowlarr base URL (LAN service, `http://` default).
+             * @default
+             */
+            url: string;
+        };
+        /** @description Prowlarr test verdict: validity plus version and member-indexer count. */
+        ProwlarrTestResponse: {
+            /**
+             * Format: int64
+             * @description Enabled member indexers, when listed.
+             */
+            indexer_count?: number | null;
+            /** @description Human summary. */
+            message: string;
+            /** @description Whether the submitted values checked out. */
+            valid: boolean;
+            /** @description Server version, when known. */
+            version?: string | null;
+        };
+        /**
+         * @description One ordered, closed format-quality recipe entry. Unknown keys are
+         *     rejected at decode so a future setting cannot silently become a
+         *     different recipe.
+         */
+        QualityRecipeEntryDto: {
+            /**
+             * Format: int64
+             * @description Custom FLAC bit depth.
+             */
+            bit_depth?: number | null;
+            /** @description Container: `flac` or `mp3`. */
+            format: string;
+            /**
+             * Format: int64
+             * @description Custom MP3 upper bound (`None` when open-ended), or canonical.
+             */
+            max_bitrate_kbps?: number | null;
+            /**
+             * Format: int64
+             * @description Custom MP3 lower bound, or canonical standard bound.
+             */
+            min_bitrate_kbps?: number | null;
+            /** @description Quality id (per-format closed set, or `custom`). */
+            quality: string;
+            /**
+             * Format: int64
+             * @description Custom FLAC sample rate.
+             */
+            sample_rate_hz?: number | null;
+            /**
+             * Format: int64
+             * @description Custom MP3 target, or canonical standard bound.
+             */
+            target_bitrate_kbps?: number | null;
+        };
         /** @description Enrichment behind one queue card. */
         QueueEnrichment: {
             /** @description Artist biography snippet, when known. */
@@ -6548,6 +9946,13 @@ export interface components {
             /** @description MusicBrainz release-group id. */
             release_group_mbid: string;
         };
+        /** @description Queue and job-registry snapshot. */
+        QueueStatsResponse: {
+            /** @description Demand per durable-work channel. */
+            channels: components["schemas"]["WakeupChannelView"][];
+            /** @description Registered background jobs in name order. */
+            jobs: components["schemas"]["JobView"][];
+        };
         /** @description Body checking which cards already landed in the library. */
         QueueValidateRequest: {
             /** @description Release-group ids to check. */
@@ -6557,6 +9962,79 @@ export interface components {
         QueueValidateResponse: {
             /** @description The checked ids that are already owned. */
             in_library?: string[];
+        };
+        /**
+         * @description Per-user quota overrides. `None` fields inherit the global download-policy
+         *     defaults; an all-`None` body clears the row back to pure inherit.
+         */
+        QuotaOverrideBody: {
+            /**
+             * Format: int32
+             * @description Asks allowed per window (0 = unlimited).
+             */
+            request_quota_count?: number | null;
+            /**
+             * Format: int32
+             * @description Window length in days.
+             */
+            request_quota_days?: number | null;
+            /**
+             * Format: int64
+             * @description Library bytes in GiB (0 = unlimited).
+             */
+            storage_quota_gb?: number | null;
+        };
+        /** @description Stored override row for display. */
+        QuotaOverrideView: {
+            /**
+             * Format: int32
+             * @description Asks allowed per window, when overridden.
+             */
+            request_quota_count?: number | null;
+            /**
+             * Format: int32
+             * @description Window length in days, when overridden.
+             */
+            request_quota_days?: number | null;
+            /**
+             * Format: int64
+             * @description Library bytes in GiB, when overridden.
+             */
+            storage_quota_gb?: number | null;
+        };
+        /** @description One user's quota standing for the admin editor. */
+        QuotaResponse: {
+            /**
+             * Format: int32
+             * @description Effective asks per window after overrides.
+             */
+            effective_request_quota_count: number;
+            /**
+             * Format: int32
+             * @description Effective window length in days after overrides.
+             */
+            effective_request_quota_days: number;
+            /**
+             * Format: int64
+             * @description Effective storage in GiB after overrides.
+             */
+            effective_storage_quota_gb: number;
+            /** @description True for admin/trusted accounts, which skip per-user quotas. */
+            exempt: boolean;
+            /** @description Stored override row (`None` fields inherit). */
+            quota_override: components["schemas"]["QuotaOverrideView"];
+            /**
+             * Format: int32
+             * @description Asks inside the trailing window.
+             */
+            requests_in_window: number;
+            /**
+             * Format: int64
+             * @description Landed download bytes attributed to the user.
+             */
+            storage_bytes: number;
+            /** @description User id. */
+            user_id: string;
         };
         /**
          * @description Body planning track-level radio. The UI resolves playback per track
@@ -7021,6 +10499,29 @@ export interface components {
                 [key: string]: string[];
             };
         };
+        /** @description One pre-restore verification check. */
+        RestoreCheck: {
+            /** @description Plain-language detail. */
+            detail: string;
+            /** @description Check name, e.g. `manifest-sha256`. */
+            name: string;
+            /** @description Whether the check passed. */
+            passed: boolean;
+        };
+        /**
+         * @description Pre-restore verification report. Read-only: nothing here writes or moves
+         *     the live database (the actual restore stays an offline CLI in stage 11).
+         */
+        RestoreReport: {
+            /** @description Backup file name the report covers. */
+            backup: string;
+            /** @description Per-check results. */
+            checks: components["schemas"]["RestoreCheck"][];
+            /** @description True when every check passed. */
+            ok: boolean;
+            /** @description True when an offline restore of this backup should succeed. */
+            restorable: boolean;
+        };
         /** @description Review resolution answer. */
         ReviewResolveResponse: {
             identity?: null | components["schemas"]["IdentityView"];
@@ -7088,6 +10589,55 @@ export interface components {
             scopes: components["schemas"]["ScanScopeView"][];
         };
         /**
+         * @description SABnzbd connection. `api_key` is the FULL key (the add-only nzbkey
+         *     cannot do queue/history/delete); masked on read, preserved on a masked
+         *     save.
+         */
+        SabnzbdConnectionDto: {
+            /**
+             * @description Full API key (masked unless unset).
+             * @default
+             */
+            api_key: string;
+            /**
+             * @description Category (`*`: a fresh SABnzbd has no `droppedneedle` category).
+             * @default *
+             */
+            category: string;
+            /**
+             * @description Client type tag.
+             * @default sabnzbd
+             */
+            client_type: string;
+            /**
+             * @description Where DroppedNeedle sees SABnzbd's completed dir.
+             * @default /sabnzbd-downloads
+             */
+            downloads_mount: string;
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Format: int64
+             * @description Post-processing level.
+             * @default 3
+             */
+            post_processing: number;
+            /**
+             * Format: int64
+             * @description Job priority.
+             * @default 0
+             */
+            priority: number;
+            /**
+             * @description SABnzbd base URL.
+             * @default
+             */
+            url: string;
+        };
+        /**
          * @description Live SABnzbd status against the saved config (v2 `SabnzbdTestResponse`,
          *     status half).
          */
@@ -7101,6 +10651,37 @@ export interface components {
             /** @description True when the saved config probes clean. */
             valid: boolean;
             /** @description SABnzbd version, when the probe reached it. */
+            version?: string | null;
+        };
+        /**
+         * @description SABnzbd test verdict: version plus the category list (for the picker),
+         *     the SABnzbd-side completed dir (the mount hint), and the mount
+         *     diagnosis over the SUBMITTED mount.
+         */
+        SabnzbdTestResponse: {
+            /** @description Known categories. */
+            categories: string[];
+            /** @description SABnzbd-side completed dir, when known. */
+            complete_dir?: string | null;
+            /** @description Human summary. */
+            message: string;
+            /** @description Whether the submitted mount holds files, when diagnosed. */
+            mount_has_files?: boolean | null;
+            /** @description Actionable mount guidance, when the mount looks wrong. */
+            mount_message?: string | null;
+            /**
+             * Format: int64
+             * @description Sampled downloads resolving under the submitted mount.
+             */
+            resolvable_downloads?: number | null;
+            /**
+             * Format: int64
+             * @description Sampled downloads.
+             */
+            sampled_downloads?: number | null;
+            /** @description Whether the submitted values checked out. */
+            valid: boolean;
+            /** @description Server version, when known. */
             version?: string | null;
         };
         /** @description Trigger a scan over one root or every scheduled root. */
@@ -7119,6 +10700,11 @@ export interface components {
             /** @description Classify verdict. */
             verdict: string;
         };
+        /**
+         * @description Automatic-scan cadence values.
+         * @enum {string}
+         */
+        ScanFrequencyDto: "manual" | "5min" | "10min" | "30min" | "1hr" | "6hr" | "12hr" | "24hr" | "3d" | "7d" | "daily";
         /** @description Scan request answer. */
         ScanResponse: {
             /**
@@ -7208,6 +10794,56 @@ export interface components {
             /** @description Track title. */
             track_name: string;
         };
+        /** @description Per-user scrobble preferences. */
+        ScrobblePreferences: {
+            /** @description Standing intent to auto-request the personal mix. */
+            auto_request_personal_mix?: boolean;
+            /** @description Standing-grant state for auto-request. */
+            auto_request_state?: string;
+            /** @description Navidrome owns external forwarding for Navidrome plays. */
+            navidrome_handles_external_scrobbles?: boolean;
+            /** @description `full`, `track_hidden`, or `offline`. */
+            now_playing_visibility?: string;
+            /** @description `listenbrainz` or `lastfm`. */
+            primary_music_source?: string;
+            /** @description Forward plays to Last.fm. */
+            scrobble_to_lastfm?: boolean;
+            /** @description Forward plays to ListenBrainz. */
+            scrobble_to_listenbrainz?: boolean;
+        };
+        /** @description Partial prefs update: absent fields keep their stored values. */
+        ScrobblePreferencesUpdate: {
+            /**
+             * @description New personal-mix auto-request intent.
+             * @default null
+             */
+            auto_request_personal_mix: boolean | null;
+            /**
+             * @description New Navidrome delegation switch.
+             * @default null
+             */
+            navidrome_handles_external_scrobbles: boolean | null;
+            /**
+             * @description New presence visibility.
+             * @default null
+             */
+            now_playing_visibility: string | null;
+            /**
+             * @description New primary source.
+             * @default null
+             */
+            primary_music_source: string | null;
+            /**
+             * @description New Last.fm forwarding switch.
+             * @default null
+             */
+            scrobble_to_lastfm: boolean | null;
+            /**
+             * @description New ListenBrainz forwarding switch.
+             * @default null
+             */
+            scrobble_to_listenbrainz: boolean | null;
+        };
         /** @description Answer to a scrobble or now-playing forward (v2 `ScrobbleResponse`). */
         ScrobbleResponse: {
             /**
@@ -7220,6 +10856,19 @@ export interface components {
             services?: {
                 [key: string]: components["schemas"]["ServiceResult"];
             };
+        };
+        /** @description Scrobble targets. */
+        ScrobbleSettingsDto: {
+            /**
+             * @description Scrobble to Last.fm (per-user credentials).
+             * @default false
+             */
+            scrobble_to_lastfm: boolean;
+            /**
+             * @description Scrobble to ListenBrainz.
+             * @default false
+             */
+            scrobble_to_listenbrainz: boolean;
         };
         /** @description One native scrobble, by name (v2 `ScrobbleRequest` fields). */
         ScrobbleSubmitRequest: {
@@ -7330,6 +10979,78 @@ export interface components {
          *     variant the rows hold; untagged so the wire keeps flat v2-style items.
          */
         SectionItem: components["schemas"]["ChartArtist"] | components["schemas"]["ChartAlbum"] | components["schemas"]["ChartTrack"] | components["schemas"]["ChartGenre"];
+        /** @description One toggleable UI section. */
+        SectionPrefItem: {
+            /** @description Backend availability (requires + linked services). */
+            available: boolean;
+            /** @description Description. */
+            description: string;
+            /** @description User toggle. */
+            enabled: boolean;
+            /** @description Section key. */
+            key: string;
+            /** @description Service requirement, when any. */
+            requires?: string | null;
+            /** @description Display title. */
+            title: string;
+            /** @description Layout zone. */
+            zone: string;
+        };
+        /** @description One section toggle update. */
+        SectionPrefUpdateItem: {
+            /** @description New toggle value. */
+            enabled: boolean;
+            /** @description Section key. */
+            key: string;
+        };
+        /** @description Section prefs by page. */
+        SectionPrefsResponse: {
+            /**
+             * @description Sections per page (`home`, `discover`, `sidebar`).
+             * @default {}
+             */
+            pages: {
+                [key: string]: components["schemas"]["SectionPrefItem"][];
+            };
+        };
+        /** @description Section prefs update (one page per call). */
+        SectionPrefsUpdate: {
+            /** @description Page to update (`home`, `discover`, `sidebar`). */
+            page: string;
+            /** @description Toggles to apply. */
+            sections: components["schemas"]["SectionPrefUpdateItem"][];
+        };
+        /** @description Security posture settings (no secrets; the HIBP path is a local file). */
+        SecuritySettingsDto: {
+            /**
+             * @description Check passwords against Have-I-Been-Pwned.
+             * @default true
+             */
+            hibp_check: boolean;
+            /**
+             * @description Local HIBP file; used instead of the API when present.
+             * @default
+             */
+            hibp_local_path: string;
+            /**
+             * @description HSTS include-subdomains flag.
+             * @default false
+             */
+            hsts_include_subdomains: boolean;
+            /**
+             * Format: int64
+             * @description HSTS max-age in seconds; 0 disables.
+             * @default 0
+             */
+            hsts_max_age: number;
+            /**
+             * @description HSTS preload flag.
+             * @default false
+             */
+            hsts_preload: boolean;
+            /** @default everyone */
+            library_download_access: components["schemas"]["DownloadAccessDto"];
+        };
         /** @description Server-wide year-in-review. */
         ServerWrappedResponse: {
             /** @description Per-user listener leaderboard. */
@@ -7437,6 +11158,134 @@ export interface components {
             /** @description True when no users exist yet and setup must run. */
             setup_required: boolean;
         };
+        /** @description Slot-lane posture. */
+        SlotView: {
+            /** @description Free background-lane permits. */
+            background_slots_available: number;
+            /** @description Background callers currently waiting for quiet. */
+            background_waiters: number;
+            /** @description Free image-lane permits. */
+            image_slots_available: number;
+            /** @description Whether user activity is inside the quiet window. */
+            user_active: boolean;
+            /** @description Free user-lane permits. */
+            user_slots_available: number;
+        };
+        /**
+         * @description slskd download-client connection. `api_key` is masked on read and
+         *     preserved on save when the masked sentinel comes back unchanged.
+         */
+        SlskdConnectionDto: {
+            /**
+             * @description API key (masked unless unset).
+             * @default
+             */
+            api_key: string;
+            /**
+             * Format: int64
+             * @description Retry base interval.
+             * @default 15
+             */
+            auto_retry_base_interval_minutes: number;
+            /**
+             * @description Automatic retry switch.
+             * @default true
+             */
+            auto_retry_enabled: boolean;
+            /**
+             * Format: int64
+             * @description Retry attempts.
+             * @default 6
+             */
+            auto_retry_max_attempts: number;
+            /**
+             * @description Client type tag.
+             * @default slskd
+             */
+            client_type: string;
+            /**
+             * Format: int64
+             * @description Remote-queue wait timeout.
+             * @default 120
+             */
+            download_queued_timeout_minutes: number;
+            /**
+             * Format: int64
+             * @description Frozen-transfer stall timeout.
+             * @default 30
+             */
+            download_stall_timeout_minutes: number;
+            /**
+             * @description Relative subpath inside the mount where slskd saves (confined).
+             * @default
+             */
+            downloads_subpath: string;
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * @description FLAC/MP3 only.
+             * @default true
+             */
+            flac_mp3_only: boolean;
+            /**
+             * Format: int64
+             * @description Concurrent downloads.
+             * @default 3
+             */
+            max_concurrent_downloads: number;
+            /**
+             * Format: int64
+             * @description Failover attempts per request.
+             * @default 3
+             */
+            max_failover_attempts: number;
+            /**
+             * Format: int64
+             * @description Preferred-quality wait.
+             * @default 15
+             */
+            preferred_quality_wait_minutes: number;
+            /**
+             * Format: double
+             * @description Preflight auto-accept score.
+             * @default 0.7
+             */
+            preflight_score_auto_accept: number;
+            /**
+             * Format: double
+             * @description Preflight manual-review floor.
+             * @default 0.5
+             */
+            preflight_score_manual_min: number;
+            /**
+             * @description Best accepted tier label.
+             * @default lossless
+             */
+            quality_max: string;
+            /**
+             * @description Worst accepted tier label.
+             * @default mp3_320
+             */
+            quality_min: string;
+            /**
+             * @description Absolute incomplete-downloads dir ("" disables the fallback).
+             * @default
+             */
+            slskd_incomplete_mount: string;
+            /**
+             * @description slskd base URL.
+             * @default
+             */
+            url: string;
+            /**
+             * @description Verify downloads after landing.
+             * @default true
+             */
+            verify_downloads: boolean;
+        };
         /**
          * @description Live slskd client status (v2 `DownloadClientStatusResponse`, trimmed to
          *     the client half; the mount half belongs to the downloads slice).
@@ -7474,6 +11323,18 @@ export interface components {
          * @enum {string}
          */
         SourceName: "jellyfin" | "navidrome" | "plex";
+        /**
+         * @description Acquisition source try-order, e.g. `["soulseek", "usenet"]`. Bundled
+         *     sources are always present; well-formed `plugin:<name>` keys pass
+         *     through order-preserved; anything else is dropped.
+         */
+        SourcePriorityDto: {
+            /**
+             * @description Try-order, best first.
+             * @default []
+             */
+            order: string[];
+        };
         /**
          * @description Authorize URL for the caller's Spotify link flow (v2
          *     `SpotifyAuthUrlResponse`).
@@ -7592,6 +11453,13 @@ export interface components {
              */
             total_tracks: number;
         };
+        /** @description Plain status answer for uninstalls and disconnects. */
+        StatusMessage: {
+            /** @description Human detail. */
+            message: string;
+            /** @description `ok`. */
+            status: string;
+        };
         /** @description Generic status answer for deletes. */
         StatusResponse: {
             /** @description Human message. */
@@ -7663,6 +11531,15 @@ export interface components {
              * @description Rows reconciled.
              */
             reconciled: number;
+        };
+        /** @description slskd test verdict: validity plus the reported version. */
+        TestConnectionResponse: {
+            /** @description Human summary. */
+            message: string;
+            /** @description Whether the submitted values checked out. */
+            valid: boolean;
+            /** @description Server version, when known. */
+            version?: string | null;
         };
         /** @description One personalized top pick. */
         TopPickItem: {
@@ -7955,6 +11832,39 @@ export interface components {
             /** @description Preferred source type. */
             source_type?: string | null;
         };
+        /**
+         * @description Which Usenet search side is active.
+         * @enum {string}
+         */
+        UsenetBackendDto: "indexers" | "prowlarr";
+        /**
+         * @description The active Usenet search backend (either/or): `"indexers"` for the
+         *     native Newznab priority list, `"prowlarr"` for the single Prowlarr
+         *     connection. Unknown values are a 400, never a silent reset.
+         */
+        UsenetSearchBackendDto: {
+            /** @default indexers */
+            backend: components["schemas"]["UsenetBackendDto"];
+        };
+        /** @description Release-type filters for discovery and search. */
+        UserPreferencesDto: {
+            /**
+             * @description Primary release types (album, ep, single, ...).
+             * @default [
+             *       "album",
+             *       "ep",
+             *       "single"
+             *     ]
+             */
+            primary_types: string[];
+            /**
+             * @description Secondary release types (studio, live, ...).
+             * @default [
+             *       "studio"
+             *     ]
+             */
+            secondary_types: string[];
+        };
         /** @description Public account shape. */
         UserResponse: {
             /** @description Served avatar URL, when an avatar is set. */
@@ -8029,6 +11939,17 @@ export interface components {
             /** @description New username: 3-32 chars of letters, digits, `.`, `_`, `-`. */
             username: string;
         };
+        /**
+         * @description Generic connection-test verdict. Reachable/bad-credential distinctions
+         *     ride in the body, never as a leaked 5xx, and the URL or host is never
+         *     echoed back.
+         */
+        VerifyConnectionResponse: {
+            /** @description Human summary. */
+            message: string;
+            /** @description Whether the submitted values checked out. */
+            valid: boolean;
+        };
         /** @description Running build identity. */
         VersionInfo: {
             /** @description Build timestamp when the image records one. */
@@ -8040,6 +11961,23 @@ export interface components {
         VisibilityBody: {
             /** @description True makes the playlist public; false makes it private. */
             is_public: boolean;
+        };
+        /** @description One durable-work channel's demand. */
+        WakeupChannelView: {
+            /** @description Channel name. */
+            channel: string;
+            /**
+             * Format: int64
+             * @description Wakeups consumed.
+             */
+            consumed_seq: number;
+            /** @description True when requested work is still unconsumed. */
+            pending: boolean;
+            /**
+             * Format: int64
+             * @description Wakeups requested.
+             */
+            requested_seq: number;
         };
         /** @description Wanted mutation outcome. */
         WantedActionResponse: {
@@ -8108,6 +12046,36 @@ export interface components {
             retry_count: number;
             /** @description Owner id (admins see every row). */
             user_id?: string | null;
+        };
+        /** @description Wanted watcher toggles. Cadence stays code constants on purpose. */
+        WantedWatcherDto: {
+            /**
+             * @description Off means badge-only even for auto-tier finds.
+             * @default true
+             */
+            auto_download_on_find: boolean;
+            /**
+             * Format: int64
+             * @description Days before a watch goes dormant.
+             * @default 365
+             */
+            dormant_after_days: number;
+            /**
+             * @description Master switch (rollback lever, read per sweep).
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Format: int64
+             * @description Max artist checks per sweep.
+             * @default 3
+             */
+            max_checks_per_sweep: number;
+            /**
+             * @description Watch partial albums too.
+             * @default true
+             */
+            watch_partial_albums: boolean;
         };
         /** @description The weekly exploration playlist shelf. */
         WeeklyExploration: {
@@ -8188,6 +12156,14 @@ export interface components {
              */
             listen_count: number;
         };
+        /** @description Shared secret for the wrapped endpoints (service-to-service). */
+        WrappedSettingsDto: {
+            /**
+             * @description API key (masked unless unset).
+             * @default
+             */
+            api_key: string;
+        };
         /** @description Top track row. */
         WrappedTrack: {
             /** @description Artist name. */
@@ -8220,6 +12196,30 @@ export interface components {
              * @description Year the stats cover.
              */
             year: number;
+        };
+        /** @description YouTube connection. */
+        YouTubeConnectionDto: {
+            /**
+             * @description API search switch.
+             * @default false
+             */
+            api_enabled: boolean;
+            /**
+             * @description API key (masked unless unset).
+             * @default
+             */
+            api_key: string;
+            /**
+             * Format: int64
+             * @description Daily quota limit (1-10000).
+             * @default 80
+             */
+            daily_quota_limit: number;
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
         };
         /** @description YouTube data-API quota state. */
         YouTubeQuotaResponse: {
@@ -8621,6 +12621,113 @@ export interface operations {
             };
         };
     };
+    list_backups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Backups on disk */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupListResponse"];
+                };
+            };
+        };
+    };
+    run_backup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Backup completed */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupRunResponse"];
+                };
+            };
+        };
+    };
+    restore_report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Backup file name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verification report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreReport"];
+                };
+            };
+        };
+    };
+    clear_cache: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CacheClearBody"];
+            };
+        };
+        responses: {
+            /** @description Clear counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CacheClearResponse"];
+                };
+            };
+        };
+    };
+    cache_stats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cache counters */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CacheStatsResponse"];
+                };
+            };
+        };
+    };
     admin_import_users: {
         parameters: {
             query?: never;
@@ -8681,6 +12788,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImportCandidateListResponse"];
+                };
+            };
+        };
+    };
+    run_precache: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Precache run started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrecacheRunResponse"];
+                };
+            };
+            /** @description A precache run is already live */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    provider_stats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provider snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderStatsResponse"];
+                };
+            };
+        };
+    };
+    queue_stats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Queue snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueStatsResponse"];
                 };
             };
         };
@@ -8770,6 +12944,56 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    get_quota: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Quota standing */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuotaResponse"];
+                };
+            };
+        };
+    };
+    set_quota: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuotaOverrideBody"];
+            };
+        };
+        responses: {
+            /** @description Fresh quota standing */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuotaResponse"];
+                };
             };
         };
     };
@@ -12762,6 +16986,119 @@ export interface operations {
             };
         };
     };
+    listenbrainz_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Link status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginConnectionStatus"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No link */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    connect_listenbrainz_route: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListenBrainzConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Link status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginConnectionStatus"];
+                };
+            };
+            /** @description Username required or credential rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description ListenBrainz is rate-limiting */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    disconnect_listenbrainz_route: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnect receipt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusMessage"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No link */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     put_email: {
         parameters: {
             query?: never;
@@ -12831,6 +17168,122 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["UserResponse"];
                 };
+            };
+        };
+    };
+    get_scrobble_preferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scrobble preferences */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScrobblePreferences"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_scrobble_preferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScrobblePreferencesUpdate"];
+            };
+        };
+        responses: {
+            /** @description Scrobble preferences */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScrobblePreferences"];
+                };
+            };
+            /** @description Unknown enum value */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_section_prefs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Section prefs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectionPrefsResponse"];
+                };
+            };
+        };
+    };
+    put_section_prefs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SectionPrefsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectionPrefsResponse"];
+                };
+            };
+            /** @description Section prefs are unwired */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -13816,6 +18269,420 @@ export interface operations {
                 content?: never;
             };
             /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_plugins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plugin listing */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginListResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin access required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    plugin_ext_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Plugin name */
+                name: string;
+                /** @description Declared route subpath */
+                subpath: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plugin answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin access required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown plugin or route */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Too many requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    plugin_ext_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Plugin name */
+                name: string;
+                /** @description Declared route subpath */
+                subpath: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plugin answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin access required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown plugin or route */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request body too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Too many requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    plugin_ext_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Plugin name */
+                name: string;
+                /** @description Declared route subpath */
+                subpath: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plugin answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin access required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown plugin or route */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Too many requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    install_plugin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginInstallRequest"];
+            };
+        };
+        responses: {
+            /** @description Installed plugin */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginInfo"];
+                };
+            };
+            /** @description Not a usable plugin repository */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin access required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_plugin_sources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plugin sources */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginSourcesResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_plugin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Plugin name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated plugin */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginInfo"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin access required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown plugin */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    uninstall_plugin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Plugin name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Uninstall receipt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusMessage"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin access required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown plugin */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    plugin_panel_js: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Plugin name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Panel bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not modified */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin access required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown plugin or panel */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -15425,6 +20292,2060 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    get_advanced: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Advanced tunables */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdvancedSettingsDto"];
+                };
+            };
+        };
+    };
+    put_advanced: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdvancedSettingsDto"];
+            };
+        };
+        responses: {
+            /** @description Saved tunables */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdvancedSettingsDto"];
+                };
+            };
+        };
+    };
+    get_cache_ttls: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Frontend cache TTLs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FrontendCacheTTLs"];
+                };
+            };
+        };
+    };
+    get_connect_apps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Connect Apps config */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectAppsDto"];
+                };
+            };
+        };
+    };
+    put_connect_apps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectAppsDto"];
+            };
+        };
+        responses: {
+            /** @description Saved config */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectAppsDto"];
+                };
+            };
+        };
+    };
+    get_slskd: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description slskd connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlskdConnectionDto"];
+                };
+            };
+        };
+    };
+    put_slskd: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SlskdConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Saved connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlskdConnectionDto"];
+                };
+            };
+        };
+    };
+    test_slskd: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SlskdConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestConnectionResponse"];
+                };
+            };
+        };
+    };
+    get_policy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Acquisition policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadPolicyDto"];
+                };
+            };
+        };
+    };
+    put_policy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DownloadPolicyDto"];
+            };
+        };
+        responses: {
+            /** @description Saved policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadPolicyDto"];
+                };
+            };
+        };
+    };
+    get_policy_summary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Policy summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicySummaryResponse"];
+                };
+            };
+        };
+    };
+    post_policy_impact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DownloadPolicyDto"];
+            };
+        };
+        responses: {
+            /** @description Impact preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyImpactResponse"];
+                };
+            };
+            /** @description Bucket counts are unwired */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_sabnzbd: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SABnzbd connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SabnzbdConnectionDto"];
+                };
+            };
+        };
+    };
+    put_sabnzbd: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SabnzbdConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Saved connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SabnzbdConnectionDto"];
+                };
+            };
+        };
+    };
+    test_sabnzbd: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SabnzbdConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SabnzbdTestResponse"];
+                };
+            };
+        };
+    };
+    get_source_priority: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Source try-order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePriorityDto"];
+                };
+            };
+        };
+    };
+    put_source_priority: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourcePriorityDto"];
+            };
+        };
+        responses: {
+            /** @description Saved try-order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePriorityDto"];
+                };
+            };
+        };
+    };
+    get_wanted: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Wanted watcher toggles */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WantedWatcherDto"];
+                };
+            };
+        };
+    };
+    put_wanted: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WantedWatcherDto"];
+            };
+        };
+        responses: {
+            /** @description Saved toggles */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WantedWatcherDto"];
+                };
+            };
+        };
+    };
+    get_events: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Events sources */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsSettingsDto"];
+                };
+            };
+        };
+    };
+    put_events: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EventsSettingsDto"];
+            };
+        };
+        responses: {
+            /** @description Saved sources */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsSettingsDto"];
+                };
+            };
+        };
+    };
+    test_skiddle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EventsSettingsDto"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyConnectionResponse"];
+                };
+            };
+        };
+    };
+    test_ticketmaster: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EventsSettingsDto"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyConnectionResponse"];
+                };
+            };
+        };
+    };
+    get_free_music: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Free-music settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreeMusicDto"];
+                };
+            };
+        };
+    };
+    put_free_music: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FreeMusicDto"];
+            };
+        };
+        responses: {
+            /** @description Saved settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreeMusicDto"];
+                };
+            };
+        };
+    };
+    get_get_it: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Store-region settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GetItDto"];
+                };
+            };
+        };
+    };
+    put_get_it: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GetItDto"];
+            };
+        };
+        responses: {
+            /** @description Saved settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GetItDto"];
+                };
+            };
+        };
+    };
+    dropped_home: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Section dropped in v3 */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    dropped_home_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Section dropped in v3 */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_indexers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Configured indexers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NewznabIndexerDto"][];
+                };
+            };
+        };
+    };
+    create_indexer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewznabIndexerDto"];
+            };
+        };
+        responses: {
+            /** @description Saved indexer id */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexerSavedResponse"];
+                };
+            };
+        };
+    };
+    reorder_indexers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IndexerReorderRequest"];
+            };
+        };
+        responses: {
+            /** @description Reordered */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationResult"];
+                };
+            };
+        };
+    };
+    get_search_backend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Search backend */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsenetSearchBackendDto"];
+                };
+            };
+        };
+    };
+    put_search_backend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UsenetSearchBackendDto"];
+            };
+        };
+        responses: {
+            /** @description Saved backend */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsenetSearchBackendDto"];
+                };
+            };
+        };
+    };
+    test_indexer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewznabIndexerDto"];
+            };
+        };
+        responses: {
+            /** @description Caps verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexerTestResponse"];
+                };
+            };
+        };
+    };
+    update_indexer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Indexer id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewznabIndexerDto"];
+            };
+        };
+        responses: {
+            /** @description Saved indexer id */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexerSavedResponse"];
+                };
+            };
+        };
+    };
+    delete_indexer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Indexer id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationResult"];
+                };
+            };
+        };
+    };
+    get_jellyfin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Jellyfin connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JellyfinConnectionDto"];
+                };
+            };
+        };
+    };
+    put_jellyfin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JellyfinConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Saved connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JellyfinConnectionDto"];
+                };
+            };
+        };
+    };
+    verify_jellyfin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JellyfinConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JellyfinVerifyResponse"];
+                };
+            };
+        };
+    };
+    get_lastfm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Last.fm master switch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LastFmSettingsDto"];
+                };
+            };
+        };
+    };
+    put_lastfm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LastFmSettingsDto"];
+            };
+        };
+        responses: {
+            /** @description Saved switch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LastFmSettingsDto"];
+                };
+            };
+        };
+    };
+    get_library: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Library settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibrarySettingsResponse"];
+                };
+            };
+        };
+    };
+    put_library: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibrarySettingsSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved library settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibrarySettingsResponse"];
+                };
+            };
+            /** @description Expected revision is stale */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    add_library_path: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryPathRequest"];
+            };
+        };
+        responses: {
+            /** @description Library settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibrarySettingsResponse"];
+                };
+            };
+        };
+    };
+    remove_library_path: {
+        parameters: {
+            query: {
+                /** @description Directory to remove */
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Library settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibrarySettingsResponse"];
+                };
+            };
+        };
+    };
+    get_schedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scan schedule */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryScanScheduleResponse"];
+                };
+            };
+        };
+    };
+    put_schedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryScanScheduleDto"];
+            };
+        };
+        responses: {
+            /** @description Saved schedule */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryScanScheduleResponse"];
+                };
+            };
+        };
+    };
+    dropped_library_sync: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Section dropped in v3 */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    dropped_library_sync_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Section dropped in v3 */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_watcher: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Filesystem poller knobs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilesystemWatcherDto"];
+                };
+            };
+        };
+    };
+    put_watcher: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FilesystemWatcherDto"];
+            };
+        };
+        responses: {
+            /** @description Saved poller knobs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilesystemWatcherDto"];
+                };
+            };
+        };
+    };
+    get_listenbrainz: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ListenBrainz connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListenBrainzConnectionDto"];
+                };
+            };
+        };
+    };
+    put_listenbrainz: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListenBrainzConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Saved connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListenBrainzConnectionDto"];
+                };
+            };
+        };
+    };
+    verify_listenbrainz: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListenBrainzConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyConnectionResponse"];
+                };
+            };
+            /** @description ListenBrainz is rate-limiting this server */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_musicbrainz: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description MusicBrainz settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MusicBrainzSettingsDto"];
+                };
+            };
+        };
+    };
+    put_musicbrainz: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MusicBrainzSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Saved settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MusicBrainzSettingsDto"];
+                };
+            };
+        };
+    };
+    activate_brainzmash: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MusicBrainzBindingRequest"];
+            };
+        };
+        responses: {
+            /** @description Activated settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MusicBrainzSettingsDto"];
+                };
+            };
+            /** @description Proposal is stale, unconsented, or unverified */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    consent_brainzmash: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MusicBrainzBindingRequest"];
+            };
+        };
+        responses: {
+            /** @description Consented settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MusicBrainzSettingsDto"];
+                };
+            };
+            /** @description Proposal is stale or outdated */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    stage_brainzmash: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Staged settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MusicBrainzSettingsDto"];
+                };
+            };
+        };
+    };
+    verify_musicbrainz: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MusicBrainzVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Verified settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MusicBrainzSettingsDto"];
+                };
+            };
+            /** @description Proposal is stale, or BrainzMash is active */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Probe failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_navidrome: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Navidrome connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NavidromeConnectionDto"];
+                };
+            };
+        };
+    };
+    put_navidrome: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NavidromeConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Saved connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NavidromeConnectionDto"];
+                };
+            };
+        };
+    };
+    doc_sync_now: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sync report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistSyncResult"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin access required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    verify_navidrome: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NavidromeConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyConnectionResponse"];
+                };
+            };
+        };
+    };
+    get_oidc: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OIDC connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OidcConnectionDto"];
+                };
+            };
+        };
+    };
+    put_oidc: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OidcConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Saved connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OidcConnectionDto"];
+                };
+            };
+        };
+    };
+    verify_oidc: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OidcConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyConnectionResponse"];
+                };
+            };
+        };
+    };
+    get_plex: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plex connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexConnectionDto"];
+                };
+            };
+        };
+    };
+    put_plex: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlexConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Saved connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexConnectionDto"];
+                };
+            };
+        };
+    };
+    get_plex_libraries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Music libraries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexLibrarySectionInfo"][];
+                };
+            };
+            /** @description Plex is not configured */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Plex is unreachable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    verify_plex: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlexConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexVerifyResponse"];
+                };
+            };
+        };
+    };
+    get_preferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Release-type filters */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPreferencesDto"];
+                };
+            };
+        };
+    };
+    put_preferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserPreferencesDto"];
+            };
+        };
+        responses: {
+            /** @description Saved filters */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPreferencesDto"];
+                };
+            };
+        };
+    };
+    get_primary_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Primary music source */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrimaryMusicSourceDto"];
+                };
+            };
+        };
+    };
+    put_primary_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrimaryMusicSourceDto"];
+            };
+        };
+        responses: {
+            /** @description Saved source */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrimaryMusicSourceDto"];
+                };
+            };
+        };
+    };
+    get_prowlarr: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Prowlarr connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProwlarrConnectionDto"];
+                };
+            };
+        };
+    };
+    put_prowlarr: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProwlarrConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Saved connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProwlarrConnectionDto"];
+                };
+            };
+        };
+    };
+    test_prowlarr: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProwlarrConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProwlarrTestResponse"];
+                };
+            };
+        };
+    };
+    get_scrobble: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scrobble targets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScrobbleSettingsDto"];
+                };
+            };
+        };
+    };
+    put_scrobble: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScrobbleSettingsDto"];
+            };
+        };
+        responses: {
+            /** @description Saved targets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScrobbleSettingsDto"];
+                };
+            };
+        };
+    };
+    get_security: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Security settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecuritySettingsDto"];
+                };
+            };
+        };
+    };
+    put_security: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecuritySettingsDto"];
+            };
+        };
+        responses: {
+            /** @description Saved settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecuritySettingsDto"];
+                };
+            };
+        };
+    };
+    verify_hibp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecuritySettingsDto"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyConnectionResponse"];
+                };
+            };
+        };
+    };
+    get_wrapped: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Wrapped settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WrappedSettingsDto"];
+                };
+            };
+        };
+    };
+    put_wrapped: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WrappedSettingsDto"];
+            };
+        };
+        responses: {
+            /** @description Saved settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WrappedSettingsDto"];
+                };
+            };
+        };
+    };
+    get_youtube: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description YouTube connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeConnectionDto"];
+                };
+            };
+        };
+    };
+    put_youtube: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["YouTubeConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Saved connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeConnectionDto"];
+                };
+            };
+        };
+    };
+    verify_youtube: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["YouTubeConnectionDto"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyConnectionResponse"];
+                };
             };
         };
     };

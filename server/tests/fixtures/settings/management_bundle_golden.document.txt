@@ -1,0 +1,204 @@
+{
+  "checksum": "sha256:c901f186baa1376804a62f00d254a781967a46682fe60f42bff0f57275896045",
+  "format": "droppedneedle-library-profile",
+  "payload": {
+    "naming_scripts": [
+      {
+        "key": "naming-1",
+        "name": "Standard",
+        "source": "{title}"
+      }
+    ],
+    "profile": {
+      "artwork": {
+        "approved_only": true,
+        "download_size": "full",
+        "embedded_enabled": true,
+        "embedded_format": "jpeg",
+        "embedded_front_only": true,
+        "embedded_maximum_size": 1200,
+        "external_enabled": true,
+        "external_format": "original",
+        "external_front_only": true,
+        "external_maximum_size": 0,
+        "external_naming_script_id": null,
+        "image_types": [
+          "front"
+        ],
+        "local_file_patterns": [
+          "cover.jpg",
+          "cover.jpeg",
+          "cover.png",
+          "cover.webp",
+          "folder.jpg",
+          "folder.png",
+          "front.jpg",
+          "front.png"
+        ],
+        "minimum_height": 0,
+        "minimum_width": 0,
+        "never_replace_with_smaller": true,
+        "overwrite_external_files": true,
+        "preserve_existing_types": [],
+        "providers": [
+          "cover_art_archive_release",
+          "cover_art_archive_release_group",
+          "local_files",
+          "embedded"
+        ]
+      },
+      "description": "Café test — unicode ✓",
+      "enrichment": {
+        "lyrics": {
+          "enabled": true,
+          "preserve_existing": false,
+          "provider": "lrclib",
+          "required": false,
+          "write_plain": true,
+          "write_synced": true
+        },
+        "replaygain": {
+          "album_aware": true,
+          "enabled": false,
+          "mode": "preserve",
+          "required": false
+        }
+      },
+      "file_behavior": {
+        "preserve_permissions": true,
+        "preserve_timestamps": true,
+        "reject_symlinks": true,
+        "strict_capability_gate": true,
+        "validate_technical_audio": true,
+        "validate_written_metadata": true
+      },
+      "genres": {
+        "aliases": [],
+        "allowlist": [],
+        "canonicalize": true,
+        "denylist": [],
+        "enabled": true,
+        "lastfm_minimum_weight": 10,
+        "lastfm_whitelist_only": true,
+        "listenbrainz_curated_only": true,
+        "listenbrainz_minimum_count": 1,
+        "maximum_ancestry_depth": 4,
+        "maximum_count": 5,
+        "mode": "replace",
+        "musicbrainz_minimum_count": 1,
+        "preferred_casing": [],
+        "sources": [
+          "musicbrainz",
+          "listenbrainz"
+        ],
+        "write_primary_only_for_constrained_formats": false
+      },
+      "identity": {
+        "automatic_edition_acceptance_enabled": false
+      },
+      "metadata": {
+        "artist_credits": {
+          "preferred_locales": [],
+          "standardization": "credited",
+          "translate_names": false
+        },
+        "enabled": true,
+        "fields": [
+          {
+            "clear_when_canonical_missing": true,
+            "field": "title",
+            "mode": "replace"
+          }
+        ],
+        "format_compatibility": {
+          "id3_text_encoding": "utf8",
+          "id3_version": "2.4",
+          "id3v23_join_delimiter": "; ",
+          "mp3_apev2_policy": "preserve",
+          "raw_aac_tag_policy": "save_apev2",
+          "remove_id3_from_flac": false,
+          "wav_tag_policy": "id3"
+        },
+        "preserve_embedded_art_during_scrub": true,
+        "preserve_fields": [],
+        "relationships": {
+          "enabled": true,
+          "types": [
+            "composer",
+            "lyricist",
+            "conductor",
+            "performer",
+            "arranger",
+            "remixer",
+            "producer"
+          ]
+        },
+        "scrub_unmanaged_tags": false,
+        "tagging_script_ids": [
+          "tagging-1"
+        ]
+      },
+      "name": "Golden Export",
+      "notification": {
+        "refresh_external_servers": false
+      },
+      "organization": {
+        "compatibility": {
+          "extension_case": "preserve",
+          "maximum_component_length": 240,
+          "maximum_path_length": 4096,
+          "replace_non_ascii": false,
+          "replace_spaces_with_underscores": false,
+          "separator_replacement": "_",
+          "unicode_normalization": "NFC",
+          "windows_compatible": true,
+          "windows_legacy_path_limit": false
+        },
+        "move_enabled": true,
+        "move_sidecars": true,
+        "multi_disc_naming_script_id": null,
+        "naming_script_id": "naming-1",
+        "remove_empty_directories": true,
+        "rename_enabled": true,
+        "sidecar_patterns": [
+          "cover.jpg",
+          "cover.jpeg",
+          "cover.png",
+          "cover.webp",
+          "folder.jpg",
+          "folder.jpeg",
+          "folder.png",
+          "front.jpg",
+          "front.png",
+          "back.jpg",
+          "back.jpeg",
+          "back.png",
+          "back.webp",
+          "booklet*.jpg",
+          "booklet*.jpeg",
+          "booklet*.png",
+          "booklet*.webp",
+          "medium*.jpg",
+          "medium*.jpeg",
+          "medium*.png",
+          "medium*.webp",
+          "*.cue",
+          "*.log",
+          "*.lrc",
+          "*.m3u",
+          "*.m3u8",
+          "*.pls"
+        ],
+        "source_cleanup": "remove_after_confirmed_move"
+      }
+    },
+    "tagging_scripts": [
+      {
+        "key": "tagging-1",
+        "name": "Tag",
+        "source": "set genre = \"Rock\""
+      }
+    ]
+  },
+  "version": 1
+}

@@ -212,17 +212,60 @@ impl E2e {
             library.clone(),
             &connect_apps,
         );
+        let providers = Arc::new(droppedneedle::providers::Providers::with_memory_cache());
+        let backup_dir = self
+            .db_path
+            .parent()
+            .map(|parent| parent.join("backups"))
+            .unwrap_or_else(std::env::temp_dir);
+        let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone());
+        let admin = droppedneedle::admin::AdminSetup::new(
+            auth.users.clone(),
+            acquire.requests.quota.clone(),
+            Arc::new(droppedneedle::providers::InMemoryProviderCache::new()),
+            providers.clone(),
+        )
+        .with_db(droppedneedle::admin::AdminDb::new(
+            self.runtime.pool().clone(),
+            self.runtime.lane().clone(),
+        ))
+        .with_backups(droppedneedle::db::BackupService::new(
+            &self.db_path,
+            &backup_dir,
+        ))
+        .with_checkpoint(self.runtime.checkpoint().clone())
+        .with_precache(jobs.precache_trigger());
+        let plugins = droppedneedle::plugins::wiring::PluginsSetup::for_tests(
+            auth.users.clone(),
+            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
+            jobs.registry().clone(),
+        )
+        .expect("test plugins bundle builds");
+        let settings = droppedneedle::settings::wiring::SettingsSetup::for_tests(
+            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
+            auth.users.clone(),
+        )
+        .expect("test settings bundle builds")
+        .with_impact_buckets(Arc::new(
+            droppedneedle::settings::services::SqliteImpactBuckets {
+                pool: self.runtime.pool().clone(),
+            },
+        ));
         let state = AppState::new(
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             self.http.clone(),
             app_config,
             auth,
             reads,
-            Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
+            providers,
             stage6,
             acquire,
             library,
             compat,
+            admin,
+            settings,
+            jobs,
+            plugins,
         );
         create_app(state)
     }
@@ -988,6 +1031,194 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/me/connections/lastfm/session",
         Posture::User,
     ),
+    // Stage-10 settings surface: every /settings route is admin-only;
+    // section prefs are per-user.
+    ("GET", "/api/v3/me/section-prefs", Posture::User),
+    ("PUT", "/api/v3/me/section-prefs", Posture::User),
+    ("GET", "/api/v3/settings/advanced", Posture::Admin),
+    ("PUT", "/api/v3/settings/advanced", Posture::Admin),
+    ("GET", "/api/v3/settings/cache-ttls", Posture::Admin),
+    ("GET", "/api/v3/settings/connect-apps", Posture::Admin),
+    ("PUT", "/api/v3/settings/connect-apps", Posture::Admin),
+    (
+        "GET",
+        "/api/v3/settings/download-client/config",
+        Posture::Admin,
+    ),
+    (
+        "PUT",
+        "/api/v3/settings/download-client/config",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/download-client/test",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/settings/download-clients/policy",
+        Posture::Admin,
+    ),
+    (
+        "PUT",
+        "/api/v3/settings/download-clients/policy",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/settings/download-clients/policy-summary",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/download-clients/policy/impact",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/settings/download-clients/sabnzbd",
+        Posture::Admin,
+    ),
+    (
+        "PUT",
+        "/api/v3/settings/download-clients/sabnzbd",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/download-clients/sabnzbd/test",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/settings/download-clients/source-priority",
+        Posture::Admin,
+    ),
+    (
+        "PUT",
+        "/api/v3/settings/download-clients/source-priority",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/settings/download-clients/wanted",
+        Posture::Admin,
+    ),
+    (
+        "PUT",
+        "/api/v3/settings/download-clients/wanted",
+        Posture::Admin,
+    ),
+    ("GET", "/api/v3/settings/events", Posture::Admin),
+    ("PUT", "/api/v3/settings/events", Posture::Admin),
+    (
+        "POST",
+        "/api/v3/settings/events/test-skiddle",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/events/test-ticketmaster",
+        Posture::Admin,
+    ),
+    ("GET", "/api/v3/settings/free-music", Posture::Admin),
+    ("PUT", "/api/v3/settings/free-music", Posture::Admin),
+    ("GET", "/api/v3/settings/get-it", Posture::Admin),
+    ("PUT", "/api/v3/settings/get-it", Posture::Admin),
+    ("GET", "/api/v3/settings/home", Posture::Admin),
+    ("PUT", "/api/v3/settings/home", Posture::Admin),
+    ("GET", "/api/v3/settings/indexers", Posture::Admin),
+    ("POST", "/api/v3/settings/indexers", Posture::Admin),
+    ("POST", "/api/v3/settings/indexers/reorder", Posture::Admin),
+    (
+        "GET",
+        "/api/v3/settings/indexers/search-backend",
+        Posture::Admin,
+    ),
+    (
+        "PUT",
+        "/api/v3/settings/indexers/search-backend",
+        Posture::Admin,
+    ),
+    ("POST", "/api/v3/settings/indexers/test", Posture::Admin),
+    ("PUT", "/api/v3/settings/indexers/{id}", Posture::Admin),
+    ("DELETE", "/api/v3/settings/indexers/{id}", Posture::Admin),
+    ("GET", "/api/v3/settings/jellyfin", Posture::Admin),
+    ("PUT", "/api/v3/settings/jellyfin", Posture::Admin),
+    ("POST", "/api/v3/settings/jellyfin/verify", Posture::Admin),
+    ("GET", "/api/v3/settings/lastfm", Posture::Admin),
+    ("PUT", "/api/v3/settings/lastfm", Posture::Admin),
+    ("GET", "/api/v3/settings/library", Posture::Admin),
+    ("PUT", "/api/v3/settings/library", Posture::Admin),
+    ("POST", "/api/v3/settings/library/paths", Posture::Admin),
+    ("DELETE", "/api/v3/settings/library/paths", Posture::Admin),
+    ("GET", "/api/v3/settings/library/schedule", Posture::Admin),
+    ("PUT", "/api/v3/settings/library/schedule", Posture::Admin),
+    ("GET", "/api/v3/settings/library/sync", Posture::Admin),
+    ("PUT", "/api/v3/settings/library/sync", Posture::Admin),
+    ("GET", "/api/v3/settings/library/watcher", Posture::Admin),
+    ("PUT", "/api/v3/settings/library/watcher", Posture::Admin),
+    ("GET", "/api/v3/settings/listenbrainz", Posture::Admin),
+    ("PUT", "/api/v3/settings/listenbrainz", Posture::Admin),
+    (
+        "POST",
+        "/api/v3/settings/listenbrainz/verify",
+        Posture::Admin,
+    ),
+    ("GET", "/api/v3/settings/musicbrainz", Posture::Admin),
+    ("PUT", "/api/v3/settings/musicbrainz", Posture::Admin),
+    (
+        "POST",
+        "/api/v3/settings/musicbrainz/activate",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/musicbrainz/brainzmash/consent",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/musicbrainz/brainzmash/stage",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/musicbrainz/verify",
+        Posture::Admin,
+    ),
+    ("GET", "/api/v3/settings/navidrome", Posture::Admin),
+    ("PUT", "/api/v3/settings/navidrome", Posture::Admin),
+    ("POST", "/api/v3/settings/navidrome/verify", Posture::Admin),
+    ("GET", "/api/v3/settings/oidc", Posture::Admin),
+    ("PUT", "/api/v3/settings/oidc", Posture::Admin),
+    ("POST", "/api/v3/settings/oidc/verify", Posture::Admin),
+    ("GET", "/api/v3/settings/plex", Posture::Admin),
+    ("PUT", "/api/v3/settings/plex", Posture::Admin),
+    ("GET", "/api/v3/settings/plex/libraries", Posture::Admin),
+    ("POST", "/api/v3/settings/plex/verify", Posture::Admin),
+    ("GET", "/api/v3/settings/preferences", Posture::Admin),
+    ("PUT", "/api/v3/settings/preferences", Posture::Admin),
+    ("GET", "/api/v3/settings/primary-source", Posture::Admin),
+    ("PUT", "/api/v3/settings/primary-source", Posture::Admin),
+    ("GET", "/api/v3/settings/prowlarr/config", Posture::Admin),
+    ("PUT", "/api/v3/settings/prowlarr/config", Posture::Admin),
+    ("POST", "/api/v3/settings/prowlarr/test", Posture::Admin),
+    ("GET", "/api/v3/settings/scrobble", Posture::Admin),
+    ("PUT", "/api/v3/settings/scrobble", Posture::Admin),
+    ("GET", "/api/v3/settings/security", Posture::Admin),
+    ("PUT", "/api/v3/settings/security", Posture::Admin),
+    (
+        "POST",
+        "/api/v3/settings/security/verify-hibp",
+        Posture::Admin,
+    ),
+    ("GET", "/api/v3/settings/wrapped", Posture::Admin),
+    ("PUT", "/api/v3/settings/wrapped", Posture::Admin),
+    ("GET", "/api/v3/settings/youtube", Posture::Admin),
+    ("PUT", "/api/v3/settings/youtube", Posture::Admin),
+    ("POST", "/api/v3/settings/youtube/verify", Posture::Admin),
     // Admin routes.
     ("GET", "/api/v3/admin/users", Posture::Admin),
     ("POST", "/api/v3/admin/users", Posture::Admin),
@@ -1009,6 +1240,57 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/admin/import/jellyfin", Posture::Admin),
     ("GET", "/api/v3/admin/import/plex", Posture::Admin),
     ("POST", "/api/v3/admin/import", Posture::Admin),
+    // Stage-10 admin UX.
+    ("GET", "/api/v3/admin/backups", Posture::Admin),
+    ("POST", "/api/v3/admin/backups", Posture::Admin),
+    (
+        "GET",
+        "/api/v3/admin/backups/{name}/restore-report",
+        Posture::Admin,
+    ),
+    ("GET", "/api/v3/admin/cache/stats", Posture::Admin),
+    ("POST", "/api/v3/admin/cache/clear", Posture::Admin),
+    ("GET", "/api/v3/admin/queue-stats", Posture::Admin),
+    ("GET", "/api/v3/admin/provider-stats", Posture::Admin),
+    ("GET", "/api/v3/admin/users/{id}/quota", Posture::Admin),
+    ("PUT", "/api/v3/admin/users/{id}/quota", Posture::Admin),
+    // Stage-10 plugins + scrobble. Plugin management and the panel bundle
+    // are admin-only; sources, guarded plugin HTTP, and the caller's own
+    // scrobble settings admit any signed-in user.
+    ("GET", "/api/v3/plugins", Posture::Admin),
+    ("POST", "/api/v3/plugins/install", Posture::Admin),
+    ("PUT", "/api/v3/plugins/{name}", Posture::Admin),
+    ("DELETE", "/api/v3/plugins/{name}", Posture::Admin),
+    ("GET", "/api/v3/plugins/sources", Posture::User),
+    ("GET", "/api/v3/plugins/ext/{name}/{subpath}", Posture::User),
+    (
+        "POST",
+        "/api/v3/plugins/ext/{name}/{subpath}",
+        Posture::User,
+    ),
+    (
+        "DELETE",
+        "/api/v3/plugins/ext/{name}/{subpath}",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/plugins/{name}/ui/panel.js", Posture::Admin),
+    ("GET", "/api/v3/me/scrobble-preferences", Posture::User),
+    ("PUT", "/api/v3/me/scrobble-preferences", Posture::User),
+    ("PUT", "/api/v3/me/connections/listenbrainz", Posture::User),
+    ("GET", "/api/v3/me/connections/listenbrainz", Posture::User),
+    (
+        "DELETE",
+        "/api/v3/me/connections/listenbrainz",
+        Posture::User,
+    ),
+    // Stage-10 jobs: the playlist export trigger and the precache trigger
+    // are both admin-only.
+    (
+        "POST",
+        "/api/v3/settings/navidrome/playlist-sync",
+        Posture::Admin,
+    ),
+    ("POST", "/api/v3/admin/precache/run", Posture::Admin),
     // Stage-4 library reads.
     ("GET", "/api/v3/library/albums", Posture::User),
     ("GET", "/api/v3/library/albums/{id}", Posture::User),
@@ -1538,7 +1820,10 @@ fn documented_routes() -> Vec<(String, String)> {
     routes
 }
 
-#[tokio::test]
+// Multi-thread: the plugins role lookup bridges the async user store with
+// `block_in_place`, which needs a multi-thread runtime (production runs
+// one; the other e2e tests never reach those extractors).
+#[tokio::test(flavor = "multi_thread")]
 async fn auth_on_every_endpoint() {
     // Coverage first, both directions: a documented route without a matrix
     // row fails by name, and a stale row fails too.
@@ -1755,6 +2040,18 @@ async fn auth_on_every_endpoint() {
         // service (404 on the empty catalog) instead of failing validation.
         if *template == "/api/v3/library/albums/{album_id}/edition-pin" && *method == "PUT" {
             body = Some(json!({"release_mbid": "e2e-dummy-id"}));
+        }
+        // Shaped binding body: a BrainzMash binding on a non-Brainzmash
+        // selection answers 400 without probing. The empty object would
+        // decode as a default tier update and probe MusicBrainz for real,
+        // which the matrix must never do.
+        if *template == "/api/v3/settings/musicbrainz/verify" && *method == "POST" {
+            body = Some(json!({
+                "access_revision": "matrix",
+                "source_id": "matrix",
+                "generation": 1,
+                "disclosure_version": "matrix",
+            }));
         }
         let (status, response_body) = if template.starts_with("/api/v3/covers/") {
             let (status, _, _) = call_raw(

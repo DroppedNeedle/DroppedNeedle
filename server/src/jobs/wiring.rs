@@ -1,0 +1,490 @@
+//! Stage-10 jobs bundle: one registry plus the loops it owns.
+//!
+//! [`JobsSetup`] is the one `AppState` field jobs adds. It owns the single
+//! [`JobRegistry`] every stage-10 loop registers on — the five always-on
+//! boot loops, the events kick one-shot, precache runs, and the plugin
+//! tick loops (via the plugins bundle, which shares this registry rather
+//! than running its own). One registry, one rebuild choke point
+//! (`sync_ticks`), no duplicate loop mechanics.
+//!
+//! Production binds [`DurableRegistryStore`] (liveness rows survive
+//! restarts); test states bind [`MemoryRegistryStore`] behind the same
+//! [`StoreKind`] seam so the setup type stays concrete. Loop backends are
+//! real where they exist (checkpoint passes, Navidrome/events settings
+//! reads) and honest no-ops where their services have not landed yet
+//! (presence sources, the personal mixer, the playlist exporter, the
+//! events sweep); each interim adapter names its follow-up.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use axum::Router;
+
+use crate::auth::users::{UsersDeps, roles::Role};
+use crate::db::{CheckpointService, DurableWorkWakeups, WriteLane};
+use crate::jobs::checkpoint::{self, CheckpointRunner};
+use crate::jobs::events_kick::{self, KickOutcome};
+use crate::jobs::events_watcher::{self, EventsWatcher, PollTimeSource, SystemWatchClock};
+use crate::jobs::personal_mix::{self, PersonalMixer};
+use crate::jobs::playlist_sync::{
+    self, PlaylistExporter, PlaylistSyncConfig, PlaylistSyncResult, PlaylistSyncSettings,
+    PlaylistSyncState, SyncRoles,
+};
+use crate::jobs::precache::{self, PrecacheLimits, PrecacheWork};
+use crate::jobs::presence::{self, PresenceSession, PresenceSources, PresenceStore, SourceStatus};
+use crate::jobs::registry::{
+    AlreadyRunning, BoxFuture, DurableRegistryStore, JobKind, JobRegistry, MemoryRegistryStore,
+    RegistryStore, WakeupChannel,
+};
+use crate::runtime_config::ConfigStore;
+use crate::runtime_config::secret_sections::{
+    AdvancedSettings, EventsSettings, NavidromeConnection,
+};
+use crate::settings::effects::{EventsKick, FnKick};
+
+/// Grace per job at shutdown. Loops select on their stop signal next to
+/// every sleep, so this only binds a cycle that is mid-flight.
+pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+
+/// Registry rows behind one concrete type: durable in production, memory
+/// in test states. The enum keeps [`JobsSetup`] non-generic so `AppState`
+/// holds one field type.
+#[derive(Clone, Debug)]
+pub enum StoreKind {
+    /// In-memory rows for states without a database.
+    Memory(MemoryRegistryStore),
+    /// Durable rows over the writer lane.
+    Durable(DurableRegistryStore),
+}
+
+impl RegistryStore for StoreKind {
+    fn register_job(
+        &self,
+        name: &str,
+        kind: JobKind,
+        channel: Option<WakeupChannel>,
+    ) -> BoxFuture<'_, ()> {
+        match self {
+            Self::Memory(store) => store.register_job(name, kind, channel),
+            Self::Durable(store) => store.register_job(name, kind, channel),
+        }
+    }
+
+    fn set_job_state(
+        &self,
+        name: &str,
+        state: crate::jobs::registry::JobState,
+    ) -> BoxFuture<'_, ()> {
+        match self {
+            Self::Memory(store) => store.set_job_state(name, state),
+            Self::Durable(store) => store.set_job_state(name, state),
+        }
+    }
+
+    fn heartbeat(&self, name: &str) -> BoxFuture<'_, ()> {
+        match self {
+            Self::Memory(store) => store.heartbeat(name),
+            Self::Durable(store) => store.heartbeat(name),
+        }
+    }
+
+    fn get_job(&self, name: &str) -> BoxFuture<'_, Option<crate::db::durable::JobRecord>> {
+        match self {
+            Self::Memory(store) => store.get_job(name),
+            Self::Durable(store) => store.get_job(name),
+        }
+    }
+
+    fn list_jobs(&self) -> BoxFuture<'_, Vec<crate::db::durable::JobRecord>> {
+        match self {
+            Self::Memory(store) => store.list_jobs(),
+            Self::Durable(store) => store.list_jobs(),
+        }
+    }
+}
+
+/// Checkpoint passes: the real service in production, skipped cycles on
+/// states without one (test states never spawn boot loops anyway).
+#[derive(Clone, Debug, Default)]
+pub struct CheckpointInput {
+    service: Option<CheckpointService>,
+}
+
+impl CheckpointRunner for CheckpointInput {
+    fn cycle(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            if let Some(service) = &self.service {
+                service.cycle().await;
+            }
+        })
+    }
+}
+
+/// Presence feed without a backend: sweeps and reconciles are no-ops
+/// until the now-playing feed slice lands its store here.
+#[derive(Clone, Debug, Default)]
+pub struct UnwiredPresenceStore;
+
+impl PresenceStore for UnwiredPresenceStore {
+    fn sweep(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
+
+    fn reconcile(&self, _source: &str, _sessions: Vec<PresenceSession>) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
+}
+
+/// Presence sources without pollers: every source reads disabled (nothing
+/// feeds the loop yet), so each cycle reconciles empty slices and moves
+/// on. The Jellyfin/Navidrome/Plex session pollers plug in here.
+#[derive(Clone, Debug, Default)]
+pub struct DisabledPresenceSources;
+
+impl PresenceSources for DisabledPresenceSources {
+    fn status(&self) -> BoxFuture<'_, SourceStatus> {
+        Box::pin(async { SourceStatus::default() })
+    }
+
+    fn poll_jellyfin(&self) -> BoxFuture<'_, Result<Vec<PresenceSession>, String>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn poll_navidrome(&self) -> BoxFuture<'_, Result<Vec<PresenceSession>, String>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn poll_plex(&self) -> BoxFuture<'_, Result<Vec<PresenceSession>, String>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+}
+
+/// Personal-mix refresh without a mixer: cycles succeed without rebuilding
+/// until the all-users mixer lands behind this seam.
+#[derive(Clone, Debug, Default)]
+pub struct UnwiredMixer;
+
+impl PersonalMixer for UnwiredMixer {
+    fn run_for_all_users(&self) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// Playlist sync config from saved settings, re-read every cycle and every
+/// route call. `None` (unwired store, unreadable section, disabled, or an
+/// empty target path) means skip quietly.
+#[derive(Clone, Debug, Default)]
+pub struct NavidromeSyncSettings {
+    store: Option<Arc<ConfigStore>>,
+}
+
+impl PlaylistSyncSettings for NavidromeSyncSettings {
+    fn sync_config(&self) -> BoxFuture<'_, Option<PlaylistSyncConfig>> {
+        Box::pin(async move {
+            let Some(store) = &self.store else {
+                return None;
+            };
+            let Ok(connection) = store.get_raw::<NavidromeConnection>() else {
+                return None;
+            };
+            if !connection.enabled
+                || !connection.playlist_sync_enabled
+                || connection.playlist_sync_path.trim().is_empty()
+            {
+                return None;
+            }
+            Some(PlaylistSyncConfig {
+                target_dir: connection.playlist_sync_path,
+                scope: connection.playlist_sync_scope,
+                remove_deleted: connection.playlist_sync_remove_deleted,
+            })
+        })
+    }
+}
+
+/// Route role lookups over the user store. Async-native: the gate awaits
+/// the row read, so role changes land on the next call with no thread
+/// bridging. Missing accounts and store faults fail closed.
+#[derive(Clone)]
+pub struct StoreSyncRoles {
+    users: UsersDeps,
+}
+
+impl SyncRoles for StoreSyncRoles {
+    fn role_of(&self, user_id: &str) -> BoxFuture<'_, Option<Role>> {
+        let users = self.users.clone();
+        let user_id = user_id.to_owned();
+        Box::pin(async move {
+            users
+                .users
+                .get_by_id(&user_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|user| user.role)
+        })
+    }
+}
+
+/// Playlist file writer without an exporter: every sync reports failure
+/// with the reason, so the loop backs off and the route answers honestly
+/// until the m3u8 exporter lands here.
+#[derive(Clone, Debug, Default)]
+pub struct UnwiredPlaylistExporter;
+
+impl PlaylistExporter for UnwiredPlaylistExporter {
+    fn sync(&self, _config: PlaylistSyncConfig) -> BoxFuture<'_, PlaylistSyncResult> {
+        Box::pin(async {
+            PlaylistSyncResult {
+                success: false,
+                message: "Playlist file export is not wired yet; the sync stays pending."
+                    .to_owned(),
+                ..PlaylistSyncResult::default()
+            }
+        })
+    }
+}
+
+/// Events sweep without a backend: sweeps succeed without walking any
+/// source until the Ticketmaster/Skiddle sweep service lands here.
+#[derive(Clone, Debug, Default)]
+pub struct UnwiredEventsWatcher;
+
+impl EventsWatcher for UnwiredEventsWatcher {
+    fn run_sweep(&self, _skip_recent_hours: Option<f64>) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// Precache phases without an implementation: every run reports the reason
+/// and lands failed, so the trigger answers honestly until the artist,
+/// album, discovery, and AudioDB passes land here.
+#[derive(Clone, Debug, Default)]
+pub struct UnwiredPrecacheWork;
+
+impl PrecacheWork for UnwiredPrecacheWork {
+    fn run(&self, _progress: precache::Progress) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async {
+            Err("Library precache phases are not wired yet; the run stays pending.".to_owned())
+        })
+    }
+}
+
+/// The production precache trigger: one supervised run per call through the
+/// shared registry. Watchdog limits re-read the advanced settings on every
+/// run; an unwired store or unreadable section falls back to the shipped
+/// timeouts.
+#[derive(Clone)]
+pub struct PrecacheTrigger {
+    registry: JobRegistry<StoreKind>,
+    config: Option<Arc<ConfigStore>>,
+}
+
+impl PrecacheTrigger {
+    /// Start one supervised run. Rejected while a run is live, like any
+    /// duplicate job name.
+    pub async fn run(&self) -> Result<precache::PrecacheHandle, AlreadyRunning> {
+        precache::spawn_run(&self.registry, UnwiredPrecacheWork, self.limits()).await
+    }
+
+    /// Watchdog limits for the next run. Values clamp to at least one unit;
+    /// a garbage section must not arm a zero stall timeout.
+    fn limits(&self) -> PrecacheLimits {
+        let fallback = AdvancedSettings::default();
+        let (stall_minutes, max_hours) = self
+            .config
+            .as_ref()
+            .and_then(|store| store.get_raw::<AdvancedSettings>().ok())
+            .map(|settings| {
+                (
+                    settings.sync_stall_timeout_minutes,
+                    settings.sync_max_timeout_hours,
+                )
+            })
+            .unwrap_or((
+                fallback.sync_stall_timeout_minutes,
+                fallback.sync_max_timeout_hours,
+            ));
+        PrecacheLimits::new(
+            Duration::from_secs(stall_minutes.max(1) as u64 * 60),
+            Duration::from_secs(max_hours.max(1) as u64 * 3600),
+        )
+    }
+}
+
+/// The admin's events `poll_time`, re-read every scheduler tick. Missing
+/// stores and unreadable sections fall back to 06:00, the watcher's own
+/// fallback for garbage values.
+#[derive(Clone, Debug, Default)]
+pub struct EventsPollTime {
+    store: Option<Arc<ConfigStore>>,
+}
+
+impl PollTimeSource for EventsPollTime {
+    fn poll_time(&self) -> String {
+        self.store
+            .as_ref()
+            .and_then(|store| store.get_raw::<EventsSettings>().ok())
+            .map(|settings| settings.poll_time)
+            .unwrap_or_else(|| "06:00".to_owned())
+    }
+}
+
+/// Everything `create_app` and `serve` need for the jobs slice: the shared
+/// registry, the playlist route state, and the boot-loop inputs.
+#[derive(Clone)]
+pub struct JobsSetup {
+    registry: JobRegistry<StoreKind>,
+    checkpoint: CheckpointInput,
+    playlist: PlaylistSyncState<NavidromeSyncSettings, UnwiredPlaylistExporter>,
+    poll_time: EventsPollTime,
+    watcher: UnwiredEventsWatcher,
+    config: Option<Arc<ConfigStore>>,
+}
+
+impl JobsSetup {
+    /// Bind the production backends: durable rows, live checkpoint passes,
+    /// settings reads over the shared store, and the route's admin gate over
+    /// the user store.
+    pub fn build(
+        users: UsersDeps,
+        wakeups: DurableWorkWakeups,
+        lane: WriteLane,
+        checkpoint: CheckpointService,
+        config: Arc<ConfigStore>,
+    ) -> Self {
+        Self {
+            registry: JobRegistry::new(StoreKind::Durable(DurableRegistryStore::new(
+                wakeups, lane,
+            ))),
+            checkpoint: CheckpointInput {
+                service: Some(checkpoint),
+            },
+            playlist: PlaylistSyncState {
+                settings: NavidromeSyncSettings {
+                    store: Some(Arc::clone(&config)),
+                },
+                exporter: UnwiredPlaylistExporter,
+                roles: Arc::new(StoreSyncRoles { users }),
+            },
+            poll_time: EventsPollTime {
+                store: Some(Arc::clone(&config)),
+            },
+            watcher: UnwiredEventsWatcher,
+            config: Some(config),
+        }
+    }
+
+    /// Test bundle: memory rows, skipped checkpoint passes, sync off, and the
+    /// live admin gate over the caller's user store. Route tests exercise the
+    /// playlist route through this; loop tests bind the memory stores
+    /// directly.
+    pub fn for_tests(users: UsersDeps) -> Self {
+        Self {
+            registry: JobRegistry::new(StoreKind::Memory(MemoryRegistryStore::new())),
+            checkpoint: CheckpointInput { service: None },
+            playlist: PlaylistSyncState {
+                settings: NavidromeSyncSettings { store: None },
+                exporter: UnwiredPlaylistExporter,
+                roles: Arc::new(StoreSyncRoles { users }),
+            },
+            poll_time: EventsPollTime { store: None },
+            watcher: UnwiredEventsWatcher,
+            config: None,
+        }
+    }
+
+    /// The shared registry. The plugins bundle takes a clone so tick loops
+    /// register on this same mechanism (`plugin-tick:{name}`), never on a
+    /// second one.
+    pub fn registry(&self) -> &JobRegistry<StoreKind> {
+        &self.registry
+    }
+
+    /// The precache trigger: one supervised run per call through the shared
+    /// registry. The admin route owns the only production caller.
+    pub fn precache_trigger(&self) -> PrecacheTrigger {
+        PrecacheTrigger {
+            registry: self.registry.clone(),
+            config: self.config.clone(),
+        }
+    }
+
+    /// Settings-nested routes jobs owns: `POST
+    /// /settings/navidrome/playlist-sync` (the v1 path). Mounts inside the
+    /// session gate with the other `/api/v3` routes.
+    pub fn settings_router(&self) -> Router {
+        Router::new().nest("/settings", playlist_sync::router(self.playlist.clone()))
+    }
+
+    /// The settings-save kick: one immediate events sweep through the
+    /// registry, spawned off the save path so the save never waits on it.
+    /// Overlapping kicks collapse (the sweep is idempotent).
+    pub fn events_kick(&self) -> Arc<dyn EventsKick> {
+        let registry = self.registry.clone();
+        let watcher = self.watcher.clone();
+        Arc::new(FnKick {
+            kick_fn: move || {
+                let registry = registry.clone();
+                let watcher = watcher.clone();
+                tokio::spawn(async move {
+                    if events_kick::kick(&registry, watcher).await == KickOutcome::Started {
+                        tracing::debug!("kicked events sweep started");
+                    }
+                });
+            },
+        })
+    }
+
+    /// Spawn the always-on loops ([`crate::jobs::BOOT_JOBS`]) on the shared
+    /// registry. Boot is the only spawner, so a name collision fails the
+    /// boot loudly instead of running half the loops.
+    pub async fn spawn_loops(&self) -> Result<(), String> {
+        checkpoint::spawn_on(
+            &self.registry,
+            self.checkpoint.clone(),
+            checkpoint::default_schedule(),
+        )
+        .await
+        .map_err(|_| format!("{} is already running", checkpoint::JOB_NAME))?;
+        presence::spawn_on(
+            &self.registry,
+            UnwiredPresenceStore,
+            DisabledPresenceSources,
+            presence::default_schedule(),
+        )
+        .await
+        .map_err(|_| format!("{} is already running", presence::JOB_NAME))?;
+        personal_mix::spawn_on(
+            &self.registry,
+            UnwiredMixer,
+            personal_mix::default_schedule(),
+        )
+        .await
+        .map_err(|_| format!("{} is already running", personal_mix::JOB_NAME))?;
+        playlist_sync::spawn_on(
+            &self.registry,
+            self.playlist.settings.clone(),
+            self.playlist.exporter.clone(),
+            playlist_sync::default_schedule(),
+        )
+        .await
+        .map_err(|_| format!("{} is already running", playlist_sync::JOB_NAME))?;
+        events_watcher::spawn_on(
+            &self.registry,
+            self.watcher.clone(),
+            self.poll_time.clone(),
+            SystemWatchClock,
+        )
+        .await
+        .map_err(|_| format!("{} is already running", events_watcher::JOB_NAME))?;
+        Ok(())
+    }
+
+    /// Cancel every live job — boot loops, the kick, precache runs, and
+    /// plugin ticks (`plugin-tick:*` shares this registry) — each with the
+    /// same grace. Shutdown calls this before awaiting the loops.
+    pub async fn cancel_all(&self, grace: Duration) {
+        self.registry.cancel_all(grace).await;
+    }
+}

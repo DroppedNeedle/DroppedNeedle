@@ -40,7 +40,12 @@ pub fn create_app(state: AppState) -> Router {
                 .merge(state.reads.gated_router())
                 .merge(state.stage6.gated_router())
                 .merge(state.acquire.gated_router())
-                .merge(state.library.gated_router()),
+                .merge(state.library.gated_router())
+                .merge(state.admin.gated_router())
+                .merge(state.plugins.gated_router())
+                .merge(state.settings.gated_router())
+                .merge(state.settings.me_router())
+                .merge(state.jobs.settings_router()),
         )
         .merge(state.reads.search_router())
         .layer(middleware::from_fn_with_state(
@@ -69,7 +74,10 @@ pub fn create_app(state: AppState) -> Router {
             rate_limit,
         ));
     let mut app = Router::new()
-        .route("/health", get(handlers::health))
+        .route(
+            "/health",
+            get(handlers::health).with_state(state.admin.checkpoint.clone()),
+        )
         .route("/openapi.json", get(handlers::openapi_json))
         .merge(v3)
         .merge(wrapped)

@@ -7,9 +7,10 @@
 use std::sync::Arc;
 
 use crate::{
-    acquire::AcquireSetup, auth::wiring::AuthSetup, compat::CompatSetup, config::AppConfig,
-    http_client::HttpClientFactory, ids::IdGenerator, library::wiring::LibrarySetup,
-    provider_policy::ProviderPolicy, providers::Providers, reads::ReadsSetup, stage6::Stage6Setup,
+    acquire::AcquireSetup, admin::AdminSetup, auth::wiring::AuthSetup, compat::CompatSetup,
+    config::AppConfig, http_client::HttpClientFactory, ids::IdGenerator, jobs::wiring::JobsSetup,
+    library::wiring::LibrarySetup, plugins::wiring::PluginsSetup, provider_policy::ProviderPolicy,
+    providers::Providers, reads::ReadsSetup, settings::wiring::SettingsSetup, stage6::Stage6Setup,
 };
 
 /// All long-lived server dependencies.
@@ -37,6 +38,14 @@ pub struct AppState {
     pub library: LibrarySetup,
     /// Stage-9 bundle: Subsonic/Jellyfin shims (outside the `/api` gate).
     pub compat: CompatSetup,
+    /// Stage-10 bundle: admin UX routes plus checkpoint health.
+    pub admin: AdminSetup,
+    /// Stage-10 bundle: section service with save effects.
+    pub settings: SettingsSetup,
+    /// Stage-10 bundle: job registry, playlist route, boot loops.
+    pub jobs: JobsSetup,
+    /// Stage-10 bundle: plugin host, routes, scrobble backend, ticks.
+    pub plugins: PluginsSetup,
 }
 
 impl AppState {
@@ -54,6 +63,10 @@ impl AppState {
         acquire: AcquireSetup,
         library: LibrarySetup,
         compat: CompatSetup,
+        admin: AdminSetup,
+        settings: SettingsSetup,
+        jobs: JobsSetup,
+        plugins: PluginsSetup,
     ) -> Self {
         Self {
             ids,
@@ -66,6 +79,10 @@ impl AppState {
             acquire,
             library,
             compat,
+            admin,
+            settings,
+            jobs,
+            plugins,
         }
     }
 

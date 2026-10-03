@@ -21,7 +21,7 @@ use droppedneedle::{
     ids::{IdGenerator, UuidGenerator},
     reads::ReadsSetup,
     runtime_config::{ConfigStore, Crypto, Secret},
-    schema::apply_migrations,
+    schema::{apply_migrations, latest_version},
 };
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -172,17 +172,40 @@ impl E2e {
             library.clone(),
             &connect_apps,
         );
+        let providers = Arc::new(droppedneedle::providers::Providers::with_memory_cache());
+        let admin = droppedneedle::admin::AdminSetup::for_tests(
+            auth.users.clone(),
+            acquire.requests.quota.clone(),
+            Arc::new(droppedneedle::providers::InMemoryProviderCache::new()),
+            providers.clone(),
+        );
+        let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone());
+        let plugins = droppedneedle::plugins::wiring::PluginsSetup::for_tests(
+            auth.users.clone(),
+            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
+            jobs.registry().clone(),
+        )
+        .expect("test plugins bundle builds");
+        let settings = droppedneedle::settings::wiring::SettingsSetup::for_tests(
+            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
+            auth.users.clone(),
+        )
+        .expect("test settings bundle builds");
         let state = AppState::new(
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             self.http.clone(),
             app_config,
             auth,
             reads,
-            Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
+            providers,
             stage6,
             acquire.clone(),
             library,
             compat,
+            admin,
+            settings,
+            jobs,
+            plugins,
         );
         (create_app(state), acquire)
     }
@@ -694,7 +717,7 @@ async fn migration_0002_download_idempotency() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("version reads");
-    assert_eq!(version, 2);
+    assert_eq!(version, latest_version());
     let table: Option<String> = conn
         .query_row(
             "SELECT name FROM sqlite_master WHERE name = 'download_idempotency_keys'",
@@ -713,7 +736,7 @@ async fn migration_0002_download_idempotency() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("version reads");
-    assert_eq!(version, 2);
+    assert_eq!(version, latest_version());
     runtime.shutdown().await;
     let _ = std::fs::remove_dir_all(&dir);
 }

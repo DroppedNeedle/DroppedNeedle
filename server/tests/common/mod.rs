@@ -46,17 +46,38 @@ pub fn hooked_state() -> AppState {
         ids.clone(),
     )
     .expect("compat bundle builds");
+    let (providers, cache) = test_providers();
+    let admin = droppedneedle::admin::AdminSetup::for_tests(
+        auth.users.clone(),
+        acquire.requests.quota.clone(),
+        cache,
+        providers.clone(),
+    );
+    let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone());
+    let plugins = droppedneedle::plugins::wiring::PluginsSetup::for_tests(
+        auth.users.clone(),
+        ids.clone(),
+        jobs.registry().clone(),
+    )
+    .expect("test plugins bundle builds");
+    let settings =
+        droppedneedle::settings::wiring::SettingsSetup::for_tests(ids.clone(), auth.users.clone())
+            .expect("test settings bundle builds");
     AppState::new(
         ids.clone(),
         test_http(),
         AppConfig::new(DEFAULT_PORT).with_test_hooks(),
         auth.clone(),
         reads,
-        Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
+        providers,
         test_stage6(&auth, ids.clone()),
         acquire,
         library,
         compat,
+        admin,
+        settings,
+        jobs,
+        plugins,
     )
 }
 
@@ -75,17 +96,38 @@ pub fn hooked_state_with_compat(subsonic: bool, jellyfin: bool) -> AppState {
     )
     .expect("compat bundle builds")
     .with_enabled(subsonic, jellyfin);
+    let (providers, cache) = test_providers();
+    let admin = droppedneedle::admin::AdminSetup::for_tests(
+        auth.users.clone(),
+        acquire.requests.quota.clone(),
+        cache,
+        providers.clone(),
+    );
+    let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone());
+    let plugins = droppedneedle::plugins::wiring::PluginsSetup::for_tests(
+        auth.users.clone(),
+        ids.clone(),
+        jobs.registry().clone(),
+    )
+    .expect("test plugins bundle builds");
+    let settings =
+        droppedneedle::settings::wiring::SettingsSetup::for_tests(ids.clone(), auth.users.clone())
+            .expect("test settings bundle builds");
     AppState::new(
         ids.clone(),
         test_http(),
         AppConfig::new(DEFAULT_PORT).with_test_hooks(),
         auth.clone(),
         reads,
-        Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
+        providers,
         test_stage6(&auth, ids.clone()),
         acquire,
         library,
         compat,
+        admin,
+        settings,
+        jobs,
+        plugins,
     )
 }
 
@@ -104,17 +146,38 @@ pub fn prod_like_state() -> AppState {
         ids.clone(),
     )
     .expect("compat bundle builds");
+    let (providers, cache) = test_providers();
+    let admin = droppedneedle::admin::AdminSetup::for_tests(
+        auth.users.clone(),
+        acquire.requests.quota.clone(),
+        cache,
+        providers.clone(),
+    );
+    let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone());
+    let plugins = droppedneedle::plugins::wiring::PluginsSetup::for_tests(
+        auth.users.clone(),
+        ids.clone(),
+        jobs.registry().clone(),
+    )
+    .expect("test plugins bundle builds");
+    let settings =
+        droppedneedle::settings::wiring::SettingsSetup::for_tests(ids.clone(), auth.users.clone())
+            .expect("test settings bundle builds");
     AppState::new(
         ids.clone(),
         test_http(),
         AppConfig::new(DEFAULT_PORT),
         auth.clone(),
         reads,
-        Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
+        providers,
         test_stage6(&auth, ids.clone()),
         acquire,
         library,
         compat,
+        admin,
+        settings,
+        jobs,
+        plugins,
     )
 }
 
@@ -159,4 +222,15 @@ fn test_library(
 /// tests need (the gate passes non-v3 paths through untouched).
 fn test_auth() -> droppedneedle::auth::wiring::AuthSetup {
     droppedneedle::auth::wiring::AuthSetup::for_tests().expect("test auth bundle builds")
+}
+
+/// Provider deps with the byte cache shared out, so the admin bundle
+/// observes the same entries the clients read.
+fn test_providers() -> (
+    Arc<droppedneedle::providers::Providers>,
+    Arc<droppedneedle::providers::InMemoryProviderCache>,
+) {
+    let cache = Arc::new(droppedneedle::providers::InMemoryProviderCache::new());
+    let providers = Arc::new(droppedneedle::providers::Providers::new(cache.clone()));
+    (providers, cache)
 }

@@ -17,12 +17,14 @@ base64 = "0.22"
 bcrypt = "0.17"
 caseless = "0.2"
 chacha20poly1305 = "0.10"
+flate2 = "1"
 futures-util = "0.3"
 getrandom = "0.3"
 libc = "0.2"
 lofty = "0.25"
 md5 = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+sha1 = "0.10"
 rubato = "0.16"
 rusqlite = { version = "0.32", features = ["bundled", "backup", "functions"] }
 rusty-chromaprint = "0.3"
@@ -34,13 +36,14 @@ symphonia = { version = "0.6", features = ["aac", "alac", "isomp4", "mp3"] }
 symphonia-adapter-libopus = "0.3"
 thiserror = "2"
 unicode-normalization = "0.1"
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "test-util", "time"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 utoipa = "5"
 uuid = { version = "1", features = ["v4"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 regex = "1.13.1"
