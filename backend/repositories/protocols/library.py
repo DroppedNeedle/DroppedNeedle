@@ -1,4 +1,4 @@
-from typing import Protocol
+from typing import Any, Protocol
 
 from models.library import LibraryAlbum
 
@@ -24,4 +24,9 @@ class LibraryRepositoryProtocol(Protocol):
         ...
 
     async def get_library_artist_mbids(self) -> set[str]:
+        ...
+
+    async def get_library_files_for_recordings(
+        self, recording_mbids: list[str]
+    ) -> dict[str, list[Any]]:
         ...

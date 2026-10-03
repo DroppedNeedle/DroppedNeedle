@@ -223,6 +223,7 @@ class NavidromeLibraryService:
             codec=song.suffix or None,
             bitrate=song.bitRate or None,
             image_url=f"/api/v1/navidrome/cover/{song.albumId}" if song.albumId else None,
+            recording_mbid=song.musicBrainzId or None,
         )
 
     async def _album_to_summary(self, album: SubsonicAlbum) -> NavidromeAlbumSummary:
@@ -272,6 +273,7 @@ class NavidromeLibraryService:
                 artist_name=track.artist_name,
                 codec=track.codec,
                 bitrate=track.bitrate,
+                recording_mbid=track.recording_mbid,
             ))
         return fixed
 

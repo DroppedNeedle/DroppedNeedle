@@ -19,6 +19,7 @@ class PlexTrackInfo(AppStruct):
     container: str | None = None
     part_key: str | None = None
     image_url: str | None = None
+    recording_mbid: str | None = None
 
 
 class PlexAlbumSummary(AppStruct):

@@ -237,6 +237,7 @@ class PlexLibraryService:
             container=container,
             part_key=part_key,
             image_url=f"/api/v1/plex/thumb/{track.parentRatingKey}" if track.parentRatingKey else None,
+            recording_mbid=extract_mbid_from_guids(track.Guid) or None,
         )
 
     async def _album_to_summary(self, album: PlexAlbum) -> PlexAlbumSummary:

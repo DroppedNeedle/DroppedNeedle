@@ -170,6 +170,12 @@ def _playlist_track_record(row: dict[str, Any]) -> PlaylistTrackRecord:
         created_at=str(row["created_at"]),
         plex_rating_key=row.get("plex_rating_key"),
         library_file_id=local_track_id or row.get("library_file_id"),
+        origin_recording_mbid=row.get("origin_recording_mbid")
+        or (
+            row.get("track_source_id")
+            if not row.get("source_type")
+            else None
+        ),
     )
 
 

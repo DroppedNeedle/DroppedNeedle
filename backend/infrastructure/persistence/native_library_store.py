@@ -2014,6 +2014,10 @@ class NativeLibraryStore(PersistenceBase):
                 "CREATE INDEX IF NOT EXISTS idx_local_track_identity_release_track "
                 "ON local_track_external_identities(release_track_mbid)"
             )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_local_track_identity_recording "
+                "ON local_track_external_identities(lower(recording_mbid))"
+            )
             connection.executescript(
                 """
                 DROP TRIGGER IF EXISTS trg_genre_artwork_artwork_insert;
@@ -3474,6 +3478,75 @@ class NativeLibraryStore(PersistenceBase):
                 track_ids,
             ).fetchall()
             return [dict(row) for row in rows]
+
+        return await self._read(operation)
+
+    async def get_target_recording_tracks_batch(
+        self, recording_mbids: list[str]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Batched recording-MBID lookup across the whole library.
+
+        Returns ``{recording_mbid_lower: [track rows]}`` for indexed files whose
+        MusicBrainz recording identity matches any requested MBID. One query
+        serves every MBID, mirroring ``get_target_album_tracks_batch``.
+        """
+        normalized = list(
+            dict.fromkeys(
+                value.strip().casefold() for value in recording_mbids if value and value.strip()
+            )
+        )
+        if not normalized:
+            return {}
+
+        def operation(
+            connection: sqlite3.Connection,
+        ) -> dict[str, list[dict[str, Any]]]:
+            placeholders = ",".join("?" for _ in normalized)
+            rows = connection.execute(
+                _TARGET_TRACK_SELECT
+                + f" WHERE LOWER(te.recording_mbid) IN ({placeholders}) "
+                "AND t.availability = 'indexed' "
+                "ORDER BY t.id",
+                normalized,
+            ).fetchall()
+            grouped: dict[str, list[dict[str, Any]]] = {}
+            for row in rows:
+                recording_mbid = str(row["recording_mbid"] or "").strip().casefold()
+                if not recording_mbid:
+                    continue
+                grouped.setdefault(recording_mbid, []).append(dict(row))
+            return grouped
+
+        return await self._read(operation)
+
+    async def existing_recording_mbids(self, identifiers: list[str]) -> set[str]:
+        """Subset of ``identifiers`` present as indexed recordings in the library.
+
+        Case-insensitive and batched: powers the playlist/download membership
+        check that lets a client skip requesting a recording it already owns
+        under another album or edition.
+        """
+        normalized = {
+            value.strip().casefold() for value in identifiers if value and value.strip()
+        }
+        if not normalized:
+            return set()
+
+        def operation(connection: sqlite3.Connection) -> set[str]:
+            placeholders = ",".join("?" for _ in normalized)
+            rows = connection.execute(
+                "SELECT DISTINCT LOWER(identity.recording_mbid) AS recording_mbid "
+                "FROM local_track_external_identities identity "
+                "JOIN local_tracks t ON t.id = identity.local_track_id "
+                f"WHERE LOWER(identity.recording_mbid) IN ({placeholders}) "
+                "AND t.availability = 'indexed'",
+                list(normalized),
+            ).fetchall()
+            return {
+                str(row["recording_mbid"]).strip().casefold()
+                for row in rows
+                if row["recording_mbid"]
+            }
 
         return await self._read(operation)
 

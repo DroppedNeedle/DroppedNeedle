@@ -49,11 +49,13 @@ class LibraryMbidsResponse(AppStruct):
 
 class LibraryMembershipRequest(AppStruct):
     album_ids: list[str] = []
+    recording_mbids: list[str] = []
 
 
 class LibraryMembershipResponse(AppStruct):
     owned_ids: list[str] = []
     requested_ids: list[str] = []
+    owned_recording_ids: list[str] = []
 
 
 class LibraryGroupedResponse(AppStruct):
@@ -64,6 +66,7 @@ class TrackResolveItem(AppStruct):
     release_group_mbid: str | None = None
     disc_number: int | None = None
     track_number: int | None = None
+    recording_mbid: str | None = None
 
 
 class TrackResolveRequest(AppStruct):

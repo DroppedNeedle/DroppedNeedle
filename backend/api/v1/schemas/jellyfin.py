@@ -15,6 +15,7 @@ class JellyfinTrackInfo(AppStruct):
     codec: str | None = None
     bitrate: int | None = None
     image_url: str | None = None
+    recording_mbid: str | None = None
 
 
 class JellyfinAlbumSummary(AppStruct):

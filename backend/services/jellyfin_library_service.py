@@ -127,6 +127,9 @@ class JellyfinLibraryService:
     def _item_to_track_info(self, item: JellyfinItem) -> JellyfinTrackInfo:
         duration_seconds = (item.duration_ticks / 10_000_000.0) if item.duration_ticks else 0.0
         album_id = item.album_id or ""
+        recording_mbid = None
+        if item.provider_ids:
+            recording_mbid = item.provider_ids.get("MusicBrainzRecording") or None
         return JellyfinTrackInfo(
             jellyfin_id=item.id,
             title=item.name,
@@ -139,6 +142,7 @@ class JellyfinLibraryService:
             codec=item.codec,
             bitrate=item.bitrate,
             image_url=f"/api/v1/jellyfin/image/{album_id}" if album_id else None,
+            recording_mbid=recording_mbid,
         )
 
     @staticmethod
@@ -172,6 +176,9 @@ class JellyfinLibraryService:
                 artist_name=track.artist_name,
                 codec=track.codec,
                 bitrate=track.bitrate,
+                album_id=track.album_id,
+                image_url=track.image_url,
+                recording_mbid=track.recording_mbid,
             ))
         return fixed
 

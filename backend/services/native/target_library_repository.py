@@ -444,6 +444,19 @@ class TargetLibraryRepository:
     ) -> list[dict[str, Any]]:
         return await self._store.get_target_recording_tracks(track_id)
 
+    async def get_library_files_for_recordings(
+        self, recording_mbids: list[str]
+    ) -> dict[str, list[LibraryTrack]]:
+        """Batched, library-wide recording lookup returning native tracks."""
+        grouped = await self._store.get_target_recording_tracks_batch(recording_mbids)
+        return {
+            recording_mbid: [self._to_track(row) for row in rows]
+            for recording_mbid, rows in grouped.items()
+        }
+
+    async def existing_recording_mbids(self, identifiers: list[str]) -> set[str]:
+        return await self._store.existing_recording_mbids(identifiers)
+
     async def get_library_files_for_album(self, album_id: str) -> list[dict[str, Any]]:
         return await self._store.get_target_album_tracks(album_id)
 

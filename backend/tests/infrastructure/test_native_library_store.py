@@ -3389,6 +3389,38 @@ async def test_get_target_album_tracks_batch_groups_indexed_rows(
 
 
 @pytest.mark.asyncio
+async def test_recording_mbid_lookups_are_library_wide_and_skip_unavailable(
+    store: NativeLibraryStore,
+) -> None:
+    """The recording batch read spans albums and the ownership check only
+    reports indexed copies, regardless of case in the stored MBID."""
+    await store.create_catalog_membership(_membership("1"))
+    await store.create_catalog_membership(_membership("2"))
+    with sqlite3.connect(store.db_path) as connection:
+        connection.executemany(
+            "INSERT INTO local_track_external_identities "
+            "(local_track_id, provider, recording_mbid, release_mbid, "
+            "release_track_mbid, decision_source, selected_at) "
+            "VALUES (?, 'musicbrainz', ?, NULL, NULL, 'automatic', 1)",
+            [("track-1", "REC-A"), ("track-2", "rec-b")],
+        )
+        connection.commit()
+
+    grouped = await store.get_target_recording_tracks_batch(["rec-a", "rec-missing"])
+    assert [row["id"] for row in grouped["rec-a"]] == ["track-1"]
+    assert grouped.get("rec-missing", []) == []
+    assert await store.existing_recording_mbids(["REC-A", "rec-missing"]) == {"rec-a"}
+
+    # A recording whose only copy is unavailable is not owned.
+    with sqlite3.connect(store.db_path) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET availability = 'missing' WHERE id = 'track-1'"
+        )
+        connection.commit()
+    assert await store.existing_recording_mbids(["rec-a"]) == set()
+
+
+@pytest.mark.asyncio
 async def test_get_target_album_tracks_ignores_stale_release_group_alias(
     store: NativeLibraryStore,
 ) -> None:

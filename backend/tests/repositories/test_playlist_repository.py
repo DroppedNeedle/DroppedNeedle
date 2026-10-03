@@ -66,6 +66,52 @@ class TestEnsureTables:
             assert by_id["t-foreign"].library_file_id is None
             assert by_id["t-empty"].library_file_id is None
 
+    def test_backfills_origin_recording_mbid_for_source_less_rows(self, tmp_path):
+        # Unbound rows used to carry the recording MBID in track_source_id;
+        # the ratchet copies it into its own column so later local linking
+        # cannot clobber the recording identity. Bound rows are untouched.
+        import sqlite3
+
+        db = tmp_path / "test.db"
+        repo = PlaylistRepository(db_path=db)
+        playlist = repo.create_playlist("Legacy")
+        conn = sqlite3.connect(db)
+        rows = [
+            ("t-unknown", "", "rec-1", None),
+            ("t-sourced", "local", "rec-2", None),
+            ("t-empty", "", "", None),
+        ]
+        for i, (tid, source, src_id, origin) in enumerate(rows):
+            conn.execute(
+                "INSERT INTO playlist_tracks "
+                "(id, playlist_id, position, track_name, artist_name, album_name, "
+                " source_type, track_source_id, origin_recording_mbid, created_at) "
+                "VALUES (?, ?, ?, 'T', 'A', 'AL', ?, ?, ?, '2025-01-01')",
+                (tid, playlist.id, i, source, src_id, origin),
+            )
+        conn.commit()
+        conn.close()
+
+        PlaylistRepository(db_path=db)  # re-run applies the idempotent backfill
+        by_id = {t.id: t for t in repo.get_tracks(playlist.id)}
+        assert by_id["t-unknown"].origin_recording_mbid == "rec-1"
+        assert by_id["t-sourced"].origin_recording_mbid is None
+        assert by_id["t-empty"].origin_recording_mbid is None
+
+    def test_add_tracks_sets_origin_recording_mbid_only_when_unbound(self, repo):
+        playlist = repo.create_playlist("Test")
+        unbound = repo.add_tracks(playlist.id, [
+            {"track_name": "T", "artist_name": "A", "album_name": "AL",
+             "source_type": "", "track_source_id": "rec-1"},
+        ])
+        assert unbound[0].origin_recording_mbid == "rec-1"
+
+        bound = repo.add_tracks(playlist.id, [
+            {"track_name": "T2", "artist_name": "A", "album_name": "AL",
+             "source_type": "navidrome", "track_source_id": "nd-1"},
+        ])
+        assert bound[0].origin_recording_mbid is None
+
     def test_unique_position_constraint(self, repo):
         playlist = repo.create_playlist("Test")
         repo.add_tracks(playlist.id, [

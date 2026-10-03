@@ -342,6 +342,36 @@ class LocalFilesService:
             primary_format=primary_format,
         )
 
+    async def match_recordings_by_mbid(
+        self, recording_mbids: list[str]
+    ) -> dict[str, tuple[str, str]]:
+        """Resolve recording MBIDs to indexed library files, across albums.
+
+        Used by playlist source resolution as a global fallback so a track can
+        link to a copy that lives under a *different* album/release-group (e.g. a
+        single whose recording is already in the library inside the full album).
+        Returns ``{recording_mbid_lower: (title, track_file_id)}``; the first
+        indexed copy wins when a recording appears more than once.
+        """
+        wanted = list(
+            dict.fromkeys(
+                value.strip().casefold() for value in recording_mbids if value and value.strip()
+            )
+        )
+        if not wanted:
+            return {}
+        grouped = await self._library_repo.get_library_files_for_recordings(wanted)
+        result: dict[str, tuple[str, str]] = {}
+        for recording_mbid, tracks in grouped.items():
+            if not tracks:
+                continue
+            track = tracks[0]
+            result[recording_mbid.strip().casefold()] = (
+                track.track_title or "Unknown",
+                str(track.id),
+            )
+        return result
+
     async def get_download_track(self, file_id: str) -> tuple[Path, str, str]:
         """Resolve a track file for download. Returns (path, filename, media_type)."""
         library_path = await self.get_track_file_path(file_id)
@@ -453,6 +483,7 @@ class LocalFilesService:
             format=track.file_format or "unknown",
             bitrate=track.bit_rate,
             date_added=None,
+            recording_mbid=track.recording_mbid or None,
         )
 
     async def get_albums(

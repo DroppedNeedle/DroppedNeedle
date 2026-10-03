@@ -11,6 +11,9 @@ class LocalTrackInfo(AppStruct):
     format: str = ""
     bitrate: int | None = None
     date_added: str | None = None
+    # MusicBrainz recording MBID for the indexed file. Enables playlist source
+    # resolution to match by recording before falling back to disc/track.
+    recording_mbid: str | None = None
 
 
 class LocalLyricLine(AppStruct):
