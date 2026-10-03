@@ -28,7 +28,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
 FRESH_JSON="$TMP_DIR/openapi.json"
 FRESH_TS="$TMP_DIR/openapi.d.ts"
 
-cargo run --quiet --manifest-path "$ROOT/server/Cargo.toml" -- --print-openapi > "$FRESH_JSON"
+cargo run --quiet --manifest-path "$ROOT/server/Cargo.toml" --bin droppedneedle -- --print-openapi > "$FRESH_JSON"
 pnpm dlx "openapi-typescript@$OPENAPI_TS_VERSION" "$FRESH_JSON" -o "$FRESH_TS" >/dev/null
 
 if [ "$WRITE" = "1" ]; then

@@ -44,6 +44,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 utoipa = "5"
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+hmac = "0.12"
+toml = "1"
+time = { version = "0.3", default-features = false, features = ["std", "formatting"] }
 
 [dev-dependencies]
 regex = "1.13.1"

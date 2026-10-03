@@ -83,6 +83,15 @@ pub fn create_app(state: AppState) -> Router {
         .merge(wrapped)
         .merge(acquire_public)
         .merge(state.compat.router());
+    // Dev-only tooling routes (covers-debug, R11). The debug-build gate
+    // compiles this mount out of release binaries entirely, so no
+    // production process can serve tooling however it was configured.
+    #[cfg(debug_assertions)]
+    if crate::tooling::covers_debug::tooling_routes_enabled(&state.config) {
+        app = app.merge(crate::tooling::covers_debug::router(
+            state.reads.platform.covers.clone(),
+        ));
+    }
     if state.config.test_hooks {
         app = app
             .route(

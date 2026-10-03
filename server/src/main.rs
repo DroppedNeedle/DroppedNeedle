@@ -40,16 +40,37 @@ use utoipa::OpenApi as _;
 /// TypeScript pipeline and CI drift gate.
 const PRINT_OPENAPI_ARG: &str = "--print-openapi";
 
+/// `--tooling-routes` mounts the dev-only tooling routes (covers-debug).
+/// Debug builds only: a release binary rejects it as unknown.
+const TOOLING_ROUTES_ARG: &str = "--tooling-routes";
+
+/// True for the arguments this binary accepts. The tooling flag only
+/// exists in debug builds.
+fn is_known_arg(arg: &str) -> bool {
+    if arg == PRINT_OPENAPI_ARG {
+        return true;
+    }
+    #[cfg(debug_assertions)]
+    if arg == TOOLING_ROUTES_ARG {
+        return true;
+    }
+    false
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == PRINT_OPENAPI_ARG) {
         print_openapi();
         return;
     }
-    if let Some(unknown) = args.first() {
+    if let Some(unknown) = args.iter().find(|arg| !is_known_arg(arg)) {
         eprintln!("unknown argument {unknown:?}: expected {PRINT_OPENAPI_ARG}");
         std::process::exit(2);
     }
+    #[cfg(debug_assertions)]
+    let tooling_routes = args.iter().any(|arg| arg == TOOLING_ROUTES_ARG);
+    #[cfg(not(debug_assertions))]
+    let tooling_routes = false;
 
     init_tracing();
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -62,7 +83,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let outcome = runtime.block_on(serve());
+    let outcome = runtime.block_on(serve(tooling_routes));
     if let Err(message) = outcome {
         eprintln!("{message}");
         std::process::exit(1);
@@ -81,12 +102,15 @@ fn print_openapi() {
 }
 
 /// Boot state, bind, and serve until SIGTERM or Ctrl-C.
-async fn serve() -> Result<(), String> {
+async fn serve(tooling_routes: bool) -> Result<(), String> {
     let mut config = AppConfig::load().map_err(|error| error.to_string())?;
     #[cfg(debug_assertions)]
     {
         config.debug_cors = true;
+        config.tooling_routes = tooling_routes;
     }
+    #[cfg(not(debug_assertions))]
+    let _ = tooling_routes;
     let http = HttpClientFactory::new().map_err(|error| error.to_string())?;
     let runtime = open_runtime(&DbConfig::new(&config.library_db_path))
         .await

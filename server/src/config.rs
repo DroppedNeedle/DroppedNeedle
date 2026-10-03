@@ -45,6 +45,10 @@ pub struct AppConfig {
     /// `main` only enables it in debug builds: release binaries never
     /// serve CORS.
     pub debug_cors: bool,
+    /// Mounts the dev-only tooling routes (covers-debug). Constructor-only
+    /// with no environment variable, and `create_app` additionally gates
+    /// the mount on debug builds: release binaries never serve tooling.
+    pub tooling_routes: bool,
 }
 
 impl AppConfig {
@@ -63,12 +67,20 @@ impl AppConfig {
             base_path: String::new(),
             test_hooks: false,
             debug_cors: false,
+            tooling_routes: false,
         }
     }
 
     /// Test configuration with the failure hooks mounted.
     pub fn with_test_hooks(mut self) -> Self {
         self.test_hooks = true;
+        self
+    }
+
+    /// Debug configuration with the dev-only tooling routes mounted.
+    /// Tests and debug servers only; release builds cannot mount them.
+    pub fn with_tooling_routes(mut self) -> Self {
+        self.tooling_routes = true;
         self
     }
 
@@ -97,6 +109,7 @@ impl AppConfig {
             base_path,
             test_hooks: false,
             debug_cors: false,
+            tooling_routes: false,
         })
     }
 
