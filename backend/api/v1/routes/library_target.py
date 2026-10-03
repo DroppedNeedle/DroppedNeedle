@@ -232,12 +232,22 @@ async def get_target_membership(
     )
     if len(album_ids) > 500:
         raise ValidationError("Library membership accepts at most 500 album IDs.")
-    owned, requested = await asyncio.gather(
+    recording_ids = list(
+        dict.fromkeys(
+            value.strip().casefold() for value in body.recording_mbids if value.strip()
+        )
+    )
+    if len(recording_ids) > 500:
+        raise ValidationError("Library membership accepts at most 500 recording IDs.")
+    owned, requested, owned_recordings = await asyncio.gather(
         ownership.existing_provider_album_ids(album_ids),
         request_history.async_existing_requested_mbids(album_ids),
+        ownership.existing_recording_ids(recording_ids),
     )
     return LibraryMembershipResponse(
-        owned_ids=sorted(owned), requested_ids=sorted(requested)
+        owned_ids=sorted(owned),
+        requested_ids=sorted(requested),
+        owned_recording_ids=sorted(owned_recordings),
     )
 
 

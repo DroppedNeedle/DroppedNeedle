@@ -77,6 +77,7 @@ class PlaylistTrackRecord:
         "album_name", "album_id", "artist_id", "track_source_id", "cover_url",
         "source_type", "available_sources", "format", "track_number", "disc_number",
         "duration", "created_at", "plex_rating_key", "library_file_id",
+        "origin_recording_mbid",
     )
 
     def __init__(
@@ -100,6 +101,7 @@ class PlaylistTrackRecord:
         created_at: str,
         plex_rating_key: Optional[str] = None,
         library_file_id: Optional[str] = None,
+        origin_recording_mbid: Optional[str] = None,
     ):
         self.id = id
         self.playlist_id = playlist_id
@@ -120,6 +122,7 @@ class PlaylistTrackRecord:
         self.created_at = created_at
         self.plex_rating_key = plex_rating_key
         self.library_file_id = library_file_id
+        self.origin_recording_mbid = origin_recording_mbid
 
 def get_cache_dir() -> Path:
       from core.config import get_settings
@@ -216,6 +219,26 @@ class PlaylistRepository:
                 SET library_file_id = track_source_id
                 WHERE library_file_id IS NULL
                   AND source_type IN ('local', 'droppedneedle-local', 'howler')
+                  AND track_source_id IS NOT NULL
+                  AND track_source_id != ''
+            """)
+            # Recording MBID the entry was imported with. Kept as its own
+            # column because linking a local file overwrites track_source_id,
+            # so the original recording identity would otherwise be lost.
+            try:
+                conn.execute(
+                    "ALTER TABLE playlist_tracks ADD COLUMN origin_recording_mbid TEXT"
+                )
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
+            # backfill: rows added before the column held the recording MBID in
+            # track_source_id whenever no source was bound yet. Idempotent.
+            conn.execute("""
+                UPDATE playlist_tracks
+                SET origin_recording_mbid = track_source_id
+                WHERE origin_recording_mbid IS NULL
+                  AND (source_type IS NULL OR source_type = '')
                   AND track_source_id IS NOT NULL
                   AND track_source_id != ''
             """)
@@ -522,13 +545,20 @@ class PlaylistRepository:
                     json.dumps(track["available_sources"])
                     if track.get("available_sources") else None
                 )
+                # Preserve the recording MBID an import arrived with. For rows
+                # that carry no bound source yet the MBID travels in
+                # track_source_id; keep it in its own column so later local
+                # linking cannot clobber it.
+                origin_recording_mbid = track.get("origin_recording_mbid")
+                if origin_recording_mbid is None and not track.get("source_type"):
+                    origin_recording_mbid = track.get("track_source_id")
                 conn.execute(
                     "INSERT INTO playlist_tracks "
                     "(id, playlist_id, position, track_name, artist_name, album_name, "
                     "album_id, artist_id, track_source_id, cover_url, source_type, "
                     "available_sources, format, track_number, disc_number, duration, "
-                    "plex_rating_key, library_file_id, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "plex_rating_key, library_file_id, origin_recording_mbid, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         track_id, playlist_id, pos,
                         track["track_name"], track["artist_name"], track["album_name"],
@@ -537,7 +567,7 @@ class PlaylistRepository:
                         track["source_type"], available_sources_json,
                         track.get("format"), track.get("track_number"), track.get("disc_number"),
                         track.get("duration"), track.get("plex_rating_key"),
-                        track.get("library_file_id"), now,
+                        track.get("library_file_id"), origin_recording_mbid, now,
                     ),
                 )
                 created_records.append(PlaylistTrackRecord(
@@ -552,6 +582,7 @@ class PlaylistRepository:
                     duration=track.get("duration"), created_at=now,
                     plex_rating_key=track.get("plex_rating_key"),
                     library_file_id=track.get("library_file_id"),
+                    origin_recording_mbid=origin_recording_mbid,
                 ))
 
             conn.execute(
@@ -826,6 +857,9 @@ class PlaylistRepository:
             created_at=row["created_at"],
             plex_rating_key=new_plex_rating_key,
             library_file_id=new_library_file_id,
+            origin_recording_mbid=row["origin_recording_mbid"]
+            if "origin_recording_mbid" in row.keys()
+            else None,
         )
 
     def get_tracks(self, playlist_id: str) -> list[PlaylistTrackRecord]:
@@ -949,4 +983,7 @@ class PlaylistRepository:
             created_at=row["created_at"],
             plex_rating_key=row["plex_rating_key"] if "plex_rating_key" in row.keys() else None,
             library_file_id=row["library_file_id"] if "library_file_id" in row.keys() else None,
+            origin_recording_mbid=row["origin_recording_mbid"]
+            if "origin_recording_mbid" in row.keys()
+            else None,
         )

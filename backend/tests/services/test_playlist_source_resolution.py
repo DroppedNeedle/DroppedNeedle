@@ -32,7 +32,8 @@ def _make_playlist(id="p-1") -> PlaylistRecord:
 def _make_track(
     id="t-1", album_id="mbid-abc", track_number=1,
     track_name="Wall Street Shuffle", artist_name="10cc", album_name="Sheet Music",
-    source_type="navidrome", available_sources=None,
+    source_type="navidrome", available_sources=None, disc_number=None,
+    origin_recording_mbid=None, library_file_id=None,
 ) -> PlaylistTrackRecord:
     return PlaylistTrackRecord(
         id=id, playlist_id="p-1", position=0,
@@ -40,8 +41,10 @@ def _make_track(
         album_id=album_id, artist_id=None, track_source_id="nd-123",
         cover_url=None, source_type=source_type,
         available_sources=available_sources,
-        format="flac", track_number=track_number, disc_number=None, duration=240,
+        format="flac", track_number=track_number, disc_number=disc_number, duration=240,
         created_at="2025-01-01T00:00:00+00:00",
+        library_file_id=library_file_id,
+        origin_recording_mbid=origin_recording_mbid,
     )
 
 
@@ -65,8 +68,13 @@ def _make_nd_service(found=True, tracks=None):
 def _make_local_service(found=True, tracks=None):
     local = AsyncMock()
     if tracks is None:
-        tracks = [SimpleNamespace(track_number=1, title="Wall Street Shuffle", track_file_id=789)]
+        tracks = [SimpleNamespace(
+            track_number=1, title="Wall Street Shuffle", track_file_id=789,
+            disc_number=1, recording_mbid=None,
+        )]
     local.match_album_by_mbid = AsyncMock(return_value=SimpleNamespace(found=found, tracks=tracks))
+    # Global, library-wide recording fallback used for cross-album copies.
+    local.match_recordings_by_mbid = AsyncMock(return_value={})
     return local
 
 
@@ -364,12 +372,12 @@ class TestStringTrackNumberRegression:
             {6: ("Speed Kills", "nd-456"), 1: ("Johnny", "nd-401")},
         )
         await cache.set(
-            "source_resolution:user:global:scope:all:mbid-abc",
+            "source_resolution:v2:user:global:scope:all:mbid-abc",
             stale_data,
             ttl_seconds=3600,
         )
 
-        jf, local, nd, plex = await service._resolve_album_sources(
+        jf, local, nd, plex, *_ = await service._resolve_album_sources(
             "mbid-abc", None, None, None,
         )
 
@@ -437,8 +445,8 @@ class TestResolveTrackSourcesConcurrency:
         async def _flaky(album_id, *args, **kwargs):
             if album_id == "mbid-a":
                 raise RuntimeError("boom")
-            # (jf_by_num, local_by_num, nd_by_num, plex_by_num)
-            return ({}, {(1, 1): ("Song B", "789")}, {}, {})
+            # (jf, local, nd, plex by num, then the four by-MBID maps)
+            return ({}, {(1, 1): ("Song B", "789")}, {}, {}, {}, {}, {}, {})
 
         service._resolve_album_sources = AsyncMock(side_effect=_flaky)
 
@@ -564,7 +572,7 @@ class TestSkippedBackendsNotCalled:
         plex = AsyncMock()
         plex.is_configured = MagicMock(return_value=False)
 
-        jf_out, local_out, nd_out, plex_out = await service._resolve_album_sources(
+        jf_out, local_out, nd_out, plex_out, *_ = await service._resolve_album_sources(
             "mbid-abc", jf, local, nd, plex,
             album_name="Sheet Music", artist_name="10cc",
         )
@@ -585,7 +593,7 @@ class TestSkippedBackendsNotCalled:
         nd = AsyncMock()
         nd.is_configured = MagicMock(return_value=False)
 
-        _, local_out, nd_out, _ = await service._resolve_album_sources(
+        _, local_out, nd_out, _, *_ = await service._resolve_album_sources(
             "mbid-abc", jf, local, nd,
             album_name="Sheet Music", artist_name="10cc",
         )
@@ -722,3 +730,246 @@ class TestResolvePromotesUnknownRows:
         assert args[4] == "789"
         assert args[6] == "789"
         repo.batch_update_available_sources.assert_not_called()
+
+
+def _local_track(
+    title, *, track_number, track_file_id, disc_number=1, recording_mbid=None
+):
+    return SimpleNamespace(
+        track_number=track_number,
+        title=title,
+        track_file_id=track_file_id,
+        disc_number=disc_number,
+        recording_mbid=recording_mbid,
+    )
+
+
+class TestRecordingMbidResolution:
+    """Recording MBID is the exact key; disc/track+fuzzy is only the fallback."""
+
+    @pytest.mark.asyncio
+    async def test_same_recording_different_numbering_persists_source(self, tmp_path):
+        """Case 1: another edition of the same release-group renumbers tracks.
+
+        The row must leave Unknown: source_type and available_sources are
+        persisted from the MBID match, without re-resolving by disc/track.
+        """
+        service, repo = _make_service(tmp_path)
+        track = _make_track(
+            track_number=2, disc_number=1, source_type="",
+            origin_recording_mbid="rec-1",
+        )
+        track.track_source_id = None
+        repo.get_tracks = MagicMock(return_value=[track])
+        local = _make_local_service(tracks=[
+            _local_track(
+                "Wall Street Shuffle", track_number=7, disc_number=2,
+                track_file_id="file-1", recording_mbid="rec-1",
+            ),
+        ])
+        # The disc/track resolver would fail here (the copy is at 2/7). The fix
+        # must persist directly instead of calling it.
+        service._resolve_new_source_id = AsyncMock(
+            side_effect=AssertionError("must not re-resolve by disc/track")
+        )
+
+        result = await service.resolve_track_sources("p-1", local_service=local)
+
+        assert result["t-1"] == ["local"]
+        repo.update_track_source.assert_called_once()
+        args, _kwargs = repo.update_track_source.call_args
+        # (playlist_id, track_id, source_type, available_sources,
+        #  track_source_id, plex_rating_key, library_file_id)
+        assert args[:4] == ("p-1", "t-1", "local", ["local"])
+        assert args[4] == "file-1"
+        assert args[6] == "file-1"
+        repo.batch_link_library_files.assert_called_once_with(
+            "p-1", {"t-1": "file-1"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_same_recording_other_album_persists_source(self, tmp_path):
+        """Case 2: the single's release-group is absent, the recording is not."""
+        service, repo = _make_service(tmp_path)
+        track = _make_track(
+            album_id="single-rg", track_number=1, source_type="",
+            origin_recording_mbid="rec-1",
+        )
+        track.track_source_id = None
+        repo.get_tracks = MagicMock(return_value=[track])
+        local = _make_local_service(found=False, tracks=[])
+        local.match_recordings_by_mbid = AsyncMock(
+            return_value={"rec-1": ("Wall Street Shuffle", "file-global")}
+        )
+
+        result = await service.resolve_track_sources("p-1", local_service=local)
+
+        assert result["t-1"] == ["local"]
+        local.match_recordings_by_mbid.assert_awaited_once_with(["rec-1"])
+        args, _kwargs = repo.update_track_source.call_args
+        assert args[:4] == ("p-1", "t-1", "local", ["local"])
+        assert args[4] == "file-global"
+        assert args[6] == "file-global"
+        repo.batch_link_library_files.assert_called_once_with(
+            "p-1", {"t-1": "file-global"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_unmatched_recording_falls_back_to_disc_track(self, tmp_path):
+        """A remaster/radio edit whose origin MBID differs from the file's tag
+        must still link when release-group slot and title line up."""
+        service, repo = _make_service(tmp_path)
+        track = _make_track(
+            track_number=1, disc_number=1, track_name="Wall Street Shuffle",
+            source_type="", origin_recording_mbid="rec-origin",
+        )
+        track.track_source_id = None
+        repo.get_tracks = MagicMock(return_value=[track])
+        local = _make_local_service(tracks=[
+            _local_track(
+                "Wall Street Shuffle", track_number=1, disc_number=1,
+                track_file_id="file-1", recording_mbid="rec-file",
+            ),
+        ])
+
+        result = await service.resolve_track_sources("p-1", local_service=local)
+
+        assert result["t-1"] == ["local"]
+        args, _kwargs = repo.update_track_source.call_args
+        assert args[:4] == ("p-1", "t-1", "local", ["local"])
+        assert args[4] == "file-1"
+        assert args[6] == "file-1"
+        repo.batch_link_library_files.assert_called_once_with(
+            "p-1", {"t-1": "file-1"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_different_recording_same_slot_still_links_via_fallback(
+        self, tmp_path,
+    ):
+        """Same title and slot but a different recording MBID on both sides is
+        still a fallback hit: the MBID prioritizes, it does not discard."""
+        service, repo = _make_service(tmp_path)
+        track = _make_track(
+            track_number=1, disc_number=1, track_name="Wall Street Shuffle",
+            source_type="navidrome", origin_recording_mbid="rec-origin",
+        )
+        repo.get_tracks = MagicMock(return_value=[track])
+        local = _make_local_service(tracks=[
+            _local_track(
+                "Wall Street Shuffle", track_number=1, disc_number=1,
+                track_file_id="file-1", recording_mbid="rec-file",
+            ),
+        ])
+
+        result = await service.resolve_track_sources("p-1", local_service=local)
+
+        assert sorted(result["t-1"]) == ["local", "navidrome"]
+        repo.batch_link_library_files.assert_called_once_with(
+            "p-1", {"t-1": "file-1"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_untagged_entry_falls_back_to_disc_track_fuzzy(self, tmp_path):
+        """Case 4: files without MBIDs keep the legacy fuzzy behavior."""
+        service, repo = _make_service(tmp_path)
+        track = _make_track(
+            track_number=1, disc_number=1, track_name="Wall Street Shuffle",
+            source_type="navidrome",
+        )
+        repo.get_tracks = MagicMock(return_value=[track])
+        local = _make_local_service(tracks=[
+            _local_track(
+                "Wall Street Shuffle", track_number=1, disc_number=1,
+                track_file_id="file-1", recording_mbid=None,
+            ),
+        ])
+
+        result = await service.resolve_track_sources("p-1", local_service=local)
+
+        assert sorted(result["t-1"]) == ["local", "navidrome"]
+        repo.batch_link_library_files.assert_called_once_with(
+            "p-1", {"t-1": "file-1"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_mbid_hit_does_not_add_other_recording_at_same_slot(self, tmp_path):
+        """Case 3: once the exact recording matches, no disc/track crossing."""
+        service, repo = _make_service(tmp_path)
+        track = _make_track(
+            track_number=1, disc_number=1, track_name="Wall Street Shuffle",
+            source_type="", origin_recording_mbid="rec-a",
+        )
+        repo.get_tracks = MagicMock(return_value=[track])
+        local = _make_local_service(tracks=[
+            _local_track(
+                "Wall Street Shuffle", track_number=9, disc_number=1,
+                track_file_id="file-a", recording_mbid="rec-a",
+            ),
+            _local_track(
+                "Wall Street Shuffle (Sing-Along)", track_number=1, disc_number=1,
+                track_file_id="file-b", recording_mbid="rec-b",
+            ),
+        ])
+
+        result = await service.resolve_track_sources("p-1", local_service=local)
+
+        assert result["t-1"] == ["local"]
+        repo.batch_link_library_files.assert_called_once_with(
+            "p-1", {"t-1": "file-a"}
+        )
+        args, _kwargs = repo.update_track_source.call_args
+        assert args[:4] == ("p-1", "t-1", "local", ["local"])
+        assert args[4] == "file-a"
+
+    @pytest.mark.asyncio
+    async def test_already_linked_unknown_row_still_gets_source_type(self, tmp_path):
+        """A row that already has library_file_id but an empty source_type must
+        stop looking Unknown after the MBID match."""
+        service, repo = _make_service(tmp_path)
+        track = _make_track(
+            track_number=2, disc_number=1, source_type="",
+            origin_recording_mbid="rec-1", library_file_id="file-1",
+        )
+        track.track_source_id = None
+        repo.get_tracks = MagicMock(return_value=[track])
+        local = _make_local_service(tracks=[
+            _local_track(
+                "Wall Street Shuffle", track_number=7, disc_number=2,
+                track_file_id="file-1", recording_mbid="rec-1",
+            ),
+        ])
+
+        result = await service.resolve_track_sources("p-1", local_service=local)
+
+        assert result["t-1"] == ["local"]
+        args, _kwargs = repo.update_track_source.call_args
+        assert args[:4] == ("p-1", "t-1", "local", ["local"])
+        assert args[4] == "file-1"
+        assert args[6] == "file-1"
+        repo.batch_link_library_files.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_mbid_match_does_not_clobber_existing_source_type(self, tmp_path):
+        """Already-sourced rows keep their source_type; only sources grow."""
+        service, repo = _make_service(tmp_path)
+        track = _make_track(
+            track_number=4, disc_number=1, source_type="navidrome",
+            available_sources=["navidrome"], origin_recording_mbid="rec-1",
+        )
+        repo.get_tracks = MagicMock(return_value=[track])
+        local = _make_local_service(tracks=[
+            _local_track(
+                "Wall Street Shuffle", track_number=11, disc_number=1,
+                track_file_id="file-1", recording_mbid="rec-1",
+            ),
+        ])
+
+        result = await service.resolve_track_sources("p-1", local_service=local)
+
+        assert sorted(result["t-1"]) == ["local", "navidrome"]
+        repo.update_track_source.assert_not_called()
+        repo.batch_update_available_sources.assert_called_once_with(
+            "p-1", {"t-1": ["local", "navidrome"]}
+        )
+

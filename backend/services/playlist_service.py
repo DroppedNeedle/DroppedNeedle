@@ -96,6 +96,21 @@ _SOURCE_TYPE_ALIASES = {
 # picks the same winner the import auto-link would have.
 _LINK_SOURCE_PRIORITY = ["local", "jellyfin", "navidrome", "plex"]
 
+# _resolve_album_sources result: four disc/track-keyed maps, then four
+# recording-MBID-keyed maps (jellyfin, local, navidrome, plex). Plex values
+# carry (title, part_key_or_plex_id, plex_id) so a direct MBID persist can set
+# both track_source_id and plex_rating_key.
+_SourceMaps = tuple[
+    dict[tuple[int, int], tuple[str, str]],
+    dict[tuple[int, int], tuple[str, str]],
+    dict[tuple[int, int], tuple[str, str]],
+    dict[tuple[int, int], tuple[str, str, str]],
+    dict[str, tuple[str, str]],
+    dict[str, tuple[str, str]],
+    dict[str, tuple[str, str]],
+    dict[str, tuple[str, str, str]],
+]
+
 
 def _normalize_source_map(by_num: dict) -> dict[tuple[int, int], tuple[str, str]]:
     """Ensure source map keys are (disc_number, track_number) tuples.
@@ -130,6 +145,108 @@ def _safe_track_number(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _mbid_key(value: str | None) -> str | None:
+    """Normalize a MusicBrainz ID for case-insensitive lookup/keys."""
+    if not value:
+        return None
+    normalized = value.strip().casefold()
+    return normalized or None
+
+
+def _track_origin_recording_mbid(track: PlaylistTrackRecord) -> str | None:
+    """Recording MBID a playlist entry was imported with.
+
+    Prefers the dedicated ``origin_recording_mbid`` column (set at add-time from
+    ``track_source_id`` when no source was bound yet); falls back to
+    ``track_source_id`` for rows that predate the column/backfill.
+    """
+    origin = getattr(track, "origin_recording_mbid", None)
+    if origin:
+        return origin
+    if not getattr(track, "source_type", "") and track.track_source_id:
+        return track.track_source_id
+    return None
+
+
+def _apply_recording_mbid_match(
+    sources: set[str],
+    file_links: dict[str, str],
+    track: PlaylistTrackRecord,
+    recording_mbid: str,
+    jf_by_mbid: dict[str, tuple[str, str]],
+    local_by_mbid: dict[str, tuple[str, str]],
+    nd_by_mbid: dict[str, tuple[str, str]],
+    plex_by_mbid: dict[str, tuple[str, str, str]],
+    local_recording_map: dict[str, tuple[str, str]],
+) -> tuple[str, str, str | None] | None:
+    """Mark every source that owns ``recording_mbid`` and return the best match.
+
+    Album-scoped maps are preferred; the library-wide local map fills the gap
+    when the copy sits under another album/release-group. The return value is
+    ``(backend, source_id, plex_rating_key)`` for the highest-priority source
+    (``_LINK_SOURCE_PRIORITY``), used to persist ``source_type`` directly
+    without re-resolving by disc/track. ``None`` means no recording match.
+    """
+    candidates: dict[str, tuple[str, str, str | None]] = {}
+    jf_match = jf_by_mbid.get(recording_mbid)
+    if jf_match:
+        sources.add("jellyfin")
+        candidates["jellyfin"] = ("jellyfin", jf_match[1], None)
+    local_match = local_by_mbid.get(recording_mbid) or local_recording_map.get(
+        recording_mbid
+    )
+    if local_match:
+        sources.add("local")
+        if not track.library_file_id and local_match[1]:
+            file_links[track.id] = local_match[1]
+        candidates["local"] = ("local", local_match[1], None)
+    nd_match = nd_by_mbid.get(recording_mbid)
+    if nd_match:
+        sources.add("navidrome")
+        candidates["navidrome"] = ("navidrome", nd_match[1], None)
+    plex_match = plex_by_mbid.get(recording_mbid)
+    if plex_match:
+        sources.add("plex")
+        candidates["plex"] = ("plex", plex_match[1], plex_match[2] or None)
+    if not candidates:
+        return None
+    best = next(s for s in _LINK_SOURCE_PRIORITY if s in candidates)
+    return candidates[best]
+
+
+def _normalize_cached_source_maps(
+    cached: object,
+) -> tuple[
+    dict[tuple[int, int], tuple[str, str]],
+    dict[tuple[int, int], tuple[str, str]],
+    dict[tuple[int, int], tuple[str, str]],
+    dict[tuple[int, int], tuple[str, str, str]],
+    dict[str, tuple[str, str]],
+    dict[str, tuple[str, str]],
+    dict[str, tuple[str, str]],
+    dict[str, tuple[str, str, str]],
+]:
+    """Coerce a cached ``_resolve_album_sources`` value into the v2 8-map shape.
+
+    Old entries (pre-v2) cached 2/3/4 number-keyed maps only; their
+    recording-MBID maps are empty and the caller falls back to disc/track
+    matching, which is exactly the legacy behavior.
+    """
+    entries = list(cached) if isinstance(cached, (list, tuple)) else []
+    while len(entries) < 8:
+        entries.append({})
+    return (
+        _normalize_source_map(entries[0] or {}),
+        _normalize_source_map(entries[1] or {}),
+        _normalize_source_map(entries[2] or {}),
+        _normalize_source_map(entries[3] or {}),
+        dict(entries[4] or {}),
+        dict(entries[5] or {}),
+        dict(entries[6] or {}),
+        dict(entries[7] or {}),
+    )
 
 
 def _fuzzy_name_match(name1: str, name2: str) -> bool:
@@ -672,12 +789,7 @@ class PlaylistService:
 
         async def _resolve_group(
             album_tracks: list[PlaylistTrackRecord],
-        ) -> tuple[
-            dict[tuple[int, int], tuple[str, str]],
-            dict[tuple[int, int], tuple[str, str]],
-            dict[tuple[int, int], tuple[str, str]],
-            dict[tuple[int, int], tuple[str, str, str]],
-        ]:
+        ) -> _SourceMaps:
             representative = album_tracks[0]
             async with sem:
                 try:
@@ -705,21 +817,55 @@ class PlaylistService:
                         representative.album_id,
                         exc_info=True,
                     )
-                    return ({}, {}, {}, {})
+                    return ({}, {}, {}, {}, {}, {}, {}, {})
 
         resolved_maps = await asyncio.gather(
             *(_resolve_group(album_tracks) for _album_id, album_tracks in grouped)
         )
 
+        # Global fallback (local only): the per-album *_by_mbid maps only see the
+        # release-group the playlist entry points at, so a single/EP whose
+        # recording already lives under a *different* album would never match.
+        # One batched, index-backed query serves every entry.
+        local_recording_map: dict[str, tuple[str, str]] = {}
+        recording_ids = {
+            key
+            for t in tracks
+            if (key := _mbid_key(_track_origin_recording_mbid(t))) is not None
+        }
+        if (
+            recording_ids
+            and local_service is not None
+            and await _is_backend_configured(local_service)
+            and hasattr(local_service, "match_recordings_by_mbid")
+        ):
+            try:
+                local_recording_map = await local_service.match_recordings_by_mbid(
+                    sorted(recording_ids)
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "Global local recording lookup failed; using album-scoped maps",
+                    exc_info=True,
+                )
+
         # entries that resolved to a local file get linked so the compat shims can
         # stream them (issue #181 - imported playlists showed empty in clients)
         file_links: dict[str, str] = {}
+        # track_id -> (backend, source_id, plex_rating_key) for exact recording
+        # matches. Persisted directly below so a re-numbered edition still gets a
+        # source_type instead of going back through the disc/track resolver.
+        mbid_matches: dict[str, tuple[str, str, str | None]] = {}
 
         for (_album_id, album_tracks), (
             jf_by_num,
             local_by_num,
             nd_by_num,
             plex_by_num,
+            jf_by_mbid,
+            local_by_mbid,
+            nd_by_mbid,
+            plex_by_mbid,
         ) in zip(grouped, resolved_maps):
             for t in album_tracks:
                 sources = set()
@@ -728,6 +874,34 @@ class PlaylistService:
                 ):
                     sources.add(t.source_type)
 
+                # Recording-MBID match wins over disc/track: the exact identity
+                # survives re-numbered editions and cross-album copies. When it
+                # matches, do not also fold in disc/track hits, which could
+                # belong to a *different* recording sharing the same title.
+                recording_mbid = _mbid_key(_track_origin_recording_mbid(t))
+                mbid_match: tuple[str, str, str | None] | None = None
+                if recording_mbid:
+                    mbid_match = _apply_recording_mbid_match(
+                        sources,
+                        file_links,
+                        t,
+                        recording_mbid,
+                        jf_by_mbid,
+                        local_by_mbid,
+                        nd_by_mbid,
+                        plex_by_mbid,
+                        local_recording_map,
+                    )
+                if mbid_match is not None:
+                    mbid_matches[t.id] = mbid_match
+                    result[t.id] = sorted(sources)
+                    continue
+
+                # No MBID match: always fall back to the legacy disc/track +
+                # fuzzy title criteria. The origin MBID prioritizes, it does not
+                # discard: an untagged/remastered/radio-edit copy whose recording
+                # MBID differs from the file's tag must still link when the
+                # release-group slot and title line up.
                 disc_key = (t.disc_number or 1, t.track_number)
                 jf_track = jf_by_num.get(disc_key)
                 if jf_track and _fuzzy_name_match(t.track_name, jf_track[0]):
@@ -750,14 +924,21 @@ class PlaylistService:
                 result[t.id] = sorted(sources)
 
         for t in no_album_tracks:
-            result[t.id] = (
-                [t.source_type]
-                if t.source_type
-                and not (
-                    t.source_type == "navidrome" and navidrome_folder_ids is not None
-                )
-                else []
-            )
+            sources = set()
+            if t.source_type and not (
+                t.source_type == "navidrome" and navidrome_folder_ids is not None
+            ):
+                sources.add(t.source_type)
+            # No album/track number to fuzz on, but a recording MBID is enough
+            # for the library-wide lookup.
+            recording_mbid = _mbid_key(_track_origin_recording_mbid(t))
+            if recording_mbid:
+                local_mbid = local_recording_map.get(recording_mbid)
+                if local_mbid:
+                    sources.add("local")
+                    if not t.library_file_id and local_mbid[1]:
+                        file_links[t.id] = local_mbid[1]
+            result[t.id] = sorted(sources)
 
         # Heal Spotify-imported Unknown rows (#381): entries stored with an empty
         # source_type stay unplayable after their album is downloaded. Promote them
@@ -795,6 +976,42 @@ class PlaylistService:
             await self._repo.batch_link_library_files(playlist_id, file_links)
         for track_id, best in promotions.items():
             track = by_id[track_id]
+            persist_sources = result[track_id]
+            if navidrome_folder_ids is not None:
+                # Scoped Navidrome matches are folder-specific and must never be
+                # stored globally; the batch path above already skips all
+                # available_sources persists under a scope. Promotion heals the
+                # local row but strips the scoped source from what it stores.
+                persist_sources = [s for s in persist_sources if s != "navidrome"]
+                if not persist_sources and best == "local":
+                    persist_sources = [best]
+            mbid_match = mbid_matches.get(track_id)
+            if mbid_match is not None and mbid_match[0] == best:
+                # Exact recording hit: persist the id we already found. Going
+                # through _resolve_new_source_id would re-resolve by (disc,
+                # track) and miss re-numbered editions / cross-album copies,
+                # leaving the row looking Unknown.
+                _backend, matched_id, matched_plex_rating_key = mbid_match
+                mbid_kwargs: dict[str, Any] = {"track_source_id": matched_id}
+                if best == "local":
+                    mbid_kwargs["library_file_id"] = matched_id
+                if best == "plex" and matched_plex_rating_key is not None:
+                    mbid_kwargs["plex_rating_key"] = matched_plex_rating_key
+                try:
+                    await self._repo.update_track_source(
+                        playlist_id,
+                        track_id,
+                        best,
+                        persist_sources,
+                        **mbid_kwargs,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "Skipping MBID source persist for track %s",
+                        track_id,
+                        exc_info=True,
+                    )
+                continue
             try:
                 new_source_id, new_plex_rating_key = await self._resolve_new_source_id(
                     track,
@@ -818,15 +1035,6 @@ class PlaylistService:
                 repo_kwargs["library_file_id"] = new_source_id
             if best == "plex":
                 repo_kwargs["plex_rating_key"] = new_plex_rating_key
-            persist_sources = result[track_id]
-            if navidrome_folder_ids is not None:
-                # Scoped Navidrome matches are folder-specific and must never be
-                # stored globally; the batch path above already skips all
-                # available_sources persists under a scope. Promotion heals the
-                # local row but strips the scoped source from what it stores.
-                persist_sources = [s for s in persist_sources if s != "navidrome"]
-                if not persist_sources and best == "local":
-                    persist_sources = [best]
             await self._repo.update_track_source(
                 playlist_id,
                 track_id,
@@ -848,12 +1056,7 @@ class PlaylistService:
         artist_name: str = "",
         user_id: str = "global",
         navidrome_folder_ids: tuple[str, ...] | None = None,
-    ) -> tuple[
-        dict[tuple[int, int], tuple[str, str]],
-        dict[tuple[int, int], tuple[str, str]],
-        dict[tuple[int, int], tuple[str, str]],
-        dict[tuple[int, int], tuple[str, str, str]],
-    ]:
+    ) -> _SourceMaps:
         scope_segment = "all"
         if navidrome_folder_ids is not None:
             scope_segment = "selected-empty"
@@ -864,35 +1067,27 @@ class PlaylistService:
                         "\0".join(navidrome_folder_ids).encode()
                     ).hexdigest()[:20]
                 )
+        # v2: the cached shape grew from 4 number-keyed maps to 8 maps (adding
+        # recording-MBID maps). Bumping the prefix retires old-shaped entries
+        # instead of trying to reinterpret them.
         cache_key = (
-            f"{SOURCE_RESOLUTION_PREFIX}:user:{user_id}:"
+            f"{SOURCE_RESOLUTION_PREFIX}:v2:user:{user_id}:"
             f"scope:{scope_segment}:{album_id}"
         )
         if self._cache:
             cached = await self._cache.get(cache_key)
             if cached is not None:
-                if len(cached) == 2:
-                    cached_maps = (
-                        _normalize_source_map(cached[0]),
-                        _normalize_source_map(cached[1]),
-                        {},
-                        {},
-                    )
-                elif len(cached) == 3:
-                    cached_maps = (
-                        _normalize_source_map(cached[0]),
-                        _normalize_source_map(cached[1]),
-                        _normalize_source_map(cached[2]),
-                        {},
-                    )
-                else:
-                    cached_maps = (
-                        _normalize_source_map(cached[0]),
-                        _normalize_source_map(cached[1]),
-                        _normalize_source_map(cached[2]),
-                        _normalize_source_map(cached[3]),
-                    )
-                jf_by_num, local_by_num, nd_by_num, plex_by_num = cached_maps
+                cached_maps = _normalize_cached_source_maps(cached)
+                (
+                    jf_by_num,
+                    local_by_num,
+                    nd_by_num,
+                    plex_by_num,
+                    jf_by_mbid,
+                    local_by_mbid,
+                    nd_by_mbid,
+                    plex_by_mbid,
+                ) = cached_maps
                 if (
                     not local_by_num
                     and local_service is not None
@@ -902,22 +1097,49 @@ class PlaylistService:
                     # has no local tracks and would block promotion until the TTL
                     # expires. Re-check local files only and merge the result back
                     # into the cached entry; other backends keep cached results.
-                    refreshed = await self._refresh_cached_local_sources(
-                        album_id, jf_service, local_service
+                    refreshed_by_num, refreshed_by_mbid = (
+                        await self._refresh_cached_local_sources(
+                            album_id, jf_service, local_service
+                        )
                     )
-                    if refreshed:
-                        local_by_num.update(refreshed)
+                    if refreshed_by_num:
+                        local_by_num.update(refreshed_by_num)
+                    if refreshed_by_mbid:
+                        local_by_mbid.update(refreshed_by_mbid)
+                    if refreshed_by_num or refreshed_by_mbid:
                         await self._cache.set(
                             cache_key,
-                            (jf_by_num, local_by_num, nd_by_num, plex_by_num),
+                            (
+                                jf_by_num,
+                                local_by_num,
+                                nd_by_num,
+                                plex_by_num,
+                                jf_by_mbid,
+                                local_by_mbid,
+                                nd_by_mbid,
+                                plex_by_mbid,
+                            ),
                             ttl_seconds=3600,
                         )
-                return (jf_by_num, local_by_num, nd_by_num, plex_by_num)
+                return (
+                    jf_by_num,
+                    local_by_num,
+                    nd_by_num,
+                    plex_by_num,
+                    jf_by_mbid,
+                    local_by_mbid,
+                    nd_by_mbid,
+                    plex_by_mbid,
+                )
 
         jf_by_num: dict[tuple[int, int], tuple[str, str]] = {}
         local_by_num: dict[tuple[int, int], tuple[str, str]] = {}
         nd_by_num: dict[tuple[int, int], tuple[str, str]] = {}
         plex_by_num: dict[tuple[int, int], tuple[str, str, str]] = {}
+        jf_by_mbid: dict[str, tuple[str, str]] = {}
+        local_by_mbid: dict[str, tuple[str, str]] = {}
+        nd_by_mbid: dict[str, tuple[str, str]] = {}
+        plex_by_mbid: dict[str, tuple[str, str, str]] = {}
 
         # Pre-fix Jellyfin imports stored the Jellyfin album GUID as album_id,
         # which the MBID-keyed Jellyfin/local lookups can never match. Re-key it
@@ -940,6 +1162,11 @@ class PlaylistService:
                                 t.title,
                                 t.jellyfin_id,
                             )
+                        recording_mbid = _mbid_key(
+                            getattr(t, "recording_mbid", None)
+                        )
+                        if recording_mbid:
+                            jf_by_mbid[recording_mbid] = (t.title, t.jellyfin_id)
             except Exception:  # noqa: BLE001
                 logger.debug(
                     "Jellyfin source resolution failed for album %s",
@@ -958,6 +1185,14 @@ class PlaylistService:
                             local_by_num[
                                 (getattr(t, "disc_number", None) or 1, key)
                             ] = (t.title, str(t.track_file_id))
+                        recording_mbid = _mbid_key(
+                            getattr(t, "recording_mbid", None)
+                        )
+                        if recording_mbid:
+                            local_by_mbid[recording_mbid] = (
+                                t.title,
+                                str(t.track_file_id),
+                            )
             except Exception:  # noqa: BLE001
                 logger.debug(
                     "Local source resolution failed for album %s",
@@ -983,6 +1218,11 @@ class PlaylistService:
                                 t.title,
                                 t.navidrome_id,
                             )
+                        recording_mbid = _mbid_key(
+                            getattr(t, "recording_mbid", None)
+                        )
+                        if recording_mbid:
+                            nd_by_mbid[recording_mbid] = (t.title, t.navidrome_id)
             except Exception:  # noqa: BLE001
                 logger.debug(
                     "Navidrome source resolution failed for album %s",
@@ -1008,6 +1248,15 @@ class PlaylistService:
                                 t.part_key or t.plex_id,
                                 t.plex_id,
                             )
+                        recording_mbid = _mbid_key(
+                            getattr(t, "recording_mbid", None)
+                        )
+                        if recording_mbid:
+                            plex_by_mbid[recording_mbid] = (
+                                t.title,
+                                t.part_key or t.plex_id,
+                                t.plex_id,
+                            )
             except Exception:  # noqa: BLE001
                 logger.debug(
                     "Plex source resolution failed for album %s",
@@ -1017,7 +1266,16 @@ class PlaylistService:
         elif plex_service is not None:
             _record_backend_skip("plex", album_id)
 
-        resolved = (jf_by_num, local_by_num, nd_by_num, plex_by_num)
+        resolved = (
+            jf_by_num,
+            local_by_num,
+            nd_by_num,
+            plex_by_num,
+            jf_by_mbid,
+            local_by_mbid,
+            nd_by_mbid,
+            plex_by_mbid,
+        )
         if self._cache:
             await self._cache.set(cache_key, resolved, ttl_seconds=3600)
         return resolved
@@ -1027,8 +1285,14 @@ class PlaylistService:
         album_id: str,
         jf_service: object,
         local_service: object,
-    ) -> dict[tuple[int, int], tuple[str, str]]:
-        """Re-check local files for a cached album with no local tracks."""
+    ) -> tuple[
+        dict[tuple[int, int], tuple[str, str]],
+        dict[str, tuple[str, str]],
+    ]:
+        """Re-check local files for a cached album with no local tracks.
+
+        Returns ``(by_disc_track, by_recording_mbid)``.
+        """
         match_album_id = album_id
         if jf_service is not None and await _is_backend_configured(jf_service):
             try:
@@ -1051,10 +1315,11 @@ class PlaylistService:
                 album_id,
                 exc_info=True,
             )
-            return {}
+            return {}, {}
         if not match.found:
-            return {}
+            return {}, {}
         refreshed: dict[tuple[int, int], tuple[str, str]] = {}
+        refreshed_by_mbid: dict[str, tuple[str, str]] = {}
         for t in match.tracks:
             key = _safe_track_number(t.track_number)
             if key is not None:
@@ -1062,7 +1327,13 @@ class PlaylistService:
                     t.title,
                     str(t.track_file_id),
                 )
-        return refreshed
+            recording_mbid = _mbid_key(getattr(t, "recording_mbid", None))
+            if recording_mbid:
+                refreshed_by_mbid[recording_mbid] = (
+                    t.title,
+                    str(t.track_file_id),
+                )
+        return refreshed, refreshed_by_mbid
 
     async def _resolve_new_source_id(
         self,
@@ -1086,6 +1357,10 @@ class PlaylistService:
             local_by_num,
             nd_by_num,
             plex_by_num,
+            _jf_by_mbid,
+            _local_by_mbid,
+            _nd_by_mbid,
+            _plex_by_mbid,
         ) = await self._resolve_album_sources(
             track.album_id,
             jf_service,

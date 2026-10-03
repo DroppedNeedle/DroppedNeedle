@@ -597,24 +597,32 @@ def test_target_membership_is_bounded_and_candidate_scoped(app: FastAPI) -> None
     override_user_auth(app, role="user")
     ownership = app.dependency_overrides[get_target_library_ownership_service]()
     ownership.existing_provider_album_ids.return_value = {"owned-rg"}
+    ownership.existing_recording_ids.return_value = {"owned-rec"}
     history = app.dependency_overrides[get_request_history_store]()
     history.async_existing_requested_mbids.return_value = {"requested-rg"}
 
     response = build_test_client(app).post(
         "/library/membership",
-        json={"album_ids": ["OWNED-RG", "requested-rg", "owned-rg"]},
+        json={
+            "album_ids": ["OWNED-RG", "requested-rg", "owned-rg"],
+            "recording_mbids": ["OWNED-REC", "missing-rec"],
+        },
     )
 
     assert response.status_code == 200
     assert response.json() == {
         "owned_ids": ["owned-rg"],
         "requested_ids": ["requested-rg"],
+        "owned_recording_ids": ["owned-rec"],
     }
     ownership.existing_provider_album_ids.assert_awaited_once_with(
         ["owned-rg", "requested-rg"]
     )
     history.async_existing_requested_mbids.assert_awaited_once_with(
         ["owned-rg", "requested-rg"]
+    )
+    ownership.existing_recording_ids.assert_awaited_once_with(
+        ["owned-rec", "missing-rec"]
     )
 
 

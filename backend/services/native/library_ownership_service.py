@@ -61,6 +61,15 @@ class LibraryOwnershipService:
             if row.get("release_group_mbid")
         }
 
+    async def existing_recording_ids(self, identifiers: list[str]) -> set[str]:
+        """Subset of recording MBIDs already owned as indexed library files.
+
+        A recording may live under any album/edition, so this is a library-wide
+        identity check; the caller uses it to avoid requesting an album whose
+        recording is already present elsewhere.
+        """
+        return await self._store.existing_recording_mbids(identifiers)
+
     async def provider_album_id(self, identifier: str) -> str:
         resolved = await self._store.resolve_target_id("album", identifier)
         if resolved is None:

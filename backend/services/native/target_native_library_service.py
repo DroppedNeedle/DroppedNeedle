@@ -347,6 +347,46 @@ class TargetNativeLibraryService:
             for item in bounded
         ]
 
+        # Recording-MBID fast path: an exact recording hit works regardless of
+        # the release-group/edition the item points at, so a single resolved via
+        # the copy's real album. One batched lookup serves every item.
+        recording_ids: list[str] = []
+        seen_recordings: set[str] = set()
+        for item in bounded:
+            recording = (item.recording_mbid or "").strip().casefold()
+            if recording and recording not in seen_recordings:
+                seen_recordings.add(recording)
+                recording_ids.append(recording)
+        recording_resolved: set[int] = set()
+        if recording_ids:
+            grouped = await self._store.get_target_recording_tracks_batch(
+                recording_ids
+            )
+            by_recording = {
+                key: [self._track(row) for row in rows]
+                for key, rows in grouped.items()
+                if rows
+            }
+            for index, item in enumerate(bounded):
+                recording = (item.recording_mbid or "").strip().casefold()
+                matches = by_recording.get(recording) if recording else None
+                if not matches:
+                    continue
+                match = matches[0]
+                resolved[index] = ResolvedTrack(
+                    release_group_mbid=(
+                        match.musicbrainz_release_group_id or match.album_id or None
+                    ),
+                    disc_number=match.disc_number,
+                    track_number=match.track_number,
+                    source="local",
+                    track_source_id=match.id,
+                    stream_url=f"/api/v1/stream/local/{match.id}",
+                    format=match.format,
+                    duration=match.duration_seconds,
+                )
+                recording_resolved.add(index)
+
         # F-TARGETCATALOG-06: one provider-aware canonical batch lookup and
         # one batch album-track read serve the whole request. Items without a
         # release-group ID / track number keep their base result and never
@@ -355,6 +395,8 @@ class TargetNativeLibraryService:
         unique_album_ids: list[str] = []
         seen_album_ids: set[str] = set()
         for index, item in enumerate(bounded):
+            if index in recording_resolved:
+                continue
             album_id = item.release_group_mbid
             if album_id is None or item.track_number is None:
                 continue

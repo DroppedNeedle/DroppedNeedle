@@ -291,6 +291,44 @@ async def test_match_album_by_mbid_not_found_when_no_tracks(service):
 
 
 @pytest.mark.asyncio
+async def test_match_album_by_mbid_exposes_recording_mbid(service):
+    svc, library_repo, music_dir, cache = service
+    library_repo.get_tracks = AsyncMock(
+        return_value=[_native_track(id="t1", recording_mbid="rec-1")]
+    )
+
+    match = await svc.match_album_by_mbid("rg-1")
+    assert match.tracks[0].recording_mbid == "rec-1"
+
+
+@pytest.mark.asyncio
+async def test_match_recordings_by_mbid_batches_and_normalizes(service):
+    svc, library_repo, music_dir, cache = service
+    library_repo.get_library_files_for_recordings = AsyncMock(
+        return_value={
+            "rec-a": [_native_track(id="file-a", track_title="A")],
+            "rec-b": [],
+        }
+    )
+
+    result = await svc.match_recordings_by_mbid(["REC-A", "rec-b", "  "])
+
+    library_repo.get_library_files_for_recordings.assert_awaited_once_with(
+        ["rec-a", "rec-b"]
+    )
+    assert result == {"rec-a": ("A", "file-a")}
+
+
+@pytest.mark.asyncio
+async def test_match_recordings_by_mbid_empty_input_skips_repo(service):
+    svc, library_repo, music_dir, cache = service
+    library_repo.get_library_files_for_recordings = AsyncMock()
+
+    assert await svc.match_recordings_by_mbid([]) == {}
+    library_repo.get_library_files_for_recordings.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_get_album_tracks_by_id_uses_native_tracks(service):
     svc, library_repo, music_dir, cache = service
     library_repo.get_tracks = AsyncMock(return_value=[_native_track(id="t9")])
