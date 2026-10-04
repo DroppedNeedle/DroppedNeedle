@@ -9,8 +9,7 @@ const state = vi.hoisted(() => ({
 vi.mock('$app/environment', () => ({ browser: true }));
 vi.mock('$app/navigation', () => ({ goto: state.goto }));
 vi.mock('$app/paths', () => ({ resolve: (path: string) => path }));
-vi.mock('$lib/api/client', () => ({ api: { global: { post: state.apiLogout } } }));
-vi.mock('$lib/constants', () => ({ API: { auth: { logout: () => '/auth/logout' } } }));
+vi.mock('$lib/api/client', () => ({ api: { global: { v3: { POST: state.apiLogout } } } }));
 vi.mock('$lib/utils/userSessionCleanup', () => ({ clearUserSessionState: state.cleanup }));
 
 import { logout } from './logout';
@@ -30,7 +29,7 @@ it('finishes logout navigation when session cleanup rejects after the revoke att
 
 	await expect(logout()).resolves.toBeUndefined();
 
-	expect(state.apiLogout).toHaveBeenCalledWith('/auth/logout');
+	expect(state.apiLogout).toHaveBeenCalledWith('/api/v3/auth/logout');
 	expect(state.cleanup).toHaveBeenCalledOnce();
 	expect(state.goto).toHaveBeenCalledWith('/login');
 });

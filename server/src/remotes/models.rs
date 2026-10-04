@@ -128,6 +128,9 @@ pub struct TrackView {
     pub recording_mbid: Option<String>,
     /// Relative images URL under `/api/v3`, when art exists.
     pub image_url: Option<String>,
+    /// Plex part key for the stream gateway. Plex-only: Jellyfin and
+    /// Navidrome stream by item id, so they always leave this empty.
+    pub part_key: Option<String>,
 }
 
 /// One page of albums.
@@ -234,6 +237,28 @@ pub struct HubView {
     pub all_albums_preview: Vec<AlbumView>,
     /// Genre labels.
     pub genres: Vec<String>,
+}
+
+/// One Plex discovery shelf: a hub title over its album rows. Plex-only
+/// (from `/hubs/sections/{id}`), kept out of the unified [`HubView`] so
+/// other sources never ship an empty shelf shape.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DiscoveryHubView {
+    /// Hub title, e.g. "Recommended for you".
+    pub title: String,
+    /// Hub kind; always `"album"` (other hub kinds are dropped, as in v1).
+    pub hub_type: String,
+    /// Albums on this shelf.
+    pub albums: Vec<AlbumView>,
+}
+
+/// Plex discovery shelves for the hub page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DiscoveryView {
+    /// Owning source.
+    pub source: SourceName,
+    /// Album shelves, in upstream order.
+    pub hubs: Vec<DiscoveryHubView>,
 }
 
 /// Favorites grouped by kind.
@@ -576,6 +601,24 @@ pub struct GenreSongsQuery {
     pub limit: Option<i64>,
     /// Records to skip (default 0).
     pub offset: Option<i64>,
+}
+
+/// Random-tracks query. Limits mirror the v1 Navidrome route
+/// (`size` 1-50, default 20) so the hub page keeps its batch size.
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+pub struct RandomQuery {
+    /// Max tracks (1-50, default 20).
+    pub limit: Option<i64>,
+    /// Genre label filter, when present.
+    pub genre: Option<String>,
+}
+
+/// Plex discovery-hubs query. The count mirrors the v1 Plex route
+/// (1-20, default 10).
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+pub struct DiscoveryQuery {
+    /// Items per hub (1-20, default 10).
+    pub count: Option<i64>,
 }
 
 /// Image size query for images/covers bytes routes.

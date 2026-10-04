@@ -36,6 +36,8 @@ pub enum AlbumSort {
     DateAdded,
     /// Release year, unknowns last.
     Year,
+    /// Album artist, case folded.
+    Artist,
     /// Database random order.
     Random,
     /// Oldest imports first.
@@ -83,6 +85,8 @@ pub struct AlbumFilter {
     pub artist_id: Option<String>,
     /// Restrict to one decade start year.
     pub decade: Option<i64>,
+    /// Restrict to one primary track format, already lowercased.
+    pub format: Option<String>,
 }
 
 /// Track list filter.
@@ -270,6 +274,14 @@ pub trait LibraryCatalog: Send + Sync {
     fn get_album<'a>(
         &'a self,
         id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<AlbumRecord>, StoreError>>;
+
+    /// Oldest album carrying one release-group mbid. None is absence,
+    /// never failure; siblings order oldest first so the match route is
+    /// deterministic.
+    fn get_album_by_release_group<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<AlbumRecord>, StoreError>>;
 
     /// One page of an album's streamable tracks, disc/track order, plus total.

@@ -20,11 +20,12 @@
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
 	import { getLibraryAlbumCopiesQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import LocalAlbumPage from './LocalAlbumPage.svelte';
-	import type { LibraryAlbumDetail } from '$lib/types';
 
+	// The outage fallback only needs the local id; the v3 album view the
+	// route gate passes satisfies this, as does the v1 detail shape.
 	interface Props {
 		data: { albumId: string };
-		localAlbum?: LibraryAlbumDetail;
+		localAlbum?: { id: string };
 	}
 
 	let { data, localAlbum }: Props = $props();

@@ -14,6 +14,7 @@
 		Database,
 		Settings,
 		Radio,
+		AudioLines,
 		Search,
 		ChartColumn,
 		Info,
@@ -84,6 +85,9 @@
 		{ id: 'plex', label: 'Plex', tier: 'setup', icon: PlexIcon },
 		{ id: 'youtube', label: 'YouTube', tier: 'setup', icon: YouTubeIcon },
 		...(authStore.isAdmin ? [{ id: 'lastfm', label: 'Last.fm', tier: 'setup', icon: Radio }] : []),
+		...(authStore.isAdmin
+			? [{ id: 'listenbrainz', label: 'ListenBrainz', tier: 'setup', icon: AudioLines }]
+			: []),
 		...(authStore.isAdmin
 			? [{ id: 'spotify', label: 'Spotify', tier: 'setup', icon: SpotifyIcon }]
 			: []),

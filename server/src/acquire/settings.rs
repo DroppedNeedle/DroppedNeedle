@@ -463,12 +463,16 @@ impl WatchView for FlowsWatchBridge {
         self.watches
             .list_due(i64::MAX, usize::MAX)
             .into_iter()
-            .map(|watch| WatchedAlbum {
-                key: watch.rg_mbid,
-                user_id: watch.user_id,
-                artist_name: watch.artist,
-                album_title: watch.title,
-                created_at: watch.next_check_at.max(0) as u64,
+            .map(|watch| {
+                let next_check_at = watch.next_check_at.max(0) as u64;
+                WatchedAlbum {
+                    key: watch.rg_mbid,
+                    user_id: watch.user_id,
+                    artist_name: watch.artist,
+                    album_title: watch.title,
+                    created_at: next_check_at,
+                    next_check_at,
+                }
             })
             .collect()
     }

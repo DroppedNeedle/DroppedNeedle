@@ -1,19 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 
-vi.mock('$lib/constants', () => ({
-	API: {
-		stream: {
-			local: (id: number | string) => `/api/v1/stream/local/${id}`,
-			jellyfin: (id: string) => `/api/v1/stream/jellyfin/${id}`
-		}
-	}
-}));
-
 vi.mock('$lib/utils/errorHandling', () => ({
 	getCoverUrl: (url: string | null, albumId: string) => url ?? `/cover/${albumId}`
 }));
 
-import type { JellyfinTrackInfo, LocalTrackInfo, NativeTrackListItem } from '$lib/types';
+import type { JellyfinTrackInfo, LocalTrackInfo, NativeTrackListItem } from '$lib/player/types';
 import type { PlaylistTrack } from '$lib/api/playlists';
 import type { TrackMeta, TrackSourceData } from './queueHelpers';
 import {
@@ -26,6 +17,7 @@ import {
 	buildQueueItemFromYouTube,
 	compareDiscTrack,
 	getDiscTrackKey,
+	normalizeCodec,
 	playlistTrackToQueueItem
 } from './queueHelpers';
 
@@ -68,7 +60,7 @@ describe('selectBestSource', () => {
 		const result = selectBestSource(data);
 		expect(result).not.toBeNull();
 		expect(result!.sourceType).toBe('local');
-		expect(result!.streamUrl).toBe('/api/v1/stream/local/42');
+		expect(result!.streamUrl).toBe('/api/v3/stream/local/42');
 	});
 
 	it('returns jellyfin source when only jellyfinTrack is available', () => {
@@ -265,21 +257,54 @@ describe('buildQueueItemsFromJellyfin', () => {
 		expect.assertions(1);
 		const track: JellyfinTrackInfo = { ...jellyfinTrack, codec: 'ALAC' };
 		const items = buildQueueItemsFromJellyfin([track], baseMeta);
-		expect(items[0].streamUrl).toBe('/api/v1/stream/jellyfin/jf-123');
+		expect(items[0].streamUrl).toBe('/api/v3/stream/jellyfin/jf-123');
 	});
 
 	it('defaults to aac for unknown codecs', () => {
 		expect.assertions(1);
 		const track: JellyfinTrackInfo = { ...jellyfinTrack, codec: 'unknown_codec' };
 		const items = buildQueueItemsFromJellyfin([track], baseMeta);
-		expect(items[0].streamUrl).toBe('/api/v1/stream/jellyfin/jf-123');
+		expect(items[0].streamUrl).toBe('/api/v3/stream/jellyfin/jf-123');
 	});
 
 	it('defaults to aac for null codec', () => {
 		expect.assertions(1);
 		const track: JellyfinTrackInfo = { ...jellyfinTrack, codec: null };
 		const items = buildQueueItemsFromJellyfin([track], baseMeta);
-		expect(items[0].streamUrl).toBe('/api/v1/stream/jellyfin/jf-123');
+		expect(items[0].streamUrl).toBe('/api/v3/stream/jellyfin/jf-123');
+	});
+});
+
+describe('normalizeCodec', () => {
+	it('lowercases known codecs and folds alac to flac', () => {
+		expect.assertions(2);
+		expect(normalizeCodec('FLAC')).toBe('flac');
+		expect(normalizeCodec('ALAC')).toBe('flac');
+	});
+
+	it('keeps wma labeled as wma instead of relabeling it aac', () => {
+		expect.assertions(2);
+		expect(normalizeCodec('wma')).toBe('wma');
+		expect(normalizeCodec('WMA')).toBe('wma');
+	});
+
+	it('passes unknown codecs through instead of calling them aac', () => {
+		expect.assertions(1);
+		expect(normalizeCodec('unknown_codec')).toBe('unknown_codec');
+	});
+
+	it('defaults a missing codec to aac', () => {
+		expect.assertions(3);
+		expect(normalizeCodec(null)).toBe('aac');
+		expect(normalizeCodec(undefined)).toBe('aac');
+		expect(normalizeCodec('')).toBe('aac');
+	});
+
+	it('carries the honest codec onto queue items', () => {
+		expect.assertions(1);
+		const track: JellyfinTrackInfo = { ...jellyfinTrack, codec: 'wma' };
+		const items = buildQueueItemsFromJellyfin([track], baseMeta);
+		expect(items[0].format).toBe('wma');
 	});
 });
 
@@ -291,7 +316,7 @@ describe('buildQueueItemsFromLocal', () => {
 		expect(items[0].sourceType).toBe('local');
 		expect(items[0].trackName).toBe('Local Song');
 		expect(items[0].availableSources).toEqual(['local']);
-		expect(items[0].streamUrl).toBe('/api/v1/stream/local/42');
+		expect(items[0].streamUrl).toBe('/api/v3/stream/local/42');
 	});
 
 	it('lowercases format', () => {
@@ -370,7 +395,7 @@ describe('buildDiscoveryQueueFromLocal', () => {
 		expect(item.albumName).toBe('Cross Album');
 		expect(item.albumId).toBe('local-album-9');
 		expect(item.sourceType).toBe('local');
-		expect(item.streamUrl).toBe('/api/v1/stream/local/file-7');
+		expect(item.streamUrl).toBe('/api/v3/stream/local/file-7');
 		expect(item.coverUrl).toBe('/cover/local-album-9');
 		expect(item.format).toBe('flac');
 		expect(item.discNumber).toBe(2);
@@ -413,7 +438,7 @@ describe('playlistTrackToQueueItem', () => {
 		const item = playlistTrackToQueueItem(basePlaylistTrack)!;
 		expect(item).not.toBeNull();
 		expect(item.sourceType).toBe('local');
-		expect(item.streamUrl).toBe('/api/v1/stream/local/42');
+		expect(item.streamUrl).toBe('/api/v3/stream/local/42');
 		expect(item.trackName).toBe('Test Track');
 	});
 
@@ -427,7 +452,7 @@ describe('playlistTrackToQueueItem', () => {
 		};
 		const item = playlistTrackToQueueItem(track)!;
 		expect(item.sourceType).toBe('jellyfin');
-		expect(item.streamUrl).toBe('/api/v1/stream/jellyfin/jf-123');
+		expect(item.streamUrl).toBe('/api/v3/stream/jellyfin/jf-123');
 		expect(item.format).toBe('opus');
 	});
 
@@ -493,7 +518,7 @@ describe('playlistTrackToQueueItem', () => {
 			format: null
 		};
 		const item = playlistTrackToQueueItem(track)!;
-		expect(item.streamUrl).toBe('/api/v1/stream/jellyfin/jf-1');
+		expect(item.streamUrl).toBe('/api/v3/stream/jellyfin/jf-1');
 	});
 
 	it('populates playlistTrackId from playlist track id', () => {
@@ -514,7 +539,7 @@ describe('playlistTrackToQueueItem', () => {
 		const item = playlistTrackToQueueItem(track)!;
 		expect(item.sourceType).toBe('local');
 		expect(item.trackSourceId).toBe('77');
-		expect(item.streamUrl).toBe('/api/v1/stream/local/77');
+		expect(item.streamUrl).toBe('/api/v3/stream/local/77');
 		expect(item.sourceIds).toEqual({ jellyfin: 'jf-123', local: '77' });
 	});
 
@@ -544,7 +569,7 @@ describe('playlistTrackToQueueItem', () => {
 		};
 		const item = playlistTrackToQueueItem(track)!;
 		expect(item.sourceType).toBe('jellyfin');
-		expect(item.streamUrl).toBe('/api/v1/stream/jellyfin/jf-123');
+		expect(item.streamUrl).toBe('/api/v3/stream/jellyfin/jf-123');
 	});
 
 	it('plays linked row with empty track_source_id via library_file_id local fallback', () => {
@@ -560,7 +585,7 @@ describe('playlistTrackToQueueItem', () => {
 		expect(item).not.toBeNull();
 		expect(item.sourceType).toBe('local');
 		expect(item.trackSourceId).toBe('42');
-		expect(item.streamUrl).toBe('/api/v1/stream/local/42');
+		expect(item.streamUrl).toBe('/api/v3/stream/local/42');
 		expect(item.sourceIds).toEqual({ local: '42' });
 	});
 

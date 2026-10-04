@@ -14,6 +14,15 @@ function splitSuffix(path: string): { pathPart: string; suffix: string } {
 }
 
 /**
+ * The deployment base prefix on its own ('' when undeployed at root):
+ * tolerates a trailing slash on the configured base while '' or '/'
+ * stays empty. Shared by the path prefix helpers and the v3 client base URL.
+ */
+export function basePathPrefix(): string {
+	return !base || base === '/' ? '' : base.replace(/\/+$/, '');
+}
+
+/**
  * Prefixes an internal root-relative path (`/api/v1/...`, media, SSE) with the
  * deployment base exactly once. Idempotent and segment-aware: an already
  * prefixed path is returned unchanged, a duplicated base collapses back to one,
@@ -31,8 +40,7 @@ export function withBasePath(path: string): string {
 		return path;
 	}
 
-	// Tolerate a trailing slash on the configured base; '' or '/' stays empty.
-	const basePath = !base || base === '/' ? '' : base.replace(/\/+$/, '');
+	const basePath = basePathPrefix();
 	if (!basePath) {
 		return path;
 	}
@@ -87,8 +95,7 @@ export function withoutBasePath(pathname: string): string {
 		return pathname;
 	}
 
-	// Tolerate a trailing slash on the configured base; '' or '/' stays empty.
-	const basePath = !base || base === '/' ? '' : base.replace(/\/+$/, '');
+	const basePath = basePathPrefix();
 	if (!basePath) {
 		return pathname;
 	}

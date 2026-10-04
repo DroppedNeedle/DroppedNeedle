@@ -79,10 +79,11 @@ fn album_sort(sort: Option<&str>) -> Result<AlbumSort, LibraryFailure> {
         None | Some("name") => Ok(AlbumSort::Name),
         Some("date_added") => Ok(AlbumSort::DateAdded),
         Some("year") => Ok(AlbumSort::Year),
+        Some("artist") => Ok(AlbumSort::Artist),
         Some("random") => Ok(AlbumSort::Random),
         Some("rediscover") => Ok(AlbumSort::Rediscover),
         Some(other) => Err(LibraryFailure::InvalidInput(format!(
-            "unknown sort '{other}': want name, date_added, year, random, or rediscover"
+            "unknown sort '{other}': want name, date_added, year, artist, random, or rediscover"
         ))),
     }
 }
@@ -124,6 +125,15 @@ fn clean_q(q: Option<&str>) -> Option<String> {
     q.map(str::trim)
         .filter(|text| !text.is_empty())
         .map(str::to_owned)
+}
+
+/// Blank format reads as absent; the rest lowercases so `FLAC` and `flac`
+/// match the same rows.
+fn clean_format(format: Option<&str>) -> Option<String> {
+    format
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(|text| text.to_lowercase())
 }
 
 /// Decade start years are multiples of ten in a sane range.
@@ -169,6 +179,7 @@ fn album_card(record: &AlbumRecord) -> AlbumCard {
         title: record.title.clone(),
         artist_name: record.artist_name.clone(),
         artist_mbid: record.artist_mbid.clone(),
+        release_group_mbid: record.release_group_mbid.clone(),
         year: record.year,
         track_count: record.track_count,
         total_size_bytes: record.total_size_bytes,
@@ -258,6 +269,7 @@ pub async fn list_albums(
         q: clean_q(query.q.as_deref()),
         artist_id: query.artist_id.clone(),
         decade: check_decade(query.decade)?,
+        format: clean_format(query.format.as_deref()),
     };
     let (records, total) = deps
         .catalog
@@ -321,6 +333,27 @@ pub async fn album_tracks(
         offset,
         limit,
     })
+}
+
+/// One page of an album's streamable tracks by release-group mbid or
+/// local album id, for browse cards that only carry the mbid. Unknown
+/// mbids and ids are 404; sibling groups resolve to the oldest album.
+pub async fn album_match(
+    deps: &LibraryDeps,
+    user_id: &str,
+    mbid: &str,
+    query: &PageQuery,
+) -> Result<TrackPage, LibraryFailure> {
+    let id = if deps.catalog.get_album(mbid).await?.is_some() {
+        mbid.to_owned()
+    } else {
+        deps.catalog
+            .get_album_by_release_group(mbid)
+            .await?
+            .map(|record| record.id)
+            .ok_or(LibraryFailure::NotFound)?
+    };
+    album_tracks(deps, user_id, &id, query).await
 }
 
 /// Other local albums sharing the album's release group. Unknown albums
@@ -599,6 +632,7 @@ pub async fn browse_albums(
         q: clean_q(query.q.as_deref()),
         artist_id: None,
         decade: check_decade(query.decade)?,
+        format: None,
     };
     let (records, total) = deps
         .catalog
@@ -630,6 +664,7 @@ pub async fn search_library(
         q: Some(q.clone()),
         artist_id: None,
         decade: None,
+        format: None,
     };
     let track_filter = TrackFilter {
         q: Some(q),
@@ -801,6 +836,18 @@ mod tests {
         assert_eq!(clean_q(None), None);
         assert_eq!(clean_q(Some("  ")), None);
         assert_eq!(clean_q(Some("  abba ")), Some("abba".to_owned()));
+    }
+
+    #[test]
+    fn format_filter_cleans_and_lowercases() {
+        assert_eq!(clean_format(None), None);
+        assert_eq!(clean_format(Some("  ")), None);
+        assert_eq!(clean_format(Some("  FLAC ")), Some("flac".to_owned()));
+    }
+
+    #[test]
+    fn artist_sort_parses() {
+        assert_eq!(album_sort(Some("artist")), Ok(AlbumSort::Artist));
     }
 
     #[test]

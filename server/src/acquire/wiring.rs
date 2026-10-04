@@ -638,12 +638,17 @@ impl AcquireSetup {
     }
 
     /// Relative-path routers for nesting under `/api/v3` inside the
-    /// session gate. The requests leg carries the principal-translation
-    /// layer so its handlers keep their `Principal` extractor.
+    /// session gate. The requests and task legs share one
+    /// principal-translation layer (both extract the requests
+    /// `Principal`) so their handlers keep working unchanged.
     pub fn gated_router(&self) -> Router {
-        let requests = super::requests::requests_core_routes(self.requests.clone()).layer(
-            axum::middleware::from_fn_with_state(self.users.clone(), translate_principal),
+        let legs = super::requests::requests_core_routes(self.requests.clone()).merge(
+            super::downloads::downloads_core_routes(self.journal.clone()),
         );
+        let requests = legs.layer(axum::middleware::from_fn_with_state(
+            self.users.clone(),
+            translate_principal,
+        ));
         Router::new()
             .merge(requests)
             .merge(imports_gated_router(self.imports.clone()))

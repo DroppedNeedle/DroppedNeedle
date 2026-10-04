@@ -69,9 +69,9 @@ const h = vi.hoisted(() => ({
 	toast: vi.fn()
 }));
 
-vi.mock('$lib/stores/authStore.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/stores/authStore.svelte')>()),
-	authStore: { user: { id: 'admin-1' }, isAdmin: true }
+vi.mock('$lib/stores/authStore.svelte', () => ({
+	authStore: { user: { id: 'admin-1' }, isAdmin: true },
+	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 vi.mock('$lib/stores/toast', () => ({ toastStore: { show: h.toast } }));
 vi.mock('$lib/queries/library/LibraryActivityQueries.svelte', () => ({

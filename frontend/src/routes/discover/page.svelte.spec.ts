@@ -1,48 +1,41 @@
 import { page } from '@vitest/browser/context';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { DiscoverResponse } from '$lib/types';
-
-vi.mock('$env/dynamic/public', () => ({
-	env: { PUBLIC_API_URL: '' }
-}));
+import type { DiscoverResponseV3 } from '$lib/queries/discover/DiscoverV3Queries.svelte';
 
 const { discoverState, deckState, launchRadioMock } = vi.hoisted(() => ({
 	discoverState: {
-		data: undefined as Partial<DiscoverResponse> | undefined,
+		data: undefined as DiscoverResponseV3 | undefined,
 		isLoading: false,
 		isFetching: false,
 		isRefetching: false,
 		error: null as Error | null,
-		dataUpdatedAt: 0,
 		refetch: () => {}
 	},
 	deckState: { shouldThrow: false },
 	launchRadioMock: vi.fn().mockResolvedValue(true)
 }));
 
-vi.mock('$lib/queries/discover/DiscoverQuery.svelte', () => ({
-	getDiscoverQuery: () => discoverState,
-	getDiscoverQueryOptions: () => ({ queryKey: ['discover'], queryFn: () => ({}) }),
-	getRadioQuery: () => ({
-		data: {
-			title: 'Radio',
-			type: 'albums',
-			items: [],
-			source: 'lastfm',
-			fallback_message: null,
-			connect_service: null
-		},
-		isLoading: false,
-		isFetching: false
-	}),
-	getPlaylistSuggestionsQuery: () => ({ data: undefined, isLoading: false })
+// The v3 home read is the page's only data input; the feed below is a real
+// v3 payload and flows through the real toDiscoverResponseV1 adapter.
+vi.mock('$lib/queries/discover/DiscoverV3Queries.svelte', () => ({
+	getDiscoverHomeV3Query: () => discoverState,
+	// RadioCard mounts its own detail read when a radio shelf renders; the
+	// station-identity test needs it quiet, not fetching.
+	getDiscoverRadioV3Query: () => ({ data: undefined, isFetching: false })
+}));
+vi.mock('$lib/queries/discover/DiscoverV3Mutations.svelte', () => ({
+	getIgnoreDiscoveryV3Mutation: () => ({ mutateAsync: vi.fn().mockResolvedValue(undefined) }),
+	getRefreshDiscoverV3Mutation: () => ({ mutateAsync: vi.fn().mockResolvedValue(undefined) }),
+	useDiscoverActivityV3: vi.fn()
 }));
 vi.mock('$lib/queries/section-prefs/SectionPrefsQuery.svelte', () => ({
 	getSectionPrefsQuery: () => ({ data: undefined, isLoading: false })
 }));
-vi.mock('$lib/queries/discover/DiscoverMutations.svelte', () => ({
-	getIgnoreDiscoveryMutation: () => ({ mutateAsync: vi.fn().mockResolvedValue(undefined) })
+// AlbumCardOverlay (on every in-library album card) reads download access;
+// allow it so the shelf renders without a QueryClientProvider.
+vi.mock('$lib/queries/local/LocalQueries.svelte', () => ({
+	getDownloadAccessQuery: () => ({ data: { allowed: true } })
 }));
 vi.mock('$lib/queries/QueryClient', () => ({
 	invalidateQueriesWithPersister: vi.fn().mockResolvedValue(undefined),
@@ -75,13 +68,13 @@ vi.mock('$lib/components/PlaylistDiscoveryModal.svelte', () => {
 	return { default: Comp };
 });
 
-vi.mock('$lib/queries/discover/DiscoverDemand.svelte', () => ({ useDiscoverActivity: vi.fn() }));
 import DiscoverPage from './+page.svelte';
 
-function emptyResponse(overrides: Partial<DiscoverResponse> = {}): Partial<DiscoverResponse> {
+function emptyResponse(overrides: Partial<DiscoverResponseV3> = {}): DiscoverResponseV3 {
 	return {
 		because_you_listen_to: [],
 		discover_queue_enabled: false,
+		genre_artwork_schema_version: 'v2',
 		service_prompts: [],
 		daily_mixes: [],
 		radio_sections: [],

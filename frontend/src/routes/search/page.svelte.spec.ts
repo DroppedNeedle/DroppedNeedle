@@ -1,7 +1,6 @@
 import { page } from '@vitest/browser/context';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import { searchStore } from '$lib/stores/search';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { resetQueryCacheForUserSwitch } from '$lib/queries/QueryClient';
 import SearchPageTestHarness from './SearchPageTestHarness.svelte';
@@ -15,9 +14,39 @@ function jsonResponse(body: unknown): Response {
 	});
 }
 
+function v3Artist(title: string, id: string, mbid: string | null = id) {
+	return {
+		kind: 'artist',
+		id: `local-${id}`,
+		title,
+		musicbrainz_id: mbid,
+		in_library: false,
+		requested: false,
+		score: 90
+	};
+}
+
+function unifiedResponse(
+	artists: unknown[] = [],
+	albums: unknown[] = [],
+	overrides: Record<string, unknown> = {}
+) {
+	return {
+		artists,
+		albums,
+		tracks: [],
+		top_artist: null,
+		top_album: null,
+		top_track: null,
+		artist_status: 'ok',
+		album_status: 'ok',
+		track_status: 'ok',
+		...overrides
+	};
+}
+
 describe('search result enrichment demand', () => {
 	beforeEach(async () => {
-		searchStore.clear();
 		await resetQueryCacheForUserSwitch();
 		authStore.setUser({
 			id: 'search-user',
@@ -37,35 +66,18 @@ describe('search result enrichment demand', () => {
 	});
 
 	it('renders usable primary results without enrichment traffic, then enriches on intent', async () => {
-		let finishArtists: ((response: Response) => void) | undefined;
-		const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+		const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			void init;
 			const url = String(input);
-			if (url.startsWith('/api/v1/search/artists?')) {
-				return new Promise<Response>((resolve) => {
-					finishArtists = resolve;
-				});
+			if (url.startsWith('/api/v3/search?')) {
+				return jsonResponse(unifiedResponse([v3Artist('Muse', 'artist-1')]));
 			}
-			if (url.startsWith('/api/v1/search/albums?')) {
-				return jsonResponse({
-					bucket: 'albums',
-					limit: 24,
-					offset: 0,
-					results: [],
-					top_result: null,
-					status: 'ok'
-				});
-			}
-			if (url.startsWith('/api/v1/library/artists?')) {
-				return jsonResponse({ items: [], total: 0, album_artist_total: 0, contributor_total: 0 });
-			}
-			if (url.startsWith('/api/v1/library/albums?')) {
-				return jsonResponse({ items: [], total: 0 });
-			}
-			if (url === '/api/v1/search/enrich/batch') {
+			if (url === '/api/v3/search/enrich/batch') {
 				return jsonResponse({
 					artists: [{ musicbrainz_id: 'artist-1', listen_count: 100 }],
 					albums: [],
-					source: 'listenbrainz'
+					source: 'listenbrainz',
+					degradations: []
 				});
 			}
 			throw new Error(`Unexpected request: ${url}`);
@@ -73,209 +85,67 @@ describe('search result enrichment demand', () => {
 		globalThis.fetch = mockFetch as typeof fetch;
 
 		await render(SearchPageTestHarness, { data: { query: 'muse' } });
-		await expect.element(page.getByRole('heading', { name: 'Albums' })).toBeInTheDocument();
-		await page.getByRole('heading', { name: 'Albums' }).hover();
-		finishArtists?.(
-			jsonResponse({
-				bucket: 'artists',
-				limit: 24,
-				offset: 0,
-				results: [
-					{
-						type: 'artist',
-						title: 'Muse',
-						musicbrainz_id: 'artist-1',
-						in_library: false,
-						score: 95
-					}
-				],
-				top_result: null,
-				status: 'ok'
-			})
-		);
 		await expect.element(page.getByText('Muse')).toBeInTheDocument();
 		await new Promise((resolve) => setTimeout(resolve, 250));
 
 		const enrichmentCalls = () =>
-			mockFetch.mock.calls.filter(([input]) => String(input) === '/api/v1/search/enrich/batch');
+			mockFetch.mock.calls.filter(([input]) => String(input) === '/api/v3/search/enrich/batch');
 		expect(enrichmentCalls()).toHaveLength(0);
-		expect(mockFetch).toHaveBeenCalledTimes(4);
-		const artistCalls = mockFetch.mock.calls.filter(([input]) =>
-			String(input).startsWith('/api/v1/search/artists?')
-		);
-		expect(artistCalls).toHaveLength(1);
-		expect(String(artistCalls[0][0])).toContain('limit=24');
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+		const searchCall = String(mockFetch.mock.calls[0][0]);
+		expect(searchCall).toContain('limit_artists=6');
+		expect(searchCall).toContain('limit_albums=24');
 
 		await page.getByText('Muse').hover();
 		await vi.waitFor(() => expect(enrichmentCalls()).toHaveLength(1));
+		const posted = JSON.parse(String(enrichmentCalls()[0][1]?.body ?? '{}')) as {
+			artists?: { musicbrainz_id?: string }[];
+		};
+		expect(posted.artists?.[0]?.musicbrainz_id).toBe('artist-1');
 	});
 
-	it('shows local artist results while reserving pending remote artist slots', async () => {
-		let finishArtists: ((response: Response) => void) | undefined;
-		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+	it('shows the provider notice when the artist bucket degrades', async () => {
+		let finishSearch: ((response: Response) => void) | undefined;
+		const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
 			const url = String(input);
-			if (url.startsWith('/api/v1/library/artists?')) {
-				return jsonResponse({
-					items: [
-						{
-							id: 'local-artist',
-							name: 'Local First',
-							musicbrainz_artist_id: null,
-							artist_identity_state: 'local_only',
-							album_count: 1,
-							track_count: 8,
-							appearance_release_count: 0,
-							appearance_track_count: 0,
-							library_relationship: 'album_artist',
-							date_added: null,
-							row_revision: 1
-						}
-					],
-					total: 1,
-					album_artist_total: 1,
-					contributor_total: 0
-				});
-			}
-			if (url.startsWith('/api/v1/library/albums?')) return jsonResponse({ items: [], total: 0 });
-			if (url.startsWith('/api/v1/search/artists?')) {
+			if (url.startsWith('/api/v3/search?')) {
 				return new Promise<Response>((resolve) => {
-					finishArtists = resolve;
-				});
-			}
-			if (url.startsWith('/api/v1/search/albums?')) {
-				return jsonResponse({
-					bucket: 'albums',
-					limit: 24,
-					offset: 0,
-					results: [],
-					status: 'ok'
+					finishSearch = resolve;
 				});
 			}
 			throw new Error(`Unexpected request: ${url}`);
-		}) as typeof fetch;
+		});
+		globalThis.fetch = mockFetch as typeof fetch;
 
-		await render(SearchPageTestHarness, { data: { query: 'local first' } });
+		await render(SearchPageTestHarness, { data: { query: 'muse' } });
 
-		await expect.element(page.getByText('Local First')).toBeInTheDocument();
-		await expect
-			.element(page.getByRole('link', { name: /Local First/ }))
-			.toHaveAttribute('href', '/artist/local-artist');
-		await expect
-			.element(page.getByLabelText('Artist search results'))
-			.toHaveAttribute('aria-busy', 'true');
 		await expect.element(page.getByLabelText('Loading top search results')).toBeInTheDocument();
+		// The persisted-cache restore holds isFetching before the fetch
+		// fires, so wait for the request itself before answering it.
+		await vi.waitFor(() => expect(mockFetch).toHaveBeenCalled());
 
-		finishArtists?.(
-			jsonResponse({
-				bucket: 'artists',
-				limit: 24,
-				offset: 0,
-				results: [],
-				status: 'error'
-			})
+		finishSearch?.(
+			jsonResponse(unifiedResponse([v3Artist('Muse', 'artist-1')], [], { artist_status: 'error' }))
 		);
 		await expect
 			.element(page.getByText(/MusicBrainz artist search is temporarily unavailable/))
 			.toBeInTheDocument();
+		await expect.element(page.getByText('Muse')).toBeInTheDocument();
 		await expect
 			.element(page.getByLabelText('Artist search results'))
 			.toHaveAttribute('aria-busy', 'false');
 		await expect.element(page.getByLabelText('Loading top search results')).not.toBeInTheDocument();
 	});
 
-	it('keeps a successful local artist bucket when the local album request fails', async () => {
-		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
-			const url = String(input);
-			if (url.startsWith('/api/v1/library/artists?')) {
-				return jsonResponse({
-					items: [
-						{
-							id: 'local-artist',
-							name: 'Local Survivor',
-							musicbrainz_artist_id: null,
-							artist_identity_state: 'local_only',
-							album_count: 1,
-							track_count: 8,
-							appearance_release_count: 0,
-							appearance_track_count: 0,
-							library_relationship: 'album_artist',
-							date_added: null,
-							row_revision: 1
-						}
-					],
-					total: 1,
-					album_artist_total: 1,
-					contributor_total: 0
-				});
-			}
-			if (url.startsWith('/api/v1/library/albums?')) {
-				return new Response('{}', { status: 500 });
-			}
-			if (url.startsWith('/api/v1/search/artists?')) {
-				return jsonResponse({
-					bucket: 'artists',
-					limit: 24,
-					offset: 0,
-					results: [],
-					status: 'ok'
-				});
-			}
-			if (url.startsWith('/api/v1/search/albums?')) {
-				return jsonResponse({
-					bucket: 'albums',
-					limit: 24,
-					offset: 0,
-					results: [],
-					status: 'ok'
-				});
-			}
-			throw new Error(`Unexpected request: ${url}`);
-		}) as typeof fetch;
-
-		await render(SearchPageTestHarness, { data: { query: 'local survivor' } });
-
-		await expect.element(page.getByText('Local Survivor')).toBeVisible();
-		await expect
-			.element(page.getByRole('link', { name: /Local Survivor/ }))
-			.toHaveAttribute('href', '/artist/local-artist');
-	});
-
 	it('keeps cached remote results visible during an outage', async () => {
 		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
 			const url = String(input);
-			if (url.startsWith('/api/v1/library/artists?')) {
-				return jsonResponse({ items: [], total: 0, album_artist_total: 0, contributor_total: 0 });
-			}
-			if (url.startsWith('/api/v1/library/albums?')) {
-				return jsonResponse({ items: [], total: 0 });
-			}
-			if (url.startsWith('/api/v1/search/artists?')) {
-				return jsonResponse({
-					bucket: 'artists',
-					limit: 24,
-					offset: 0,
-					results: [
-						{
-							type: 'artist',
-							title: 'Cached Muse',
-							musicbrainz_id: 'cached-artist',
-							in_library: false,
-							score: 90
-						}
-					],
-					top_result: null,
-					status: 'stale'
-				});
-			}
-			if (url.startsWith('/api/v1/search/albums?')) {
-				return jsonResponse({
-					bucket: 'albums',
-					limit: 24,
-					offset: 0,
-					results: [],
-					top_result: null,
-					status: 'ok'
-				});
+			if (url.startsWith('/api/v3/search?')) {
+				return jsonResponse(
+					unifiedResponse([v3Artist('Cached Muse', 'cached-artist')], [], {
+						artist_status: 'stale'
+					})
+				);
 			}
 			throw new Error(`Unexpected request: ${url}`);
 		}) as typeof fetch;
@@ -290,41 +160,13 @@ describe('search result enrichment demand', () => {
 			.toBeInTheDocument();
 		await expect.element(page.getByText('No artists found')).not.toBeInTheDocument();
 	});
-	it('fetches the bucket-width artist profile but renders only six combined results', async () => {
-		const remoteArtists = Array.from({ length: 8 }, (_, index) => ({
-			type: 'artist',
-			title: `Artist ${index + 1}`,
-			musicbrainz_id: `artist-${index + 1}`,
-			in_library: false,
-			score: 90 - index
-		}));
+
+	it('renders the top hit plus five artist cards from the six-row fetch', async () => {
+		const rows = Array.from({ length: 6 }, (_, index) => v3Artist(`Artist ${index + 1}`, `a${index + 1}`));
 		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
 			const url = String(input);
-			if (url.startsWith('/api/v1/library/artists?')) {
-				return jsonResponse({ items: [], total: 0, album_artist_total: 0, contributor_total: 0 });
-			}
-			if (url.startsWith('/api/v1/library/albums?')) {
-				return jsonResponse({ items: [], total: 0 });
-			}
-			if (url.startsWith('/api/v1/search/artists?')) {
-				return jsonResponse({
-					bucket: 'artists',
-					limit: 24,
-					offset: 0,
-					results: remoteArtists,
-					top_result: remoteArtists[0],
-					status: 'ok'
-				});
-			}
-			if (url.startsWith('/api/v1/search/albums?')) {
-				return jsonResponse({
-					bucket: 'albums',
-					limit: 24,
-					offset: 0,
-					results: [],
-					top_result: null,
-					status: 'ok'
-				});
+			if (url.startsWith('/api/v3/search?')) {
+				return jsonResponse(unifiedResponse(rows, [], { top_artist: rows[0] }));
 			}
 			throw new Error(`Unexpected request: ${url}`);
 		}) as typeof fetch;
@@ -334,55 +176,19 @@ describe('search result enrichment demand', () => {
 		for (const title of ['Artist 1', 'Artist 2', 'Artist 3', 'Artist 4', 'Artist 5', 'Artist 6']) {
 			await expect.element(page.getByText(title)).toBeInTheDocument();
 		}
-		await expect.element(page.getByText('Artist 7')).not.toBeInTheDocument();
-		const artistCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.find(([input]) =>
-			String(input).startsWith('/api/v1/search/artists?')
+		const searchCall = String(
+			(globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]
 		);
-		expect(String(artistCall?.[0])).toContain('limit=24');
+		expect(searchCall).toContain('limit_artists=6');
 	});
 
 	it('keeps a top result visible when it falls outside the first six results', async () => {
-		const remoteArtists = Array.from({ length: 24 }, (_, index) => ({
-			type: 'artist',
-			title: `Artist ${index + 1}`,
-			musicbrainz_id: `artist-${index + 1}`,
-			in_library: false,
-			score: 90 - index
-		}));
-		const topResult = {
-			type: 'artist',
-			title: 'Top Result Artist',
-			musicbrainz_id: 'top-result-artist',
-			in_library: false,
-			score: 100
-		};
+		const rows = Array.from({ length: 6 }, (_, index) => v3Artist(`Artist ${index + 1}`, `a${index + 1}`));
+		const topResult = v3Artist('Top Result Artist', 'top-result-artist');
 		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
 			const url = String(input);
-			if (url.startsWith('/api/v1/library/artists?')) {
-				return jsonResponse({ items: [], total: 0, album_artist_total: 0, contributor_total: 0 });
-			}
-			if (url.startsWith('/api/v1/library/albums?')) {
-				return jsonResponse({ items: [], total: 0 });
-			}
-			if (url.startsWith('/api/v1/search/artists?')) {
-				return jsonResponse({
-					bucket: 'artists',
-					limit: 24,
-					offset: 0,
-					results: remoteArtists,
-					top_result: topResult,
-					status: 'ok'
-				});
-			}
-			if (url.startsWith('/api/v1/search/albums?')) {
-				return jsonResponse({
-					bucket: 'albums',
-					limit: 24,
-					offset: 0,
-					results: [],
-					top_result: null,
-					status: 'ok'
-				});
+			if (url.startsWith('/api/v3/search?')) {
+				return jsonResponse(unifiedResponse(rows, [], { top_artist: topResult }));
 			}
 			throw new Error(`Unexpected request: ${url}`);
 		}) as typeof fetch;
@@ -394,5 +200,41 @@ describe('search result enrichment demand', () => {
 			await expect.element(page.getByText(title)).toBeInTheDocument();
 		}
 		await expect.element(page.getByText('Artist 6')).not.toBeInTheDocument();
+	});
+
+	it('keys unidentified rows by local id and skips their enrichment', async () => {
+		const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.startsWith('/api/v3/search?')) {
+				return jsonResponse(
+					unifiedResponse([
+						{
+							kind: 'artist',
+							id: 'local-artist',
+							title: 'Local First',
+							musicbrainz_id: null,
+							in_library: true,
+							requested: false,
+							score: 90
+						}
+					])
+				);
+			}
+			throw new Error(`Unexpected request: ${url}`);
+		});
+		globalThis.fetch = mockFetch as typeof fetch;
+
+		await render(SearchPageTestHarness, { data: { query: 'local first' } });
+
+		await expect.element(page.getByText('Local First')).toBeInTheDocument();
+		await expect
+			.element(page.getByRole('link', { name: /Local First/ }))
+			.toHaveAttribute('href', '/artist/local-artist');
+
+		await page.getByText('Local First').hover();
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		expect(
+			mockFetch.mock.calls.filter(([input]) => String(input) === '/api/v3/search/enrich/batch')
+		).toHaveLength(0);
 	});
 });

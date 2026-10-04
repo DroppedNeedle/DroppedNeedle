@@ -1,14 +1,27 @@
 import { describe, expect, it, vi } from 'vitest';
-import type * as TanStackSvelteQuery from '@tanstack/svelte-query';
 
-vi.mock('@tanstack/svelte-query', async (importOriginal) => {
-	const actual = await importOriginal<typeof TanStackSvelteQuery>();
-	return {
-		...actual,
-		createQuery: vi.fn((factory: () => Record<string, unknown>) => factory()),
-		queryOptions: vi.fn((opts: Record<string, unknown>) => opts)
-	};
-});
+vi.mock('@tanstack/svelte-query', () => ({
+	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory()),
+	queryOptions: vi.fn((opts: Record<string, unknown>) => opts)
+}));
+
+// The real api client rides along (queryFns never run here) and pulls
+// userSessionCleanup -> the real QueryClient module, which needs the
+// QueryClient class the plain-object tanstack mock cannot re-export.
+// Stub the module: nothing under test touches the cache.
+vi.mock('../QueryClient', () => ({
+	queryClient: {
+		getQueryData: vi.fn(),
+		setQueryData: vi.fn(),
+		removeQueries: vi.fn(),
+		invalidateQueries: vi.fn(),
+		cancelQueries: vi.fn(),
+		clear: vi.fn(),
+		ensureQueryData: vi.fn()
+	},
+	invalidateQueriesWithPersister: vi.fn(),
+	setQueryDataWithPersister: vi.fn()
+}));
 
 import {
 	getAlbumDownloadsQuery,

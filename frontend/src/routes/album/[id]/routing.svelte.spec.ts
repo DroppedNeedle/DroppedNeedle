@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({
 	localDetail404: false,
 	album: {
 		id: 'local-album-id',
-		musicbrainz_release_group_id: 'provider-album-id' as string | null
+		release_group_mbid: 'provider-album-id' as string | null
 	}
 }));
 
@@ -34,22 +34,21 @@ vi.mock('./ProviderAlbumPage.svelte', () => {
 	return { default: Component };
 });
 
-vi.mock('$lib/queries/library/LibraryQueries.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/queries/library/LibraryQueries.svelte')>()),
-	getLibraryAlbumDetailQuery: (...args: unknown[]) => {
+vi.mock('$lib/queries/library/LibraryV3Queries.svelte', () => ({
+	getLibraryAlbumDetailV3Query: (...args: unknown[]) => {
 		h.localDetailRequest(...args);
 		return h.localDetail404
 			? { data: undefined, isLoading: false, isError: true, error: new Error('404') }
 			: { data: h.album, isLoading: false, isError: false, error: null };
 	},
-	cacheCanonicalLibraryAlbumDetail: (...args: unknown[]) => h.cache(...args)
+	cacheCanonicalLibraryAlbumDetailV3: (...args: unknown[]) => h.cache(...args)
 }));
 
 import AlbumPage from './+page.svelte';
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	h.album.musicbrainz_release_group_id = 'provider-album-id';
+	h.album.release_group_mbid = 'provider-album-id';
 	h.localDetail404 = false;
 });
 
@@ -85,13 +84,16 @@ it('replaces a linked local route with its MusicBrainz release-group route', asy
 			replaceState: true
 		});
 	});
-	expect(h.cache).toHaveBeenCalledWith(expect.objectContaining({ id: 'local-album-id' }));
+	expect(h.cache).toHaveBeenCalledWith(
+		undefined,
+		expect.objectContaining({ id: 'local-album-id' })
+	);
 	expect(h.providerView).not.toHaveBeenCalled();
 	expect(h.localView).not.toHaveBeenCalled();
 });
 
 it('keeps a local-only album on its local route', async () => {
-	h.album.musicbrainz_release_group_id = null;
+	h.album.release_group_mbid = null;
 	await render(AlbumPage, {
 		props: { data: { albumId: 'local-album-id' } }
 	} as unknown as Parameters<typeof render>[1]);

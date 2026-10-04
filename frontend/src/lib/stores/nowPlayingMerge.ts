@@ -1,4 +1,4 @@
-import type { NowPlayingSession } from '$lib/types';
+import type { NowPlayingSession } from './nowPlayingSessions.svelte';
 
 /**
  * Combine the viewer's own local web-player session with the server presence feed.

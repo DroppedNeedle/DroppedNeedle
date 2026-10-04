@@ -1,25 +1,27 @@
 import { createMutation, createQuery, queryOptions } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API, CACHE_TTL } from '$lib/constants';
+import type { components } from '$lib/api/v3/openapi';
+import { CACHE_TTL } from '$lib/constants';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-import type {
-	DownloadPolicySettings,
-	SabnzbdConnectionSettings,
-	SabnzbdTestResult,
-	SourcePriority,
-	WantedWatcherSettings
-} from '$lib/types';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
+import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
+
+export type DownloadPolicySettings = components['schemas']['DownloadPolicyDto'];
+export type SabnzbdConnectionSettings = components['schemas']['SabnzbdConnectionDto'];
+export type SabnzbdStatus = components['schemas']['SabnzbdStatusResponse'];
+export type SabnzbdTestResult = components['schemas']['SabnzbdTestResponse'];
+export type SourcePriority = components['schemas']['SourcePriorityDto'];
+export type WantedWatcherSettings = components['schemas']['WantedWatcherDto'];
 
 const sourcePriorityOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: [...DownloadQueryKeyFactory.all, 'source-priority'] as const,
 		queryFn: ({ signal }) =>
-			api.global.get<SourcePriority>(API.downloadClients.sourcePriority(), { signal })
+			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.sourcePriority(), { signal })
 	});
 
 export const getSourcePriorityQuery = () => createQuery(() => sourcePriorityOptions());
@@ -27,7 +29,7 @@ export const getSourcePriorityQuery = () => createQuery(() => sourcePriorityOpti
 export function saveSourcePriority() {
 	return createMutation(() => ({
 		mutationFn: (order: string[]) =>
-			api.global.put<SourcePriority>(API.downloadClients.sourcePriority(), { order }),
+			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.sourcePriority(), { order }),
 		onSuccess: () =>
 			invalidateQueriesWithPersister({
 				queryKey: [...DownloadQueryKeyFactory.all, 'source-priority']
@@ -40,7 +42,9 @@ const sabnzbdOptions = () =>
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.sabnzbd(),
 		queryFn: ({ signal }) =>
-			api.global.get<SabnzbdConnectionSettings>(API.downloadClients.sabnzbd(), { signal })
+			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdConfig(), {
+				signal
+			})
 	});
 
 export const getSabnzbdConfigQuery = () => createQuery(() => sabnzbdOptions());
@@ -50,7 +54,7 @@ const sabnzbdStatusOptions = () =>
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.sabnzbdStatus(),
 		queryFn: ({ signal }) =>
-			api.global.get<SabnzbdTestResult>(API.downloadClients.sabnzbdStatus(), { signal })
+			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdStatus(), { signal })
 	});
 
 export const getSabnzbdStatusQuery = () => createQuery(() => sabnzbdStatusOptions());
@@ -60,7 +64,7 @@ const policyOptions = () =>
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.policy(),
 		queryFn: ({ signal }) =>
-			api.global.get<DownloadPolicySettings>(API.downloadClients.policy(), { signal })
+			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.policy(), { signal })
 	});
 
 // enabled-getter so non-admin pages can render without firing the admin-only
@@ -78,7 +82,10 @@ async function invalidateClients() {
 export function saveSabnzbdConfig() {
 	return createMutation(() => ({
 		mutationFn: (config: SabnzbdConnectionSettings) =>
-			api.global.put<SabnzbdConnectionSettings>(API.downloadClients.sabnzbd(), config),
+			api.global.v3.PUT(
+				DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdConfig(),
+				config
+			),
 		onSuccess: invalidateClients
 	}));
 }
@@ -86,14 +93,14 @@ export function saveSabnzbdConfig() {
 export function testSabnzbd() {
 	return createMutation(() => ({
 		mutationFn: (config: SabnzbdConnectionSettings) =>
-			api.global.post<SabnzbdTestResult>(API.downloadClients.sabnzbdTest(), config)
+			api.global.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdTest(), config)
 	}));
 }
 
 export function saveDownloadPolicy() {
 	return createMutation(() => ({
 		mutationFn: (policy: DownloadPolicySettings) =>
-			api.global.put<DownloadPolicySettings>(API.downloadClients.policy(), policy),
+			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.policy(), policy),
 		onSuccess: async () => {
 			await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.policy() });
 			await invalidateQueriesWithPersister({
@@ -108,7 +115,7 @@ const wantedSettingsOptions = () =>
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.wantedSettings(),
 		queryFn: ({ signal }) =>
-			api.global.get<WantedWatcherSettings>(API.downloadClients.wanted(), { signal })
+			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.wanted(), { signal })
 	});
 
 export const getWantedSettingsQuery = () => createQuery(() => wantedSettingsOptions());
@@ -116,7 +123,7 @@ export const getWantedSettingsQuery = () => createQuery(() => wantedSettingsOpti
 export function saveWantedSettings() {
 	return createMutation(() => ({
 		mutationFn: (settings: WantedWatcherSettings) =>
-			api.global.put<WantedWatcherSettings>(API.downloadClients.wanted(), settings),
+			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.wanted(), settings),
 		onSuccess: () =>
 			invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.wantedSettings() })
 	}));

@@ -2,15 +2,15 @@
 	import { goto } from '$app/navigation';
 	import {
 		isRedactedPlaylist,
-		type PlaylistListItem,
 		type PlaylistSummary,
 		type RedactedPlaylist
 	} from '$lib/api/playlists';
 	import { toastStore } from '$lib/stores/toast';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
-	import { getPlaylistListQuery } from '$lib/queries/playlists/PlaylistQuery.svelte';
-	import { createCreatePlaylistMutation } from '$lib/queries/playlists/PlaylistMutations.svelte';
+	import { getPlaylistListV3Query } from '$lib/queries/playlists/PlaylistV3Queries.svelte';
+	import { createPlaylistV3 } from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
+	import { toPageList } from '$lib/queries/playlists/playlistV3Adapter';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { ListMusic, Plus, Lock } from 'lucide-svelte';
 	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
@@ -23,10 +23,10 @@
 		connectionsQuery.data?.connections.some((c) => c.service === 'spotify') ?? false
 	);
 
-	const query = getPlaylistListQuery(() => authStore.isAuthenticated);
-	const createMutation = createCreatePlaylistMutation();
+	const query = getPlaylistListV3Query(() => authStore.isAuthenticated);
+	const createMutation = createPlaylistV3();
 
-	let items = $derived((query.data ?? []) as PlaylistListItem[]);
+	let items = $derived(toPageList(query.data ?? []));
 	let myPlaylists = $derived(
 		items.filter((p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner)
 	);

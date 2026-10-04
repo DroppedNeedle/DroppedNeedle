@@ -65,6 +65,23 @@ pub struct TaskRow {
     pub retry_count: i64,
     /// Selected candidate index, once picked.
     pub candidate_index: Option<i64>,
+    /// Progress percent (0-100) the worker last reported.
+    pub progress_percent: i64,
+    /// Total transfer bytes, once known.
+    pub total_size_bytes: Option<i64>,
+    /// Bytes transferred so far.
+    pub downloaded_bytes: i64,
+    /// Picked candidate quality (format label), once picked.
+    pub quality_format: Option<String>,
+    /// Fetch source: `soulseek`, `usenet`, or `plugin:<key>`.
+    pub source: String,
+    /// Download client that owns the transfer (`slskd`, `sabnzbd`).
+    pub download_client: String,
+    /// Source username (soulseek) or linked marker (usenet persists `""`,
+    /// never NULL, per the v2 #245 note; NULL means never linked).
+    pub source_username: Option<String>,
+    /// Search job id that produced the picked candidate, once linked.
+    pub search_job_id: Option<String>,
     /// Last outcome text.
     pub error_message: Option<String>,
     /// Creation time (unix seconds).
@@ -103,6 +120,14 @@ fn task_from_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
         recording_mbid: row.get("recording_mbid")?,
         retry_count: row.get("retry_count")?,
         candidate_index: row.get("candidate_index")?,
+        progress_percent: row.get("progress_percent")?,
+        total_size_bytes: row.get("total_size_bytes")?,
+        downloaded_bytes: row.get("downloaded_bytes")?,
+        quality_format: row.get("quality_format")?,
+        source: row.get("source")?,
+        download_client: row.get("download_client")?,
+        source_username: row.get("source_username")?,
+        search_job_id: row.get("search_job_id")?,
         error_message: row.get("error_message")?,
         created_at: row.get("created_at")?,
         started_at: row.get("started_at")?,
@@ -448,6 +473,75 @@ impl<'conn> DownloadStore<'conn> {
             rusqlite::params![now, now, task_id],
         )?;
         Ok(())
+    }
+
+    /// Link one task to its picked candidate: the source identity, the
+    /// search job that produced it, and its position. The worker calls
+    /// this when it enqueues a candidate; the reimport guard reads these
+    /// columns back to tell linked tasks from never-started ones.
+    pub fn link_candidate(
+        &self,
+        task_id: &str,
+        source_username: &str,
+        search_job_id: &str,
+        candidate_index: i64,
+        now: f64,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE download_tasks SET source_username = ?, search_job_id = ?, \
+                 candidate_index = ?, updated_at = ? WHERE id = ?",
+            rusqlite::params![
+                source_username,
+                search_job_id,
+                candidate_index,
+                now,
+                task_id
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Whether one task can be reimported: failed or short-landed, with a
+    /// picked candidate still linked (ports v2
+    /// `download_store.get_reimportable_task_ids`, including the #245 note:
+    /// usenet persists `source_username = ""`, so the NULL check only
+    /// excludes never-linked tasks of either source).
+    pub fn is_reimportable(&self, task_id: &str) -> Result<bool, StoreError> {
+        let found: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT id FROM download_tasks WHERE id = ? \
+                 AND status IN ('failed', 'partial') \
+                 AND source_username IS NOT NULL \
+                 AND search_job_id IS NOT NULL \
+                 AND candidate_index IS NOT NULL",
+                rusqlite::params![task_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    /// Requeue one failed or short-landed task for import without
+    /// re-searching: the picked candidate, source link, and search job stay
+    /// on the row, so the worker resumes from the linked files instead of
+    /// starting over. Answers None when the task is missing or the
+    /// reimport guard above fails. This is the one deliberate write out of
+    /// a terminal status; `transition_task` still refuses all others.
+    pub fn reimport_task(&self, task_id: &str, now: f64) -> Result<Option<TaskRow>, StoreError> {
+        let changed = self.conn.execute(
+            "UPDATE download_tasks SET status = 'queued', error_message = NULL, \
+                 last_polled_at = ?, updated_at = ? WHERE id = ? \
+             AND status IN ('failed', 'partial') \
+             AND source_username IS NOT NULL \
+             AND search_job_id IS NOT NULL \
+             AND candidate_index IS NOT NULL",
+            rusqlite::params![now, now, task_id],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get_task(task_id)
     }
 
     /// Claim an idempotency key. Returns true on first claim; a repeat

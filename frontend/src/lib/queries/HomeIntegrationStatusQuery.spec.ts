@@ -1,19 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@tanstack/svelte-query', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('@tanstack/svelte-query')>();
-	return {
-		...actual,
-		createQuery: vi.fn((factory: () => Record<string, unknown>) => factory())
-	};
-});
+vi.mock('@tanstack/svelte-query', () => ({
+	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory())
+}));
 
 vi.mock('$lib/api/client', () => ({
 	api: { global: { get: vi.fn() } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
-	authStore: { user: { id: 'user-a' } as { id: string } | null }
+	authStore: { user: { id: 'user-a' } as { id: string } | null },
+	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 
 import { api } from '$lib/api/client';

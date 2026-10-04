@@ -63,6 +63,7 @@ fn service_response<T: serde::Serialize>(
 #[utoipa::path(
     get,
     path = "/api/v3/search",
+    operation_id = "unified_search",
     params(SearchQuery),
     responses(
         (status = 200, description = "Ranked hits per bucket", body = super::models::SearchResponse),
@@ -141,6 +142,7 @@ pub async fn suggest(
     if query.q.trim().len() < 2 {
         return Ok(Json(super::models::SuggestResponse {
             results: Vec::new(),
+            status: super::models::SearchRemoteStatus::Ok,
         }));
     }
     service_response(deps.service.suggest(&query.q, limit).await, &deps)

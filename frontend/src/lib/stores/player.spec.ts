@@ -363,7 +363,7 @@ describe('playerStore queue methods', () => {
 		it('updates streamUrl for target source', () => {
 			playerStore.playQueue(makeItems(3));
 			playerStore.changeTrackSource(1, 'jellyfin');
-			expect(playerStore.queue[1].streamUrl).toBe('/api/v1/stream/jellyfin/vid-1');
+			expect(playerStore.queue[1].streamUrl).toBe('/api/v3/stream/jellyfin/vid-1');
 		});
 	});
 
@@ -375,7 +375,7 @@ describe('playerStore queue methods', () => {
 			playerStore.updateQueueItemByPlaylistTrackId('pt-2', 'jellyfin', 'jf-new', 'opus');
 			expect(playerStore.queue[2].sourceType).toBe('jellyfin');
 			expect(playerStore.queue[2].trackSourceId).toBe('jf-new');
-			expect(playerStore.queue[2].streamUrl).toBe('/api/v1/stream/jellyfin/jf-new');
+			expect(playerStore.queue[2].streamUrl).toBe('/api/v3/stream/jellyfin/jf-new');
 		});
 
 		it('is a no-op when playlistTrackId is not found', () => {
@@ -402,7 +402,7 @@ describe('playerStore queue methods', () => {
 			const items = makeItems(3).map((item, i) => ({ ...item, playlistTrackId: `pt-${i}` }));
 			playerStore.playQueue(items);
 			playerStore.updateQueueItemByPlaylistTrackId('pt-1', 'local', '999', 'flac');
-			expect(playerStore.queue[1].streamUrl).toBe('/api/v1/stream/local/999');
+			expect(playerStore.queue[1].streamUrl).toBe('/api/v3/stream/local/999');
 		});
 	});
 
@@ -428,7 +428,7 @@ describe('playerStore queue methods', () => {
 						albumName: 'Album',
 						coverUrl: null,
 						sourceType: 'howler',
-						streamUrl: '/api/v1/stream/local/1',
+						streamUrl: '/api/v3/stream/local/1',
 						availableSources: ['howler', 'jellyfin']
 					}
 				],
@@ -645,7 +645,7 @@ describe('playerStore queue methods', () => {
 						albumName: 'Album',
 						coverUrl: null,
 						sourceType: 'local',
-						streamUrl: '/api/v1/stream/local/1',
+						streamUrl: '/api/v3/stream/local/1',
 						availableSources: ['local']
 					}
 				],
@@ -682,7 +682,7 @@ describe('playerStore queue methods', () => {
 						albumName: 'Album',
 						coverUrl: null,
 						sourceType: 'local',
-						streamUrl: '/api/v1/stream/local/1',
+						streamUrl: '/api/v3/stream/local/1',
 						availableSources: ['local'],
 						queueOrigin: 'manual'
 					}
@@ -937,7 +937,7 @@ describe('beforeunload beacon', () => {
 		beforeUnloadHandler!();
 
 		expect(sendBeaconMock).toHaveBeenCalledWith(
-			'/api/v1/stream/jellyfin/jf-beacon/stop',
+			'/api/v3/playback/stop',
 			expect.any(Blob)
 		);
 
@@ -945,7 +945,7 @@ describe('beforeunload beacon', () => {
 		expect(sentBlob.type).toBe('application/json');
 		const text = await sentBlob.text();
 		const parsed = JSON.parse(text);
-		expect(parsed).toEqual({ play_session_id: 'ps-beacon', position_seconds: 45 });
+		expect(parsed).toEqual({ source: 'jellyfin', track_id: 'jf-beacon', position_ms: 45000 });
 	});
 
 	it('removes beforeunload listener on destroy/stop', async () => {

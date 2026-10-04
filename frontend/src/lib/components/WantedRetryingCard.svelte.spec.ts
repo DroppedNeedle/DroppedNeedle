@@ -6,7 +6,7 @@ import type { WantedRetryingItem } from '$lib/queries/wanted/types';
 
 function makeItem(overrides: Partial<WantedRetryingItem> = {}): WantedRetryingItem {
 	return {
-		release_group_mbid: '22222222-2222-2222-2222-222222222222',
+		musicbrainz_id: '22222222-2222-2222-2222-222222222222',
 		artist_name: 'Yan Qing',
 		album_title: 'the arrival',
 		retry_count: 1,
@@ -34,9 +34,16 @@ describe('WantedRetryingCard.svelte', () => {
 	it('shows the album with a still-hunting retry line', async () => {
 		await renderCard();
 		await expect.element(page.getByText('the arrival')).toBeVisible();
+		await expect.element(page.getByText('Yan Qing • 2026')).toBeVisible();
 		await expect.element(page.getByText('Still hunting')).toBeVisible();
 		await expect.element(page.getByText('retry 2 of 6')).toBeVisible();
 		await expect.element(page.getByText('next try in 25 min')).toBeVisible();
+	});
+
+	it('hides the next-try line when no retry is scheduled', async () => {
+		await renderCard({ next_retry_at: null });
+		await expect.element(page.getByText('retry 2 of 6')).toBeVisible();
+		expect(page.getByText('next try', { exact: false }).elements()).toHaveLength(0);
 	});
 
 	it('links to the downloads queue instead of offering watch actions', async () => {

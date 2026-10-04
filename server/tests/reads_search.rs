@@ -319,6 +319,59 @@ async fn unified_search_returns_ranked_buckets_with_tops() {
 }
 
 #[tokio::test]
+async fn search_responses_carry_ok_statuses_while_local_only() {
+    let (app, _) = authed_app().await;
+    let (status, _, bytes) = call(
+        app.clone(),
+        Method::GET,
+        "/api/v3/search?q=beyonce",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&bytes);
+    assert_eq!(body["artist_status"], "ok");
+    assert_eq!(body["album_status"], "ok");
+    assert_eq!(body["track_status"], "ok");
+
+    let (status, _, bytes) = call(
+        app.clone(),
+        Method::GET,
+        "/api/v3/search/artists?q=beyonce",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json(&bytes)["status"], "ok");
+
+    let (status, _, bytes) = call(
+        app.clone(),
+        Method::GET,
+        "/api/v3/search/suggest?q=beyonce",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json(&bytes)["status"], "ok");
+
+    let (status, _, bytes) = call(
+        app,
+        Method::GET,
+        "/api/v3/search/suggest?q=x",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&bytes);
+    assert_eq!(body["status"], "ok");
+    assert!(body["results"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn search_ignores_accents_and_case() {
     let (app, _) = authed_app().await;
     for query in ["beyonce", "BEYONCE", "Beyoncé", "BEYONCÉ"] {
@@ -405,7 +458,10 @@ async fn suggest_short_query_returns_empty_200() {
     .await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json(&bytes), serde_json::json!({"results": []}));
+    assert_eq!(
+        json(&bytes),
+        serde_json::json!({"results": [], "status": "ok"})
+    );
 }
 
 #[tokio::test]

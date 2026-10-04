@@ -14,8 +14,11 @@
 		saveDownloadClientConfig,
 		testDownloadClient
 	} from '$lib/queries/downloads/DownloadClientQueries.svelte';
+	import type {
+		DownloadClientConfig,
+		TestConnectionResult
+	} from '$lib/queries/downloads/DownloadClientQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import type { DownloadClientConfig, TestConnectionResult } from '$lib/types';
 
 	import DownloadClientCard from './DownloadClientCard.svelte';
 
@@ -120,9 +123,27 @@
 	function currentConfig(): DownloadClientConfig | null {
 		const d = configQuery.data;
 		if (!d) return null;
+		// The seeded snapshot round-trips the policy-owned fields; each falls
+		// back to the live query value so a partial snapshot never wipes a
+		// stored setting with undefined.
 		return {
 			...d,
-			...policyFields,
+			verify_downloads: policyFields.verify_downloads ?? d.verify_downloads,
+			quality_min: policyFields.quality_min ?? d.quality_min,
+			quality_max: policyFields.quality_max ?? d.quality_max,
+			flac_mp3_only: policyFields.flac_mp3_only ?? d.flac_mp3_only,
+			preflight_score_auto_accept:
+				policyFields.preflight_score_auto_accept ?? d.preflight_score_auto_accept,
+			preflight_score_manual_min:
+				policyFields.preflight_score_manual_min ?? d.preflight_score_manual_min,
+			download_stall_timeout_minutes:
+				policyFields.download_stall_timeout_minutes ?? d.download_stall_timeout_minutes,
+			download_queued_timeout_minutes:
+				policyFields.download_queued_timeout_minutes ?? d.download_queued_timeout_minutes,
+			preferred_quality_wait_minutes:
+				policyFields.preferred_quality_wait_minutes ?? d.preferred_quality_wait_minutes,
+			max_failover_attempts: policyFields.max_failover_attempts ?? d.max_failover_attempts,
+			max_concurrent_downloads: policyFields.max_concurrent_downloads ?? d.max_concurrent_downloads,
 			enabled,
 			url,
 			api_key: apiKey,
@@ -273,14 +294,18 @@
 					the container after changing it.
 				</p>
 			{/if}
-			{#if mount?.ok && mountAdvisory}
-				<div class="alert alert-warning items-start text-sm">
-					<TriangleAlert class="size-5 shrink-0" aria-hidden="true" />
-					<div class="space-y-1">
-						<p>{mountAdvisory}</p>
-						{#if mount.path}<code class="text-base-content/60">{mount.path}</code>{/if}
+			<!-- The subpath editor also renders while mount probing is unserved (v3
+				has no mount fields yet) so the setting stays editable. -->
+			{#if (mount?.ok && mountAdvisory) || !mount}
+				{#if mountAdvisory}
+					<div class="alert alert-warning items-start text-sm">
+						<TriangleAlert class="size-5 shrink-0" aria-hidden="true" />
+						<div class="space-y-1">
+							<p>{mountAdvisory}</p>
+							{#if mount?.path}<code class="text-base-content/60">{mount?.path}</code>{/if}
+						</div>
 					</div>
-				</div>
+				{/if}
 				<div class="space-y-1.5 rounded-box border border-base-content/10 bg-base-200/40 p-3">
 					<label class="text-sm font-medium" for="downloads-subpath">
 						Downloads subfolder

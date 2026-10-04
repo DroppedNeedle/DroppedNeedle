@@ -17,11 +17,12 @@ vi.mock('$lib/stores/toast', () => ({
 	toastStore: { show: vi.fn() }
 }));
 
-vi.mock('$lib/api/playlists', () => ({
-	removeTrackFromPlaylist: vi.fn(),
-	removeTracksFromPlaylist: vi.fn(),
-	updatePlaylistTrack: vi.fn(),
-	reorderPlaylistTrack: vi.fn()
+// The list mutates through V3 hooks; stub them so renders need no QueryClientProvider.
+vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
+	removePlaylistTrackV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	removePlaylistTracksV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	updatePlaylistTrackV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	reorderPlaylistTrackV3: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
 const MBID = '123e4567-e89b-12d3-a456-426614174000';

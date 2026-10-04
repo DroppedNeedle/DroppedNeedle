@@ -95,7 +95,7 @@ beforeEach(() => {
 	h.recoveryMutate.mockReset();
 	h.recoveryMutate.mockResolvedValue({
 		recovery_code: 'AAAA-BBBB-CCCC-DDDD-EEEE',
-		expires_at: '2026-07-17T17:00:00Z'
+		expires_at: 1784307600
 	});
 	h.recoveryReset.mockReset();
 	h.toast.mockClear();
@@ -126,7 +126,7 @@ describe('SettingsUsers password recovery', () => {
 	});
 
 	it('does not show a stale code after the dialog moves to another user', async () => {
-		let resolveFirst: (value: { recovery_code: string; expires_at: string }) => void;
+		let resolveFirst: (value: { recovery_code: string; expires_at: number }) => void;
 		h.recoveryMutate
 			.mockImplementationOnce(
 				() =>
@@ -136,7 +136,7 @@ describe('SettingsUsers password recovery', () => {
 			)
 			.mockResolvedValueOnce({
 				recovery_code: '2222-2222-2222-2222-2222',
-				expires_at: '2026-07-17T17:00:00Z'
+				expires_at: 1784307600
 			});
 
 		await render(SettingsUsers);
@@ -151,7 +151,7 @@ describe('SettingsUsers password recovery', () => {
 
 		resolveFirst!({
 			recovery_code: '1111-1111-1111-1111-1111',
-			expires_at: '2026-07-17T17:00:00Z'
+			expires_at: 1784307600
 		});
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		await expect.element(page.getByText('1111-1111-1111-1111-1111')).not.toBeInTheDocument();

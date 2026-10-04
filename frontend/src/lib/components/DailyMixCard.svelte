@@ -17,7 +17,7 @@
 	let expanded = $state(false);
 
 	const albumItems = $derived(
-		section.items.filter((item): item is HomeAlbum => section.type === 'albums')
+		section.items.filter((_item): _item is HomeAlbum => section.type === 'albums')
 	);
 	const mosaicAlbums = $derived(albumItems.slice(0, 4));
 	const albumCount = $derived(albumItems.length);

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 import { AUTH_ENDPOINTS } from './endpoints';
 
@@ -9,8 +9,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 
 vi.mock('$lib/api/client', () => ({
 	api: {
-		get: vi.fn(),
-		post: vi.fn()
+		v3: { GET: vi.fn(), POST: vi.fn() }
 	}
 }));
 
@@ -22,8 +21,10 @@ import { api } from '$lib/api/client';
 import { createMutation, createQuery } from '@tanstack/svelte-query';
 import { invalidateQueriesWithPersister } from '../QueryClient';
 
-const mockGet = vi.mocked(api.get);
-const mockPost = vi.mocked(api.post);
+const mockGet = vi.mocked(api.v3.GET) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
+const mockPost = vi.mocked(api.v3.POST) as unknown as Mock<
+	(...args: unknown[]) => Promise<unknown>
+>;
 const mockCreateMutation = vi.mocked(createMutation);
 const mockCreateQuery = vi.mocked(createQuery);
 const mockInvalidate = vi.mocked(invalidateQueriesWithPersister);
@@ -91,7 +92,7 @@ describe('createImportUsersMutation', () => {
 
 describe('getImportCandidatesQuery', () => {
 	it('keys + hits the right endpoint per provider via authenticated api.get', async () => {
-		mockGet.mockResolvedValue({ users: [] });
+		mockGet.mockResolvedValue({ candidates: [] });
 		const { getImportCandidatesQuery } = await import('./ImportCandidatesQuery.svelte');
 		getImportCandidatesQuery(
 			() => 'plex',

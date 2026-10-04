@@ -2,10 +2,10 @@ import { page } from '@vitest/browser/context';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-import type { NavidromeFolderPreference } from '$lib/types';
+import type { RemoteFolders } from '$lib/queries/remotes/types';
 
 const h = vi.hoisted(() => ({
-	preference: undefined as NavidromeFolderPreference | undefined,
+	preference: undefined as RemoteFolders | undefined,
 	isPending: false,
 	isError: false,
 	isMutationError: false,
@@ -14,8 +14,8 @@ const h = vi.hoisted(() => ({
 	isSaving: false
 }));
 
-vi.mock('$lib/queries/navidrome-folders/NavidromeFolderQueries.svelte', () => ({
-	getNavidromeFolderPreferenceQuery: () => ({
+vi.mock('$lib/queries/remotes/RemoteQueries.svelte', () => ({
+	getRemoteFoldersQuery: () => ({
 		get data() {
 			return h.preference;
 		},
@@ -28,8 +28,8 @@ vi.mock('$lib/queries/navidrome-folders/NavidromeFolderQueries.svelte', () => ({
 	})
 }));
 
-vi.mock('$lib/queries/navidrome-folders/NavidromeFolderMutations.svelte', () => ({
-	createUpdateNavidromeFolderPreferenceMutation: () => ({
+vi.mock('$lib/queries/remotes/RemoteMutations.svelte', () => ({
+	createSaveRemoteFoldersMutation: () => ({
 		mutateAsync: h.save,
 		get isPending() {
 			return h.isSaving;
@@ -45,17 +45,16 @@ vi.mock('$lib/queries/navidrome-folders/NavidromeFolderMutations.svelte', () => 
 
 import NavidromeMusicFoldersCard from './NavidromeMusicFoldersCard.svelte';
 
-function preference(overrides: Partial<NavidromeFolderPreference> = {}): NavidromeFolderPreference {
+function preference(overrides: Partial<RemoteFolders> = {}): RemoteFolders {
 	return {
 		mode: 'all',
-		selected_folder_ids: [],
+		folder_ids: [],
 		available_folders: [
 			{ id: 'folder-a', name: 'Folder A' },
 			{ id: 'folder-b', name: 'Folder B' }
 		],
 		stale_folder_ids: [],
 		source_available: true,
-		scope_revision: 'all',
 		...overrides
 	};
 }
@@ -94,10 +93,9 @@ describe('NavidromeMusicFoldersCard', () => {
 	it('shows stale folders without widening to All', async () => {
 		h.preference = preference({
 			mode: 'selected',
-			selected_folder_ids: ['gone'],
+			folder_ids: ['gone'],
 			available_folders: [{ id: 'folder-b', name: 'Folder B' }],
-			stale_folder_ids: ['gone'],
-			scope_revision: 'selected-empty'
+			stale_folder_ids: ['gone']
 		});
 		await render(NavidromeMusicFoldersCard, { userId: 'alice' });
 		await expect.element(page.getByRole('radio', { name: /Selected folders/ })).toBeChecked();

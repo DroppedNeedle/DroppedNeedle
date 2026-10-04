@@ -1,5 +1,13 @@
 <script lang="ts">
-	import { Radio, Music, LoaderCircle, ExternalLink, RadioTower, Check, Sparkles } from 'lucide-svelte';
+	import {
+		Radio,
+		Music,
+		LoaderCircle,
+		ExternalLink,
+		RadioTower,
+		Check,
+		Sparkles
+	} from 'lucide-svelte';
 	import { ApiError } from '$lib/api/client';
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
 	import {
@@ -67,12 +75,12 @@
 	const autoRequestState = $derived(prefs?.auto_request_state ?? 'none');
 	$effect(() => {
 		if (prefs) {
-			scrobbleLastfm = prefs.scrobble_to_lastfm;
-			scrobbleListenbrainz = prefs.scrobble_to_listenbrainz;
-			navidromeHandlesExternalScrobbles = prefs.navidrome_handles_external_scrobbles;
+			scrobbleLastfm = prefs.scrobble_to_lastfm ?? false;
+			scrobbleListenbrainz = prefs.scrobble_to_listenbrainz ?? false;
+			navidromeHandlesExternalScrobbles = prefs.navidrome_handles_external_scrobbles ?? true;
 			primarySource = (prefs.primary_music_source as MusicSource) ?? 'listenbrainz';
 			nowPlayingVisibility = (prefs.now_playing_visibility as NowPlayingVisibility) ?? 'full';
-			autoRequestPersonalMix = prefs.auto_request_personal_mix;
+			autoRequestPersonalMix = prefs.auto_request_personal_mix ?? false;
 		}
 	});
 
@@ -134,12 +142,12 @@
 			await scrobbleManager.refreshSettings();
 		} catch {
 			if (prefs) {
-				scrobbleLastfm = prefs.scrobble_to_lastfm;
-				scrobbleListenbrainz = prefs.scrobble_to_listenbrainz;
-				navidromeHandlesExternalScrobbles = prefs.navidrome_handles_external_scrobbles;
+				scrobbleLastfm = prefs.scrobble_to_lastfm ?? false;
+				scrobbleListenbrainz = prefs.scrobble_to_listenbrainz ?? false;
+				navidromeHandlesExternalScrobbles = prefs.navidrome_handles_external_scrobbles ?? true;
 				primarySource = (prefs.primary_music_source as MusicSource) ?? 'listenbrainz';
 				nowPlayingVisibility = (prefs.now_playing_visibility as NowPlayingVisibility) ?? 'full';
-				autoRequestPersonalMix = prefs.auto_request_personal_mix;
+				autoRequestPersonalMix = prefs.auto_request_personal_mix ?? false;
 			}
 		}
 	}

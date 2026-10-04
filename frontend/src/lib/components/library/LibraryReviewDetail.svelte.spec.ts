@@ -302,7 +302,7 @@ describe('LibraryReviewDetail', () => {
 			.element(page.getByRole('heading', { name: 'Use this release despite conflicts?' }))
 			.toHaveFocus();
 		await expect
-			.element(page.getByText('The local evidence conflicts with this release'))
+			.element(page.getByText('will attach its external identity as a manual override'))
 			.toBeVisible();
 		await expect
 			.element(page.getByRole('heading', { name: 'Failed evidence gates' }))

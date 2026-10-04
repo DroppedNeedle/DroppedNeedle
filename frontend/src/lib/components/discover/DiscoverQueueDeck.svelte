@@ -25,7 +25,7 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
-	import { getQueuePreviewMutation } from '$lib/queries/discover/DiscoverDemand.svelte';
+	import { getQueuePreviewV3Mutation } from '$lib/queries/discover/DiscoverV3Mutations.svelte';
 
 	interface Props {
 		youtubeEnabled: boolean;
@@ -44,7 +44,7 @@
 	let ytSearchUrl = $state<string | null>(null);
 	let previewController: AbortController | null = null;
 	let previewGeneration = 0;
-	const previewMutation = getQueuePreviewMutation();
+	const previewMutation = getQueuePreviewV3Mutation();
 
 	const current = $derived(deck.current);
 	const cardIdentity = $derived(`${deck.requestKey}:${current?.release_group_mbid ?? ''}`);
@@ -157,9 +157,9 @@
 		try {
 			const data = await previewMutation.mutateAsync({ mbid, signal: previewController.signal });
 			if (!isCurrent()) return;
-			ytSearchUrl = data.youtube_search_url;
+			ytSearchUrl = data.youtube_search_url ?? null;
 			if (data.status === 'available' && data.youtube_url) {
-				ytEmbedUrl = data.youtube_url;
+				ytEmbedUrl = data.youtube_url ?? null;
 				videoOpen = true;
 			} else {
 				ytError = data.status;

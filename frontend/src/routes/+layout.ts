@@ -1,8 +1,10 @@
 import { browser } from '$app/environment';
 import { ApiError, api } from '$lib/api/client';
 import { queryClient } from '$lib/queries/QueryClient';
-import { API, AUTH_FREE_PATHS } from '$lib/constants';
-import { toAuthUser, type AuthSessionUser } from '$lib/queries/auth/types';
+import { AUTH_FREE_PATHS } from '$lib/constants';
+import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
+import { PROFILE_ENDPOINTS } from '$lib/queries/profile/endpoints';
+import { toAuthUser } from '$lib/queries/auth/types';
 import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
 import { DEFAULT_SOURCE, isMusicSource, musicSourceStore } from '$lib/stores/musicSource';
 import { authStore, LAST_USER_ID_KEY } from '$lib/stores/authStore.svelte';
@@ -24,17 +26,17 @@ export const load: LayoutLoad = async ({ url }) => {
 	let setupRequired = authStore.setupRequired;
 	if (!authStore.initialized) {
 		try {
-			const status = await api.global.get<{ required: boolean }>(API.auth.setupStatus(), {
+			const status = await api.global.v3.GET(AUTH_ENDPOINTS.setupStatus, {
 				timeoutMs: BOOTSTRAP_TIMEOUT_MS
 			});
-			setupRequired = status.required;
+			setupRequired = status.setup_required;
 			authStore.setSetupRequired(setupRequired);
 		} catch {
 			throw error(503, BUSY_MESSAGE);
 		}
 
 		try {
-			const user = await api.global.get<AuthSessionUser>(API.auth.me(), {
+			const user = await api.global.v3.GET(PROFILE_ENDPOINTS.get(), {
 				timeoutMs: BOOTSTRAP_TIMEOUT_MS
 			});
 			authStore.setUser(toAuthUser(user));

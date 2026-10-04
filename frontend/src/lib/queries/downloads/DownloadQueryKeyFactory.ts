@@ -1,23 +1,24 @@
+import { userIdSegment } from '../userKeySegment';
 import { getDownloadScope } from './downloadScope.svelte';
 
 export const DownloadQueryKeyFactory = {
 	all: ['downloads'] as const,
 	clientConfig: () => [...DownloadQueryKeyFactory.all, 'client-config'] as const,
 	clientStatus: () => [...DownloadQueryKeyFactory.all, 'client-status'] as const,
-	searchJob: (userId: string | undefined, jobId: string) =>
-		[...DownloadQueryKeyFactory.all, 'search', userId ?? 'anon', jobId] as const,
+	searchJob: (userId: string | null | undefined, jobId: string) =>
+		[...DownloadQueryKeyFactory.all, 'search', userIdSegment(userId), jobId] as const,
 	tasks: (userId?: string) =>
 		[
 			...DownloadQueryKeyFactory.all,
 			'tasks',
-			userId ?? 'anon',
+			userIdSegment(userId),
 			getDownloadScope().role,
 			getDownloadScope().generation
 		] as const,
 	activity: (userId?: string) => [...DownloadQueryKeyFactory.tasks(userId), 'activity'] as const,
 	// nested under tasks() so the existing invalidateTasks() prefix-invalidates this too
-	albumTasks: (userId: string | undefined, mbid: string) =>
-		[...DownloadQueryKeyFactory.tasks(userId), 'album', mbid] as const,
+	albumTasks: (userId: string | null | undefined, mbid: string) =>
+		[...DownloadQueryKeyFactory.tasks(userId ?? undefined), 'album', mbid] as const,
 	quarantine: () => [...DownloadQueryKeyFactory.all, 'quarantine'] as const,
 	// nested under tasks() so invalidateTasks() prefix-invalidates held lists (all + per-album)
 	heldPrefix: (userId?: string) => [...DownloadQueryKeyFactory.tasks(userId), 'held'] as const,

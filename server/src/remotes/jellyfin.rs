@@ -655,6 +655,20 @@ impl JellyfinAdapter {
         ))
     }
 
+    /// Random tracks via the Audio listing with `sortBy=Random` (a
+    /// documented `ItemSortBy` value) plus the optional genre filter.
+    pub async fn random(&self, limit: i64, genre: &str) -> Result<Vec<TrackView>, AdapterError> {
+        let page = self
+            .tracks(&TrackBrowse {
+                limit,
+                sort_by: "Random".to_owned(),
+                genre: genre.to_owned(),
+                ..TrackBrowse::default()
+            })
+            .await?;
+        Ok(page.items)
+    }
+
     /// Similar items via `/Items/{id}/Similar`, audio rows mapped to tracks
     /// and album rows to their tracks is the caller's job; here similar
     /// albums resolve to their first-page tracks is wrong, so only Audio
@@ -1141,6 +1155,7 @@ impl JellyfinAdapter {
                 .and_then(value_to_i64)
                 .map(|year| year as i32),
             recording_mbid: str_field(&providers, "MusicBrainzTrack").map(str::to_owned),
+            part_key: None,
         }
     }
 

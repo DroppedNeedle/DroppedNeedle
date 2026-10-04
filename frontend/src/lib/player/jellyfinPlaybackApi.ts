@@ -1,26 +1,17 @@
-import { API } from '$lib/constants';
-import { api, ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/client';
 
-type PlaybackSessionResult = {
-	play_session_id: string;
-	item_id: string;
-};
+import { reportPlaybackProgress, startPlaybackSession, stopPlaybackSession } from './playbackGateway';
 
-type StartSessionPayload = {
-	play_session_id?: string;
-};
+// Thin Jellyfin leg over the single gateway session flow. Signatures stay
+// stable so the player store keeps compiling; the v1 play-session id the
+// player threads through is now the gateway's opaque session key.
 
-export async function startSession(itemId: string, playSessionId?: string): Promise<string> {
-	const payload: StartSessionPayload | undefined = playSessionId
-		? { play_session_id: playSessionId }
-		: undefined;
-
+export async function startSession(itemId: string, _playSessionId?: string): Promise<string> {
+	// v3 sessions are server-keyed per (user, device, track): there is no
+	// resume, so a carried session id is ignored and each start is fresh.
 	try {
-		const data = await api.global.post<PlaybackSessionResult>(
-			API.stream.jellyfinStart(itemId),
-			payload
-		);
-		return data.play_session_id;
+		const data = await startPlaybackSession({ source: 'jellyfin', track_id: itemId });
+		return data.session;
 	} catch (e) {
 		if (e instanceof ApiError) {
 			throw new Error(`Failed to start Jellyfin playback session: ${e.status} ${e.message}`, {
@@ -33,14 +24,15 @@ export async function startSession(itemId: string, playSessionId?: string): Prom
 
 export async function reportProgress(
 	itemId: string,
-	playSessionId: string,
+	_playSessionId: string,
 	positionSeconds: number,
 	isPaused: boolean
 ): Promise<boolean> {
 	try {
-		await api.global.post(API.stream.jellyfinProgress(itemId), {
-			play_session_id: playSessionId,
-			position_seconds: positionSeconds,
+		await reportPlaybackProgress({
+			source: 'jellyfin',
+			track_id: itemId,
+			position_ms: Math.round(positionSeconds * 1000),
 			is_paused: isPaused
 		});
 		return true;
@@ -51,13 +43,14 @@ export async function reportProgress(
 
 export async function reportStop(
 	itemId: string,
-	playSessionId: string,
+	_playSessionId: string,
 	positionSeconds: number
 ): Promise<boolean> {
 	try {
-		await api.global.post(API.stream.jellyfinStop(itemId), {
-			play_session_id: playSessionId,
-			position_seconds: positionSeconds
+		await stopPlaybackSession({
+			source: 'jellyfin',
+			track_id: itemId,
+			position_ms: Math.round(positionSeconds * 1000)
 		});
 		return true;
 	} catch {

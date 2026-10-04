@@ -2,21 +2,20 @@
 	import '../../auth.css';
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { api, ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/client';
 	import { getAuthProvidersQuery } from '$lib/queries/auth/AuthProvidersQuery.svelte';
 	import {
 		createJellyfinLoginMutation,
 		createLocalLoginMutation,
-		createOidcAuthorizeMutation,
-		createPlexPinMutation
+		createOidcAuthorizeMutation
 	} from '$lib/queries/auth/AuthMutations.svelte';
-	import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { createPlexStartMutation } from '$lib/queries/plex/PlexAuthMutations.svelte';
+	import { pollPlexFlow } from '$lib/queries/plex/PlexFlowApi';
 	import {
 		toAuthUser,
 		type AuthProviders,
-		type AuthSessionResponse,
-		type PlexPollResponse
+		type SessionUserLike
 	} from '$lib/queries/auth/types';
 	import { onDestroy } from 'svelte';
 	import { Eye, EyeOff } from 'lucide-svelte';
@@ -62,7 +61,7 @@
 	let plexLoading = $state(false);
 	let plexError = $state<string | null>(null);
 	let plexPollInterval: ReturnType<typeof setInterval> | null = null;
-	const plexPin = createPlexPinMutation();
+	const plexPin = createPlexStartMutation();
 
 	let oidcLoading = $state(false);
 	let oidcError = $state<string | null>(null);
@@ -72,7 +71,7 @@
 		if (plexPollInterval) clearInterval(plexPollInterval);
 	});
 
-	function storeSession(data: AuthSessionResponse) {
+	function storeSession(data: { user: SessionUserLike }) {
 		authStore.setUser(toAuthUser(data.user));
 		goto(withBasePath('/'));
 	}
@@ -100,16 +99,18 @@
 		plexLoading = true;
 		if (plexPollInterval) clearInterval(plexPollInterval);
 		try {
-			const { pin_id, auth_url } = await plexPin.mutateAsync();
-			window.open(auth_url, '_blank', 'width=800,height=600');
+			const { pin_id, authorize_url } = await plexPin.mutateAsync({ purpose: 'login' });
+			window.open(authorize_url, '_blank', 'width=800,height=600');
 
 			plexPollInterval = setInterval(async () => {
 				try {
-					const data = await api.global.get<PlexPollResponse>(AUTH_ENDPOINTS.plexPoll(pin_id));
+					const data = await pollPlexFlow('login', pin_id);
 					if (data.completed === false) return;
 					clearInterval(plexPollInterval!);
 					plexLoading = false;
-					if (data.user) storeSession({ user: data.user });
+					if (data.user) {
+						storeSession({ user: data.user });
+					}
 				} catch (e) {
 					clearInterval(plexPollInterval!);
 					plexLoading = false;
@@ -126,8 +127,8 @@
 		oidcError = null;
 		oidcLoading = true;
 		try {
-			const { redirect_url } = await oidcAuthorize.mutateAsync();
-			window.location.href = redirect_url;
+			const { authorize_url } = await oidcAuthorize.mutateAsync();
+			window.location.href = authorize_url;
 		} catch {
 			oidcError = 'SSO is not configured';
 			oidcLoading = false;

@@ -2,7 +2,7 @@
 	import { Music, Pause, User } from 'lucide-svelte';
 	import AudioQualityBadge from '$lib/components/AudioQualityBadge.svelte';
 	import { getApiUrl } from '$lib/api/api-utils';
-	import type { NowPlayingSession } from '$lib/types';
+	import type { NowPlayingSession } from '$lib/stores/nowPlayingSessions.svelte';
 
 	interface Props {
 		sessions: NowPlayingSession[];

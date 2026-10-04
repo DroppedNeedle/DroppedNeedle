@@ -1,19 +1,25 @@
 import { createMutation, createQuery, queryOptions } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API, CACHE_TTL } from '$lib/constants';
+import type { components } from '$lib/api/v3/openapi';
+import { CACHE_TTL } from '$lib/constants';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-import type { OperationResult, ProwlarrConnectionSettings, ProwlarrTestResult } from '$lib/types';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
+import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
+
+export type ProwlarrConnectionSettings = components['schemas']['ProwlarrConnectionDto'];
+export type ProwlarrTestResult = components['schemas']['ProwlarrTestResponse'];
 
 const getProwlarrConfigQueryOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.prowlarr(),
 		queryFn: ({ signal }) =>
-			api.global.get<ProwlarrConnectionSettings>(API.prowlarr.config(), { signal })
+			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.prowlarrConfig(), {
+				signal
+			})
 	});
 
 export const getProwlarrConfigQuery = () => createQuery(() => getProwlarrConfigQueryOptions());
@@ -31,7 +37,7 @@ async function invalidateProwlarr() {
 export function saveProwlarrConfigMutation() {
 	return createMutation(() => ({
 		mutationFn: (connection: ProwlarrConnectionSettings) =>
-			api.global.put<OperationResult>(API.prowlarr.config(), connection),
+			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.prowlarrConfig(), connection),
 		onSuccess: invalidateProwlarr
 	}));
 }
@@ -39,6 +45,6 @@ export function saveProwlarrConfigMutation() {
 export function testProwlarrMutation() {
 	return createMutation(() => ({
 		mutationFn: (connection: ProwlarrConnectionSettings) =>
-			api.global.post<ProwlarrTestResult>(API.prowlarr.test(), connection)
+			api.global.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.prowlarrTest(), connection)
 	}));
 }

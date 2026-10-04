@@ -130,6 +130,14 @@ fn album_matches(record: &AlbumRecord, filter: &AlbumFilter) -> bool {
     {
         return false;
     }
+    if let Some(format) = filter.format.as_deref()
+        && record
+            .format
+            .as_deref()
+            .is_none_or(|primary| !primary.eq_ignore_ascii_case(format))
+    {
+        return false;
+    }
     filter
         .q
         .as_deref()
@@ -146,6 +154,12 @@ fn sort_albums(records: &mut [AlbumRecord], sort: AlbumSort, descending: bool) {
                 .then(a.id.cmp(&b.id))
         }),
         AlbumSort::Year => records.sort_by(|a, b| a.year.cmp(&b.year).then(a.id.cmp(&b.id))),
+        AlbumSort::Artist => records.sort_by(|a, b| {
+            a.artist_name
+                .cmp(&b.artist_name)
+                .then(a.title.cmp(&b.title))
+                .then(a.id.cmp(&b.id))
+        }),
         AlbumSort::Random => records.sort_by(|a, b| b.id.cmp(&a.id)),
         AlbumSort::Rediscover => records.sort_by(|a, b| {
             a.date_added
@@ -213,6 +227,26 @@ impl LibraryCatalog for MemoryCatalog {
                 .iter()
                 .find(|record| record.id == id)
                 .cloned())
+        })
+    }
+
+    fn get_album_by_release_group<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<AlbumRecord>, StoreError>> {
+        Box::pin(async move {
+            let mut matches: Vec<AlbumRecord> = lock(&self.albums)
+                .iter()
+                .filter(|record| record.release_group_mbid.as_deref() == Some(release_group_mbid))
+                .cloned()
+                .collect();
+            matches.sort_by(|a, b| {
+                a.date_added
+                    .partial_cmp(&b.date_added)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then(a.id.cmp(&b.id))
+            });
+            Ok(matches.into_iter().next())
         })
     }
 
@@ -648,6 +682,7 @@ macro_rules! fail_catalog {
 impl LibraryCatalog for FailingCatalog {
     fail_catalog!(list_albums(filter: &'a AlbumFilter, sort: AlbumSort, descending: bool, limit: u64, offset: u64) -> (Vec<AlbumRecord>, u64));
     fail_catalog!(get_album(id: &'a str) -> Option<AlbumRecord>);
+    fail_catalog!(get_album_by_release_group(release_group_mbid: &'a str) -> Option<AlbumRecord>);
     fail_catalog!(album_tracks(album_id: &'a str, limit: u64, offset: u64) -> (Vec<TrackRecord>, u64));
     fail_catalog!(album_copies(album_id: &'a str) -> Vec<AlbumRecord>);
     fail_catalog!(list_artists(scope: ArtistScope, q: Option<&'a str>, sort: ArtistSort, descending: bool, limit: u64, offset: u64) -> ArtistListing);

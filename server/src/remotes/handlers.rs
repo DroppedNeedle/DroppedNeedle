@@ -39,11 +39,11 @@ use super::folders::{FolderSaveError, FolderStore, checked_preference, resolve_s
 use super::jellyfin::JellyfinAdapter;
 use super::models::{
     AlbumBrowseQuery, AlbumPage, ArtistBrowseQuery, ArtistIndex, ArtistPage, ConnectionSave,
-    ConnectionStatus, FavoritesView, FolderResolutionView, FolderSave, GenreSongsQuery,
-    HistoryPage, HistoryQuery, HubView, ImageQuery, ImportResult, InfoView, LyricsQuery,
-    LyricsView, MatchQuery, MatchView, MusicFolderView, PageQuery, PlaylistCollection,
-    PlaylistDetail, SearchQuery, SearchResults, SessionsView, SourceName, StatsView,
-    TrackBrowseQuery, TrackPage,
+    ConnectionStatus, DiscoveryQuery, DiscoveryView, FavoritesView, FolderResolutionView,
+    FolderSave, GenreSongsQuery, HistoryPage, HistoryQuery, HubView, ImageQuery, ImportResult,
+    InfoView, LyricsQuery, LyricsView, MatchQuery, MatchView, MusicFolderView, PageQuery,
+    PlaylistCollection, PlaylistDetail, RandomQuery, SearchQuery, SearchResults, SessionsView,
+    SourceName, StatsView, TrackBrowseQuery, TrackPage,
 };
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
@@ -100,6 +100,8 @@ pub fn remotes_router(deps: RemotesDeps) -> axum::Router {
         .route("/remotes/{source}/lyrics/{id}", get(get_lyrics))
         .route("/remotes/{source}/top/{artist}", get(get_top_songs))
         .route("/remotes/{source}/similar/{id}", get(get_similar))
+        .route("/remotes/{source}/random", get(get_random))
+        .route("/remotes/{source}/discovery", get(get_discovery))
         .route("/remotes/{source}/mix/{id}", get(get_mix))
         .route("/remotes/{source}/sessions", get(list_sessions))
         .route("/remotes/{source}/history", get(list_history))
@@ -752,6 +754,64 @@ pub async fn get_similar(
         offset: 0,
         limit,
     }))
+}
+
+/// Random tracks, optionally filtered by genre. Limits mirror the v1
+/// Navidrome route (default 20, max 50); Plex answers unsupported.
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/random",
+    responses((status = 200, description = "Random tracks", body = TrackPage)))]
+pub async fn get_random(
+    State(deps): State<RemotesDeps>,
+    RemotesUser(ctx): RemotesUser,
+    Path(source): Path<String>,
+    ValidQuery(query): ValidQuery<RandomQuery>,
+) -> Result<Json<TrackPage>, RemotesError> {
+    let source = parse_source(&source)?;
+    let limit = query.limit.unwrap_or(20).clamp(1, 50);
+    let genre = query.genre.as_deref().unwrap_or("");
+    let handle = handle_for(&deps, &ctx.user_id, source).await?;
+    let items = handle
+        .random(limit, genre)
+        .await
+        .map_err(|error| failed(source, error))?;
+    let total = items.len() as i64;
+    Ok(Json(TrackPage {
+        items,
+        total,
+        offset: 0,
+        limit,
+    }))
+}
+
+/// Plex discovery shelves (Plex only, following the mix-route precedent:
+/// the shape is source-specific, so the gate lives in the handler).
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/discovery",
+    responses((status = 200, description = "Discovery shelves", body = DiscoveryView)))]
+pub async fn get_discovery(
+    State(deps): State<RemotesDeps>,
+    RemotesUser(ctx): RemotesUser,
+    Path(source): Path<String>,
+    ValidQuery(query): ValidQuery<DiscoveryQuery>,
+) -> Result<Json<DiscoveryView>, RemotesError> {
+    let source = parse_source(&source)?;
+    if source != SourceName::Plex {
+        return Err(RemotesError::Unsupported {
+            message: format!("{} has no discovery shelves", source.display()),
+        });
+    }
+    let count = query.count.unwrap_or(10).clamp(1, 20);
+    let handle = handle_for(&deps, &ctx.user_id, source).await?;
+    let RemoteHandle::Plex(adapter) = handle else {
+        return Err(RemotesError::internal(
+            &"discovery resolved a non-Plex handle",
+            deps.ids.as_ref(),
+        ));
+    };
+    adapter
+        .discovery(count)
+        .await
+        .map(Json)
+        .map_err(|error| failed(source, error))
 }
 
 /// Instant mix for an item, artist, or genre id (Jellyfin only).

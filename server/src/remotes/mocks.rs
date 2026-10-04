@@ -1114,6 +1114,7 @@ fn plex_router(recorder: MockRecorder) -> axum::Router {
             get(px_custom_composite),
         )
         .route("/hubs/search", get(px_search))
+        .route("/hubs/sections/{id}", get(px_hubs))
         .route("/status/sessions", get(px_sessions))
         .route("/status/sessions/history/all", get(px_history))
         .route("/library/parts/{*key}", get(px_part))
@@ -1571,6 +1572,23 @@ async fn px_search(
         {"type": "album", "Metadata": albums},
         {"type": "track", "Metadata": tracks},
         {"type": "artist", "Metadata": artists},
+    ]}))
+}
+
+/// Section hubs: one album shelf plus one artist shelf so discovery
+/// filtering (album-type only) stays testable.
+async fn px_hubs(
+    State(recorder): State<MockRecorder>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    if !px_authorized(&headers, &recorder) {
+        return px_unauthorized();
+    }
+    let _ = id;
+    px_container(json!({"Hub": [
+        {"title": "Recommended for you", "type": "album", "Metadata": px_albums("1")},
+        {"title": "Top artists", "type": "artist", "Metadata": px_artists("1")},
     ]}))
 }
 

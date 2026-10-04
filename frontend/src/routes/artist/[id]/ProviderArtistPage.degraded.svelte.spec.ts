@@ -58,8 +58,7 @@ vi.mock('./LocalArtistPage.svelte', () => {
 	return { default: Component };
 });
 
-vi.mock('$lib/queries/library/LibraryQueries.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/queries/library/LibraryQueries.svelte')>()),
+vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getLibraryArtistDetailQuery: (...args: unknown[]) => {
 		h.libraryDetailObserver(...args);
 		return {
@@ -67,7 +66,12 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', async (importOriginal) => 
 			isLoading: false,
 			error: null
 		};
-	}
+	},
+	// Real children (ReleaseList, ArtistAppearancesSection) read these when
+	// provider data renders; keep them quiet so the page mounts without a
+	// QueryClientProvider.
+	getLibraryMembershipQuery: () => ({ data: undefined, isLoading: false }),
+	getLibraryArtistAppearancesQuery: () => ({ data: undefined, isLoading: false })
 }));
 
 vi.mock('$lib/stores/library', () => ({

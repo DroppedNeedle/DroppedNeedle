@@ -1,18 +1,17 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { browser } from '$app/environment';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
 	import { setQueueMutationToastsSuppressed } from '$lib/stores/playerUtils';
 	import { deckFocus } from '$lib/stores/deckFocus.svelte';
-	import { API } from '$lib/constants';
+	import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 	import { api } from '$lib/api/client';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { getCoverUrl } from '$lib/utils/errorHandling';
-	import type { CrateTrack, LocalAlbumSummary, LocalAlbumMatch, CrateResponse } from '$lib/types';
+	import { formatBytes } from '$lib/utils/formatting';
+	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
 	import type { QueueItem } from '$lib/player/types';
-	import { launchLocalPlayback } from '$lib/player/launchLocalPlayback';
-	import { buildQueueItemsFromLocal } from '$lib/player/queueHelpers';
 	import { slide } from 'svelte/transition';
 	import Turntable from '$lib/components/local/Turntable.svelte';
 	import Crate from '$lib/components/local/Crate.svelte';
@@ -22,12 +21,20 @@
 	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import {
-		getLocalRecentQuery,
-		getLocalAlbumsQuery,
-		getLocalSuggestionsQuery,
-		getLocalDecadesQuery,
-		getLocalStatsQuery
-	} from '$lib/queries/local/LocalQueries.svelte';
+		getLocalRecentV3Query,
+		getLocalAlbumsV3Query,
+		getLocalSuggestionsV3Query,
+		getLocalDecadesV3Query,
+		getLocalStatsV3Query
+	} from '$lib/queries/local/LocalV3Queries.svelte';
+	import { LocalV3Api } from '$lib/queries/local/LocalV3Api';
+	import {
+		albumCardToSummary,
+		albumCoverUrl,
+		crateCoverUrl,
+		matchTrackToQueueItem,
+		suggestionToCrateTrack
+	} from '$lib/queries/local/LocalV3Adapters';
 	import { ChevronDown, Headphones, Play, Shuffle, Clock } from 'lucide-svelte';
 
 	const MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -52,20 +59,65 @@
 		crateDeadline = now + CRATE_REFRESH_MS;
 	}
 
-	const recentQuery = getLocalRecentQuery();
-	const rediscoverQuery = getLocalAlbumsQuery(() => ({ sort: 'rediscover', limit: 20 }));
-	const suggestionsQuery = getLocalSuggestionsQuery(() => eraDecade);
-	const decadesQuery = getLocalDecadesQuery();
-	const statsQuery = getLocalStatsQuery();
-
-	const crateTracks = $derived(suggestionsQuery.data?.items ?? []);
-	const recentAlbums = $derived(recentQuery.data ?? []);
-	const rediscoverAlbums = $derived(rediscoverQuery.data?.items ?? []);
-	const decades = $derived(decadesQuery.data?.items ?? []);
-	const stats = $derived(statsQuery.data ?? null);
+	const recentQuery = getLocalRecentV3Query(() => 20);
+	const rediscoverQuery = getLocalAlbumsV3Query(() => ({
+		limit: 20,
+		offset: 0,
+		sort: 'rediscover',
+		order: 'asc'
+	}));
+	const suggestionsQuery = getLocalSuggestionsV3Query(() => eraDecade);
+	const decadesQuery = getLocalDecadesV3Query();
+	const statsQuery = getLocalStatsV3Query();
 
 	let openDecade = $state<number | null>(null);
-	const openShelf = $derived(decades.find((d) => d.decade === openDecade) ?? null);
+	const shelfQuery = getLocalAlbumsV3Query(
+		() => ({ limit: 50, offset: 0, sort: 'name', order: 'asc', decade: openDecade ?? undefined }),
+		() => openDecade !== null
+	);
+
+	const recentAlbums = $derived((recentQuery.data ?? []).map(albumCardToSummary));
+	const rediscoverAlbums = $derived((rediscoverQuery.data?.items ?? []).map(albumCardToSummary));
+	const decades = $derived(decadesQuery.data?.items ?? []);
+	const stats = $derived(statsQuery.data ?? null);
+	const shelfAlbums = $derived((shelfQuery.data?.items ?? []).map(albumCardToSummary));
+	const openShelf = $derived.by(() => {
+		const shelf = decades.find((d) => d.decade === openDecade) ?? null;
+		if (!shelf) return null;
+		return { ...shelf, albums: shelfAlbums };
+	});
+
+	// Face covers for closed decade cards, from the shelves already on
+	// screen. Decades with no card in either shelf render without art until
+	// opened, when the browse query supplies the face.
+	const faceByDecade = $derived.by(() => {
+		const faces = new SvelteMap<number, LocalAlbumSummary>();
+		for (const card of [...(recentQuery.data ?? []), ...(rediscoverQuery.data?.items ?? [])]) {
+			if (card.year == null) continue;
+			const decade = Math.floor(card.year / 10) * 10;
+			if (!faces.has(decade)) faces.set(decade, albumCardToSummary(card));
+		}
+		return faces;
+	});
+
+	// Suggestion tracks carry the owning album's local id but no mbid, so
+	// covers resolve through the album cards already on screen.
+	const albumMbidById = $derived.by(() => {
+		const map = new SvelteMap<string, string | null>();
+		for (const card of [
+			...(recentQuery.data ?? []),
+			...(rediscoverQuery.data?.items ?? []),
+			...(shelfQuery.data?.items ?? [])
+		]) {
+			map.set(card.id, card.release_group_mbid ?? null);
+		}
+		return map;
+	});
+	const crateTracks = $derived(
+		(suggestionsQuery.data?.items ?? []).map((s) =>
+			suggestionToCrateTrack(s, albumMbidById.get(s.album_id) ?? null)
+		)
+	);
 
 	const isPlaying = $derived(playerStore.isPlaying);
 	const heroCover = $derived(playerStore.nowPlaying?.coverUrl ?? null);
@@ -83,10 +135,10 @@
 			discNumber: 1,
 			albumId: t.album_mbid ?? '',
 			albumName: t.album_name,
-			coverUrl: getCoverUrl(t.cover_url, t.album_mbid ?? ''),
+			coverUrl: crateCoverUrl(t),
 			coverRemoteUrl: t.cover_url?.startsWith('http') ? t.cover_url : null,
 			sourceType: 'local',
-			streamUrl: API.stream.local(t.track_file_id),
+			streamUrl: gatewayStreamUrl('local', t.track_file_id),
 			format: (t.format ?? '').toLowerCase()
 		};
 	}
@@ -108,18 +160,19 @@
 
 	async function playAlbum(album: LocalAlbumSummary, shuffle = false) {
 		try {
-			const match = await api.global.get<LocalAlbumMatch>(
-				API.local.albumMatch(album.musicbrainz_id)
+			const match = await api.global.v3.GET(
+				LocalV3Api.albumMatch(album.musicbrainz_id, { limit: 1000 })
 			);
-			const tracks = [...match.tracks].sort((a, b) => a.track_number - b.track_number);
+			const tracks = [...match.items].sort(
+				(a, b) => a.disc_number - b.disc_number || a.track_number - b.track_number
+			);
 			if (!tracks.length) return;
-			launchLocalPlayback(tracks, 0, shuffle, {
-				albumId: album.musicbrainz_id,
-				albumName: album.name,
-				artistName: album.artist_name,
-				coverUrl: album.cover_url ?? null,
-				artistId: album.artist_mbid ?? undefined
-			});
+			const cover = albumCoverUrl(album);
+			playerStore.playQueue(
+				tracks.map((t) => matchTrackToQueueItem(t, cover, album.musicbrainz_id)),
+				0,
+				shuffle
+			);
 			if (album.year) eraDecade = Math.floor(album.year / 10) * 10;
 		} catch {
 			playbackToast.show("Couldn't load that album", 'error');
@@ -137,19 +190,17 @@
 
 	async function queueAlbum(album: LocalAlbumSummary) {
 		try {
-			const match = await api.global.get<LocalAlbumMatch>(
-				API.local.albumMatch(album.musicbrainz_id)
+			const match = await api.global.v3.GET(
+				LocalV3Api.albumMatch(album.musicbrainz_id, { limit: 1000 })
 			);
-			const tracks = [...match.tracks].sort((a, b) => a.track_number - b.track_number);
+			const tracks = [...match.items].sort(
+				(a, b) => a.disc_number - b.disc_number || a.track_number - b.track_number
+			);
 			if (!tracks.length) return;
-			const items = buildQueueItemsFromLocal(tracks, {
-				albumId: album.musicbrainz_id,
-				albumName: album.name,
-				artistName: album.artist_name,
-				coverUrl: album.cover_url ?? null,
-				artistId: album.artist_mbid ?? undefined
-			});
-			playerStore.addMultipleToQueue(items);
+			const cover = albumCoverUrl(album);
+			playerStore.addMultipleToQueue(
+				tracks.map((t) => matchTrackToQueueItem(t, cover, album.musicbrainz_id))
+			);
 		} catch {
 			playbackToast.show("Couldn't queue that album", 'error');
 		}
@@ -157,8 +208,10 @@
 
 	async function fetchBatch(): Promise<QueueItem[]> {
 		try {
-			const res = await api.global.get<CrateResponse>(API.local.suggestions(40));
-			return res.items.map(crateToQueueItem);
+			const res = await api.global.v3.GET(LocalV3Api.suggestions(40, null));
+			return res.items.map((s) =>
+				crateToQueueItem(suggestionToCrateTrack(s, albumMbidById.get(s.album_id) ?? null))
+			);
 		} catch {
 			return crateTracks.map(crateToQueueItem);
 		}
@@ -261,7 +314,7 @@
 				<h1 class="text-xl font-black tracking-tight sm:text-2xl">The Listening Room</h1>
 				<p class="text-xs text-base-content/50">
 					{#if stats}{stats.total_tracks.toLocaleString()} tracks &middot; {stats.total_artists} artists
-						&middot; {stats.total_size_human}{:else}Your local music, ready to spin{/if}
+						&middot; {formatBytes(stats.total_size_bytes)}{:else}Your local music, ready to spin{/if}
 				</p>
 			</div>
 		</header>
@@ -336,7 +389,7 @@
 						<h2 class="text-lg font-bold">{title}</h2>
 					</div>
 					<HorizontalCarousel>
-						{#each albums as album (album.musicbrainz_id)}
+						{#each albums as album, i (`${album.musicbrainz_id}:${i}`)}
 							{@render albumTile(album)}
 						{/each}
 					</HorizontalCarousel>
@@ -352,8 +405,7 @@
 					title="Play {album.name}"
 				>
 					<AlbumImage
-						mbid={album.musicbrainz_id}
-						remoteUrl={album.cover_url}
+						customUrl={albumCoverUrl(album)}
 						alt={album.name}
 						size="full"
 						requestSize={250}
@@ -400,7 +452,9 @@
 				<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
 					{#each decades as shelfData (shelfData.decade)}
 						{@const active = openDecade === shelfData.decade}
-						{@const face = shelfData.albums[0]}
+						{@const face =
+							active && shelfAlbums.length ? shelfAlbums[0] : faceByDecade.get(shelfData.decade)}
+						{@const faceCover = face ? albumCoverUrl(face) : null}
 						<button
 							class="decade-card group relative aspect-[4/3] overflow-hidden rounded-2xl border p-4 text-left {active
 								? 'border-accent/60 ring-1 ring-accent/40'
@@ -409,9 +463,9 @@
 							aria-expanded={active}
 							title="Browse {shelfData.label}"
 						>
-							{#if face}
+							{#if faceCover}
 								<img
-									src={getCoverUrl(face.cover_url, face.musicbrainz_id)}
+									src={faceCover}
 									alt=""
 									aria-hidden="true"
 									loading="lazy"
@@ -443,11 +497,19 @@
 							<h3 class="text-base font-bold text-base-content/85">{openShelf.label}</h3>
 							<span class="text-xs text-base-content/40">{openShelf.album_count} albums</span>
 						</div>
-						<HorizontalCarousel>
-							{#each openShelf.albums as album (album.musicbrainz_id)}
-								{@render albumTile(album)}
-							{/each}
-						</HorizontalCarousel>
+						{#if shelfQuery.isLoading}
+							<div class="flex gap-3">
+								{#each Array(6) as _, i (`shelf-skeleton-${i}`)}
+									<div class="h-36 w-36 shrink-0 animate-pulse rounded-xl bg-base-200/60"></div>
+								{/each}
+							</div>
+						{:else}
+							<HorizontalCarousel>
+								{#each openShelf.albums as album, i (`${album.musicbrainz_id}:${i}`)}
+									{@render albumTile(album)}
+								{/each}
+							</HorizontalCarousel>
+						{/if}
 					</div>
 				{/if}
 			</div>

@@ -17,7 +17,9 @@
 //! (CORS, limits), and never inherit `/api` session auth. Case-variant
 //! compat paths and preflights match no route, so the 404/405 fallbacks
 //! redispatch them into the compat router (preflight 204, canonical
-//! rewrite) before answering natively.
+//! rewrite) before answering natively. Native OPTIONS preflights on
+//! existing paths land in the 405 fallback too, so under debug CORS it
+//! answers them directly with the pinned localhost headers.
 
 use axum::{Router, extract::Request, middleware, response::IntoResponse, routing::get};
 
@@ -128,13 +130,27 @@ pub fn create_app(state: AppState) -> Router {
             response
         }
     };
+    // Captured before `state` moves into the request-scope layer below.
+    let debug_cors = state.config.debug_cors;
     let fallback_405 = {
         let compat_router = compat_router.clone();
         move |request: Request| async move {
+            // Read before `request` moves into the redispatch: OPTIONS
+            // matches no route, so native preflights land here without ever
+            // seeing `debug_cors_layer` (same reason compat preflights
+            // short-circuit inside `fallback_redispatch`).
+            let is_options = request.method() == axum::http::Method::OPTIONS;
+            let origin = request.headers().get(axum::http::header::ORIGIN).cloned();
             let compat_path =
                 crate::compat::shared::path_case::is_compat_path(request.uri().path());
             if let Some(redispatch) = fallback_redispatch(&compat_router, request).await {
                 return redispatch;
+            }
+            if debug_cors
+                && is_options
+                && let Some(preflight) = debug_preflight_response(origin.as_ref())
+            {
+                return preflight;
             }
             let mut response = handlers::fallback_405().await.into_response();
             if compat_path {
@@ -185,4 +201,48 @@ fn debug_cors_layer() -> tower_http::cors::CorsLayer {
             axum::http::header::ACCEPT_RANGES,
             axum::http::header::CONTENT_LENGTH,
         ])
+}
+
+/// Native preflight answer for debug CORS. Mirrors `debug_cors_layer`
+/// (same origin allowlist, methods, and headers) because the layer never
+/// sees OPTIONS requests: they land in the 405 fallback instead. Returns
+/// `None` for a missing or disallowed `Origin` so the bare 405 still
+/// answers non-browser callers.
+fn debug_preflight_response(
+    origin: Option<&axum::http::HeaderValue>,
+) -> Option<axum::response::Response> {
+    use crate::auth::session::cors::DEBUG_CORS_ORIGINS;
+
+    let origin = origin?;
+    let allowed = DEBUG_CORS_ORIGINS
+        .iter()
+        .any(|pinned| pinned.as_bytes() == origin.as_bytes());
+    if !allowed {
+        return None;
+    }
+    let mut response = axum::http::StatusCode::NO_CONTENT.into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        origin.clone(),
+    );
+    headers.insert(
+        axum::http::header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+        axum::http::HeaderValue::from_static("true"),
+    );
+    headers.insert(
+        axum::http::header::ACCESS_CONTROL_ALLOW_METHODS,
+        axum::http::HeaderValue::from_static("GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS"),
+    );
+    headers.insert(
+        axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS,
+        axum::http::HeaderValue::from_static("authorization, content-type, range"),
+    );
+    headers.insert(
+        axum::http::header::VARY,
+        axum::http::HeaderValue::from_static(
+            "origin, access-control-request-method, access-control-request-headers",
+        ),
+    );
+    Some(response)
 }

@@ -46,6 +46,12 @@ vi.mock('$lib/queries/connections/ConnectionsQuery.svelte', () => ({
 	getConnectionsQuery: () => ({ data: undefined, isPending: false })
 }));
 
+// HomeEntryCards (rendered by the page) reads the library activity feed;
+// stub it so the shell renders without a QueryClientProvider.
+vi.mock('$lib/queries/library/LibraryActivityQueries.svelte', () => ({
+	getLibraryActivityQuery: () => ({ data: { items: [] } })
+}));
+
 vi.mock('$lib/queries/discover/DiscoverDemand.svelte', () => ({ useDiscoverActivity: vi.fn() }));
 import Page from './+page.svelte';
 

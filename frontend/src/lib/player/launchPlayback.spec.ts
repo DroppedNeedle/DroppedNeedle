@@ -1,19 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { LocalTrackInfo, JellyfinTrackInfo } from '$lib/types';
+import type { JellyfinTrackInfo, LocalTrackInfo } from '$lib/player/types';
 import type { PlaybackMeta, QueueItem } from '$lib/player/types';
 
 vi.mock('$lib/stores/player.svelte', () => ({
 	playerStore: { playQueue: vi.fn() }
 }));
 
-vi.mock('$lib/constants', () => ({
-	API: {
-		stream: {
-			local: (id: number | string) => `/api/v1/stream/local/${id}`,
-			jellyfin: (id: string) => `/api/v1/stream/jellyfin/${id}`
-		}
-	}
-}));
 
 import { playerStore } from '$lib/stores/player.svelte';
 import { launchLocalPlayback } from './launchLocalPlayback';
@@ -52,7 +44,7 @@ describe('launchLocalPlayback', () => {
 				trackSourceId: '42',
 				trackName: 'Song A',
 				sourceType: 'local',
-				streamUrl: '/api/v1/stream/local/42',
+				streamUrl: '/api/v3/stream/local/42',
 				format: 'flac'
 			})
 		);
@@ -190,7 +182,7 @@ describe('launchJellyfinPlayback', () => {
 		const call = vi.mocked(playerStore.playQueue).mock.calls[0];
 		const item: QueueItem = call[0][0];
 
-		expect(item.streamUrl).toBe('/api/v1/stream/jellyfin/jf-abc');
+		expect(item.streamUrl).toBe('/api/v3/stream/jellyfin/jf-abc');
 		expect(item.format).toBe('flac');
 	});
 

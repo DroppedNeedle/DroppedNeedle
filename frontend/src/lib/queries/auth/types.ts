@@ -1,5 +1,10 @@
+import type { components } from '$lib/api/v3/openapi';
+import type { V3Response } from '$lib/api/v3/client';
 import type { AuthUser, MusicBrainzSourceIdentity } from '$lib/stores/authStore.svelte';
 
+// No v3 route serves this yet (the backend allowlists /api/v3/auth/providers
+// but ships no handler), so the login page keeps its own shape: the query
+// falls back to local-only tabs until the backend lands the route.
 export interface AuthProviders {
 	local: boolean;
 	plex: boolean;
@@ -8,94 +13,54 @@ export interface AuthProviders {
 }
 
 /** User payload returned by every endpoint that establishes a session. */
-export interface AuthSessionUser {
+export type AuthSessionUser = components['schemas']['UserResponse'] & {
+	musicbrainz_source?: MusicBrainzSourceIdentity | null;
+};
+
+/** The least a login answer carries: the native UserResponse and the leaner
+ * federated poll view both satisfy this, and it is all toAuthUser reads. */
+export interface SessionUserLike {
 	id: string;
 	display_name: string;
 	role: string;
-	email: string | null;
-	avatar_url: string | null;
-	username: string | null;
-	username_display: string | null;
+	email?: string | null;
+	avatar_url?: string | null;
+	username?: string | null;
+	username_display?: string | null;
 	providers?: string[];
 	musicbrainz_source?: MusicBrainzSourceIdentity | null;
 }
 
-export interface AuthSessionResponse {
-	user: AuthSessionUser;
-}
+/** Login/setup success body, inferred from the contract (user plus the raw
+ * session token only in Bearer [REDACTED] Jellyfin and OIDC logins answer the same
+ * shape, but their spec entries carry no response schema, so those two
+ * mutations name this type explicitly until the backend annotates them. */
+export type AuthSessionResponse = V3Response<'/api/v3/auth/login', 'post'>;
 
-export interface LocalLoginVars {
-	username: string;
-	password: string;
-}
+export type LocalLoginVars = components['schemas']['LoginBody'];
 
-export interface PasswordRecoveryResetVars {
-	username: string;
-	recovery_code: string;
-	new_password: string;
-}
+export type PasswordRecoveryResetVars = components['schemas']['PasswordReset'];
 
-export interface PasswordRecoveryCodeResponse {
-	recovery_code: string;
-	expires_at: string;
-}
+export type PasswordRecoveryCodeResponse = components['schemas']['RecoveryCodeResponse'];
 
-export interface JellyfinLoginVars {
-	username: string;
-	password: string;
-}
+export type JellyfinLoginVars = components['schemas']['JellyfinLoginBody'];
 
-export interface SetupVars {
-	display_name: string;
-	username: string;
-	email?: string;
-	password: string;
-}
+export type SetupVars = components['schemas']['SetupBody'];
 
-export interface OidcExchangeVars {
-	code: string;
-}
+export type OidcExchangeVars = components['schemas']['OidcExchangeBody'];
 
-export interface PlexPinResponse {
-	pin_id: string;
-	auth_url: string;
-}
-
-/** Poll returns `{ completed: false }` until the user authorises, then the session. */
-export interface PlexPollResponse {
-	completed?: boolean;
-	user?: AuthSessionUser;
-}
-
-export interface OidcAuthorizeResponse {
-	redirect_url: string;
-}
+// Confirmed: the authorize POST answers the *Body schema (openapi
+// /api/v3/auth/oidc/authorize 200 content), so the alias shares it by design.
+export type OidcAuthorizeResponse = components['schemas']['OidcAuthorizeBody'];
 
 /** An importable media-server account (admin import picker, Phase 6 / D5). */
-export interface ImportCandidate {
-	provider: string;
-	provider_uid: string;
-	display_name: string;
-	avatar_url: string | null;
-	email: string | null;
-	already_imported: boolean;
-}
+export type ImportCandidate = components['schemas']['ImportCandidateView'];
 
-export interface ImportCandidateListResponse {
-	users: ImportCandidate[];
-}
+export type ImportCandidateListResponse = components['schemas']['ImportCandidateListResponse'];
 
-export interface ImportUsersVars {
-	provider: string;
-	provider_uids: string[];
-}
+export type ImportUsersVars = components['schemas']['ImportUsersRequest'];
 
-export interface ImportUsersResult {
-	imported: AuthSessionUser[];
-	linked: AuthSessionUser[];
-	skipped: string[];
-	total_imported: number;
-}
+export type ImportUsersResult = components['schemas']['ImportUsersResponse'];
 
 const KNOWN_ROLES: readonly AuthUser['role'][] = ['admin', 'trusted', 'user'];
 
@@ -111,15 +76,15 @@ function toRole(role: string): AuthUser['role'] {
 
 /** Maps a session response user onto the auth store's AuthUser shape. Centralises
  * the mapping that login, setup and the OIDC callback previously each duplicated. */
-export function toAuthUser(user: AuthSessionUser): AuthUser {
+export function toAuthUser(user: SessionUserLike): AuthUser {
 	return {
 		id: user.id,
 		display_name: user.display_name,
 		role: toRole(user.role),
-		email: user.email,
-		avatar_url: user.avatar_url,
-		username: user.username,
-		username_display: user.username_display,
+		email: user.email ?? null,
+		avatar_url: user.avatar_url ?? null,
+		username: user.username ?? null,
+		username_display: user.username_display ?? null,
 		providers: user.providers ?? [],
 		...(user.musicbrainz_source === undefined
 			? {}

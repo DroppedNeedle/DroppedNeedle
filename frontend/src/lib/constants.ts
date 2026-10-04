@@ -1,5 +1,7 @@
 import type { MusicSource } from './stores/musicSource';
-import type { RequestKind } from './types';
+
+/** Album vs track request lane, carried on request query strings. */
+export type RequestKind = 'album' | 'track';
 
 export const AUTH_FREE_PATHS = ['/login', '/setup', '/auth/callback', '/recover-password'];
 
@@ -134,15 +136,8 @@ const requestKindQuery = (requestKind: RequestKind = 'album') =>
 	`?request_kind=${encodeURIComponent(requestKind)}`;
 
 export const API = {
-	auth: {
-		setupStatus: () => '/api/v1/auth/setup/status',
-		me: () => '/api/v1/auth/me',
-		deviceSessions: () => '/api/v1/auth/device-sessions',
-		logout: () => '/api/v1/auth/logout',
-		passwordRecoveryReset: () => '/api/v1/auth/password-recovery/reset',
-		adminPasswordRecovery: (userId: string) =>
-			`/api/v1/auth/admin/users/${encodeURIComponent(userId)}/password-recovery`
-	},
+	// Auth rides the v3 endpoints module ($lib/queries/auth/endpoints); no v1
+	// auth builders remain.
 	artist: {
 		basic: (id: string) => `/api/v1/artists/${id}`,
 		extended: (id: string) => `/api/v1/artists/${id}/extended`,
@@ -652,8 +647,6 @@ export const API = {
 		generateTrack: () => '/api/v1/youtube/generate-track',
 		generateTracks: () => '/api/v1/youtube/generate-tracks',
 		trackLinks: (albumId: string) => `/api/v1/youtube/track-links/${albumId}`,
-		deleteTrackLink: (albumId: string, discNumber: number, trackNumber: number) =>
-			`/api/v1/youtube/track-link/${albumId}/${discNumber}/${trackNumber}`,
 		quota: () => '/api/v1/youtube/quota'
 	},
 	settings: () => '/api/v1/settings',
@@ -664,10 +657,6 @@ export const API = {
 	settingsPlex: () => '/api/v1/settings/plex',
 	settingsPlexVerify: () => '/api/v1/settings/plex/verify',
 	settingsPlexLibraries: () => '/api/v1/settings/plex/libraries',
-	plexAuthPin: () => '/api/v1/plex/auth/pin',
-	plexAuthPoll: (pinId: number) => `/api/v1/plex/auth/poll?pin_id=${pinId}`,
-	settingsLocalFiles: () => '/api/v1/settings/local-files',
-	settingsLocalFilesVerify: () => '/api/v1/settings/local-files/verify',
 	settingsMusicbrainz: () => '/api/v1/settings/musicbrainz',
 	settingsMusicbrainzBrainzMashStage: () => '/api/v1/settings/musicbrainz/brainzmash/stage',
 	settingsMusicbrainzBrainzMashConsent: () => '/api/v1/settings/musicbrainz/brainzmash/consent',
@@ -677,40 +666,12 @@ export const API = {
 	settingsSpotifyRedirectUri: () => '/api/v1/settings/spotify/redirect-uri',
 	settingsGetIt: () => '/api/v1/settings/get-it',
 	settingsFreeMusic: () => '/api/v1/settings/free-music',
-	profile: {
-		get: () => '/api/v1/profile',
-		update: () => '/api/v1/profile',
-		avatarUpload: () => '/api/v1/profile/avatar',
-		avatar: (userId: string) => `/api/v1/profile/avatar/${userId}`,
-		updateUsername: () => '/api/v1/profile/username',
-		updateEmail: () => '/api/v1/profile/email',
-		changePassword: () => '/api/v1/profile/password',
-		setPassword: () => '/api/v1/profile/set-password'
-	},
+	// profile + connections + spotify builders lived here until the profile
+	// seam migration moved them onto the v3 registry (their endpoints.ts
+	// files); only stragglers with out-of-scope consumers remain.
 	me: {
-		connections: () => '/api/v1/me/connections',
-		connection: (service: string) => `/api/v1/me/connections/${service}`,
-		scrobblePreferences: () => '/api/v1/me/scrobble-preferences',
 		sectionPrefs: () => '/api/v1/me/section-prefs',
-		lastfmAuthToken: () => '/api/v1/me/connections/lastfm/auth/token',
-		lastfmAuthSession: () => '/api/v1/me/connections/lastfm/auth/session',
-		listenbrainz: () => '/api/v1/me/connections/listenbrainz',
-		navidrome: () => '/api/v1/me/connections/navidrome',
-		navidromeMusicFolderPreferences: () => '/api/v1/me/navidrome/music-folder-preferences',
-		jellyfin: () => '/api/v1/me/connections/jellyfin',
-		plexAuthPin: () => '/api/v1/me/connections/plex/auth/pin',
-		plexAuthPoll: (pinId: number) => `/api/v1/me/connections/plex/auth/poll?pin_id=${pinId}`,
-		spotifyAuthUrl: () => '/api/v1/me/connections/spotify/auth/url',
-		spotifyPlaylists: () => '/api/v1/me/spotify/playlists',
-		spotifyImport: (playlistId: string) => `/api/v1/me/spotify/playlists/${playlistId}/import`,
-		personalMixRefresh: () => '/api/v1/me/personal-mix/refresh'
-	},
-	scrobble: {
-		nowPlaying: () => '/api/v1/scrobble/now-playing',
-		submit: () => '/api/v1/scrobble/submit'
-	},
-	nowPlaying: {
-		report: () => '/api/v1/now-playing'
+		navidromeMusicFolderPreferences: () => '/api/v1/me/navidrome/music-folder-preferences'
 	},
 	playlists: {
 		list: () => '/api/v1/playlists',

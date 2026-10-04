@@ -21,7 +21,7 @@
 
 	let { item, itemType, href = null, rank, variant, className, onFallbackClick }: Props = $props();
 
-	function isAlbum(value: HomeAlbum | HomeArtist): value is HomeAlbum {
+	function isAlbum(_value: HomeAlbum | HomeArtist): _value is HomeAlbum {
 		return itemType === 'album';
 	}
 

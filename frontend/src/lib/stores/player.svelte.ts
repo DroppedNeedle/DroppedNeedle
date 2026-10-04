@@ -6,8 +6,8 @@ import type {
 	SourceType
 } from '$lib/player/types';
 import { createPlaybackSource } from '$lib/player/createSource';
-import { API } from '$lib/constants';
 import { api } from '$lib/api/client';
+import { GATEWAY_ENDPOINTS } from '$lib/player/playbackGateway';
 import {
 	reportProgress as reportJellyfinProgress,
 	reportStop as reportJellyfinStop,
@@ -149,9 +149,8 @@ function createPlayerStore() {
 	);
 	const handleBeforeUnload = createBeforeUnloadHandler(
 		() => ({ jellyfinItem: getJellyfinItem(), currentItem: queue[currentIndex] ?? null, progress }),
-		API.stream.jellyfinStop,
-		API.stream.navidromeScrobble,
-		API.stream.plexScrobble
+		GATEWAY_ENDPOINTS.playbackStop(),
+		GATEWAY_ENDPOINTS.scrobbleSubmit()
 	);
 
 	function getNextIndex(): number | null {

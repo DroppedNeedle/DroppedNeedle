@@ -22,7 +22,7 @@
 		() => open,
 		() => authStore.user?.id
 	);
-	const candidates = $derived(candidatesQuery.data?.users ?? []);
+	const candidates = $derived(candidatesQuery.data?.candidates ?? []);
 	const importMutation = createImportUsersMutation();
 
 	let wasOpen = false;

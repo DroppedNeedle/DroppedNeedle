@@ -1,4 +1,5 @@
 import { api } from '$lib/api/client';
+import type { components } from '$lib/api/v3/openapi';
 import { createMutation } from '@tanstack/svelte-query';
 import { toastStore } from '$lib/stores/toast';
 import { authStore } from '$lib/stores/authStore.svelte';
@@ -6,19 +7,19 @@ import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../Qu
 import { ScrobblePreferencesQueryKeyFactory } from './ScrobblePreferencesQueryKeyFactory';
 import { SCROBBLE_PREFERENCES_ENDPOINTS } from './endpoints';
 import { notifyPendingApprovalCountChanged } from '$lib/utils/requestsApi';
-import type {
-	ApprovalActionResponse,
-	PersonalMixRefreshResponse,
-	ScrobblePreferences,
-	ScrobblePreferencesUpdate
-} from './types';
+import type { ScrobblePreferencesUpdate } from './types';
 import { isMusicSource, musicSourceStore } from '$lib/stores/musicSource';
 
 // invalidate so the card + (Phase 5) home/discover re-read the new primary source
 export const createUpdateScrobblePreferencesMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: ScrobblePreferencesUpdate) =>
-			api.global.put<ScrobblePreferences>(SCROBBLE_PREFERENCES_ENDPOINTS.update, vars),
+			// Partial by design (absent keeps stored values); the generated body
+			// type over-states requiredness, so the patch is asserted at the call.
+			api.global.v3.PUT(
+				SCROBBLE_PREFERENCES_ENDPOINTS.update(),
+				vars as components['schemas']['ScrobblePreferencesUpdate']
+			),
 		onMutate: () => ({ userId: authStore.user?.id }),
 		onSuccess: async (preferences, _vars, context) => {
 			const userId = context.userId;
@@ -34,11 +35,7 @@ export const createUpdateScrobblePreferencesMutation = () =>
 // personal_mix_refreshed SSE handler (FollowingEvents) when the build lands
 export const createRefreshPersonalMixMutation = () =>
 	createMutation(() => ({
-		mutationFn: () =>
-			api.global.post<PersonalMixRefreshResponse>(
-				SCROBBLE_PREFERENCES_ENDPOINTS.refreshPersonalMix,
-				{}
-			)
+		mutationFn: () => api.global.v3.POST(SCROBBLE_PREFERENCES_ENDPOINTS.refreshPersonalMixV3())
 	}));
 
 interface PersonalMixApprovalVars {
@@ -59,9 +56,7 @@ function approvalErrorMessage(err: unknown, fallback: string): string {
 export const createApprovePersonalMixMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: PersonalMixApprovalVars) =>
-			api.global.post<ApprovalActionResponse>(
-				SCROBBLE_PREFERENCES_ENDPOINTS.approvePersonalMix(vars.userId)
-			),
+			api.global.v3.POST(SCROBBLE_PREFERENCES_ENDPOINTS.approvePersonalMix(vars.userId)),
 		onSuccess: async (_data, vars) => {
 			toastStore.show({
 				message: `Weekly Mix auto-request approved for ${vars.userName ?? 'user'}`,
@@ -77,9 +72,7 @@ export const createApprovePersonalMixMutation = () =>
 export const createRejectPersonalMixMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: PersonalMixApprovalVars) =>
-			api.global.post<ApprovalActionResponse>(
-				SCROBBLE_PREFERENCES_ENDPOINTS.rejectPersonalMix(vars.userId)
-			),
+			api.global.v3.POST(SCROBBLE_PREFERENCES_ENDPOINTS.rejectPersonalMix(vars.userId)),
 		onSuccess: async (_data, vars) => {
 			toastStore.show({
 				message: `Weekly Mix auto-request rejected for ${vars.userName ?? 'user'}`,

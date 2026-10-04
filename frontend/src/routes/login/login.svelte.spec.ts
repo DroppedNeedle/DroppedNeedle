@@ -38,8 +38,14 @@ vi.mock('$lib/queries/auth/AuthProvidersQuery.svelte', () => ({
 vi.mock('$lib/queries/auth/AuthMutations.svelte', () => ({
 	createLocalLoginMutation: () => ({ mutateAsync: mockLocalMutate, isPending: false }),
 	createJellyfinLoginMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	createOidcAuthorizeMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	createPlexPinMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
+	createOidcAuthorizeMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
+}));
+
+// The page mints Plex pins through the real flow module; these tests never
+// touch the Plex tab, so stub the mutation instead of mounting a QueryClient.
+vi.mock('$lib/queries/plex/PlexAuthMutations.svelte', () => ({
+	createPlexStartMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createPlexPollMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
 import Login from './+page.svelte';
@@ -70,7 +76,11 @@ describe('login local tab uses a username field', () => {
 		expect(el.type).toBe('text');
 		expect(el.getAttribute('autocomplete')).toBe('username');
 		// The local tab no longer collects an email address.
-		expect(document.querySelector('input[type="email"]')).toBeNull();
+		const textboxes = await page.getByRole('textbox').all();
+		expect(textboxes.length).toBeGreaterThan(0);
+		for (const box of textboxes) {
+			await expect.element(box).not.toHaveAttribute('type', 'email');
+		}
 	});
 
 	it('labels the local tab "Username"', async () => {

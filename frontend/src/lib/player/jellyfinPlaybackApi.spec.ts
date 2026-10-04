@@ -17,7 +17,8 @@ vi.mock('$lib/api/client', () => {
 	return {
 		api: {
 			global: {
-				post: (...args: unknown[]) => mockPost(...args)
+				post: (...args: unknown[]) => mockPost(...args),
+				v3: { POST: (...args: unknown[]) => mockPost(...args) }
 			}
 		},
 		ApiError: _ApiError
@@ -32,22 +33,26 @@ describe('jellyfinPlaybackApi', () => {
 	});
 
 	describe('startSession', () => {
-		it('sends POST to start endpoint and returns play_session_id', async () => {
-			mockPost.mockResolvedValueOnce({ play_session_id: 'sess-123', item_id: 'item-456' });
+		it('starts a gateway session and returns its session key', async () => {
+			mockPost.mockResolvedValueOnce({ accepted: true, session: 'u:web:item-456' });
 
 			const result = await api.startSession('item-456');
 
-			expect(result).toBe('sess-123');
-			expect(mockPost).toHaveBeenCalledWith('/api/v1/stream/jellyfin/item-456/start', undefined);
+			expect(result).toBe('u:web:item-456');
+			expect(mockPost).toHaveBeenCalledWith('/api/v3/playback/start', {
+				source: 'jellyfin',
+				track_id: 'item-456'
+			});
 		});
 
-		it('sends existing play_session_id when provided', async () => {
-			mockPost.mockResolvedValueOnce({ play_session_id: 'sess-123', item_id: 'item-456' });
+		it('ignores a carried session id: v3 sessions are server-keyed', async () => {
+			mockPost.mockResolvedValueOnce({ accepted: true, session: 'u:web:item-456' });
 
 			await api.startSession('item-456', 'sess-existing');
 
-			expect(mockPost).toHaveBeenCalledWith('/api/v1/stream/jellyfin/item-456/start', {
-				play_session_id: 'sess-existing'
+			expect(mockPost).toHaveBeenCalledWith('/api/v3/playback/start', {
+				source: 'jellyfin',
+				track_id: 'item-456'
 			});
 		});
 
@@ -68,9 +73,10 @@ describe('jellyfinPlaybackApi', () => {
 			const ok = await api.reportProgress('item-1', 'sess-1', 42.5, false);
 
 			expect(ok).toBe(true);
-			expect(mockPost).toHaveBeenCalledWith('/api/v1/stream/jellyfin/item-1/progress', {
-				play_session_id: 'sess-1',
-				position_seconds: 42.5,
+			expect(mockPost).toHaveBeenCalledWith('/api/v3/playback/progress', {
+				source: 'jellyfin',
+				track_id: 'item-1',
+				position_ms: 42500,
 				is_paused: false
 			});
 		});
@@ -96,9 +102,10 @@ describe('jellyfinPlaybackApi', () => {
 			const ok = await api.reportStop('item-1', 'sess-1', 120.0);
 
 			expect(ok).toBe(true);
-			expect(mockPost).toHaveBeenCalledWith('/api/v1/stream/jellyfin/item-1/stop', {
-				play_session_id: 'sess-1',
-				position_seconds: 120.0
+			expect(mockPost).toHaveBeenCalledWith('/api/v3/playback/stop', {
+				source: 'jellyfin',
+				track_id: 'item-1',
+				position_ms: 120000
 			});
 		});
 

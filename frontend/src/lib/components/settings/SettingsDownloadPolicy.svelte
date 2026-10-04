@@ -3,6 +3,7 @@
 		getDownloadPolicyQuery,
 		saveDownloadPolicy
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
+	import type { DownloadPolicySettings as DownloadPolicyDto } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { untrack } from 'svelte';
 
@@ -124,8 +125,9 @@
 	}
 
 	async function onSave() {
-		const d = policyQuery.data as DownloadPolicySettings | undefined;
-		if (!d) return;
+		const raw = policyQuery.data;
+		if (!raw) return;
+		const d = raw as DownloadPolicySettings;
 		if (!qualityRecipe.length) {
 			toastStore.show({
 				message: 'Add at least one quality recipe entry before saving',
@@ -143,8 +145,11 @@
 			nextQualityMin,
 			nextQualityMax
 		);
-		const policy: DownloadPolicySettings = {
-			...d,
+		// The save payload round-trips the full v3 DTO (which carries fields the
+		// recipe model does not know, like ignored terms and the recycle bin)
+		// with the edited fields overlaid.
+		const policy: DownloadPolicyDto = {
+			...raw,
 			quality_min: nextQualityMin,
 			quality_max: nextQualityMax,
 			quality_cutoff: nextCutoff,

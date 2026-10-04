@@ -1,13 +1,14 @@
 <script lang="ts">
-	import { onMount, onDestroy, untrack } from 'svelte';
-	import { SvelteMap } from 'svelte/reactivity';
+	import { onMount, untrack } from 'svelte';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { page } from '$app/state';
 	import { fade, fly } from 'svelte/transition';
 	import RequestCard from '$lib/components/RequestCard.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
 	import Toast from '$lib/components/Toast.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import type { ActiveRequestItem, RequestHistoryItem, RequestKind } from '$lib/types';
+	import type { RequestItem } from '$lib/queries/requests/types';
+	import type { RequestKind } from '$lib/constants';
 	import {
 		TriangleAlert,
 		CircleCheck,
@@ -35,16 +36,19 @@
 	import type { WantedWatchItem } from '$lib/queries/wanted/types';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import {
-		fetchActiveRequests,
-		fetchRequestHistory,
-		cancelRequest,
-		retryRequest,
-		clearHistoryItem,
-		fetchPendingApprovals,
-		approveRequest,
-		rejectRequest,
-		notifyPendingApprovalCountChanged
-	} from '$lib/utils/requestsApi';
+		getActiveRequestCountQuery,
+		getActiveRequestsQuery,
+		getApprovalsQuery,
+		getRequestHistoryQuery
+	} from '$lib/queries/requests/RequestQueries.svelte';
+	import {
+		createApproveRequestMutation,
+		createBatchCancelRequestsMutation,
+		createCancelRequestMutation,
+		createClearHistoryMutation,
+		createRejectRequestMutation,
+		createRetryRequestMutation
+	} from '$lib/queries/requests/RequestMutations.svelte';
 	import {
 		getAutoDownloadApprovalsQuery,
 		getAutoDownloadApprovalBatchesQuery
@@ -61,7 +65,6 @@
 		createRejectPersonalMixMutation
 	} from '$lib/queries/scrobble-preferences/ScrobblePreferencesMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { isAbortError } from '$lib/utils/errorHandling';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		getCutoffUnmetQuery,
@@ -81,19 +84,18 @@
 	const wantedItems = $derived(wantedQuery.data?.items ?? []);
 	const wantedRetrying = $derived(wantedQuery.data?.retrying ?? []);
 	const wantedActiveCount = $derived(
-		wantedItems.filter((i) => i.state === 'watching' || i.state === 'dormant').length +
-			wantedRetrying.length
+		wantedItems.filter((i) => i.state === 'watching').length + wantedRetrying.length
 	);
 	// mbid (lowercased) -> chip state for History rows: a terminal-looking request
 	// that's actually still being worked on must never read as dead
 	const wantedStates = $derived.by(() => {
 		const map = new SvelteMap<string, 'retrying' | 'watching'>();
 		for (const entry of wantedRetrying) {
-			map.set(entry.release_group_mbid.toLowerCase(), 'retrying');
+			map.set(entry.musicbrainz_id.toLowerCase(), 'retrying');
 		}
 		for (const watch of wantedItems) {
-			if (watch.state === 'watching' || watch.state === 'dormant') {
-				map.set(watch.release_group_mbid.toLowerCase(), 'watching');
+			if (watch.state === 'watching') {
+				map.set(watch.musicbrainz_id.toLowerCase(), 'watching');
 			}
 		}
 		return map;
@@ -104,15 +106,15 @@
 	const wantedBusy = $derived(stopWatch.isPending || resumeWatch.isPending);
 
 	function handleWantedStop(item: WantedWatchItem) {
-		stopWatch.mutate({ mbid: item.release_group_mbid, albumTitle: item.album_title });
+		stopWatch.mutate({ mbid: item.musicbrainz_id, albumTitle: item.album_title });
 	}
 
 	function handleWantedResume(item: WantedWatchItem) {
-		resumeWatch.mutate({ mbid: item.release_group_mbid, albumTitle: item.album_title });
+		resumeWatch.mutate({ mbid: item.musicbrainz_id, albumTitle: item.album_title });
 	}
 
 	function handleWantedSeen(item: WantedWatchItem) {
-		markWantedSeen.mutate({ mbid: item.release_group_mbid, albumTitle: item.album_title });
+		markWantedSeen.mutate({ mbid: item.musicbrainz_id, albumTitle: item.album_title });
 	}
 
 	// Cutoff-unmet worklist (admin/trusted curators, CollectionManagement D7/D18).
@@ -185,62 +187,109 @@
 		return `${Math.floor(diff / 86400)}d ago`;
 	}
 
-	let activeItems = $state<ActiveRequestItem[]>([]);
-	let activeCount = $state(0);
-	let activeLoading = $state(true);
-	let activeError = $state<string | null>(null);
+	// Active, history, and approvals all read through TanStack Query: the
+	// request mutations invalidate the requests prefix, so every tab refreshes
+	// itself after a row action with no manual reloads.
+	const activeListQuery = getActiveRequestsQuery(() => activeTab === 'active');
+	const activeItems = $derived(activeListQuery.data?.items ?? []);
+	const activeCount = $derived(activeListQuery.data?.count ?? activeItems.length);
+	const activeLoading = $derived(activeListQuery.isPending);
+	const activeError = $derived(
+		activeListQuery.isError ? "Couldn't load active requests" : null
+	);
+	const isPolling = $derived(activeListQuery.isFetching);
 
-	let historyItems = $state<RequestHistoryItem[]>([]);
-	let historyTotal = $state(0);
 	let historyPage = $state(1);
 	const historyPageSize = 20;
-	let historyTotalPages = $state(1);
-	let historyLoading = $state(true);
-	let historyError = $state<string | null>(null);
 	let historyFilter = $state<string | undefined>(undefined);
 	let historySort = $state<string | undefined>(undefined);
+	const historyQuery = getRequestHistoryQuery(
+		() => ({
+			page: historyPage,
+			pageSize: historyPageSize,
+			status: historyFilter,
+			sort: historySort
+		}),
+		() => activeTab === 'history'
+	);
+	const historyItems = $derived<RequestItem[]>(historyQuery.data?.items ?? []);
+	const historyTotal = $derived(historyQuery.data?.total ?? 0);
+	const historyTotalPages = $derived(historyQuery.data?.total_pages ?? 1);
+	const historyLoading = $derived(historyQuery.isPending);
+	const historyError = $derived(historyQuery.isError ? "Couldn't load request history" : null);
 
-	let pollInterval: ReturnType<typeof setInterval> | null = null;
-	let activeAbortController: AbortController | null = null;
-	let historyAbortController: AbortController | null = null;
-	let activeRequestId = 0;
-	let historyRequestId = 0;
+	// Approvals stay fetched for every admin visit so the tab badge is live
+	// even before the tab opens.
+	const approvalsQuery = getApprovalsQuery(() => authStore.isAdmin);
+	const approvalItems = $derived<RequestItem[]>(approvalsQuery.data?.items ?? []);
+	const approvalCount = $derived(approvalsQuery.data?.count ?? approvalItems.length);
+	const approvalLoading = $derived(approvalsQuery.isPending);
+	const approvalError = $derived(
+		approvalsQuery.isError ? "Couldn't load pending approvals" : null
+	);
+
 	let toastShow = $state(false);
 	let toastMessage = $state('');
 	let toastType = $state<'success' | 'error' | 'info'>('success');
-	let isPolling = $state(false);
-
-	let approvalItems = $state<ActiveRequestItem[]>([]);
-	let approvalCount = $state(0);
-	let approvalLoading = $state(true);
-	let approvalError = $state<string | null>(null);
-	let approvalAbortController: AbortController | null = null;
 
 	function requestKey(mbid: string, requestKind: RequestKind): string {
 		return `${requestKind}:${mbid}`;
 	}
 
-	function itemRequestKey(item: { musicbrainz_id: string; request_kind?: RequestKind }): string {
-		return requestKey(item.musicbrainz_id, item.request_kind ?? 'album');
+	function itemKind(item: Pick<RequestItem, 'request_kind'>): RequestKind {
+		return item.request_kind === 'track' ? 'track' : 'album';
+	}
+
+	function itemRequestKey(item: Pick<RequestItem, 'musicbrainz_id' | 'request_kind'>): string {
+		return requestKey(item.musicbrainz_id, itemKind(item));
+	}
+
+	// R10: the tab badge reads the cheap active-count endpoint and falls back
+	// to the list count while it loads.
+	const activeCountQuery = getActiveRequestCountQuery(() => !!authStore.user?.id);
+	const activeBadgeCount = $derived(activeCountQuery.data?.count ?? activeCount);
+
+	// R10 batch-cancel selection on the Active tab.
+	let selectedKeys = $state<Set<string>>(new Set());
+	const selectedList = $derived(activeItems.filter((i) => selectedKeys.has(itemRequestKey(i))));
+
+	function handleSelect(mbid: string, requestKind: RequestKind, selected: boolean) {
+		const next = new SvelteSet(selectedKeys);
+		if (selected) next.add(requestKey(mbid, requestKind));
+		else next.delete(requestKey(mbid, requestKind));
+		selectedKeys = next;
+	}
+
+	const cancelRequestMutation = createCancelRequestMutation();
+	const retryRequestMutation = createRetryRequestMutation();
+	const clearHistoryMutation = createClearHistoryMutation();
+	const approveRequestMutation = createApproveRequestMutation();
+	const rejectRequestMutation = createRejectRequestMutation();
+	const batchCancelMutation = createBatchCancelRequestsMutation();
+
+	async function handleBatchCancel() {
+		const albumMbids = selectedList
+			.filter((i) => itemKind(i) === 'album')
+			.map((i) => i.musicbrainz_id);
+		const trackMbids = selectedList
+			.filter((i) => itemKind(i) === 'track')
+			.map((i) => i.musicbrainz_id);
+		try {
+			if (albumMbids.length > 0) {
+				await batchCancelMutation.mutateAsync({ mbids: albumMbids, kind: 'album' });
+			}
+			if (trackMbids.length > 0) {
+				await batchCancelMutation.mutateAsync({ mbids: trackMbids, kind: 'track' });
+			}
+			selectedKeys = new Set();
+		} catch {
+			// the mutation already toasted the failure
+		}
 	}
 	const downloadingCount = $derived(activeItems.filter((i) => i.status === 'downloading').length);
 	const pendingCount = $derived(
 		activeItems.filter((i) => i.status === 'pending' || i.status === 'queued').length
 	);
-
-	function abortActiveLoad() {
-		if (activeAbortController) {
-			activeAbortController.abort();
-			activeAbortController = null;
-		}
-	}
-
-	function abortHistoryLoad() {
-		if (historyAbortController) {
-			historyAbortController.abort();
-			historyAbortController = null;
-		}
-	}
 
 	function showToast(message: string, type: 'success' | 'error' | 'info' = 'success') {
 		toastMessage = message;
@@ -248,259 +297,84 @@
 		toastShow = true;
 	}
 
-	async function loadActive() {
-		const requestId = ++activeRequestId;
-		abortActiveLoad();
-		const controller = new AbortController();
-		activeAbortController = controller;
-		isPolling = true;
-		try {
-			const data = await fetchActiveRequests(controller.signal);
-			if (controller.signal.aborted || requestId !== activeRequestId) {
-				return;
-			}
-			activeItems = data.items;
-			activeCount = data.count;
-			activeError = null;
-		} catch (e) {
-			if (isAbortError(e)) {
-				return;
-			}
-			activeError = "Couldn't load active requests";
-		} finally {
-			if (!controller.signal.aborted && requestId === activeRequestId) {
-				activeLoading = false;
-			}
-			if (activeAbortController === controller) {
-				activeAbortController = null;
-			}
-			setTimeout(() => {
-				isPolling = false;
-			}, 500);
+	// Drop batch-cancel selections for rows that settled since the last poll.
+	$effect(() => {
+		const live = new Set(activeItems.map(itemRequestKey));
+		if (selectedKeys.size > 0 && ![...selectedKeys].every((key) => live.has(key))) {
+			selectedKeys = new Set([...selectedKeys].filter((key) => live.has(key)));
 		}
-	}
-
-	async function loadHistory() {
-		const requestId = ++historyRequestId;
-		abortHistoryLoad();
-		const controller = new AbortController();
-		historyAbortController = controller;
-		historyLoading = true;
-		try {
-			const data = await fetchRequestHistory(
-				historyPage,
-				historyPageSize,
-				historyFilter,
-				controller.signal,
-				historySort
-			);
-			if (controller.signal.aborted || requestId !== historyRequestId) {
-				return;
-			}
-			historyItems = data.items;
-			historyTotal = data.total;
-			historyTotalPages = data.total_pages;
-			historyError = null;
-		} catch (e) {
-			if (isAbortError(e)) {
-				return;
-			}
-			historyError = "Couldn't load request history";
-		} finally {
-			if (!controller.signal.aborted && requestId === historyRequestId) {
-				historyLoading = false;
-			}
-			if (historyAbortController === controller) {
-				historyAbortController = null;
-			}
-		}
-	}
-
-	function startPolling() {
-		stopPolling();
-		void loadActive();
-		pollInterval = setInterval(loadActive, 5000);
-	}
-
-	function stopPolling() {
-		if (pollInterval) {
-			clearInterval(pollInterval);
-			pollInterval = null;
-		}
-		abortActiveLoad();
-	}
-
-	function handleVisibility() {
-		if (document.hidden) {
-			stopPolling();
-		} else if (activeTab === 'active') {
-			startPolling();
-		}
-	}
-
-	function abortApprovalsLoad() {
-		if (approvalAbortController) {
-			approvalAbortController.abort();
-			approvalAbortController = null;
-		}
-	}
-
-	async function loadApprovals() {
-		abortApprovalsLoad();
-		const controller = new AbortController();
-		approvalAbortController = controller;
-		approvalLoading = true;
-		try {
-			const data = await fetchPendingApprovals(controller.signal);
-			if (controller.signal.aborted) return;
-			approvalItems = data.items;
-			approvalCount = data.count;
-			notifyPendingApprovalCountChanged();
-			approvalError = null;
-		} catch (e) {
-			if (isAbortError(e)) return;
-			approvalError = "Couldn't load pending approvals";
-		} finally {
-			if (!controller.signal.aborted) approvalLoading = false;
-			if (approvalAbortController === controller) approvalAbortController = null;
-		}
-	}
+	});
 
 	async function handleApprove(mbid: string, requestKind: RequestKind) {
 		try {
-			const result = await approveRequest(mbid, requestKind);
-			if (result.success) {
-				showToast(result.message);
-				const key = requestKey(mbid, requestKind);
-				approvalItems = approvalItems.filter((i) => itemRequestKey(i) !== key);
-				approvalCount = approvalItems.length;
-				notifyPendingApprovalCountChanged();
-			} else {
-				showToast(result.message, 'error');
-			}
+			await approveRequestMutation.mutateAsync({ mbid, kind: requestKind });
 		} catch {
-			showToast('Could not approve that request', 'error');
+			// the mutation already toasted the failure
 		}
 	}
 
 	async function handleReject(mbid: string, requestKind: RequestKind) {
 		try {
-			const result = await rejectRequest(mbid, requestKind);
-			if (result.success) {
-				showToast(result.message, 'info');
-				const key = requestKey(mbid, requestKind);
-				approvalItems = approvalItems.filter((i) => itemRequestKey(i) !== key);
-				approvalCount = approvalItems.length;
-				notifyPendingApprovalCountChanged();
-			} else {
-				showToast(result.message, 'error');
-			}
+			await rejectRequestMutation.mutateAsync({ mbid, kind: requestKind });
 		} catch {
-			showToast('Could not reject that request', 'error');
+			// the mutation already toasted the failure
 		}
 	}
 
 	function switchTab(tab: RequestsTab) {
 		activeTab = tab;
-		if (tab === 'active') {
-			abortHistoryLoad();
-			abortApprovalsLoad();
-			startPolling();
-		} else if (tab === 'history') {
-			stopPolling();
-			abortApprovalsLoad();
-			void loadHistory();
-		} else if (tab === 'approvals') {
-			stopPolling();
-			abortHistoryLoad();
-			void loadApprovals();
-		} else {
-			// auto-download: the TanStack query fetches itself once the tab is active
-			stopPolling();
-			abortHistoryLoad();
-			abortApprovalsLoad();
-		}
 	}
 
 	async function handleCancel(mbid: string, requestKind: RequestKind) {
 		try {
-			const result = await cancelRequest(mbid, requestKind);
-			if (result.success) {
-				showToast(result.message);
-				const key = requestKey(mbid, requestKind);
-				activeItems = activeItems.filter((i) => itemRequestKey(i) !== key);
-				activeCount = activeItems.length;
-			} else {
-				showToast(result.message, 'error');
-			}
+			await cancelRequestMutation.mutateAsync({ mbid, kind: requestKind });
 		} catch {
-			showToast("Couldn't cancel that request", 'error');
+			// the mutation already toasted the failure
 		}
 	}
 
 	async function handleRetry(mbid: string, requestKind: RequestKind) {
 		try {
-			const result = await retryRequest(mbid, requestKind);
-			if (result.success) {
-				showToast(result.message);
-				await Promise.all([loadHistory(), loadActive()]);
-			} else {
-				showToast(result.message, 'error');
-			}
+			await retryRequestMutation.mutateAsync({ mbid, kind: requestKind });
 		} catch {
-			showToast("Couldn't retry that request", 'error');
+			// the mutation already toasted the failure
 		}
 	}
 
 	async function handleClear(mbid: string, requestKind: RequestKind) {
 		try {
-			const result = await clearHistoryItem(mbid, requestKind);
-			if (result.success) {
-				showToast('Removed from history');
-				const key = requestKey(mbid, requestKind);
-				historyItems = historyItems.filter((i) => itemRequestKey(i) !== key);
-				historyTotal = Math.max(0, historyTotal - 1);
-			} else {
-				showToast("Couldn't remove that item", 'error');
-			}
+			await clearHistoryMutation.mutateAsync({ mbid, kind: requestKind });
 		} catch {
-			showToast("Couldn't remove that item from history", 'error');
+			// the mutation already toasted the failure
 		}
 	}
 
 	function handleRemoved() {
-		void loadHistory();
+		void historyQuery.refetch();
 	}
 
 	function handleHistoryPageChange(page: number) {
 		historyPage = page;
-		void loadHistory();
 	}
 
 	function handleFilterChange(e: Event) {
 		const value = (e.target as HTMLSelectElement).value;
 		historyFilter = value || undefined;
 		historyPage = 1;
-		void loadHistory();
 	}
 
 	function handleSortChange(e: Event) {
 		const value = (e.target as HTMLSelectElement).value;
 		historySort = value || undefined;
 		historyPage = 1;
-		void loadHistory();
 	}
 
 	onMount(() => {
-		document.addEventListener('visibilitychange', handleVisibility);
 		const tabParam = page.url.searchParams.get('tab');
 		if (tabParam === 'approvals' && authStore.isAdmin) {
 			switchTab('approvals');
 		} else if (tabParam === 'wanted') {
 			switchTab('wanted');
-		} else {
-			startPolling();
-			if (authStore.isAdmin) void loadApprovals();
 		}
 	});
 
@@ -523,14 +397,6 @@
 		if (untrack(() => activeTab) !== target) {
 			switchTab(target);
 		}
-	});
-
-	onDestroy(() => {
-		stopPolling();
-		abortActiveLoad();
-		abortHistoryLoad();
-		abortApprovalsLoad();
-		document.removeEventListener('visibilitychange', handleVisibility);
 	});
 </script>
 
@@ -573,11 +439,11 @@
 		>
 			<Download class="h-4 w-4" />
 			Active
-			{#if activeCount > 0}
+			{#if activeBadgeCount > 0}
 				<span
 					class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-info/15 text-info text-xs font-medium tabular-nums"
 				>
-					{activeCount}
+					{activeBadgeCount}
 				</span>
 			{/if}
 			{#if isPolling && activeTab === 'active'}
@@ -683,7 +549,7 @@
 				<div class="alert alert-warning mb-4">
 					<TriangleAlert class="h-5 w-5" />
 					<span>{activeError}</span>
-					<button class="btn btn-sm" onclick={loadActive}>Retry</button>
+					<button class="btn btn-sm" onclick={() => void activeListQuery.refetch()}>Retry</button>
 				</div>
 			{/if}
 
@@ -718,12 +584,35 @@
 					</p>
 				</div>
 			{:else}
+				{#if selectedList.length > 0}
+					<div class="flex items-center gap-2 mb-3">
+						<span class="text-xs text-base-content/60">
+							{selectedList.length} selected
+						</span>
+						<button
+							class="btn btn-sm btn-error btn-outline"
+							disabled={batchCancelMutation.isPending}
+							onclick={() => void handleBatchCancel()}
+						>
+							Cancel selected
+						</button>
+						<button
+							class="btn btn-sm btn-ghost"
+							onclick={() => (selectedKeys = new Set())}
+						>
+							Clear
+						</button>
+					</div>
+				{/if}
 				<div class="flex flex-col gap-2.5">
 					{#each activeItems as item, i (itemRequestKey(item))}
 						<div in:fly={{ y: 12, duration: 200, delay: i * 30 }}>
 							<RequestCard
 								{item}
 								mode="active"
+								selectable
+								selected={selectedKeys.has(itemRequestKey(item))}
+								onselect={handleSelect}
 								oncancel={authStore.isAdmin || item.user_id === authStore.user?.id
 									? handleCancel
 									: undefined}
@@ -745,12 +634,8 @@
 					<option value="imported">Imported</option>
 					<option value="incomplete">Incomplete</option>
 					<option value="failed">Failed</option>
-					<option value="importFailed">Import Failed</option>
-					<option value="importBlocked">Import Blocked</option>
 					<option value="cancelled">Cancelled</option>
-					{#if authStore.isAdmin}
-						<option value="reimportable">Can reimport</option>
-					{/if}
+					<option value="rejected">Rejected</option>
 				</select>
 
 				<select
@@ -777,7 +662,7 @@
 			{#if historyError}
 				<div class="alert alert-error mb-4">
 					<span>{historyError}</span>
-					<button class="btn btn-sm" onclick={loadHistory}>Retry</button>
+					<button class="btn btn-sm" onclick={() => void historyQuery.refetch()}>Retry</button>
 				</div>
 			{/if}
 
@@ -818,7 +703,7 @@
 						<RequestCard
 							{item}
 							mode="history"
-							watchState={(item.request_kind ?? 'album') === 'album' &&
+							watchState={itemKind(item) === 'album' &&
 							['failed', 'incomplete', 'cancelled'].includes(item.status)
 								? wantedStates.get(item.musicbrainz_id.toLowerCase())
 								: undefined}
@@ -827,7 +712,6 @@
 								: undefined}
 							onclear={handleClear}
 							onremoved={handleRemoved}
-							onreimported={loadHistory}
 						/>
 					{/each}
 				</div>
@@ -892,24 +776,16 @@
 					verification downloads by itself; near misses show up as candidates for you to review.
 				</p>
 				<div class="flex flex-col gap-2.5">
-					{#each wantedRetrying as item, i (`retrying-${item.release_group_mbid}`)}
+					{#each wantedRetrying as item, i (`retrying-${item.musicbrainz_id}`)}
 						<div in:fly={{ y: 12, duration: 200, delay: i * 30 }}>
-							<WantedRetryingCard
-								{item}
-								ownerName={authStore.isAdmin && item.user_id !== authStore.user?.id
-									? (item.user_name ?? undefined)
-									: undefined}
-							/>
+							<WantedRetryingCard {item} />
 						</div>
 					{/each}
-					{#each wantedItems as item, i (item.release_group_mbid)}
+					{#each wantedItems as item, i (item.musicbrainz_id)}
 						<div in:fly={{ y: 12, duration: 200, delay: (wantedRetrying.length + i) * 30 }}>
 							<WantedWatchCard
 								{item}
 								busy={wantedBusy}
-								ownerName={authStore.isAdmin && item.user_id !== authStore.user?.id
-									? (item.user_name ?? undefined)
-									: undefined}
 								onstop={authStore.isAdmin || item.user_id === authStore.user?.id
 									? handleWantedStop
 									: undefined}
@@ -929,7 +805,7 @@
 				<div class="alert alert-warning mb-4">
 					<TriangleAlert class="h-5 w-5" />
 					<span>{approvalError}</span>
-					<button class="btn btn-sm" onclick={loadApprovals}>Retry</button>
+					<button class="btn btn-sm" onclick={() => void approvalsQuery.refetch()}>Retry</button>
 				</div>
 			{/if}
 
@@ -973,10 +849,8 @@
 								class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg overflow-hidden bg-base-300"
 							>
 								<AlbumImage
-									mbid={(item.request_kind ?? 'album') === 'track'
-										? (item.track_release_group_mbid ?? '')
-										: item.musicbrainz_id}
-									customUrl={item.cover_url ?? null}
+									mbid={itemKind(item) === 'track' ? '' : item.musicbrainz_id}
+									customUrl={null}
 									alt={item.album_title}
 									size="sm"
 									rounded="lg"
@@ -984,7 +858,7 @@
 								/>
 							</div>
 							<div class="flex-1 min-w-0">
-								{#if (item.request_kind ?? 'album') === 'track'}
+								{#if itemKind(item) === 'track'}
 									<div class="flex items-center gap-1.5 min-w-0">
 										<span class="badge badge-ghost badge-xs shrink-0">Track</span>
 										<p class="font-semibold text-sm truncate">
@@ -1013,16 +887,14 @@
 							<div class="flex gap-2 shrink-0">
 								<button
 									class="btn btn-success btn-sm gap-1"
-									onclick={() =>
-										void handleApprove(item.musicbrainz_id, item.request_kind ?? 'album')}
+									onclick={() => void handleApprove(item.musicbrainz_id, itemKind(item))}
 								>
 									<Check class="h-3.5 w-3.5" />
 									Approve
 								</button>
 								<button
 									class="btn btn-error btn-sm btn-outline gap-1"
-									onclick={() =>
-										void handleReject(item.musicbrainz_id, item.request_kind ?? 'album')}
+									onclick={() => void handleReject(item.musicbrainz_id, itemKind(item))}
 								>
 									<X class="h-3.5 w-3.5" />
 									Reject

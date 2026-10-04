@@ -85,6 +85,10 @@ pub fn library_router(deps: LibraryDeps) -> Router {
             get(handlers::list_genre_tracks),
         )
         .route("/local-library/albums", get(handlers::browse_albums))
+        .route(
+            "/local-library/albums/match/{mbid}",
+            get(handlers::match_album),
+        )
         .route("/local-library/search", get(handlers::search_library))
         .route("/local-library/recent", get(handlers::recent_albums))
         .route("/local-library/decades", get(handlers::list_decades))

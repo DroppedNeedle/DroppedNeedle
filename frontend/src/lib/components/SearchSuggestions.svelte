@@ -1,13 +1,12 @@
 <script lang="ts">
 	import { getApiUrl } from '$lib/api/api-utils';
-	import { SvelteMap } from 'svelte/reactivity';
 	import { Disc3, Search } from 'lucide-svelte';
 	import type { SearchRemoteStatus, SuggestResult } from '$lib/types';
+	import { getSearchSuggestionsV3Query } from '$lib/queries/search/SearchV3Queries.svelte';
 	import {
-		getLocalAlbumSearchQuery,
-		getLocalArtistSearchQuery,
-		getSearchSuggestionsQuery
-	} from '$lib/queries/search/SearchQueries.svelte';
+		toSearchRemoteStatus,
+		toSuggestResultsV1
+	} from '$lib/queries/search/SearchV3Adapters';
 
 	interface Props {
 		query: string;
@@ -39,62 +38,29 @@
 	let debouncedQuery = $state('');
 	let queryEnabled = $state(false);
 
-	const remoteQuery = getSearchSuggestionsQuery(
-		() => debouncedQuery,
-		() => queryEnabled
-	);
-	const localArtistQuery = getLocalArtistSearchQuery(() => debouncedQuery, 5);
-	const localAlbumQuery = getLocalAlbumSearchQuery(() => debouncedQuery, 5);
+	// The v3 suggest endpoint already merges the local catalog across buckets,
+	// best first, so one call replaces the old remote-plus-two-local fan-out.
+	// Track rows drop in the adapter, so over-fetch to keep five artist/album
+	// rows in the dropdown.
+	const SUGGEST_FETCH_LIMIT = 10;
+	const SUGGEST_DISPLAY_LIMIT = 5;
 
-	let suggestions = $derived.by(() => {
-		const remote = remoteQuery.data?.results ?? [];
-		const merged = new SvelteMap(remote.map((result) => [result.musicbrainz_id, result]));
-		for (const artist of localArtistQuery.data?.items ?? []) {
-			const id = artist.musicbrainz_artist_id ?? artist.id;
-			merged.set(id, {
-				...merged.get(id),
-				type: 'artist',
-				title: artist.name,
-				musicbrainz_id: id,
-				in_library: true,
-				requested: false,
-				score: merged.get(id)?.score ?? 100,
-				local_id: artist.id
-			});
-		}
-		for (const album of localAlbumQuery.data?.items ?? []) {
-			const id = album.musicbrainz_release_group_id ?? album.id;
-			merged.set(id, {
-				...merged.get(id),
-				type: 'album',
-				title: album.title,
-				artist: album.artist_name,
-				year: album.year,
-				musicbrainz_id: id,
-				in_library: true,
-				requested: false,
-				score: merged.get(id)?.score ?? 100,
-				local_id: album.id
-			});
-		}
-		return [...merged.values()]
-			.sort((left, right) => {
-				const libraryOrder = Number(right.in_library) - Number(left.in_library);
-				return libraryOrder || right.score - left.score || left.title.localeCompare(right.title);
-			})
-			.slice(0, 5);
-	});
+	const suggestQuery = getSearchSuggestionsV3Query(
+		() => debouncedQuery,
+		() => queryEnabled,
+		SUGGEST_FETCH_LIMIT
+	);
+
+	let suggestions = $derived(
+		toSuggestResultsV1(suggestQuery.data?.results ?? []).slice(0, SUGGEST_DISPLAY_LIMIT)
+	);
 	let remoteStatus: SearchRemoteStatus = $derived(
-		remoteQuery.isError ? 'error' : (remoteQuery.data?.remote_status ?? 'ok')
+		suggestQuery.isError ? 'error' : toSearchRemoteStatus(suggestQuery.data?.status ?? 'ok')
 	);
 	let waitingForDebounce = $derived(
 		showDropdown && query.trim().length >= 2 && debouncedQuery !== query.trim()
 	);
-	let loading = $derived(
-		waitingForDebounce ||
-			(queryEnabled &&
-				(remoteQuery.isFetching || localArtistQuery.isFetching || localAlbumQuery.isFetching))
-	);
+	let loading = $derived(waitingForDebounce || (queryEnabled && suggestQuery.isFetching));
 
 	const activeDescendant = $derived(
 		activeIndex >= 0 && activeIndex < suggestions.length ? `${id}-option-${activeIndex}` : undefined
@@ -335,10 +301,10 @@
 				<li class="flex items-center justify-between gap-3 border-t border-base-300 p-3 text-sm">
 					<span>
 						{remoteStatus === 'timeout'
-							? 'MusicBrainz suggestions took too long.'
-							: 'Some MusicBrainz suggestions are unavailable.'}
+							? 'Suggestions took too long.'
+							: 'Some suggestions are unavailable.'}
 					</span>
-					<button class="btn btn-xs" onclick={() => remoteQuery.refetch()}>Retry</button>
+					<button class="btn btn-xs" onclick={() => suggestQuery.refetch()}>Retry</button>
 				</li>
 			{/if}
 		</ul>

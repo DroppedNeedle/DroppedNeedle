@@ -21,7 +21,7 @@ use axum::{
 };
 use requests::{
     RequestsState,
-    dispatch::{DispatchOrigin, DispatchOutcome},
+    dispatch::{DispatchOrigin, DispatchOutcome, TaskProgress},
     ledger::{ApprovalBatch, FollowApproval, MixApproval, WantedRetrying, WantedWatch},
     quota::QuotaPolicy,
 };
@@ -786,21 +786,33 @@ async fn wanted_views_and_actions() {
         key: MBID_A.to_owned(),
         artist_name: "A".to_owned(),
         album_title: "A".to_owned(),
+        kind: "missing".to_owned(),
         state: "watching".to_owned(),
         check_count: 3,
+        next_check_at: Some(4_000),
         new_candidate_count: 2,
         created_at: 100,
+        artist_mbid: None,
+        year: Some(2021),
+        cover_url: None,
         user_id: "u-ada".to_owned(),
+        user_name: Some("Ada".to_owned()),
     });
     state.wanted.seed_watch(WantedWatch {
         key: MBID_B.to_owned(),
         artist_name: "B".to_owned(),
         album_title: "B".to_owned(),
+        kind: "partial".to_owned(),
         state: "watching".to_owned(),
         check_count: 1,
+        next_check_at: Some(5_000),
         new_candidate_count: 0,
         created_at: 200,
+        artist_mbid: None,
+        year: None,
+        cover_url: None,
         user_id: "u-bob".to_owned(),
+        user_name: Some("Bob".to_owned()),
     });
     state.wanted.seed_retrying(WantedRetrying {
         key: MBID_C.to_owned(),
@@ -808,7 +820,12 @@ async fn wanted_views_and_actions() {
         album_title: "C".to_owned(),
         retry_count: 2,
         max_attempts: 5,
+        next_retry_at: Some(6_000),
+        artist_mbid: None,
+        year: Some(2022),
+        cover_url: None,
         user_id: "u-ada".to_owned(),
+        user_name: Some("Ada".to_owned()),
     });
 
     let (_, _, ada) = send(
@@ -1568,4 +1585,214 @@ async fn auto_download_reject_happy_path() {
     )
     .await;
     assert_eq!(again["success"], false);
+}
+
+// Active rows carry the linked task's progress snapshot; rows without a
+// task read exactly as the record maps.
+#[tokio::test]
+async fn active_items_carry_task_progress() {
+    let (state, dispatch) = RequestsState::for_tests();
+    let (_, _, body) = send(
+        app(&state),
+        request(
+            Method::POST,
+            "/requests/albums",
+            Some(TRUSTED),
+            Some(album_body(MBID_A)),
+        ),
+    )
+    .await;
+    let task_id = body["task_id"].as_str().unwrap().to_owned();
+    dispatch.set_progress(
+        &task_id,
+        TaskProgress {
+            status: "downloading".to_owned(),
+            progress_percent: 40,
+            total_size_bytes: Some(1000),
+            downloaded_bytes: 400,
+            error_message: None,
+            quality: Some("FLAC".to_owned()),
+            protocol: "soulseek".to_owned(),
+        },
+    );
+
+    let (_, _, active) = send(
+        app(&state),
+        request(Method::GET, "/requests/active", Some(TRUSTED), None),
+    )
+    .await;
+    let item = &active["items"][0];
+    assert_eq!(item["progress"], 40.0);
+    assert_eq!(item["size"], 1000.0);
+    assert_eq!(item["size_remaining"], 600.0);
+    assert_eq!(item["quality"], "FLAC");
+    assert_eq!(item["protocol"], "soulseek");
+    assert!(item.get("error_message").is_none());
+    // No live ETA source exists, so the field stays absent, never zero.
+    assert!(item.get("eta").is_none());
+    assert!(item.get("status_messages").is_none());
+}
+
+// Track rows keep their album context and approvals stamp review time,
+// so the card can link artwork and name the reviewer.
+#[tokio::test]
+async fn track_rows_keep_album_context_and_review_stamp() {
+    let (state, _) = RequestsState::for_tests();
+    let track = json!({
+        "recording_mbid": MBID_B,
+        "artist_name": "Test Artist",
+        "track_title": "Test Track",
+        "album_title": "Test Album",
+        "release_group_mbid": MBID_A,
+    });
+    send(
+        app(&state),
+        request(Method::POST, "/requests/tracks", Some(ADA), Some(track)),
+    )
+    .await;
+    let approve = format!("/requests/approvals/{MBID_B}/approve?kind=track");
+    send(
+        app(&state),
+        request(Method::POST, &approve, Some(ADMIN), None),
+    )
+    .await;
+
+    let (_, _, history) = send(
+        app(&state),
+        request(Method::GET, "/requests/history", Some(ADMIN), None),
+    )
+    .await;
+    let item = &history["items"][0];
+    assert_eq!(item["track_release_group_mbid"], MBID_A);
+    assert_eq!(item["reviewed_by_name"], "Root");
+    assert!(item["reviewed_at"].as_u64().unwrap() > 0);
+}
+
+// Failed rows offer the admin reimport only while the task stays
+// linked; the failure text rides along for the card's error line.
+#[tokio::test]
+async fn failed_rows_offer_reimport_only_when_linked() {
+    let (state, dispatch) = RequestsState::for_tests();
+    let (_, _, first) = send(
+        app(&state),
+        request(
+            Method::POST,
+            "/requests/albums",
+            Some(TRUSTED),
+            Some(album_body(MBID_A)),
+        ),
+    )
+    .await;
+    let (_, _, second) = send(
+        app(&state),
+        request(
+            Method::POST,
+            "/requests/albums",
+            Some(TRUSTED),
+            Some(album_body(MBID_B)),
+        ),
+    )
+    .await;
+    let task_a = first["task_id"].as_str().unwrap().to_owned();
+    let task_b = second["task_id"].as_str().unwrap().to_owned();
+    dispatch.fail(&task_a);
+    dispatch.fail(&task_b);
+    dispatch.set_reimportable(&task_a);
+    dispatch.set_progress(
+        &task_a,
+        TaskProgress {
+            status: "failed".to_owned(),
+            error_message: Some("mount gone".to_owned()),
+            ..Default::default()
+        },
+    );
+
+    let (_, _, history) = send(
+        app(&state),
+        request(
+            Method::GET,
+            "/requests/history?status=failed",
+            Some(TRUSTED),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(history["total"], 2);
+    let items = history["items"].as_array().unwrap();
+    let row_a = items
+        .iter()
+        .find(|row| row["musicbrainz_id"] == MBID_A.to_lowercase())
+        .unwrap();
+    let row_b = items
+        .iter()
+        .find(|row| row["musicbrainz_id"] == MBID_B.to_lowercase())
+        .unwrap();
+    assert_eq!(row_a["can_reimport"], true);
+    assert_eq!(row_a["error_message"], "mount gone");
+    assert_eq!(row_a["task_id"], task_a);
+    assert_eq!(row_b["can_reimport"], false);
+    assert!(row_b.get("error_message").is_none());
+}
+
+// The wanted view serves the restored card fields: kind, the next-check
+// ETA, year, and the admin-only owner name. Dormant rows pass through.
+#[tokio::test]
+async fn wanted_view_serves_restored_card_fields() {
+    let (state, _) = RequestsState::for_tests();
+    state.wanted.seed_watch(WantedWatch {
+        key: MBID_A.to_owned(),
+        artist_name: "A".to_owned(),
+        album_title: "A".to_owned(),
+        kind: "partial".to_owned(),
+        state: "dormant".to_owned(),
+        check_count: 9,
+        next_check_at: Some(9_000),
+        new_candidate_count: 0,
+        created_at: 100,
+        artist_mbid: Some(ARTIST.to_owned()),
+        year: Some(1977),
+        cover_url: None,
+        user_id: "u-ada".to_owned(),
+        user_name: Some("Ada".to_owned()),
+    });
+    state.wanted.seed_retrying(WantedRetrying {
+        key: MBID_C.to_owned(),
+        artist_name: "C".to_owned(),
+        album_title: "C".to_owned(),
+        retry_count: 2,
+        max_attempts: 5,
+        next_retry_at: Some(6_000),
+        artist_mbid: None,
+        year: Some(2022),
+        cover_url: None,
+        user_id: "u-ada".to_owned(),
+        user_name: Some("Ada".to_owned()),
+    });
+
+    let (_, _, admin) = send(
+        app(&state),
+        request(Method::GET, "/requests/wanted", Some(ADMIN), None),
+    )
+    .await;
+    let watch = &admin["items"][0];
+    assert_eq!(watch["kind"], "partial");
+    assert_eq!(watch["state"], "dormant");
+    assert_eq!(watch["next_check_at"], 9_000);
+    assert_eq!(watch["year"], 1977);
+    assert_eq!(watch["artist_mbid"], ARTIST);
+    assert_eq!(watch["user_name"], "Ada");
+    let retrying = &admin["retrying"][0];
+    assert_eq!(retrying["next_retry_at"], 6_000);
+    assert_eq!(retrying["year"], 2022);
+    assert_eq!(retrying["user_name"], "Ada");
+
+    // Owners see their own rows but never the owner chip.
+    let (_, _, own) = send(
+        app(&state),
+        request(Method::GET, "/requests/wanted", Some(ADA), None),
+    )
+    .await;
+    assert!(own["items"][0].get("user_name").is_none());
+    assert!(own["items"][0].get("user_id").is_none());
+    assert_eq!(own["items"][0]["next_check_at"], 9_000);
 }

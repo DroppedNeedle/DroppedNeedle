@@ -1,0 +1,27 @@
+import type { components } from '$lib/api/v3/openapi';
+
+export type RemoteSource = components['schemas']['SourceName'];
+export type RemoteHub = components['schemas']['HubView'];
+export type RemoteConnectionStatus = components['schemas']['ConnectionStatus'];
+export type RemoteAlbumPage = components['schemas']['RemotesAlbumPage'];
+export type RemoteAlbum = components['schemas']['RemotesAlbumView'];
+export type RemoteArtistPage = components['schemas']['RemotesArtistPage'];
+export type RemoteArtistIndex = components['schemas']['ArtistIndex'];
+export type RemoteArtist = components['schemas']['RemotesArtistView'];
+export type RemoteTrackPage = components['schemas']['RemotesTrackPage'];
+export type RemoteTrack = components['schemas']['RemotesTrackView'];
+export type RemoteDiscovery = components['schemas']['DiscoveryView'];
+export type RemoteDiscoveryHub = components['schemas']['DiscoveryHubView'];
+export type RemoteSearchResults = components['schemas']['RemotesSearchResults'];
+export type RemoteFavorites = components['schemas']['FavoritesView'];
+export type RemoteHistoryPage = components['schemas']['HistoryPage'];
+export type RemoteStats = components['schemas']['RemotesStatsView'];
+export type RemoteSessions = components['schemas']['SessionsView'];
+export type RemotePlaylists = components['schemas']['PlaylistCollection'];
+export type RemotePlaylistDetail = components['schemas']['RemotesPlaylistDetail'];
+export type RemoteInfo = components['schemas']['InfoView'];
+export type RemoteLyrics = components['schemas']['RemotesLyricsView'];
+export type RemoteMatch = components['schemas']['MatchView'];
+export type RemoteFolders = components['schemas']['FolderResolutionView'];
+export type RemoteFolderSave = components['schemas']['FolderSave'];
+export type RemotePlaylistImport = components['schemas']['ImportResult'];

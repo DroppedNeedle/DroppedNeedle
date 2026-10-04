@@ -41,6 +41,7 @@ function localCopy(id: string, title: string): LibraryAlbumSummary {
 		format: 'flac',
 		year: 2008,
 		is_compilation: false,
+		release_type: 'album',
 		cover_available: false,
 		date_added: 1,
 		sort_name: null,

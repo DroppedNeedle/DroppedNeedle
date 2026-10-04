@@ -891,7 +891,7 @@ impl RequestsService {
         self.sync_request_statuses()?;
         let owner = (!principal.role.is_admin()).then_some(principal.user_id.as_str());
         let rows = self.store.active(owner, None)?;
-        let items = rows.iter().map(RequestItem::from).collect::<Vec<_>>();
+        let items = rows.iter().map(|row| self.to_item(row)).collect::<Vec<_>>();
         Ok(ActiveRequestsResponse {
             count: items.len() as u32,
             items,
@@ -951,7 +951,7 @@ impl RequestsService {
             .iter()
             .skip(start)
             .take(page_size as usize)
-            .map(RequestItem::from)
+            .map(|row| self.to_item(row))
             .collect::<Vec<_>>();
         let total_pages = total.div_ceil(page_size).max(1);
         Ok(HistoryResponse {
@@ -970,7 +970,7 @@ impl RequestsService {
     ) -> Result<ActiveRequestsResponse, RequestsError> {
         principal.require_admin()?;
         let rows = self.store.pending_approvals(None)?;
-        let items = rows.iter().map(RequestItem::from).collect::<Vec<_>>();
+        let items = rows.iter().map(|row| self.to_item(row)).collect::<Vec<_>>();
         Ok(ActiveRequestsResponse {
             count: items.len() as u32,
             items,
@@ -1003,15 +1003,26 @@ impl RequestsService {
                 musicbrainz_id: watch.key.clone(),
                 artist_name: watch.artist_name.clone(),
                 album_title: watch.album_title.clone(),
+                kind: watch.kind.clone(),
                 state: watch.state.clone(),
                 check_count: watch.check_count,
+                next_check_at: watch.next_check_at,
                 new_candidate_count: watch.new_candidate_count,
                 created_at: watch.created_at,
+                artist_mbid: watch.artist_mbid.clone(),
+                year: watch.year,
+                cover_url: watch.cover_url.clone(),
                 user_id: is_admin.then(|| watch.user_id.clone()),
+                user_name: if is_admin {
+                    watch.user_name.clone()
+                } else {
+                    None
+                },
             })
             .collect::<Vec<_>>();
         // Watches the flows loop owns render beside this slice's rows.
-        // Loop watches have no local check counts, so they read zero.
+        // Loop watches have no local check counts, so they read zero; the
+        // loop tracks album-level availability, so they read `missing`.
         if let Some(view) = &self.watch_view {
             for watch in view.watching() {
                 if !is_admin && watch.user_id != principal.user_id {
@@ -1024,11 +1035,17 @@ impl RequestsService {
                     musicbrainz_id: watch.key,
                     artist_name: watch.artist_name,
                     album_title: watch.album_title,
+                    kind: "missing".to_owned(),
                     state: "watching".to_owned(),
                     check_count: 0,
+                    next_check_at: Some(watch.next_check_at),
                     new_candidate_count: 0,
                     created_at: watch.created_at,
+                    artist_mbid: None,
+                    year: None,
+                    cover_url: None,
                     user_id: is_admin.then_some(watch.user_id),
+                    user_name: None,
                 });
             }
             items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
@@ -1044,7 +1061,16 @@ impl RequestsService {
                     album_title: entry.album_title.clone(),
                     retry_count: entry.retry_count,
                     max_attempts: entry.max_attempts,
+                    next_retry_at: entry.next_retry_at,
+                    artist_mbid: entry.artist_mbid.clone(),
+                    year: entry.year,
+                    cover_url: entry.cover_url.clone(),
                     user_id: is_admin.then(|| entry.user_id.clone()),
+                    user_name: if is_admin {
+                        entry.user_name.clone()
+                    } else {
+                        None
+                    },
                 })
                 .collect(),
         })
@@ -1827,6 +1853,31 @@ impl RequestsService {
     /// Reconcile one live row against its linked task. Waiting rows have no
     /// task and never move here; taskless dispatch rows keep their status
     /// (v2 falls back to library presence, which lives in another slice).
+    /// One row plus its linked task's progress snapshot. Rows without a
+    /// task (waiting for approval) read exactly as the record maps.
+    fn to_item(&self, record: &RequestRecord) -> RequestItem {
+        let mut item = RequestItem::from(record);
+        let Some(task_id) = record.task_id.as_deref() else {
+            return item;
+        };
+        if let Some(snapshot) = self.dispatch.task_progress(task_id) {
+            item.progress = Some(snapshot.progress_percent as f64);
+            item.size = snapshot.total_size_bytes.map(|total| total as f64);
+            item.size_remaining = snapshot
+                .total_size_bytes
+                .map(|total| (total - snapshot.downloaded_bytes).max(0) as f64);
+            item.error_message = snapshot.error_message;
+            item.quality = snapshot.quality;
+            item.protocol = Some(snapshot.protocol);
+        }
+        // v2 history quirk: only failed rows offer the admin reimport, and
+        // only when the task still has its candidate linked.
+        if record.status == STATUS_FAILED {
+            item.can_reimport = Some(self.dispatch.reimportable(task_id));
+        }
+        item
+    }
+
     fn reconcile_one(&self, record: &RequestRecord, now: u64) -> Result<bool, RequestsError> {
         let Some(task_id) = record.task_id.as_deref() else {
             return Ok(false);
@@ -1960,16 +2011,29 @@ impl From<&RequestRecord> for RequestItem {
             album_title: record.album_title.clone(),
             artist_mbid: record.artist_mbid.clone(),
             year: record.year,
+            cover_url: None,
             requested_at: record.requested_at,
             completed_at: record.completed_at,
             status: record.status.clone(),
+            progress: None,
+            eta: None,
+            size: None,
+            size_remaining: None,
+            status_messages: None,
+            error_message: None,
+            quality: None,
+            protocol: None,
             user_id: record.user_id.clone(),
             requested_by_name: record.requested_by_name.clone(),
             reviewed_by_name: record.reviewed_by_name.clone(),
+            reviewed_at: record.reviewed_at,
+            in_library: None,
             task_id: record.task_id.clone(),
+            can_reimport: None,
             request_kind: record.kind.as_str().to_owned(),
             track_title: record.track_title.clone(),
             duration_seconds: record.duration_seconds,
+            track_release_group_mbid: record.track_release_group_mbid.clone(),
             requester_count: record.requesters.len() as u32,
         }
     }

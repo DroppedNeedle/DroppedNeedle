@@ -21,6 +21,25 @@ pub enum SearchKind {
     Track,
 }
 
+/// Per-bucket provider health for one search call. The values mirror v1's
+/// `SearchRemoteStatus` exactly so the same notice and stale-time logic
+/// applies. The local-only stage always emits `Ok`; stage-5 provider
+/// fan-out fills in the real values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchRemoteStatus {
+    /// Full results.
+    Ok,
+    /// Some provider results missing; what arrived is shown.
+    Partial,
+    /// The provider timed out; local matches are still shown.
+    Timeout,
+    /// The provider failed; local matches are still shown.
+    Error,
+    /// The provider is unavailable; cached results are shown.
+    Stale,
+}
+
 /// One search hit. Cover art is deliberately absent: the covers endpoints
 /// serve art by id, so search never duplicates those URLs.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -63,6 +82,12 @@ pub struct SearchResponse {
     pub top_album: Option<SearchResultItem>,
     /// Standout track hit, if one scored high enough to headline.
     pub top_track: Option<SearchResultItem>,
+    /// Provider health for the artist bucket.
+    pub artist_status: SearchRemoteStatus,
+    /// Provider health for the album bucket.
+    pub album_status: SearchRemoteStatus,
+    /// Provider health for the track bucket.
+    pub track_status: SearchRemoteStatus,
 }
 
 /// One bucket drill-down page.
@@ -79,6 +104,8 @@ pub struct SearchBucketResponse {
     /// Standout hit, present only on the first page and only when one
     /// scored high enough to headline.
     pub top_result: Option<SearchResultItem>,
+    /// Provider health for this bucket.
+    pub status: SearchRemoteStatus,
 }
 
 /// One typeahead suggestion.
@@ -103,6 +130,8 @@ pub struct SuggestResult {
 pub struct SuggestResponse {
     /// Suggestions, best first.
     pub results: Vec<SuggestResult>,
+    /// Provider health for the suggestion call.
+    pub status: SearchRemoteStatus,
 }
 
 /// Query params for `GET /api/v3/search`.

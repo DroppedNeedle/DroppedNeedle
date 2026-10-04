@@ -6,7 +6,7 @@
 //! fetch's state for status sync. Another slice implements the durable side;
 //! this slice ships only the [`ScriptedDispatch`] fake for briefs.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 /// What triggered a dispatch. Origins decide quota exemptions, never routing.
@@ -100,6 +100,27 @@ pub enum DispatchError {
     Failed(String),
 }
 
+/// One fetch's progress snapshot as the request views read it. Every field
+/// mirrors a `download_tasks` column; the views render what is present and
+/// hide what is not (v2 served these same shapes, always empty).
+#[derive(Debug, Clone, Default)]
+pub struct TaskProgress {
+    /// Task status wire string (`queued`, `downloading`, ...).
+    pub status: String,
+    /// Progress percent (0-100) the worker last reported.
+    pub progress_percent: i64,
+    /// Total transfer bytes, once known.
+    pub total_size_bytes: Option<i64>,
+    /// Bytes transferred so far.
+    pub downloaded_bytes: i64,
+    /// Last outcome text.
+    pub error_message: Option<String>,
+    /// Picked candidate quality (format label), once picked.
+    pub quality: Option<String>,
+    /// Fetch source (`soulseek`, `usenet`, `plugin:<key>`).
+    pub protocol: String,
+}
+
 /// The durability seam. The downloads slice owns the implementation; intake
 /// only starts, cancels, and polls through here.
 pub trait DownloadDispatch: Send + Sync {
@@ -109,6 +130,16 @@ pub trait DownloadDispatch: Send + Sync {
     fn cancel_task(&self, task_id: &str);
     /// Read one fetch's state for status sync.
     fn task_state(&self, task_id: &str) -> DispatchTaskState;
+    /// Read one fetch's progress snapshot for the request views. Unknown
+    /// ids answer None; fakes that track no progress keep the default.
+    fn task_progress(&self, _task_id: &str) -> Option<TaskProgress> {
+        None
+    }
+    /// Whether one fetch can be reimported (failed or short-landed with
+    /// its candidate still linked). Fakes keep the default false.
+    fn reimportable(&self, _task_id: &str) -> bool {
+        false
+    }
 }
 
 /// Scripted fake for briefs: canned outcomes in call order, every call
@@ -122,6 +153,10 @@ pub struct ScriptedDispatch {
     cancels: Mutex<Vec<String>>,
     /// Task states; fresh tasks start active.
     states: Mutex<HashMap<String, DispatchTaskState>>,
+    /// Progress snapshots by task id.
+    progress: Mutex<HashMap<String, TaskProgress>>,
+    /// Task ids the reimport guard passes for.
+    reimportable_ids: Mutex<HashSet<String>>,
     /// Counter for minted task ids.
     next_task: Mutex<u64>,
 }
@@ -134,6 +169,8 @@ impl ScriptedDispatch {
             calls: Mutex::new(Vec::new()),
             cancels: Mutex::new(Vec::new()),
             states: Mutex::new(HashMap::new()),
+            progress: Mutex::new(HashMap::new()),
+            reimportable_ids: Mutex::new(HashSet::new()),
             next_task: Mutex::new(1),
         })
     }
@@ -177,6 +214,20 @@ impl ScriptedDispatch {
             .map(|mut cancels| std::mem::take(&mut *cancels))
             .unwrap_or_default()
     }
+
+    /// Script one task's progress snapshot for the request views.
+    pub fn set_progress(&self, task_id: &str, progress: TaskProgress) {
+        if let Ok(mut snapshots) = self.progress.lock() {
+            snapshots.insert(task_id.to_owned(), progress);
+        }
+    }
+
+    /// Script one task as passing the reimport guard.
+    pub fn set_reimportable(&self, task_id: &str) {
+        if let Ok(mut ids) = self.reimportable_ids.lock() {
+            ids.insert(task_id.to_owned());
+        }
+    }
 }
 
 impl Default for ScriptedDispatch {
@@ -186,6 +237,8 @@ impl Default for ScriptedDispatch {
             calls: Mutex::new(Vec::new()),
             cancels: Mutex::new(Vec::new()),
             states: Mutex::new(HashMap::new()),
+            progress: Mutex::new(HashMap::new()),
+            reimportable_ids: Mutex::new(HashSet::new()),
             next_task: Mutex::new(1),
         }
     }
@@ -230,5 +283,19 @@ impl DownloadDispatch for ScriptedDispatch {
             .ok()
             .and_then(|states| states.get(task_id).copied())
             .unwrap_or(DispatchTaskState::Missing)
+    }
+
+    fn task_progress(&self, task_id: &str) -> Option<TaskProgress> {
+        self.progress
+            .lock()
+            .ok()
+            .and_then(|snapshots| snapshots.get(task_id).cloned())
+    }
+
+    fn reimportable(&self, task_id: &str) -> bool {
+        self.reimportable_ids
+            .lock()
+            .map(|ids| ids.contains(task_id))
+            .unwrap_or(false)
     }
 }

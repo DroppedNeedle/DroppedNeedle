@@ -43,14 +43,13 @@ vi.mock('$lib/api/client', () => {
 			super(message);
 		}
 	}
-	return { ApiError, api: { global: { get: state.apiGet } } };
+	return { ApiError, api: { global: { v3: { GET: state.apiGet } } } };
 });
 vi.mock('$lib/constants', () => ({
-	AUTH_FREE_PATHS: ['/login', '/setup'],
-	API: {
-		auth: { setupStatus: () => '/setup-status', me: () => '/me' },
-		me: { scrobblePreferences: () => '/scrobble-preferences' }
-	}
+	AUTH_FREE_PATHS: ['/login', '/setup']
+}));
+vi.mock('$lib/queries/auth/endpoints', () => ({
+	AUTH_ENDPOINTS: { setupStatus: '/setup-status' }
 }));
 vi.mock('$lib/queries/QueryClient', () => ({
 	queryClient: { ensureQueryData: state.ensureQueryData },
@@ -151,10 +150,10 @@ describe('+layout load session bootstrap', () => {
 		state.setupRequired = false;
 	});
 
-	it('keeps the session intact and reports a busy server when /auth/me times out', async () => {
+	it('keeps the session intact and reports a busy server when /api/v3/me times out', async () => {
 		state.user = user;
 		state.apiGet
-			.mockResolvedValueOnce({ required: false })
+			.mockResolvedValueOnce({ setup_required: false })
 			.mockRejectedValueOnce(new DOMException('Timed out', 'TimeoutError'));
 
 		await expect(loadPage()).rejects.toMatchObject({
@@ -164,7 +163,7 @@ describe('+layout load session bootstrap', () => {
 		expect(state.clear).not.toHaveBeenCalled();
 		expect(state.user).toBe(user);
 		expect(state.apiGet).toHaveBeenNthCalledWith(1, '/setup-status', { timeoutMs: 10_000 });
-		expect(state.apiGet).toHaveBeenNthCalledWith(2, '/me', { timeoutMs: 10_000 });
+		expect(state.apiGet).toHaveBeenNthCalledWith(2, '/api/v3/me', { timeoutMs: 10_000 });
 	});
 
 	it('clears every session leg and redirects after persistent cleanup fails on 401', async () => {
@@ -180,7 +179,7 @@ describe('+layout load session bootstrap', () => {
 			throw new Error('IndexedDB unavailable');
 		});
 		state.apiGet
-			.mockResolvedValueOnce({ required: false })
+			.mockResolvedValueOnce({ setup_required: false })
 			.mockRejectedValueOnce(new ApiError(401, 'Unauthorized'));
 
 		await expect(loadPage()).rejects.toMatchObject({ status: 302, location: '/login' });
@@ -226,7 +225,7 @@ describe('+layout load session bootstrap', () => {
 			generation: 7
 		};
 		state.apiGet
-			.mockResolvedValueOnce({ required: false })
+			.mockResolvedValueOnce({ setup_required: false })
 			.mockResolvedValueOnce({ ...user, musicbrainz_source: source });
 		state.user = null;
 		state.initialized = false;
@@ -235,7 +234,7 @@ describe('+layout load session bootstrap', () => {
 			user: { musicbrainz_source: source }
 		});
 		expect(state.apiGet).toHaveBeenCalledTimes(2);
-		expect(state.apiGet).toHaveBeenNthCalledWith(2, '/me', { timeoutMs: 10_000 });
+		expect(state.apiGet).toHaveBeenNthCalledWith(2, '/api/v3/me', { timeoutMs: 10_000 });
 		expect(state.ensureQueryData).toHaveBeenCalledOnce();
 	});
 
@@ -267,13 +266,13 @@ describe('+layout load session bootstrap', () => {
 	});
 
 	it('runs setup and session hydration only once across in-app navigation', async () => {
-		state.apiGet.mockResolvedValueOnce({ required: false }).mockResolvedValueOnce(user);
+		state.apiGet.mockResolvedValueOnce({ setup_required: false }).mockResolvedValueOnce(user);
 
 		await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
 		await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
 
 		expect(state.apiGet.mock.calls.filter(([url]) => url === '/setup-status')).toHaveLength(1);
-		expect(state.apiGet.mock.calls.filter(([url]) => url === '/me')).toHaveLength(1);
+		expect(state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/me')).toHaveLength(1);
 		expect(state.apiGet.mock.calls.filter(([url]) => url === '/scrobble-preferences')).toHaveLength(
 			0
 		);
@@ -282,7 +281,7 @@ describe('+layout load session bootstrap', () => {
 
 	it('retains setup state across navigation without repeating bootstrap requests', async () => {
 		state.apiGet
-			.mockResolvedValueOnce({ required: true })
+			.mockResolvedValueOnce({ setup_required: true })
 			.mockRejectedValueOnce(new ApiError(401, 'Unauthorized'));
 
 		await expect(loadPage('/login')).resolves.toEqual({
@@ -292,7 +291,7 @@ describe('+layout load session bootstrap', () => {
 		await expect(loadPage()).rejects.toMatchObject({ status: 302, location: '/setup' });
 
 		expect(state.apiGet.mock.calls.filter(([url]) => url === '/setup-status')).toHaveLength(1);
-		expect(state.apiGet.mock.calls.filter(([url]) => url === '/me')).toHaveLength(1);
+		expect(state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/me')).toHaveLength(1);
 	});
 
 	it('redirects a configured setup route to login when signed out', async () => {

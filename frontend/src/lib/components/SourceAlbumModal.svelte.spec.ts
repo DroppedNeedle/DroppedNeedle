@@ -11,16 +11,16 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => h.goto(...args) }));
-vi.mock('$lib/api/client', async (importOriginal) => {
-	const mod = await importOriginal<typeof import('$lib/api/client')>();
-	return {
-		...mod,
-		api: {
-			...mod.api,
-			global: { ...mod.api.global, get: (...args: unknown[]) => h.apiGet(...args) }
+vi.mock('$lib/api/client', () => ({
+	api: {
+		get: (...args: unknown[]) => h.apiGet(...args),
+		global: {
+			get: (...args: unknown[]) => h.apiGet(...args),
+			v3: { GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), DELETE: vi.fn(), PATCH: vi.fn() }
 		}
-	};
-});
+	},
+	ApiError: class ApiError extends Error {}
+}));
 vi.mock('$lib/utils/downloadActions', () => ({
 	downloadAlbumArchive: (...args: unknown[]) => h.downloadAlbum(...args),
 	downloadTrackFile: (...args: unknown[]) => h.downloadTrack(...args)
@@ -39,6 +39,13 @@ vi.mock('$lib/stores/player.svelte', () => ({
 }));
 vi.mock('$lib/stores/toast', () => ({
 	toastStore: { show: vi.fn() }
+}));
+// AddToPlaylistModal always mounts (hidden) and creates its mutations at init;
+// keep them inert so no QueryClientProvider is needed.
+vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
+	createPlaylistV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	addPlaylistTracksV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	checkPlaylistTracksV3: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
 import SourceAlbumModal from './SourceAlbumModal.svelte';

@@ -514,6 +514,34 @@ pub async fn list_decades(
         .map_err(|failure| failed(failure, &deps))
 }
 
+/// One page of an album's streamable tracks by release-group mbid or
+/// local album id.
+#[utoipa::path(
+    get,
+    path = "/api/v3/local-library/albums/match/{mbid}",
+    params(
+        ("mbid" = String, Path, description = "Release-group mbid or local album id"),
+        PageQuery
+    ),
+    responses(
+        (status = 200, description = "Track page", body = TrackPage),
+        (status = 400, description = "Bad query string"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Unknown mbid or album id"),
+    )
+)]
+pub async fn match_album(
+    State(deps): State<LibraryDeps>,
+    LibraryUser(ctx): LibraryUser,
+    Path(mbid): Path<String>,
+    ValidQuery(query): ValidQuery<PageQuery>,
+) -> Result<Json<TrackPage>, LibraryError> {
+    services::album_match(&deps, &ctx.user_id, &mbid, &query)
+        .await
+        .map(Json)
+        .map_err(|failure| failed(failure, &deps))
+}
+
 /// Reason-tagged track suggestions.
 #[utoipa::path(
     get,

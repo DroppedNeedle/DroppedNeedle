@@ -15,10 +15,12 @@
 //! - [`quarantine`] release blocklist with TTL and prune-on-write.
 //! - [`orphans`] fail-closed orphan reconcile and recycle-bin prune.
 //! - [`sources`] the per-source fetch seam (slskd/usenet live elsewhere).
+//! - [`http`] the served task legs (admin reimport only, for now).
 //!
 //! Quirk citations name the v2 behavior each port preserves, so a reader
 //! can diff against the Python without guessing.
 
+pub mod http;
 pub mod manifest;
 pub mod orphans;
 pub mod quarantine;
@@ -28,6 +30,7 @@ pub mod state;
 pub mod store;
 pub mod watchdog;
 
+pub use http::{ReimportResponse, downloads_core_routes, downloads_router};
 pub use manifest::{DownloadManifest, ExpectedFile, ExpectedTrack, ManifestCodec, TaskHandle};
 pub use orphans::{
     OrphanDecision, OrphanEvidence, OrphanPolicy, RecycleBin, evaluate_orphan, job_name_parts,

@@ -65,11 +65,11 @@
 
 	const connectionsQuery = getConnectionsQuery();
 	const connectionsSettled = $derived(connectionsQuery.isPending !== true);
+	// data-defined plus not-error already implies success: pending and
+	// loading-error states carry no data, and refetch-error states report
+	// isError, so no separate isSuccess clause is needed.
 	const connectionsUsable = $derived(
-		connectionsSettled &&
-			connectionsQuery.data !== undefined &&
-			connectionsQuery.isError !== true &&
-			connectionsQuery.isSuccess !== false
+		connectionsSettled && connectionsQuery.data !== undefined && connectionsQuery.isError !== true
 	);
 	const linkedSources = $derived.by<MusicSource[]>(() => {
 		if (!connectionsUsable) return [];

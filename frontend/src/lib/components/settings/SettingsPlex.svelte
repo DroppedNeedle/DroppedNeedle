@@ -1,20 +1,24 @@
 <script lang="ts">
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { onDestroy } from 'svelte';
-	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
+	import { PLEX_ENDPOINTS } from '$lib/queries/plex/endpoints';
+	import { pollPlexFlow, startPlexFlow } from '$lib/queries/plex/PlexFlowApi';
 	import { resetPlexScrobblePreference } from '$lib/player/plexPlaybackApi';
-	import type { PlexConnectionSettings, PlexLibrarySection } from '$lib/types';
+	import type { components } from '$lib/api/v3/openapi';
 
-	type PlexTestResult = { valid: boolean; message: string; libraries?: PlexLibrarySection[] };
+	type PlexConnectionSettings = components['schemas']['PlexConnectionDto'];
+	type PlexLibrarySection = components['schemas']['PlexLibrarySectionInfo'];
+
+	type PlexTestResult = components['schemas']['PlexVerifyResponse'];
 	type PlexSettingsForm = ReturnType<typeof createSettingsForm<PlexConnectionSettings>> & {
 		testResult: PlexTestResult | null;
 	};
 
 	const form = createSettingsForm<PlexConnectionSettings>({
-		loadEndpoint: API.settingsPlex(),
-		saveEndpoint: API.settingsPlex(),
-		testEndpoint: API.settingsPlexVerify(),
+		loadEndpoint: PLEX_ENDPOINTS.settings(),
+		saveEndpoint: PLEX_ENDPOINTS.settings(),
+		testEndpoint: PLEX_ENDPOINTS.verify(),
 		enabledField: 'enabled',
 		secondaryEnabledField: 'login_enabled',
 		refreshIntegration: true,
@@ -51,11 +55,9 @@
 		oauthPending = true;
 		oauthUrl = null;
 		try {
-			const res = await api.global.post<{ pin_id: number; pin_code: string; auth_url: string }>(
-				API.plexAuthPin()
-			);
-			oauthUrl = res.auth_url;
-			window.open(res.auth_url, '_blank', 'noopener');
+			const res = await startPlexFlow('connect');
+			oauthUrl = res.authorize_url;
+			window.open(res.authorize_url, '_blank', 'noopener');
 			await pollForToken(res.pin_id);
 		} catch {
 			oauthPending = false;
@@ -68,9 +70,7 @@
 			await new Promise((r) => setTimeout(r, 3000));
 			if (!oauthPending) return;
 			try {
-				const res = await api.global.get<{ completed: boolean; auth_token: string }>(
-					API.plexAuthPoll(pinId)
-				);
+				const res = await pollPlexFlow('connect', pinId);
 				if (!oauthPending) return;
 				if (res.completed && res.auth_token) {
 					if (form.data) form.data.plex_token = res.auth_token;
@@ -95,7 +95,7 @@
 	async function fetchLibraries() {
 		loadingLibraries = true;
 		try {
-			libraries = await api.global.get<PlexLibrarySection[]>(API.settingsPlexLibraries());
+			libraries = await api.global.v3.GET(PLEX_ENDPOINTS.libraries());
 		} catch {
 			libraries = [];
 		}

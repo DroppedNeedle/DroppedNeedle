@@ -16,7 +16,8 @@ vi.mock('$lib/api/client', () => ({
 		global: {
 			get: (...args: unknown[]) => mockGet(...args),
 			post: (...args: unknown[]) => mockPost(...args),
-			put: (...args: unknown[]) => mockPut(...args)
+			put: (...args: unknown[]) => mockPut(...args),
+			v3: { POST: (...args: unknown[]) => mockPost(...args) }
 		}
 	}
 }));
@@ -157,7 +158,7 @@ describe('download queue queries', () => {
 			year: 2000
 		});
 		const call = mockPost.mock.calls.at(-1);
-		expect(String(call?.[0])).toContain('/requests/new');
+		expect(String(call?.[0])).toBe('/api/v3/requests/albums');
 		expect(call?.[1]).toMatchObject({ musicbrainz_id: 'rg', artist: 'A', album: 'B', year: 2000 });
 	});
 
@@ -174,15 +175,16 @@ describe('download queue queries', () => {
 			release_id: 'release'
 		});
 		const call = mockPost.mock.calls.at(-1);
-		expect(call?.[0]).toBe('/api/v1/tracks/rec/request');
+		expect(call?.[0]).toBe('/api/v3/requests/tracks');
 		expect(call?.[1]).toEqual({
+			recording_mbid: 'rec',
 			artist_name: 'A',
 			track_title: 'T',
 			album_title: 'B',
 			duration_seconds: 287,
 			release_group_mbid: 'rg',
 			artist_mbid: 'artist',
-			release_id: 'release'
+			release_mbid: 'release'
 		});
 	});
 
@@ -298,18 +300,19 @@ describe('download queue queries', () => {
 		});
 	});
 
-	it('requestAlbum names the snapshot summary in dispatched and duplicate copy when carried', async () => {
+	it('requestAlbum renders dispatched and duplicate copy without a quality summary', async () => {
+		// v3 intake responses carry no quality snapshot (clean-slate drop), so
+		// the copy never names one.
 		for (const [status, expected] of [
-			['pending', 'Requested - searching now using Balanced.'],
-			['queued', 'Already being acquired using Balanced.']
+			['pending', 'Requested - searching now.'],
+			['queued', 'Already being acquired.']
 		] as const) {
 			mockToast.mockClear();
 			mockPost.mockResolvedValueOnce({
 				success: true,
 				message: status === 'pending' ? 'Request accepted' : 'Request already in progress',
 				musicbrainz_id: 'rg',
-				status,
-				quality_snapshot_summary: 'Balanced'
+				status
 			});
 			const m = requestAlbum() as unknown as { mutationFn: (i: unknown) => Promise<unknown> };
 			await m.mutationFn({ release_group_mbid: 'rg' });
@@ -379,7 +382,7 @@ describe('download queue queries', () => {
 		});
 
 		const call = mockPost.mock.calls.at(-1);
-		expect(String(call?.[0])).toBe('/api/v1/requests/batch');
+		expect(String(call?.[0])).toBe('/api/v3/requests/batches');
 		expect(call?.[1]).toEqual({
 			items: [{ musicbrainz_id: 'rg-1' }, { musicbrainz_id: 'rg-2' }],
 			monitor_artist: true,

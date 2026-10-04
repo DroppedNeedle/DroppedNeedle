@@ -3,7 +3,9 @@
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { ChevronLeft, Disc3, Search, X } from 'lucide-svelte';
-	import { getLibraryAlbumsQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import { getLibraryAlbumsV3Query } from '$lib/queries/library/LibraryV3Queries.svelte';
+	import { albumViewToSummary } from '$lib/queries/library/LibraryV3Adapters';
+	import type { LibraryV3AlbumsParams } from '$lib/queries/library/LibraryQueryKeyFactory';
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
 	import type { AlbumSort } from '$lib/types';
@@ -26,7 +28,22 @@
 		};
 	});
 
-	const albumsQuery = getLibraryAlbumsQuery(() => params);
+	// The url keeps the v1 sort vocabulary so shared links survive; it maps
+	// onto the v3 catalog sorts one row below.
+	const SORT_MAP: Record<AlbumSort, Pick<LibraryV3AlbumsParams, 'sort' | 'order'>> = {
+		recent: { sort: 'date_added', order: 'desc' },
+		title: { sort: 'name', order: 'asc' },
+		artist: { sort: 'artist', order: 'asc' }
+	};
+
+	const albumsQuery = getLibraryAlbumsV3Query(() => ({
+		limit: PAGE_SIZE,
+		offset: (params.page - 1) * PAGE_SIZE,
+		...SORT_MAP[params.sort],
+		...(params.q ? { q: params.q } : {}),
+		...(params.format ? { format: params.format } : {})
+	}));
+	const albums = $derived((albumsQuery.data?.items ?? []).map(albumViewToSummary));
 	const total = $derived(albumsQuery.data?.total ?? 0);
 	const totalPages = $derived(
 		albumsQuery.data ? Math.max(1, Math.ceil(albumsQuery.data.total / PAGE_SIZE)) : 1
@@ -140,7 +157,7 @@
 				<div class="skeleton aspect-square w-full rounded-lg"></div>
 			{/each}
 		</div>
-	{:else if !albumsQuery.data || albumsQuery.data.items.length === 0}
+	{:else if !albumsQuery.data || albums.length === 0}
 		<div class="flex flex-col items-center justify-center min-h-100 text-center">
 			<Disc3 class="h-12 w-12 text-base-content/40 mb-4" strokeWidth={1.5} />
 			<h2 class="text-2xl font-semibold mb-2">No albums found</h2>
@@ -152,7 +169,7 @@
 		</div>
 	{:else}
 		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-			{#each albumsQuery.data.items as album (album.id)}
+			{#each albums as album (album.id)}
 				<LibraryAlbumCard {album} />
 			{/each}
 		</div>

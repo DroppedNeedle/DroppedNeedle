@@ -127,7 +127,8 @@ fn track(
 
 /// Seeded catalog matching the briefs below.
 fn seeded_catalog() -> MemoryCatalog {
-    let al1 = album("al1", "First Light", "a1", "Aurora", Some(1994), 1000.0);
+    let mut al1 = album("al1", "First Light", "a1", "Aurora", Some(1994), 1000.0);
+    al1.release_group_mbid = Some("rg-first-light".to_owned());
     let al2 = album("al2", "Second Dawn", "a1", "Aurora", Some(2001), 2000.0);
     let al3 = album("al3", "Lone Peak", "a2", "Boreal", Some(1994), 1500.0);
     let al4 = album(
@@ -303,6 +304,7 @@ const ROUTES: &[&str] = &[
     "/library/genres",
     "/library/genres/rock/tracks",
     "/local-library/albums",
+    "/local-library/albums/match/rg-first-light",
     "/local-library/search?q=light",
     "/local-library/recent",
     "/local-library/decades",
@@ -434,6 +436,124 @@ async fn album_copies_siblings_and_empty() {
 
     let (status, _) = get(app.clone(), "/library/albums/nope/copies").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn albums_format_filter_and_artist_sort() {
+    let (rig, user_id) = auth_bundle().await;
+    // Dedicated seed: the shared catalog pins every album to flac, so the
+    // format brief needs its own mix.
+    let mut second = album("al2", "Second Dawn", "a1", "Aurora", Some(2001), 2000.0);
+    second.format = Some("mp3".to_owned());
+    let catalog = MemoryCatalog::new().with_albums(vec![
+        album("al1", "First Light", "a1", "Aurora", Some(1994), 1000.0),
+        second,
+        album("al3", "Lone Peak", "a2", "Boreal", Some(1994), 1500.0),
+    ]);
+    let app = app(
+        deps(
+            Arc::new(catalog),
+            Arc::new(MemoryFavorites::new()),
+            Arc::new(MemoryLyrics::new()),
+            &rig.deps,
+        ),
+        Some(&user_id),
+    );
+    let (status, json) = get(app.clone(), "/library/albums?format=mp3").await;
+    assert_eq!(status, StatusCode::OK);
+    let page: AlbumPage = serde_json::from_value(json).expect("page decodes");
+    assert_eq!(page.total, 1);
+    assert_eq!(page.items[0].id, "al2");
+
+    let (status, json) = get(app.clone(), "/library/albums?format=FLAC").await;
+    assert_eq!(status, StatusCode::OK);
+    let page: AlbumPage = serde_json::from_value(json).expect("page decodes");
+    assert_eq!(page.total, 2);
+
+    let (status, json) = get(app.clone(), "/library/albums?format=%20").await;
+    assert_eq!(status, StatusCode::OK);
+    let page: AlbumPage = serde_json::from_value(json).expect("page decodes");
+    assert_eq!(page.total, 3);
+
+    let (status, json) = get(app.clone(), "/library/albums?sort=artist").await;
+    assert_eq!(status, StatusCode::OK);
+    let page: AlbumPage = serde_json::from_value(json).expect("page decodes");
+    assert_eq!(
+        page.items
+            .iter()
+            .map(|album| album.id.as_str())
+            .collect::<Vec<_>>(),
+        ["al1", "al2", "al3"]
+    );
+
+    let (status, json) = get(app.clone(), "/library/albums?sort=artist&order=desc").await;
+    assert_eq!(status, StatusCode::OK);
+    let page: AlbumPage = serde_json::from_value(json).expect("page decodes");
+    assert_eq!(
+        page.items
+            .iter()
+            .map(|album| album.id.as_str())
+            .collect::<Vec<_>>(),
+        ["al3", "al2", "al1"]
+    );
+}
+
+#[tokio::test]
+async fn album_cards_carry_release_group_mbid() {
+    let (rig, user_id) = auth_bundle().await;
+    let app = app(
+        deps(
+            Arc::new(seeded_catalog()),
+            Arc::new(seeded_favorites()),
+            Arc::new(seeded_lyrics()),
+            &rig.deps,
+        ),
+        Some(&user_id),
+    );
+    let (status, json) = get(app.clone(), "/local-library/albums").await;
+    assert_eq!(status, StatusCode::OK);
+    let page: AlbumCardPage = serde_json::from_value(json).expect("cards decode");
+    let first = page
+        .items
+        .iter()
+        .find(|card| card.id == "al1")
+        .expect("al1 card listed");
+    assert_eq!(first.release_group_mbid.as_deref(), Some("rg-first-light"));
+    let second = page
+        .items
+        .iter()
+        .find(|card| card.id == "al2")
+        .expect("al2 card listed");
+    assert!(second.release_group_mbid.is_none());
+}
+
+#[tokio::test]
+async fn album_match_resolves_mbid_and_local_id() {
+    let (rig, user_id) = auth_bundle().await;
+    let app = app(
+        deps(
+            Arc::new(seeded_catalog()),
+            Arc::new(seeded_favorites()),
+            Arc::new(seeded_lyrics()),
+            &rig.deps,
+        ),
+        Some(&user_id),
+    );
+    let (status, json) = get(app.clone(), "/local-library/albums/match/rg-first-light").await;
+    assert_eq!(status, StatusCode::OK);
+    let page: TrackPage = serde_json::from_value(json).expect("track page decodes");
+    assert_eq!(page.total, 2);
+    assert_eq!(page.items[0].id, "t1");
+    assert_eq!(page.items[1].id, "t2");
+
+    let (status, json) = get(app.clone(), "/local-library/albums/match/al1?limit=1").await;
+    assert_eq!(status, StatusCode::OK);
+    let page: TrackPage = serde_json::from_value(json).expect("track page decodes");
+    assert_eq!((page.total, page.items.len()), (2, 1));
+
+    let (status, json) = get(app.clone(), "/local-library/albums/match/nope").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(json["error"]["code"], "NOT_FOUND");
 }
 
 #[tokio::test]
@@ -1213,6 +1333,66 @@ async fn sqlite_albums_streamable_counts_identity_and_filters() {
         .await
         .expect("artist filter");
     assert_eq!(total, 3);
+}
+
+#[tokio::test]
+async fn sqlite_format_filter_artist_sort_and_release_group_lookup() {
+    let fixture = sqlite_fixture().await;
+    for (format, total) in [("flac", 2), ("mp3", 1), ("FLAC", 2), ("ogg", 0)] {
+        let filter = AlbumFilter {
+            format: Some(format.to_lowercase()),
+            ..Default::default()
+        };
+        let (albums, counted) = fixture
+            .catalog
+            .list_albums(&filter, AlbumSort::Name, false, 50, 0)
+            .await
+            .expect("format filter");
+        assert_eq!(counted, total, "for {format}");
+        assert_eq!(albums.len() as u64, total, "for {format}");
+    }
+
+    let filter = AlbumFilter::default();
+    let (albums, _) = fixture
+        .catalog
+        .list_albums(&filter, AlbumSort::Artist, false, 50, 0)
+        .await
+        .expect("artist sort");
+    assert_eq!(
+        albums
+            .iter()
+            .map(|album| album.id.as_str())
+            .collect::<Vec<_>>(),
+        ["al1", "al4", "al2", "al3"]
+    );
+    let (albums, _) = fixture
+        .catalog
+        .list_albums(&filter, AlbumSort::Artist, true, 50, 0)
+        .await
+        .expect("artist sort desc");
+    assert_eq!(
+        albums
+            .iter()
+            .map(|album| album.id.as_str())
+            .collect::<Vec<_>>(),
+        ["al3", "al2", "al4", "al1"]
+    );
+
+    let found = fixture
+        .catalog
+        .get_album_by_release_group("rg1")
+        .await
+        .expect("lookup runs")
+        .expect("rg1 resolves");
+    assert_eq!(found.id, "al1");
+    assert!(
+        fixture
+            .catalog
+            .get_album_by_release_group("nope")
+            .await
+            .expect("lookup runs")
+            .is_none()
+    );
 }
 
 #[tokio::test]

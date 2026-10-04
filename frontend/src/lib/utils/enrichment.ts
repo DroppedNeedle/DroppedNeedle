@@ -1,13 +1,5 @@
-import type {
-	Artist,
-	Album,
-	EnrichmentResponse,
-	EnrichmentSource,
-	ArtistEnrichmentRequest,
-	AlbumEnrichmentRequest
-} from '$lib/types';
-import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
+import type { Artist, Album, EnrichmentSource } from '$lib/types';
+import type { EnrichmentResponseV3 } from '../queries/search/SearchV3Queries.svelte';
 
 export function getListenTitle(
 	source: EnrichmentSource,
@@ -18,25 +10,13 @@ export function getListenTitle(
 	return 'Plays';
 }
 
-export async function fetchEnrichmentBatch(
-	artists: ArtistEnrichmentRequest[],
-	albums: AlbumEnrichmentRequest[],
-	signal?: AbortSignal
-): Promise<EnrichmentResponse | null> {
-	if (artists.length === 0 && albums.length === 0) return null;
-
-	try {
-		return await api.post<EnrichmentResponse>(
-			API.search.enrichment(),
-			{ artists, albums },
-			{ signal }
-		);
-	} catch {
-		return null;
-	}
-}
-
-export function applyArtistEnrichment(artists: Artist[], enrichment: EnrichmentResponse): Artist[] {
+// Degradations ride on the v3 answer and are read by the query stale-time
+// helper; counts simply stay absent for degraded ids, so these merges
+// ignore the degradations list and map what arrived.
+export function applyArtistEnrichment(
+	artists: Artist[],
+	enrichment: EnrichmentResponseV3
+): Artist[] {
 	if (enrichment.artists.length === 0) return artists;
 
 	const map = new Map(enrichment.artists.map((a) => [a.musicbrainz_id, a]));
@@ -51,7 +31,7 @@ export function applyArtistEnrichment(artists: Artist[], enrichment: EnrichmentR
 	});
 }
 
-export function applyAlbumEnrichment(albums: Album[], enrichment: EnrichmentResponse): Album[] {
+export function applyAlbumEnrichment(albums: Album[], enrichment: EnrichmentResponseV3): Album[] {
 	if (enrichment.albums.length === 0) return albums;
 
 	const map = new Map(enrichment.albums.map((a) => [a.musicbrainz_id, a]));

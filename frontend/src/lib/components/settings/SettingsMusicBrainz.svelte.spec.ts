@@ -408,10 +408,10 @@ describe('MusicBrainz four-way source picker', () => {
 			.toBeVisible();
 		await expect
 			.element(page.getByRole('spinbutton', { name: 'Rate Limit (requests/sec)' }))
-			.toHaveValue('1');
+			.toHaveValue(1);
 		await expect
 			.element(page.getByRole('spinbutton', { name: 'Concurrent Searches' }))
-			.toHaveValue('1');
+			.toHaveValue(1);
 		await expect
 			.element(page.getByRole('spinbutton', { name: 'Concurrent Searches' }))
 			.toHaveAttribute('max', '64');

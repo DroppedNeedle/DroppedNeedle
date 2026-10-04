@@ -1,13 +1,14 @@
 import { playerStore } from '$lib/stores/player.svelte';
-import type {
-	NowPlayingSubmission,
-	ScrobbleSubmission,
-	ScrobbleSettings,
-	ScrobbleResponse
-} from '$lib/types';
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
+import type { components } from '$lib/api/v3/openapi';
 import type { SourceType } from '$lib/player/types';
+import {
+	sendScrobbleNowPlaying,
+	submitScrobble,
+	type ScrobbleNowPlayingRequest,
+	type ScrobbleSubmitRequest
+} from '$lib/player/playbackGateway';
+import { SCROBBLE_PREFERENCES_ENDPOINTS } from '$lib/queries/scrobble-preferences/endpoints';
 import {
 	makeTrackKey,
 	shouldAccumulate,
@@ -17,6 +18,18 @@ import {
 	formatServiceTooltip
 } from '$lib/stores/scrobbleHelpers';
 import { registerUserSessionReset } from '$lib/utils/userSessionCleanup';
+
+export type NowPlayingSubmission = ScrobbleNowPlayingRequest;
+export type ScrobbleSubmission = ScrobbleSubmitRequest;
+export type ScrobbleResponse = components['schemas']['ScrobbleResponse'];
+
+// The manager only reads the three forwarding flags out of the full
+// per-user scrobble-preferences DTO.
+export interface ScrobbleSettings {
+	scrobble_to_lastfm?: boolean;
+	scrobble_to_listenbrainz?: boolean;
+	navidrome_handles_external_scrobbles?: boolean;
+}
 
 type ScrobbleStatus = 'idle' | 'tracking' | 'scrobbled' | 'error';
 
@@ -77,7 +90,9 @@ function createScrobbleManager() {
 		const now = Date.now();
 		if (settingsCache && now - lastSettingsFetch < 60_000) return settingsCache;
 		try {
-			settingsCache = await api.global.get<ScrobbleSettings>(API.me.scrobblePreferences());
+			settingsCache = await api.global.get<ScrobbleSettings>(
+				SCROBBLE_PREFERENCES_ENDPOINTS.get()
+			);
 			lastSettingsFetch = now;
 			return settingsCache;
 		} catch {
@@ -99,7 +114,7 @@ function createScrobbleManager() {
 	): Promise<void> {
 		try {
 			const body = makeNowPlayingSubmission(artistName, trackName, albumName, durationMs, source);
-			await api.global.post(API.scrobble.nowPlaying(), body);
+			await sendScrobbleNowPlaying(body);
 		} catch {
 			status = 'error';
 		}
@@ -122,9 +137,9 @@ function createScrobbleManager() {
 				timestamp,
 				source
 			);
-			const data = await api.global.post<ScrobbleResponse>(API.scrobble.submit(), body);
+			const data = await submitScrobble(body);
 			lastServiceDetail = Object.fromEntries(
-				Object.entries(data.services).map(([k, v]) => [k, { success: v.success }])
+				Object.entries(data.services ?? {}).map(([k, v]) => [k, { success: v.success }])
 			);
 			if (data.accepted) {
 				status = 'scrobbled';

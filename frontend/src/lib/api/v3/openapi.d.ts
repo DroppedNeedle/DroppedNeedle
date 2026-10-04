@@ -1421,6 +1421,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/downloads/tasks/{task_id}/reimport": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Requeue one failed or short-landed task for import without
+         *     re-searching. `POST /api/v3/downloads/tasks/{task_id}/reimport`.
+         *     Admin only. Missing tasks and tasks that fail the reimport guard
+         *     (no picked candidate linked) answer 404.
+         */
+        post: operations["reimport_task_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/favorites": {
         parameters: {
             query?: never;
@@ -2133,6 +2155,26 @@ export interface paths {
         };
         /** Album-card browse for the local library. */
         get: operations["browse_albums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/local-library/albums/match/{mbid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One page of an album's streamable tracks by release-group mbid or
+         *     local album id.
+         */
+        get: operations["match_album"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2985,6 +3027,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/remotes/{source}/discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Plex discovery shelves (Plex only, following the mix-route precedent:
+         *     the shape is source-specific, so the gate lives in the handler).
+         */
+        get: operations["get_discovery"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/remotes/{source}/favorites": {
         parameters: {
             query?: never;
@@ -3220,6 +3282,26 @@ export interface paths {
         put?: never;
         /** Import one remote playlist into the local catalog. */
         post: operations["import_playlist"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/remotes/{source}/random": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Random tracks, optionally filtered by genre. Limits mirror the v1
+         *     Navidrome route (default 20, max 50); Plex answers unsupported.
+         */
+        get: operations["get_random"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4015,7 +4097,7 @@ export interface paths {
             cookie?: never;
         };
         /** Ranked hits across the selected buckets plus each bucket's standout. */
-        get: operations["search"];
+        get: operations["unified_search"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5851,6 +5933,8 @@ export interface components {
             id: string;
             /** @description Most common track format, when any track exists. */
             primary_format?: string | null;
+            /** @description Linked MusicBrainz release group, when identified. */
+            release_group_mbid?: string | null;
             /** @description Album title. */
             title: string;
             /**
@@ -6785,6 +6869,8 @@ export interface components {
         CreatePlaylistBody: {
             /** @description Display name. Must not be blank. */
             name: string;
+            /** @description Import provenance (`<source>:<id>`), when the playlist was imported. */
+            source_ref?: string | null;
         };
         /**
          * @description One decade shelf. Shelves carry counts; fetch the shelf's albums
@@ -7086,6 +7172,26 @@ export interface components {
             pending_count: number;
             /** @description Discover section the batch came from. */
             source_section?: string;
+        };
+        /**
+         * @description One Plex discovery shelf: a hub title over its album rows. Plex-only
+         *     (from `/hubs/sections/{id}`), kept out of the unified [`HubView`] so
+         *     other sources never ship an empty shelf shape.
+         */
+        DiscoveryHubView: {
+            /** @description Albums on this shelf. */
+            albums: components["schemas"]["RemotesAlbumView"][];
+            /** @description Hub kind; always `"album"` (other hub kinds are dropped, as in v1). */
+            hub_type: string;
+            /** @description Hub title, e.g. "Recommended for you". */
+            title: string;
+        };
+        /** @description Plex discovery shelves for the hub page. */
+        DiscoveryView: {
+            /** @description Album shelves, in upstream order. */
+            hubs: components["schemas"]["DiscoveryHubView"][];
+            /** @description Owning source. */
+            source: components["schemas"]["SourceName"];
         };
         /** @description Change display name. */
         DisplayNameUpdate: {
@@ -9212,6 +9318,8 @@ export interface components {
             name: string;
             /** @description Owner display name. */
             owner_name?: string | null;
+            /** @description Import provenance (`<source>:<id>`), when the playlist was imported. */
+            source_ref?: string | null;
             /**
              * Format: double
              * @description Total duration in seconds, when any track reports one.
@@ -9292,6 +9400,8 @@ export interface components {
             name: string;
             /** @description Owner display name. */
             owner_name?: string | null;
+            /** @description Import provenance (`<source>:<id>`), when the playlist was imported. */
+            source_ref?: string | null;
             /**
              * Format: double
              * @description Total duration in seconds, when any track reports one.
@@ -10147,6 +10257,18 @@ export interface components {
             /** @description Always `ok` when the trigger lands. */
             status: string;
         };
+        /**
+         * @description Reimport outcome. The requeue puts the task back in line; the worker
+         *     reports fresh progress from there.
+         */
+        ReimportResponse: {
+            /** @description Failure text, when the requeue itself failed. */
+            error_message?: string | null;
+            /** @description Task status after this call (`queued`). */
+            status: string;
+            /** @description Whether the task went back in line. */
+            success: boolean;
+        };
         /** @description One page of albums. */
         RemotesAlbumPage: {
             /** @description Page items. */
@@ -10387,6 +10509,11 @@ export interface components {
             id: string;
             /** @description Relative images URL under `/api/v3`, when art exists. */
             image_url?: string | null;
+            /**
+             * @description Plex part key for the stream gateway. Plex-only: Jellyfin and
+             *     Navidrome stream by item id, so they always leave this empty.
+             */
+            part_key?: string | null;
             /** @description Linked MusicBrainz recording id. */
             recording_mbid?: string | null;
             /** @description Owning source. */
@@ -10443,17 +10570,50 @@ export interface components {
             /** @description Artist name. */
             artist_name: string;
             /**
+             * @description Whether an admin can reimport the linked task (failed with its
+             *     candidate still linked). None when not applicable.
+             */
+            can_reimport?: boolean | null;
+            /**
              * Format: int64
              * @description Epoch seconds when terminal, when terminal.
              */
             completed_at?: number | null;
             /**
+             * @description Custom artwork URL override. None: artwork resolves client-side
+             *     from the MBID, which is what v2's built cover URL did anyway.
+             */
+            cover_url?: string | null;
+            /**
              * Format: int64
              * @description Track length for exact-track rows.
              */
             duration_seconds?: number | null;
+            /** @description Last failure text from the linked task, when failed. */
+            error_message?: string | null;
+            /**
+             * Format: int64
+             * @description Epoch seconds when the transfer should finish. None: no live ETA
+             *     source exists (v2 never sent one either).
+             */
+            eta?: number | null;
+            /**
+             * @description Whether the album is in the library. None: the intake slice has
+             *     no library seam; callers treat unknown as present for imported
+             *     rows, which only land after the task completes.
+             */
+            in_library?: boolean | null;
             /** @description Album or recording MBID. */
             musicbrainz_id: string;
+            /**
+             * Format: double
+             * @description Download progress percent (0-100) from the linked task, when linked.
+             */
+            progress?: number | null;
+            /** @description Fetch source from the linked task (`soulseek`, `usenet`, ...). */
+            protocol?: string | null;
+            /** @description Picked candidate quality from the linked task, once picked. */
+            quality?: string | null;
             /** @description `album` or `track`. */
             request_kind: string;
             /**
@@ -10468,12 +10628,34 @@ export interface components {
              * @description Co-requester count beyond the owner.
              */
             requester_count: number;
+            /**
+             * Format: int64
+             * @description Epoch seconds when reviewed, when reviewed.
+             */
+            reviewed_at?: number | null;
             /** @description Reviewer display name. */
             reviewed_by_name?: string | null;
+            /**
+             * Format: double
+             * @description Total transfer bytes from the linked task, once known.
+             */
+            size?: number | null;
+            /**
+             * Format: double
+             * @description Bytes still to transfer from the linked task, once known.
+             */
+            size_remaining?: number | null;
             /** @description Row status. */
             status: string;
+            /**
+             * @description Task status detail groups behind the card's expander. None until a
+             *     producer exists (v2 never sent these either).
+             */
+            status_messages?: components["schemas"]["RequestStatusMessage"][] | null;
             /** @description Linked download task. */
             task_id?: string | null;
+            /** @description Containing release group for exact-track rows (album context). */
+            track_release_group_mbid?: string | null;
             /** @description Track title for exact-track rows. */
             track_title?: string | null;
             /** @description Primary owner id. */
@@ -10483,6 +10665,17 @@ export interface components {
              * @description Release year.
              */
             year?: number | null;
+        };
+        /**
+         * @description One grouped status detail behind the request card's expander. The
+         *     intake slice has no producer for these yet (v2 never sent them
+         *     either), so views answer None until one exists.
+         */
+        RequestStatusMessage: {
+            /** @description Detail lines. */
+            messages: string[];
+            /** @description Group heading, when grouped. */
+            title?: string | null;
         };
         /**
          * @description Personal-mix refresh outcome (A:393). The schema renames to avoid the
@@ -10911,6 +11104,8 @@ export interface components {
             offset: number;
             /** @description This page of hits, best first. */
             results: components["schemas"]["SearchResultItem"][];
+            /** @description Provider health for this bucket. */
+            status: components["schemas"]["SearchRemoteStatus"];
             top_result?: null | components["schemas"]["SearchResultItem"];
         };
         /**
@@ -10919,17 +11114,31 @@ export interface components {
          */
         SearchKind: "artist" | "album" | "track";
         /**
+         * @description Per-bucket provider health for one search call. The values mirror v1's
+         *     `SearchRemoteStatus` exactly so the same notice and stale-time logic
+         *     applies. The local-only stage always emits `Ok`; stage-5 provider
+         *     fan-out fills in the real values.
+         * @enum {string}
+         */
+        SearchRemoteStatus: "ok" | "partial" | "timeout" | "error" | "stale";
+        /**
          * @description Unified search response: one ranked list per bucket plus the standout
          *     hit per bucket, when one earns it.
          */
         SearchResponse: {
+            /** @description Provider health for the album bucket. */
+            album_status: components["schemas"]["SearchRemoteStatus"];
             /** @description Matching albums, best first. */
             albums: components["schemas"]["SearchResultItem"][];
+            /** @description Provider health for the artist bucket. */
+            artist_status: components["schemas"]["SearchRemoteStatus"];
             /** @description Matching artists, best first. */
             artists: components["schemas"]["SearchResultItem"][];
             top_album?: null | components["schemas"]["SearchResultItem"];
             top_artist?: null | components["schemas"]["SearchResultItem"];
             top_track?: null | components["schemas"]["SearchResultItem"];
+            /** @description Provider health for the track bucket. */
+            track_status: components["schemas"]["SearchRemoteStatus"];
             /** @description Matching tracks, best first. */
             tracks: components["schemas"]["SearchResultItem"][];
         };
@@ -11471,6 +11680,8 @@ export interface components {
         SuggestResponse: {
             /** @description Suggestions, best first. */
             results: components["schemas"]["SuggestResult"][];
+            /** @description Provider health for the suggestion call. */
+            status: components["schemas"]["SearchRemoteStatus"];
         };
         /** @description One typeahead suggestion. */
         SuggestResult: {
@@ -11990,6 +12201,8 @@ export interface components {
         WantedItem: {
             /** @description Album title. */
             album_title: string;
+            /** @description Artist MBID. */
+            artist_mbid?: string | null;
             /** @description Artist name. */
             artist_name: string;
             /**
@@ -11998,10 +12211,17 @@ export interface components {
              */
             check_count: number;
             /**
+             * @description Custom artwork URL override. None: artwork resolves client-side
+             *     from the MBID.
+             */
+            cover_url?: string | null;
+            /**
              * Format: int64
              * @description Epoch seconds when created.
              */
             created_at: number;
+            /** @description `missing` (whole album) or `partial` (filling gaps). */
+            kind: string;
             /** @description Release-group MBID. */
             musicbrainz_id: string;
             /**
@@ -12009,10 +12229,22 @@ export interface components {
              * @description Unseen candidate count.
              */
             new_candidate_count: number;
-            /** @description Watch state: `watching` or `paused`. */
+            /**
+             * Format: int64
+             * @description Epoch seconds when the next check is due, when scheduled.
+             */
+            next_check_at?: number | null;
+            /** @description Watch state: `watching`, `paused`, or loop-set `dormant`. */
             state: string;
             /** @description Owner id (admins see every row). */
             user_id?: string | null;
+            /** @description Owner display name (admins only; the "watched for" chip). */
+            user_name?: string | null;
+            /**
+             * Format: int32
+             * @description Release year.
+             */
+            year?: number | null;
         };
         /** @description Wanted list: watches plus the still-retrying set. */
         WantedResponse: {
@@ -12030,8 +12262,15 @@ export interface components {
         WantedRetryingItem: {
             /** @description Album title. */
             album_title: string;
+            /** @description Artist MBID. */
+            artist_mbid?: string | null;
             /** @description Artist name. */
             artist_name: string;
+            /**
+             * @description Custom artwork URL override. None: artwork resolves client-side
+             *     from the MBID.
+             */
+            cover_url?: string | null;
             /**
              * Format: int32
              * @description Attempts allowed.
@@ -12040,12 +12279,24 @@ export interface components {
             /** @description Release-group MBID. */
             musicbrainz_id: string;
             /**
+             * Format: int64
+             * @description Epoch seconds when the next try is due, when scheduled.
+             */
+            next_retry_at?: number | null;
+            /**
              * Format: int32
              * @description Attempts so far.
              */
             retry_count: number;
             /** @description Owner id (admins see every row). */
             user_id?: string | null;
+            /** @description Owner display name (admins only; the "requested by" chip). */
+            user_name?: string | null;
+            /**
+             * Format: int32
+             * @description Release year.
+             */
+            year?: number | null;
         };
         /** @description Wanted watcher toggles. Cadence stays code constants on purpose. */
         WantedWatcherDto: {
@@ -14750,6 +15001,28 @@ export interface operations {
             };
         };
     };
+    reimport_task_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Download task id */
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReimportResponse"];
+                };
+            };
+        };
+    };
     list_favorites_handler: {
         parameters: {
             query?: {
@@ -15201,7 +15474,7 @@ export interface operations {
                 limit: number | null;
                 /** @description Page start. Default 0. */
                 offset: number | null;
-                /** @description `name`, `date_added`, or `year`. Default `name`. */
+                /** @description `name`, `date_added`, `year`, or `artist`. Default `name`. */
                 sort: string | null;
                 /** @description `asc` or `desc`. Default `asc`. */
                 order: string | null;
@@ -15211,6 +15484,11 @@ export interface operations {
                 artist_id: string | null;
                 /** @description Restrict to one decade start year, e.g. 1990. */
                 decade: number | null;
+                /**
+                 * @description Restrict to one primary track format, e.g. `flac`. Blank reads as
+                 *     absent; matching is case-insensitive.
+                 */
+                format: string | null;
             };
             cookie?: never;
         };
@@ -16598,6 +16876,54 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    match_album: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group mbid or local album id */
+                mbid: string;
+                /** @description Page size, 1-1000. Default 200. */
+                limit: number | null;
+                /** @description Page start. Default 0. */
+                offset: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackPage"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown mbid or album id */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18925,6 +19251,26 @@ export interface operations {
             };
         };
     };
+    get_discovery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovery shelves */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryView"];
+                };
+            };
+        };
+    };
     get_favorites: {
         parameters: {
             query?: never;
@@ -19197,6 +19543,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImportResult"];
+                };
+            };
+        };
+    };
+    get_random: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Random tracks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemotesTrackPage"];
                 };
             };
         };
@@ -20122,7 +20488,7 @@ export interface operations {
             };
         };
     };
-    search: {
+    unified_search: {
         parameters: {
             query?: never;
             header?: never;

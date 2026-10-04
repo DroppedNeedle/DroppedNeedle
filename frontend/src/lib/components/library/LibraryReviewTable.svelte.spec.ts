@@ -22,7 +22,7 @@ const item = {
 	exclusion_source: null,
 	release_group_mbid: null,
 	identity_source: null,
-	candidate_count: 2,
+	ranked_edition_keys: ['rg-1:rel-1', 'rg-1:rel-2'],
 	evidence_summary: {},
 	active_job_state: null,
 	created_at: 1,
@@ -54,6 +54,14 @@ describe('LibraryReviewTable responsive presentation', () => {
 		await expect.element(page.getByRole('table')).toBeVisible();
 		await expect.element(page.getByRole('checkbox', { name: 'Select Local Album' })).toBeVisible();
 		await expect.element(page.getByText('Several equally likely releases').first()).toBeVisible();
+	});
+
+	it('counts the latest candidates from the ranked edition keys', async () => {
+		await page.viewport(1280, 720);
+		await renderTable();
+		await expect.element(page.getByText('2 available')).toBeVisible();
+		await renderTable([{ ...item, ranked_edition_keys: [] }]);
+		await expect.element(page.getByText('None').first()).toBeVisible();
 	});
 
 	it('uses the signed empty state for albums kept with local metadata', async () => {

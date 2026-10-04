@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import {
-		cacheCanonicalLibraryAlbumDetail,
-		getLibraryAlbumDetailQuery
-	} from '$lib/queries/library/LibraryQueries.svelte';
+		cacheCanonicalLibraryAlbumDetailV3,
+		getLibraryAlbumDetailV3Query
+	} from '$lib/queries/library/LibraryV3Queries.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import LocalAlbumPage from './LocalAlbumPage.svelte';
 	import ProviderAlbumPage from './ProviderAlbumPage.svelte';
@@ -13,14 +14,14 @@
 	}
 
 	let { data }: Props = $props();
-	const localQuery = getLibraryAlbumDetailQuery(() => data.albumId);
+	const localQuery = getLibraryAlbumDetailV3Query(() => data.albumId);
 	const localAlbum = $derived(localQuery.data);
-	const providerAlbumId = $derived(localAlbum?.musicbrainz_release_group_id ?? null);
+	const providerAlbumId = $derived(localAlbum?.release_group_mbid ?? null);
 	const shouldRedirect = $derived(providerAlbumId !== null && providerAlbumId !== data.albumId);
 
 	$effect(() => {
 		if (localAlbum && shouldRedirect) {
-			void cacheCanonicalLibraryAlbumDetail(localAlbum);
+			void cacheCanonicalLibraryAlbumDetailV3(authStore.user?.id, localAlbum);
 			void goto(albumHref(providerAlbumId ?? data.albumId), { replaceState: true });
 		}
 	});

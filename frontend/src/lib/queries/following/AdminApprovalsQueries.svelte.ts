@@ -2,9 +2,8 @@ import { api } from '$lib/api/client';
 import { createQuery } from '@tanstack/svelte-query';
 import { FollowQueryKeyFactory } from './FollowQueryKeyFactory';
 import { FOLLOW_ENDPOINTS } from './endpoints';
-import type { ApprovalBatchListResponse, AutoDownloadApprovalsResponse } from './types';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { API } from '$lib/constants';
+import { REQUESTS_ENDPOINTS } from '../requests/endpoints';
 
 type Getter<T> = () => T;
 
@@ -12,7 +11,7 @@ export const getAutoDownloadApprovalsQuery = (getEnabled: Getter<boolean>) =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.adminApprovals(),
 		queryFn: ({ signal }) =>
-			api.global.get<AutoDownloadApprovalsResponse>(FOLLOW_ENDPOINTS.adminApprovals(), { signal }),
+			api.global.v3.GET(FOLLOW_ENDPOINTS.adminApprovals(), { signal }),
 		enabled: getEnabled()
 	}));
 
@@ -21,7 +20,7 @@ export const getAutoDownloadApprovalBatchesQuery = (getEnabled: Getter<boolean>)
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.adminApprovalBatches(),
 		queryFn: ({ signal }) =>
-			api.global.get<ApprovalBatchListResponse>(FOLLOW_ENDPOINTS.adminApprovalBatches(), {
+			api.global.v3.GET(FOLLOW_ENDPOINTS.adminApprovalBatches(), {
 				signal
 			}),
 		enabled: getEnabled()
@@ -31,7 +30,7 @@ export const getPendingApprovalCountQuery = (getEnabled: Getter<boolean>) =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.pendingApprovalCount(authStore.user?.id),
 		queryFn: ({ signal }) =>
-			api.global.get<{ count: number }>(API.requests.pendingApprovalCount(), { signal }),
+			api.global.v3.GET(REQUESTS_ENDPOINTS.approvalsCount(), { signal }),
 		enabled: getEnabled() && !!authStore.user?.id,
 		staleTime: 0,
 		refetchInterval: 120_000,

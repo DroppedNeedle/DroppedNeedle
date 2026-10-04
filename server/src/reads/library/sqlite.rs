@@ -103,7 +103,10 @@ const ALBUM_JOINS: &str = "FROM local_albums a \
 const ALBUM_FILTER: &str = "(? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \
     OR a.album_artist_name_folded LIKE ? ESCAPE '\\') \
     AND (? IS NULL OR a.album_artist_id = ?) \
-    AND (? IS NULL OR (a.year >= ? AND a.year < ? + 10))";
+    AND (? IS NULL OR (a.year >= ? AND a.year < ? + 10)) \
+    AND (? IS NULL OR LOWER((SELECT t2.file_format FROM local_tracks t2 \
+     WHERE t2.local_album_id = a.id AND t2.availability = 'indexed' \
+     GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1)) = ?)";
 
 fn album_order(sort: AlbumSort, descending: bool) -> &'static str {
     match (sort, descending) {
@@ -113,6 +116,12 @@ fn album_order(sort: AlbumSort, descending: bool) -> &'static str {
         (AlbumSort::DateAdded, true) => "a.created_at DESC, a.id ASC",
         (AlbumSort::Year, false) => "(a.year IS NULL) ASC, a.year ASC, a.id ASC",
         (AlbumSort::Year, true) => "(a.year IS NULL) ASC, a.year DESC, a.id ASC",
+        (AlbumSort::Artist, false) => {
+            "a.album_artist_name_folded ASC, a.title_folded ASC, a.id ASC"
+        }
+        (AlbumSort::Artist, true) => {
+            "a.album_artist_name_folded DESC, a.title_folded DESC, a.id ASC"
+        }
         (AlbumSort::Random, _) => "RANDOM()",
         (AlbumSort::Rediscover, false) => "a.created_at ASC, a.id ASC",
         (AlbumSort::Rediscover, true) => "a.created_at DESC, a.id ASC",
@@ -287,6 +296,8 @@ impl LibraryCatalog for SqliteCatalog {
             .bind(filter.decade)
             .bind(filter.decade)
             .bind(filter.decade)
+            .bind(filter.format.as_deref())
+            .bind(filter.format.as_deref())
             .bind(limit as i64)
             .bind(offset as i64)
             .fetch_all(pool)
@@ -303,6 +314,8 @@ impl LibraryCatalog for SqliteCatalog {
             .bind(filter.decade)
             .bind(filter.decade)
             .bind(filter.decade)
+            .bind(filter.format.as_deref())
+            .bind(filter.format.as_deref())
             .fetch_one(pool)
             .await
             .map_err(|error| internal("library.albums.count", error))?;
@@ -326,6 +339,26 @@ impl LibraryCatalog for SqliteCatalog {
             .fetch_optional(pool)
             .await
             .map_err(|error| internal("library.albums.get", error))?;
+            Ok(row.as_ref().map(map_album))
+        })
+    }
+
+    fn get_album_by_release_group<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<AlbumRecord>, StoreError>> {
+        Box::pin(async move {
+            let Some(pool) = self.db.live() else {
+                return Err(unwired_store());
+            };
+            let row = sqlx::query(&format!(
+                "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE ae.release_group_mbid = ? \
+                 GROUP BY a.id ORDER BY a.created_at ASC, a.id ASC LIMIT 1"
+            ))
+            .bind(release_group_mbid)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| internal("library.albums.match", error))?;
             Ok(row.as_ref().map(map_album))
         })
     }

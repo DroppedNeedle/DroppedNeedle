@@ -2,6 +2,7 @@
 	import { Shuffle, Play, X, ListPlus, ListStart, ListMusic, Info, Download } from 'lucide-svelte';
 	import { goto } from '$app/navigation';
 	import { API } from '$lib/constants';
+import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 	import { downloadAlbumArchive, downloadTrackFile } from '$lib/utils/downloadActions';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { launchJellyfinPlayback } from '$lib/player/launchJellyfinPlayback';
@@ -235,7 +236,7 @@
 					albumName: t.album_name,
 					coverUrl: t.album_id ? `/api/v1/jellyfin/image/${t.album_id}` : null,
 					sourceType: 'jellyfin' as const,
-					streamUrl: API.stream.jellyfin(t.jellyfin_id),
+					streamUrl: gatewayStreamUrl('jellyfin', t.jellyfin_id),
 					format: normalizeCodec(t.codec)
 				}));
 				playerStore.playQueue(items, 0, false);

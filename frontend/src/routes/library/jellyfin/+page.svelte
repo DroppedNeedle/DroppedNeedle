@@ -1,6 +1,19 @@
 <script lang="ts">
-	import { API } from '$lib/constants';
 	import { api, ApiError } from '$lib/api/client';
+	import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
+	import {
+		getRemoteArtistIndexQuery,
+		getRemoteFavoritesQuery,
+		getRemoteHubQuery,
+		getRemoteMixQuery,
+		getRemoteSimilarQuery
+	} from '$lib/queries/remotes/RemoteQueries.svelte';
+	import type {
+		RemoteAlbum,
+		RemoteArtist,
+		RemoteHub,
+		RemoteTrack
+	} from '$lib/queries/remotes/types';
 	import { getSourcePlaylistsQuery } from '$lib/queries/source-playlists/SourcePlaylistQueries.svelte';
 	import SourceAlbumCardCompact from '$lib/components/SourceAlbumCardCompact.svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
@@ -27,26 +40,17 @@
 	import { buildDiscoveryQueueFromJellyfin } from '$lib/player/queueHelpers';
 	import { formatDurationSec as formatDuration } from '$lib/utils/formatting';
 	import { reveal } from '$lib/actions/reveal';
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { getApiUrl } from '$lib/api/api-utils';
 	import { Tv } from 'lucide-svelte';
 	import type {
-		JellyfinHubResponse,
 		JellyfinAlbumSummary,
 		JellyfinTrackInfo,
-		JellyfinTrackPage,
-		JellyfinFavoritesExpanded,
-		JellyfinArtistIndexResponse,
 		ArtistIndexEntry,
 		BrowseHeroCard
 	} from '$lib/types';
 	import type { DiscoveryTrack } from '$lib/components/DiscoveryTrackTable.svelte';
 
-	let hub = $state<JellyfinHubResponse | null>(null);
-	let loading = $state(true);
-	let error = $state('');
 	const playlistsQuery = getSourcePlaylistsQuery(() => 'jellyfin');
 	const playlistCollection = $derived(playlistsQuery.data);
 	const playlistErrorCode = $derived(
@@ -59,63 +63,138 @@
 
 	let selectedAlbum = $state<JellyfinAlbumSummary | null>(null);
 	let modalOpen = $state(false);
-
-	let favExpanded = $state<JellyfinFavoritesExpanded | null>(null);
 	let favTab = $state<'albums' | 'artists'>('albums');
-
-	let mixTracks = $state<JellyfinTrackInfo[]>([]);
-	let mixLoading = $state(false);
 	let mixLabel = $state('');
+	let refreshing = $state(false);
 
-	let similarAlbums = $state<JellyfinAlbumSummary[]>([]);
-	let similarLoading = $state(false);
-	let similarSeedName = $state('');
-
-	let artistIndex = $state<JellyfinArtistIndexResponse | null>(null);
-	let artistIndexLoading = $state(false);
-	let genericArtistIndex = $derived<ArtistIndexEntry[]>(
-		artistIndex?.index.map((e) => ({
-			name: e.name,
-			artists: e.artists.map((a) => ({
-				id: a.jellyfin_id,
-				name: a.name,
-				image_url: a.image_url,
-				album_count: a.album_count,
-				musicbrainz_id: a.musicbrainz_id
-			}))
-		})) ?? []
+	const hubQuery = getRemoteHubQuery(() => 'jellyfin');
+	const favoritesQuery = getRemoteFavoritesQuery(() => 'jellyfin');
+	const artistIndexQuery = getRemoteArtistIndexQuery(() => 'jellyfin');
+	const mixQuery = getRemoteMixQuery(
+		() => 'jellyfin',
+		() => mixLabel,
+		() => ({ kind: 'genre', limit: 30 })
 	);
 
-	let jellyfinSessions = $derived(nowPlayingMerged.sessionsForSource('jellyfin'));
+	const hub = $derived<RemoteHub | null>(hubQuery.data ?? null);
+	const loading = $derived(hubQuery.isPending);
+	const error = $derived(hubQuery.isError ? "Couldn't connect to Jellyfin." : '');
 
-	let refreshing = $state(false);
+	const similarSeed = $derived(
+		hub?.recently_played?.[0] ?? favoritesQuery.data?.albums?.[0] ?? null
+	);
+	const similarQuery = getRemoteSimilarQuery(
+		() => 'jellyfin',
+		() => similarSeed?.id ?? '',
+		() => ({ limit: 30 })
+	);
+
+	const mixTracks = $derived<RemoteTrack[]>(mixQuery.data?.items ?? []);
+	const mixLoading = $derived(mixQuery.isFetching);
+	const similarSeedName = $derived(similarSeed?.title ?? '');
+	// The v3 similar route returns tracks, so the shelf groups them back
+	// into their albums to keep the album carousel.
+	const similarAlbums = $derived(groupTracksByAlbum(similarQuery.data?.items ?? []));
+	const similarLoading = $derived(similarQuery.isFetching);
+
+	const favoriteAlbums = $derived((favoritesQuery.data?.albums ?? []).map(toAlbumSummary));
+	const favoriteArtists = $derived<RemoteArtist[]>(favoritesQuery.data?.artists ?? []);
+	const recentlyPlayed = $derived((hub?.recently_played ?? []).map(toAlbumSummary));
+	const recentlyAdded = $derived((hub?.recently_added ?? []).map(toAlbumSummary));
+	const allAlbumsPreview = $derived((hub?.all_albums_preview ?? []).map(toAlbumSummary));
+	const mostPlayedArtists = $derived(hub?.most_played_artists ?? []);
+
+	const genericArtistIndex = $derived<ArtistIndexEntry[]>(
+		(artistIndexQuery.data?.index ?? []).map((e) => ({
+			name: e.name,
+			artists: e.artists.map((a) => ({
+				id: a.id,
+				name: a.name,
+				image_url: a.image_url ?? null,
+				album_count: a.album_count ?? undefined,
+				musicbrainz_id: a.artist_mbid ?? null
+			}))
+		}))
+	);
+	const artistIndexLoading = $derived(artistIndexQuery.isFetching);
+
+	const jellyfinSessions = $derived(nowPlayingMerged.sessionsForSource('jellyfin'));
 
 	async function refreshHub() {
 		refreshing = true;
 		try {
-			await playlistsQuery.refetch();
-			hub = await api.get<JellyfinHubResponse>(API.jellyfinLibrary.hub());
-			loadSimilarAlbums();
-			loadFavoritesExpanded();
-			loadArtistIndex();
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			return;
+			await Promise.all([
+				playlistsQuery.refetch(),
+				hubQuery.refetch(),
+				favoritesQuery.refetch(),
+				mixQuery.refetch(),
+				similarQuery.refetch(),
+				artistIndexQuery.refetch()
+			]);
 		} finally {
 			refreshing = false;
 		}
 	}
 
-	function toDiscoveryTracks(tracks: JellyfinTrackInfo[]): DiscoveryTrack[] {
+	// Shared shelves and the album modal still take the per-source summary
+	// shapes, so remote albums map at the page edge.
+	function toAlbumSummary(album: RemoteAlbum): JellyfinAlbumSummary {
+		return {
+			jellyfin_id: album.id,
+			name: album.title,
+			artist_name: album.artist_name,
+			year: album.year ?? null,
+			track_count: album.track_count ?? 0,
+			image_url: album.image_url ?? null,
+			musicbrainz_id: album.release_group_mbid ?? album.release_mbid ?? null,
+			artist_musicbrainz_id: album.artist_mbid ?? null
+		};
+	}
+
+	function toTrackInfo(track: RemoteTrack): JellyfinTrackInfo {
+		return {
+			jellyfin_id: track.id,
+			title: track.title,
+			track_number: track.track_number ?? 0,
+			disc_number: track.disc_number ?? null,
+			duration_seconds: track.duration_secs ?? 0,
+			album_name: track.album_name,
+			artist_name: track.artist_name,
+			album_id: track.album_id ?? undefined,
+			image_url: track.image_url ?? null
+		};
+	}
+
+	function toDiscoveryTracks(tracks: RemoteTrack[]): DiscoveryTrack[] {
 		return tracks.map((t) => ({
-			id: t.jellyfin_id,
+			id: t.id,
 			title: t.title,
 			artist_name: t.artist_name,
 			album_name: t.album_name,
-			album_id: t.album_id,
-			image_url: t.album_id ? getApiUrl(`/api/v1/jellyfin/image/${t.album_id}`) : null,
-			duration_seconds: t.duration_seconds
+			album_id: t.album_id ?? undefined,
+			image_url: t.image_url ?? undefined,
+			duration_seconds: t.duration_secs ?? 0
 		}));
+	}
+
+	function groupTracksByAlbum(tracks: RemoteTrack[]): JellyfinAlbumSummary[] {
+		const albums: JellyfinAlbumSummary[] = [];
+		const seen: string[] = [];
+		for (const t of tracks) {
+			const key = t.album_id ?? t.album_name;
+			if (!key || seen.includes(key)) continue;
+			seen.push(key);
+			albums.push({
+				jellyfin_id: t.album_id ?? key,
+				name: t.album_name,
+				artist_name: t.artist_name,
+				track_count: 0,
+				image_url: t.image_url ?? null,
+				musicbrainz_id: null,
+				year: t.year ?? null
+			});
+		}
+		return albums;
 	}
 
 	function openAlbumDetail(album: JellyfinAlbumSummary) {
@@ -123,24 +202,9 @@
 		modalOpen = true;
 	}
 
-	async function loadInstantMixByGenre(genre: string) {
-		mixLoading = true;
-		mixLabel = genre;
-		try {
-			mixTracks = await api.get<JellyfinTrackInfo[]>(
-				API.jellyfinLibrary.instantMixByGenre(genre, 30)
-			);
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			mixTracks = [];
-		} finally {
-			mixLoading = false;
-		}
-	}
-
 	function playMixTracks(startIndex = 0) {
 		if (mixTracks.length === 0) return;
-		const items = buildDiscoveryQueueFromJellyfin(mixTracks);
+		const items = buildDiscoveryQueueFromJellyfin(mixTracks.map(toTrackInfo));
 		playerStore.playQueue(items, startIndex);
 	}
 
@@ -150,18 +214,24 @@
 		offset: number
 	): Promise<BrowseTrack[]> {
 		if (genres.length === 0) return [];
-		const res = await api.get<JellyfinTrackPage>(
-			API.jellyfinLibrary.genreSongs(genres, limit, offset)
+		// The v3 genre route serves one genre per call, so multi-select fans
+		// out and merges in genre order; paging slices the merged list.
+		const pages = await Promise.all(
+			genres.map((genre) =>
+				api.global.v3.GET(REMOTE_ENDPOINTS.genreSongs('jellyfin', genre, { limit: limit + offset }))
+			)
 		);
-		if (!res) return [];
-		return res.items.map((t) => ({
-			id: t.jellyfin_id,
-			title: t.title,
-			artist_name: t.artist_name,
-			album_name: t.album_name,
-			duration_seconds: t.duration_seconds,
-			image_url: t.image_url ?? undefined
-		}));
+		return pages
+			.flatMap((page) => page.items)
+			.slice(offset, offset + limit)
+			.map((t) => ({
+				id: t.id,
+				title: t.title,
+				artist_name: t.artist_name,
+				album_name: t.album_name,
+				duration_seconds: t.duration_secs ?? 0,
+				image_url: t.image_url ?? undefined
+			}));
 	}
 
 	function buildJellyfinGenreQueue(tracks: BrowseTrack[]) {
@@ -175,24 +245,6 @@
 			image_url: t.image_url ?? null
 		}));
 		return buildDiscoveryQueueFromJellyfin(jellyfinTracks);
-	}
-
-	async function loadSimilarAlbums() {
-		if (!hub) return;
-		const seed = hub.recently_played?.[0] ?? hub.favorites?.[0] ?? hub.most_played_albums?.[0];
-		if (!seed) return;
-		similarSeedName = seed.name;
-		similarLoading = true;
-		try {
-			similarAlbums = await api.get<JellyfinAlbumSummary[]>(
-				API.jellyfinLibrary.similar(seed.jellyfin_id)
-			);
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			similarAlbums = [];
-		} finally {
-			similarLoading = false;
-		}
 	}
 
 	let browseCards = $derived<BrowseHeroCard[]>([
@@ -221,44 +273,6 @@
 			icon: 'music'
 		}
 	]);
-
-	onMount(() => {
-		(async () => {
-			try {
-				hub = await api.get<JellyfinHubResponse>(API.jellyfinLibrary.hub());
-			} catch {
-				error = "Couldn't connect to Jellyfin.";
-			} finally {
-				loading = false;
-			}
-			loadSimilarAlbums();
-			loadFavoritesExpanded();
-			loadArtistIndex();
-		})();
-	});
-
-	async function loadFavoritesExpanded() {
-		try {
-			favExpanded = await api.get<JellyfinFavoritesExpanded>(
-				API.jellyfinLibrary.favoritesExpanded()
-			);
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			favExpanded = null;
-		}
-	}
-
-	async function loadArtistIndex() {
-		artistIndexLoading = true;
-		try {
-			artistIndex = await api.get<JellyfinArtistIndexResponse>(API.jellyfinLibrary.artistsIndex());
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			artistIndex = null;
-		} finally {
-			artistIndexLoading = false;
-		}
-	}
 </script>
 
 <div class="container mx-auto space-y-6 p-6">
@@ -307,7 +321,7 @@
 		<HubPageSkeleton />
 	{:else}
 		<FeaturedAlbumHero
-			albums={hub?.recently_played ?? []}
+			albums={recentlyPlayed}
 			idKey="jellyfin_id"
 			onAlbumClick={(a) => openAlbumDetail(a as JellyfinAlbumSummary)}
 		/>
@@ -337,11 +351,11 @@
 			</div>
 		{/if}
 
-		{#if loading || (favExpanded && (favExpanded.albums.length > 0 || favExpanded.artists.length > 0))}
+		{#if loading || favoriteAlbums.length > 0 || favoriteArtists.length > 0}
 			<div use:reveal>
 				<HubShelf title="Favorites" {loading}>
 					<div class="flex gap-2 mb-3">
-						{#if !favExpanded || favExpanded.albums.length > 0}
+						{#if loading || favoriteAlbums.length > 0}
 							<button
 								class="badge cursor-pointer"
 								class:badge-primary={favTab === 'albums'}
@@ -349,7 +363,7 @@
 								onclick={() => (favTab = 'albums')}>Albums</button
 							>
 						{/if}
-						{#if !favExpanded || favExpanded.artists.length > 0}
+						{#if loading || favoriteArtists.length > 0}
 							<button
 								class="badge cursor-pointer"
 								class:badge-primary={favTab === 'artists'}
@@ -359,9 +373,9 @@
 						{/if}
 					</div>
 					{#if favTab === 'albums'}
-						{#if favExpanded && favExpanded.albums.length > 0}
+						{#if favoriteAlbums.length > 0}
 							<HorizontalCarousel>
-								{#each favExpanded.albums as album (album.jellyfin_id)}
+								{#each favoriteAlbums as album (album.jellyfin_id)}
 									<SourceAlbumCardCompact
 										imageId={album.musicbrainz_id ?? album.jellyfin_id}
 										imageUrl={album.image_url}
@@ -372,13 +386,13 @@
 								{/each}
 							</HorizontalCarousel>
 						{/if}
-					{:else if favExpanded && favExpanded.artists.length > 0}
+					{:else if favoriteArtists.length > 0}
 						<HorizontalCarousel>
-							{#each favExpanded.artists as artist (artist.jellyfin_id)}
+							{#each favoriteArtists as artist (artist.id)}
 								<div class="shrink-0 w-28 text-center">
 									<div class="w-24 h-24 mx-auto rounded-full overflow-hidden shadow-sm">
 										<ArtistImage
-											mbid={artist.musicbrainz_id ?? artist.jellyfin_id}
+											mbid={artist.artist_mbid ?? artist.id}
 											remoteUrl={artist.image_url}
 											alt={artist.name}
 											size="full"
@@ -387,7 +401,7 @@
 									</div>
 									<p class="text-sm font-medium mt-1 line-clamp-1">{artist.name}</p>
 									<p class="text-xs opacity-60">
-										{artist.album_count} album{artist.album_count !== 1 ? 's' : ''}
+										{artist.album_count ?? 0} album{(artist.album_count ?? 0) !== 1 ? 's' : ''}
 									</p>
 								</div>
 							{/each}
@@ -404,7 +418,7 @@
 					loading={mixLoading}
 					empty={!mixLoading && mixTracks.length === 0}
 					emptyMessage="Pick a genre to build a mix."
-					onrefresh={mixLabel ? () => loadInstantMixByGenre(mixLabel) : undefined}
+					onrefresh={mixLabel ? () => void mixQuery.refetch() : undefined}
 				>
 					{#snippet actions()}
 						{#if hub && hub.genres.length > 0}
@@ -413,7 +427,7 @@
 								selected={mixLabel || undefined}
 								loading={mixLoading}
 								onselect={(g) => {
-									if (g) loadInstantMixByGenre(g);
+									if (g) mixLabel = g;
 								}}
 							/>
 						{/if}
@@ -426,7 +440,7 @@
 							<button
 								class="btn btn-ghost btn-sm"
 								onclick={() => {
-									const items = buildDiscoveryQueueFromJellyfin(mixTracks);
+									const items = buildDiscoveryQueueFromJellyfin(mixTracks.map(toTrackInfo));
 									playerStore.playQueue(items, 0, true);
 								}}
 							>
@@ -456,9 +470,9 @@
 
 		<div use:reveal>
 			<HubShelf title="Recently Added" {loading}>
-				{#if hub && hub.recently_added.length > 0}
+				{#if recentlyAdded.length > 0}
 					<AlbumGrid
-						albums={hub.recently_added}
+						albums={recentlyAdded}
 						idKey="jellyfin_id"
 						onAlbumClick={(a) => openAlbumDetail(a as JellyfinAlbumSummary)}
 					/>
@@ -468,30 +482,18 @@
 			</HubShelf>
 		</div>
 
-		{#if hub && (hub.most_played_artists.length > 0 || hub.most_played_albums.length > 0)}
+		{#if mostPlayedArtists.length > 0}
 			<div use:reveal>
 				<HubShelf title="Most Played" {loading}>
 					<MostPlayedSection
-						artists={hub.most_played_artists.map((a) => ({
-							id: a.jellyfin_id,
+						artists={mostPlayedArtists.map((a) => ({
+							id: a.id,
 							name: a.name,
 							image_url: a.image_url,
-							musicbrainz_id: a.musicbrainz_id,
-							play_count: a.play_count,
-							album_count: a.album_count
+							musicbrainz_id: a.artist_mbid,
+							album_count: a.album_count ?? undefined
 						}))}
-						albums={hub.most_played_albums.map((a) => ({
-							id: a.jellyfin_id,
-							name: a.name,
-							artist_name: a.artist_name,
-							image_url: a.image_url,
-							musicbrainz_id: a.musicbrainz_id,
-							play_count: a.play_count
-						}))}
-						onAlbumClick={(album) => {
-							const orig = hub?.most_played_albums.find((a) => a.jellyfin_id === album.id);
-							if (orig) openAlbumDetail(orig);
-						}}
+						albums={[]}
 					/>
 				</HubShelf>
 			</div>
@@ -526,9 +528,9 @@
 				seeAllHref={withBasePath('/library/jellyfin/albums')}
 				{loading}
 			>
-				{#if hub && hub.all_albums_preview.length > 0}
+				{#if allAlbumsPreview.length > 0}
 					<HorizontalCarousel>
-						{#each hub?.all_albums_preview ?? [] as album (album.jellyfin_id)}
+						{#each allAlbumsPreview as album (album.jellyfin_id)}
 							<SourceAlbumCardCompact
 								imageId={album.musicbrainz_id ?? album.jellyfin_id}
 								imageUrl={album.image_url}

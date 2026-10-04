@@ -1,11 +1,12 @@
 import { writable, get } from 'svelte/store';
 import { browser } from '$app/environment';
-import { API, PAGE_SOURCE_KEYS } from '$lib/constants';
+import { PAGE_SOURCE_KEYS } from '$lib/constants';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { queryClient, setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
 import { ScrobblePreferencesQueryKeyFactory } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQueryKeyFactory';
+import { SCROBBLE_PREFERENCES_ENDPOINTS } from '$lib/queries/scrobble-preferences/endpoints';
 import { registerUserSessionReset } from '$lib/utils/userSessionCleanup';
 
 export type MusicSource = 'listenbrainz' | 'lastfm';
@@ -108,8 +109,14 @@ function createMusicSourceStore() {
 		const userId = authStore.user?.id;
 		if (!userId) return false;
 		try {
-			const preferences = await api.global.put<ScrobblePreferences>(API.me.scrobblePreferences(), {
-				primary_music_source: source
+			// Null fields mean "leave unchanged"; only the source moves.
+			const preferences = await api.global.v3.PUT(SCROBBLE_PREFERENCES_ENDPOINTS.update(), {
+				primary_music_source: source,
+				auto_request_personal_mix: null,
+				navidrome_handles_external_scrobbles: null,
+				now_playing_visibility: null,
+				scrobble_to_lastfm: null,
+				scrobble_to_listenbrainz: null
 			});
 			if (authStore.user?.id !== userId || mutationVersion !== saveVersion) return true;
 			await setQueryDataWithPersister(ScrobblePreferencesQueryKeyFactory.get(userId), preferences);

@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import type { PlaylistSummary } from '$lib/api/playlists';
-	import { fetchPlaylist, deletePlaylist, isRedactedPlaylist } from '$lib/api/playlists';
+	import { fetchPlaylist, isRedactedPlaylist } from '$lib/api/playlists';
+	import { deletePlaylistV3 } from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
 	import { playlistTrackToQueueItem } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -20,6 +21,8 @@
 	}
 
 	let { playlist, ondelete }: Props = $props();
+
+	const deleteMutation = deletePlaylistV3();
 
 	// Mutations (delete) are owner-only; admins may delete any playlist for cleanup (D4).
 	let canDelete = $derived(playlist.is_owner || authStore.isAdmin);
@@ -125,7 +128,7 @@
 		clearTimeout(confirmTimer);
 		deleting = true;
 		try {
-			await deletePlaylist(playlist.id);
+			await deleteMutation.mutateAsync(playlist.id);
 			toastStore.show({ message: 'Playlist deleted.', type: 'success' });
 			ondelete?.(playlist.id);
 		} catch {

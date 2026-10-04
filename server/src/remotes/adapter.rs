@@ -509,6 +509,17 @@ impl RemoteHandle {
         }
     }
 
+    /// Random tracks, optionally filtered by genre. Navidrome is a
+    /// `getRandomSongs` passthrough, Jellyfin sorts Audio by `Random`,
+    /// Plex has no such endpoint and answers `Unsupported`.
+    pub async fn random(&self, limit: i64, genre: &str) -> Result<Vec<TrackView>, AdapterError> {
+        match self {
+            Self::Jellyfin(inner) => inner.random(limit, genre).await,
+            Self::Navidrome(inner) => inner.random(limit, genre).await,
+            Self::Plex(inner) => inner.random(limit, genre).await,
+        }
+    }
+
     /// Tracks similar to one track.
     pub async fn similar(&self, id: &str, limit: i64) -> Result<Vec<TrackView>, AdapterError> {
         match self {

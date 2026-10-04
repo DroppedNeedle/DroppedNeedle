@@ -21,6 +21,7 @@ const album: LibraryAlbumDetail = {
 	format: 'flac',
 	year: 2024,
 	is_compilation: false,
+	release_type: 'album',
 	cover_available: true,
 	date_added: 1,
 	sort_name: null,
@@ -167,9 +168,9 @@ const h = vi.hoisted(() => ({
 	conversionRefetch: vi.fn()
 }));
 
-vi.mock('$lib/stores/authStore.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/stores/authStore.svelte')>()),
-	authStore: { user: { id: 'admin-1' } }
+vi.mock('$lib/stores/authStore.svelte', () => ({
+	authStore: { user: { id: 'admin-1' } },
+	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
 	getLibraryOperationQuery: (getId: () => string | null) => {

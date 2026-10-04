@@ -67,19 +67,19 @@
 		}
 	}
 
-	function isArtist(item: HomeArtist | HomeAlbum | HomeTrack | HomeGenre): item is HomeArtist {
+	function isArtist(_item: HomeArtist | HomeAlbum | HomeTrack | HomeGenre): _item is HomeArtist {
 		return section.type === 'artists';
 	}
 
-	function isAlbum(item: HomeArtist | HomeAlbum | HomeTrack | HomeGenre): item is HomeAlbum {
+	function isAlbum(_item: HomeArtist | HomeAlbum | HomeTrack | HomeGenre): _item is HomeAlbum {
 		return section.type === 'albums';
 	}
 
-	function isTrack(item: HomeArtist | HomeAlbum | HomeTrack | HomeGenre): item is HomeTrack {
+	function isTrack(_item: HomeArtist | HomeAlbum | HomeTrack | HomeGenre): _item is HomeTrack {
 		return section.type === 'tracks';
 	}
 
-	function isGenre(item: HomeArtist | HomeAlbum | HomeTrack | HomeGenre): item is HomeGenre {
+	function isGenre(_item: HomeArtist | HomeAlbum | HomeTrack | HomeGenre): _item is HomeGenre {
 		return section.type === 'genres';
 	}
 </script>

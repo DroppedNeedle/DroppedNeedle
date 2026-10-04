@@ -19,7 +19,6 @@
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import LiveUpdatingBadge from '$lib/components/LiveUpdatingBadge.svelte';
-	import { api } from '$lib/api/client';
 	import { isDismissed } from '$lib/utils/dismissedPrompts';
 	import { withBasePath } from '$lib/utils/basePath';
 	import {
@@ -36,30 +35,33 @@
 		Heart,
 		SlidersHorizontal
 	} from 'lucide-svelte';
-	import { getDiscoverQuery } from '$lib/queries/discover/DiscoverQuery.svelte';
-	import { getIgnoreDiscoveryMutation } from '$lib/queries/discover/DiscoverMutations.svelte';
+	import { getDiscoverHomeV3Query } from '$lib/queries/discover/DiscoverV3Queries.svelte';
+	import {
+		getIgnoreDiscoveryV3Mutation,
+		getRefreshDiscoverV3Mutation,
+		useDiscoverActivityV3
+	} from '$lib/queries/discover/DiscoverV3Mutations.svelte';
 	import type { TopPickItem } from '$lib/types';
 	import { getSectionPrefsQuery } from '$lib/queries/section-prefs/SectionPrefsQuery.svelte';
 	import { discoverHasContent } from '$lib/utils/discoverContent';
-	import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
-	import { authStore } from '$lib/stores/authStore.svelte';
-	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-	import { API } from '$lib/constants';
-	import { useDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
+	import { toDiscoverResponseV1 } from '$lib/queries/discover/DiscoverV3Adapters';
 
-	useDiscoverActivity(() => ({ feature: 'discover' }));
+	useDiscoverActivityV3(() => ({ feature: 'discover' }));
 
 	let playlistDiscoverOpen = $state(false);
 
-	const discoverQuery = getDiscoverQuery();
-	const ignoreDiscoveryMutation = getIgnoreDiscoveryMutation();
+	const discoverQuery = getDiscoverHomeV3Query();
+	const ignoreDiscoveryMutation = getIgnoreDiscoveryV3Mutation();
+	const refreshDiscoverMutation = getRefreshDiscoverV3Mutation();
 	const sectionPrefsQuery = getSectionPrefsQuery();
 	// client-only chrome: the backend can't blank an action card, so filter here
 	const playlistDiscoveryEnabled = $derived(
 		sectionPrefsQuery.data?.pages?.discover?.find((s) => s.key === 'playlist_discovery')?.enabled ??
 			true
 	);
-	const discoverData = $derived(discoverQuery.data ?? null);
+	const discoverData = $derived(
+		discoverQuery.data ? toDiscoverResponseV1(discoverQuery.data) : null
+	);
 	const loading = $derived(discoverQuery.isLoading);
 	const refreshing = $derived(discoverQuery.isFetching && !discoverQuery.isLoading);
 	const isUpdating = $derived(discoverQuery.isRefetching && !!discoverData);
@@ -69,10 +71,7 @@
 	const error = $derived(discoverQuery.error?.message ?? '');
 
 	async function handleRefresh() {
-		await api.global.post(API.discoverRefresh());
-		await invalidateQueriesWithPersister({
-			queryKey: DiscoverQueryKeyFactory.discover(authStore.user?.id)
-		});
+		await refreshDiscoverMutation.mutateAsync();
 	}
 
 	async function handleIgnoreTopPick(pick: TopPickItem) {

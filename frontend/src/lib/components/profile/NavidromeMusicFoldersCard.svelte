@@ -1,9 +1,10 @@
 <script lang="ts">
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
-	import { getNavidromeFolderPreferenceQuery } from '$lib/queries/navidrome-folders/NavidromeFolderQueries.svelte';
-	import { createUpdateNavidromeFolderPreferenceMutation } from '$lib/queries/navidrome-folders/NavidromeFolderMutations.svelte';
-	import type { NavidromeFolderPreferenceMode } from '$lib/types';
+	import { getRemoteFoldersQuery } from '$lib/queries/remotes/RemoteQueries.svelte';
+	import { createSaveRemoteFoldersMutation } from '$lib/queries/remotes/RemoteMutations.svelte';
 	import { CircleAlert, Folder, Save } from 'lucide-svelte';
+
+	type FolderMode = 'all' | 'selected';
 
 	interface Props {
 		userId: string;
@@ -11,13 +12,13 @@
 
 	let { userId }: Props = $props();
 
-	const preferenceQuery = getNavidromeFolderPreferenceQuery(() => userId);
-	const updateMutation = createUpdateNavidromeFolderPreferenceMutation(() => userId);
+	const preferenceQuery = getRemoteFoldersQuery(() => Boolean(userId));
+	const updateMutation = createSaveRemoteFoldersMutation();
 	const preference = $derived(preferenceQuery.data);
 	const unavailable = $derived(preference ? !preference.source_available : false);
 	const staleIds = $derived(preference?.stale_folder_ids ?? []);
 
-	let mode = $state<NavidromeFolderPreferenceMode>('all');
+	let mode = $state<FolderMode>('all');
 	let selectedIds = $state<string[]>([]);
 	let loadedPreference = $state('');
 
@@ -25,17 +26,16 @@
 		if (!preference) return;
 		const fingerprint = JSON.stringify([
 			preference.mode,
-			preference.selected_folder_ids,
-			preference.scope_revision,
+			preference.folder_ids,
 			preference.source_available
 		]);
 		if (fingerprint === loadedPreference) return;
 		loadedPreference = fingerprint;
-		mode = preference.mode;
-		selectedIds = [...preference.selected_folder_ids];
+		mode = preference.mode as FolderMode;
+		selectedIds = [...preference.folder_ids];
 	});
 
-	function setMode(nextMode: NavidromeFolderPreferenceMode) {
+	function setMode(nextMode: FolderMode) {
 		mode = nextMode;
 	}
 

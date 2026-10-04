@@ -1,18 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { PlexTrackInfo } from '$lib/types';
+import type { PlexTrackInfo } from '$lib/player/types';
 import type { PlaybackMeta, QueueItem } from '$lib/player/types';
 
 vi.mock('$lib/stores/player.svelte', () => ({
 	playerStore: { playQueue: vi.fn() }
 }));
 
-vi.mock('$lib/constants', () => ({
-	API: {
-		stream: {
-			plex: (id: string) => `/api/v1/stream/plex/${id}`
-		}
-	}
-}));
 
 vi.mock('$lib/utils/errorHandling', () => ({
 	getCoverUrl: (url: string | null, albumId: string) => url || `/api/v1/covers/${albumId}`
@@ -63,7 +56,7 @@ describe('launchPlexPlayback', () => {
 		expect(items[0].trackSourceId).toBe('/library/parts/100/1234/file.flac');
 		expect(items[0].trackName).toBe('Song A');
 		expect(items[0].sourceType).toBe('plex');
-		expect(items[0].streamUrl).toBe('/api/v1/stream/plex//library/parts/100/1234/file.flac');
+		expect(items[0].streamUrl).toBe('/api/v3/stream/plex//library/parts/100/1234/file.flac');
 		expect(items[0].plexRatingKey).toBe('pk-100');
 	});
 

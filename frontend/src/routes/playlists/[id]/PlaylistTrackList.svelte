@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { slide, fly } from 'svelte/transition';
+	import type { PlaylistDetail, PlaylistTrack } from '$lib/api/playlists';
 	import {
-		removeTrackFromPlaylist,
-		removeTracksFromPlaylist,
-		updatePlaylistTrack,
-		reorderPlaylistTrack,
-		type PlaylistDetail,
-		type PlaylistTrack
-	} from '$lib/api/playlists';
+		removePlaylistTrackV3,
+		removePlaylistTracksV3,
+		reorderPlaylistTrackV3,
+		updatePlaylistTrackV3
+	} from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
+	import { toPageTrack } from '$lib/queries/playlists/playlistV3Adapter';
 	import { playlistTrackToQueueItem } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -47,6 +47,11 @@
 	let lastClickedIndex = $state<number | null>(null);
 	let bulkRemoving = $state(false);
 	let selectionMode = $derived(selectedIds.size > 0);
+
+	const removeTrackMutation = removePlaylistTrackV3();
+	const removeTracksMutation = removePlaylistTracksV3();
+	const updateTrackMutation = updatePlaylistTrackV3();
+	const reorderTrackMutation = reorderPlaylistTrackV3();
 
 	function toggleTrackSelection(trackId: string, index: number, shiftKey: boolean) {
 		if (shiftKey && lastClickedIndex !== null) {
@@ -94,7 +99,7 @@
 		clearSelection();
 
 		try {
-			await removeTracksFromPlaylist(playlist.id, ids);
+			await removeTracksMutation.mutateAsync({ id: playlist.id, trackIds: ids });
 			toastStore.show({ message: `Removed ${count} track${count === 1 ? '' : 's'}`, type: 'info' });
 			liveMessage = `${count} track${count === 1 ? '' : 's'} removed from playlist`;
 			ontrackchange();
@@ -131,7 +136,7 @@
 		playlist.track_count = playlist.tracks.length;
 		playlist.total_duration = Math.max(0, (playlist.total_duration ?? 0) - (track.duration ?? 0));
 		try {
-			await removeTrackFromPlaylist(playlist.id, track.id);
+			await removeTrackMutation.mutateAsync({ id: playlist.id, trackId: track.id });
 			toastStore.show({ message: `Removed "${track.track_name}"`, type: 'info' });
 			liveMessage = `${track.track_name} removed from playlist`;
 			ontrackchange();
@@ -169,9 +174,12 @@
 		const prevFormat = track.format;
 		track.source_type = newSourceType;
 		try {
-			const updated = await updatePlaylistTrack(playlist.id, track.id, {
-				source_type: newSourceType
+			const retargeted = await updateTrackMutation.mutateAsync({
+				id: playlist.id,
+				trackId: track.id,
+				sourceType: newSourceType
 			});
+			const updated = toPageTrack(retargeted);
 			track.track_source_id = updated.track_source_id;
 			track.source_type = updated.source_type;
 			track.format = updated.format;
@@ -234,7 +242,11 @@
 		dragOverIndex = null;
 
 		try {
-			await reorderPlaylistTrack(playlist.id, track.id, toIndex);
+			await reorderTrackMutation.mutateAsync({
+				id: playlist.id,
+				trackId: track.id,
+				newPosition: toIndex
+			});
 			liveMessage = `Track moved to position ${toIndex + 1}`;
 		} catch {
 			playlist.tracks = prevTracks;
@@ -288,7 +300,11 @@
 			pendingReorderPosition = null;
 			reorderTimeout = null;
 			try {
-				await reorderPlaylistTrack(playlist.id, trackId, position);
+				await reorderTrackMutation.mutateAsync({
+					id: playlist.id,
+					trackId,
+					newPosition: position
+				});
 			} catch {
 				if (savedTracks) playlist.tracks = savedTracks;
 				toastStore.show({ message: "Couldn't reorder that track", type: 'error' });

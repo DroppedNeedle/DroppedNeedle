@@ -63,6 +63,8 @@ pub struct PlaylistSummary {
     pub cover_urls: Vec<String>,
     /// Custom cover URL, when one was uploaded.
     pub custom_cover_url: Option<String>,
+    /// Import provenance (`<source>:<id>`), when the playlist was imported.
+    pub source_ref: Option<String>,
     /// Creation time, epoch seconds.
     pub created_at: u64,
     /// Last mutation time, epoch seconds.
@@ -88,6 +90,8 @@ pub struct PlaylistDetail {
     pub cover_urls: Vec<String>,
     /// Custom cover URL, when one was uploaded.
     pub custom_cover_url: Option<String>,
+    /// Import provenance (`<source>:<id>`), when the playlist was imported.
+    pub source_ref: Option<String>,
     /// Tracks in position order.
     pub tracks: Vec<PlaylistTrack>,
     /// Track count.
@@ -144,6 +148,8 @@ pub struct PlaylistListResponse {
 pub struct CreatePlaylistBody {
     /// Display name. Must not be blank.
     pub name: String,
+    /// Import provenance (`<source>:<id>`), when the playlist was imported.
+    pub source_ref: Option<String>,
 }
 
 /// Rename-playlist body. A missing name leaves the playlist unchanged.

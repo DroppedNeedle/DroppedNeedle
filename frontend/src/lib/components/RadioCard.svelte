@@ -3,7 +3,8 @@
 	import HomeSection from '$lib/components/HomeSection.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
-	import { getRadioQuery } from '$lib/queries/discover/DiscoverQuery.svelte';
+	import { getDiscoverRadioV3Query } from '$lib/queries/discover/DiscoverV3Queries.svelte';
+	import { toHomeSection } from '$lib/queries/discover/DiscoverV3Adapters';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -21,13 +22,14 @@
 	let { seedType, seedId, initialSection = null }: Props = $props();
 
 	let expanded = $state(false);
-	const radioQuery = getRadioQuery(() => ({ seedType, seedId, enabled: expanded }));
+	const radioQuery = getDiscoverRadioV3Query(() => ({ seedType, seedId, enabled: expanded }));
+	const freshSection = $derived(radioQuery.data ? toHomeSection(radioQuery.data) : undefined);
 	const section = $derived(
-		radioQuery.data?.items.length ? radioQuery.data : (initialSection ?? radioQuery.data)
+		freshSection?.items.length ? freshSection : (initialSection ?? freshSection)
 	);
 
 	const albumItems = $derived(
-		section ? section.items.filter((item): item is HomeAlbum => section.type === 'albums') : []
+		section ? section.items.filter((_item): _item is HomeAlbum => section.type === 'albums') : []
 	);
 	const featuredAlbum = $derived(albumItems[0] ?? null);
 	const albumCount = $derived(albumItems.length);
@@ -38,7 +40,7 @@
 
 	async function handleRefresh() {
 		await invalidateQueriesWithPersister({
-			queryKey: DiscoverQueryKeyFactory.radio(authStore.user?.id, seedType, seedId)
+			queryKey: DiscoverQueryKeyFactory.v3.radio(authStore.user?.id, seedType, seedId, {})
 		});
 	}
 </script>

@@ -13,7 +13,8 @@
 	import AlbumRequestButton from '$lib/components/AlbumRequestButton.svelte';
 	import GenreAlbumCard from '$lib/components/GenreAlbumCard.svelte';
 	import SampleButton from '$lib/components/discover/SampleButton.svelte';
-	import { getPlaylistSuggestionsQuery } from '$lib/queries/discover/DiscoverQuery.svelte';
+	import { getDiscoverPlaylistSuggestionsV3Query } from '$lib/queries/discover/DiscoverV3Queries.svelte';
+	import { toHomeSection } from '$lib/queries/discover/DiscoverV3Adapters';
 	import { getPlaylistListQuery } from '$lib/queries/playlists/PlaylistQuery.svelte';
 	import { isRedactedPlaylist, type PlaylistSummary } from '$lib/api/playlists';
 	import { fetchAlbumTracks } from '$lib/api/albums';
@@ -55,13 +56,15 @@
 	);
 	const playlistsLoading = $derived(playlistListQuery.isLoading);
 
-	const suggestionsQuery = getPlaylistSuggestionsQuery(() => ({
+	const suggestionsQuery = getDiscoverPlaylistSuggestionsV3Query(() => ({
 		playlistId: activePlaylistId,
 		count: suggestionCount,
 		enabled: open
 	}));
 
-	const suggestions = $derived(suggestionsQuery.data?.suggestions ?? null);
+	const suggestions = $derived(
+		suggestionsQuery.data ? toHomeSection(suggestionsQuery.data.suggestions) : null
+	);
 	const profile = $derived(suggestionsQuery.data?.profile ?? null);
 	const isLoading = $derived(suggestionsQuery.isLoading && !!activePlaylistId);
 	const isError = $derived(suggestionsQuery.isError);
@@ -73,8 +76,9 @@
 	});
 
 	const topGenres = $derived.by(() => {
-		if (!profile?.genre_distribution) return [];
-		const entries = Object.entries(profile.genre_distribution);
+		const distribution = profile?.genre_distribution ?? {};
+		const entries = Object.entries(distribution);
+		if (entries.length === 0) return [];
 		entries.sort((a, b) => b[1].length - a[1].length);
 		return entries.slice(0, 5).map(([genre]) => genre);
 	});
@@ -358,11 +362,12 @@
 								<div class="flex flex-wrap items-center gap-4 text-sm">
 									<span class="inline-flex items-center gap-1.5 text-base-content/70">
 										<Music2 class="h-3.5 w-3.5" />
-										{profile.track_count} track{profile.track_count === 1 ? '' : 's'}
+										{profile.track_count ?? 0} track{(profile.track_count ?? 0) === 1 ? '' : 's'}
 									</span>
 									<span class="inline-flex items-center gap-1.5 text-base-content/70">
 										<Users class="h-3.5 w-3.5" />
-										{profile.artist_mbids.length} artist{profile.artist_mbids.length === 1
+										{(profile.artist_mbids ?? []).length} artist{(profile.artist_mbids ?? [])
+											.length === 1
 											? ''
 											: 's'}
 									</span>

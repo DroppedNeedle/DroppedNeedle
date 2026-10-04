@@ -926,3 +926,49 @@ fn failover_identities_match_the_consult() {
     assert!(failover_identities("usenet", "", &[], "").is_empty());
     assert!(failover_identities("plugin:x", "u", &files, "job").is_empty());
 }
+
+// Reimport requeues a linked failed task with its candidate kept, and
+// refuses unlinked, live, or missing tasks (v2 reimport guard).
+#[test]
+fn reimport_requeues_linked_failed_tasks() {
+    let dir = scratch_dir("reimport");
+    let conn = scratch_store(&dir);
+    let now = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    let store = DownloadStore::new(&conn);
+    store.insert_task(&new_task("linked"), now).unwrap();
+    store.insert_task(&new_task("bare"), now).unwrap();
+    store.insert_task(&new_task("live"), now).unwrap();
+    store
+        .link_candidate("linked", "peer", "job-1", 2, now)
+        .unwrap();
+    store
+        .link_candidate("live", "peer", "job-1", 0, now)
+        .unwrap();
+    store
+        .transition_task("linked", TaskStatus::Failed, now, Some("mount gone"))
+        .unwrap();
+    store
+        .transition_task("bare", TaskStatus::Failed, now, Some("mount gone"))
+        .unwrap();
+
+    assert!(store.is_reimportable("linked").unwrap());
+    assert!(!store.is_reimportable("bare").unwrap());
+    assert!(!store.is_reimportable("live").unwrap());
+    assert!(!store.is_reimportable("missing").unwrap());
+
+    let row = store.reimport_task("linked", now).unwrap().unwrap();
+    assert_eq!(row.status, TaskStatus::Queued);
+    assert!(row.error_message.is_none());
+    assert_eq!(row.candidate_index, Some(2));
+    assert_eq!(row.source_username.as_deref(), Some("peer"));
+    assert_eq!(row.search_job_id.as_deref(), Some("job-1"));
+    // Back in line, so the guard no longer passes for it.
+    assert!(!store.is_reimportable("linked").unwrap());
+
+    assert!(store.reimport_task("bare", now).unwrap().is_none());
+    assert!(store.reimport_task("live", now).unwrap().is_none());
+    assert!(store.reimport_task("missing", now).unwrap().is_none());
+}

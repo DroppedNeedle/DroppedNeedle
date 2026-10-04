@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient } from '@tanstack/svelte-query';
 import { CACHE_KEYS } from '$lib/constants';
+import {
+	resetMusicBrainzSourceScope,
+	setMusicBrainzSourceScope
+} from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { HomeQueryKeyFactory } from './HomeQueryKeyFactory';
 import { setQueueCachedData } from '$lib/utils/discoverQueueCache';
 import { overviewCacheSuffix } from '$lib/utils/timeRangeCache';
@@ -11,6 +15,7 @@ import { clearUserScopedLocalCaches } from '$lib/utils/userScopedCaches';
 describe('clear-on-user-switch (AMU-5)', () => {
 	beforeEach(() => {
 		localStorage.clear();
+		resetMusicBrainzSourceScope();
 	});
 
 	it('queryClient.clear() drops the user-keyed home entry', () => {
@@ -24,6 +29,12 @@ describe('clear-on-user-switch (AMU-5)', () => {
 	});
 
 	it('clearUserScopedLocalCaches() removes the prior user discover-queue + time-range entries', () => {
+		// The queue writer drops data without a source scope; establish one so
+		// the seeded entry exists to be cleared.
+		setMusicBrainzSourceScope(
+			{ source_mode: 'mirror', source_id: 'mirror-a', generation: 7 },
+			'user-a'
+		);
 		setQueueCachedData({ items: [], currentIndex: 0, queueId: 'q-a' }, 'user-a');
 		const queueKey = `${CACHE_KEYS.DISCOVER_QUEUE}_user-a`;
 		const trKey = `${CACHE_KEYS.TIME_RANGE_OVERVIEW_CACHE}_${overviewCacheSuffix(
@@ -93,15 +104,15 @@ describe('clear-on-user-switch (AMU-5)', () => {
 		] as const;
 		const namespaces = [...userNamespaces, ...navidromeNamespaces];
 		const seededKeys = namespaces;
-		const failedKeys = new Set([userNamespaces[0], userNamespaces[3]]);
+		const failedKeys: Set<string> = new Set([userNamespaces[0], userNamespaces[3]]);
 		for (const key of seededKeys) localStorage.setItem(key, 'cached');
 
 		const attemptedKeys = new Set<string>();
 		const originalRemoveItem = Storage.prototype.removeItem;
-		const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (key) {
+		const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation((key) => {
 			attemptedKeys.add(key);
 			if (failedKeys.has(key)) throw new Error(`remove failed for ${key}`);
-			return originalRemoveItem.call(this, key);
+			return originalRemoveItem.call(localStorage, key);
 		});
 
 		try {

@@ -1,12 +1,12 @@
 import { page } from '@vitest/browser/context';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { PlaylistListItem, PlaylistSummary, RedactedPlaylist } from '$lib/api/playlists';
+import type { PlaylistListItemV3 } from '$lib/queries/playlists/PlaylistV3Queries.svelte';
 
 // The list page consumes the user-scoped TanStack query + create mutation; stub both so
 // the page renders without a QueryClientProvider and tests drive data directly.
 const listQuery = {
-	data: [] as PlaylistListItem[],
+	data: [] as PlaylistListItemV3[],
 	isLoading: false,
 	isError: false,
 	error: null as Error | null,
@@ -14,21 +14,22 @@ const listQuery = {
 };
 const mockMutateAsync = vi.fn();
 
-vi.mock('$lib/queries/playlists/PlaylistQuery.svelte', () => ({
-	getPlaylistListQuery: () => listQuery
+vi.mock('$lib/queries/playlists/PlaylistV3Queries.svelte', () => ({
+	getPlaylistListV3Query: () => listQuery
 }));
-vi.mock('$lib/queries/playlists/PlaylistMutations.svelte', () => ({
-	createCreatePlaylistMutation: () => ({ mutateAsync: mockMutateAsync, isPending: false })
+vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
+	createPlaylistV3: () => ({ mutateAsync: mockMutateAsync, isPending: false }),
+	deletePlaylistV3: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/queries/connections/ConnectionsQuery.svelte', () => ({
 	getConnectionsQuery: () => ({ data: undefined, isPending: false })
 }));
 
-// PlaylistCard pulls these in; the list tests never trigger them.
-vi.mock('$lib/api/playlists', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/api/playlists')>()),
-	fetchPlaylist: vi.fn(),
-	deletePlaylist: vi.fn()
+// PlaylistCard pulls this in; the list tests never trigger it.
+vi.mock('$lib/api/playlists', () => ({
+	isRedactedPlaylist: (p: { is_redacted?: boolean } | null | undefined) =>
+		p?.is_redacted === true,
+	fetchPlaylist: vi.fn()
 }));
 
 const mockToastShow = vi.fn();
@@ -43,7 +44,7 @@ vi.mock('$app/navigation', () => ({
 
 import PlaylistsPage from './+page.svelte';
 
-function makePlaylist(overrides: Partial<PlaylistSummary> = {}): PlaylistSummary {
+function makePlaylist(overrides: Record<string, unknown> = {}): PlaylistListItemV3 {
 	return {
 		id: 'pl-1',
 		name: 'Test Playlist',
@@ -52,8 +53,8 @@ function makePlaylist(overrides: Partial<PlaylistSummary> = {}): PlaylistSummary
 		cover_urls: [],
 		custom_cover_url: null,
 		source_ref: null,
-		created_at: '2026-01-01T00:00:00Z',
-		updated_at: '2026-01-02T00:00:00Z',
+		created_at: 1767225600,
+		updated_at: 1767312000,
 		is_public: false,
 		is_owner: true,
 		owner_name: null,
@@ -62,7 +63,7 @@ function makePlaylist(overrides: Partial<PlaylistSummary> = {}): PlaylistSummary
 	};
 }
 
-function makeRedacted(overrides: Partial<RedactedPlaylist> = {}): RedactedPlaylist {
+function makeRedacted(overrides: Record<string, unknown> = {}): PlaylistListItemV3 {
 	return { id: 'pl-x', track_count: 7, owner_name: 'Cara', is_redacted: true, ...overrides };
 }
 
@@ -150,6 +151,14 @@ describe('Playlists list page', () => {
 
 		await expect.element(page.getByText('Private playlist')).toBeVisible();
 		await expect.element(page.getByText(/owned by Cara/)).toBeVisible();
+	});
+
+	it('shows the import badge for a V3 row carrying source_ref', async () => {
+		listQuery.data = [makePlaylist({ id: 'pl-1', name: 'Plex Mix', source_ref: 'plex:xyz' })];
+		await render(PlaylistsPage);
+
+		await expect.element(page.getByText('Plex Mix')).toBeVisible();
+		await expect.element(page.getByText(/from Plex/)).toBeVisible();
 	});
 
 	it('hides the delete button on a shared (non-owned) card', async () => {

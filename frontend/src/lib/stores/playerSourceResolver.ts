@@ -1,5 +1,5 @@
 import { getApiUrl } from '$lib/api/api-utils';
-import { API } from '$lib/constants';
+import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import type { NowPlaying, QueueItem, SourceType } from '$lib/player/types';
 
 // Raw URL computation only - base-path composition happens once at each
@@ -9,13 +9,13 @@ function rawSourceUrl(item: QueueItem): string | undefined {
 		case 'youtube':
 			return item.streamUrl;
 		case 'local':
-			return item.streamUrl ?? API.stream.local(item.trackSourceId);
+			return item.streamUrl ?? gatewayStreamUrl('local', item.trackSourceId);
 		case 'navidrome':
-			return item.streamUrl ?? API.stream.navidrome(item.trackSourceId);
+			return item.streamUrl ?? gatewayStreamUrl('navidrome', item.trackSourceId);
 		case 'jellyfin':
-			return API.stream.jellyfin(item.trackSourceId);
+			return gatewayStreamUrl('jellyfin', item.trackSourceId);
 		case 'plex':
-			return item.streamUrl ?? API.stream.plex(item.trackSourceId);
+			return item.streamUrl ?? gatewayStreamUrl('plex', item.trackSourceId);
 	}
 }
 
@@ -24,13 +24,13 @@ function rawPrefetchUrl(item: QueueItem): string | null {
 		case 'youtube':
 			return null;
 		case 'jellyfin':
-			return API.stream.jellyfin(item.trackSourceId);
+			return gatewayStreamUrl('jellyfin', item.trackSourceId);
 		case 'navidrome':
-			return API.stream.navidrome(item.trackSourceId);
+			return gatewayStreamUrl('navidrome', item.trackSourceId);
 		case 'plex':
-			return API.stream.plex(item.trackSourceId);
+			return gatewayStreamUrl('plex', item.trackSourceId);
 		case 'local':
-			return API.stream.local(item.trackSourceId);
+			return gatewayStreamUrl('local', item.trackSourceId);
 		default:
 			return item.streamUrl ?? null;
 	}
@@ -52,13 +52,13 @@ export function buildPrefetchUrl(item: QueueItem): string | null {
 function rawStreamUrlForSource(sourceType: SourceType, trackSourceId: string): string | undefined {
 	switch (sourceType) {
 		case 'local':
-			return API.stream.local(trackSourceId);
+			return gatewayStreamUrl('local', trackSourceId);
 		case 'navidrome':
-			return API.stream.navidrome(trackSourceId);
+			return gatewayStreamUrl('navidrome', trackSourceId);
 		case 'jellyfin':
-			return API.stream.jellyfin(trackSourceId);
+			return gatewayStreamUrl('jellyfin', trackSourceId);
 		case 'plex':
-			return API.stream.plex(trackSourceId);
+			return gatewayStreamUrl('plex', trackSourceId);
 		default:
 			return undefined;
 	}

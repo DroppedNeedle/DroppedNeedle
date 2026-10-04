@@ -31,7 +31,8 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 		get user() {
 			return { id: 'user-1' };
 		}
-	}
+	},
+	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 
 vi.mock('$lib/queries/import/DropImportQueries.svelte', () => ({

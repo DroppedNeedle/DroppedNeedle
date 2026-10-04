@@ -1,6 +1,14 @@
 <script lang="ts">
 	import { API } from '$lib/constants';
 	import { api, ApiError } from '$lib/api/client';
+	import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
+	import {
+		getRemoteArtistIndexQuery,
+		getRemoteDiscoveryQuery,
+		getRemoteHistoryQuery,
+		getRemoteHubQuery
+	} from '$lib/queries/remotes/RemoteQueries.svelte';
+	import type { RemoteAlbum, RemoteHub, RemoteTrack } from '$lib/queries/remotes/types';
 	import { getSourcePlaylistsQuery } from '$lib/queries/source-playlists/SourcePlaylistQueries.svelte';
 	import { resetPlexScrobblePreference } from '$lib/player/plexPlaybackApi';
 	import SourceAlbumCardCompact from '$lib/components/SourceAlbumCardCompact.svelte';
@@ -29,23 +37,13 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import type {
-		PlexHubResponse,
 		PlexAlbumSummary,
 		PlexConnectionSettings,
-		PlexDiscoveryResponse,
-		PlexDiscoveryHub,
-		PlexHistoryResponse,
-		PlexHistoryEntry,
 		PlexTrackInfo,
-		PlexTrackPage,
-		PlexArtistIndexResponse,
 		ArtistIndexEntry,
 		BrowseHeroCard
 	} from '$lib/types';
 
-	let hub = $state<PlexHubResponse | null>(null);
-	let loading = $state(true);
-	let error = $state('');
 	const playlistsQuery = getSourcePlaylistsQuery(() => 'plex');
 	const playlistCollection = $derived(playlistsQuery.data);
 	const playlistErrorCode = $derived(
@@ -61,73 +59,97 @@
 
 	let selectedAlbum = $state<PlexAlbumSummary | null>(null);
 	let modalOpen = $state(false);
+	let refreshing = $state(false);
 
-	let discoveryHubs = $state<PlexDiscoveryHub[]>([]);
-	let discoveryLoading = $state(false);
+	const hubQuery = getRemoteHubQuery(() => 'plex');
+	const discoveryQuery = getRemoteDiscoveryQuery(
+		() => 'plex',
+		() => 10
+	);
+	const historyQuery = getRemoteHistoryQuery(
+		() => 'plex',
+		() => ({ limit: 10 })
+	);
+	const artistIndexQuery = getRemoteArtistIndexQuery(() => 'plex');
 
-	let historyEntries = $state<PlexHistoryEntry[]>([]);
-	let historyTotal = $state(0);
-	let historyLoading = $state(false);
+	const hub = $derived<RemoteHub | null>(hubQuery.data ?? null);
+	const loading = $derived(hubQuery.isPending);
+	const error = $derived(hubQuery.isError ? "Couldn't connect to Plex." : '');
 
-	let artistIndex = $state<PlexArtistIndexResponse | null>(null);
-	let artistIndexLoading = $state(false);
-	let genericArtistIndex = $derived<ArtistIndexEntry[]>(
-		artistIndex?.index.map((e) => ({
+	const discoveryHubs = $derived(
+		(discoveryQuery.data?.hubs ?? []).map((dHub) => ({
+			title: dHub.title,
+			albums: dHub.albums.map(toAlbumSummary)
+		}))
+	);
+	const discoveryLoading = $derived(discoveryQuery.isFetching);
+
+	const historyEntries = $derived(historyQuery.data?.items ?? []);
+	const historyTotal = $derived(historyQuery.data?.total ?? 0);
+	const historyLoading = $derived(historyQuery.isFetching);
+
+	const recentlyPlayed = $derived((hub?.recently_played ?? []).map(toAlbumSummary));
+	const recentlyAdded = $derived((hub?.recently_added ?? []).map(toAlbumSummary));
+	const allAlbumsPreview = $derived((hub?.all_albums_preview ?? []).map(toAlbumSummary));
+
+	const genericArtistIndex = $derived<ArtistIndexEntry[]>(
+		(artistIndexQuery.data?.index ?? []).map((e) => ({
 			name: e.name,
 			artists: e.artists.map((a) => ({
-				id: a.plex_id,
+				id: a.id,
 				name: a.name,
-				image_url: a.image_url,
-				musicbrainz_id: a.musicbrainz_id
+				image_url: a.image_url ?? null,
+				album_count: a.album_count ?? undefined,
+				musicbrainz_id: a.artist_mbid ?? null
 			}))
-		})) ?? []
+		}))
 	);
+	const artistIndexLoading = $derived(artistIndexQuery.isFetching);
 
-	let plexSessions = $derived(nowPlayingMerged.sessionsForSource('plex'));
-
-	let refreshing = $state(false);
+	const plexSessions = $derived(nowPlayingMerged.sessionsForSource('plex'));
 
 	async function refreshHub() {
 		refreshing = true;
 		try {
-			await playlistsQuery.refetch();
-			hub = await api.get<PlexHubResponse>(API.plexLibrary.hub());
-			loadDiscovery();
-			loadHistory();
-			loadArtistIndex();
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			return;
+			await Promise.all([
+				playlistsQuery.refetch(),
+				hubQuery.refetch(),
+				discoveryQuery.refetch(),
+				historyQuery.refetch(),
+				artistIndexQuery.refetch()
+			]);
 		} finally {
 			refreshing = false;
 		}
 	}
 
-	async function loadDiscovery() {
-		discoveryLoading = true;
-		try {
-			const resp = await api.get<PlexDiscoveryResponse>(API.plexLibrary.discovery());
-			discoveryHubs = resp.hubs;
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			discoveryHubs = [];
-		} finally {
-			discoveryLoading = false;
-		}
+	// Shared shelves and the album modal still take the per-source summary
+	// shapes, so remote albums map at the page edge.
+	function toAlbumSummary(album: RemoteAlbum): PlexAlbumSummary {
+		return {
+			plex_id: album.id,
+			name: album.title,
+			artist_name: album.artist_name,
+			year: album.year ?? null,
+			track_count: album.track_count ?? 0,
+			image_url: album.image_url ?? null,
+			musicbrainz_id: album.release_group_mbid ?? album.release_mbid ?? null,
+			artist_musicbrainz_id: album.artist_mbid ?? null
+		};
 	}
 
-	async function loadHistory() {
-		historyLoading = true;
-		try {
-			const resp = await api.get<PlexHistoryResponse>(API.plexLibrary.history(10));
-			historyEntries = resp.entries;
-			historyTotal = resp.total;
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			historyEntries = [];
-		} finally {
-			historyLoading = false;
-		}
+	function toTrackInfo(track: RemoteTrack): PlexTrackInfo {
+		return {
+			plex_id: track.id,
+			title: track.title,
+			track_number: track.track_number ?? 0,
+			duration_seconds: track.duration_secs ?? 0,
+			disc_number: track.disc_number ?? 1,
+			album_name: track.album_name,
+			artist_name: track.artist_name,
+			part_key: track.part_key ?? null,
+			image_url: track.image_url ?? null
+		};
 	}
 
 	function openAlbumDetail(album: PlexAlbumSummary) {
@@ -135,7 +157,7 @@
 		modalOpen = true;
 	}
 
-	let plexGenreTrackMap = new SvelteMap<string, PlexTrackInfo>();
+	const plexGenreTrackMap = new SvelteMap<string, PlexTrackInfo>();
 	const GENRE_MAP_MAX = 500;
 
 	async function fetchPlexGenreSongs(
@@ -145,16 +167,17 @@
 	): Promise<BrowseTrack[]> {
 		const genre = genres[0];
 		if (!genre) return [];
-		const res = await api.get<PlexTrackPage>(API.plexLibrary.genreSongs(genre, limit, offset));
-		if (!res) return [];
+		const page = await api.global.v3.GET(
+			REMOTE_ENDPOINTS.genreSongs('plex', genre, { limit, offset })
+		);
 		if (plexGenreTrackMap.size > GENRE_MAP_MAX) plexGenreTrackMap.clear();
-		for (const t of res.items) plexGenreTrackMap.set(t.plex_id, t);
-		return res.items.map((t) => ({
-			id: t.plex_id,
+		for (const t of page.items) plexGenreTrackMap.set(t.id, toTrackInfo(t));
+		return page.items.map((t) => ({
+			id: t.id,
 			title: t.title,
 			artist_name: t.artist_name,
 			album_name: t.album_name,
-			duration_seconds: t.duration_seconds,
+			duration_seconds: t.duration_secs ?? 0,
 			image_url: t.image_url ?? undefined
 		}));
 	}
@@ -204,44 +227,26 @@
 		}
 	]);
 
-	function formatViewedAt(ts: string): string {
-		try {
-			const d = new Date(Number(ts) * 1000);
-			return d.toLocaleDateString(undefined, {
-				month: 'short',
-				day: 'numeric',
-				hour: '2-digit',
-				minute: '2-digit'
-			});
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			return '';
-		}
+	function formatViewedAt(viewedAt: number): string {
+		const d = new Date(viewedAt * 1000);
+		return d.toLocaleDateString(undefined, {
+			month: 'short',
+			day: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit'
+		});
 	}
 
+	// The scrobble toggle stays on the settings surface, which migrates
+	// separately; only the library reads moved to remote queries.
 	onMount(() => {
 		(async () => {
 			try {
-				const [hubData, settings] = await Promise.allSettled([
-					api.get<PlexHubResponse>(API.plexLibrary.hub()),
-					api.get<PlexConnectionSettings>(API.settingsPlex())
-				]);
-				if (hubData.status === 'fulfilled') {
-					hub = hubData.value;
-				} else {
-					error = "Couldn't load Plex library data.";
-				}
-				if (settings.status === 'fulfilled') {
-					scrobbleEnabled = settings.value.scrobble_to_plex ?? false;
-				}
-			} catch {
-				error = "Couldn't connect to Plex.";
-			} finally {
-				loading = false;
+				const settings = await api.get<PlexConnectionSettings>(API.settingsPlex());
+				scrobbleEnabled = settings.scrobble_to_plex ?? false;
+			} catch (err) {
+				console.warn('[Hub] scrobble setting load failed:', err);
 			}
-			loadDiscovery();
-			loadHistory();
-			loadArtistIndex();
 		})();
 	});
 
@@ -261,17 +266,6 @@
 			});
 		} finally {
 			scrobbleLoading = false;
-		}
-	}
-	async function loadArtistIndex() {
-		artistIndexLoading = true;
-		try {
-			artistIndex = await api.get<PlexArtistIndexResponse>(API.plexLibrary.artistsIndex());
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			artistIndex = null;
-		} finally {
-			artistIndexLoading = false;
 		}
 	}
 </script>
@@ -337,7 +331,7 @@
 		<HubPageSkeleton />
 	{:else}
 		<FeaturedAlbumHero
-			albums={hub?.recently_played ?? []}
+			albums={recentlyPlayed}
 			idKey="plex_id"
 			onAlbumClick={(a) => openAlbumDetail(a as PlexAlbumSummary)}
 		/>
@@ -348,7 +342,7 @@
 				loading={discoveryLoading}
 				empty={!discoveryLoading && discoveryHubs.length === 0 && !loading}
 				emptyMessage="No recommendations available right now."
-				onrefresh={loadDiscovery}
+				onrefresh={() => void discoveryQuery.refetch()}
 			>
 				{#each discoveryHubs as dHub (dHub.title)}
 					<div class="mb-4">
@@ -356,19 +350,11 @@
 						<HorizontalCarousel>
 							{#each dHub.albums as album (album.plex_id)}
 								<SourceAlbumCardCompact
-									imageId={album.plex_id}
+									imageId={album.musicbrainz_id ?? album.plex_id}
 									imageUrl={album.image_url}
 									name={album.name}
 									artistName={album.artist_name}
-									onclick={() =>
-										openAlbumDetail({
-											plex_id: album.plex_id,
-											name: album.name,
-											artist_name: album.artist_name,
-											year: album.year,
-											image_url: album.image_url,
-											track_count: 0
-										})}
+									onclick={() => openAlbumDetail(album)}
 								/>
 							{/each}
 						</HorizontalCarousel>
@@ -393,9 +379,9 @@
 				{loading}
 				seeAllHref={withBasePath('/library/plex/albums?sort=date_added')}
 			>
-				{#if hub && hub.recently_added.length > 0}
+				{#if recentlyAdded.length > 0}
 					<AlbumGrid
-						albums={hub.recently_added}
+						albums={recentlyAdded}
 						idKey="plex_id"
 						seeAllHref={withBasePath('/library/plex/albums?sort=date_added')}
 						onAlbumClick={(a) => openAlbumDetail(a as PlexAlbumSummary)}
@@ -419,11 +405,10 @@
 									<th>Artist</th>
 									<th>Album</th>
 									<th>When</th>
-									<th>Device</th>
 								</tr>
 							</thead>
 							<tbody>
-								{#each historyEntries as entry (entry.rating_key + entry.viewed_at)}
+								{#each historyEntries as entry (entry.id + entry.viewed_at)}
 									<tr
 										class="hover transition-all duration-200 hover:border-l-2 hover:border-l-primary hover:pl-1"
 									>
@@ -431,7 +416,6 @@
 										<td class="text-base-content/60">{entry.artist_name}</td>
 										<td class="text-base-content/60">{entry.album_name}</td>
 										<td class="text-base-content/50 text-xs">{formatViewedAt(entry.viewed_at)}</td>
-										<td class="text-base-content/50 text-xs">{entry.device_name}</td>
 									</tr>
 								{/each}
 							</tbody>
@@ -473,9 +457,9 @@
 			</HubShelf>
 
 			<HubShelf title="Browse Albums" seeAllHref={withBasePath('/library/plex/albums')} {loading}>
-				{#if hub && hub.all_albums_preview.length > 0}
+				{#if allAlbumsPreview.length > 0}
 					<HorizontalCarousel>
-						{#each hub?.all_albums_preview ?? [] as album (album.plex_id)}
+						{#each allAlbumsPreview as album (album.plex_id)}
 							<SourceAlbumCardCompact
 								imageId={album.musicbrainz_id ?? album.plex_id}
 								imageUrl={album.image_url}

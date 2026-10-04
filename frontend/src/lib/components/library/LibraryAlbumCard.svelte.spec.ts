@@ -19,6 +19,7 @@ const baseAlbum: LibraryAlbumSummary = {
 	format: 'flac',
 	year: 1997,
 	is_compilation: false,
+	release_type: 'album',
 	cover_available: false,
 	date_added: null,
 	sort_name: null,

@@ -1,6 +1,21 @@
 <script lang="ts">
-	import { API } from '$lib/constants';
 	import { api, ApiError } from '$lib/api/client';
+	import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
+	import {
+		getRemoteArtistIndexQuery,
+		getRemoteFavoritesQuery,
+		getRemoteHubQuery,
+		getRemoteInfoArtistQuery,
+		getRemoteRandomQuery,
+		getRemoteSimilarQuery,
+		getRemoteTopQuery
+	} from '$lib/queries/remotes/RemoteQueries.svelte';
+	import type {
+		RemoteAlbum,
+		RemoteArtist,
+		RemoteHub,
+		RemoteTrack
+	} from '$lib/queries/remotes/types';
 	import { getSourcePlaylistsQuery } from '$lib/queries/source-playlists/SourcePlaylistQueries.svelte';
 	import SourceAlbumCardCompact from '$lib/components/SourceAlbumCardCompact.svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
@@ -26,25 +41,17 @@
 	import { buildDiscoveryQueueFromNavidrome } from '$lib/player/queueHelpers';
 	import { formatDurationSec as formatDuration } from '$lib/utils/formatting';
 	import { reveal } from '$lib/actions/reveal';
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import type {
-		NavidromeHubResponse,
 		NavidromeAlbumSummary,
 		NavidromeTrackInfo,
-		NavidromeArtistInfo,
-		NavidromeArtistIndexResponse,
-		NavidromeGenreSongsResponse,
 		ArtistIndexEntry,
 		BrowseHeroCard
 	} from '$lib/types';
 	import type { DiscoveryTrack } from '$lib/components/DiscoveryTrackTable.svelte';
 
-	let hub = $state<NavidromeHubResponse | null>(null);
-	let loading = $state(true);
-	let error = $state('');
 	const playlistsQuery = getSourcePlaylistsQuery(() => 'navidrome');
 	const playlistCollection = $derived(playlistsQuery.data);
 	const playlistErrorCode = $derived(
@@ -58,64 +65,130 @@
 	let selectedAlbum = $state<NavidromeAlbumSummary | null>(null);
 	let modalOpen = $state(false);
 	let favTab = $state<'albums' | 'artists' | 'tracks'>('albums');
-
-	let randomTracks = $state<NavidromeTrackInfo[]>([]);
-	let randomLoading = $state(false);
 	let selectedGenre = $state<string | undefined>(undefined);
+	let refreshing = $state(false);
 
-	let topSongs = $state<NavidromeTrackInfo[]>([]);
-	let topSongsLoading = $state(false);
-	let topSongsArtist = $state('');
-
-	let similarSongs = $state<NavidromeTrackInfo[]>([]);
-	let similarLoading = $state(false);
-
-	let artistInfo = $state<NavidromeArtistInfo | null>(null);
-	let artistInfoLoading = $state(false);
-
-	let artistIndex = $state<NavidromeArtistIndexResponse | null>(null);
-	let artistIndexLoading = $state(false);
-	let genericArtistIndex = $derived<ArtistIndexEntry[]>(
-		artistIndex?.index.map((e) => ({
-			name: e.name,
-			artists: e.artists.map((a) => ({
-				id: a.navidrome_id,
-				name: a.name,
-				image_url: a.image_url,
-				album_count: a.album_count,
-				musicbrainz_id: a.musicbrainz_id
-			}))
-		})) ?? []
+	const hubQuery = getRemoteHubQuery(() => 'navidrome');
+	const favoritesQuery = getRemoteFavoritesQuery(() => 'navidrome');
+	const artistIndexQuery = getRemoteArtistIndexQuery(() => 'navidrome');
+	const randomQuery = getRemoteRandomQuery(
+		() => 'navidrome',
+		() => ({
+			limit: 20,
+			genre: selectedGenre
+		})
 	);
 
-	let navidromeSessions = $derived(nowPlayingMerged.sessionsForSource('navidrome'));
+	const hub = $derived<RemoteHub | null>(hubQuery.data ?? null);
+	const loading = $derived(hubQuery.isPending);
+	const error = $derived(hubQuery.isError ? "Couldn't connect to Navidrome." : '');
 
-	let refreshing = $state(false);
+	const topSeedName = $derived(hub?.favorite_artists?.[0]?.name ?? '');
+	const similarSeedId = $derived(favoritesQuery.data?.tracks?.[0]?.id ?? '');
+	const artistSeed = $derived(hub?.favorite_artists?.[0] ?? null);
+
+	const topQuery = getRemoteTopQuery(
+		() => 'navidrome',
+		() => topSeedName,
+		() => 20
+	);
+	const similarQuery = getRemoteSimilarQuery(
+		() => 'navidrome',
+		() => similarSeedId,
+		() => ({ limit: 20 })
+	);
+	const artistInfoQuery = getRemoteInfoArtistQuery(
+		() => 'navidrome',
+		() => artistSeed?.id ?? ''
+	);
+
+	const randomTracks = $derived<RemoteTrack[]>(randomQuery.data?.items ?? []);
+	const randomLoading = $derived(randomQuery.isFetching);
+	const topSongs = $derived<RemoteTrack[]>(topQuery.data?.items ?? []);
+	const topSongsLoading = $derived(topQuery.isFetching);
+	const topSongsArtist = $derived(topSeedName);
+	const similarSongs = $derived<RemoteTrack[]>(similarQuery.data?.items ?? []);
+	const similarLoading = $derived(similarQuery.isFetching);
+	const artistInfo = $derived(artistInfoQuery.data ?? null);
+	const artistInfoLoading = $derived(artistInfoQuery.isFetching);
+	const artistSeedName = $derived(artistSeed?.name ?? '');
+
+	const favoriteAlbums = $derived((favoritesQuery.data?.albums ?? []).map(toAlbumSummary));
+	const favoriteArtists = $derived<RemoteArtist[]>(favoritesQuery.data?.artists ?? []);
+	const favoriteTracks = $derived<RemoteTrack[]>(favoritesQuery.data?.tracks ?? []);
+	const favoritesLoading = $derived(favoritesQuery.isFetching);
+	const recentlyPlayed = $derived((hub?.recently_played ?? []).map(toAlbumSummary));
+	const allAlbumsPreview = $derived((hub?.all_albums_preview ?? []).map(toAlbumSummary));
+
+	const genericArtistIndex = $derived<ArtistIndexEntry[]>(
+		(artistIndexQuery.data?.index ?? []).map((e) => ({
+			name: e.name,
+			artists: e.artists.map((a) => ({
+				id: a.id,
+				name: a.name,
+				image_url: a.image_url ?? null,
+				album_count: a.album_count ?? undefined,
+				musicbrainz_id: a.artist_mbid ?? null
+			}))
+		}))
+	);
+	const artistIndexLoading = $derived(artistIndexQuery.isFetching);
+
+	const navidromeSessions = $derived(nowPlayingMerged.sessionsForSource('navidrome'));
 
 	async function refreshHub() {
 		refreshing = true;
 		try {
-			await playlistsQuery.refetch();
-			hub = await api.get<NavidromeHubResponse>(API.navidromeLibrary.hub());
-			loadTopSongs();
-			loadSimilarSongs();
-			loadArtistInfo();
-			loadArtistIndex();
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			return;
+			await Promise.all([
+				playlistsQuery.refetch(),
+				hubQuery.refetch(),
+				favoritesQuery.refetch(),
+				randomQuery.refetch(),
+				topQuery.refetch(),
+				similarQuery.refetch(),
+				artistInfoQuery.refetch(),
+				artistIndexQuery.refetch()
+			]);
 		} finally {
 			refreshing = false;
 		}
 	}
 
-	function toDiscoveryTracks(tracks: NavidromeTrackInfo[]): DiscoveryTrack[] {
+	// Shared shelves and the album modal still take the per-source summary
+	// shapes, so remote albums map at the page edge.
+	function toAlbumSummary(album: RemoteAlbum): NavidromeAlbumSummary {
+		return {
+			navidrome_id: album.id,
+			name: album.title,
+			artist_name: album.artist_name,
+			year: album.year ?? null,
+			track_count: album.track_count ?? 0,
+			image_url: album.image_url ?? null,
+			musicbrainz_id: album.release_group_mbid ?? album.release_mbid ?? null,
+			artist_musicbrainz_id: album.artist_mbid ?? null
+		};
+	}
+
+	function toTrackInfo(track: RemoteTrack): NavidromeTrackInfo {
+		return {
+			navidrome_id: track.id,
+			title: track.title,
+			track_number: track.track_number ?? 0,
+			disc_number: track.disc_number ?? null,
+			duration_seconds: track.duration_secs ?? 0,
+			album_name: track.album_name,
+			artist_name: track.artist_name,
+			image_url: track.image_url ?? null
+		};
+	}
+
+	function toDiscoveryTracks(tracks: RemoteTrack[]): DiscoveryTrack[] {
 		return tracks.map((t) => ({
-			id: t.navidrome_id,
+			id: t.id,
 			title: t.title,
 			artist_name: t.artist_name,
 			album_name: t.album_name,
-			duration_seconds: t.duration_seconds,
+			duration_seconds: t.duration_secs ?? 0,
 			image_url: t.image_url ?? undefined
 		}));
 	}
@@ -126,25 +199,26 @@
 		offset: number
 	): Promise<BrowseTrack[]> {
 		if (genres.length === 0) return [];
-		let res: NavidromeGenreSongsResponse | null;
-		if (genres.length === 1) {
-			res = await api.get<NavidromeGenreSongsResponse>(
-				API.navidromeLibrary.genreSongs(genres[0], limit, offset)
-			);
-		} else {
-			res = await api.get<NavidromeGenreSongsResponse>(
-				API.navidromeLibrary.multiGenreSongs(genres, limit, offset)
-			);
-		}
-		if (!res) return [];
-		return res.songs.map((t) => ({
-			id: t.navidrome_id,
-			title: t.title,
-			artist_name: t.artist_name,
-			album_name: t.album_name,
-			duration_seconds: t.duration_seconds,
-			image_url: t.image_url ?? undefined
-		}));
+		// The v3 genre route serves one genre per call, so multi-select fans
+		// out and merges in genre order; paging slices the merged list.
+		const pages = await Promise.all(
+			genres.map((genre) =>
+				api.global.v3.GET(
+					REMOTE_ENDPOINTS.genreSongs('navidrome', genre, { limit: limit + offset })
+				)
+			)
+		);
+		return pages
+			.flatMap((page) => page.items)
+			.slice(offset, offset + limit)
+			.map((t) => ({
+				id: t.id,
+				title: t.title,
+				artist_name: t.artist_name,
+				album_name: t.album_name,
+				duration_seconds: t.duration_secs ?? 0,
+				image_url: t.image_url ?? undefined
+			}));
 	}
 
 	function buildNavidromeGenreQueue(tracks: BrowseTrack[]) {
@@ -160,106 +234,27 @@
 		return buildDiscoveryQueueFromNavidrome(navidromeTracks);
 	}
 
-	async function loadRandomTracks() {
-		randomLoading = true;
-		try {
-			randomTracks = await api.get<NavidromeTrackInfo[]>(
-				API.navidromeLibrary.random(20, selectedGenre)
-			);
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			randomTracks = [];
-		} finally {
-			randomLoading = false;
-		}
-	}
-
 	function playRandomTracks(startIndex = 0) {
 		if (randomTracks.length === 0) return;
-		const items = buildDiscoveryQueueFromNavidrome(randomTracks);
+		const items = buildDiscoveryQueueFromNavidrome(randomTracks.map(toTrackInfo));
 		playerStore.playQueue(items, startIndex);
-	}
-
-	async function loadTopSongs() {
-		if (!hub) return;
-		const artist = hub.favorite_artists?.[0];
-		if (!artist) return;
-		topSongsLoading = true;
-		topSongsArtist = artist.name;
-		try {
-			topSongs = await api.get<NavidromeTrackInfo[]>(API.navidromeLibrary.topSongs(artist.name));
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			topSongs = [];
-		} finally {
-			topSongsLoading = false;
-		}
-	}
-
-	async function loadSimilarSongs() {
-		if (!hub) return;
-		const recentTrack = hub.favorite_tracks?.[0];
-		if (!recentTrack) return;
-		similarLoading = true;
-		try {
-			similarSongs = await api.get<NavidromeTrackInfo[]>(
-				API.navidromeLibrary.similarSongs(recentTrack.navidrome_id)
-			);
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			similarSongs = [];
-		} finally {
-			similarLoading = false;
-		}
-	}
-
-	async function loadArtistInfo() {
-		if (!hub) return;
-		const artist = hub.favorite_artists?.[0];
-		if (!artist) return;
-		artistInfoLoading = true;
-		try {
-			artistInfo = await api.get<NavidromeArtistInfo>(
-				API.navidromeLibrary.artistInfo(artist.navidrome_id)
-			);
-			if (artistInfo) artistInfo.name = artist.name;
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			artistInfo = null;
-		} finally {
-			artistInfoLoading = false;
-		}
 	}
 
 	function playTopSongs(startIndex = 0) {
 		if (topSongs.length === 0) return;
-		const items = buildDiscoveryQueueFromNavidrome(topSongs);
+		const items = buildDiscoveryQueueFromNavidrome(topSongs.map(toTrackInfo));
 		playerStore.playQueue(items, startIndex);
 	}
 
 	function playSimilarSongs(startIndex = 0) {
 		if (similarSongs.length === 0) return;
-		const items = buildDiscoveryQueueFromNavidrome(similarSongs);
+		const items = buildDiscoveryQueueFromNavidrome(similarSongs.map(toTrackInfo));
 		playerStore.playQueue(items, startIndex);
 	}
 
 	function openAlbumDetail(album: NavidromeAlbumSummary) {
 		selectedAlbum = album;
 		modalOpen = true;
-	}
-
-	async function loadArtistIndex() {
-		artistIndexLoading = true;
-		try {
-			artistIndex = await api.get<NavidromeArtistIndexResponse>(
-				API.navidromeLibrary.artistsIndex()
-			);
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			artistIndex = null;
-		} finally {
-			artistIndexLoading = false;
-		}
 	}
 
 	let browseCards = $derived<BrowseHeroCard[]>([
@@ -288,22 +283,6 @@
 			icon: 'music'
 		}
 	]);
-
-	onMount(() => {
-		(async () => {
-			try {
-				hub = await api.get<NavidromeHubResponse>(API.navidromeLibrary.hub());
-			} catch {
-				error = "Couldn't connect to Navidrome.";
-			} finally {
-				loading = false;
-			}
-			loadTopSongs();
-			loadSimilarSongs();
-			loadArtistInfo();
-			loadArtistIndex();
-		})();
-	});
 </script>
 
 <div class="container mx-auto space-y-6 p-6">
@@ -356,15 +335,15 @@
 		<HubPageSkeleton />
 	{:else}
 		<FeaturedAlbumHero
-			albums={hub?.recently_played ?? []}
+			albums={recentlyPlayed}
 			idKey="navidrome_id"
 			onAlbumClick={(a) => openAlbumDetail(a as NavidromeAlbumSummary)}
 		/>
 
-		{#if hub && (hub.favorites.length > 0 || hub.favorite_artists.length > 0 || hub.favorite_tracks.length > 0)}
+		{#if favoriteAlbums.length > 0 || favoriteArtists.length > 0 || favoriteTracks.length > 0}
 			<div use:reveal>
-				<HubShelf title="Favorites" {loading}>
-					{#if hub && (hub.favorites.length > 0 || hub.favorite_artists.length > 0 || hub.favorite_tracks.length > 0)}
+				<HubShelf title="Favorites" loading={favoritesLoading}>
+					{#if favoriteAlbums.length > 0 || favoriteArtists.length > 0 || favoriteTracks.length > 0}
 						<div role="tablist" class="tabs tabs-box tabs-sm mb-3">
 							<button
 								role="tab"
@@ -372,7 +351,7 @@
 								class:tab-active={favTab === 'albums'}
 								onclick={() => (favTab = 'albums')}
 							>
-								Albums ({hub.favorites.length})
+								Albums ({favoriteAlbums.length})
 							</button>
 							<button
 								role="tab"
@@ -380,7 +359,7 @@
 								class:tab-active={favTab === 'artists'}
 								onclick={() => (favTab = 'artists')}
 							>
-								Artists ({hub.favorite_artists.length})
+								Artists ({favoriteArtists.length})
 							</button>
 							<button
 								role="tab"
@@ -388,14 +367,14 @@
 								class:tab-active={favTab === 'tracks'}
 								onclick={() => (favTab = 'tracks')}
 							>
-								Tracks ({hub.favorite_tracks.length})
+								Tracks ({favoriteTracks.length})
 							</button>
 						</div>
 
 						{#if favTab === 'albums'}
-							{#if hub.favorites.length > 0}
+							{#if favoriteAlbums.length > 0}
 								<HorizontalCarousel>
-									{#each hub.favorites as album (album.navidrome_id)}
+									{#each favoriteAlbums as album (album.navidrome_id)}
 										<SourceAlbumCardCompact
 											imageId={album.musicbrainz_id ?? album.navidrome_id}
 											imageUrl={album.image_url}
@@ -409,13 +388,13 @@
 								<p class="text-sm text-base-content/50">No favorite albums yet.</p>
 							{/if}
 						{:else if favTab === 'artists'}
-							{#if hub.favorite_artists.length > 0}
+							{#if favoriteArtists.length > 0}
 								<HorizontalCarousel>
-									{#each hub.favorite_artists as artist (artist.navidrome_id)}
+									{#each favoriteArtists as artist (artist.id)}
 										<div class="shrink-0 w-32 text-center">
 											<div class="mx-auto h-28 w-28 overflow-hidden rounded-full">
 												<ArtistImage
-													mbid={artist.musicbrainz_id ?? artist.navidrome_id}
+													mbid={artist.artist_mbid ?? artist.id}
 													remoteUrl={artist.image_url}
 													alt={artist.name}
 													size="full"
@@ -426,7 +405,7 @@
 											</div>
 											<p class="text-sm font-medium mt-1 line-clamp-1">{artist.name}</p>
 											<p class="text-xs opacity-60">
-												{artist.album_count} album{artist.album_count !== 1 ? 's' : ''}
+												{artist.album_count ?? 0} album{(artist.album_count ?? 0) !== 1 ? 's' : ''}
 											</p>
 										</div>
 									{/each}
@@ -435,7 +414,7 @@
 								<p class="text-sm text-base-content/50">No favorite artists yet.</p>
 							{/if}
 						{:else if favTab === 'tracks'}
-							{#if hub.favorite_tracks.length > 0}
+							{#if favoriteTracks.length > 0}
 								<div class="max-h-72 overflow-y-auto rounded-lg">
 									<table class="table table-sm">
 										<thead>
@@ -448,7 +427,7 @@
 											</tr>
 										</thead>
 										<tbody>
-											{#each hub.favorite_tracks as track, i (track.navidrome_id)}
+											{#each favoriteTracks as track, i (track.id)}
 												<tr
 													class="hover transition-all duration-200 hover:border-l-2 hover:border-l-primary hover:pl-1"
 												>
@@ -457,7 +436,7 @@
 													<td class="text-base-content/60">{track.artist_name}</td>
 													<td class="text-base-content/60">{track.album_name}</td>
 													<td class="text-right text-base-content/50"
-														>{formatDuration(track.duration_seconds)}</td
+														>{formatDuration(track.duration_secs ?? 0)}</td
 													>
 												</tr>
 											{/each}
@@ -479,7 +458,7 @@
 				loading={randomLoading}
 				empty={!randomLoading && randomTracks.length === 0 && !loading}
 				emptyMessage="Refresh to load a new batch of random tracks."
-				onrefresh={loadRandomTracks}
+				onrefresh={() => void randomQuery.refetch()}
 			>
 				{#snippet actions()}
 					{#if hub && hub.genres.length > 0}
@@ -490,7 +469,6 @@
 							showAll={true}
 							onselect={(g) => {
 								selectedGenre = g;
-								loadRandomTracks();
 							}}
 						/>
 					{/if}
@@ -503,7 +481,7 @@
 						<button
 							class="btn btn-ghost btn-sm"
 							onclick={() => {
-								const items = buildDiscoveryQueueFromNavidrome(randomTracks);
+								const items = buildDiscoveryQueueFromNavidrome(randomTracks.map(toTrackInfo));
 								playerStore.playQueue(items, 0, true);
 							}}
 						>
@@ -543,7 +521,7 @@
 					loading={topSongsLoading}
 					empty={!topSongsLoading && topSongs.length === 0}
 					emptyMessage="Connect Last.fm to see top songs."
-					onrefresh={loadTopSongs}
+					onrefresh={() => void topQuery.refetch()}
 				>
 					{#if topSongs.length > 0}
 						<div class="flex items-center gap-2 mb-3">
@@ -560,14 +538,14 @@
 			</div>
 		{/if}
 
-		{#if hub?.favorite_tracks?.length}
+		{#if favoriteTracks.length > 0}
 			<div use:reveal>
 				<DiscoveryShelf
 					title="Similar Songs"
 					loading={similarLoading}
 					empty={!similarLoading && similarSongs.length === 0}
 					emptyMessage="Connect Last.fm to see similar songs."
-					onrefresh={loadSimilarSongs}
+					onrefresh={() => void similarQuery.refetch()}
 				>
 					{#if similarSongs.length > 0}
 						<div class="flex items-center gap-2 mb-3">
@@ -587,12 +565,12 @@
 
 		{#if artistInfo}
 			<div use:reveal>
-				<HubShelf title="About {artistInfo.name}" loading={artistInfoLoading}>
+				<HubShelf title="About {artistSeedName}" loading={artistInfoLoading}>
 					<div class="flex gap-4 items-start">
 						{#if artistInfo.image_url}
 							<img
 								src={getApiUrl(artistInfo.image_url)}
-								alt={artistInfo.name}
+								alt={artistSeedName}
 								class="w-24 h-24 rounded-full object-cover shrink-0"
 							/>
 						{/if}
@@ -604,7 +582,7 @@
 								<div>
 									<p class="text-xs font-semibold text-base-content/50 mb-1">Similar Artists</p>
 									<div class="flex flex-wrap gap-1">
-										{#each artistInfo.similar_artists.slice(0, 8) as sa (sa.navidrome_id || sa.name)}
+										{#each artistInfo.similar_artists.slice(0, 8) as sa (sa.id)}
 											<span class="badge badge-sm badge-outline">{sa.name}</span>
 										{/each}
 									</div>
@@ -645,9 +623,9 @@
 				seeAllHref={withBasePath('/library/navidrome/albums')}
 				{loading}
 			>
-				{#if hub && hub.all_albums_preview.length > 0}
+				{#if allAlbumsPreview.length > 0}
 					<HorizontalCarousel>
-						{#each hub?.all_albums_preview ?? [] as album (album.navidrome_id)}
+						{#each allAlbumsPreview as album (album.navidrome_id)}
 							<SourceAlbumCardCompact
 								imageId={album.musicbrainz_id ?? album.navidrome_id}
 								imageUrl={album.image_url}

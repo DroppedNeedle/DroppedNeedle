@@ -63,11 +63,19 @@ export function createProgressReporter(
 	return { start, stop };
 }
 
-function buildStopSessionPayload(
-	playSessionId: string,
-	positionSeconds: number
-): { play_session_id: string; position_seconds: number } {
-	return { play_session_id: playSessionId, position_seconds: positionSeconds };
+function beacon(url: string, payload: Record<string, unknown>): void {
+	navigator.sendBeacon(url, new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+}
+
+function scrobbleBodyFrom(item: QueueItem): Record<string, unknown> {
+	return {
+		track_name: item.trackName,
+		artist_name: item.artistName,
+		album_name: item.albumName,
+		timestamp: Math.floor(Date.now() / 1000),
+		duration_ms: Math.round((item.duration ?? 0) * 1000),
+		source: item.sourceType
+	};
 }
 
 export function createBeforeUnloadHandler(
@@ -76,27 +84,23 @@ export function createBeforeUnloadHandler(
 		currentItem: QueueItem | null;
 		progress: number;
 	},
-	jellyfinStopUrl: (trackSourceId: string) => string,
-	navidromeScrobbleUrl: (trackSourceId: string) => string,
-	plexScrobbleUrl: (ratingKey: string) => string
+	stopUrl: string,
+	scrobbleUrl: string
 ): () => void {
 	return () => {
 		if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') return;
 		const { jellyfinItem, currentItem, progress } = getState();
 
 		if (jellyfinItem?.playSessionId) {
-			const payload = new Blob(
-				[JSON.stringify(buildStopSessionPayload(jellyfinItem.playSessionId, progress))],
-				{ type: 'application/json' }
-			);
-			navigator.sendBeacon(jellyfinStopUrl(jellyfinItem.trackSourceId), payload);
+			beacon(stopUrl, {
+				source: 'jellyfin',
+				track_id: jellyfinItem.trackSourceId,
+				position_ms: Math.round(progress * 1000)
+			});
 		}
 
 		if (currentItem?.sourceType === 'navidrome' && progress > 30) {
-			navigator.sendBeacon(
-				navidromeScrobbleUrl(currentItem.trackSourceId),
-				new Blob([], { type: 'application/json' })
-			);
+			beacon(scrobbleUrl, scrobbleBodyFrom(currentItem));
 		}
 
 		if (
@@ -105,10 +109,7 @@ export function createBeforeUnloadHandler(
 			progress > 30 &&
 			isPlexScrobbleEnabled()
 		) {
-			navigator.sendBeacon(
-				plexScrobbleUrl(currentItem.plexRatingKey),
-				new Blob([], { type: 'application/json' })
-			);
+			beacon(scrobbleUrl, scrobbleBodyFrom(currentItem));
 		}
 	};
 }

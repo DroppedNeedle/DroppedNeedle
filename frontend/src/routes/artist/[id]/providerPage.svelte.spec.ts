@@ -151,8 +151,7 @@ vi.mock('$lib/queries/artist/ArtistQueries.svelte', () => ({
 	}),
 	updateArtistReleaseInCache: vi.fn()
 }));
-vi.mock('$lib/queries/downloads/DownloadMutations.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/queries/downloads/DownloadMutations.svelte')>()),
+vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 	requestAlbum: () => ({
 		mutateAsync: vi.fn().mockResolvedValue({ success: true }),
 		isPending: false

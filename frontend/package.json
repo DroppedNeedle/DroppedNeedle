@@ -26,7 +26,8 @@
 		"format:check": "prettier --check .",
 		"lint": "eslint .",
 		"test:unit": "vitest",
-		"test": "pnpm run test:unit -- --run"
+		"test": "pnpm run test:unit -- --run",
+		"test:e2e:ci": "playwright test --config playwright.ci.config.ts"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.1.1",
@@ -47,6 +48,7 @@
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-svelte": "^3.23.0",
 		"globals": "^17.11.0",
+		"openapi-typescript": "7.13.0",
 		"playwright": "^1.63.0",
 		"postcss": "^8.5.28",
 		"prettier": "^3.9.6",
@@ -68,6 +70,7 @@
 		"idb-keyval": "^6.3.0",
 		"lucide-svelte": "^1.0.1",
 		"marked": "^18.0.13",
+		"openapi-fetch": "^0.17.0",
 		"runed": "^0.37.1"
 	},
 	"pnpm": {

@@ -35,17 +35,20 @@
 		return `in ${Math.round(seconds / 86400)} d`;
 	}
 
-	const nextCheckLabel = $derived(formatEta(item.next_check_at - nowSeconds()));
+	const nextCheckLabel = $derived(
+		item.next_check_at == null ? null : formatEta(item.next_check_at - nowSeconds())
+	);
 	const checkedLabel = $derived(
 		item.check_count > 0 ? `checked ${item.check_count}×` : 'not checked yet'
 	);
+	const isPaused = $derived(item.state === 'paused' || item.state === 'stopped');
 </script>
 
 <div class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box">
 	<div class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg overflow-hidden bg-base-300">
 		<AlbumImage
-			mbid={item.release_group_mbid}
-			customUrl={item.cover_url}
+			mbid={item.musicbrainz_id}
+			customUrl={item.cover_url ?? null}
 			alt={item.album_title}
 			size="sm"
 			rounded="lg"
@@ -55,7 +58,7 @@
 
 	<div class="flex-1 min-w-0">
 		<a
-			href={withBasePath(`/album/${item.release_group_mbid}`)}
+			href={withBasePath(`/album/${item.musicbrainz_id}`)}
 			class="block font-semibold text-sm truncate hover:text-accent hover:underline"
 			title={item.album_title}
 		>
@@ -72,8 +75,10 @@
 					<Radar class="h-3 w-3" />
 					Watching
 				</span>
-				<span class="text-base-content/20">•</span>
-				<span class="text-base-content/40">next check {nextCheckLabel}</span>
+				{#if nextCheckLabel}
+					<span class="text-base-content/20">•</span>
+					<span class="text-base-content/40">next check {nextCheckLabel}</span>
+				{/if}
 				<span class="text-base-content/20">•</span>
 				<span class="text-base-content/40">{checkedLabel}</span>
 			{:else if item.state === 'dormant'}
@@ -83,10 +88,10 @@
 				</span>
 				<span class="text-base-content/20">•</span>
 				<span class="text-base-content/40">paused after a year of looking</span>
-			{:else if item.state === 'stopped'}
+			{:else if isPaused}
 				<span class="text-base-content/50 flex items-center gap-1">
 					<CircleStop class="h-3 w-3" />
-					Stopped
+					{item.state === 'stopped' ? 'Stopped' : 'Paused'}
 				</span>
 				<span class="text-base-content/20">•</span>
 				<span class="text-base-content/40">not being searched</span>
@@ -110,7 +115,7 @@
 
 		{#if item.new_candidate_count > 0}
 			<a
-				href={withBasePath(`/album/${item.release_group_mbid}`)}
+				href={withBasePath(`/album/${item.musicbrainz_id}`)}
 				class="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-full bg-accent/15 text-accent text-xs font-medium hover:bg-accent/25"
 				onclick={() => onseen?.(item)}
 			>
@@ -145,7 +150,7 @@
 					<span class="hidden sm:inline">Stop</span>
 				</button>
 			{/if}
-		{:else if (item.state === 'dormant' || item.state === 'stopped') && onresume}
+		{:else if (item.state === 'dormant' || isPaused) && onresume}
 			<button
 				class="btn btn-primary btn-sm btn-outline gap-1"
 				disabled={busy}

@@ -1,3 +1,5 @@
+import type { components } from '$lib/api/v3/openapi';
+
 // mirrors backend api/v1/schemas/artist.py (FollowStatusResponse) and the
 // following hub responses
 export type AutoDownloadState = 'none' | 'pending' | 'approved' | 'rejected' | 'revoked';
@@ -37,40 +39,15 @@ export interface UnseenCountResponse {
 	count: number;
 }
 
-export interface AutoDownloadApproval {
-	user_id: string;
-	artist_mbid: string;
-	artist_name: string;
-	requested_at: number;
-	user_name?: string | null;
-}
-
-export interface AutoDownloadApprovalsResponse {
-	items: AutoDownloadApproval[];
-	count: number;
-}
-
-// mirrors backend api/v1/schemas/requests_page.py (ApprovalBatchItem/ListResponse) -
-// the bulk "Lidarr Import" approval card (LidarrImport D3)
-export interface ApprovalBatch {
-	batch_id: string;
-	user_id: string;
-	artist_count: number;
-	sample_names: string[];
-	requested_at: number;
-	source: string; // e.g. "lidarr_import"
-	user_name?: string | null;
-}
-
-export interface ApprovalBatchListResponse {
-	batches: ApprovalBatch[];
-	count: number;
-}
-
-export interface ApprovalActionResponse {
-	success: boolean;
-	message: string;
-}
+// Approval rows come from the generated v3 contract (the follow rows above
+// stay hand-mirrored for the follows migration). v3 drops the batch `source`
+// tag and always resolves `user_name`.
+export type AutoDownloadApproval = components['schemas']['AutoDownloadApprovalItem'];
+export type AutoDownloadApprovalsResponse =
+	components['schemas']['AutoDownloadApprovalListResponse'];
+export type ApprovalBatch = components['schemas']['ApprovalBatchItem'];
+export type ApprovalBatchListResponse = components['schemas']['ApprovalBatchListResponse'];
+export type ApprovalActionResponse = components['schemas']['ActionResponse'];
 
 // mirrors backend api/v1/schemas/following.py (ConcertResponse etc.)
 export type ConcertStatus = 'scheduled' | 'cancelled' | 'rescheduled';

@@ -803,6 +803,81 @@ async fn navidrome_top_and_similar_pass_through() {
 }
 
 #[tokio::test]
+async fn navidrome_random_passes_size_and_genre() {
+    let mock = serve_navidrome().await.expect("mock serves");
+    let handle = navidrome_handle(&mock.base_url, None);
+    let tracks = handle.random(5, "Synthwave").await.expect("random loads");
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].title, "Tide Glass");
+    assert!(tracks[0].part_key.is_none());
+    let queries = mock.recorder.snapshot().navidrome_queries;
+    let random = queries
+        .iter()
+        .find(|(endpoint, _)| endpoint == "getRandomSongs")
+        .expect("getRandomSongs ran");
+    assert!(random.1.contains(&("size".to_owned(), "5".to_owned())));
+    assert!(
+        random
+            .1
+            .contains(&("genre".to_owned(), "Synthwave".to_owned()))
+    );
+}
+
+#[tokio::test]
+async fn jellyfin_random_sorts_audio_by_random() {
+    let mock = serve_jellyfin().await.expect("mock serves");
+    let handle = jellyfin_handle(&mock.base_url);
+    let tracks = handle.random(5, "").await.expect("random loads");
+    assert!(!tracks.is_empty());
+    assert!(tracks.iter().all(|track| track.part_key.is_none()));
+    let calls = mock.recorder.snapshot();
+    assert!(calls.jellyfin_items_queries.iter().any(|query| {
+        query.contains(&("sortBy".to_owned(), "Random".to_owned()))
+            && query.contains(&("limit".to_owned(), "5".to_owned()))
+    }));
+}
+
+#[tokio::test]
+async fn plex_random_is_unsupported() {
+    let mock = serve_plex().await.expect("mock serves");
+    let handle = plex_handle(&mock.base_url, vec!["1".to_owned()]);
+    assert!(matches!(
+        handle.random(5, "").await,
+        Err(AdapterError::Unsupported(_))
+    ));
+}
+
+#[tokio::test]
+async fn plex_discovery_returns_album_hubs_only() {
+    let mock = serve_plex().await.expect("mock serves");
+    let handle = plex_handle(&mock.base_url, vec!["1".to_owned()]);
+    let RemoteHandle::Plex(adapter) = handle else {
+        panic!("plex handle resolves");
+    };
+    let discovery = adapter.discovery(10).await.expect("discovery loads");
+    assert_eq!(discovery.hubs.len(), 1);
+    assert_eq!(discovery.hubs[0].title, "Recommended for you");
+    assert_eq!(discovery.hubs[0].hub_type, "album");
+    assert_eq!(discovery.hubs[0].albums.len(), 2);
+    assert_eq!(discovery.hubs[0].albums[0].title, "Neon Meridian");
+}
+
+#[tokio::test]
+async fn plex_track_views_carry_part_keys() {
+    let mock = serve_plex().await.expect("mock serves");
+    let handle = plex_handle(&mock.base_url, vec!["1".to_owned()]);
+    let page = handle
+        .tracks(&TrackBrowse::default())
+        .await
+        .expect("tracks load");
+    assert!(!page.items.is_empty());
+    assert_eq!(
+        page.items[0].part_key.as_deref(),
+        Some("/library/parts/px-t-1/file.flac")
+    );
+}
+
+#[tokio::test]
 async fn navidrome_match_resolves_mbid() {
     let mock = serve_navidrome().await.expect("mock serves");
     let handle = navidrome_handle(&mock.base_url, None);
@@ -1789,6 +1864,40 @@ async fn routes_serve_similar_tracks_where_supported() {
     let (status, body) = get_json(app.clone(), "/remotes/plex/similar/px-t-1").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error_code(&body), "REMOTE_UNSUPPORTED");
+}
+
+#[tokio::test]
+async fn routes_serve_random_tracks_where_supported() {
+    let (app, _) = connected_testbed().await;
+    for source in ["navidrome", "jellyfin"] {
+        let (status, body) =
+            get_json(app.clone(), &format!("/remotes/{source}/random?limit=5")).await;
+        assert_eq!(status, StatusCode::OK, "{source}");
+        assert!(body.get("items").and_then(Value::as_array).is_some());
+    }
+
+    let (status, body) = get_json(app.clone(), "/remotes/plex/random").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error_code(&body), "REMOTE_UNSUPPORTED");
+}
+
+#[tokio::test]
+async fn routes_serve_discovery_for_plex_only() {
+    let (app, _) = connected_testbed().await;
+    let (status, body) = get_json(app.clone(), "/remotes/plex/discovery?count=5").await;
+    assert_eq!(status, StatusCode::OK);
+    let hubs = body.get("hubs").and_then(Value::as_array).expect("hubs");
+    assert_eq!(hubs.len(), 1);
+    assert_eq!(
+        hubs[0].get("title").and_then(Value::as_str),
+        Some("Recommended for you")
+    );
+
+    for source in ["navidrome", "jellyfin"] {
+        let (status, body) = get_json(app.clone(), &format!("/remotes/{source}/discovery")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{source}");
+        assert_eq!(error_code(&body), "REMOTE_UNSUPPORTED", "{source}");
+    }
 }
 
 #[tokio::test]

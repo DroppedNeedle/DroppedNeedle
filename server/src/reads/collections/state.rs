@@ -63,6 +63,8 @@ pub struct StoredPlaylist {
     pub tracks: Vec<super::models::PlaylistTrack>,
     /// Uploaded cover bytes, if any.
     pub cover: Option<StoredCover>,
+    /// Import provenance (`<source>:<id>`), when the playlist was imported.
+    pub source_ref: Option<String>,
     /// Creation time, epoch seconds.
     pub created_at: u64,
     /// Last mutation time, epoch seconds.

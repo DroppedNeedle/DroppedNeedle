@@ -27,9 +27,9 @@ use serde_json::Value;
 
 use super::adapter::{AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse};
 use super::models::{
-    AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, HistoryEntry, HistoryPage, HubView,
-    InfoView, LyricsView, MatchView, PlaylistDetail, PlaylistSummary, SearchResults, SessionView,
-    SessionsView, SourceName, StatsView, TrackView,
+    AlbumView, ArtistIndexEntry, ArtistView, DiscoveryHubView, DiscoveryView, FavoritesView,
+    HistoryEntry, HistoryPage, HubView, InfoView, LyricsView, MatchView, PlaylistDetail,
+    PlaylistSummary, SearchResults, SessionView, SessionsView, SourceName, StatsView, TrackView,
 };
 
 /// Request timeout per upstream call, matching the v2 repository.
@@ -685,6 +685,68 @@ impl PlexAdapter {
         ))
     }
 
+    /// Plex exposes no random/shuffle endpoint, so random-offset sampling
+    /// would lie about pagination; explicit unsupported instead.
+    pub async fn random(&self, _limit: i64, _genre: &str) -> Result<Vec<TrackView>, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "Plex has no random-tracks endpoint".to_owned(),
+        ))
+    }
+
+    /// Discovery shelves via `/hubs/sections/{section}?count=`, album-type
+    /// hubs only (v1 `get_discovery_hubs` semantics: first configured
+    /// section, `Metadata` rows as albums). Empty shelves when nothing
+    /// resolves or the hubs call is declined.
+    pub async fn discovery(&self, count: i64) -> Result<DiscoveryView, AdapterError> {
+        self.require_configured()?;
+        let empty = || DiscoveryView {
+            source: SourceName::Plex,
+            hubs: Vec::new(),
+        };
+        let sections = self.resolve_sections().await?;
+        let Some(section) = sections.first() else {
+            return Ok(empty());
+        };
+        let container = match self
+            .request(
+                &format!("/hubs/sections/{section}"),
+                &[("count".to_owned(), count.to_string())],
+            )
+            .await
+        {
+            Ok(container) => container,
+            Err(AdapterError::Api(_)) => return Ok(empty()),
+            Err(other) => return Err(other),
+        };
+        let mut hubs = Vec::new();
+        for hub in container
+            .get("Hub")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+        {
+            if str_field(&hub, "type").unwrap_or("") != "album" {
+                continue;
+            }
+            let albums: Vec<AlbumView> = metadata(&hub)
+                .iter()
+                .map(|album| self.album_view(album))
+                .collect();
+            if albums.is_empty() {
+                continue;
+            }
+            hubs.push(DiscoveryHubView {
+                title: str_field(&hub, "title").unwrap_or("").to_owned(),
+                hub_type: "album".to_owned(),
+                albums,
+            });
+        }
+        Ok(DiscoveryView {
+            source: SourceName::Plex,
+            hubs,
+        })
+    }
+
     /// Audio-only sessions from `/status/sessions`.
     pub async fn sessions(&self) -> Result<SessionsView, AdapterError> {
         self.require_configured()?;
@@ -1252,6 +1314,7 @@ impl PlexAdapter {
                 .and_then(value_to_i64)
                 .map(|year| year as i32),
             recording_mbid: guid_mbid(track),
+            part_key: first_part_key(track),
         }
     }
 
@@ -1394,6 +1457,18 @@ fn guid_mbid(record: &Value) -> Option<String> {
 
 fn has_thumb(record: &Value) -> bool {
     !str_field(record, "thumb").unwrap_or("").is_empty()
+}
+
+/// First `Media[0].Part[0].key`: the stream gateway's Plex key.
+fn first_part_key(track: &Value) -> Option<String> {
+    let part = track
+        .get("Media")?
+        .as_array()?
+        .first()?
+        .get("Part")?
+        .as_array()?
+        .first()?;
+    non_empty(str_field(part, "key"))
 }
 
 fn known_title(album: &Value) -> bool {

@@ -198,9 +198,9 @@ describe('Library Management mutations', () => {
 
 	it('reissues the sealed preview token with a POST and no body', async () => {
 		reissueLibraryManagementPreviewMutation();
-		const mutation = currentMutation<string>();
+		const mutation = currentMutation<{ jobId: string }>();
 
-		await mutation.mutationFn('preview/1');
+		await mutation.mutationFn({ jobId: 'preview/1' });
 
 		expect(api.global.post).toHaveBeenCalledWith(
 			'/api/v1/library/management/previews/preview%2F1/reissue'

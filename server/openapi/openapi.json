@@ -2630,6 +2630,38 @@
         }
       }
     },
+    "/api/v3/downloads/tasks/{task_id}/reimport": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "Requeue one failed or short-landed task for import without\nre-searching. `POST /api/v3/downloads/tasks/{task_id}/reimport`.\nAdmin only. Missing tasks and tasks that fail the reimport guard\n(no picked candidate linked) answer 404.",
+        "operationId": "reimport_task_handler",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Download task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReimportResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/favorites": {
       "get": {
         "tags": [
@@ -3199,7 +3231,7 @@
           {
             "name": "sort",
             "in": "path",
-            "description": "`name`, `date_added`, or `year`. Default `name`.",
+            "description": "`name`, `date_added`, `year`, or `artist`. Default `name`.",
             "required": true,
             "schema": {
               "type": [
@@ -3255,6 +3287,18 @@
                 "null"
               ],
               "format": "int64"
+            }
+          },
+          {
+            "name": "format",
+            "in": "path",
+            "description": "Restrict to one primary track format, e.g. `flac`. Blank reads as\nabsent; matching is case-insensitive.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -4812,6 +4856,73 @@
           },
           "401": {
             "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/local-library/albums/match/{mbid}": {
+      "get": {
+        "tags": [
+          "crate::reads::library::handlers"
+        ],
+        "summary": "One page of an album's streamable tracks by release-group mbid or\nlocal album id.",
+        "operationId": "match_album",
+        "parameters": [
+          {
+            "name": "mbid",
+            "in": "path",
+            "description": "Release-group mbid or local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "description": "Page size, 1-1000. Default 200.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "path",
+            "description": "Page start. Default 0.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Track page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad query string"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown mbid or album id"
           }
         }
       }
@@ -7086,6 +7197,27 @@
         }
       }
     },
+    "/api/v3/remotes/{source}/discovery": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Plex discovery shelves (Plex only, following the mix-route precedent:\nthe shape is source-specific, so the gate lives in the handler).",
+        "operationId": "get_discovery",
+        "responses": {
+          "200": {
+            "description": "Discovery shelves",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoveryView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/remotes/{source}/favorites": {
       "get": {
         "tags": [
@@ -7359,6 +7491,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/random": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Random tracks, optionally filtered by genre. Limits mirror the v1\nNavidrome route (default 20, max 50); Plex answers unsupported.",
+        "operationId": "get_random",
+        "responses": {
+          "200": {
+            "description": "Random tracks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesTrackPage"
                 }
               }
             }
@@ -8506,7 +8659,7 @@
           "crate::reads::search::handlers"
         ],
         "summary": "Ranked hits across the selected buckets plus each bucket's standout.",
-        "operationId": "search",
+        "operationId": "unified_search",
         "parameters": [
           {
             "name": "q",
@@ -12196,6 +12349,13 @@
             ],
             "description": "Most common track format, when any track exists."
           },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked MusicBrainz release group, when identified."
+          },
           "title": {
             "type": "string",
             "description": "Album title."
@@ -14180,6 +14340,13 @@
           "name": {
             "type": "string",
             "description": "Display name. Must not be blank."
+          },
+          "source_ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Import provenance (`<source>:<id>`), when the playlist was imported."
           }
         }
       },
@@ -14984,6 +15151,53 @@
           "source_section": {
             "type": "string",
             "description": "Discover section the batch came from."
+          }
+        }
+      },
+      "DiscoveryHubView": {
+        "type": "object",
+        "description": "One Plex discovery shelf: a hub title over its album rows. Plex-only\n(from `/hubs/sections/{id}`), kept out of the unified [`HubView`] so\nother sources never ship an empty shelf shape.",
+        "required": [
+          "title",
+          "hub_type",
+          "albums"
+        ],
+        "properties": {
+          "albums": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemotesAlbumView"
+            },
+            "description": "Albums on this shelf."
+          },
+          "hub_type": {
+            "type": "string",
+            "description": "Hub kind; always `\"album\"` (other hub kinds are dropped, as in v1)."
+          },
+          "title": {
+            "type": "string",
+            "description": "Hub title, e.g. \"Recommended for you\"."
+          }
+        }
+      },
+      "DiscoveryView": {
+        "type": "object",
+        "description": "Plex discovery shelves for the hub page.",
+        "required": [
+          "source",
+          "hubs"
+        ],
+        "properties": {
+          "hubs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryHubView"
+            },
+            "description": "Album shelves, in upstream order."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceName",
+            "description": "Owning source."
           }
         }
       },
@@ -19250,6 +19464,13 @@
             ],
             "description": "Owner display name."
           },
+          "source_ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Import provenance (`<source>:<id>`), when the playlist was imported."
+          },
           "total_duration": {
             "type": [
               "number",
@@ -19447,6 +19668,13 @@
               "null"
             ],
             "description": "Owner display name."
+          },
+          "source_ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Import provenance (`<source>:<id>`), when the playlist was imported."
           },
           "total_duration": {
             "type": [
@@ -21270,6 +21498,31 @@
           }
         }
       },
+      "ReimportResponse": {
+        "type": "object",
+        "description": "Reimport outcome. The requeue puts the task back in line; the worker\nreports fresh progress from there.",
+        "required": [
+          "success",
+          "status"
+        ],
+        "properties": {
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Failure text, when the requeue itself failed."
+          },
+          "status": {
+            "type": "string",
+            "description": "Task status after this call (`queued`)."
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether the task went back in line."
+          }
+        }
+      },
       "RemotesAlbumPage": {
         "type": "object",
         "description": "One page of albums.",
@@ -21796,6 +22049,13 @@
             ],
             "description": "Relative images URL under `/api/v3`, when art exists."
           },
+          "part_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Plex part key for the stream gateway. Plex-only: Jellyfin and\nNavidrome stream by item id, so they always leave this empty."
+          },
           "recording_mbid": {
             "type": [
               "string",
@@ -21940,6 +22200,13 @@
             "type": "string",
             "description": "Artist name."
           },
+          "can_reimport": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether an admin can reimport the linked task (failed with its\ncandidate still linked). None when not applicable."
+          },
           "completed_at": {
             "type": [
               "integer",
@@ -21949,6 +22216,13 @@
             "description": "Epoch seconds when terminal, when terminal.",
             "minimum": 0
           },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Custom artwork URL override. None: artwork resolves client-side\nfrom the MBID, which is what v2's built cover URL did anyway."
+          },
           "duration_seconds": {
             "type": [
               "integer",
@@ -21957,9 +22231,54 @@
             "format": "int64",
             "description": "Track length for exact-track rows."
           },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last failure text from the linked task, when failed."
+          },
+          "eta": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch seconds when the transfer should finish. None: no live ETA\nsource exists (v2 never sent one either).",
+            "minimum": 0
+          },
+          "in_library": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the album is in the library. None: the intake slice has\nno library seam; callers treat unknown as present for imported\nrows, which only land after the task completes."
+          },
           "musicbrainz_id": {
             "type": "string",
             "description": "Album or recording MBID."
+          },
+          "progress": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Download progress percent (0-100) from the linked task, when linked."
+          },
+          "protocol": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Fetch source from the linked task (`soulseek`, `usenet`, ...)."
+          },
+          "quality": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Picked candidate quality from the linked task, once picked."
           },
           "request_kind": {
             "type": "string",
@@ -21984,6 +22303,15 @@
             "description": "Co-requester count beyond the owner.",
             "minimum": 0
           },
+          "reviewed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch seconds when reviewed, when reviewed.",
+            "minimum": 0
+          },
           "reviewed_by_name": {
             "type": [
               "string",
@@ -21991,9 +22319,35 @@
             ],
             "description": "Reviewer display name."
           },
+          "size": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Total transfer bytes from the linked task, once known."
+          },
+          "size_remaining": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Bytes still to transfer from the linked task, once known."
+          },
           "status": {
             "type": "string",
             "description": "Row status."
+          },
+          "status_messages": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/RequestStatusMessage"
+            },
+            "description": "Task status detail groups behind the card's expander. None until a\nproducer exists (v2 never sent these either)."
           },
           "task_id": {
             "type": [
@@ -22001,6 +22355,13 @@
               "null"
             ],
             "description": "Linked download task."
+          },
+          "track_release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Containing release group for exact-track rows (album context)."
           },
           "track_title": {
             "type": [
@@ -22023,6 +22384,29 @@
             ],
             "format": "int32",
             "description": "Release year."
+          }
+        }
+      },
+      "RequestStatusMessage": {
+        "type": "object",
+        "description": "One grouped status detail behind the request card's expander. The\nintake slice has no producer for these yet (v2 never sent them\neither), so views answer None until one exists.",
+        "required": [
+          "messages"
+        ],
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Detail lines."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Group heading, when grouped."
           }
         }
       },
@@ -22926,7 +23310,8 @@
           "bucket",
           "limit",
           "offset",
-          "results"
+          "results",
+          "status"
         ],
         "properties": {
           "bucket": {
@@ -22952,6 +23337,10 @@
             },
             "description": "This page of hits, best first."
           },
+          "status": {
+            "$ref": "#/components/schemas/SearchRemoteStatus",
+            "description": "Provider health for this bucket."
+          },
           "top_result": {
             "oneOf": [
               {
@@ -22974,21 +23363,43 @@
           "track"
         ]
       },
+      "SearchRemoteStatus": {
+        "type": "string",
+        "description": "Per-bucket provider health for one search call. The values mirror v1's\n`SearchRemoteStatus` exactly so the same notice and stale-time logic\napplies. The local-only stage always emits `Ok`; stage-5 provider\nfan-out fills in the real values.",
+        "enum": [
+          "ok",
+          "partial",
+          "timeout",
+          "error",
+          "stale"
+        ]
+      },
       "SearchResponse": {
         "type": "object",
         "description": "Unified search response: one ranked list per bucket plus the standout\nhit per bucket, when one earns it.",
         "required": [
           "artists",
           "albums",
-          "tracks"
+          "tracks",
+          "artist_status",
+          "album_status",
+          "track_status"
         ],
         "properties": {
+          "album_status": {
+            "$ref": "#/components/schemas/SearchRemoteStatus",
+            "description": "Provider health for the album bucket."
+          },
           "albums": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SearchResultItem"
             },
             "description": "Matching albums, best first."
+          },
+          "artist_status": {
+            "$ref": "#/components/schemas/SearchRemoteStatus",
+            "description": "Provider health for the artist bucket."
           },
           "artists": {
             "type": "array",
@@ -23029,6 +23440,10 @@
                 "description": "Standout track hit, if one scored high enough to headline."
               }
             ]
+          },
+          "track_status": {
+            "$ref": "#/components/schemas/SearchRemoteStatus",
+            "description": "Provider health for the track bucket."
           },
           "tracks": {
             "type": "array",
@@ -24087,7 +24502,8 @@
         "type": "object",
         "description": "Typeahead response: one merged list across buckets, best first.",
         "required": [
-          "results"
+          "results",
+          "status"
         ],
         "properties": {
           "results": {
@@ -24096,6 +24512,10 @@
               "$ref": "#/components/schemas/SuggestResult"
             },
             "description": "Suggestions, best first."
+          },
+          "status": {
+            "$ref": "#/components/schemas/SearchRemoteStatus",
+            "description": "Provider health for the suggestion call."
           }
         }
       },
@@ -25252,6 +25672,7 @@
           "musicbrainz_id",
           "artist_name",
           "album_title",
+          "kind",
           "state",
           "check_count",
           "new_candidate_count",
@@ -25261,6 +25682,13 @@
           "album_title": {
             "type": "string",
             "description": "Album title."
+          },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Artist MBID."
           },
           "artist_name": {
             "type": "string",
@@ -25272,11 +25700,22 @@
             "description": "Passed checks so far.",
             "minimum": 0
           },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Custom artwork URL override. None: artwork resolves client-side\nfrom the MBID."
+          },
           "created_at": {
             "type": "integer",
             "format": "int64",
             "description": "Epoch seconds when created.",
             "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "description": "`missing` (whole album) or `partial` (filling gaps)."
           },
           "musicbrainz_id": {
             "type": "string",
@@ -25288,9 +25727,18 @@
             "description": "Unseen candidate count.",
             "minimum": 0
           },
+          "next_check_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch seconds when the next check is due, when scheduled.",
+            "minimum": 0
+          },
           "state": {
             "type": "string",
-            "description": "Watch state: `watching` or `paused`."
+            "description": "Watch state: `watching`, `paused`, or loop-set `dormant`."
           },
           "user_id": {
             "type": [
@@ -25298,6 +25746,21 @@
               "null"
             ],
             "description": "Owner id (admins see every row)."
+          },
+          "user_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Owner display name (admins only; the \"watched for\" chip)."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Release year."
           }
         }
       },
@@ -25347,9 +25810,23 @@
             "type": "string",
             "description": "Album title."
           },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Artist MBID."
+          },
           "artist_name": {
             "type": "string",
             "description": "Artist name."
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Custom artwork URL override. None: artwork resolves client-side\nfrom the MBID."
           },
           "max_attempts": {
             "type": "integer",
@@ -25360,6 +25837,15 @@
           "musicbrainz_id": {
             "type": "string",
             "description": "Release-group MBID."
+          },
+          "next_retry_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch seconds when the next try is due, when scheduled.",
+            "minimum": 0
           },
           "retry_count": {
             "type": "integer",
@@ -25373,6 +25859,21 @@
               "null"
             ],
             "description": "Owner id (admins see every row)."
+          },
+          "user_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Owner display name (admins only; the \"requested by\" chip)."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Release year."
           }
         }
       },

@@ -15,9 +15,9 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
-vi.mock('$lib/stores/authStore.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/stores/authStore.svelte')>()),
-	authStore: h.authStore
+vi.mock('$lib/stores/authStore.svelte', () => ({
+	authStore: h.authStore,
+	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 vi.mock('$lib/api/client', () => ({ api: { global: { get: h.get } } }));
 vi.mock('$lib/queries/library/LibraryCatalogInvalidation', () => ({

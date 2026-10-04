@@ -13,7 +13,10 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => h.goto(...args) }));
-vi.mock('$lib/stores/authStore.svelte', () => ({ authStore: h.authStore }));
+vi.mock('$lib/stores/authStore.svelte', () => ({
+	authStore: h.authStore,
+	LAST_USER_ID_KEY: 'msr:last_user_id'
+}));
 
 const contribution: LibraryContribution = {
 	id: 'contribution-1',

@@ -12,8 +12,8 @@ use sqlx::{Row, SqlitePool};
 
 use super::models::{
     Degradation, EnrichmentBatchRequest, EnrichmentResponse, EnrichmentSource,
-    SearchBucketResponse, SearchKind, SearchResponse, SearchResultItem, SuggestResponse,
-    SuggestResult,
+    SearchBucketResponse, SearchKind, SearchRemoteStatus, SearchResponse, SearchResultItem,
+    SuggestResponse, SuggestResult,
 };
 use super::ports::{EnrichmentPort, MAX_ENRICHMENT_PER_BUCKET};
 
@@ -98,6 +98,9 @@ impl SearchService {
                 top_artist: None,
                 top_album: None,
                 top_track: None,
+                artist_status: SearchRemoteStatus::Ok,
+                album_status: SearchRemoteStatus::Ok,
+                track_status: SearchRemoteStatus::Ok,
             });
         }
         let mut artists = Vec::new();
@@ -119,6 +122,9 @@ impl SearchService {
             artists,
             albums,
             tracks,
+            artist_status: SearchRemoteStatus::Ok,
+            album_status: SearchRemoteStatus::Ok,
+            track_status: SearchRemoteStatus::Ok,
         })
     }
 
@@ -151,6 +157,7 @@ impl SearchService {
             offset,
             results,
             top_result,
+            status: SearchRemoteStatus::Ok,
         })
     }
 
@@ -161,6 +168,7 @@ impl SearchService {
         if folded.trim().len() < 2 {
             return Ok(SuggestResponse {
                 results: Vec::new(),
+                status: SearchRemoteStatus::Ok,
             });
         }
         let mut merged: Vec<SuggestResult> = Vec::new();
@@ -181,7 +189,10 @@ impl SearchService {
                 .then_with(|| left.title.cmp(&right.title))
         });
         merged.truncate(limit as usize);
-        Ok(SuggestResponse { results: merged })
+        Ok(SuggestResponse {
+            results: merged,
+            status: SearchRemoteStatus::Ok,
+        })
     }
 
     /// Best-first artist hits, capped.

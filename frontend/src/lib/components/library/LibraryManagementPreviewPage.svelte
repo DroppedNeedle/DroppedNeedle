@@ -465,7 +465,7 @@
 	const applyDisabledReason = $derived.by((): string | null => {
 		if (canApply || activationPreview || preview?.state !== 'ready') return null;
 		if (preview.stale)
-			return `Apply is disabled: this preview is stale (${preview.stale_reasons.map(qualifiedReasonLabel).join(' · ') || 'inputs changed'}). Generate a fresh preview.`;
+			return `Apply is disabled: this preview is stale (${preview.stale_reasons.map((code) => qualifiedReasonLabel(code)).join(' · ') || 'inputs changed'}). Generate a fresh preview.`;
 		if (preview.expired)
 			return 'Apply is disabled: this preview expired. Generate a fresh preview.';
 		if (!preview.ready_for_confirmation)

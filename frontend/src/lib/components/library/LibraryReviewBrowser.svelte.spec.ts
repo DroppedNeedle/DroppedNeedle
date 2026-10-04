@@ -50,9 +50,9 @@ vi.mock('$app/state', async () => {
 	return { page: state.libraryReviewPage };
 });
 vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => h.goto(...args) }));
-vi.mock('$lib/stores/authStore.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/stores/authStore.svelte')>()),
-	authStore: { user: { id: 'admin-1' } }
+vi.mock('$lib/stores/authStore.svelte', () => ({
+	authStore: { user: { id: 'admin-1' } },
+	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 vi.mock('$lib/queries/library/LibraryReviewQueries.svelte', () => ({
 	getLibraryReviewsQuery: (filters: () => LibraryReviewFilters) => {
@@ -125,7 +125,7 @@ describe('LibraryReviewBrowser URL state', () => {
 			search: undefined,
 			sort: 'album'
 		});
-		await page.getByRole('button', { name: 'Review' }).first().click();
+		await page.getByRole('button', { name: 'Review', exact: true }).first().click();
 		expect(h.goto).toHaveBeenLastCalledWith(
 			'/library/review?state=all&cursor=cursor-1&reason=CONTRADICTORY&root=root-1&sort=album&review=review-1',
 			{ noScroll: true, keepFocus: true }
@@ -211,7 +211,7 @@ describe('LibraryReviewBrowser confirm lane', () => {
 		setLibraryReviewUrl('/library/review?state=edition_to_confirm');
 		await render(LibraryReviewBrowser);
 
-		await expect.element(page.getByText(/3 editions to confirm\./)).toBeVisible();
+		await expect.element(page.getByText(/3\s+editions to confirm\./)).toBeVisible();
 		await expect
 			.element(page.getByText('Edition to confirm - release group pinned, pressing unproven.'))
 			.not.toBeInTheDocument();
@@ -261,7 +261,7 @@ describe('LibraryReviewBrowser confirm lane', () => {
 		setLibraryReviewUrl('/library/review?state=edition_to_confirm');
 		await render(LibraryReviewBrowser);
 
-		await expect.element(page.getByText(/25 editions to confirm\./)).toBeVisible();
+		await expect.element(page.getByText(/25\s+editions to confirm\./)).toBeVisible();
 		await expect
 			.element(page.getByText('Edition to confirm - release group pinned, pressing unproven.'))
 			.not.toBeInTheDocument();

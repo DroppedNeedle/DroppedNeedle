@@ -38,12 +38,19 @@
 		createSetPasswordMutation,
 		createUploadAvatarMutation
 	} from '$lib/queries/profile/ProfileMutations.svelte';
+	import {
+		getRemoteConnectionQuery,
+		getRemoteStatsQuery
+	} from '$lib/queries/remotes/RemoteQueries.svelte';
+	import { getLibraryStatsV3Query } from '$lib/queries/library/LibraryV3Queries.svelte';
+	import { formatBytes } from '$lib/utils/formatting';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
-	import type { ProfileServiceConnection } from '$lib/queries/profile/types';
+	import type { ProfileLibraryStats, ProfileServiceConnection } from '$lib/queries/profile/types';
 	import MediaServerAccountsCard from '$lib/components/profile/MediaServerAccountsCard.svelte';
 	import NavidromeMusicFoldersCard from '$lib/components/profile/NavidromeMusicFoldersCard.svelte';
+	import SessionsManager from '$lib/components/profile/SessionsManager.svelte';
 	import ScrobblingDiscoveryCard from '$lib/components/profile/ScrobblingDiscoveryCard.svelte';
 	import SpotifyConnectionCard from '$lib/components/profile/SpotifyConnectionCard.svelte';
 	import ProfileConnectApps from '$lib/components/profile/ProfileConnectApps.svelte';
@@ -57,22 +64,88 @@
 
 	const userId = authStore.user?.id ?? '';
 	const profileQuery = getProfileQuery(userId);
+	const navidromeConnection = getRemoteConnectionQuery(() => 'navidrome');
+	const jellyfinConnection = getRemoteConnectionQuery(() => 'jellyfin');
+	const plexConnection = getRemoteConnectionQuery(() => 'plex');
+	const navidromeStats = getRemoteStatsQuery(() => 'navidrome');
+	const jellyfinStats = getRemoteStatsQuery(() => 'jellyfin');
+	const plexStats = getRemoteStatsQuery(() => 'plex');
+	const libraryStatsQuery = getLibraryStatsV3Query();
 	const profile = $derived(profileQuery.data);
 	const providers = $derived(profile?.providers ?? authStore.user?.providers ?? []);
 	const hasLocalPassword = $derived(providers.includes('local'));
 
+	// v3 split the old fat profile: services come from the remotes
+	// connection reads (a server counts as usable in either account mode),
+	// libraries from the per-source stats reads plus the global stats for
+	// local files. Both stay empty until their reads settle so the grid
+	// never flashes red-then-green on a cold nav.
+	const services = $derived.by<ProfileServiceConnection[]>(() => {
+		if (navidromeConnection.isPending || jellyfinConnection.isPending || plexConnection.isPending)
+			return [];
+		return [
+			{
+				name: 'Navidrome',
+				enabled: navidromeConnection.data?.connected ?? false,
+				username: navidromeConnection.data?.account_label ?? '',
+				url: null
+			},
+			{
+				name: 'Jellyfin',
+				enabled: jellyfinConnection.data?.connected ?? false,
+				username: jellyfinConnection.data?.account_label ?? '',
+				url: null
+			},
+			{
+				name: 'Plex',
+				enabled: plexConnection.data?.connected ?? false,
+				username: plexConnection.data?.account_label ?? '',
+				url: null
+			}
+		];
+	});
+	const libraryStats = $derived.by<ProfileLibraryStats[]>(() => {
+		const rows: ProfileLibraryStats[] = [];
+		const remotes = [
+			{ source: 'Navidrome', status: navidromeConnection, stats: navidromeStats },
+			{ source: 'Jellyfin', status: jellyfinConnection, stats: jellyfinStats },
+			{ source: 'Plex', status: plexConnection, stats: plexStats }
+		];
+		for (const { source, status, stats } of remotes) {
+			if (!status.data?.connected || stats.isPending || !stats.data) continue;
+			rows.push({
+				source,
+				total_tracks: stats.data.total_tracks,
+				total_albums: stats.data.total_albums,
+				total_artists: stats.data.total_artists,
+				total_size_bytes: null,
+				total_size_human: null
+			});
+		}
+		const global = libraryStatsQuery.data;
+		if (global && global.total_tracks > 0) {
+			rows.push({
+				source: 'Local Files',
+				total_tracks: global.total_tracks,
+				total_albums: global.total_albums,
+				total_artists: global.total_artists,
+				total_size_bytes: global.total_size_bytes,
+				total_size_human: formatBytes(global.total_size_bytes)
+			});
+		}
+		return rows;
+	});
+
 	// lastfm + listenbrainz are per-user (managed in the scrobbling card), so drop from the read-only grid
 	const HIDDEN_SERVICES = new Set(['ListenBrainz', 'Last.fm']);
-	const visibleServices = $derived(
-		(profile?.services ?? []).filter((s) => !HIDDEN_SERVICES.has(s.name))
-	);
+	const visibleServices = $derived(services.filter((s) => !HIDDEN_SERVICES.has(s.name)));
 	const navidromeEnabled = $derived(
-		profile?.services.some((service) => service.name === 'Navidrome' && service.enabled) ?? false
+		services.some((service) => service.name === 'Navidrome' && service.enabled)
 	);
 	const mediaAccountsEnabled = $derived(
-		profile?.services.some(
+		services.some(
 			(service) => service.enabled && ['Navidrome', 'Jellyfin', 'Plex'].includes(service.name)
-		) ?? false
+		)
 	);
 
 	type ProfileTocSection = {
@@ -85,13 +158,14 @@
 
 		return [
 			{ id: 'account', label: 'Account' },
+			{ id: 'sessions', label: 'Sessions' },
 			{ id: 'connected-services', label: 'Connected Services' },
 			...(mediaAccountsEnabled ? [{ id: 'media-accounts', label: 'Media Accounts' }] : []),
 			...(navidromeEnabled ? [{ id: 'navidrome-music-folders', label: 'Music Folders' }] : []),
 			{ id: 'connect-apps', label: 'Connect Apps' },
 			{ id: 'scrobbling', label: 'Scrobbling' },
 			{ id: 'spotify', label: 'Spotify' },
-			...(profile.library_stats.length > 0 ? [{ id: 'libraries', label: 'Your Libraries' }] : [])
+			...(libraryStats.length > 0 ? [{ id: 'libraries', label: 'Your Libraries' }] : [])
 		];
 	});
 
@@ -707,6 +781,10 @@
 					</div>
 				</section>
 
+				<div id="sessions" class="scroll-mt-24 xl:ml-40">
+					<SessionsManager />
+				</div>
+
 				<section id="connected-services" class="scroll-mt-24 xl:ml-40">
 					<h2
 						class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
@@ -766,7 +844,7 @@
 				</section>
 
 				<div id="media-accounts" class="scroll-mt-24 xl:ml-40">
-					<MediaServerAccountsCard services={profile.services} />
+					<MediaServerAccountsCard {services} />
 				</div>
 
 				<div id="navidrome-music-folders" class="scroll-mt-24 xl:ml-40">
@@ -785,7 +863,7 @@
 					<SpotifyConnectionCard />
 				</div>
 
-				{#if profile.library_stats.length > 0}
+				{#if libraryStats.length > 0}
 					<section id="libraries" class="scroll-mt-24 xl:ml-40">
 						<h2
 							class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
@@ -794,7 +872,7 @@
 							Your Libraries
 						</h2>
 						<div class="space-y-4">
-							{#each profile.library_stats as stats (stats.source)}
+							{#each libraryStats as stats (stats.source)}
 								{@const SourceIcon = getSourceIcon(stats.source)}
 								<div
 									class="crate-card overflow-hidden rounded-xl border border-base-300/40 bg-base-200/50 backdrop-blur-sm"

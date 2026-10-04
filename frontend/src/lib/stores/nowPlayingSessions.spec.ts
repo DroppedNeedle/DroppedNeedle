@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({ get: vi.fn() }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { get: state.get } }
+	api: { global: { v3: { GET: state.get } } }
 }));
 
 import type {
@@ -11,8 +11,11 @@ import type {
 	MuxEventStream,
 	MuxUnsubscribe
 } from '$lib/queries/events/MuxEventStream';
-import type { NowPlayingSession } from '$lib/types';
-import { createNowPlayingStore } from './nowPlayingSessions.svelte';
+import {
+	createNowPlayingStore,
+	nowPlayingEntryToSession,
+	type NowPlayingSession
+} from './nowPlayingSessions.svelte';
 
 const SESSION: NowPlayingSession = {
 	id: 's1',
@@ -22,7 +25,8 @@ const SESSION: NowPlayingSession = {
 	album_name: 'Album',
 	cover_url: '',
 	device_name: 'Web',
-	is_paused: false
+	is_paused: false,
+	source: 'plex'
 };
 
 function fakeMux() {
@@ -69,7 +73,7 @@ describe('nowPlayingSessions', () => {
 		store.start();
 		await vi.waitFor(() => expect(store.sessions).toHaveLength(1));
 
-		expect(state.get).toHaveBeenCalledWith('/api/v1/now-playing');
+		expect(state.get).toHaveBeenCalledWith('/api/v3/now-playing', { signal: undefined });
 		expect(on).toHaveBeenCalledWith('snapshot', expect.any(Function));
 		expect(store.sessions[0].id).toBe('s1');
 		store.stop();
@@ -110,5 +114,24 @@ describe('nowPlayingSessions', () => {
 		emit('snapshot', { sessions: [{ ...SESSION }] });
 
 		expect(store.sessions).toHaveLength(0);
+	});
+
+	it('maps a v3 entry onto the session view, blanking a redacted album', () => {
+		const session = nowPlayingEntryToSession({
+			id: 'u:web',
+			user_name: 'userA',
+			track_name: '',
+			artist_name: '',
+			album_name: null,
+			cover_url: '',
+			device_name: 'Web',
+			is_paused: false,
+			source: 'plex',
+			redacted: true
+		});
+
+		expect(session.album_name).toBe('');
+		expect(session.redacted).toBe(true);
+		expect(session.audio_codec).toBeUndefined();
 	});
 });

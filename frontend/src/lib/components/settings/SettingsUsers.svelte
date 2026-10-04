@@ -63,7 +63,7 @@
 	let recoveryUser = $state<UserRecord | null>(null);
 	let recoveryDialogEl: HTMLDialogElement | undefined = $state();
 	let recoveryCode = $state<string | null>(null);
-	let recoveryExpiresAt = $state<string | null>(null);
+	let recoveryExpiresAt = $state<number | null>(null);
 	let recoveryError = $state<string | null>(null);
 	let recoveryCopied = $state(false);
 
@@ -278,9 +278,10 @@
 		}
 	}
 
-	function recoveryExpiryLabel(value: string | null): string {
-		if (!value) return '';
-		const expires = new Date(value);
+	function recoveryExpiryLabel(value: number | null): string {
+		if (value == null) return '';
+		// v3 reports expiry as unix seconds.
+		const expires = new Date(value * 1000);
 		if (Number.isNaN(expires.getTime())) return '15 minutes after creation';
 		return expires.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 	}

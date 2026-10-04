@@ -3,8 +3,9 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import AlbumImage from './AlbumImage.svelte';
 	import DeleteAlbumModal from './DeleteAlbumModal.svelte';
-	import type { ActiveRequestItem, RequestHistoryItem, RequestKind } from '$lib/types';
-	import { reimportDownload } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import type { RequestItem } from '$lib/queries/requests/types';
+	import type { RequestKind } from '$lib/constants';
+	import { reimportDownloadV3 } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		ChevronDown,
@@ -26,11 +27,15 @@
 	} from 'lucide-svelte';
 
 	interface Props {
-		item: ActiveRequestItem | RequestHistoryItem;
+		item: RequestItem;
 		mode: 'active' | 'history';
 		// still being worked on despite the terminal status: 'retrying' = auto-retry
 		// ladder, 'watching' = wanted watcher. Renders a chip linking to the Wanted tab.
 		watchState?: 'retrying' | 'watching';
+		// R10 batch-cancel selection. Rendered only when `selectable` is set.
+		selectable?: boolean;
+		selected?: boolean;
+		onselect?: (mbid: string, requestKind: RequestKind, selected: boolean) => void;
 		oncancel?: (mbid: string, requestKind: RequestKind) => void;
 		onretry?: (mbid: string, requestKind: RequestKind) => void;
 		onclear?: (mbid: string, requestKind: RequestKind) => void;
@@ -38,18 +43,27 @@
 		onreimported?: () => void;
 	}
 
-	let { item, mode, watchState, oncancel, onretry, onclear, onremoved, onreimported }: Props =
-		$props();
+	let {
+		item,
+		mode,
+		watchState,
+		selectable = false,
+		selected = false,
+		onselect,
+		oncancel,
+		onretry,
+		onclear,
+		onremoved,
+		onreimported
+	}: Props = $props();
 
-	const reimport = reimportDownload();
+	const reimport = reimportDownloadV3();
 
 	let confirmingCancel = $state(false);
 	let showDeleteModal = $state(false);
 
-	function formatRelativeTime(dateStr: string): string {
-		const date = new Date(dateStr);
-		const now = new Date();
-		const diffMs = now.getTime() - date.getTime();
+	function formatRelativeTime(epochSeconds: number): string {
+		const diffMs = Date.now() - epochSeconds * 1000;
 		const diffMin = Math.floor(diffMs / 60000);
 		if (diffMin < 1) return 'just now';
 		if (diffMin < 60) return `${diffMin}m ago`;
@@ -57,11 +71,11 @@
 		if (diffHr < 24) return `${diffHr}h ago`;
 		const diffDays = Math.floor(diffHr / 24);
 		if (diffDays < 7) return `${diffDays}d ago`;
-		return date.toLocaleDateString();
+		return new Date(epochSeconds * 1000).toLocaleDateString();
 	}
 
-	function formatDate(dateStr: string): string {
-		return new Date(dateStr).toLocaleString(undefined, {
+	function formatDate(epochSeconds: number): string {
+		return new Date(epochSeconds * 1000).toLocaleString(undefined, {
 			month: 'short',
 			day: 'numeric',
 			year: 'numeric',
@@ -76,10 +90,8 @@
 		return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 	}
 
-	function formatEta(etaStr: string): string {
-		const eta = new Date(etaStr);
-		const now = new Date();
-		const diffMs = eta.getTime() - now.getTime();
+	function formatEta(epochSeconds: number): string {
+		const diffMs = epochSeconds * 1000 - Date.now();
 		if (diffMs <= 0) return 'any moment';
 		const diffMin = Math.floor(diffMs / 60000);
 		if (diffMin < 1) return '< 1 min';
@@ -124,6 +136,8 @@
 				return { badgeClass: 'badge-error', label: 'Import Failed', icon: CircleX };
 			case 'importBlocked':
 				return { badgeClass: 'badge-warning', label: 'Import Blocked', icon: TriangleAlert };
+			case 'cancelling':
+				return { badgeClass: 'badge-ghost', label: 'Cancelling', icon: Loader };
 			case 'incomplete':
 				return { badgeClass: 'badge-warning', label: 'Incomplete', icon: TriangleAlert };
 			case 'imported':
@@ -148,8 +162,7 @@
 			item.status === 'failed' ||
 			item.status === 'downloadClientUnavailable'
 	);
-	const artistMbid = $derived('artist_mbid' in item ? item.artist_mbid : null);
-	const requestKind = $derived(item.request_kind ?? 'album');
+	const requestKind = $derived<RequestKind>(item.request_kind === 'track' ? 'track' : 'album');
 	const isTrackRequest = $derived(requestKind === 'track');
 	const trackTitle = $derived(
 		isTrackRequest ? (item.track_title ?? 'Unknown track') : item.album_title
@@ -189,6 +202,11 @@
 		onclear?.(item.musicbrainz_id, requestKind);
 	}
 
+	function handleSelect(e: Event) {
+		e.stopPropagation();
+		onselect?.(item.musicbrainz_id, requestKind, !selected);
+	}
+
 	function handleRemoveFromLibrary(e: Event) {
 		e.stopPropagation();
 		showDeleteModal = true;
@@ -200,16 +218,12 @@
 	}
 
 	const isActive = $derived(mode === 'active');
-	const activeItem = $derived(item as ActiveRequestItem);
-	const historyItem = $derived(item as RequestHistoryItem);
 	const hasProgress = $derived(
 		isActive &&
-			(activeItem.status === 'downloading' ||
-				activeItem.status === 'importing' ||
-				activeItem.status === 'paused')
+			(item.status === 'downloading' || item.status === 'importing' || item.status === 'paused')
 	);
 	const hasStatusMessages = $derived(
-		isActive && activeItem.status_messages && activeItem.status_messages.length > 0
+		isActive && item.status_messages && item.status_messages.length > 0
 	);
 </script>
 
@@ -217,7 +231,7 @@
 	class="request-card relative flex flex-col rounded-box transition-all duration-200"
 	class:border-error={isFailedState}
 	class:border={isFailedState}
-	class:is-downloading={isActive && activeItem.status === 'downloading'}
+	class:is-downloading={isActive && item.status === 'downloading'}
 >
 	{#if albumContextMbid}
 		<a
@@ -230,6 +244,15 @@
 	{/if}
 
 	<div class="relative z-10 flex items-center gap-3 sm:gap-4 p-3 sm:p-4 pointer-events-none">
+		{#if selectable}
+			<input
+				type="checkbox"
+				class="checkbox checkbox-sm shrink-0 pointer-events-auto"
+				checked={selected}
+				onclick={handleSelect}
+				aria-label="Select {trackTitle}"
+			/>
+		{/if}
 		<div class="w-14 h-14 sm:w-18 sm:h-18 shrink-0 rounded-lg overflow-hidden relative">
 			<AlbumImage
 				mbid={artworkMbid}
@@ -239,7 +262,7 @@
 				rounded="lg"
 				className="w-full h-full"
 			/>
-			{#if isActive && activeItem.status === 'pending'}
+			{#if isActive && item.status === 'pending'}
 				<div class="absolute inset-0 bg-base-300/60 flex items-center justify-center">
 					<Loader class="h-5 w-5 text-warning animate-spin" />
 				</div>
@@ -255,9 +278,9 @@
 					<span class="ml-1">Album: {item.album_title}</span>
 				</p>
 			{/if}
-			{#if artistMbid}
+			{#if item.artist_mbid}
 				<a
-					href={artistHref(artistMbid)}
+					href={artistHref(item.artist_mbid)}
 					class="text-xs sm:text-sm text-base-content/70 hover:text-primary transition-colors line-clamp-1 text-left pointer-events-auto"
 				>
 					{item.artist_name}
@@ -275,18 +298,24 @@
 					<span class="text-base-content/20">•</span>
 					<span class="text-xs text-base-content/40">{item.year}</span>
 				{/if}
-				{#if isActive && activeItem.quality}
+				{#if isActive && item.quality}
 					<span class="text-base-content/20">•</span>
-					<span class="text-xs text-primary/70 font-medium">{activeItem.quality}</span>
+					<span class="text-xs text-primary/70 font-medium">{item.quality}</span>
 				{/if}
-				{#if isActive && activeItem.protocol}
+				{#if isActive && item.protocol}
 					<span class="text-base-content/20">•</span>
-					<span class="text-xs text-base-content/40 capitalize">{activeItem.protocol}</span>
+					<span class="text-xs text-base-content/40 capitalize">{item.protocol}</span>
 				{/if}
-				{#if !isActive && historyItem.reviewed_by_name}
+				{#if item.requester_count > 0}
 					<span class="text-base-content/20">•</span>
 					<span class="text-xs text-base-content/40">
-						{historyItem.status === 'rejected' ? 'Rejected' : 'Approved'} by {historyItem.reviewed_by_name}
+						+{item.requester_count} other{item.requester_count === 1 ? '' : 's'}
+					</span>
+				{/if}
+				{#if !isActive && item.reviewed_by_name}
+					<span class="text-base-content/20">•</span>
+					<span class="text-xs text-base-content/40">
+						{item.status === 'rejected' ? 'Rejected' : 'Approved'} by {item.reviewed_by_name}
 					</span>
 				{/if}
 			</div>
@@ -324,38 +353,36 @@
 						<div class="progress-track flex-1">
 							<div
 								class="progress-fill"
-								class:progress-fill-paused={activeItem.status === 'paused'}
-								style="width: {activeItem.progress ?? 0}%"
+								class:progress-fill-paused={item.status === 'paused'}
+								style="width: {item.progress ?? 0}%"
 							></div>
 						</div>
 						<span
 							class="text-xs text-base-content/70 min-w-[3ch] text-right tabular-nums font-medium"
 						>
-							{activeItem.progress?.toFixed(0) ?? 0}%
+							{item.progress?.toFixed(0) ?? 0}%
 						</span>
 					</div>
 					<div class="flex items-center gap-2 text-xs text-base-content/40">
-						{#if activeItem.eta}
-							<span>{formatEta(activeItem.eta)}</span>
+						{#if item.eta}
+							<span>{formatEta(item.eta)}</span>
 						{/if}
-						{#if activeItem.eta && activeItem.size && activeItem.size_remaining != null}
+						{#if item.eta && item.size && item.size_remaining != null}
 							<span class="text-base-content/20">•</span>
 						{/if}
-						{#if activeItem.size && activeItem.size_remaining != null}
+						{#if item.size && item.size_remaining != null}
 							<span class="tabular-nums">
-								{formatSize(activeItem.size - (activeItem.size_remaining ?? 0))}/{formatSize(
-									activeItem.size
-								)}
+								{formatSize(item.size - (item.size_remaining ?? 0))}/{formatSize(item.size)}
 							</span>
 						{/if}
 					</div>
 				</div>
-			{:else if isActive && isFailedState && activeItem.error_message}
+			{:else if isActive && isFailedState && item.error_message}
 				<span class="text-xs text-error/80 max-w-44 text-right line-clamp-2"
-					>{activeItem.error_message}</span
+					>{item.error_message}</span
 				>
-			{:else if !isActive && historyItem.completed_at}
-				<span class="text-xs text-base-content/40">{formatDate(historyItem.completed_at)}</span>
+			{:else if !isActive && item.completed_at}
+				<span class="text-xs text-base-content/40">{formatDate(item.completed_at)}</span>
 			{/if}
 
 			<div class="flex gap-1 items-center">
@@ -391,7 +418,7 @@
 						</button>
 					{/if}
 				{:else}
-					{#if historyItem.status === 'failed' || historyItem.status === 'cancelled' || historyItem.status === 'incomplete'}
+					{#if item.status === 'failed' || item.status === 'cancelled' || item.status === 'incomplete'}
 						<button
 							class="btn btn-xs btn-primary btn-ghost"
 							onclick={handleRetry}
@@ -400,16 +427,16 @@
 							<RotateCcw class="h-3.5 w-3.5" />
 						</button>
 					{/if}
-					{#if authStore.isAdmin && historyItem.can_reimport && historyItem.download_task_id}
+					{#if authStore.isAdmin && item.can_reimport && item.task_id}
 						<button
 							class="btn btn-xs btn-ghost"
 							onclick={(e) => {
 								e.stopPropagation();
 								reimport.mutate(
 									{
-										id: historyItem.download_task_id!,
+										id: item.task_id!,
 										release_group_mbid:
-											historyItem.track_release_group_mbid ?? historyItem.musicbrainz_id
+											item.track_release_group_mbid ?? (isTrackRequest ? null : item.musicbrainz_id)
 									},
 									{ onSuccess: () => onreimported?.() }
 								);
@@ -421,7 +448,7 @@
 							<FileDown class="h-3.5 w-3.5" />
 						</button>
 					{/if}
-					{#if authStore.isAdmin && !isTrackRequest && historyItem.status === 'imported' && historyItem.in_library}
+					{#if authStore.isAdmin && !isTrackRequest && item.status === 'imported' && item.in_library !== false}
 						<button
 							class="btn btn-xs btn-ghost text-base-content/40 hover:text-error"
 							onclick={handleRemoveFromLibrary}
@@ -447,7 +474,7 @@
 			<div
 				class="bg-base-100/50 border border-error/10 rounded-lg p-3 text-xs max-h-48 overflow-y-auto"
 			>
-				{#each activeItem.status_messages ?? [] as msg, i (`${msg.title}-${i}`)}
+				{#each item.status_messages ?? [] as msg, i (`${msg.title}-${i}`)}
 					{#if msg.title}
 						<div class="font-medium text-base-content/70 mt-2 first:mt-0">{msg.title}</div>
 					{/if}

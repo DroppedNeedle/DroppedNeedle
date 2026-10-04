@@ -27,7 +27,7 @@ import SettingsProwlarr from './SettingsProwlarr.svelte';
 describe('SettingsProwlarr.svelte', () => {
 	it('renders the connection card seeded from the masked config', async () => {
 		await render(SettingsProwlarr);
-		await expect.element(page.getByText('Prowlarr')).toBeInTheDocument();
+		await expect.element(page.getByRole('heading', { name: 'Connection' })).toBeInTheDocument();
 		await expect.element(page.getByLabelText('Enabled')).toBeInTheDocument();
 		const url = page.getByLabelText('URL');
 		await expect.element(url).toHaveValue('http://prowlarr:9696');

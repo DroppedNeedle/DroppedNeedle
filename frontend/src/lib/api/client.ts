@@ -4,6 +4,7 @@ import { withBasePath } from '$lib/utils/basePath';
 import { browser } from '$app/environment';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { clearUserSessionState } from '$lib/utils/userSessionCleanup';
+import { createV3Client, type V3Client } from './v3/client';
 
 export class ApiError extends Error {
 	readonly status: number;
@@ -52,7 +53,7 @@ export class TransportError extends ApiError {
 	}
 }
 
-interface RequestOptions extends Omit<RequestInit, 'method' | 'body'> {
+export interface RequestOptions extends Omit<RequestInit, 'method' | 'body'> {
 	signal?: AbortSignal;
 	raw?: boolean;
 	cache?: RequestCache;
@@ -117,88 +118,97 @@ interface ApiClient {
 	delete<T = void>(url: string, opts?: DeleteRequestOptions): Promise<T>;
 	head(url: string, opts?: RequestOptions): Promise<Response>;
 	upload<T = unknown>(url: string, body: FormData, opts?: RequestOptions): Promise<T>;
+	/** Typed v3 client over the generated contract (same fetch flavor as the host). */
+	v3: V3Client;
+}
+
+function transportPath(url: string): string {
+	try {
+		return new URL(url, 'http://droppedneedle.invalid').pathname;
+	} catch {
+		return url.split('?', 1)[0] ?? url;
+	}
+}
+
+/**
+ * The one request pipeline: timeout/abort mapping, session-cookie fetch, and
+ * the ApiError taxonomy. Both the untyped client methods and the typed v3
+ * client run through here, so their failure behavior cannot drift apart.
+ */
+export async function executeRequest<T>(
+	fetchFn: FetchFn,
+	method: string,
+	url: string,
+	body?: unknown,
+	opts?: RequestOptions
+): Promise<T> {
+	const { raw, timeoutMs, signal, ...fetchOpts } = opts ?? {};
+	// credentials: 'include' sends the httpOnly session cookie cross-origin (dev proxy)
+	const deadlineSignal = timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined;
+	const requestSignal =
+		signal && deadlineSignal
+			? AbortSignal.any([signal, deadlineSignal])
+			: (signal ?? deadlineSignal);
+	const init: RequestInit = {
+		method,
+		credentials: 'include',
+		...fetchOpts,
+		signal: requestSignal
+	};
+
+	if (body !== undefined && body !== null) {
+		if (body instanceof FormData) {
+			// Do not set Content-Type, the browser sets multipart/form-data with boundary automatically
+			init.body = body;
+		} else {
+			const headers = new Headers(init.headers as HeadersInit | undefined);
+			headers.set('Content-Type', 'application/json');
+			init.headers = headers;
+			init.body = JSON.stringify(body);
+		}
+	}
+
+	const requestUrl = getApiUrl(url);
+
+	let res: Response;
+	try {
+		res = await fetchFn(requestUrl, init);
+	} catch (cause) {
+		const timedOut = deadlineSignal?.aborted === true && signal?.aborted !== true;
+		const aborted =
+			!timedOut &&
+			((cause instanceof DOMException && cause.name === 'AbortError') ||
+				requestSignal?.aborted === true);
+		throw new TransportError(
+			timedOut ? 'TRANSPORT_TIMEOUT' : aborted ? 'TRANSPORT_ABORTED' : 'TRANSPORT_NETWORK',
+			method,
+			transportPath(url)
+		);
+	}
+
+	if (raw) return res as unknown as T;
+	return handleResponse<T>(res);
 }
 
 function createClient(fetchFn: FetchFn): ApiClient {
-	function transportPath(url: string): string {
-		try {
-			return new URL(url, 'http://droppedneedle.invalid').pathname;
-		} catch {
-			return url.split('?', 1)[0] ?? url;
-		}
-	}
-
-	async function request<T>(
-		method: string,
-		url: string,
-		body?: unknown,
-		opts?: RequestOptions
-	): Promise<T> {
-		const { raw, timeoutMs, signal, ...fetchOpts } = opts ?? {};
-		// credentials: 'include' sends the httpOnly session cookie cross-origin (dev proxy)
-		const deadlineSignal = timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined;
-		const requestSignal =
-			signal && deadlineSignal
-				? AbortSignal.any([signal, deadlineSignal])
-				: (signal ?? deadlineSignal);
-		const init: RequestInit = {
-			method,
-			credentials: 'include',
-			...fetchOpts,
-			signal: requestSignal
-		};
-
-		if (body !== undefined && body !== null) {
-			if (body instanceof FormData) {
-				// Do not set Content-Type, the browser sets multipart/form-data with boundary automatically
-				init.body = body;
-			} else {
-				const headers = new Headers(init.headers as HeadersInit | undefined);
-				headers.set('Content-Type', 'application/json');
-				init.headers = headers;
-				init.body = JSON.stringify(body);
-			}
-		}
-
-		const requestUrl = getApiUrl(url);
-
-		let res: Response;
-		try {
-			res = await fetchFn(requestUrl, init);
-		} catch (cause) {
-			const timedOut = deadlineSignal?.aborted === true && signal?.aborted !== true;
-			const aborted =
-				!timedOut &&
-				((cause instanceof DOMException && cause.name === 'AbortError') ||
-					requestSignal?.aborted === true);
-			throw new TransportError(
-				timedOut ? 'TRANSPORT_TIMEOUT' : aborted ? 'TRANSPORT_ABORTED' : 'TRANSPORT_NETWORK',
-				method,
-				transportPath(url)
-			);
-		}
-
-		if (raw) return res as unknown as T;
-		return handleResponse<T>(res);
-	}
-
 	return {
 		get: <T = unknown>(url: string, opts?: RequestOptions) =>
-			request<T>('GET', url, undefined, opts),
+			executeRequest<T>(fetchFn, 'GET', url, undefined, opts),
 		post: <T = unknown>(url: string, body?: unknown, opts?: RequestOptions) =>
-			request<T>('POST', url, body, opts),
+			executeRequest<T>(fetchFn, 'POST', url, body, opts),
 		put: <T = unknown>(url: string, body?: unknown, opts?: RequestOptions) =>
-			request<T>('PUT', url, body, opts),
+			executeRequest<T>(fetchFn, 'PUT', url, body, opts),
 		patch: <T = unknown>(url: string, body?: unknown, opts?: RequestOptions) =>
-			request<T>('PATCH', url, body, opts),
+			executeRequest<T>(fetchFn, 'PATCH', url, body, opts),
 		delete: <T = void>(url: string, opts?: DeleteRequestOptions) => {
 			const { body, ...requestOptions } = opts ?? {};
-			return request<T>('DELETE', url, body, requestOptions);
+			return executeRequest<T>(fetchFn, 'DELETE', url, body, requestOptions);
 		},
 		head: (url: string, opts?: RequestOptions) =>
-			request<Response>('HEAD', url, undefined, { ...opts, raw: true }),
+			executeRequest<Response>(fetchFn, 'HEAD', url, undefined, { ...opts, raw: true }),
 		upload: <T = unknown>(url: string, body: FormData, opts?: RequestOptions) =>
-			request<T>('POST', url, body, opts)
+			executeRequest<T>(fetchFn, 'POST', url, body, opts),
+		v3: createV3Client(fetchFn)
 	};
 }
 

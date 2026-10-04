@@ -138,6 +138,7 @@ describe('Search queries', () => {
 				format: 'FLAC',
 				year: 2020,
 				is_compilation: false,
+				release_type: 'album',
 				cover_available: true,
 				date_added: null,
 				sort_name: null,

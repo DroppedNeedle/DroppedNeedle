@@ -1,5 +1,6 @@
 import { get } from 'svelte/store';
 import { API } from '$lib/constants';
+import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import { api } from '$lib/api/client';
 import { integrationStore } from '$lib/stores/integration';
 import { playerStore } from '$lib/stores/player.svelte';
@@ -9,14 +10,14 @@ import { getCoverUrl } from '$lib/utils/errorHandling';
 import type { QueueItem } from '$lib/player/types';
 import type {
 	JellyfinAlbumMatch,
-	LocalAlbumMatch,
-	NavidromeAlbumMatch,
-	PlexAlbumMatch,
 	JellyfinTrackInfo,
+	LocalAlbumMatch,
 	LocalTrackInfo,
+	NavidromeAlbumMatch,
 	NavidromeTrackInfo,
+	PlexAlbumMatch,
 	PlexTrackInfo
-} from '$lib/types';
+} from '$lib/player/types';
 
 export interface AlbumCardMeta {
 	mbid: string;
@@ -40,7 +41,7 @@ function buildLocalItems(tracks: LocalTrackInfo[], meta: AlbumCardMeta): QueueIt
 		coverUrl: cover,
 		sourceType: 'local' as const,
 		artistId: meta.artistId,
-		streamUrl: API.stream.local(t.track_file_id),
+		streamUrl: gatewayStreamUrl('local', t.track_file_id),
 		format: t.format.toLowerCase()
 	}));
 }
@@ -57,7 +58,7 @@ function buildNavidromeItems(tracks: NavidromeTrackInfo[], meta: AlbumCardMeta):
 		coverUrl: cover,
 		sourceType: 'navidrome' as const,
 		artistId: meta.artistId,
-		streamUrl: API.stream.navidrome(t.navidrome_id),
+		streamUrl: gatewayStreamUrl('navidrome', t.navidrome_id),
 		format: normalizeCodec(t.codec)
 	}));
 }
@@ -74,7 +75,7 @@ function buildJellyfinItems(tracks: JellyfinTrackInfo[], meta: AlbumCardMeta): Q
 		coverUrl: cover,
 		sourceType: 'jellyfin' as const,
 		artistId: meta.artistId,
-		streamUrl: API.stream.jellyfin(t.jellyfin_id),
+		streamUrl: gatewayStreamUrl('jellyfin', t.jellyfin_id),
 		format: normalizeCodec(t.codec)
 	}));
 }
@@ -94,7 +95,7 @@ function buildPlexItems(tracks: PlexTrackInfo[], meta: AlbumCardMeta): QueueItem
 				coverUrl: cover,
 				sourceType: 'plex' as const,
 				artistId: meta.artistId,
-				streamUrl: API.stream.plex(t.part_key!),
+				streamUrl: gatewayStreamUrl('plex', t.part_key!),
 				format: normalizeCodec(t.codec),
 				plexRatingKey: t.plex_id
 			};

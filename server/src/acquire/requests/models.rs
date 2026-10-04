@@ -195,6 +195,18 @@ pub struct BatchCancelResponse {
     pub message: String,
 }
 
+/// One grouped status detail behind the request card's expander. The
+/// intake slice has no producer for these yet (v2 never sent them
+/// either), so views answer None until one exists.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct RequestStatusMessage {
+    /// Group heading, when grouped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Detail lines.
+    pub messages: Vec<String>,
+}
+
 /// One request row in list views.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RequestItem {
@@ -210,6 +222,10 @@ pub struct RequestItem {
     /// Release year.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub year: Option<i32>,
+    /// Custom artwork URL override. None: artwork resolves client-side
+    /// from the MBID, which is what v2's built cover URL did anyway.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
     /// Epoch seconds when asked.
     pub requested_at: u64,
     /// Epoch seconds when terminal, when terminal.
@@ -217,6 +233,32 @@ pub struct RequestItem {
     pub completed_at: Option<u64>,
     /// Row status.
     pub status: String,
+    /// Download progress percent (0-100) from the linked task, when linked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<f64>,
+    /// Epoch seconds when the transfer should finish. None: no live ETA
+    /// source exists (v2 never sent one either).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eta: Option<u64>,
+    /// Total transfer bytes from the linked task, once known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<f64>,
+    /// Bytes still to transfer from the linked task, once known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_remaining: Option<f64>,
+    /// Task status detail groups behind the card's expander. None until a
+    /// producer exists (v2 never sent these either).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_messages: Option<Vec<RequestStatusMessage>>,
+    /// Last failure text from the linked task, when failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    /// Picked candidate quality from the linked task, once picked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<String>,
+    /// Fetch source from the linked task (`soulseek`, `usenet`, ...).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
     /// Primary owner id.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
@@ -226,9 +268,21 @@ pub struct RequestItem {
     /// Reviewer display name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reviewed_by_name: Option<String>,
+    /// Epoch seconds when reviewed, when reviewed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reviewed_at: Option<u64>,
+    /// Whether the album is in the library. None: the intake slice has
+    /// no library seam; callers treat unknown as present for imported
+    /// rows, which only land after the task completes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_library: Option<bool>,
     /// Linked download task.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
+    /// Whether an admin can reimport the linked task (failed with its
+    /// candidate still linked). None when not applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_reimport: Option<bool>,
     /// `album` or `track`.
     pub request_kind: String,
     /// Track title for exact-track rows.
@@ -237,6 +291,9 @@ pub struct RequestItem {
     /// Track length for exact-track rows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_seconds: Option<i64>,
+    /// Containing release group for exact-track rows (album context).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_release_group_mbid: Option<String>,
     /// Co-requester count beyond the owner.
     pub requester_count: u32,
 }
@@ -297,17 +354,35 @@ pub struct WantedItem {
     pub artist_name: String,
     /// Album title.
     pub album_title: String,
-    /// Watch state: `watching` or `paused`.
+    /// `missing` (whole album) or `partial` (filling gaps).
+    pub kind: String,
+    /// Watch state: `watching`, `paused`, or loop-set `dormant`.
     pub state: String,
     /// Passed checks so far.
     pub check_count: u32,
+    /// Epoch seconds when the next check is due, when scheduled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_check_at: Option<u64>,
     /// Unseen candidate count.
     pub new_candidate_count: u32,
     /// Epoch seconds when created.
     pub created_at: u64,
+    /// Artist MBID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artist_mbid: Option<String>,
+    /// Release year.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    /// Custom artwork URL override. None: artwork resolves client-side
+    /// from the MBID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
     /// Owner id (admins see every row).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
+    /// Owner display name (admins only; the "watched for" chip).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_name: Option<String>,
 }
 
 /// One auto-retry entry behind the wanted view.
@@ -323,9 +398,25 @@ pub struct WantedRetryingItem {
     pub retry_count: u32,
     /// Attempts allowed.
     pub max_attempts: u32,
+    /// Epoch seconds when the next try is due, when scheduled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_retry_at: Option<u64>,
+    /// Artist MBID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artist_mbid: Option<String>,
+    /// Release year.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    /// Custom artwork URL override. None: artwork resolves client-side
+    /// from the MBID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
     /// Owner id (admins see every row).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
+    /// Owner display name (admins only; the "requested by" chip).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_name: Option<String>,
 }
 
 /// Wanted list: watches plus the still-retrying set.

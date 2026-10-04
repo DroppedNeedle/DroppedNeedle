@@ -1,13 +1,19 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { LoaderCircle, Music2, ArrowLeft, RefreshCw, CircleCheckBig, Download } from 'lucide-svelte';
+	import {
+		LoaderCircle,
+		Music2,
+		ArrowLeft,
+		RefreshCw,
+		CircleCheckBig,
+		Download
+	} from 'lucide-svelte';
 	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import {
 		getSpotifyPlaylistsQuery,
 		createImportSpotifyPlaylistMutation
 	} from '$lib/queries/spotify/SpotifyQueries.svelte';
-	import type { SpotifyPlaylistItem } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { getApiUrl } from '$lib/api/api-utils';
 
@@ -18,7 +24,7 @@
 	let importingAll = $state(false);
 	let importAllProgress = $state({ done: 0, total: 0 });
 
-	async function handleImport(playlist: SpotifyPlaylistItem) {
+	async function handleImport(playlist: { id: string; name: string }) {
 		if (importing || importingAll) return;
 		importing = playlist.id;
 		try {

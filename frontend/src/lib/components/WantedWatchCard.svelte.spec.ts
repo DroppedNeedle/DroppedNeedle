@@ -6,7 +6,7 @@ import type { WantedWatchItem } from '$lib/queries/wanted/types';
 
 function makeItem(overrides: Partial<WantedWatchItem> = {}): WantedWatchItem {
 	return {
-		release_group_mbid: '22222222-2222-2222-2222-222222222222',
+		musicbrainz_id: '22222222-2222-2222-2222-222222222222',
 		artist_name: 'Yan Qing',
 		album_title: 'the arrival',
 		kind: 'missing',
@@ -18,9 +18,6 @@ function makeItem(overrides: Partial<WantedWatchItem> = {}): WantedWatchItem {
 		artist_mbid: null,
 		year: 2026,
 		cover_url: null,
-		first_release_date: '2026-06-23',
-		last_checked_at: Date.now() / 1000 - 3600,
-		last_outcome: 'no_results',
 		user_id: 'user-a',
 		user_name: null,
 		...overrides
@@ -46,6 +43,12 @@ describe('WantedWatchCard.svelte', () => {
 		await expect.element(page.getByText('checked 4×')).toBeVisible();
 	});
 
+	it('hides the next-check line when no check is scheduled', async () => {
+		await renderCard({ next_check_at: null });
+		await expect.element(page.getByText('Watching')).toBeVisible();
+		expect(page.getByText('next check', { exact: false }).elements()).toHaveLength(0);
+	});
+
 	it('shows Stop and Check now for a watching want and fires the callbacks', async () => {
 		const onstop = vi.fn();
 		const onresume = vi.fn();
@@ -61,6 +64,15 @@ describe('WantedWatchCard.svelte', () => {
 		await renderCard({ state: 'dormant' }, { onresume });
 		await expect.element(page.getByText('Dormant')).toBeVisible();
 		await expect.element(page.getByText('paused after a year of looking')).toBeVisible();
+		await page.getByText('Resume').click();
+		expect(onresume).toHaveBeenCalledOnce();
+	});
+
+	it('shows a Resume button for a paused want', async () => {
+		const onresume = vi.fn();
+		await renderCard({ state: 'paused' }, { onresume });
+		await expect.element(page.getByText('Paused')).toBeVisible();
+		await expect.element(page.getByText('not being searched')).toBeVisible();
 		await page.getByText('Resume').click();
 		expect(onresume).toHaveBeenCalledOnce();
 	});
@@ -94,6 +106,11 @@ describe('WantedWatchCard.svelte', () => {
 	it('notes when a partial want is finding missing tracks', async () => {
 		await renderCard({ kind: 'partial' });
 		await expect.element(page.getByText('finding missing tracks')).toBeVisible();
+	});
+
+	it('names the owner when one is passed', async () => {
+		await renderCard({}, { ownerName: 'Ada' });
+		await expect.element(page.getByText('watched for Ada')).toBeVisible();
 	});
 
 	it('hides mutating buttons when no callbacks are given (non-owner)', async () => {

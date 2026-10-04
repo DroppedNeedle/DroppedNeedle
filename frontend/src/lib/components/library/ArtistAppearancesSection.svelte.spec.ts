@@ -61,6 +61,7 @@ const album: LibraryAlbumSummary = {
 	format: 'flac',
 	year: 2024,
 	is_compilation: false,
+	release_type: 'album',
 	cover_available: false,
 	date_added: 1,
 	sort_name: null,

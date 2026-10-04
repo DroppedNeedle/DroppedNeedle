@@ -8,13 +8,13 @@ import {
 	type SetDataOptions,
 	type Updater
 } from '@tanstack/svelte-query';
-import { experimental_createQueryPersister } from '@tanstack/svelte-query-persist-client';
 import {
 	clearPersistedQueryCache,
 	createIDBStorage,
 	removePersistedQueries,
 	type PersistedQueryPredicate
 } from './IndexedDbPersister.svelte';
+import { createPersistedQueryPersister } from './persistedCache';
 import {
 	musicBrainzSourceKey,
 	subscribeMusicBrainzSourceScope,
@@ -22,19 +22,7 @@ import {
 } from './musicbrainz/sourceScope.svelte';
 import { getDownloadScope, subscribeDownloadRoleChange } from './downloads/downloadScope.svelte';
 
-/**
- * Maximum age for queries to be persisted.
- * @see https://tanstack.com/query/latest/docs/framework/react/plugins/persistQueryClient#how-it-works
- */
-const QUERY_MAX_AGE = 1000 * 60 * 60 * 24 * 7; // 7 days
-
-const queryPersister = experimental_createQueryPersister({
-	storage: createIDBStorage(isCurrentQueryScope),
-	maxAge: QUERY_MAX_AGE,
-	// No need to serialize/deserialize since we're using IndexedDB which can store complex objects.
-	serialize: (persistedQuery) => persistedQuery,
-	deserialize: (cached) => cached
-});
+const queryPersister = createPersistedQueryPersister(createIDBStorage(isCurrentQueryScope));
 
 export const setQueryDataWithPersister = async <
 	TQueryFnData = unknown,

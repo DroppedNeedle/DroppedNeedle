@@ -34,8 +34,7 @@ vi.mock('./ProviderArtistPage.svelte', () => {
 	return { default: Component };
 });
 
-vi.mock('$lib/queries/library/LibraryQueries.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/queries/library/LibraryQueries.svelte')>()),
+vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getLibraryArtistDetailQuery: (...args: unknown[]) => {
 		h.localDetailRequest(...args);
 		return h.localDetail404

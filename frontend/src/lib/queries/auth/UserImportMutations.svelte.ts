@@ -14,8 +14,7 @@ import type { ImportUsersResult, ImportUsersVars } from './types';
  */
 export const createImportUsersMutation = () =>
 	createMutation(() => ({
-		mutationFn: (vars: ImportUsersVars) =>
-			api.post<ImportUsersResult>(AUTH_ENDPOINTS.adminImport, vars),
+		mutationFn: (vars: ImportUsersVars) => api.v3.POST(AUTH_ENDPOINTS.adminImport, vars),
 		onSuccess: (_result: ImportUsersResult, vars: ImportUsersVars) =>
 			invalidateQueriesWithPersister({
 				queryKey: AuthQueryKeyFactory.importCandidates(vars.provider, authStore.user?.id)

@@ -51,13 +51,13 @@ const h = vi.hoisted(() => ({
 	isAdmin: true
 }));
 
-vi.mock('$lib/stores/authStore.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/stores/authStore.svelte')>()),
+vi.mock('$lib/stores/authStore.svelte', () => ({
 	authStore: {
 		get isAdmin() {
 			return h.isAdmin;
 		}
-	}
+	},
+	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 vi.mock('$lib/stores/toast', () => ({ toastStore: { show: h.toast } }));
 vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({

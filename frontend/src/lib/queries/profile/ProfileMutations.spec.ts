@@ -1,13 +1,83 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 
-// Keep the real QueryClient/persister (we exercise the real cache reset below) but
-// stub createQuery/createMutation so we can pull the options object straight out.
-vi.mock('@tanstack/svelte-query', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('@tanstack/svelte-query')>();
+// Stub createQuery/createMutation so we can pull the options object straight out;
+// ../QueryClient is an in-memory fake below (the real one needs the QueryClient
+// class, which a plain-object tanstack mock cannot re-export).
+vi.mock('@tanstack/svelte-query', () => ({
+	createMutation: vi.fn((factory: () => Record<string, unknown>) => factory()),
+	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory())
+}));
+
+// In-memory stand-in for ../QueryClient: the real module instantiates the
+// QueryClient class from @tanstack/svelte-query, which a plain-object mock
+// cannot re-export (a factory re-importing the original crashes the browser
+// worker). This fake preserves what the tests observe: set/get round-trips,
+// clear/ensure caching, and invalidation via queryClient.invalidateQueries.
+const queryCache = vi.hoisted(() => ({ map: new Map<string, unknown>() }));
+
+vi.mock('../QueryClient', () => {
+	const keyOf = (key: unknown) => JSON.stringify(key);
+	const fakeClient = {
+		getQueryData: vi.fn(
+			<T = unknown>(key: unknown): T | undefined =>
+				queryCache.map.get(keyOf(key)) as T | undefined
+		),
+		setQueryData: vi.fn((key: unknown, updater: unknown) => {
+			const next =
+				typeof updater === 'function'
+					? (updater as (old: unknown) => unknown)(queryCache.map.get(keyOf(key)))
+					: updater;
+			queryCache.map.set(keyOf(key), next);
+			return next;
+		}),
+		removeQueries: vi.fn((filters?: { queryKey?: unknown }) => {
+			if (filters?.queryKey === undefined) {
+				queryCache.map.clear();
+				return;
+			}
+			const prefix = keyOf(filters.queryKey).slice(0, -1);
+			for (const k of [...queryCache.map.keys()]) {
+				if (k.startsWith(prefix)) queryCache.map.delete(k);
+			}
+		}),
+		invalidateQueries: vi.fn(async (_filters?: unknown, _options?: unknown) => undefined),
+		cancelQueries: vi.fn(async (_filters?: unknown) => undefined),
+		clear: vi.fn(() => queryCache.map.clear()),
+		ensureQueryData: vi.fn(
+			async (opts: {
+				queryKey: unknown;
+				queryFn: (ctx: { queryKey: unknown; signal: AbortSignal }) => Promise<unknown>;
+			}): Promise<unknown> => {
+				const k = keyOf(opts.queryKey);
+				if (!queryCache.map.has(k)) {
+					queryCache.map.set(
+						k,
+						await opts.queryFn({
+							queryKey: opts.queryKey,
+							signal: new AbortController().signal
+						})
+					);
+				}
+				return queryCache.map.get(k);
+			}
+		)
+	};
 	return {
-		...actual,
-		createMutation: vi.fn((factory: () => Record<string, unknown>) => factory()),
-		createQuery: vi.fn((factory: () => Record<string, unknown>) => factory())
+		queryClient: fakeClient,
+		invalidateQueriesWithPersister: vi.fn((filters?: unknown, options?: unknown) =>
+			fakeClient.invalidateQueries(filters, options)
+		),
+		setQueryDataWithPersister: vi.fn(
+			<_T = unknown>(key: unknown, updater: unknown): Promise<void> => {
+				fakeClient.setQueryData(key, updater);
+				return Promise.resolve();
+			}
+		),
+		resetQueryCacheForUserSwitch: vi.fn(async (): Promise<void> => {
+			queryClient.clear();
+			const idb = await import('idb-keyval');
+			await idb.clear();
+		}),
 	};
 });
 
@@ -22,7 +92,7 @@ vi.mock('idb-keyval', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { get: vi.fn(), post: vi.fn(), put: vi.fn(), upload: vi.fn() } }
+	api: { global: { v3: { GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), PATCH: vi.fn() } } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -50,10 +120,12 @@ import {
 	createUploadAvatarMutation
 } from './ProfileMutations.svelte';
 
-const mockGet = vi.mocked(api.global.get);
-const mockPost = vi.mocked(api.global.post);
-const mockPut = vi.mocked(api.global.put);
-const mockUpload = vi.mocked(api.global.upload);
+// The typed client's generics resolve mock results to void; loosen to Mock
+// so resolves typecheck (assertions still pin URLs + bodies).
+const mockV3Get = vi.mocked(api.global.v3.GET) as unknown as Mock;
+const mockV3Post = vi.mocked(api.global.v3.POST) as unknown as Mock;
+const mockV3Put = vi.mocked(api.global.v3.PUT) as unknown as Mock;
+const mockV3Patch = vi.mocked(api.global.v3.PATCH) as unknown as Mock;
 
 const SESSION_USER = {
 	id: 'userA',
@@ -68,10 +140,10 @@ const SESSION_USER = {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	mockGet.mockResolvedValue({});
-	mockPost.mockResolvedValue(SESSION_USER);
-	mockPut.mockResolvedValue(SESSION_USER);
-	mockUpload.mockResolvedValue(SESSION_USER);
+	mockV3Get.mockResolvedValue({});
+	mockV3Post.mockResolvedValue(SESSION_USER);
+	mockV3Put.mockResolvedValue(SESSION_USER);
+	mockV3Patch.mockResolvedValue(SESSION_USER);
 });
 
 type Opts = {
@@ -91,53 +163,75 @@ describe('ProfileQueryKeyFactory', () => {
 });
 
 describe('getProfileQuery', () => {
-	it('builds a userId-scoped key and fetches /api/v1/profile', async () => {
+	it('builds a userId-scoped key and fetches GET /api/v3/me', async () => {
 		const opts = getProfileQuery('userA') as unknown as Opts;
 		expect(opts.queryKey).toEqual(['profile', 'userA']);
 		await opts.queryFn!({ signal: new AbortController().signal });
-		expect(mockGet.mock.calls[0][0]).toBe(PROFILE_ENDPOINTS.get);
+		expect(mockV3Get.mock.calls[0][0]).toBe(PROFILE_ENDPOINTS.get());
 	});
 });
 
 describe('profile mutations hit the correct endpoints', () => {
-	it('display name -> PUT /profile', async () => {
+	it('display name -> PATCH /api/v3/me', async () => {
 		const m = createUpdateDisplayNameMutation('userA') as unknown as Opts;
 		await m.mutationFn({ display_name: 'Bob' });
-		expect(mockPut).toHaveBeenCalledWith(PROFILE_ENDPOINTS.update, { display_name: 'Bob' });
+		expect(mockV3Patch).toHaveBeenCalledWith(PROFILE_ENDPOINTS.update(), {
+			display_name: 'Bob'
+		});
 	});
 
-	it('username -> PUT /profile/username', async () => {
+	it('username -> PUT /api/v3/me/username', async () => {
 		const m = createUpdateUsernameMutation('userA') as unknown as Opts;
 		await m.mutationFn({ username: 'bob' });
-		expect(mockPut).toHaveBeenCalledWith(PROFILE_ENDPOINTS.updateUsername, { username: 'bob' });
+		expect(mockV3Put).toHaveBeenCalledWith(PROFILE_ENDPOINTS.updateUsername(), {
+			username: 'bob'
+		});
 	});
 
-	it('email -> PUT /profile/email', async () => {
+	it('email -> PUT /api/v3/me/email', async () => {
 		const m = createUpdateEmailMutation('userA') as unknown as Opts;
 		await m.mutationFn({ email: null });
-		expect(mockPut).toHaveBeenCalledWith(PROFILE_ENDPOINTS.updateEmail, { email: null });
+		expect(mockV3Put).toHaveBeenCalledWith(PROFILE_ENDPOINTS.updateEmail(), { email: null });
 	});
 
-	it('change password -> POST /profile/password', async () => {
+	it('change password -> POST /api/v3/me/password', async () => {
 		const m = createChangePasswordMutation('userA') as unknown as Opts;
 		await m.mutationFn({ current_password: 'a', new_password: 'b' });
-		expect(mockPost).toHaveBeenCalledWith(PROFILE_ENDPOINTS.changePassword, {
+		expect(mockV3Post).toHaveBeenCalledWith(PROFILE_ENDPOINTS.changePassword(), {
 			current_password: 'a',
 			new_password: 'b'
 		});
 	});
 
-	it('set password -> POST /profile/set-password', async () => {
+	it('set password -> POST /api/v3/me/local-password', async () => {
 		const m = createSetPasswordMutation('userA') as unknown as Opts;
 		await m.mutationFn({ new_password: 'b' });
-		expect(mockPost).toHaveBeenCalledWith(PROFILE_ENDPOINTS.setPassword, { new_password: 'b' });
+		expect(mockV3Post).toHaveBeenCalledWith(PROFILE_ENDPOINTS.setPassword(), {
+			new_password: 'b'
+		});
 	});
 
-	it('avatar -> POST /profile/avatar as multipart form data', async () => {
+	it('avatar -> POST /api/v3/me/avatar as base64 JSON', async () => {
+		vi.stubGlobal(
+			'FileReader',
+			class {
+				result: string | null = null;
+				onload: (() => void) | null = null;
+				onerror: (() => void) | null = null;
+				error: unknown = null;
+				readAsDataURL() {
+					this.result = 'data:image/png;base64,eA==';
+					this.onload?.();
+				}
+			}
+		);
 		const m = createUploadAvatarMutation('userA') as unknown as Opts;
 		await m.mutationFn(new File(['x'], 'a.png', { type: 'image/png' }));
-		expect(mockUpload.mock.calls[0][0]).toBe(PROFILE_ENDPOINTS.avatarUpload);
-		expect(mockUpload.mock.calls[0][1]).toBeInstanceOf(FormData);
+		expect(mockV3Post).toHaveBeenCalledWith(PROFILE_ENDPOINTS.avatarUpload(), {
+			content_type: 'image/png',
+			image_base64: 'eA=='
+		});
+		vi.unstubAllGlobals();
 	});
 });
 

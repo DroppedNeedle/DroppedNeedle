@@ -1,6 +1,13 @@
 import { page } from '@vitest/browser/context';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
+
+// Album cards read the download-access flag; stub it so the section renders
+// without a QueryClientProvider.
+vi.mock('$lib/queries/local/LocalQueries.svelte', () => ({
+	getDownloadAccessQuery: () => ({ data: { allowed: true } })
+}));
+
 import HomeSection from './HomeSection.svelte';
 
 describe('HomeSection.svelte', () => {

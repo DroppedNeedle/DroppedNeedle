@@ -35,10 +35,60 @@ vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 	discardHeldManagementUnit: () => ({ mutate: h.discard, isPending: false })
 }));
 
-vi.mock('$lib/queries/QueryClient', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/queries/QueryClient')>()),
-	invalidateQueriesWithPersister: (...args: unknown[]) => h.invalidate(...args)
-}));
+vi.mock('$lib/queries/QueryClient', () => {
+	// musicSource/userSessionCleanup ride along via $lib/constants and import
+	// the client value + setter; they only run at call time, so a small
+	// in-memory client is enough.
+	const store = new Map<string, unknown>();
+	const keyOf = (key: unknown) => JSON.stringify(key);
+	const fakeClient = {
+		getQueryData: (key: unknown) => store.get(keyOf(key)),
+		setQueryData: (key: unknown, updater: unknown) => {
+			const next =
+				typeof updater === 'function'
+					? (updater as (old: unknown) => unknown)(store.get(keyOf(key)))
+					: updater;
+			store.set(keyOf(key), next);
+			return next;
+		},
+		removeQueries: (filters?: { queryKey?: unknown }) => {
+			if (filters?.queryKey === undefined) {
+				store.clear();
+				return;
+			}
+			const prefix = keyOf(filters.queryKey).slice(0, -1);
+			for (const k of [...store.keys()]) {
+				if (k.startsWith(prefix)) store.delete(k);
+			}
+		},
+		invalidateQueries: vi.fn(async () => undefined),
+		cancelQueries: vi.fn(async () => undefined),
+		clear: () => store.clear(),
+		ensureQueryData: async (opts: {
+			queryKey: unknown;
+			queryFn: (ctx: { queryKey: unknown; signal: AbortSignal }) => Promise<unknown>;
+		}) => {
+			const k = keyOf(opts.queryKey);
+			if (!store.has(k)) {
+				store.set(
+					k,
+					await opts.queryFn({
+						queryKey: opts.queryKey,
+						signal: new AbortController().signal
+					})
+				);
+			}
+			return store.get(k);
+		}
+	};
+	return {
+		queryClient: fakeClient,
+		invalidateQueriesWithPersister: (...args: unknown[]) => h.invalidate(...args),
+		setQueryDataWithPersister: async (key: unknown, updater: unknown): Promise<void> => {
+			fakeClient.setQueryData(key, updater);
+		}
+	};
+});
 
 class FakeEventSource {
 	static instances: FakeEventSource[] = [];

@@ -1361,3 +1361,103 @@ async fn leak_briefs_fixed_500_and_envelopes() {
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
     assert_eq!(wrong_method["error"]["code"], "METHOD_NOT_ALLOWED");
 }
+
+#[tokio::test]
+async fn playlist_source_ref_roundtrip() {
+    let state = CollectionsState::new();
+    let app = app(&state);
+
+    let (status, _, created) = send_json(
+        app.clone(),
+        request(
+            Method::POST,
+            "/playlists",
+            Some(ADA),
+            Some(json!({"name": "Imported", "source_ref": "spotify:abc"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["source_ref"], "spotify:abc");
+    let id = created["id"].as_str().unwrap().to_owned();
+
+    let (_, _, detail) = send_json(
+        app.clone(),
+        request(Method::GET, &format!("/playlists/{id}"), Some(ADA), None),
+    )
+    .await;
+    assert_eq!(detail["source_ref"], "spotify:abc");
+
+    let (_, _, list) = send_json(
+        app.clone(),
+        request(Method::GET, "/playlists", Some(ADA), None),
+    )
+    .await;
+    assert_eq!(list["playlists"][0]["source_ref"], "spotify:abc");
+}
+
+#[tokio::test]
+async fn playlist_source_ref_defaults_to_null() {
+    let state = CollectionsState::new();
+    let app = app(&state);
+
+    let (status, _, created) = send_json(
+        app.clone(),
+        request(
+            Method::POST,
+            "/playlists",
+            Some(ADA),
+            Some(json!({"name": "Plain"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(
+        created.get("source_ref").is_none_or(Value::is_null),
+        "missing source_ref serializes as null or absent"
+    );
+
+    let (_, _, list) = send_json(
+        app.clone(),
+        request(Method::GET, "/playlists", Some(ADA), None),
+    )
+    .await;
+    assert!(
+        list["playlists"][0]
+            .get("source_ref")
+            .is_none_or(Value::is_null),
+        "missing source_ref serializes as null or absent"
+    );
+}
+
+#[tokio::test]
+async fn playlist_source_ref_stays_out_of_redacted_rows() {
+    let state = CollectionsState::new();
+    let app = app(&state);
+
+    let (_, _, created) = send_json(
+        app.clone(),
+        request(
+            Method::POST,
+            "/playlists",
+            Some(ADA),
+            Some(json!({"name": "Secret", "source_ref": "plex:xyz"})),
+        ),
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    assert_eq!(created["source_ref"], "plex:xyz");
+
+    let (_, _, list) = send_json(
+        app.clone(),
+        request(Method::GET, "/playlists", Some(BOB), None),
+    )
+    .await;
+    let row = &list["playlists"][0];
+    assert_eq!(row["id"], id);
+    assert_eq!(row["is_redacted"], true);
+    assert!(
+        row.get("source_ref").is_none(),
+        "redacted rows never carry provenance"
+    );
+}

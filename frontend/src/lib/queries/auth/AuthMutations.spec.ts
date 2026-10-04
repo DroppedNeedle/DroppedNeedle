@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 import { AUTH_ENDPOINTS } from './endpoints';
 import { toAuthUser } from './types';
@@ -11,9 +11,11 @@ vi.mock('@tanstack/svelte-query', () => ({
 vi.mock('$lib/api/client', () => ({
 	api: {
 		post: vi.fn(),
+		v3: { POST: vi.fn() },
 		global: {
 			get: vi.fn(),
-			post: vi.fn()
+			post: vi.fn(),
+			v3: { POST: vi.fn() }
 		}
 	}
 }));
@@ -23,7 +25,12 @@ import { createMutation, createQuery } from '@tanstack/svelte-query';
 
 const mockGet = vi.mocked(api.global.get);
 const mockPost = vi.mocked(api.global.post);
-const mockAuthenticatedPost = vi.mocked(api.post);
+const mockV3Post = vi.mocked(api.global.v3.POST) as unknown as Mock<
+	(...args: unknown[]) => Promise<unknown>
+>;
+const mockAuthenticatedV3Post = vi.mocked(api.v3.POST) as unknown as Mock<
+	(...args: unknown[]) => Promise<unknown>
+>;
 const mockCreateMutation = vi.mocked(createMutation);
 const mockCreateQuery = vi.mocked(createQuery);
 
@@ -94,26 +101,26 @@ describe('toAuthUser', () => {
 
 describe('auth mutations route through api.global', () => {
 	it('local login posts username + password to the login endpoint', async () => {
-		mockPost.mockResolvedValue({ user: {} });
+		mockV3Post.mockResolvedValue({ user: {} });
 		const { createLocalLoginMutation } = await import('./AuthMutations.svelte');
 		createLocalLoginMutation();
 
 		await lastMutationFn()({ username: 'jane.doe', password: 'pw' });
 
-		expect(mockPost).toHaveBeenCalledWith(AUTH_ENDPOINTS.login, {
+		expect(mockV3Post).toHaveBeenCalledWith(AUTH_ENDPOINTS.login, {
 			username: 'jane.doe',
 			password: 'pw'
 		});
 	});
 
 	it('setup posts username and omits email when not provided', async () => {
-		mockPost.mockResolvedValue({ user: {} });
+		mockV3Post.mockResolvedValue({ user: {} });
 		const { createSetupMutation } = await import('./AuthMutations.svelte');
 		createSetupMutation();
 
 		await lastMutationFn()({ display_name: 'A', username: 'a.admin', password: 'pw' });
 
-		expect(mockPost).toHaveBeenCalledWith(AUTH_ENDPOINTS.setup, {
+		expect(mockV3Post).toHaveBeenCalledWith(AUTH_ENDPOINTS.setup, {
 			display_name: 'A',
 			username: 'a.admin',
 			password: 'pw'
@@ -130,18 +137,8 @@ describe('auth mutations route through api.global', () => {
 		expect(mockPost).toHaveBeenCalledWith(AUTH_ENDPOINTS.oidcExchange, { code: 'abc' });
 	});
 
-	it('plex pin posts to the pin endpoint with no body', async () => {
-		mockPost.mockResolvedValue({ pin_id: 'p', auth_url: 'u' });
-		const { createPlexPinMutation } = await import('./AuthMutations.svelte');
-		createPlexPinMutation();
-
-		await lastMutationFn()(undefined);
-
-		expect(mockPost).toHaveBeenCalledWith(AUTH_ENDPOINTS.plexPin);
-	});
-
 	it('password recovery posts the code and new password without a session', async () => {
-		mockPost.mockResolvedValue(undefined);
+		mockV3Post.mockResolvedValue(undefined);
 		const { createPasswordRecoveryResetMutation } = await import('./AuthMutations.svelte');
 		createPasswordRecoveryResetMutation();
 
@@ -151,7 +148,7 @@ describe('auth mutations route through api.global', () => {
 			new_password: 'a new secure password'
 		});
 
-		expect(mockPost).toHaveBeenCalledWith('/api/v1/auth/password-recovery/reset', {
+		expect(mockV3Post).toHaveBeenCalledWith('/api/v3/auth/password-recovery/reset', {
 			username: 'alice',
 			recovery_code: 'AAAA-BBBB-CCCC-DDDD-EEEE',
 			new_password: 'a new secure password'
@@ -159,17 +156,17 @@ describe('auth mutations route through api.global', () => {
 	});
 
 	it('admin recovery-code generation uses the authenticated client', async () => {
-		mockAuthenticatedPost.mockResolvedValue({
+		mockAuthenticatedV3Post.mockResolvedValue({
 			recovery_code: 'AAAA-BBBB-CCCC-DDDD-EEEE',
-			expires_at: '2026-07-17T17:00:00Z'
+			expires_at: 1784288400
 		});
 		const { createPasswordRecoveryCodeMutation } = await import('./AuthMutations.svelte');
 		createPasswordRecoveryCodeMutation();
 
 		await lastMutationFn()('user/1');
 
-		expect(mockAuthenticatedPost).toHaveBeenCalledWith(
-			'/api/v1/auth/admin/users/user%2F1/password-recovery'
+		expect(mockAuthenticatedV3Post).toHaveBeenCalledWith(
+			'/api/v3/admin/users/user%2F1/recovery-code'
 		);
 	});
 });

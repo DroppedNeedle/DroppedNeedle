@@ -1,5 +1,11 @@
-// mirrors backend api/v1/schemas/me_connections.py; the encrypted secret
-// (token/session_key) is never sent to the client (AMU-3/AMU-6)
+import type { components } from '$lib/api/v3/openapi';
+
+// One linked account in the connections aggregate. Mapped at runtime from
+// the per-service v3 reads (remotes connection statuses, scrobbler link
+// reads, the spotify presence probe); the encrypted secrets behind the
+// links are never sent to the client (AMU-3/AMU-6). The aggregate holds
+// linked accounts only: consumers treat presence as linked, so an unlinked
+// service has no entry at all rather than an `enabled: false` one.
 export interface ConnectionStatus {
 	service: string;
 	enabled: boolean;
@@ -10,21 +16,14 @@ export interface ConnectionsResponse {
 	connections: ConnectionStatus[];
 }
 
-export interface ConnectionActionResponse {
-	service: string;
-	deleted: boolean;
-}
-
 export interface LastFmAuthTokenResponse {
 	token: string;
 	auth_url: string;
 }
 
-export interface LastFmAuthSessionResponse {
-	success: boolean;
-	message: string;
-	username: string;
-}
+// v3 answers the approved-token exchange with the link itself, not the v1
+// success/message envelope.
+export type LastFmAuthSessionResponse = components['schemas']['LastFmSessionResponse'];
 
 export interface ListenBrainzConnectVars {
 	user_token: string;
@@ -38,12 +37,14 @@ export interface MediaServerConnectVars {
 	password: string;
 }
 
+// One linked media-server account, as the connect mutations return it.
+export type MediaServerConnectionStatus = components['schemas']['ConnectionStatus'];
+
+// Adapter output: the v3 start body names the popup URL `authorize_url`, but
+// the account card reads `auth_url`, so the pin mutation maps once.
 export interface PlexLinkPinResponse {
 	pin_id: number;
 	auth_url: string;
 }
 
-export interface PlexLinkPollResponse {
-	completed: boolean;
-	username: string;
-}
+export type PlexLinkPollResponse = components['schemas']['PlexLinkPollResult'];

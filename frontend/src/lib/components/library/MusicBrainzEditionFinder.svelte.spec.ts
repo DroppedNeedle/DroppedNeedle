@@ -47,9 +47,9 @@ const h = vi.hoisted(() => ({
 	}
 }));
 
-vi.mock('$lib/stores/authStore.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/stores/authStore.svelte')>()),
-	authStore: { user: { id: 'admin-1' } }
+vi.mock('$lib/stores/authStore.svelte', () => ({
+	authStore: { user: { id: 'admin-1' } },
+	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({
 	getReleaseEditionSearchQuery: (

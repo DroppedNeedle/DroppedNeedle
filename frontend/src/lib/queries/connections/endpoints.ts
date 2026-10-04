@@ -1,15 +1,18 @@
-import { API } from '$lib/constants';
+import { v3 } from '$lib/api/v3/endpoint';
 
-// current user is resolved server-side from the session cookie, so no endpoint takes a user id
+// v3 connection URLs, built through the typed registry: every template is a
+// literal the contract-coverage gate verifies against the generated spec.
+// Media-server links (navidrome/jellyfin/plex) ride the remotes slice's
+// connection entry - hooks import REMOTE_ENDPOINTS for those rather than
+// duplicating the template here. The current user is resolved server-side
+// from the session cookie, so no endpoint takes a user id.
 export const CONNECTIONS_ENDPOINTS = {
-	list: API.me.connections(),
-	connection: (service: string) => API.me.connection(service),
-	lastfmAuthToken: API.me.lastfmAuthToken(),
-	lastfmAuthSession: API.me.lastfmAuthSession(),
-	listenbrainz: API.me.listenbrainz(),
-	navidrome: API.me.navidrome(),
-	jellyfin: API.me.jellyfin(),
-	plexAuthPin: API.me.plexAuthPin(),
-	plexAuthPoll: (pinId: number) => API.me.plexAuthPoll(pinId),
-	spotifyAuthUrl: API.me.spotifyAuthUrl()
+	listenbrainz: () => v3('/api/v3/me/connections/listenbrainz'),
+	lastfm: () => v3('/api/v3/me/connections/lastfm'),
+	lastfmToken: () => v3('/api/v3/me/connections/lastfm/token'),
+	lastfmSession: () => v3('/api/v3/me/connections/lastfm/session'),
+	// Plex link pins ride the single v3 Plex flow ($lib/queries/plex).
+	// Spotify presence rides the spotify slice's playlists read (200 when
+	// linked, 400 when not); the aggregate imports it from there.
+	spotifyAuthUrl: () => v3('/api/v3/acquire/spotify/auth/url')
 } as const;

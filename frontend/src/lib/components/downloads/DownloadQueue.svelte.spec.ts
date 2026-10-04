@@ -58,7 +58,8 @@ vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 	retryHeldManagementUnit: () => ({ mutate: vi.fn(), isPending: false }),
 	discardHeldManagementUnit: () => ({ mutate: vi.fn(), isPending: false }),
 	reimportDownload: () => ({ mutate: vi.fn(), isPending: false }),
-	tryNextSource: () => ({ mutate: vi.fn(), isPending: false })
+	tryNextSource: () => ({ mutate: vi.fn(), isPending: false }),
+	discardHeldVerdict: () => ({ mutate: vi.fn(), isPending: false })
 }));
 
 vi.mock('$lib/queries/downloads/DownloadSSE.svelte', () => ({
@@ -66,11 +67,12 @@ vi.mock('$lib/queries/downloads/DownloadSSE.svelte', () => ({
 		state: { progress: null, status: null, source: null, done: false },
 		start: vi.fn(),
 		stop: vi.fn()
-	})
+	}),
+	getOrganizerRetry: () => null,
+	resetOrganizerRetry: vi.fn()
 }));
 
-vi.mock('$lib/stores/authStore.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/stores/authStore.svelte')>()),
+vi.mock('$lib/stores/authStore.svelte', () => ({
 	LAST_USER_ID_KEY: 'test:last-user',
 	authStore: {
 		get isAdmin() {

@@ -3,16 +3,26 @@
 	import { Disc3, Search, Plus, Check, CircleCheck, X } from 'lucide-svelte';
 	import { fly } from 'svelte/transition';
 	import {
-		fetchPlaylists,
-		createPlaylist,
-		addTracksToPlaylist,
 		queueItemToTrackData,
-		checkTrackMembership
+		isRedactedPlaylist,
+		type PlaylistSummary
 	} from '$lib/api/playlists';
-	import { isRedactedPlaylist, type PlaylistSummary } from '$lib/api/playlists';
+	import { api } from '$lib/api/client';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
+	import { PlaylistV3Api } from '$lib/queries/playlists/PlaylistV3Api';
+	import {
+		addPlaylistTracksV3,
+		checkPlaylistTracksV3,
+		createPlaylistV3
+	} from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
+	import {
+		toPageDetail,
+		toPageList,
+		trackDataToV3Input,
+		transposeMembership
+	} from '$lib/queries/playlists/playlistV3Adapter';
 	import PlaylistMosaic from './PlaylistMosaic.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import type { QueueItem } from '$lib/player/types';
@@ -23,9 +33,13 @@
 	// track counts; invalidate the user-scoped list query so /playlists reflects it.
 	function invalidatePlaylistList() {
 		void invalidateQueriesWithPersister({
-			queryKey: PlaylistQueryKeyFactory.list(authStore.user?.id)
+			queryKey: PlaylistQueryKeyFactory.v3.list(authStore.user?.id)
 		});
 	}
+
+	const createMutation = createPlaylistV3();
+	const addTracksMutation = addPlaylistTracksV3();
+	const checkTracksMutation = checkPlaylistTracksV3();
 
 	let dialogEl: HTMLDialogElement | undefined = $state();
 	let pendingTracks: QueueItem[] = [];
@@ -81,7 +95,8 @@
 	async function loadPlaylists() {
 		try {
 			// Only the user's own playlists are valid add targets (D4).
-			playlists = (await fetchPlaylists()).filter(
+			const answer = await api.global.v3.GET(PlaylistV3Api.list());
+			playlists = toPageList(answer.playlists).filter(
 				(p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner
 			);
 			if (pendingTracks.length > 0) {
@@ -90,7 +105,8 @@
 					artist_name: t.artistName,
 					album_name: t.albumName
 				}));
-				membership = await checkTrackMembership(trackIdentifiers);
+				const checked = await checkTracksMutation.mutateAsync({ tracks: trackIdentifiers });
+				membership = transposeMembership(checked.membership);
 			}
 		} catch {
 			fetchError = "Couldn't load your playlists.";
@@ -119,7 +135,10 @@
 				return;
 			}
 			const trackData = tracksToAdd.map(queueItemToTrackData);
-			await addTracksToPlaylist(playlist.id, trackData);
+			await addTracksMutation.mutateAsync({
+				id: playlist.id,
+				tracks: trackData.map(trackDataToV3Input)
+			});
 			addedSet.add(playlist.id);
 			const allIndices = Array.from({ length: trackCount }, (_, i) => i);
 			membership = { ...membership, [playlist.id]: allIndices };
@@ -148,9 +167,13 @@
 		if (!name || creating || pendingTracks.length === 0) return;
 		creating = true;
 		try {
-			const detail = await createPlaylist(name);
+			const created = await createMutation.mutateAsync(name);
+			const detail = toPageDetail(created);
 			const trackData = pendingTracks.map(queueItemToTrackData);
-			await addTracksToPlaylist(detail.id, trackData);
+			await addTracksMutation.mutateAsync({
+				id: detail.id,
+				tracks: trackData.map(trackDataToV3Input)
+			});
 			addedSet.add(detail.id);
 			const allIndices = Array.from({ length: trackCount }, (_, i) => i);
 			membership = { ...membership, [detail.id]: allIndices };

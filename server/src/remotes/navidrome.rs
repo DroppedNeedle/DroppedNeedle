@@ -778,6 +778,28 @@ impl NavidromeAdapter {
         Ok(songs.iter().map(|song| self.track_view(song)).collect())
     }
 
+    /// Random songs via `getRandomSongs`, folder-scoped like the v1
+    /// route (`size` + optional `genre`). Empty when declined.
+    pub async fn random(&self, limit: i64, genre: &str) -> Result<Vec<TrackView>, AdapterError> {
+        self.require_configured()?;
+        let mut params = vec![("size".to_owned(), limit.to_string())];
+        if !genre.is_empty() {
+            params.push(("genre".to_owned(), genre.to_owned()));
+        }
+        let value = match self.request("/rest/getRandomSongs", &params).await {
+            Ok(value) => value,
+            Err(AdapterError::Api(_)) => return Ok(Vec::new()),
+            Err(other) => return Err(other),
+        };
+        let songs = value
+            .get("randomSongs")
+            .and_then(|block| block.get("song"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        Ok(songs.iter().map(|song| self.track_view(song)).collect())
+    }
+
     /// Similar songs via `getSimilarSongs2`. Empty when declined.
     pub async fn similar(&self, id: &str, limit: i64) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
@@ -1211,6 +1233,7 @@ impl NavidromeAdapter {
                 .map(|year| year as i32),
             recording_mbid: non_empty(str_field(song, "musicBrainzId")),
             image_url: cover_url(str_field(song, "coverArt").unwrap_or("")),
+            part_key: None,
         }
     }
 

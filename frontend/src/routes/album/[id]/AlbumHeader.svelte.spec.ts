@@ -53,6 +53,7 @@ const localAlbum: LibraryAlbumDetail = {
 	format: 'flac',
 	year: 2008,
 	is_compilation: false,
+	release_type: 'album',
 	cover_available: true,
 	date_added: 1,
 	sort_name: null,

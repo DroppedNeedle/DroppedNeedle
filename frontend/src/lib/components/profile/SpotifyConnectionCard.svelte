@@ -29,7 +29,12 @@
 
 	async function disconnect() {
 		error = null;
-		await disconnectMutation.mutateAsync('spotify');
+		try {
+			await disconnectMutation.mutateAsync('spotify');
+		} catch {
+			// v3 ships no Spotify unlink; the mutation rejects loudly.
+			error = 'Spotify disconnect is not available yet.';
+		}
 	}
 </script>
 

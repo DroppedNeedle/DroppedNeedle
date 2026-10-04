@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mergeNowPlayingSessions } from './nowPlayingMerge';
-import type { NowPlayingSession } from '$lib/types';
+import type { NowPlayingSession } from './nowPlayingSessions.svelte';
 
 function session(overrides: Partial<NowPlayingSession>): NowPlayingSession {
 	return {

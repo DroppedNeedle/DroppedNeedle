@@ -4,10 +4,10 @@ import { render } from 'vitest-browser-svelte';
 import AddToPlaylistModal from './AddToPlaylistModal.svelte';
 import type { QueueItem } from '$lib/player/types';
 
-const mockFetchPlaylists = vi.fn();
-const mockCreatePlaylist = vi.fn();
-const mockAddTracksToPlaylist = vi.fn();
-const mockCheckTrackMembership = vi.fn();
+const mockV3List = vi.fn();
+const mockCreateMutate = vi.fn();
+const mockAddTracksMutate = vi.fn();
+const mockCheckTracksMutate = vi.fn();
 const mockQueueItemToTrackData = vi.fn((item: QueueItem) => ({
 	track_name: item.trackName,
 	artist_name: item.artistName,
@@ -15,11 +15,17 @@ const mockQueueItemToTrackData = vi.fn((item: QueueItem) => ({
 	source_type: item.sourceType
 }));
 
+vi.mock('$lib/api/client', () => ({
+	api: { global: { v3: { GET: (...args: unknown[]) => mockV3List(...args) } } }
+}));
+
+vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
+	createPlaylistV3: () => ({ mutateAsync: mockCreateMutate, isPending: false }),
+	addPlaylistTracksV3: () => ({ mutateAsync: mockAddTracksMutate, isPending: false }),
+	checkPlaylistTracksV3: () => ({ mutateAsync: mockCheckTracksMutate, isPending: false })
+}));
+
 vi.mock('$lib/api/playlists', () => ({
-	fetchPlaylists: (...args: unknown[]) => mockFetchPlaylists(...args),
-	createPlaylist: (...args: unknown[]) => mockCreatePlaylist(...args),
-	addTracksToPlaylist: (...args: unknown[]) => mockAddTracksToPlaylist(...args),
-	checkTrackMembership: (...args: unknown[]) => mockCheckTrackMembership(...args),
 	queueItemToTrackData: (item: QueueItem) => mockQueueItemToTrackData(item),
 	isRedactedPlaylist: (p: { is_redacted?: boolean } | null | undefined) => p?.is_redacted === true
 }));
@@ -48,8 +54,8 @@ function makePlaylists() {
 			cover_urls: [],
 			custom_cover_url: null,
 			source_ref: null,
-			created_at: '2026-01-01',
-			updated_at: '2026-01-01',
+			created_at: 1767225600,
+			updated_at: 1767225600,
 			is_public: false,
 			is_owner: true,
 			owner_name: null,
@@ -63,14 +69,18 @@ function makePlaylists() {
 			cover_urls: [],
 			custom_cover_url: null,
 			source_ref: null,
-			created_at: '2026-01-02',
-			updated_at: '2026-01-02',
+			created_at: 1767312000,
+			updated_at: 1767312000,
 			is_public: false,
 			is_owner: true,
 			owner_name: null,
 			is_redacted: false
 		}
 	];
+}
+
+function mockListAnswer(playlists: unknown[]) {
+	mockV3List.mockResolvedValue({ playlists });
 }
 
 type ModalRef = { open: (tracks: QueueItem[]) => void };
@@ -84,28 +94,28 @@ async function renderModal() {
 
 describe('AddToPlaylistModal.svelte', () => {
 	beforeEach(() => {
-		mockFetchPlaylists.mockReset();
-		mockCreatePlaylist.mockReset();
-		mockAddTracksToPlaylist.mockReset();
-		mockCheckTrackMembership.mockReset();
+		mockV3List.mockReset();
+		mockCreateMutate.mockReset();
+		mockAddTracksMutate.mockReset();
+		mockCheckTracksMutate.mockReset();
 		mockQueueItemToTrackData.mockClear();
-		mockCheckTrackMembership.mockResolvedValue({});
+		mockCheckTracksMutate.mockResolvedValue({ membership: {} });
 	});
 
 	it('opening modal fetches playlists and renders list', async () => {
-		mockFetchPlaylists.mockResolvedValue(makePlaylists());
+		mockListAnswer(makePlaylists());
 		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
 		await expect.element(page.getByText('My Playlist')).toBeVisible();
 		await expect.element(page.getByText('Another')).toBeVisible();
-		expect(mockFetchPlaylists).toHaveBeenCalledOnce();
+		expect(mockV3List).toHaveBeenCalledOnce();
 	});
 
 	it('shows loading skeletons while fetching', async () => {
-		let resolveFetch!: (value: unknown[]) => void;
-		mockFetchPlaylists.mockReturnValue(
-			new Promise<unknown[]>((r) => {
+		let resolveFetch!: (value: { playlists: unknown[] }) => void;
+		mockV3List.mockReturnValue(
+			new Promise<{ playlists: unknown[] }>((r) => {
 				resolveFetch = r;
 			})
 		);
@@ -115,12 +125,12 @@ describe('AddToPlaylistModal.svelte', () => {
 		const skeletons = page.getByTestId('playlist-skeleton').all();
 		expect((await skeletons).length).toBeGreaterThan(0);
 
-		resolveFetch(makePlaylists());
+		resolveFetch({ playlists: makePlaylists() });
 		await expect.element(page.getByText('My Playlist')).toBeVisible();
 	});
 
 	it('renders empty state when playlists list is empty', async () => {
-		mockFetchPlaylists.mockResolvedValue([]);
+		mockListAnswer([]);
 		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
@@ -128,8 +138,8 @@ describe('AddToPlaylistModal.svelte', () => {
 	});
 
 	it('clicking add button calls addTracksToPlaylist with correct tracks', async () => {
-		mockFetchPlaylists.mockResolvedValue(makePlaylists());
-		mockAddTracksToPlaylist.mockResolvedValue([]);
+		mockListAnswer(makePlaylists());
+		mockAddTracksMutate.mockResolvedValue({ tracks: [] });
 		const track = makeTrack();
 		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([track]);
@@ -139,14 +149,14 @@ describe('AddToPlaylistModal.svelte', () => {
 		await addBtn.click();
 
 		await vi.waitFor(() => {
-			expect(mockAddTracksToPlaylist).toHaveBeenCalledOnce();
-			expect(mockAddTracksToPlaylist.mock.calls[0][0]).toBe('p1');
+			expect(mockAddTracksMutate).toHaveBeenCalledOnce();
+			expect(mockAddTracksMutate.mock.calls[0][0]).toMatchObject({ id: 'p1' });
 		});
 	});
 
 	it('after adding, button transitions from CirclePlus to Check', async () => {
-		mockFetchPlaylists.mockResolvedValue(makePlaylists());
-		mockAddTracksToPlaylist.mockResolvedValue([]);
+		mockListAnswer(makePlaylists());
+		mockAddTracksMutate.mockResolvedValue({ tracks: [] });
 		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
@@ -157,8 +167,8 @@ describe('AddToPlaylistModal.svelte', () => {
 	});
 
 	it('clicking add on same playlist twice is a no-op (addedSet guard)', async () => {
-		mockFetchPlaylists.mockResolvedValue(makePlaylists());
-		mockAddTracksToPlaylist.mockResolvedValue([]);
+		mockListAnswer(makePlaylists());
+		mockAddTracksMutate.mockResolvedValue({ tracks: [] });
 		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
@@ -166,23 +176,27 @@ describe('AddToPlaylistModal.svelte', () => {
 		await page.getByLabelText('Add to My Playlist').click();
 		await expect.element(page.getByLabelText('Already added').first()).toBeVisible();
 
-		expect(mockAddTracksToPlaylist).toHaveBeenCalledOnce();
+		expect(mockAddTracksMutate).toHaveBeenCalledOnce();
 	});
 
 	it('new playlist creation flow: creates, adds tracks, shows in list', async () => {
-		mockFetchPlaylists.mockResolvedValue([]);
-		mockCreatePlaylist.mockResolvedValue({
+		mockListAnswer([]);
+		mockCreateMutate.mockResolvedValue({
 			id: 'p-new',
 			name: 'Fresh',
 			track_count: 0,
 			total_duration: null,
 			cover_urls: [],
 			custom_cover_url: null,
-			created_at: '2026-01-03',
-			updated_at: '2026-01-03',
+			created_at: 1767400000,
+			updated_at: 1767400000,
+			is_public: false,
+			is_owner: true,
+			owner_name: null,
+			is_redacted: false,
 			tracks: []
 		});
-		mockAddTracksToPlaylist.mockResolvedValue([]);
+		mockAddTracksMutate.mockResolvedValue({ tracks: [] });
 
 		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
@@ -193,13 +207,13 @@ describe('AddToPlaylistModal.svelte', () => {
 		await input.fill('Fresh');
 		await page.getByLabelText('Create playlist').click();
 
-		expect(mockCreatePlaylist).toHaveBeenCalledWith('Fresh');
+		expect(mockCreateMutate).toHaveBeenCalledWith('Fresh');
 		await expect.element(page.getByText('Fresh')).toBeVisible();
 	});
 
 	it('error during add shows error status and does not mark as added', async () => {
-		mockFetchPlaylists.mockResolvedValue(makePlaylists());
-		mockAddTracksToPlaylist.mockRejectedValue(new Error('Network error'));
+		mockListAnswer(makePlaylists());
+		mockAddTracksMutate.mockRejectedValue(new Error('Network error'));
 		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
@@ -212,8 +226,8 @@ describe('AddToPlaylistModal.svelte', () => {
 	});
 
 	it('shows tick for playlists where all tracks already exist', async () => {
-		mockFetchPlaylists.mockResolvedValue(makePlaylists());
-		mockCheckTrackMembership.mockResolvedValue({ p1: [0] });
+		mockListAnswer(makePlaylists());
+		mockCheckTracksMutate.mockResolvedValue({ membership: { '0': ['p1'] } });
 		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
@@ -224,8 +238,8 @@ describe('AddToPlaylistModal.svelte', () => {
 	});
 
 	it('shows partial indicator when some tracks already exist', async () => {
-		mockFetchPlaylists.mockResolvedValue(makePlaylists());
-		mockCheckTrackMembership.mockResolvedValue({ p1: [0] });
+		mockListAnswer(makePlaylists());
+		mockCheckTracksMutate.mockResolvedValue({ membership: { '0': ['p1'] } });
 		const track1 = makeTrack({ trackName: 'Track 1' });
 		const track2 = makeTrack({ trackName: 'Track 2', trackSourceId: 'v2' });
 		const result = await renderModal();
@@ -237,9 +251,9 @@ describe('AddToPlaylistModal.svelte', () => {
 	});
 
 	it('partial add only sends non-duplicate tracks', async () => {
-		mockFetchPlaylists.mockResolvedValue(makePlaylists());
-		mockCheckTrackMembership.mockResolvedValue({ p1: [0] });
-		mockAddTracksToPlaylist.mockResolvedValue([]);
+		mockListAnswer(makePlaylists());
+		mockCheckTracksMutate.mockResolvedValue({ membership: { '0': ['p1'] } });
+		mockAddTracksMutate.mockResolvedValue({ tracks: [] });
 		const track1 = makeTrack({ trackName: 'Track 1' });
 		const track2 = makeTrack({ trackName: 'Track 2', trackSourceId: 'v2' });
 		const result = await renderModal();
@@ -249,16 +263,16 @@ describe('AddToPlaylistModal.svelte', () => {
 		await page.getByLabelText('Add the remaining tracks to My Playlist').click();
 
 		await vi.waitFor(() => {
-			expect(mockAddTracksToPlaylist).toHaveBeenCalledOnce();
-			const calledTracks = mockAddTracksToPlaylist.mock.calls[0][1];
+			expect(mockAddTracksMutate).toHaveBeenCalledOnce();
+			const calledTracks = mockAddTracksMutate.mock.calls[0][0].tracks;
 			expect(calledTracks).toHaveLength(1);
 			expect(calledTracks[0].track_name).toBe('Track 2');
 		});
 	});
 
 	it('shows + for playlists with no overlap', async () => {
-		mockFetchPlaylists.mockResolvedValue(makePlaylists());
-		mockCheckTrackMembership.mockResolvedValue({});
+		mockListAnswer(makePlaylists());
+		mockCheckTracksMutate.mockResolvedValue({ membership: {} });
 		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 

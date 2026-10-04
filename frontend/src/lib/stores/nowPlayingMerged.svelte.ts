@@ -2,7 +2,7 @@ import { nowPlayingStore } from '$lib/stores/nowPlayingSessions.svelte';
 import { playerStore } from '$lib/stores/player.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { mergeNowPlayingSessions } from '$lib/stores/nowPlayingMerge';
-import type { NowPlayingSession } from '$lib/types';
+import type { NowPlayingSession } from '$lib/stores/nowPlayingSessions.svelte';
 
 // The viewer's own current web-player track is rendered from local state (always
 // un-redacted and instant), while every other session comes from the server feed.

@@ -1,6 +1,4 @@
 <script lang="ts">
-	import { run } from 'svelte/legacy';
-
 	import { onDestroy, onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
@@ -8,23 +6,20 @@
 	import SearchArtistCard from '$lib/components/SearchArtistCard.svelte';
 	import ArtistCardSkeleton from '$lib/components/ArtistCardSkeleton.svelte';
 	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
-	import type {
-		Artist,
-		EnrichmentSource,
-		SearchBucketResponse,
-		SearchRemoteStatus
-	} from '$lib/types';
+	import type { Artist, EnrichmentSource, SearchRemoteStatus } from '$lib/types';
 	import { colors } from '$lib/colors';
-	import { searchStore } from '$lib/stores/search';
-	import { fetchEnrichmentBatch, applyArtistEnrichment } from '$lib/utils/enrichment';
-	import { createSearchEnrichmentBatcher } from '$lib/utils/searchEnrichmentBatcher';
-	import { isAbortError } from '$lib/utils/errorHandling';
-	import { api } from '$lib/api/client';
-	import { API } from '$lib/constants';
+	import { applyArtistEnrichment } from '$lib/utils/enrichment';
 	import { getSearchStatusNotice } from '$lib/utils/searchStatus';
-	import { updatePaginatedSearchResults } from '$lib/utils/paginatedSearchResults';
+	import {
+		SEARCH_BUCKET_PAGE_SIZE,
+		getSearchBucketV3Query,
+		getSearchEnrichBatchV3Query,
+		type EnrichmentResponseV3
+	} from '$lib/queries/search/SearchV3Queries.svelte';
+	import { SearchEnrichCollector } from '$lib/queries/search/SearchV3Enrichment.svelte';
+	import { toSearchRemoteStatus, toV1Artist } from '$lib/queries/search/SearchV3Adapters';
 	import { RefreshCw } from 'lucide-svelte';
-	import { REMOTE_ARTIST_PAGE_SIZE } from '$lib/queries/search/SearchQueries.svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 
 	interface Props {
 		data: { query: string };
@@ -33,21 +28,48 @@
 	let { data }: Props = $props();
 
 	let normalizedQuery = $derived(data.query.trim());
-
-	let artists: Artist[] = $state([]);
-	let topArtist: Artist | null = $state(null);
-	let loading = $state(false);
-	let hasMore = $state(true);
-	let offset = 0;
-	const limit = REMOTE_ARTIST_PAGE_SIZE;
-	let sentinel = $state<HTMLElement>();
-	let abortController: AbortController | null = null;
-	let observer: IntersectionObserver | null = null;
+	let offset = $state(0);
+	// Answered pages filed under their echoed offset, so pages land in
+	// order even if they resolve out of order. The stored source is the raw
+	// answered page itself: identity comparison tells a fresh answer from
+	// an already-filed one, so a retry overwrite never gets mistaken for
+	// a duplicate filing.
+	let pages = new SvelteMap<
+		number,
+		{ items: Artist[]; top: Artist | null; status: SearchRemoteStatus; source: unknown }
+	>();
+	let enrichment: EnrichmentResponseV3 | null = $state(null);
 	let enrichmentSource: EnrichmentSource = $state('none');
-	let lastQuery = $state('');
-	let remoteStatus: SearchRemoteStatus = $state('ok');
-	let replaceOnNextLoad = false;
+	let sentinel = $state<HTMLElement>();
+
+	const pageQuery = getSearchBucketV3Query(
+		() => 'artists',
+		() => normalizedQuery,
+		() => SEARCH_BUCKET_PAGE_SIZE,
+		() => offset
+	);
+	const enrichCollector = new SearchEnrichCollector();
+	const enrichQuery = getSearchEnrichBatchV3Query(() => enrichCollector.body);
+
+	let baseArtists = $derived(
+		[...pages.entries()]
+			.sort(([left], [right]) => left - right)
+			.flatMap(([, page]) => page.items)
+	);
+	let artists = $derived(
+		enrichment ? applyArtistEnrichment(baseArtists, enrichment) : baseArtists
+	);
+	let topArtist = $derived(pages.get(0)?.top ?? null);
+	let remoteStatus: SearchRemoteStatus = $derived(
+		pageQuery.isError ? 'error' : (pages.get(0)?.status ?? 'ok')
+	);
 	let statusNotice = $derived(getSearchStatusNotice(remoteStatus, 'artists', false));
+	let loading = $derived(pageQuery.isPending || pageQuery.isFetching);
+	let hasMore = $derived.by(() => {
+		if (pages.size === 0) return true;
+		const lastOffset = Math.max(...pages.keys());
+		return (pages.get(lastOffset)?.items.length ?? 0) >= SEARCH_BUCKET_PAGE_SIZE;
+	});
 
 	function navigateBack() {
 		if (normalizedQuery) {
@@ -60,158 +82,78 @@
 			goto(withBasePath(`/search/${bucket}?q=${encodeURIComponent(normalizedQuery)}`));
 		}
 	}
-	function retryRemoteSearch() {
-		if (loading || !normalizedQuery) return;
-		replaceOnNextLoad = true;
-		offset = 0;
-		hasMore = true;
-		void loadMore();
-	}
 
-	const enrichmentBatcher = createSearchEnrichmentBatcher({
-		load: fetchEnrichmentBatch,
-		onresult: (enrichment) => {
-			enrichmentSource = enrichment.source;
-			artists = applyArtistEnrichment(artists, enrichment);
-			searchStore.setEnrichmentSource(enrichmentSource);
-		}
-	});
-
-	async function loadMore() {
+	function loadMore() {
 		if (loading || !hasMore || !normalizedQuery) return;
-
-		loading = true;
-		const requestOffset = offset;
-		const replaceResults = replaceOnNextLoad && requestOffset === 0;
-
-		if (abortController) {
-			abortController.abort();
-		}
-		abortController = new AbortController();
-
-		try {
-			const responseData = await api.global.get<SearchBucketResponse<Artist>>(
-				API.search.artists(normalizedQuery, limit, requestOffset),
-				{ signal: abortController.signal }
-			);
-
-			const newArtists: Artist[] = responseData.results || [];
-			const failedWithoutResults =
-				replaceResults &&
-				newArtists.length === 0 &&
-				(responseData.status === 'error' || responseData.status === 'timeout');
-
-			if (failedWithoutResults) {
-				remoteStatus = artists.length > 0 ? 'stale' : responseData.status;
-				hasMore = false;
-			} else {
-				remoteStatus = responseData.status;
-				if (requestOffset === 0) {
-					topArtist = responseData.top_result ?? null;
-				}
-				hasMore = newArtists.length >= limit;
-
-				const update = updatePaginatedSearchResults(
-					artists,
-					newArtists,
-					requestOffset,
-					replaceResults
-				);
-				artists = update.items;
-				offset = update.nextOffset;
-				searchStore.updateArtists(artists);
-			}
-		} catch (error) {
-			if (isAbortError(error)) {
-				return;
-			}
-			remoteStatus = artists.length > 0 ? 'stale' : 'error';
-			hasMore = false;
-		} finally {
-			replaceOnNextLoad = false;
-			loading = false;
-		}
+		offset += SEARCH_BUCKET_PAGE_SIZE;
 	}
 
 	function resetAndLoad() {
-		enrichmentBatcher.reset();
-		remoteStatus = 'ok';
-		replaceOnNextLoad = false;
-		if (abortController) {
-			abortController.abort();
-			abortController = null;
-		}
-		if (observer) {
-			observer.disconnect();
-			observer = null;
-		}
-
-		const cache = searchStore.getCache(normalizedQuery, { allowStale: true });
-		if (cache && cache.artists.length > 0) {
-			artists = cache.artists;
-			topArtist = cache.topArtist ?? null;
-			enrichmentSource = cache.enrichmentSource;
-			offset = cache.artists.length;
-			hasMore = cache.artists.length >= limit;
-			if (searchStore.isStale(cache.timestamp)) {
-				replaceOnNextLoad = true;
-				offset = 0;
-				hasMore = true;
-				void loadMore();
-			}
+		pages.clear();
+		enrichCollector.reset();
+		enrichment = null;
+		enrichmentSource = 'none';
+		if (offset === 0) {
+			void pageQuery.refetch();
 		} else {
-			artists = [];
-			topArtist = null;
 			offset = 0;
-			hasMore = true;
-			enrichmentSource = 'none';
-			void loadMore();
 		}
 	}
 
-	run(() => {
-		if (browser && normalizedQuery && normalizedQuery !== lastQuery) {
-			lastQuery = normalizedQuery;
-			resetAndLoad();
+	function retryRemoteSearch() {
+		if (loading || !normalizedQuery) return;
+		resetAndLoad();
+	}
+
+	$effect(() => {
+		void normalizedQuery;
+		offset = 0;
+		pages.clear();
+		enrichCollector.reset();
+		enrichment = null;
+		enrichmentSource = 'none';
+	});
+
+	$effect(() => {
+		const page = pageQuery.data;
+		if (!page || pages.get(page.offset)?.source === page) return;
+		pages.set(page.offset, {
+			items: page.results.map(toV1Artist),
+			top: page.top_result ? toV1Artist(page.top_result) : null,
+			status: toSearchRemoteStatus(page.status),
+			source: page
+		});
+	});
+
+	$effect(() => {
+		const result = enrichQuery.data;
+		if (result) {
+			enrichment = result;
+			enrichmentSource = result.source;
 		}
 	});
 
-	run(() => {
-		if (browser && sentinel && !observer) {
-			observer = new IntersectionObserver(
-				(entries) => {
-					if (entries[0].isIntersecting && hasMore && !loading) {
-						loadMore();
-					}
-				},
-				{ threshold: 0.1 }
-			);
-
-			observer.observe(sentinel);
-		}
+	$effect(() => {
+		if (!browser || !sentinel) return;
+		const current = new IntersectionObserver(
+			(entries) => {
+				if (entries[0].isIntersecting) loadMore();
+			},
+			{ threshold: 0.1 }
+		);
+		current.observe(sentinel);
+		return () => current.disconnect();
 	});
 
 	onMount(() => {
-		if (browser) {
-			const handleRefresh = () => resetAndLoad();
-			window.addEventListener('search-refresh', handleRefresh);
-
-			return () => {
-				window.removeEventListener('search-refresh', handleRefresh);
-			};
-		}
+		if (!browser) return;
+		const handleRefresh = () => resetAndLoad();
+		window.addEventListener('search-refresh', handleRefresh);
+		return () => window.removeEventListener('search-refresh', handleRefresh);
 	});
 
 	onDestroy(() => {
-		if (observer) {
-			observer.disconnect();
-			observer = null;
-		}
-		if (abortController) {
-			abortController.abort();
-			abortController = null;
-		}
-		enrichmentBatcher.dispose();
+		enrichCollector.dispose();
 	});
 </script>
 
@@ -277,7 +219,7 @@
 					<SearchArtistCard
 						{artist}
 						{enrichmentSource}
-						onenrichmentrequest={() => enrichmentBatcher.requestArtist(artist)}
+						onenrichmentrequest={() => enrichCollector.requestArtist(artist)}
 					/>
 				{/each}
 			</div>

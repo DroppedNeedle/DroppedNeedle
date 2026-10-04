@@ -1,7 +1,13 @@
 <script lang="ts">
+	import { SvelteMap } from 'svelte/reactivity';
 	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
-	import { getLocalSearchQuery } from '$lib/queries/local/LocalQueries.svelte';
-	import { getCoverUrl } from '$lib/utils/errorHandling';
+	import { getLocalSearchV3Query } from '$lib/queries/local/LocalV3Queries.svelte';
+	import {
+		albumCardToSummary,
+		albumCoverUrl,
+		crateCoverUrl,
+		suggestionToCrateTrack
+	} from '$lib/queries/local/LocalV3Adapters';
 	import { fly } from 'svelte/transition';
 	import { Search, X, Disc3, Music2, Play, ListPlus, GripVertical, Loader } from 'lucide-svelte';
 
@@ -32,16 +38,28 @@
 		return () => clearTimeout(id);
 	});
 
-	const searchQuery = getLocalSearchQuery(() => debounced);
+	const searchQuery = getLocalSearchV3Query(() => debounced);
 
-	const albums = $derived(searchQuery.data?.albums ?? []);
-	const tracks = $derived(searchQuery.data?.tracks ?? []);
+	const albums = $derived((searchQuery.data?.albums ?? []).map(albumCardToSummary));
+	// Track covers resolve through the same response's album cards.
+	const tracks = $derived.by(() => {
+		const mbidByAlbumId = new SvelteMap(
+			(searchQuery.data?.albums ?? []).map((a) => [a.id, a.release_group_mbid ?? null] as const)
+		);
+		return (searchQuery.data?.tracks ?? []).map((t) =>
+			suggestionToCrateTrack(t, mbidByAlbumId.get(t.album_id) ?? null)
+		);
+	});
 	// Albums first, then tracks in backend order.
 	type Row =
 		| { kind: 'album'; key: string; album: LocalAlbumSummary }
 		| { kind: 'track'; key: string; track: CrateTrack };
 	const rows = $derived<Row[]>([
-		...albums.map((a) => ({ kind: 'album' as const, key: `album:${a.musicbrainz_id}`, album: a })),
+		...albums.map((a, i) => ({
+			kind: 'album' as const,
+			key: `album:${a.musicbrainz_id}:${i}`,
+			album: a
+		})),
 		...tracks.map((t) => ({ kind: 'track' as const, key: `track:${t.track_file_id}`, track: t }))
 	]);
 
@@ -123,6 +141,7 @@
 			{#each rows as row (row.key)}
 				{#if row.kind === 'album'}
 					{@const a = row.album}
+					{@const cover = albumCoverUrl(a)}
 					<div
 						class="search-row group flex items-center gap-3 rounded-xl border border-base-content/5 bg-base-200/70 p-2 backdrop-blur-sm"
 						class:is-dragging={draggingId === row.key}
@@ -146,12 +165,13 @@
 						<div
 							class="relative h-11 w-11 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
 						>
-							<img
-								src={getCoverUrl(a.cover_url, a.musicbrainz_id)}
-								alt={a.name}
-								class="h-full w-full object-cover"
-								loading="lazy"
-							/>
+							{#if cover}
+								<img src={cover} alt={a.name} class="h-full w-full object-cover" loading="lazy" />
+							{:else}
+								<div class="flex h-full w-full items-center justify-center bg-base-300">
+									<Disc3 class="h-4 w-4 text-base-content/30" />
+								</div>
+							{/if}
 						</div>
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-semibold text-base-content">{a.name}</p>
@@ -183,6 +203,7 @@
 					</div>
 				{:else}
 					{@const t = row.track}
+					{@const trackCover = crateCoverUrl(t)}
 					<div
 						class="search-row group flex items-center gap-3 rounded-xl border border-base-content/5 bg-base-200/70 p-2 backdrop-blur-sm"
 						class:is-dragging={draggingId === row.key}
@@ -206,9 +227,9 @@
 						<div
 							class="relative h-11 w-11 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
 						>
-							{#if t.cover_url}
+							{#if trackCover}
 								<img
-									src={getCoverUrl(t.cover_url, t.album_mbid ?? '')}
+									src={trackCover}
 									alt={t.album_name}
 									class="h-full w-full object-cover"
 									loading="lazy"

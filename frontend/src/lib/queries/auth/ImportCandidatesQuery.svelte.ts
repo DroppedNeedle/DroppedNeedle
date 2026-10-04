@@ -2,7 +2,6 @@ import { api } from '$lib/api/client';
 import { createQuery } from '@tanstack/svelte-query';
 import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 import { AUTH_ENDPOINTS } from './endpoints';
-import type { ImportCandidateListResponse } from './types';
 
 /** Enumerated import candidates for a media service (admin-only). Uses the
  *  authenticated `api` client (the import flow runs post-session, unlike login).
@@ -17,7 +16,7 @@ export const getImportCandidatesQuery = (
 		queryKey: AuthQueryKeyFactory.importCandidates(provider(), userId()),
 		enabled: enabled(),
 		queryFn: ({ signal }) =>
-			api.get<ImportCandidateListResponse>(
+			api.v3.GET(
 				provider() === 'plex' ? AUTH_ENDPOINTS.adminImportPlex : AUTH_ENDPOINTS.adminImportJellyfin,
 				{ signal }
 			)

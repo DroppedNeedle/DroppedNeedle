@@ -4,17 +4,17 @@ import { render } from 'vitest-browser-svelte';
 
 // Shared mock data/helpers live in vi.hoisted so the (hoisted) vi.mock calls can use them.
 const { profile, mutationStub, emptyComponent } = vi.hoisted(() => ({
-	// Minimal profile payload so the {#if profile} body (which holds the Connect Apps
-	// section + hash-scroll target) renders.
+	// Minimal identity payload so the {#if profile} body (which holds the Connect Apps
+	// section + hash-scroll target) renders. Services/libraries compose from
+	// the remotes + library hooks, mocked settled-empty below.
 	profile: {
+		id: 'user-1',
 		display_name: 'Alice',
 		avatar_url: null,
 		username: 'alice',
 		username_display: 'alice',
 		email: null,
-		providers: ['local'],
-		services: [],
-		library_stats: []
+		providers: ['local']
 	},
 	mutationStub: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	emptyComponent: () => {
@@ -35,6 +35,13 @@ vi.mock('$lib/queries/profile/ProfileMutations.svelte', () => ({
 	createSetPasswordMutation: mutationStub,
 	createUploadAvatarMutation: mutationStub
 }));
+vi.mock('$lib/queries/remotes/RemoteQueries.svelte', () => ({
+	getRemoteConnectionQuery: () => ({ data: undefined, isPending: false, isError: false }),
+	getRemoteStatsQuery: () => ({ data: undefined, isPending: false, isError: false })
+}));
+vi.mock('$lib/queries/library/LibraryV3Queries.svelte', () => ({
+	getLibraryStatsV3Query: () => ({ data: undefined, isPending: false, isError: false })
+}));
 
 // Sibling profile cards pull their own query graphs; stub them so the page renders in
 // isolation. ProfileConnectApps is left REAL (its queries are mocked below) so the
@@ -43,6 +50,7 @@ vi.mock('$lib/components/profile/MediaServerAccountsCard.svelte', emptyComponent
 vi.mock('$lib/components/profile/NavidromeMusicFoldersCard.svelte', emptyComponent);
 vi.mock('$lib/components/profile/ScrobblingDiscoveryCard.svelte', emptyComponent);
 vi.mock('$lib/components/profile/SpotifyConnectionCard.svelte', emptyComponent);
+vi.mock('$lib/components/profile/SessionsManager.svelte', emptyComponent);
 
 vi.mock('$lib/queries/connect-apps/ConnectAppsQueries.svelte', () => ({
 	getConnectAppsSettingsQuery: () => ({

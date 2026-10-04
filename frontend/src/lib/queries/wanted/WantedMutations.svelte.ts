@@ -5,7 +5,6 @@ import { toastStore } from '$lib/stores/toast';
 import { invalidateQueriesWithPersister } from '../QueryClient';
 import { WantedQueryKeyFactory } from './WantedQueryKeyFactory';
 import { WANTED_ENDPOINTS } from './endpoints';
-import type { WantedActionResponse } from './types';
 
 function invalidateWanted(): Promise<void> {
 	return invalidateQueriesWithPersister({
@@ -22,7 +21,7 @@ export interface WantedActionVars {
 export const createStopWatchMutation = () =>
 	createMutation(() => ({
 		mutationFn: ({ mbid }: WantedActionVars) =>
-			api.global.post<WantedActionResponse>(WANTED_ENDPOINTS.stop(mbid)),
+			api.global.v3.POST(WANTED_ENDPOINTS.stop(mbid)),
 		onSuccess: (_data, { albumTitle }) => {
 			toastStore.show({
 				message: `Stopped watching ${albumTitle} - it won't be searched again.`,
@@ -40,7 +39,7 @@ export const createStopWatchMutation = () =>
 export const createResumeWatchMutation = () =>
 	createMutation(() => ({
 		mutationFn: ({ mbid }: WantedActionVars) =>
-			api.global.post<WantedActionResponse>(WANTED_ENDPOINTS.resume(mbid)),
+			api.global.v3.POST(WANTED_ENDPOINTS.resume(mbid)),
 		onSuccess: (_data, { albumTitle }) => {
 			toastStore.show({
 				message: `Watching ${albumTitle} - it'll be checked again soon.`,
@@ -59,7 +58,7 @@ export const createResumeWatchMutation = () =>
 export const createMarkWantedSeenMutation = () =>
 	createMutation(() => ({
 		mutationFn: ({ mbid }: WantedActionVars) =>
-			api.global.post<WantedActionResponse>(WANTED_ENDPOINTS.seen(mbid)),
+			api.global.v3.POST(WANTED_ENDPOINTS.seen(mbid)),
 		onSettled: () => {
 			void invalidateWanted();
 		}

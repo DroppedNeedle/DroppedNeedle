@@ -1291,6 +1291,12 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         Posture::Admin,
     ),
     ("POST", "/api/v3/admin/precache/run", Posture::Admin),
+    // Stage-12 gap step: admin reimport behind the request card.
+    (
+        "POST",
+        "/api/v3/downloads/tasks/{task_id}/reimport",
+        Posture::Admin,
+    ),
     // Stage-4 library reads.
     ("GET", "/api/v3/library/albums", Posture::User),
     ("GET", "/api/v3/library/albums/{id}", Posture::User),
@@ -1316,6 +1322,12 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/local-library/recent", Posture::User),
     ("GET", "/api/v3/local-library/decades", Posture::User),
     ("GET", "/api/v3/local-library/suggestions", Posture::User),
+    // Stage-12 gap step.
+    (
+        "GET",
+        "/api/v3/local-library/albums/match/{mbid}",
+        Posture::User,
+    ),
     // Stage-4 unified search.
     ("GET", "/api/v3/search", Posture::User),
     ("GET", "/api/v3/search/{bucket}", Posture::User),
@@ -1528,6 +1540,9 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ),
     ("GET", "/api/v3/remotes/{source}/tracks", Posture::User),
     ("GET", "/api/v3/remotes/{source}/search", Posture::User),
+    // Stage-12 gap step.
+    ("GET", "/api/v3/remotes/{source}/random", Posture::User),
+    ("GET", "/api/v3/remotes/{source}/discovery", Posture::User),
     ("GET", "/api/v3/remotes/{source}/recent", Posture::User),
     (
         "GET",

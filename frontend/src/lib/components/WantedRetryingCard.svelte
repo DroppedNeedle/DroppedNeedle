@@ -22,7 +22,9 @@
 		return `in ${Math.round(seconds / 86400)} d`;
 	}
 
-	const nextTryLabel = $derived(formatEta(item.next_retry_at - nowSeconds()));
+	const nextTryLabel = $derived(
+		item.next_retry_at == null ? null : formatEta(item.next_retry_at - nowSeconds())
+	);
 	const attempt = $derived(Math.min(item.retry_count + 1, item.max_attempts));
 </script>
 
@@ -31,8 +33,8 @@
 <div class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box">
 	<div class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg overflow-hidden bg-base-300">
 		<AlbumImage
-			mbid={item.release_group_mbid}
-			customUrl={item.cover_url}
+			mbid={item.musicbrainz_id}
+			customUrl={item.cover_url ?? null}
 			alt={item.album_title}
 			size="sm"
 			rounded="lg"
@@ -42,7 +44,7 @@
 
 	<div class="flex-1 min-w-0">
 		<a
-			href={withBasePath(`/album/${item.release_group_mbid}`)}
+			href={withBasePath(`/album/${item.musicbrainz_id}`)}
 			class="block font-semibold text-sm truncate hover:text-accent hover:underline"
 			title={item.album_title}
 		>
@@ -58,8 +60,10 @@
 			</span>
 			<span class="text-base-content/20">•</span>
 			<span class="text-base-content/40">retry {attempt} of {item.max_attempts}</span>
-			<span class="text-base-content/20">•</span>
-			<span class="text-base-content/40">next try {nextTryLabel}</span>
+			{#if nextTryLabel}
+				<span class="text-base-content/20">•</span>
+				<span class="text-base-content/40">next try {nextTryLabel}</span>
+			{/if}
 			{#if ownerName}
 				<span class="text-base-content/20">•</span>
 				<span class="text-base-content/40">requested by {ownerName}</span>

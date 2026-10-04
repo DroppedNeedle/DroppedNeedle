@@ -332,6 +332,24 @@ impl requests::DownloadDispatch for UnifiedDispatch {
             Some(Db::Cancelled) => requests::DispatchTaskState::Cancelled,
         }
     }
+
+    fn task_progress(&self, task_id: &str) -> Option<requests::TaskProgress> {
+        self.get_task(task_id).map(|row| requests::TaskProgress {
+            status: row.status.as_str().to_owned(),
+            progress_percent: row.progress_percent,
+            total_size_bytes: row.total_size_bytes,
+            downloaded_bytes: row.downloaded_bytes,
+            error_message: row.error_message,
+            quality: row.quality_format,
+            protocol: row.source,
+        })
+    }
+
+    fn reimportable(&self, task_id: &str) -> bool {
+        self.journal
+            .with_store(|store| store.is_reimportable(task_id))
+            .unwrap_or(false)
+    }
 }
 
 impl flows::DownloadDispatch for UnifiedDispatch {

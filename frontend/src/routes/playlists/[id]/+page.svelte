@@ -2,28 +2,28 @@
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
-	import {
-		deletePlaylist,
-		resolvePlaylistSources,
-		requestMissingTracks,
-		isRedactedPlaylist,
-		type PlaylistDetail,
-		type PlaylistDetailItem,
-		type RedactedPlaylist
-	} from '$lib/api/playlists';
+	import { requestMissingTracks, type PlaylistDetail } from '$lib/api/playlists';
 	import { playlistTrackToQueueItem } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getCacheTTL } from '$lib/stores/cacheTtl.svelte';
-	import { getPlaylistDetailQuery } from '$lib/queries/playlists/PlaylistQuery.svelte';
-	import { createSetPlaylistPublicMutation } from '$lib/queries/playlists/PlaylistMutations.svelte';
+	import {
+		getPlaylistDetailV3Query,
+		type PlaylistDetailV3
+	} from '$lib/queries/playlists/PlaylistV3Queries.svelte';
+	import {
+		deletePlaylistV3,
+		resolvePlaylistSourcesV3,
+		setPlaylistVisibilityV3
+	} from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
+	import { toPageDetail } from '$lib/queries/playlists/playlistV3Adapter';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { Music, Lock, Download, LoaderCircle } from 'lucide-svelte';
+	import { Music, Download, LoaderCircle } from 'lucide-svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import type { PageData } from './$types';
@@ -33,11 +33,13 @@
 
 	let { data }: { data: PageData } = $props();
 
-	const detailQuery = getPlaylistDetailQuery(
+	const detailQuery = getPlaylistDetailV3Query(
 		() => data.playlistId,
 		() => true
 	);
-	const shareMutation = createSetPlaylistPublicMutation();
+	const shareMutation = setPlaylistVisibilityV3();
+	const deleteMutation = deletePlaylistV3();
+	const resolveSourcesMutation = resolvePlaylistSourcesV3();
 
 	// A local mutable copy of the (full) playlist so child components can keep
 	// applying optimistic updates; redaction/loading/error leave it null.
@@ -48,11 +50,6 @@
 	let trackList = $state<ReturnType<typeof PlaylistTrackList> | null>(null);
 	let header = $state<ReturnType<typeof PlaylistHeader> | null>(null);
 
-	let redacted = $derived(
-		detailQuery.data && isRedactedPlaylist(detailQuery.data)
-			? (detailQuery.data as RedactedPlaylist)
-			: null
-	);
 	let loading = $derived(detailQuery.isLoading);
 	let loadError = $derived.by(() => {
 		if (!detailQuery.isError) return null;
@@ -85,7 +82,7 @@
 		if (requesting || !playlist) return;
 		requesting = true;
 		try {
-			const result = await requestMissingTracks(playlist.id);
+			const result = await requestMissingTracks(playlist.tracks);
 			toastStore.show({ message: result.message, type: 'success' });
 		} catch {
 			toastStore.show({ message: "Couldn't submit requests", type: 'error' });
@@ -181,7 +178,8 @@
 			return;
 		}
 		try {
-			const sources = await resolvePlaylistSources(playlistId);
+			const answer = await resolveSourcesMutation.mutateAsync(playlistId);
+			const sources = answer.sources;
 			if (playlist && playlist.id === playlistId) {
 				applySourcesMap(sources);
 				// Empty resolve results are not fresh: skip caching when nothing
@@ -191,7 +189,7 @@
 				if (hasUsableSourcesForPlaylist(sources, ids)) {
 					setSourcesCache(playlistId, sources);
 					await invalidateQueriesWithPersister({
-						queryKey: PlaylistQueryKeyFactory.detail(authStore.user?.id, playlistId)
+						queryKey: PlaylistQueryKeyFactory.v3.detail(authStore.user?.id, playlistId)
 					});
 				}
 			}
@@ -200,7 +198,7 @@
 		}
 	}
 
-	let lastSyncedData: PlaylistDetailItem | undefined;
+	let lastSyncedData: PlaylistDetailV3 | undefined;
 	$effect(() => {
 		const d = detailQuery.data;
 		if (d === lastSyncedData) return;
@@ -208,9 +206,10 @@
 		untrack(() => {
 			trackList?.clearReorderState();
 			header?.cleanupPreview();
-			if (d && !isRedactedPlaylist(d)) {
+			if (d) {
 				// Clone so optimistic child mutations never touch the query cache.
-				playlist = { ...d, tracks: d.tracks.map((t) => ({ ...t })) };
+				const page = toPageDetail(d);
+				playlist = { ...page, tracks: page.tracks.map((t) => ({ ...t })) };
 				void resolveAndCacheSources(d.id);
 			} else {
 				playlist = null;
@@ -281,9 +280,9 @@
 		if (!playlist || deleting) return;
 		deleting = true;
 		try {
-			await deletePlaylist(playlist.id);
+			await deleteMutation.mutateAsync(playlist.id);
 			await invalidateQueriesWithPersister({
-				queryKey: PlaylistQueryKeyFactory.list(authStore.user?.id)
+				queryKey: PlaylistQueryKeyFactory.v3.list(authStore.user?.id)
 			});
 			toastStore.show({ message: 'Playlist deleted', type: 'success' });
 			await goto(withBasePath('/playlists'));
@@ -355,19 +354,6 @@
 				</button>
 				<BackButton fallback={withBasePath('/playlists')} />
 			</div>
-		</div>
-	{:else if redacted}
-		<div class="flex flex-col items-center justify-center py-20 gap-4 text-center">
-			<div class="flex items-center justify-center rounded-full bg-base-200 p-5">
-				<Lock class="h-12 w-12 text-base-content/30" />
-			</div>
-			<h2 class="text-lg font-semibold italic text-base-content/70">Private playlist</h2>
-			<p class="text-sm text-base-content/60">
-				{redacted.track_count} track{redacted.track_count === 1 ? '' : 's'}{redacted.owner_name
-					? ` · owned by ${redacted.owner_name}`
-					: ''}
-			</p>
-			<BackButton fallback={withBasePath('/playlists')} />
 		</div>
 	{:else if !playlist}
 		<div class="flex flex-col items-center justify-center py-20 gap-4">

@@ -29,9 +29,9 @@
 	$effect(() => {
 		const d = quotaQuery.data;
 		if (d && !seeded) {
-			requestCount = d.override.request_quota_count?.toString() ?? '';
-			requestDays = d.override.request_quota_days?.toString() ?? '';
-			storageGb = d.override.storage_quota_gb?.toString() ?? '';
+			requestCount = d.quota_override.request_quota_count?.toString() ?? '';
+			requestDays = d.quota_override.request_quota_days?.toString() ?? '';
+			storageGb = d.quota_override.storage_quota_gb?.toString() ?? '';
 			seeded = true;
 		}
 	});

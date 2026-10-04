@@ -2,7 +2,7 @@
 	import type { CrateTrack, CrateReason, LocalAlbumSummary } from '$lib/types';
 	import { flip } from 'svelte/animate';
 	import { fly } from 'svelte/transition';
-	import { getCoverUrl } from '$lib/utils/errorHandling';
+	import { crateCoverUrl } from '$lib/queries/local/LocalV3Adapters';
 	import {
 		Sparkles,
 		RotateCcw,
@@ -243,6 +243,7 @@
 				{#each tracks as t, i (t.track_file_id)}
 					{@const meta = reasonMeta(t.reason)}
 					{@const Icon = meta.icon}
+					{@const cover = crateCoverUrl(t)}
 					<div
 						class="crate-card group flex items-center gap-3 rounded-xl border border-base-content/5 bg-base-200/70 p-2.5 backdrop-blur-sm"
 						class:is-dragging={draggingId === t.track_file_id}
@@ -268,9 +269,9 @@
 						<div
 							class="relative h-12 w-12 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
 						>
-							{#if t.cover_url}
+							{#if cover}
 								<img
-									src={getCoverUrl(t.cover_url, t.album_mbid ?? '')}
+									src={cover}
 									alt={t.album_name}
 									class="h-full w-full object-cover"
 									loading="lazy"

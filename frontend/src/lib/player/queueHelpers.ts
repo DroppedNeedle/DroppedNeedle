@@ -1,24 +1,31 @@
-import type { QueueItem, SourceType } from '$lib/player/types';
 import type {
 	JellyfinTrackInfo,
 	LocalTrackInfo,
 	NativeTrackListItem,
 	NavidromeTrackInfo,
 	PlexTrackInfo,
+	QueueItem,
+	SourceType,
 	YouTubeTrackLink
-} from '$lib/types';
+} from '$lib/player/types';
 import type { PlaylistTrack } from '$lib/api/playlists';
-import { API } from '$lib/constants';
+import type { components } from '$lib/api/v3/openapi';
+import { gatewayStreamUrl } from '$lib/player/playbackGateway';
+import type { TrackViewV3 } from '$lib/queries/library/LibraryV3Queries.svelte';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 
-const SUPPORTED_CODECS = new Set(['aac', 'mp3', 'opus', 'flac', 'wav', 'wma', 'vorbis', 'alac']);
-const CODEC_ALIASES: Record<string, string> = { alac: 'flac', wma: 'aac' };
+type RemotesTrackView = components['schemas']['RemotesTrackView'];
+
+const CODEC_ALIASES: Record<string, string> = { alac: 'flac' };
 
 export function normalizeCodec(codec: string | undefined | null): string {
-	const raw = codec?.toLowerCase() ?? 'aac';
+	const raw = codec?.toLowerCase() ?? '';
+	if (!raw) return 'aac';
 	if (CODEC_ALIASES[raw]) return CODEC_ALIASES[raw];
-	if (SUPPORTED_CODECS.has(raw)) return raw;
-	return 'aac';
+	// Unknown codecs (wma included) pass through honestly: relabeling one
+	// as aac would lie about what is about to play, and every surface
+	// downstream renders the raw value as-is.
+	return raw;
 }
 
 export interface TrackMeta {
@@ -71,7 +78,7 @@ export function selectBestSource(
 		return {
 			sourceType: 'local',
 			trackSourceId: String(data.localTrack.track_file_id),
-			streamUrl: API.stream.local(data.localTrack.track_file_id),
+			streamUrl: gatewayStreamUrl('local', data.localTrack.track_file_id),
 			format
 		};
 	}
@@ -80,7 +87,7 @@ export function selectBestSource(
 		return {
 			sourceType: 'navidrome',
 			trackSourceId: data.navidromeTrack.navidrome_id,
-			streamUrl: API.stream.navidrome(data.navidromeTrack.navidrome_id),
+			streamUrl: gatewayStreamUrl('navidrome', data.navidromeTrack.navidrome_id),
 			format
 		};
 	}
@@ -89,7 +96,7 @@ export function selectBestSource(
 		return {
 			sourceType: 'jellyfin',
 			trackSourceId: data.jellyfinTrack.jellyfin_id,
-			streamUrl: API.stream.jellyfin(data.jellyfinTrack.jellyfin_id),
+			streamUrl: gatewayStreamUrl('jellyfin', data.jellyfinTrack.jellyfin_id),
 			format
 		};
 	}
@@ -99,7 +106,7 @@ export function selectBestSource(
 		return {
 			sourceType: 'plex',
 			trackSourceId: data.plexTrack.part_key,
-			streamUrl: API.stream.plex(data.plexTrack.part_key),
+			streamUrl: gatewayStreamUrl('plex', data.plexTrack.part_key),
 			format
 		};
 	}
@@ -165,7 +172,7 @@ export function buildQueueItemsFromJellyfin(
 			coverUrl: normalizedCoverUrl,
 			sourceType: 'jellyfin' as const,
 			artistId: meta.artistId,
-			streamUrl: API.stream.jellyfin(t.jellyfin_id),
+			streamUrl: gatewayStreamUrl('jellyfin', t.jellyfin_id),
 			format,
 			availableSources: ['jellyfin'] as SourceType[],
 			duration: t.duration_seconds
@@ -191,7 +198,7 @@ export function buildQueueItemsFromNavidrome(
 			coverUrl: normalizedCoverUrl,
 			sourceType: 'navidrome' as const,
 			artistId: meta.artistId,
-			streamUrl: API.stream.navidrome(t.navidrome_id),
+			streamUrl: gatewayStreamUrl('navidrome', t.navidrome_id),
 			format,
 			availableSources: ['navidrome'] as SourceType[],
 			duration: t.duration_seconds
@@ -213,7 +220,7 @@ export function buildQueueItemsFromLocal(tracks: LocalTrackInfo[], meta: TrackMe
 		coverRemoteUrl: meta.coverUrl?.startsWith('http') ? meta.coverUrl : null,
 		sourceType: 'local' as const,
 		artistId: meta.artistId,
-		streamUrl: API.stream.local(t.track_file_id),
+		streamUrl: gatewayStreamUrl('local', t.track_file_id),
 		format: t.format.toLowerCase(),
 		availableSources: ['local'] as SourceType[],
 		duration: t.duration_seconds ?? undefined
@@ -237,7 +244,7 @@ export function buildQueueItemsFromPlex(tracks: PlexTrackInfo[], meta: TrackMeta
 				coverUrl: normalizedCoverUrl,
 				sourceType: 'plex' as const,
 				artistId: meta.artistId,
-				streamUrl: API.stream.plex(t.part_key!),
+				streamUrl: gatewayStreamUrl('plex', t.part_key!),
 				format,
 				availableSources: ['plex'] as SourceType[],
 				duration: t.duration_seconds,
@@ -271,10 +278,10 @@ export function buildQueueItemsFromYouTube(
 }
 
 function resolveStreamUrl(sourceType: string, trackSourceId: string): string | undefined {
-	if (sourceType === 'local') return API.stream.local(trackSourceId);
-	if (sourceType === 'navidrome') return API.stream.navidrome(trackSourceId);
-	if (sourceType === 'jellyfin') return API.stream.jellyfin(trackSourceId);
-	if (sourceType === 'plex') return API.stream.plex(trackSourceId);
+	if (sourceType === 'local') return gatewayStreamUrl('local', trackSourceId);
+	if (sourceType === 'navidrome') return gatewayStreamUrl('navidrome', trackSourceId);
+	if (sourceType === 'jellyfin') return gatewayStreamUrl('jellyfin', trackSourceId);
+	if (sourceType === 'plex') return gatewayStreamUrl('plex', trackSourceId);
 	return undefined;
 }
 
@@ -328,7 +335,7 @@ export function buildDiscoveryQueueFromNavidrome(tracks: NavidromeTrackInfo[]): 
 		albumName: t.album_name,
 		coverUrl: t.image_url ?? null,
 		sourceType: 'navidrome' as const,
-		streamUrl: API.stream.navidrome(t.navidrome_id),
+		streamUrl: gatewayStreamUrl('navidrome', t.navidrome_id),
 		format: normalizeCodec(t.codec),
 		availableSources: ['navidrome'] as SourceType[],
 		duration: t.duration_seconds
@@ -348,7 +355,7 @@ export function buildDiscoveryQueueFromLocal(tracks: NativeTrackListItem[]): Que
 		coverRemoteUrl: null,
 		sourceType: 'local' as const,
 		artistId: t.artist_id,
-		streamUrl: API.stream.local(t.id),
+		streamUrl: gatewayStreamUrl('local', t.id),
 		format: (t.format ?? '').toLowerCase(),
 		availableSources: ['local'] as SourceType[],
 		duration: t.duration_seconds ?? undefined
@@ -366,7 +373,7 @@ export function buildDiscoveryQueueFromJellyfin(tracks: JellyfinTrackInfo[]): Qu
 		albumName: t.album_name,
 		coverUrl: t.image_url ?? null,
 		sourceType: 'jellyfin' as const,
-		streamUrl: API.stream.jellyfin(t.jellyfin_id),
+		streamUrl: gatewayStreamUrl('jellyfin', t.jellyfin_id),
 		format: normalizeCodec(t.codec),
 		availableSources: ['jellyfin'] as SourceType[],
 		duration: t.duration_seconds
@@ -386,9 +393,288 @@ export function buildDiscoveryQueueFromPlex(tracks: PlexTrackInfo[]): QueueItem[
 			albumName: t.album_name,
 			coverUrl: t.image_url ?? null,
 			sourceType: 'plex' as const,
-			streamUrl: API.stream.plex(t.part_key!),
+			streamUrl: gatewayStreamUrl('plex', t.part_key!),
 			format: normalizeCodec(t.codec),
 			availableSources: ['plex'] as SourceType[],
 			duration: t.duration_seconds
+		}));
+}
+
+// v3 queue builders. Same shapes and priority order as the v1 builders
+// above, but reading RemotesTrackView (jellyfin/navidrome/plex) and
+// TrackViewV3 (local) instead of the v1 catalog types. The v1 builders
+// stay untouched until phase B moves every producer over.
+// One known v3 gap, flagged for phase B: RemotesTrackView carries no
+// codec, so remote formats fall back to 'aac' through normalizeCodec.
+// Quality badges read low until the contract exposes a codec. Plex is
+// fully mapped: part_key streams, the ratingKey id scrobbles.
+
+export interface TrackSourceDataV3 {
+	trackPosition: number;
+	discNumber?: number;
+	trackTitle: string;
+	trackLength?: number;
+	jellyfinTrack?: RemotesTrackView | null;
+	navidromeTrack?: RemotesTrackView | null;
+	localTrack?: TrackViewV3 | null;
+	plexTrack?: RemotesTrackView | null;
+}
+
+export function selectBestSourceV3(
+	data: TrackSourceDataV3
+): { sourceType: SourceType; trackSourceId: string; streamUrl: string; format?: string } | null {
+	if (data.localTrack) {
+		const format = data.localTrack.format.toLowerCase();
+		return {
+			sourceType: 'local',
+			trackSourceId: data.localTrack.id,
+			streamUrl: gatewayStreamUrl('local', data.localTrack.id),
+			format
+		};
+	}
+	if (data.navidromeTrack) {
+		const format = normalizeCodec(undefined);
+		return {
+			sourceType: 'navidrome',
+			trackSourceId: data.navidromeTrack.id,
+			streamUrl: gatewayStreamUrl('navidrome', data.navidromeTrack.id),
+			format
+		};
+	}
+	if (data.jellyfinTrack) {
+		const format = normalizeCodec(undefined);
+		return {
+			sourceType: 'jellyfin',
+			trackSourceId: data.jellyfinTrack.id,
+			streamUrl: gatewayStreamUrl('jellyfin', data.jellyfinTrack.id),
+			format
+		};
+	}
+	if (data.plexTrack) {
+		if (!data.plexTrack.part_key) return null;
+		const format = normalizeCodec(undefined);
+		return {
+			sourceType: 'plex',
+			trackSourceId: data.plexTrack.part_key,
+			streamUrl: gatewayStreamUrl('plex', data.plexTrack.part_key),
+			format
+		};
+	}
+	return null;
+}
+
+export function getAvailableSourcesV3(data: TrackSourceDataV3): SourceType[] {
+	const sources: SourceType[] = [];
+	if (data.localTrack) sources.push('local');
+	if (data.navidromeTrack) sources.push('navidrome');
+	if (data.jellyfinTrack) sources.push('jellyfin');
+	if (data.plexTrack) sources.push('plex');
+	return sources;
+}
+
+export function buildQueueItemV3(meta: TrackMeta, data: TrackSourceDataV3): QueueItem | null {
+	const best = selectBestSourceV3(data);
+	if (!best) return null;
+
+	const normalizedCoverUrl = getCoverUrl(meta.coverUrl, meta.albumId);
+
+	const sourceIds: Partial<Record<SourceType, string>> = {};
+	if (data.localTrack) sourceIds.local = data.localTrack.id;
+	if (data.navidromeTrack) sourceIds.navidrome = data.navidromeTrack.id;
+	if (data.jellyfinTrack) sourceIds.jellyfin = data.jellyfinTrack.id;
+	if (data.plexTrack?.part_key) sourceIds.plex = data.plexTrack.part_key;
+
+	return {
+		trackSourceId: best.trackSourceId,
+		trackName: data.trackTitle,
+		artistName: meta.artistName,
+		trackNumber: data.trackPosition,
+		discNumber: data.discNumber ?? 1,
+		albumId: meta.albumId,
+		albumName: meta.albumName,
+		coverUrl: normalizedCoverUrl,
+		sourceType: best.sourceType,
+		artistId: meta.artistId,
+		streamUrl: best.streamUrl,
+		format: best.format,
+		availableSources: getAvailableSourcesV3(data),
+		sourceIds,
+		duration: data.trackLength,
+		plexRatingKey: data.plexTrack?.id
+	};
+}
+
+export function buildQueueItemsFromJellyfinV3(
+	tracks: RemotesTrackView[],
+	meta: TrackMeta
+): QueueItem[] {
+	const normalizedCoverUrl = getCoverUrl(meta.coverUrl, meta.albumId);
+	return tracks.map((t) => ({
+		trackSourceId: t.id,
+		trackName: t.title,
+		artistName: meta.artistName,
+		trackNumber: t.track_number ?? 0,
+		discNumber: normalizeDiscNumber(t.disc_number),
+		albumId: meta.albumId,
+		albumName: meta.albumName,
+		coverUrl: normalizedCoverUrl,
+		sourceType: 'jellyfin' as const,
+		artistId: meta.artistId,
+		streamUrl: gatewayStreamUrl('jellyfin', t.id),
+		format: normalizeCodec(undefined),
+		availableSources: ['jellyfin'] as SourceType[],
+		duration: t.duration_secs ?? undefined
+	}));
+}
+
+export function buildQueueItemsFromNavidromeV3(
+	tracks: RemotesTrackView[],
+	meta: TrackMeta
+): QueueItem[] {
+	const normalizedCoverUrl = getCoverUrl(meta.coverUrl, meta.albumId);
+	return tracks.map((t) => ({
+		trackSourceId: t.id,
+		trackName: t.title,
+		artistName: meta.artistName,
+		trackNumber: t.track_number ?? 0,
+		discNumber: normalizeDiscNumber(t.disc_number),
+		albumId: meta.albumId,
+		albumName: meta.albumName,
+		coverUrl: normalizedCoverUrl,
+		sourceType: 'navidrome' as const,
+		artistId: meta.artistId,
+		streamUrl: gatewayStreamUrl('navidrome', t.id),
+		format: normalizeCodec(undefined),
+		availableSources: ['navidrome'] as SourceType[],
+		duration: t.duration_secs ?? undefined
+	}));
+}
+
+export function buildQueueItemsFromLocalV3(tracks: TrackViewV3[], meta: TrackMeta): QueueItem[] {
+	const normalizedCoverUrl = getCoverUrl(meta.coverUrl, meta.albumId);
+	return tracks.map((t) => ({
+		trackSourceId: t.id,
+		trackName: t.title,
+		artistName: meta.artistName,
+		trackNumber: t.track_number,
+		discNumber: normalizeDiscNumber(t.disc_number),
+		albumId: meta.albumId,
+		albumName: meta.albumName,
+		coverUrl: normalizedCoverUrl,
+		coverRemoteUrl: meta.coverUrl?.startsWith('http') ? meta.coverUrl : null,
+		sourceType: 'local' as const,
+		artistId: meta.artistId,
+		streamUrl: gatewayStreamUrl('local', t.id),
+		format: t.format.toLowerCase(),
+		availableSources: ['local'] as SourceType[],
+		duration: t.duration_seconds ?? undefined
+	}));
+}
+
+export function buildQueueItemsFromPlexV3(
+	tracks: RemotesTrackView[],
+	meta: TrackMeta
+): QueueItem[] {
+	// v3 plex ids are ratingKeys (scrobble key); the stream gateway needs
+	// the part key, so tracks without one are dropped like the v1 builder.
+	const normalizedCoverUrl = getCoverUrl(meta.coverUrl, meta.albumId);
+	return tracks
+		.filter((t) => t.part_key)
+		.map((t) => ({
+			trackSourceId: t.part_key!,
+			trackName: t.title,
+			artistName: meta.artistName,
+			trackNumber: t.track_number ?? 0,
+			discNumber: normalizeDiscNumber(t.disc_number),
+			albumId: meta.albumId,
+			albumName: meta.albumName,
+			coverUrl: normalizedCoverUrl,
+			sourceType: 'plex' as const,
+			artistId: meta.artistId,
+			streamUrl: gatewayStreamUrl('plex', t.part_key!),
+			format: normalizeCodec(undefined),
+			availableSources: ['plex'] as SourceType[],
+			duration: t.duration_secs ?? undefined,
+			plexRatingKey: t.id
+		}));
+}
+
+export function buildDiscoveryQueueFromNavidromeV3(tracks: RemotesTrackView[]): QueueItem[] {
+	return tracks.map((t) => ({
+		trackSourceId: t.id,
+		trackName: t.title,
+		artistName: t.artist_name,
+		trackNumber: t.track_number ?? 0,
+		discNumber: normalizeDiscNumber(t.disc_number),
+		albumId: t.album_id ?? '',
+		albumName: t.album_name,
+		coverUrl: t.image_url ?? null,
+		sourceType: 'navidrome' as const,
+		streamUrl: gatewayStreamUrl('navidrome', t.id),
+		format: normalizeCodec(undefined),
+		availableSources: ['navidrome'] as SourceType[],
+		duration: t.duration_secs ?? undefined
+	}));
+}
+
+export function buildDiscoveryQueueFromLocalV3(tracks: TrackViewV3[]): QueueItem[] {
+	return tracks.map((t) => ({
+		trackSourceId: t.id,
+		trackName: t.title,
+		artistName: t.artist_name,
+		trackNumber: t.track_number,
+		discNumber: normalizeDiscNumber(t.disc_number),
+		albumId: t.album_id,
+		albumName: t.album_title,
+		coverUrl: getCoverUrl(null, t.album_id),
+		coverRemoteUrl: null,
+		sourceType: 'local' as const,
+		artistId: t.artist_id ?? undefined,
+		streamUrl: gatewayStreamUrl('local', t.id),
+		format: t.format.toLowerCase(),
+		availableSources: ['local'] as SourceType[],
+		duration: t.duration_seconds ?? undefined
+	}));
+}
+
+export function buildDiscoveryQueueFromJellyfinV3(tracks: RemotesTrackView[]): QueueItem[] {
+	return tracks.map((t) => ({
+		trackSourceId: t.id,
+		trackName: t.title,
+		artistName: t.artist_name,
+		trackNumber: t.track_number ?? 0,
+		discNumber: normalizeDiscNumber(t.disc_number),
+		albumId: t.album_id ?? '',
+		albumName: t.album_name,
+		coverUrl: t.image_url ?? null,
+		sourceType: 'jellyfin' as const,
+		streamUrl: gatewayStreamUrl('jellyfin', t.id),
+		format: normalizeCodec(undefined),
+		availableSources: ['jellyfin'] as SourceType[],
+		duration: t.duration_secs ?? undefined
+	}));
+}
+
+export function buildDiscoveryQueueFromPlexV3(tracks: RemotesTrackView[]): QueueItem[] {
+	// Tracks without a part key cannot stream, so they are dropped like
+	// the v1 builder. plexRatingKey is set where the v1 discovery builder
+	// leaves it out, because the v3 id already is the ratingKey.
+	return tracks
+		.filter((t) => t.part_key)
+		.map((t) => ({
+			trackSourceId: t.part_key!,
+			trackName: t.title,
+			artistName: t.artist_name,
+			trackNumber: t.track_number ?? 0,
+			discNumber: normalizeDiscNumber(t.disc_number),
+			albumId: t.album_id ?? '',
+			albumName: t.album_name,
+			coverUrl: t.image_url ?? null,
+			sourceType: 'plex' as const,
+			streamUrl: gatewayStreamUrl('plex', t.part_key!),
+			format: normalizeCodec(undefined),
+			availableSources: ['plex'] as SourceType[],
+			duration: t.duration_secs ?? undefined,
+			plexRatingKey: t.id
 		}));
 }

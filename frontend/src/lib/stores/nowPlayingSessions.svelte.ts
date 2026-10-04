@@ -1,12 +1,51 @@
-import { API } from '$lib/constants';
-import { api } from '$lib/api/client';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-import type { NowPlayingSession } from '$lib/types';
+import {
+	fetchNowPlayingSnapshot,
+	type NowPlayingEntry
+} from '$lib/player/playbackGateway';
 import {
 	muxEventStream,
 	type MuxEventStream,
 	type MuxUnsubscribe
 } from '$lib/queries/events/MuxEventStream';
+
+// Client view over one presence row: the v3 entry plus client-only fields.
+// audio_codec/bitrate are v2-only and stay absent on v3 rows (the quality
+// badge hides itself when they are missing).
+export interface NowPlayingSession {
+	id: string;
+	user_name: string;
+	track_name: string;
+	artist_name: string;
+	album_name: string;
+	cover_url: string;
+	device_name: string;
+	is_paused: boolean;
+	source?: string;
+	progress_ms?: number | null;
+	duration_ms?: number | null;
+	redacted?: boolean;
+	audio_codec?: string;
+	bitrate?: number;
+	_isLocal?: boolean;
+}
+
+export function nowPlayingEntryToSession(entry: NowPlayingEntry): NowPlayingSession {
+	return {
+		id: entry.id,
+		user_name: entry.user_name,
+		track_name: entry.track_name,
+		artist_name: entry.artist_name,
+		album_name: entry.album_name ?? '',
+		cover_url: entry.cover_url,
+		device_name: entry.device_name,
+		is_paused: entry.is_paused,
+		source: entry.source,
+		progress_ms: entry.progress_ms,
+		duration_ms: entry.duration_ms,
+		redacted: entry.redacted
+	};
+}
 
 // Server-driven presence: hydrate once over HTTP, then receive privacy-projected
 // snapshots live over SSE (the `now-playing` channel). The 1s tick only smooths
@@ -88,8 +127,8 @@ export function createNowPlayingStore(mux: MuxEventStream = muxEventStream) {
 
 	async function hydrate(): Promise<void> {
 		try {
-			const data = await api.global.get<{ sessions: NowPlayingSession[] }>(API.nowPlaying.report());
-			applySnapshot(data.sessions ?? []);
+			const data = await fetchNowPlayingSnapshot();
+			applySnapshot((data.sessions ?? []).map(nowPlayingEntryToSession));
 		} catch {
 			// the SSE snapshot replayed on connect will populate us shortly
 		}

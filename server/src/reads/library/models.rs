@@ -69,7 +69,7 @@ pub struct AlbumQuery {
     pub limit: Option<i64>,
     /// Page start. Default 0.
     pub offset: Option<i64>,
-    /// `name`, `date_added`, or `year`. Default `name`.
+    /// `name`, `date_added`, `year`, or `artist`. Default `name`.
     pub sort: Option<String>,
     /// `asc` or `desc`. Default `asc`.
     pub order: Option<String>,
@@ -79,6 +79,9 @@ pub struct AlbumQuery {
     pub artist_id: Option<String>,
     /// Restrict to one decade start year, e.g. 1990.
     pub decade: Option<i64>,
+    /// Restrict to one primary track format, e.g. `flac`. Blank reads as
+    /// absent; matching is case-insensitive.
+    pub format: Option<String>,
 }
 
 /// Track list query for album and genre scopes.
@@ -275,6 +278,8 @@ pub struct AlbumCard {
     pub artist_name: String,
     /// Linked MusicBrainz artist id, when the artist is identified.
     pub artist_mbid: Option<String>,
+    /// Linked MusicBrainz release group, when identified.
+    pub release_group_mbid: Option<String>,
     /// Release year, when known.
     pub year: Option<i64>,
     /// Streamable tracks on this album.

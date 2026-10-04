@@ -1,10 +1,11 @@
 <script lang="ts">
+	import type { PlaylistDetail } from '$lib/api/playlists';
 	import {
-		updatePlaylist,
-		uploadPlaylistCover,
-		deletePlaylistCover,
-		type PlaylistDetail
-	} from '$lib/api/playlists';
+		deletePlaylistCoverV3,
+		updatePlaylistV3,
+		uploadPlaylistCoverV3
+	} from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
+	import { toPageDetail } from '$lib/queries/playlists/playlistV3Adapter';
 	import PlaylistDiscoveryModal from '$lib/components/PlaylistDiscoveryModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { formatTotalDurationSec, formatRelativeTime } from '$lib/utils/formatting';
@@ -67,6 +68,10 @@
 	let coverPreview = $state<string | null>(null);
 	let discoverModalOpen = $state(false);
 
+	const renameMutation = updatePlaylistV3();
+	const uploadCoverMutation = uploadPlaylistCoverV3();
+	const removeCoverMutation = deletePlaylistCoverV3();
+
 	$effect(() => {
 		if (editingName && nameInputEl) {
 			nameInputEl.focus();
@@ -106,7 +111,8 @@
 		}
 		savingName = true;
 		try {
-			const updated = await updatePlaylist(playlist.id, { name: trimmed });
+			const renamed = await renameMutation.mutateAsync({ id: playlist.id, name: trimmed });
+			const updated = toPageDetail(renamed);
 			editingName = false;
 			onplaylistupdate(
 				buildUpdatedPlaylist({
@@ -155,7 +161,7 @@
 		coverPreview = URL.createObjectURL(file);
 		uploading = true;
 		try {
-			const result = await uploadPlaylistCover(playlist.id, file);
+			const result = await uploadCoverMutation.mutateAsync({ id: playlist.id, file });
 			onplaylistupdate(
 				buildUpdatedPlaylist({
 					custom_cover_url: result.cover_url + '?t=' + Date.now()
@@ -176,7 +182,7 @@
 
 	async function removeCover() {
 		try {
-			await deletePlaylistCover(playlist.id);
+			await removeCoverMutation.mutateAsync(playlist.id);
 			onplaylistupdate(buildUpdatedPlaylist({ custom_cover_url: null }));
 			toastStore.show({ message: 'Cover removed.', type: 'success' });
 		} catch {

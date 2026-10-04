@@ -1,25 +1,27 @@
 import { createMutation, createQuery, queryOptions } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API, CACHE_TTL } from '$lib/constants';
+import type { components } from '$lib/api/v3/openapi';
+import { CACHE_TTL } from '$lib/constants';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-import type {
-	IndexerSavedResponse,
-	IndexerSettings,
-	IndexerTestResult,
-	OperationResult,
-	UsenetSearchBackend,
-	UsenetSearchBackendName
-} from '$lib/types';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
+import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
+
+export type IndexerSettings = components['schemas']['NewznabIndexerDto'];
+export type IndexerSavedResponse = components['schemas']['IndexerSavedResponse'];
+export type IndexerTestResult = components['schemas']['IndexerTestResponse'];
+export type OperationResult = components['schemas']['OperationResult'];
+export type UsenetSearchBackend = components['schemas']['UsenetSearchBackendDto'];
+export type UsenetSearchBackendName = components['schemas']['UsenetBackendDto'];
 
 const getIndexersQueryOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.indexers(),
-		queryFn: ({ signal }) => api.global.get<IndexerSettings[]>(API.indexers.list(), { signal })
+		queryFn: ({ signal }) =>
+			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.indexers(), { signal })
 	});
 
 export const getIndexersQuery = () => createQuery(() => getIndexersQueryOptions());
@@ -35,15 +37,16 @@ export function saveIndexerMutation() {
 	return createMutation(() => ({
 		mutationFn: (indexer: IndexerSettings) =>
 			indexer.id
-				? api.global.put<IndexerSavedResponse>(API.indexers.update(indexer.id), indexer)
-				: api.global.post<IndexerSavedResponse>(API.indexers.create(), indexer),
+				? api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.indexer(indexer.id), indexer)
+				: api.global.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexers(), indexer),
 		onSuccess: invalidateIndexers
 	}));
 }
 
 export function deleteIndexerMutation() {
 	return createMutation(() => ({
-		mutationFn: (id: string) => api.global.delete<OperationResult>(API.indexers.remove(id)),
+		mutationFn: (id: string) =>
+			api.global.v3.DELETE(DOWNLOAD_SETTINGS_ENDPOINTS.indexer(id)),
 		onSuccess: invalidateIndexers
 	}));
 }
@@ -51,7 +54,9 @@ export function deleteIndexerMutation() {
 export function reorderIndexersMutation() {
 	return createMutation(() => ({
 		mutationFn: (orderedIds: string[]) =>
-			api.global.post<OperationResult>(API.indexers.reorder(), { ordered_ids: orderedIds }),
+			api.global.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexersReorder(), {
+				ordered_ids: orderedIds
+			}),
 		onSuccess: invalidateIndexers
 	}));
 }
@@ -59,7 +64,7 @@ export function reorderIndexersMutation() {
 export function testIndexerMutation() {
 	return createMutation(() => ({
 		mutationFn: (indexer: IndexerSettings) =>
-			api.global.post<IndexerTestResult>(API.indexers.test(), indexer)
+			api.global.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexersTest(), indexer)
 	}));
 }
 
@@ -68,7 +73,7 @@ const getSearchBackendQueryOptions = () =>
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.searchBackend(),
 		queryFn: ({ signal }) =>
-			api.global.get<UsenetSearchBackend>(API.indexers.searchBackend(), { signal })
+			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.searchBackend(), { signal })
 	});
 
 export const getSearchBackendQuery = () => createQuery(() => getSearchBackendQueryOptions());
@@ -76,7 +81,9 @@ export const getSearchBackendQuery = () => createQuery(() => getSearchBackendQue
 export function saveSearchBackendMutation() {
 	return createMutation(() => ({
 		mutationFn: (backend: UsenetSearchBackendName) =>
-			api.global.put<OperationResult>(API.indexers.searchBackend(), { backend }),
+			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.searchBackend(), {
+				backend
+			}),
 		onSuccess: async () => {
 			// Switching backends flips readiness: sweep the SABnzbd-shape set so
 			// status surfaces and Home refresh alongside the selector. The own key

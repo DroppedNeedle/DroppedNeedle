@@ -13,9 +13,11 @@ vi.mock('@tanstack/svelte-query', () => ({
 vi.mock('$lib/api/client', () => ({
 	api: {
 		global: {
-			put: vi.fn().mockResolvedValue({ id: 'i1' }),
-			post: vi.fn().mockResolvedValue({ success: true }),
-			delete: vi.fn().mockResolvedValue({ success: true })
+			v3: {
+				PUT: vi.fn().mockResolvedValue({ id: 'i1' }),
+				POST: vi.fn().mockResolvedValue({ success: true }),
+				DELETE: vi.fn().mockResolvedValue({ success: true })
+			}
 		}
 	}
 }));
@@ -24,7 +26,7 @@ vi.mock('$lib/queries/QueryClient', () => ({
 }));
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
+import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import {
 	deleteIndexerMutation,
@@ -36,9 +38,9 @@ import {
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
-const mockPut = vi.mocked(api.global.put);
-const mockPost = vi.mocked(api.global.post);
-const mockDelete = vi.mocked(api.global.delete);
+const mockPut = vi.mocked(api.global.v3.PUT);
+const mockPost = vi.mocked(api.global.v3.POST);
+const mockDelete = vi.mocked(api.global.v3.DELETE);
 const mockInvalidate = vi.mocked(invalidateQueriesWithPersister);
 
 interface Mutation {
@@ -70,7 +72,7 @@ describe('IndexerQueries (B9 invalidation pin)', () => {
 		saveIndexerMutation();
 		const mutation = captured.current as unknown as Mutation;
 		await mutation.mutationFn(indexer);
-		expect(mockPut).toHaveBeenCalledWith(API.indexers.update('i1'), indexer);
+		expect(mockPut).toHaveBeenCalledWith(DOWNLOAD_SETTINGS_ENDPOINTS.indexer('i1'), indexer);
 		await mutation.onSuccess?.();
 		const swept = sweptKeys();
 		expect(swept).toContainEqual(DownloadQueryKeyFactory.indexers());
@@ -82,7 +84,7 @@ describe('IndexerQueries (B9 invalidation pin)', () => {
 		deleteIndexerMutation();
 		let mutation = captured.current as unknown as Mutation;
 		await mutation.mutationFn('i1');
-		expect(mockDelete).toHaveBeenCalledWith(API.indexers.remove('i1'));
+		expect(mockDelete).toHaveBeenCalledWith(DOWNLOAD_SETTINGS_ENDPOINTS.indexer('i1'));
 		await mutation.onSuccess?.();
 		expect(sweptKeys()).toContainEqual(DownloadQueryKeyFactory.indexers());
 
@@ -90,7 +92,7 @@ describe('IndexerQueries (B9 invalidation pin)', () => {
 		reorderIndexersMutation();
 		mutation = captured.current as unknown as Mutation;
 		await mutation.mutationFn(['i1']);
-		expect(mockPost).toHaveBeenCalledWith(API.indexers.reorder(), { ordered_ids: ['i1'] });
+		expect(mockPost).toHaveBeenCalledWith(DOWNLOAD_SETTINGS_ENDPOINTS.indexersReorder(), { ordered_ids: ['i1'] });
 		await mutation.onSuccess?.();
 		expect(sweptKeys()).toContainEqual(HomeQueryKeyFactory.prefix);
 	});
@@ -99,7 +101,7 @@ describe('IndexerQueries (B9 invalidation pin)', () => {
 		testIndexerMutation();
 		const mutation = captured.current as unknown as Mutation;
 		await mutation.mutationFn(indexer);
-		expect(mockPost).toHaveBeenCalledWith(API.indexers.test(), indexer);
+		expect(mockPost).toHaveBeenCalledWith(DOWNLOAD_SETTINGS_ENDPOINTS.indexersTest(), indexer);
 		expect(mutation.onSuccess).toBeUndefined();
 		expect(mockInvalidate).not.toHaveBeenCalled();
 	});
@@ -108,7 +110,7 @@ describe('IndexerQueries (B9 invalidation pin)', () => {
 		saveSearchBackendMutation();
 		const mutation = captured.current as unknown as Mutation;
 		await mutation.mutationFn('prowlarr');
-		expect(mockPut).toHaveBeenCalledWith(API.indexers.searchBackend(), {
+		expect(mockPut).toHaveBeenCalledWith(DOWNLOAD_SETTINGS_ENDPOINTS.searchBackend(), {
 			backend: 'prowlarr'
 		});
 		await mutation.onSuccess?.();

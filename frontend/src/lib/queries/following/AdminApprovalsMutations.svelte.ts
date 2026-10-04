@@ -5,7 +5,6 @@ import { invalidateQueriesWithPersister } from '../QueryClient';
 import { FollowQueryKeyFactory } from './FollowQueryKeyFactory';
 import { FOLLOW_ENDPOINTS } from './endpoints';
 import { notifyPendingApprovalCountChanged } from '$lib/utils/requestsApi';
-import type { ApprovalActionResponse } from './types';
 
 interface ApprovalActionVars {
 	userId: string;
@@ -24,7 +23,7 @@ function errorMessage(err: unknown, fallback: string): string {
 export const createApproveAutoDownloadMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: ApprovalActionVars) =>
-			api.global.post<ApprovalActionResponse>(FOLLOW_ENDPOINTS.approve(vars.userId, vars.mbid)),
+			api.global.v3.POST(FOLLOW_ENDPOINTS.approve(vars.userId, vars.mbid)),
 		onSuccess: async (_data, vars) => {
 			toastStore.show({
 				message: `Auto-download approved for ${vars.artistName}`,
@@ -40,7 +39,7 @@ export const createApproveAutoDownloadMutation = () =>
 export const createRejectAutoDownloadMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: ApprovalActionVars) =>
-			api.global.post<ApprovalActionResponse>(FOLLOW_ENDPOINTS.reject(vars.userId, vars.mbid)),
+			api.global.v3.POST(FOLLOW_ENDPOINTS.reject(vars.userId, vars.mbid)),
 		onSuccess: async (_data, vars) => {
 			toastStore.show({ message: `Auto-download rejected for ${vars.artistName}`, type: 'info' });
 			await invalidateApprovals();
@@ -61,7 +60,7 @@ interface BatchActionVars {
 export const createApproveAutoDownloadBatchMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: BatchActionVars) =>
-			api.global.post<ApprovalActionResponse>(FOLLOW_ENDPOINTS.approveBatch(vars.batchId)),
+			api.global.v3.POST(FOLLOW_ENDPOINTS.approveBatch(vars.batchId)),
 		onSuccess: async (_data, vars) => {
 			toastStore.show({
 				message: `Auto-download approved for ${vars.userName}'s ${vars.artistCount} artists`,
@@ -77,7 +76,7 @@ export const createApproveAutoDownloadBatchMutation = () =>
 export const createRejectAutoDownloadBatchMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: BatchActionVars) =>
-			api.global.post<ApprovalActionResponse>(FOLLOW_ENDPOINTS.rejectBatch(vars.batchId)),
+			api.global.v3.POST(FOLLOW_ENDPOINTS.rejectBatch(vars.batchId)),
 		onSuccess: async (_data, vars) => {
 			toastStore.show({
 				message: `Auto-download rejected for ${vars.userName}'s ${vars.artistCount} artists`,

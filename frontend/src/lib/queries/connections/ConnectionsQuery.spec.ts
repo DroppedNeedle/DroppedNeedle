@@ -1,11 +1,75 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 
-vi.mock('@tanstack/svelte-query', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('@tanstack/svelte-query')>();
+vi.mock('@tanstack/svelte-query', () => ({
+	createMutation: vi.fn((factory: () => Record<string, unknown>) => factory()),
+	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory())
+}));
+
+// In-memory stand-in for ../QueryClient: the real module instantiates the
+// QueryClient class from @tanstack/svelte-query, which a plain-object mock
+// cannot re-export (a factory re-importing the original crashes the browser
+// worker). This fake preserves what the tests observe: set/get round-trips,
+// clear/ensure caching, and invalidation via queryClient.invalidateQueries.
+const queryCache = vi.hoisted(() => ({ map: new Map<string, unknown>() }));
+
+vi.mock('../QueryClient', () => {
+	const keyOf = (key: unknown) => JSON.stringify(key);
+	const fakeClient = {
+		getQueryData: vi.fn(
+			<T = unknown>(key: unknown): T | undefined =>
+				queryCache.map.get(keyOf(key)) as T | undefined
+		),
+		setQueryData: vi.fn((key: unknown, updater: unknown) => {
+			const next =
+				typeof updater === 'function'
+					? (updater as (old: unknown) => unknown)(queryCache.map.get(keyOf(key)))
+					: updater;
+			queryCache.map.set(keyOf(key), next);
+			return next;
+		}),
+		removeQueries: vi.fn((filters?: { queryKey?: unknown }) => {
+			if (filters?.queryKey === undefined) {
+				queryCache.map.clear();
+				return;
+			}
+			const prefix = keyOf(filters.queryKey).slice(0, -1);
+			for (const k of [...queryCache.map.keys()]) {
+				if (k.startsWith(prefix)) queryCache.map.delete(k);
+			}
+		}),
+		invalidateQueries: vi.fn(async (_filters?: unknown, _options?: unknown) => undefined),
+		cancelQueries: vi.fn(async (_filters?: unknown) => undefined),
+		clear: vi.fn(() => queryCache.map.clear()),
+		ensureQueryData: vi.fn(
+			async (opts: {
+				queryKey: unknown;
+				queryFn: (ctx: { queryKey: unknown; signal: AbortSignal }) => Promise<unknown>;
+			}): Promise<unknown> => {
+				const k = keyOf(opts.queryKey);
+				if (!queryCache.map.has(k)) {
+					queryCache.map.set(
+						k,
+						await opts.queryFn({
+							queryKey: opts.queryKey,
+							signal: new AbortController().signal
+						})
+					);
+				}
+				return queryCache.map.get(k);
+			}
+		)
+	};
 	return {
-		...actual,
-		createMutation: vi.fn((factory: () => Record<string, unknown>) => factory()),
-		createQuery: vi.fn((factory: () => Record<string, unknown>) => factory())
+		queryClient: fakeClient,
+		invalidateQueriesWithPersister: vi.fn((filters?: unknown, options?: unknown) =>
+			fakeClient.invalidateQueries(filters, options)
+		),
+		setQueryDataWithPersister: vi.fn(
+			<_T = unknown>(key: unknown, updater: unknown): Promise<void> => {
+				fakeClient.setQueryData(key, updater);
+				return Promise.resolve();
+			}
+		)
 	};
 });
 
@@ -20,7 +84,12 @@ vi.mock('idb-keyval', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() } }
+	api: {
+		global: {
+			put: vi.fn(),
+			v3: { GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), DELETE: vi.fn() }
+		}
+	}
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -30,6 +99,8 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
+import { PLEX_ENDPOINTS } from '../plex/endpoints';
+import { REMOTE_ENDPOINTS } from '../remotes/endpoints';
 import { queryClient } from '../QueryClient';
 import { ConnectionsQueryKeyFactory } from './ConnectionsQueryKeyFactory';
 import { CONNECTIONS_ENDPOINTS } from './endpoints';
@@ -45,10 +116,13 @@ import {
 	createPlexLinkPollMutation
 } from './ConnectionsMutations.svelte';
 
-const mockGet = vi.mocked(api.global.get);
-const mockPost = vi.mocked(api.global.post);
 const mockPut = vi.mocked(api.global.put);
-const mockDelete = vi.mocked(api.global.delete);
+// The typed client's generics resolve mock results to void; loosen to Mock
+// so resolves/implementations typecheck (assertions still pin URLs + bodies).
+const mockV3Get = vi.mocked(api.global.v3.GET) as unknown as Mock;
+const mockV3Post = vi.mocked(api.global.v3.POST) as unknown as Mock;
+const mockV3Put = vi.mocked(api.global.v3.PUT) as unknown as Mock;
+const mockV3Delete = vi.mocked(api.global.v3.DELETE) as unknown as Mock;
 
 type Opts = {
 	queryKey?: unknown;
@@ -60,16 +134,17 @@ type Opts = {
 beforeEach(() => {
 	vi.clearAllMocks();
 	(authStore as { user: { id: string } | null }).user = { id: 'userA' };
-	mockGet.mockResolvedValue({ connections: [] });
-	mockPost.mockResolvedValue({});
+	mockV3Get.mockRejectedValue(new Error('404'));
+	mockV3Post.mockResolvedValue({});
+	mockV3Put.mockResolvedValue({});
+	mockV3Delete.mockResolvedValue({});
 	mockPut.mockResolvedValue({});
-	mockDelete.mockResolvedValue({ service: 'lastfm', deleted: true });
 });
 
 describe('ConnectionsQueryKeyFactory (AMU-5)', () => {
-	it('scopes the key by userId and falls back to anon', () => {
+	it('scopes the key by userId and normalizes a missing id to null', () => {
 		expect(ConnectionsQueryKeyFactory.list('userA')).toEqual(['me', 'connections', 'userA']);
-		expect(ConnectionsQueryKeyFactory.list(undefined)).toEqual(['me', 'connections', 'anon']);
+		expect(ConnectionsQueryKeyFactory.list(undefined)).toEqual(['me', 'connections', null]);
 		expect(ConnectionsQueryKeyFactory.list('userB')).not.toEqual(
 			ConnectionsQueryKeyFactory.list('userA')
 		);
@@ -77,11 +152,12 @@ describe('ConnectionsQueryKeyFactory (AMU-5)', () => {
 });
 
 describe('getConnectionsQuery', () => {
-	it('builds a userId-scoped key and fetches /me/connections', async () => {
-		const opts = getConnectionsQuery() as unknown as Opts;
-		expect(opts.queryKey).toEqual(['me', 'connections', 'userA']);
-		await opts.queryFn!({ signal: new AbortController().signal });
-		expect(mockGet.mock.calls[0][0]).toBe(CONNECTIONS_ENDPOINTS.list);
+	it('builds a userId-scoped key', () => {
+		expect((getConnectionsQuery() as unknown as Opts).queryKey).toEqual([
+			'me',
+			'connections',
+			'userA'
+		]);
 	});
 
 	it('does not leak across a user switch (key re-derives from authStore)', () => {
@@ -97,19 +173,67 @@ describe('getConnectionsQuery', () => {
 			'userB'
 		]);
 	});
+
+	it('aggregates the per-service v3 reads, linked accounts only', async () => {
+		mockV3Get.mockImplementation((url: unknown) => {
+			const u = String(url);
+			if (u.includes('/remotes/navidrome/connection'))
+				return Promise.resolve({
+					source: 'navidrome',
+					connected: true,
+					account_mode: 'linked',
+					account_label: 'alice'
+				});
+			if (u.includes('/remotes/jellyfin/connection'))
+				return Promise.resolve({
+					source: 'jellyfin',
+					connected: true,
+					account_mode: 'shared',
+					account_label: ''
+				});
+			if (u.includes('/remotes/plex/connection')) return Promise.reject(new Error('404'));
+			if (u.includes('/me/connections/listenbrainz'))
+				return Promise.resolve({ service: 'listenbrainz', enabled: true, username: 'alice-lb' });
+			if (u.includes('/me/connections/lastfm'))
+				return Promise.resolve({ configured: true, linked: false, username: null });
+			if (u.includes('/acquire/spotify/playlists')) return Promise.resolve({ playlists: [] });
+			return Promise.reject(new Error(`unexpected ${u}`));
+		});
+		const opts = getConnectionsQuery() as unknown as Opts;
+		const data = (await opts.queryFn!({ signal: new AbortController().signal })) as {
+			connections: unknown[];
+		};
+		expect(mockV3Get).toHaveBeenCalledTimes(6);
+		// linked navidrome + listenbrainz + spotify presence; the shared-mode
+		// jellyfin credential, the rejected plex read, and the unlinked
+		// lastfm account stay out (presence means linked).
+		expect(data.connections).toEqual([
+			{ service: 'navidrome', enabled: true, username: 'alice' },
+			{ service: 'listenbrainz', enabled: true, username: 'alice-lb' },
+			{ service: 'spotify', enabled: true, username: '' }
+		]);
+	});
+
+	it('reads an empty list when nothing is linked', async () => {
+		const opts = getConnectionsQuery() as unknown as Opts;
+		const data = (await opts.queryFn!({ signal: new AbortController().signal })) as {
+			connections: unknown[];
+		};
+		expect(data).toEqual({ connections: [] });
+	});
 });
 
 describe('connection mutations hit the correct endpoints', () => {
 	it('lastfm request token -> POST', async () => {
 		const m = createLastFmRequestTokenMutation() as unknown as Opts;
 		await m.mutationFn(undefined);
-		expect(mockPost.mock.calls[0][0]).toBe(CONNECTIONS_ENDPOINTS.lastfmAuthToken);
+		expect(mockV3Post.mock.calls[0][0]).toBe(CONNECTIONS_ENDPOINTS.lastfmToken());
 	});
 
 	it('lastfm exchange session -> POST with token', async () => {
 		const m = createLastFmExchangeSessionMutation() as unknown as Opts;
 		await m.mutationFn('tok-1');
-		expect(mockPost).toHaveBeenCalledWith(CONNECTIONS_ENDPOINTS.lastfmAuthSession, {
+		expect(mockV3Post).toHaveBeenCalledWith(CONNECTIONS_ENDPOINTS.lastfmSession(), {
 			token: 'tok-1'
 		});
 	});
@@ -117,23 +241,35 @@ describe('connection mutations hit the correct endpoints', () => {
 	it('connect listenbrainz -> PUT with token + username', async () => {
 		const m = createConnectListenBrainzMutation() as unknown as Opts;
 		await m.mutationFn({ user_token: 'lb', username: 'alice' });
-		expect(mockPut).toHaveBeenCalledWith(CONNECTIONS_ENDPOINTS.listenbrainz, {
+		expect(mockV3Put).toHaveBeenCalledWith(CONNECTIONS_ENDPOINTS.listenbrainz(), {
 			user_token: 'lb',
 			username: 'alice'
 		});
 	});
 
-	it('disconnect -> DELETE /me/connections/{service}', async () => {
+	it('disconnect lastfm -> DELETE the lastfm link', async () => {
 		const m = createDisconnectMutation() as unknown as Opts;
 		await m.mutationFn('lastfm');
-		expect(mockDelete.mock.calls[0][0]).toBe(CONNECTIONS_ENDPOINTS.connection('lastfm'));
+		expect(mockV3Delete.mock.calls[0][0]).toBe(CONNECTIONS_ENDPOINTS.lastfm());
+	});
+
+	it('disconnect navidrome -> DELETE the remotes connection', async () => {
+		const m = createDisconnectMutation() as unknown as Opts;
+		await m.mutationFn('navidrome');
+		expect(mockV3Delete.mock.calls[0][0]).toBe(REMOTE_ENDPOINTS.connection('navidrome'));
+	});
+
+	it('disconnect spotify -> loud rejection (v3 ships no unlink)', async () => {
+		const m = createDisconnectMutation() as unknown as Opts;
+		await expect(m.mutationFn('spotify')).rejects.toThrow('not supported');
+		expect(mockV3Delete).not.toHaveBeenCalled();
 	});
 
 	// media-server account links (issue #138)
 	it('connect navidrome -> PUT with username + password', async () => {
 		const m = createConnectNavidromeMutation() as unknown as Opts;
 		await m.mutationFn({ username: 'alice', password: 'pw' });
-		expect(mockPut).toHaveBeenCalledWith(CONNECTIONS_ENDPOINTS.navidrome, {
+		expect(mockPut).toHaveBeenCalledWith(REMOTE_ENDPOINTS.connection('navidrome'), {
 			username: 'alice',
 			password: 'pw'
 		});
@@ -142,22 +278,26 @@ describe('connection mutations hit the correct endpoints', () => {
 	it('connect jellyfin -> PUT with username + password', async () => {
 		const m = createConnectJellyfinMutation() as unknown as Opts;
 		await m.mutationFn({ username: 'alice', password: 'pw' });
-		expect(mockPut).toHaveBeenCalledWith(CONNECTIONS_ENDPOINTS.jellyfin, {
+		expect(mockPut).toHaveBeenCalledWith(REMOTE_ENDPOINTS.connection('jellyfin'), {
 			username: 'alice',
 			password: 'pw'
 		});
 	});
 
-	it('plex link pin -> POST', async () => {
+	it('plex link pin -> POST the single flow start for link', async () => {
+		mockV3Post.mockResolvedValueOnce({ pin_id: 7, authorize_url: 'https://plex.tv/link' });
 		const m = createPlexLinkPinMutation() as unknown as Opts;
-		await m.mutationFn(undefined);
-		expect(mockPost.mock.calls[0][0]).toBe(CONNECTIONS_ENDPOINTS.plexAuthPin);
+		const pin = (await m.mutationFn(undefined)) as { pin_id: number; auth_url: string };
+		expect(mockV3Post.mock.calls[0][0]).toBe(PLEX_ENDPOINTS.start('link'));
+		// the mutation maps authorize_url back to the card's auth_url field
+		expect(pin).toEqual({ pin_id: 7, auth_url: 'https://plex.tv/link' });
 	});
 
-	it('plex link poll -> GET with pin id', async () => {
+	it('plex link poll -> POST the link poll route with the pin id', async () => {
+		mockV3Post.mockResolvedValueOnce({ completed: false });
 		const m = createPlexLinkPollMutation() as unknown as Opts;
 		await m.mutationFn(7);
-		expect(mockGet.mock.calls[0][0]).toBe(CONNECTIONS_ENDPOINTS.plexAuthPoll(7));
+		expect(mockV3Post.mock.calls.at(-1)).toEqual([PLEX_ENDPOINTS.poll('link'), { pin_id: 7 }]);
 	});
 });
 

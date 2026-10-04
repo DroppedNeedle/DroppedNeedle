@@ -120,8 +120,8 @@ vi.mock('$lib/api/client', () => ({
 		}
 	}
 }));
-vi.mock('$lib/queries/discover/DiscoverDemand.svelte', () => ({
-	getQueuePreviewMutation: () => ({ mutateAsync: previewAction })
+vi.mock('$lib/queries/discover/DiscoverV3Mutations.svelte', () => ({
+	getQueuePreviewV3Mutation: () => ({ mutateAsync: previewAction })
 }));
 
 import DiscoverQueueDeck from './DiscoverQueueDeck.svelte';

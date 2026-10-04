@@ -77,6 +77,7 @@ fn to_summary(row: &StoredPlaylist, caller: &Principal) -> PlaylistSummary {
         total_duration,
         cover_urls,
         custom_cover_url: row.cover.as_ref().map(|_| cover_url(&row.id)),
+        source_ref: row.source_ref.clone(),
         created_at: row.created_at,
         updated_at: row.updated_at,
         is_public: row.is_public,
@@ -94,6 +95,7 @@ fn to_detail(row: &StoredPlaylist, caller: &Principal) -> PlaylistDetail {
         name: summary.name,
         cover_urls: summary.cover_urls,
         custom_cover_url: summary.custom_cover_url,
+        source_ref: summary.source_ref,
         tracks: row.tracks.clone(),
         track_count: summary.track_count,
         total_duration: summary.total_duration,
@@ -216,6 +218,7 @@ pub fn create_playlist(
         is_public: false,
         tracks: Vec::new(),
         cover: None,
+        source_ref: body.source_ref.clone(),
         created_at: now,
         updated_at: now,
     };

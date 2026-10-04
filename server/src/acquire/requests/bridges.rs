@@ -23,6 +23,8 @@ pub struct WatchedAlbum {
     pub album_title: String,
     /// Epoch seconds when the watch started.
     pub created_at: u64,
+    /// Epoch seconds when the next check is due.
+    pub next_check_at: u64,
 }
 
 /// Approval-verdict sink into the reads slice's follow rows.

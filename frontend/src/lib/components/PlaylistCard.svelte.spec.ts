@@ -1,8 +1,13 @@
 import { page } from '@vitest/browser/context';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import PlaylistCard from './PlaylistCard.svelte';
 import type { PlaylistSummary } from '$lib/api/playlists';
+
+// The card deletes through the V3 mutation; stub it so renders need no QueryClientProvider.
+vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
+	deletePlaylistV3: () => ({ mutateAsync: vi.fn(), isPending: false })
+}));
 
 const basePlaylist: PlaylistSummary = {
 	id: 'pl-1',

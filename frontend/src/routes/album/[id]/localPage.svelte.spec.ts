@@ -75,6 +75,7 @@ const album: LibraryAlbumDetail = {
 	format: 'flac',
 	year: 2026,
 	is_compilation: false,
+	release_type: 'album',
 	cover_available: false,
 	date_added: 1,
 	sort_name: null,
@@ -226,6 +227,13 @@ vi.mock('$lib/queries/libraryContributions/LibraryContributionMutations.svelte',
 
 const blob = vi.hoisted(() => ({ download: vi.fn() }));
 vi.mock('$lib/utils/blobDownload', () => ({ downloadBlob: blob.download }));
+// AddToPlaylistModal always mounts (hidden) and creates its mutations at init;
+// keep them inert so no QueryClientProvider is needed.
+vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
+	createPlaylistV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	addPlaylistTracksV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	checkPlaylistTracksV3: () => ({ mutateAsync: vi.fn(), isPending: false })
+}));
 
 import LocalAlbumPage from './LocalAlbumPage.svelte';
 

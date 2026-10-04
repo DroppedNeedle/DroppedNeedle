@@ -1,54 +1,50 @@
 import { page, userEvent } from '@vitest/browser/context';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { PlaylistDetail, PlaylistDetailItem, PlaylistTrack } from '$lib/api/playlists';
+import type { PlaylistDetailV3 } from '$lib/queries/playlists/PlaylistV3Queries.svelte';
 
 vi.mock('$env/dynamic/public', () => ({
 	env: { PUBLIC_API_URL: '' }
 }));
 
-const mockDeletePlaylist = vi.fn();
-const mockAddTracksToPlaylist = vi.fn();
-const mockRemoveTrackFromPlaylist = vi.fn();
-const mockRemoveTracksFromPlaylist = vi.fn();
-const mockUpdatePlaylist = vi.fn();
-const mockUpdatePlaylistTrack = vi.fn();
-const mockReorderPlaylistTrack = vi.fn();
-const mockUploadPlaylistCover = vi.fn();
-const mockDeletePlaylistCover = vi.fn();
-const mockCheckTrackMembership = vi.fn();
-const mockResolvePlaylistSources = vi.fn();
+const mockShareMutate = vi.fn();
+const mockDeleteMutate = vi.fn();
+const mockResolveMutate = vi.fn();
+const mockRenameMutate = vi.fn();
 
 vi.mock('$lib/api/playlists', () => ({
-	queueItemToTrackData: (item: unknown) => item,
 	isRedactedPlaylist: (p: { is_redacted?: boolean } | null | undefined) => p?.is_redacted === true,
-	fetchPlaylist: vi.fn(),
-	fetchPlaylists: vi.fn(),
-	createPlaylist: vi.fn(),
-	deletePlaylist: (...args: unknown[]) => mockDeletePlaylist(...args),
-	addTracksToPlaylist: (...args: unknown[]) => mockAddTracksToPlaylist(...args),
-	removeTrackFromPlaylist: (...args: unknown[]) => mockRemoveTrackFromPlaylist(...args),
-	removeTracksFromPlaylist: (...args: unknown[]) => mockRemoveTracksFromPlaylist(...args),
-	updatePlaylist: (...args: unknown[]) => mockUpdatePlaylist(...args),
-	updatePlaylistTrack: (...args: unknown[]) => mockUpdatePlaylistTrack(...args),
-	reorderPlaylistTrack: (...args: unknown[]) => mockReorderPlaylistTrack(...args),
-	uploadPlaylistCover: (...args: unknown[]) => mockUploadPlaylistCover(...args),
-	deletePlaylistCover: (...args: unknown[]) => mockDeletePlaylistCover(...args),
-	checkTrackMembership: (...args: unknown[]) => mockCheckTrackMembership(...args),
-	resolvePlaylistSources: (...args: unknown[]) => mockResolvePlaylistSources(...args),
 	requestMissingTracks: vi.fn()
 }));
 
-// The detail page consumes the user-scoped TanStack detail query + share mutation;
-// stub both so it renders without a QueryClientProvider and tests drive data directly.
+// The detail page consumes the user-scoped TanStack detail query + V3 mutations;
+// stub them so it renders without a QueryClientProvider and tests drive data directly.
 const detailQuery = {
-	data: undefined as PlaylistDetailItem | undefined,
+	data: undefined as PlaylistDetailV3 | undefined,
 	isLoading: false,
 	isError: false,
 	error: null as Error | null,
 	refetch: vi.fn()
 };
 
+vi.mock('$lib/queries/playlists/PlaylistV3Queries.svelte', () => ({
+	getPlaylistDetailV3Query: () => detailQuery
+}));
+
+vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
+	setPlaylistVisibilityV3: () => ({ mutateAsync: mockShareMutate, isPending: false }),
+	deletePlaylistV3: () => ({ mutateAsync: mockDeleteMutate, isPending: false }),
+	resolvePlaylistSourcesV3: () => ({ mutateAsync: mockResolveMutate, isPending: false }),
+	updatePlaylistV3: () => ({ mutateAsync: mockRenameMutate, isPending: false }),
+	uploadPlaylistCoverV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	deletePlaylistCoverV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	removePlaylistTrackV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	removePlaylistTracksV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	updatePlaylistTrackV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	reorderPlaylistTrackV3: () => ({ mutateAsync: vi.fn(), isPending: false })
+}));
+
+// PlaylistDiscoveryModal (inside the header) still reads the v1 list query.
 vi.mock('$lib/queries/playlists/PlaylistQuery.svelte', () => ({
 	getPlaylistListQuery: () => ({
 		data: [],
@@ -56,22 +52,77 @@ vi.mock('$lib/queries/playlists/PlaylistQuery.svelte', () => ({
 		isError: false,
 		error: null,
 		refetch: vi.fn()
-	}),
-	getPlaylistDetailQuery: () => detailQuery
+	})
 }));
 
-vi.mock('$lib/queries/playlists/PlaylistMutations.svelte', () => ({
-	createSetPlaylistPublicMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
-}));
+vi.mock('$lib/queries/QueryClient', () => {
+	// musicSource/userSessionCleanup ride along via $lib/constants and import
+	// the client value + setter; they only run at call time, so a small
+	// in-memory client is enough.
+	const store = new Map<string, unknown>();
+	const keyOf = (key: unknown) => JSON.stringify(key);
+	const fakeClient = {
+		getQueryData: (key: unknown) => store.get(keyOf(key)),
+		setQueryData: (key: unknown, updater: unknown) => {
+			const next =
+				typeof updater === 'function'
+					? (updater as (old: unknown) => unknown)(store.get(keyOf(key)))
+					: updater;
+			store.set(keyOf(key), next);
+			return next;
+		},
+		removeQueries: (filters?: { queryKey?: unknown }) => {
+			if (filters?.queryKey === undefined) {
+				store.clear();
+				return;
+			}
+			const prefix = keyOf(filters.queryKey).slice(0, -1);
+			for (const k of [...store.keys()]) {
+				if (k.startsWith(prefix)) store.delete(k);
+			}
+		},
+		invalidateQueries: vi.fn(async () => undefined),
+		cancelQueries: vi.fn(async () => undefined),
+		clear: () => store.clear(),
+		ensureQueryData: async (opts: {
+			queryKey: unknown;
+			queryFn: (ctx: { queryKey: unknown; signal: AbortSignal }) => Promise<unknown>;
+		}) => {
+			const k = keyOf(opts.queryKey);
+			if (!store.has(k)) {
+				store.set(
+					k,
+					await opts.queryFn({
+						queryKey: opts.queryKey,
+						signal: new AbortController().signal
+					})
+				);
+			}
+			return store.get(k);
+		}
+	};
+	return {
+		queryClient: fakeClient,
+		invalidateQueriesWithPersister: vi.fn(),
+		setQueryDataWithPersister: async (key: unknown, updater: unknown): Promise<void> => {
+			fakeClient.setQueryData(key, updater);
+		}
+	};
+});
 
-vi.mock('$lib/queries/QueryClient', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/queries/QueryClient')>()),
-	invalidateQueriesWithPersister: vi.fn()
-}));
-
-vi.mock('$lib/queries/discover/DiscoverQuery.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/queries/discover/DiscoverQuery.svelte')>()),
+vi.mock('$lib/queries/discover/DiscoverQuery.svelte', () => ({
 	getPlaylistSuggestionsQuery: () => ({
+		data: undefined,
+		isLoading: false,
+		isError: false,
+		error: null,
+		refetch: vi.fn()
+	})
+}));
+
+// The discovery modal (inside the header) reads V3 suggestions.
+vi.mock('$lib/queries/discover/DiscoverV3Queries.svelte', () => ({
+	getDiscoverPlaylistSuggestionsV3Query: () => ({
 		data: undefined,
 		isLoading: false,
 		isError: false,
@@ -109,7 +160,7 @@ async function renderDetail(playlistId = 'pl-1') {
 	} as Parameters<typeof render<typeof DetailPage>>[1]);
 }
 
-function makeTrack(overrides: Partial<PlaylistTrack> = {}): PlaylistTrack {
+function makeTrack(overrides: Record<string, unknown> = {}): PlaylistDetailV3['tracks'][number] {
 	return {
 		id: 'trk-1',
 		position: 0,
@@ -126,14 +177,14 @@ function makeTrack(overrides: Partial<PlaylistTrack> = {}): PlaylistTrack {
 		track_number: 1,
 		disc_number: null,
 		duration: 240,
-		created_at: '2026-01-01T00:00:00Z',
+		created_at: 1767225600,
 		plex_rating_key: null,
 		library_file_id: null,
 		...overrides
 	};
 }
 
-function makePlaylist(overrides: Partial<PlaylistDetail> = {}): PlaylistDetail {
+function makePlaylist(overrides: Record<string, unknown> = {}): PlaylistDetailV3 {
 	return {
 		id: 'pl-1',
 		name: 'My Playlist',
@@ -142,8 +193,8 @@ function makePlaylist(overrides: Partial<PlaylistDetail> = {}): PlaylistDetail {
 		cover_urls: [],
 		custom_cover_url: null,
 		source_ref: null,
-		created_at: '2026-01-01T00:00:00Z',
-		updated_at: '2026-01-02T00:00:00Z',
+		created_at: 1767225600,
+		updated_at: 1767312000,
 		is_public: false,
 		is_owner: true,
 		owner_name: null,
@@ -169,15 +220,11 @@ describe('Playlist detail page', () => {
 		detailQuery.isError = false;
 		detailQuery.error = null;
 		detailQuery.refetch.mockReset();
-		mockDeletePlaylist.mockReset();
-		mockRemoveTrackFromPlaylist.mockReset();
-		mockUpdatePlaylist.mockReset();
-		mockUpdatePlaylistTrack.mockReset();
-		mockReorderPlaylistTrack.mockReset();
-		mockUploadPlaylistCover.mockReset();
-		mockDeletePlaylistCover.mockReset();
-		mockResolvePlaylistSources.mockReset();
-		mockResolvePlaylistSources.mockResolvedValue({});
+		mockShareMutate.mockReset();
+		mockDeleteMutate.mockReset();
+		mockRenameMutate.mockReset();
+		mockResolveMutate.mockReset();
+		mockResolveMutate.mockResolvedValue({ sources: {} });
 		mockToastShow.mockReset();
 		mockPlayQueue.mockReset();
 		mockAddToQueue.mockReset();
@@ -210,6 +257,13 @@ describe('Playlist detail page', () => {
 		await expect.element(page.getByText('Other Artist')).toBeVisible();
 	});
 
+	it('shows the import chip for a V3 detail carrying source_ref', async () => {
+		detailQuery.data = makePlaylist({ source_ref: 'plex:xyz' });
+		await renderDetail('pl-1');
+
+		await expect.element(page.getByText(/Imported from Plex/)).toBeVisible();
+	});
+
 	it('shows error state when playlist is missing', async () => {
 		detailQuery.data = undefined;
 		detailQuery.isError = true;
@@ -218,14 +272,6 @@ describe('Playlist detail page', () => {
 
 		await expect.element(page.getByText("Couldn't load this playlist")).toBeVisible();
 		await expect.element(page.getByText('Playlist not found')).toBeVisible();
-	});
-
-	it('shows a redacted placeholder for an admin viewing a private playlist', async () => {
-		detailQuery.data = { id: 'pl-1', track_count: 9, owner_name: 'Cara', is_redacted: true };
-		await renderDetail('pl-1');
-
-		await expect.element(page.getByRole('heading', { name: 'Private playlist' })).toBeVisible();
-		await expect.element(page.getByText(/owned by Cara/)).toBeVisible();
 	});
 
 	it('shows empty state when playlist has no tracks', async () => {
@@ -321,11 +367,11 @@ describe('Playlist detail page', () => {
 		await expect
 			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
 			.toBeVisible();
-		expect(mockUpdatePlaylist).not.toHaveBeenCalled();
+		expect(mockRenameMutate).not.toHaveBeenCalled();
 	});
 
 	it('inline name editing: Enter saves new name', async () => {
-		mockUpdatePlaylist.mockResolvedValue({ name: 'Renamed', updated_at: '2026-01-03T00:00:00Z' });
+		mockRenameMutate.mockResolvedValue(makePlaylist({ name: 'Renamed' }));
 		detailQuery.data = makePlaylist();
 		await renderDetail('pl-1');
 
@@ -336,20 +382,20 @@ describe('Playlist detail page', () => {
 		await nameInput.fill('Renamed');
 		await userEvent.keyboard('{Enter}');
 
-		expect(mockUpdatePlaylist).toHaveBeenCalledOnce();
-		expect(mockUpdatePlaylist.mock.calls[0][1]).toEqual({ name: 'Renamed' });
+		expect(mockRenameMutate).toHaveBeenCalledOnce();
+		expect(mockRenameMutate.mock.calls[0][0]).toEqual({ id: 'pl-1', name: 'Renamed' });
 	});
 
 	it('calls resolvePlaylistSources after playlist loads', async () => {
 		detailQuery.data = makePlaylist();
-		mockResolvePlaylistSources.mockResolvedValue({});
+		mockResolveMutate.mockResolvedValue({ sources: {} });
 		await renderDetail('pl-1');
 
 		await expect
 			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
 			.toBeVisible();
 		await vi.waitFor(() => {
-			expect(mockResolvePlaylistSources).toHaveBeenCalledWith('pl-1');
+			expect(mockResolveMutate).toHaveBeenCalledWith('pl-1');
 		});
 	});
 
@@ -410,14 +456,14 @@ describe('Playlist detail page', () => {
 
 	it('does not cache empty resolve results', async () => {
 		detailQuery.data = makePlaylist();
-		mockResolvePlaylistSources.mockResolvedValue({});
+		mockResolveMutate.mockResolvedValue({ sources: {} });
 		await renderDetail('pl-1');
 
 		await expect
 			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
 			.toBeVisible();
 		await vi.waitFor(() => {
-			expect(mockResolvePlaylistSources).toHaveBeenCalledWith('pl-1');
+			expect(mockResolveMutate).toHaveBeenCalledWith('pl-1');
 		});
 		// Let the resolve promise chain settle, then assert nothing was cached.
 		await new Promise((r) => setTimeout(r, 100));

@@ -4,7 +4,8 @@ import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 import { AUTH_ENDPOINTS } from './endpoints';
 import type { AuthProviders } from './types';
 
-/** Which login methods the server has enabled. Unauthenticated; safe on /login. */
+/** Which login methods the server has enabled. Unauthenticated; safe on /login.
+ * Untyped by necessity: the backend has no spec entry for this route yet. */
 export const getAuthProvidersQuery = () =>
 	createQuery(() => ({
 		queryKey: AuthQueryKeyFactory.providers(),

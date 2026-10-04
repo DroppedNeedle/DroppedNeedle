@@ -4,14 +4,17 @@ import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
+import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
+import { RequestQueryKeyFactory } from '$lib/queries/requests/RequestQueryKeyFactory';
+import type { IntakeResponse, TrackIntakeResponse } from '$lib/queries/requests/types';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
 import { toastStore } from '$lib/stores/toast';
 // Request-surface copy lives beside the other acquisition label mappings.
 import { batchRequestCopy, requestStatusCopy } from '$lib/utils/acquisitionLabels';
 import { albumRequestOutcome } from '$lib/utils/requestOutcome';
-import type { RequestAccepted } from '$lib/types';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
+import { DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
 
 // Response mirrors for the consolidated request paths that are not shared with
 // the application-wide type contract.
@@ -30,11 +33,6 @@ interface ReimportDownloadResponse {
 
 interface RetryDownloadResponse {
 	started?: boolean;
-}
-
-interface TrackRequestResponse {
-	status: string;
-	task_id?: string | null;
 }
 
 interface AlbumRequestInput {
@@ -69,13 +67,11 @@ function errorMessage(err: unknown, fallback: string): string {
 
 // One consolidated request surface means one invalidation pair (Acquisition plan):
 // an accepted/dispatched/duplicate album answer may have created tasks or history
-// rows. DownloadQueryKeyFactory.all already prefixes tasks/activity/held/policy;
-// ['requests'] has no factory yet (the requests page still fetches imperatively),
-// so the literal prefix carries the future convention.
+// rows. DownloadQueryKeyFactory.all already prefixes tasks/activity/held/policy.
 async function invalidateRequestSurface(): Promise<void> {
 	await Promise.all([
 		invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.all }),
-		invalidateQueriesWithPersister({ queryKey: ['requests'] })
+		invalidateQueriesWithPersister({ queryKey: RequestQueryKeyFactory.all })
 	]);
 }
 
@@ -84,11 +80,11 @@ async function invalidateRequestSurface(): Promise<void> {
 // the summary sentence comes from the response when the backend carries one.
 export function requestAlbum() {
 	return createMutation(() => ({
-		mutationFn: async (input: AlbumRequestInput): Promise<RequestAccepted> => {
+		mutationFn: async (input: AlbumRequestInput): Promise<IntakeResponse> => {
 			const initiatingUserId = authStore.user?.id;
-			let data: RequestAccepted;
+			let data: IntakeResponse;
 			try {
-				data = await api.global.post<RequestAccepted>(API.requests.new(), {
+				data = await api.global.v3.POST(REQUESTS_ENDPOINTS.requestAlbum(), {
 					musicbrainz_id: input.release_group_mbid,
 					artist: input.artist_name ?? null,
 					album: input.album_title ?? null,
@@ -128,9 +124,8 @@ export function requestAlbum() {
 				return data;
 			}
 			const outcome = albumRequestOutcome(data);
-			const summary = data.quality_snapshot_summary ?? undefined;
 			toastStore.show({
-				message: requestStatusCopy(outcome ?? 'dispatched', summary),
+				message: requestStatusCopy(outcome ?? 'dispatched'),
 				type: outcome === 'duplicate_active' || outcome === 'in_library' ? 'info' : 'success'
 			});
 			return data;
@@ -154,10 +149,6 @@ export interface BatchRequestResult {
 	error?: string;
 }
 
-// constants.ts carries registry rows only; the batch endpoint predates this
-// slice's read-only rule for that file, so its URL stays local to this module.
-const REQUEST_BATCH_URL = '/api/v1/requests/batch';
-
 // Discography/discovery bulk requests. Counts are rendered verbatim by
 // batchRequestCopy - skipped and over-limit albums are never claimed as queued.
 export function requestBatch() {
@@ -169,13 +160,7 @@ export function requestBatch() {
 		}): Promise<BatchRequestResult> => {
 			const initiatingUserId = authStore.user?.id;
 			try {
-				const response = await api.global.post<{
-					success: boolean;
-					message: string;
-					requested: number;
-					skipped: number;
-					overflow: number;
-				}>(REQUEST_BATCH_URL, {
+				const response = await api.global.v3.POST(REQUESTS_ENDPOINTS.requestBatch(), {
 					items: input.items,
 					monitor_artist: input.monitorArtist === true,
 					auto_download_artist: input.autoDownloadArtist === true
@@ -216,16 +201,17 @@ export function requestBatch() {
 export function requestTrack() {
 	return createMutation(() => ({
 		mutationFn: (input: TrackRequestInput) =>
-			api.global.post<TrackRequestResponse>(API.tracks.request(input.recording_mbid), {
+			api.global.v3.POST(REQUESTS_ENDPOINTS.requestTrack(), {
+				recording_mbid: input.recording_mbid,
 				artist_name: input.artist_name,
 				track_title: input.track_title,
 				album_title: input.album_title ?? null,
 				duration_seconds: input.duration_seconds ?? null,
 				release_group_mbid: input.release_group_mbid ?? null,
 				artist_mbid: input.artist_mbid ?? null,
-				release_id: input.release_id ?? null
+				release_mbid: input.release_id ?? null
 			}),
-		onSuccess: (data: TrackRequestResponse) => {
+		onSuccess: (data: TrackIntakeResponse) => {
 			toastStore.show({
 				message:
 					data.status === 'already_in_library'
@@ -610,6 +596,35 @@ export function reimportDownload() {
 			if (data.status === 'completed' || data.status === 'partial') {
 				invalidateAlbum(input.release_group_mbid);
 			}
+		},
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'Failed to reimport download'), type: 'error' })
+	}));
+}
+
+// v3 admin reimport: the task goes back in line with its picked candidate
+// kept, so the worker checks the downloads mount again without
+// re-searching. The request history card calls this; the card's
+// onreimported callback refreshes its own list.
+export function reimportDownloadV3() {
+	return createMutation(() => ({
+		mutationFn: (input: ReimportInput) =>
+			api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.reimport(input.id)),
+		onSuccess: (data, input: ReimportInput) => {
+			if (data.success) {
+				toastStore.show({
+					message: 'Back in line - checking the downloads mount again',
+					type: 'success'
+				});
+			} else {
+				toastStore.show({
+					message: data.error_message ?? "Couldn't requeue that download",
+					type: 'error'
+				});
+			}
+			void invalidateTasks();
+			void invalidateQueriesWithPersister({ queryKey: RequestQueryKeyFactory.all });
+			invalidateAlbum(input.release_group_mbid);
 		},
 		onError: (err: unknown) =>
 			toastStore.show({ message: errorMessage(err, 'Failed to reimport download'), type: 'error' })

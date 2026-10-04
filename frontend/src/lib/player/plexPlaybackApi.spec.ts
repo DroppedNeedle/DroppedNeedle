@@ -19,23 +19,18 @@ vi.mock('$lib/api/client', () => {
 		api: {
 			global: {
 				post: (...args: unknown[]) => mockPost(...args),
-				get: (...args: unknown[]) => mockGet(...args)
+				get: (...args: unknown[]) => mockGet(...args),
+				v3: {
+					POST: (...args: unknown[]) => mockPost(...args),
+					GET: (...args: unknown[]) => mockGet(...args)
+				}
 			}
 		},
 		ApiError: _ApiError
 	};
 });
 
-vi.mock('$lib/constants', () => ({
-	API: {
-		stream: {
-			plexScrobble: (key: string) => `/api/v1/stream/plex/${key}/scrobble`,
-			plexNowPlaying: (key: string) => `/api/v1/stream/plex/${key}/now-playing`,
-			plexStopped: (key: string) => `/api/v1/stream/plex/${key}/stopped`
-		},
-		settingsPlex: () => '/api/v1/settings/plex'
-	}
-}));
+
 
 import {
 	reportPlexScrobble,
@@ -59,8 +54,8 @@ describe('plexPlaybackApi', () => {
 
 			await reportPlexScrobble('12345');
 
-			expect(mockPost).toHaveBeenCalledWith('/api/v1/stream/plex/12345/scrobble');
-			expect(mockGet).toHaveBeenCalledWith('/api/v1/settings/plex');
+			expect(mockPost).toHaveBeenCalledWith('/api/v3/playback/stop', { source: 'plex', track_id: '12345' });
+			expect(mockGet).toHaveBeenCalledWith('/api/v3/settings/plex');
 		});
 
 		it('does not call scrobble when disabled', async () => {
@@ -101,7 +96,7 @@ describe('plexPlaybackApi', () => {
 
 			await reportPlexNowPlaying('67890');
 
-			expect(mockPost).toHaveBeenCalledWith('/api/v1/stream/plex/67890/now-playing');
+			expect(mockPost).toHaveBeenCalledWith('/api/v3/playback/start', { source: 'plex', track_id: '67890' });
 		});
 
 		it('warns on error without throwing', async () => {
@@ -170,7 +165,7 @@ describe('plexPlaybackApi', () => {
 
 			await reportPlexStopped('99999');
 
-			expect(mockPost).toHaveBeenCalledWith('/api/v1/stream/plex/99999/stopped');
+			expect(mockPost).toHaveBeenCalledWith('/api/v3/playback/stop', { source: 'plex', track_id: '99999' });
 		});
 
 		it('warns on error without throwing', async () => {

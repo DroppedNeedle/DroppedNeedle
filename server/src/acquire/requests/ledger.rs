@@ -651,16 +651,28 @@ pub struct WantedWatch {
     pub artist_name: String,
     /// Album title.
     pub album_title: String,
-    /// `watching` or `paused`.
+    /// `missing` (whole album) or `partial` (filling gaps).
+    pub kind: String,
+    /// `watching`, `paused`, or loop-set `dormant`.
     pub state: String,
     /// Passed checks so far.
     pub check_count: u32,
+    /// Epoch seconds when the next check is due, when scheduled.
+    pub next_check_at: Option<u64>,
     /// Unseen candidate count.
     pub new_candidate_count: u32,
     /// Epoch seconds when created.
     pub created_at: u64,
+    /// Artist MBID.
+    pub artist_mbid: Option<String>,
+    /// Release year.
+    pub year: Option<i32>,
+    /// Custom artwork URL override.
+    pub cover_url: Option<String>,
     /// Owner id.
     pub user_id: String,
+    /// Owner display name (served to admins only).
+    pub user_name: Option<String>,
 }
 
 /// One still-scheduled auto-retry.
@@ -676,8 +688,18 @@ pub struct WantedRetrying {
     pub retry_count: u32,
     /// Attempts allowed.
     pub max_attempts: u32,
+    /// Epoch seconds when the next try is due, when scheduled.
+    pub next_retry_at: Option<u64>,
+    /// Artist MBID.
+    pub artist_mbid: Option<String>,
+    /// Release year.
+    pub year: Option<i32>,
+    /// Custom artwork URL override.
+    pub cover_url: Option<String>,
     /// Owner id.
     pub user_id: String,
+    /// Owner display name (served to admins only).
+    pub user_name: Option<String>,
 }
 
 /// Wanted watches plus the retrying set. The watcher loop lives in another

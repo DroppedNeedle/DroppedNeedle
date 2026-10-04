@@ -71,8 +71,7 @@ vi.mock('./LocalAlbumPage.svelte', () => {
 	return { default: Component };
 });
 
-vi.mock('$lib/queries/library/LibraryQueries.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/queries/library/LibraryQueries.svelte')>()),
+vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getLibraryAlbumDetailQuery: (...args: unknown[]) => {
 		h.libraryDetailObserver(...args);
 		return {
@@ -94,9 +93,9 @@ vi.mock('$lib/stores/integration', () => ({
 	integrationStore: { subscribe: () => () => {} }
 }));
 
-vi.mock('$lib/stores/authStore.svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/stores/authStore.svelte')>()),
-	authStore: { user: null, isTrusted: false }
+vi.mock('$lib/stores/authStore.svelte', () => ({
+	authStore: { user: null, isTrusted: false },
+	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 
 import ProviderAlbumPage from './ProviderAlbumPage.svelte';

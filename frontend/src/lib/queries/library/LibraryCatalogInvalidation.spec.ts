@@ -18,7 +18,7 @@ beforeEach(() => {
 });
 
 describe('invalidateLibraryCatalog', () => {
-	it('sweeps catalog, artist, discovery, reconciliation and lyrics caches', async () => {
+	it('sweeps catalog, artist, discovery, reconciliation, lyrics, and local caches', async () => {
 		await invalidateLibraryCatalog();
 		const keys = invalidate.mock.calls.map(([filters]) => filters.queryKey);
 
@@ -29,5 +29,6 @@ describe('invalidateLibraryCatalog', () => {
 		expect(keys).toContainEqual(['discover']);
 		expect(keys).toContainEqual(['library', 'artist-reconciliation']);
 		expect(keys).toContainEqual(['lyrics']);
+		expect(keys).toContainEqual(['local']);
 	});
 });
