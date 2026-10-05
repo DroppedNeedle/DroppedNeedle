@@ -3,7 +3,9 @@
 //! Order of checks per request: scope (non-v3 passes through; the layer mounts
 //! on the v3 router so this is defence in depth) -> public allowlist -> credential
 //! extraction (Bearer-then-cookie) -> session lookup (unknown/revoked/expired
-//! -> 401 + `WWW-Authenticate: Bearer`) -> origin check on cookie mutations
+//! -> 401 + `WWW-Authenticate: Bearer`; each such failure also takes a token
+//! from the caller's auth-failure bucket, and an empty bucket answers 429)
+//! -> origin check on cookie mutations
 //! against the effective host (forwarded host only from trusted proxies)
 //! (-> 403). Success stashes [`CurrentSession`] in the request extensions for
 //! handlers and role extractors; role gating itself is handler-level, as is
@@ -33,6 +35,7 @@
 //! must serve with connect info for non-loopback peers to ever verify.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 
 use axum::{
     extract::{ConnectInfo, Request, State},
@@ -45,6 +48,7 @@ use super::{
     allowlist::is_public,
     extract::{Transport, forbidden_response, unauthorized_response},
     origin::{OriginDecision, check_origin},
+    rate_limit::{AUTH_FAILURE_CLASS, RateLimiter, rate_limited_response},
     store::{SessionKind, SessionStore, now_unix},
     tokens::hash_token,
 };
@@ -229,6 +233,9 @@ pub struct SessionAuth<S> {
     /// Proxies trusted to set `X-Forwarded-*`; loopback by default (v2
     /// parity). Off-host proxies are set from deployment config at wiring.
     pub trusted_proxies: TrustedProxies,
+    /// Shared limiter; failed authentications are charged per client
+    /// address, since the request limiter runs after this gate.
+    pub limits: Arc<RateLimiter>,
 }
 
 impl<S> SessionAuth<S> {
@@ -239,7 +246,14 @@ impl<S> SessionAuth<S> {
             store,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
+            limits: Arc::new(RateLimiter::new()),
         }
+    }
+
+    /// Share the app's request limiter (auth-failure budget).
+    pub fn with_limits(mut self, limits: Arc<RateLimiter>) -> Self {
+        self.limits = limits;
+        self
     }
 
     /// Trust the given proxies for forwarded host/proto. Fed from deployment
@@ -269,7 +283,7 @@ where
         return next.run(request).await;
     }
     let Some((raw_token, transport)) = super::extract::extract(request.headers()) else {
-        return unauthorized_response("Not authenticated");
+        return auth_failure(&auth.limits, &request, "Not authenticated");
     };
     let record = match auth
         .store
@@ -288,7 +302,7 @@ where
         }
     };
     let Some(record) = record else {
-        return unauthorized_response("Invalid or expired token");
+        return auth_failure(&auth.limits, &request, "Invalid or expired token");
     };
     if check_origin(
         request.headers(),
@@ -307,6 +321,18 @@ where
         transport,
     });
     next.run(request).await
+}
+
+/// 401 for a failed authentication, charged to the caller's address. Once
+/// that budget is spent the answer is 429, so junk tokens on protected
+/// paths are throttled even though the request limiter never sees them.
+fn auth_failure(limits: &RateLimiter, request: &Request, message: &str) -> Response {
+    let outcome = limits.check(AUTH_FAILURE_CLASS, &limits.caller_key(request));
+    if outcome.allowed {
+        unauthorized_response(message)
+    } else {
+        rate_limited_response(AUTH_FAILURE_CLASS, outcome.retry_after_secs)
+    }
 }
 
 /// Effective request host for the origin check. From a trusted proxy the

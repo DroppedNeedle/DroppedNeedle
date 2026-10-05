@@ -194,6 +194,9 @@ impl PathMatch {
 pub const DEFAULT_CLASS: RateClass = class("default", 30.0, 60);
 /// Local login, per client and per username.
 pub const LOGIN_CLASS: RateClass = class("login", 2.0, 5);
+/// Failed authentications on protected paths, per client address. Charged
+/// by the session gate, which answers before the request limiter runs.
+pub const AUTH_FAILURE_CLASS: RateClass = class("auth-failure", 1.0, 20);
 
 const fn class(name: &'static str, rate_per_sec: f64, capacity: u32) -> RateClass {
     RateClass {

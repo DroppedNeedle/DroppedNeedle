@@ -2222,6 +2222,22 @@ async fn rate_limits_key_by_client_and_username() {
 }
 
 #[tokio::test]
+async fn failed_authentications_are_throttled_per_client() {
+    let e2e = E2e::open("auth-failures").await;
+    let app = e2e.router();
+
+    // The gate answers before the request limiter, so it charges its own
+    // per-address bucket (burst 20) for every failed authentication.
+    let mut last = StatusCode::OK;
+    for _ in 0..25 {
+        last = call_from(app.clone(), "198.51.100.7:1", "/api/v3/me", None).await;
+    }
+    assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
+    let other = call_from(app, "198.51.100.8:1", "/api/v3/me", None).await;
+    assert_eq!(other, StatusCode::UNAUTHORIZED, "another client is untouched");
+}
+
+#[tokio::test]
 async fn login_store_failure_is_a_500_not_bad_credentials() {
     let e2e = E2e::open("login-store-down").await;
     setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;

@@ -385,7 +385,8 @@ impl AuthSetup {
         );
         Ok(Self {
             users,
-            session_auth: SessionAuth::new(auth.sessions.clone(), base_path),
+            session_auth: SessionAuth::new(auth.sessions.clone(), base_path)
+                .with_limits(limits.clone()),
             limits,
             native,
             oidc,
@@ -401,8 +402,11 @@ impl AuthSetup {
     /// (`TRUSTED_PROXY_IPS`).
     #[must_use]
     pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
-        self.session_auth = self.session_auth.with_trusted_proxies(trusted.clone());
         let limits = Arc::new(RateLimiter::new().with_trusted_proxies(trusted.clone()));
+        self.session_auth = self
+            .session_auth
+            .with_trusted_proxies(trusted.clone())
+            .with_limits(limits.clone());
         self.native = self
             .native
             .with_trusted_proxies(trusted.clone())
@@ -520,10 +524,11 @@ impl AuthSetup {
             ids,
             "",
         );
+        let limits = Arc::new(RateLimiter::new());
         Ok(Self {
             users,
-            session_auth: SessionAuth::new(sessions, ""),
-            limits: Arc::new(RateLimiter::new()),
+            session_auth: SessionAuth::new(sessions, "").with_limits(limits.clone()),
+            limits,
             native,
             oidc,
             jellyfin,
