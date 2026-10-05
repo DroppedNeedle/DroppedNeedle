@@ -955,7 +955,7 @@
     "/api/v3/artists/{artist_mbid}/auto-download": {
       "put": {
         "tags": [
-          "crate::reads::collections::follows"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Turn auto-download on or off for one artist.",
         "operationId": "set_auto_download_handler",
@@ -1009,7 +1009,7 @@
     "/api/v3/artists/{artist_mbid}/follow": {
       "put": {
         "tags": [
-          "crate::reads::collections::follows"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Follow or unfollow one artist.",
         "operationId": "set_follow_handler",
@@ -1057,7 +1057,7 @@
     "/api/v3/artists/{artist_mbid}/follow-status": {
       "get": {
         "tags": [
-          "crate::reads::collections::follows"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Read one artist's follow status.",
         "operationId": "get_follow_status_handler",
@@ -2668,7 +2668,7 @@
     "/api/v3/favorites": {
       "get": {
         "tags": [
-          "crate::reads::collections::favorites"
+          "crate::reads::collections::handlers"
         ],
         "summary": "List the caller's favorites.",
         "operationId": "list_favorites_handler",
@@ -2706,7 +2706,7 @@
     "/api/v3/favorites/{kind}/{item_id}": {
       "put": {
         "tags": [
-          "crate::reads::collections::favorites"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Favorite or unfavorite one item.",
         "operationId": "set_favorite_handler",
@@ -2763,7 +2763,7 @@
     "/api/v3/following/artists": {
       "get": {
         "tags": [
-          "crate::reads::collections::follows"
+          "crate::reads::collections::handlers"
         ],
         "summary": "List the caller's followed artists.",
         "operationId": "list_followed_artists_handler",
@@ -2787,7 +2787,7 @@
     "/api/v3/following/new-releases": {
       "get": {
         "tags": [
-          "crate::reads::collections::follows"
+          "crate::reads::collections::handlers"
         ],
         "summary": "List new-release sightings for followed artists.",
         "operationId": "list_new_releases_handler",
@@ -2811,7 +2811,7 @@
     "/api/v3/following/new-releases/recent": {
       "get": {
         "tags": [
-          "crate::reads::collections::follows"
+          "crate::reads::collections::handlers"
         ],
         "summary": "List recent-window sightings for followed artists.",
         "operationId": "list_recent_releases_handler",
@@ -2835,7 +2835,7 @@
     "/api/v3/following/new-releases/seen": {
       "post": {
         "tags": [
-          "crate::reads::collections::follows"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Mark the caller's sightings seen.",
         "operationId": "mark_seen_handler",
@@ -2859,7 +2859,7 @@
     "/api/v3/following/new-releases/unseen-count": {
       "get": {
         "tags": [
-          "crate::reads::collections::follows"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Count unseen sightings for the caller.",
         "operationId": "unseen_count_handler",
@@ -3328,7 +3328,7 @@
     "/api/v3/library/albums/{album_id}/edition-pin": {
       "get": {
         "tags": [
-          "crate::reads::collections::pins"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Read the pin display lane for one album.",
         "operationId": "get_pin_handler",
@@ -3364,7 +3364,7 @@
       },
       "put": {
         "tags": [
-          "crate::reads::collections::pins"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Pin one edition for an album.",
         "operationId": "set_pin_handler",
@@ -3416,7 +3416,7 @@
       },
       "delete": {
         "tags": [
-          "crate::reads::collections::pins"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Clear the pin for an album.",
         "operationId": "clear_pin_handler",
@@ -5929,7 +5929,7 @@
     "/api/v3/playlists": {
       "get": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "List visible playlists.",
         "operationId": "list_playlists_handler",
@@ -5951,7 +5951,7 @@
       },
       "post": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Create a playlist.",
         "operationId": "create_playlist_handler",
@@ -5988,7 +5988,7 @@
     "/api/v3/playlists/check-tracks": {
       "post": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Check which visible playlists hold each queried track.",
         "operationId": "check_tracks_handler",
@@ -6025,7 +6025,7 @@
     "/api/v3/playlists/{playlist_id}": {
       "get": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Read one playlist.",
         "operationId": "get_playlist_handler",
@@ -6061,7 +6061,7 @@
       },
       "put": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Rename a playlist.",
         "operationId": "update_playlist_handler",
@@ -6113,7 +6113,7 @@
       },
       "delete": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Delete a playlist.",
         "operationId": "delete_playlist_handler",
@@ -6154,7 +6154,7 @@
     "/api/v3/playlists/{playlist_id}/cover": {
       "get": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Serve playlist cover bytes.",
         "operationId": "get_cover_handler",
@@ -6183,7 +6183,7 @@
       },
       "post": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Upload a playlist cover.",
         "operationId": "upload_cover_handler",
@@ -6235,7 +6235,7 @@
       },
       "delete": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Delete a playlist cover.",
         "operationId": "remove_cover_handler",
@@ -6276,7 +6276,7 @@
     "/api/v3/playlists/{playlist_id}/resolve-sources": {
       "post": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Resolve each track's known sources.",
         "operationId": "resolve_sources_handler",
@@ -6314,7 +6314,7 @@
     "/api/v3/playlists/{playlist_id}/tracks": {
       "post": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Add tracks to a playlist.",
         "operationId": "add_tracks_handler",
@@ -6368,7 +6368,7 @@
     "/api/v3/playlists/{playlist_id}/tracks/remove": {
       "post": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Bulk-remove tracks from a playlist.",
         "operationId": "remove_tracks_handler",
@@ -6422,7 +6422,7 @@
     "/api/v3/playlists/{playlist_id}/tracks/reorder": {
       "patch": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Reorder one track inside a playlist.",
         "operationId": "reorder_track_handler",
@@ -6476,7 +6476,7 @@
     "/api/v3/playlists/{playlist_id}/tracks/{track_id}": {
       "delete": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Remove one track from a playlist.",
         "operationId": "remove_track_handler",
@@ -6524,7 +6524,7 @@
       },
       "patch": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Update one track's source fields.",
         "operationId": "update_track_handler",
@@ -6587,7 +6587,7 @@
     "/api/v3/playlists/{playlist_id}/visibility": {
       "patch": {
         "tags": [
-          "crate::reads::collections::playlists"
+          "crate::reads::collections::handlers"
         ],
         "summary": "Flip playlist visibility.",
         "operationId": "set_visibility_handler",
@@ -9077,7 +9077,7 @@
     "/api/v3/requests/auto-download-approval-batches": {
       "get": {
         "tags": [
-          "crate::reads::collections::approvals"
+          "crate::reads::collections::handlers"
         ],
         "summary": "List pending requests grouped per user.",
         "operationId": "list_approval_batches_handler",
@@ -9168,7 +9168,7 @@
     "/api/v3/requests/auto-download-approvals": {
       "get": {
         "tags": [
-          "crate::reads::collections::approvals"
+          "crate::reads::collections::handlers"
         ],
         "summary": "List pending auto-download requests.",
         "operationId": "list_approvals_handler",
