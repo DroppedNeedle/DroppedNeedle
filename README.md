@@ -83,11 +83,6 @@ services:
       # boundary so imports move fast. Do not nest extra binds under /data.
       - /path/to/media:/data:rw
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8688/health"]
-      interval: 30s
-      timeout: 10s
-      start_period: 10m
 ```
 
 > [!TIP]
@@ -237,7 +232,7 @@ Everything user-editable lives in the web UI and lands in `config/config.json`. 
 | `PORT` | `8688` | Port the app listens on |
 | `BIND_HOST` | `auto` | `auto` listens on IPv4 and IPv6, dropping to IPv4 alone where IPv6 is off. Set `0.0.0.0`, `::`, or one interface IP to pin it |
 | `TRUSTED_PROXY_IPS` | `127.0.0.1,::1` | IPs/CIDRs whose `X-Forwarded-*` headers are trusted; point it at your reverse proxy, listing every address family it arrives on. `*` trusts every peer: only behind a proxy that strips spoofed headers |
-| `BASE_PATH` | empty | Serve under a sub-path behind a reverse proxy, e.g. `/music`. Letters, digits and `.` `_` `~` `-` only, no trailing slash, and it cannot start with `/api` |
+| `BASE_PATH` | empty | Serve under a sub-path behind a reverse proxy, e.g. `/music`. Letters, digits and `.` `_` `~` `-` only, no trailing slash, and its first segment cannot be `api` |
 | `TZ` | `UTC` | Container timezone |
 | `SLSKD_DOWNLOADS_PATH` | `/data/downloads/slskd` | Exact in-container path to slskd completions (the compose example uses `/data/slskd/complete`) |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR` |
@@ -281,7 +276,7 @@ Unraid commonly uses `nobody:users` (PUID 99, PGID 100). Point PUID and PGID at 
 | Settings and encryption key | `/app/config` | Persist it |
 | Database, backups, cover art and metadata cache | `/app/cache` | Persist it |
 | Plugins | `/app/plugins` | Persist it or installs vanish on recreate |
-| Drop-import staging | `/app/imports` | Optional; without it, large uploads and unmatched files live on the container layer |
+| Download and drop-import staging | `/app/imports` | Optional; without it, staged downloads, large uploads and unmatched files live on the container layer |
 | Media | `/data` | Shared parent for library (`/data/music`) and client completions |
 
 Where things live in the UI:

@@ -30,19 +30,12 @@ services:
       # mount boundary, enabling fast atomic moves. Configure the library root as /data/music.
       # Avoid nested binds beneath /data: they create new mount boundaries even on one disk.
       - /path/to/media:/data:rw
-      # OPTIONAL drop-import staging. Put its host path beneath /path/to/media and map it to
-      # /app/imports if you need uploads awaiting a manual match to survive recreation.
+      # OPTIONAL download and drop-import staging. Put its host path beneath /path/to/media and
+      # map it to /app/imports if staged downloads and uploads awaiting a match must survive recreation.
       - /path/to/media/imports:/app/imports
       # OPTIONAL (Usenet): point the SABnzbd Downloads mount setting at
       # /data/sabnzbd/complete so it also uses this common media mount.
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8688/health"]
-      interval: 30s
-      timeout: 10s
-      # The first start after an upgrade may migrate a large library before the API opens.
-      start_period: 10m
-      retries: 3
 
 # Optional: run slskd alongside DroppedNeedle (you manage slskd and its shares).
 #  slskd:
