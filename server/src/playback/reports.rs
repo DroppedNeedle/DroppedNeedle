@@ -121,10 +121,7 @@ async fn deliver(queued: &QueuedReport, http: &reqwest::Client, resolver: &Conne
     let Some(source) = SourceName::parse(&queued.source) else {
         return;
     };
-    let resolved = match resolver
-        .resolve(&queued.report.user_id, source)
-        .await
-    {
+    let resolved = match resolver.resolve(&queued.report.user_id, source).await {
         Ok(resolved) => resolved,
         Err(ResolveError::NotConfigured) => {
             tracing::debug!(
