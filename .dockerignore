@@ -1,49 +1,42 @@
-# Source control & CI
+# Source control and CI
 .git
 .github
 .gitignore
 .dockerignore
 
-# Documentation & metadata
+# Docs and metadata
 *.md
 LICENSE
-pyproject.toml
-todos.md
-AGENTS.md
-Docs/
 Images/
+templates/
+ca_profile.xml
+examples/
 
-# Caches & runtime data
+# Local runtime data and private files
 /cache/
-config/
-__pycache__/
-*.pyc
-*.pyo
-.mypy_cache/
-.ruff_cache/
-backend/.ruff*
-
-# Dev-only files
-backend/requirements-dev.txt
+/config/
+/dev-data/
 **/.env
 **/.env.*
-backend/app-dev/
+AGENTS.md
+CLAUDE.md
+Docs/
+.dev-notes/
 
-# Frontend build artifacts & dev files
+# Build output and dependencies
+server/target/
 frontend/node_modules/
 frontend/build/
 frontend/.svelte-kit/
 frontend/.vite/
 
-# Docker (prevent recursive context)
+# Docker files themselves
 docker-compose*.yml
 Dockerfile
-manage.sh
 
-# IDE & OS
+# Editor and OS
 .vscode/
 .idea/
 *.swp
 .DS_Store
 Thumbs.db
-server/target/

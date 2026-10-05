@@ -1,8 +1,0 @@
--r requirements.txt
-mypy==2.3.1
-pytest==9.1.1
-pytest-asyncio==1.4.0
-ruff==0.16.8
-testcontainers==4.15.0
-types-PyYAML==6.0.12.20260906
-watchfiles==1.2.0

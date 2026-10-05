@@ -1,12 +1,8 @@
-.github/instructions/
 .Trash-1000
 
 # Runtime files
 /cache/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+/dev-data/
 *.log
 *.pid
 *.sock
@@ -14,30 +10,21 @@ __pycache__/
 .env
 .env.*
 
-# Virtual environments and tool caches
-.venv/
-venv/
-env/
-.pytest_cache
-.mypy_cache/
-.ruff_cache/
-backend/.venv/
-backend/.ruff*
-backend/.virtualenv.pyz
+# Rust build output
+server/target/
 
 # Frontend build output
-frontend/.vitest-attachments/
 frontend/node_modules/
 frontend/.svelte-kit/
 frontend/build/
 frontend/dist/
 frontend/.vite/
 frontend/.vitest-attachments/
+__screenshots__/
 
 # Local config
 docker-compose.yml
-config/config.json
-!config/config.example.json
+/config/
 
 # Editor and OS files
 .DS_Store
@@ -53,9 +40,8 @@ ehthumbs.db
 /todos.md
 AGENTS.md
 AGENTS.md.bak
+CLAUDE.md
 Docs/
-
 .agents/
-
-# Local dev app directory
-backend/app-dev/
+.dev-notes/
+.github/instructions/

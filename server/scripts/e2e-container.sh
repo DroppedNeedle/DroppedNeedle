@@ -1,8 +1,7 @@
 #!/bin/sh
-# Stage-1 E2E: fresh container boot -> healthy -> clean SIGTERM shutdown.
-# Prints budget numbers (cold/warm boot, idle RSS, shutdown time) for the
-# stage report. Safe to run beside prod: ephemeral host port, own image tag,
-# own container name, no volumes.
+# Container smoke test: fresh boot, healthy, clean SIGTERM shutdown.
+# Prints cold and warm boot time, idle RSS and shutdown time. Uses an
+# ephemeral host port, its own image tag and container name, and no volumes.
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -41,7 +40,7 @@ boot_and_wait() {
 }
 
 echo "--- build ---"
-docker build -f "$ROOT/Dockerfile.v3" -t "$IMAGE" "$ROOT" || fail "docker build failed"
+docker build -f "$ROOT/Dockerfile" -t "$IMAGE" "$ROOT" || fail "docker build failed"
 
 cleanup
 

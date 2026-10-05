@@ -1,95 +1,54 @@
-FROM node:25-alpine AS frontend-build
+# DroppedNeedle v3 image (stage-3 auth service). Single-process by design: the
+# binary is one tokio runtime and compose must never scale it past 1, because
+# durable-operation ownership lives in-process.
+FROM rust:1.89-bookworm AS builder
 
-WORKDIR /app/frontend
+# Stage-8 audio decode: opusic-sys (via symphonia-adapter-libopus) builds a
+# bundled C library through the `cmake` crate, which shells out to the cmake
+# binary. The rust base image ships gcc but not cmake.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cmake \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
+WORKDIR /app
+COPY rust-toolchain.toml ./
+COPY server/ ./server/
 
-RUN npm install -g pnpm@10.33.0
+RUN cargo build --release --manifest-path server/Cargo.toml
 
-COPY frontend/package.json ./
-COPY frontend/pnpm-lock.yaml ./
-COPY frontend/pnpm-workspace.yaml ./
+FROM debian:bookworm-slim
 
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+ARG COMMIT_TAG=dev
+ARG BUILD_DATE=unknown
 
-COPY frontend/ .
-
-# Build SvelteKit with the literal base-path placeholder instead of an empty
-# prefix so container startup can stamp in any BASE_PATH without rebuilding
-# (see frontend/svelte.config.js and backend/maintenance/configure_frontend_base.py).
-ENV DROPPEDNEEDLE_BASE_PATH_PLACEHOLDER=1
-RUN pnpm run build
-
-FROM python:3.13.5-slim AS python-deps
-
-COPY backend/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --prefix=/install -r /tmp/requirements.txt
-
-FROM python:3.13.5-slim
-
-ARG COMMIT_TAG
-ARG BUILD_DATE
-ARG DROPPEDNEEDLE_SOURCE_REVISION=unknown
-
-LABEL org.opencontainers.image.title="DroppedNeedle" \
-      org.opencontainers.image.description="Music request and discovery app with a built-in native library + download engine" \
+LABEL org.opencontainers.image.title="DroppedNeedle v3" \
+      org.opencontainers.image.description="DroppedNeedle v3 backend (Rust auth service)" \
       org.opencontainers.image.url="https://github.com/DroppedNeedle/DroppedNeedle" \
       org.opencontainers.image.source="https://github.com/DroppedNeedle/DroppedNeedle" \
       org.opencontainers.image.version="${COMMIT_TAG}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.licenses="AGPL-3.0" \
-      org.droppedneedle.source-revision="${DROPPEDNEEDLE_SOURCE_REVISION}"
+      org.opencontainers.image.licenses="AGPL-3.0-or-later"
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    MALLOC_ARENA_MAX=2 \
-    PORT=8688 \
-    DROPPEDNEEDLE_STATIC_DIR=/app/cache/frontend-static \
-    COMMIT_TAG=${COMMIT_TAG} \
-    BUILD_DATE=${BUILD_DATE} \
-    DROPPEDNEEDLE_SOURCE_REVISION=${DROPPEDNEEDLE_SOURCE_REVISION}
+ENV PORT=8688 \
+    RUST_LOG=info
 
 WORKDIR /app
 
-# libchromaprint-tools provides fpcalc (Tier-3 fingerprinting). Its version is
-# pinned reproducibly via the pinned python:3.13.5-slim (bookworm) base; apt
-# version-pinning is avoided because Debian drops old versions from the mirror.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl tini gosu libchromaprint-tools ffmpeg loudgain \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=python-deps /install /usr/local
-
-# Bake the user at the entrypoint's default PUID/PGID (1000) so the common
-# deployment needs no runtime usermod/groupmod remap (which can stall startup).
-RUN groupadd -r -g 1000 droppedneedle \
+    && apt-get install -y --no-install-recommends curl ca-certificates tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r -g 1000 droppedneedle \
     && useradd -r -u 1000 -g droppedneedle -d /app -s /sbin/nologin droppedneedle
 
-COPY backend/ .
-# Pristine, never-served input for entrypoint.sh, which writes the resolved
-# frontend to DROPPEDNEEDLE_STATIC_DIR before uvicorn starts.
-COPY --from=frontend-build /app/frontend/build ./static-template
-COPY entrypoint.sh /entrypoint.sh
-
-RUN find /app -type f -print0 \
-      | sort -z \
-      | xargs -0 sha256sum \
-      | sha256sum \
-      | cut -d' ' -f1 > /app/.droppedneedle-source-revision \
-    && test -s /app/.droppedneedle-source-revision
-
+COPY --from=builder /app/server/target/release/droppedneedle /app/droppedneedle
 RUN mkdir -p /app/cache /app/config \
-    && chown -R droppedneedle:droppedneedle /app \
-    && chmod +x /entrypoint.sh
+    && chown -R droppedneedle:droppedneedle /app/droppedneedle /app/cache /app/config
 
-EXPOSE ${PORT}
+USER droppedneedle
 
-# Shell form is required: ${PORT}/${BASE_PATH} must expand at probe time from
-# container env. Empty BASE_PATH reproduces today's URL exactly; a nonempty
-# value reaches the same prefixed surface reverse proxies forward to.
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10m --retries=3 \
-    CMD curl -f http://localhost:${PORT}${BASE_PATH:-}/health || exit 1
+EXPOSE 8688
 
-ENTRYPOINT ["tini", "--", "/entrypoint.sh"]
-CMD ["python", "-m", "maintenance.automatic_upgrade", "--start-target"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:${PORT}/health || exit 1
+
+ENTRYPOINT ["tini", "--", "/app/droppedneedle"]

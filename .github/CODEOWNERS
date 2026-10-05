@@ -3,22 +3,16 @@
 # CI/CD and infrastructure
 .github/workflows/*.yml                              @HabiRabbu
 Dockerfile                                           @HabiRabbu
-docker-compose.yml                                   @HabiRabbu
 docker-compose.*.yml                                 @HabiRabbu
 entrypoint.sh                                        @HabiRabbu
 
-# Security-sensitive backend paths
-backend/middleware.py                                @HabiRabbu
-backend/core/config.py                               @HabiRabbu
-backend/core/exceptions.py                           @HabiRabbu
-backend/core/exception_handlers.py                   @HabiRabbu
-backend/infrastructure/crypto.py                     @HabiRabbu
-backend/infrastructure/persistence/auth_store.py     @HabiRabbu
-backend/repositories/plex_repository.py              @HabiRabbu
-backend/services/auth_service.py                     @HabiRabbu
-backend/services/preferences_service.py              @HabiRabbu
-backend/services/*_user_auth_service.py              @HabiRabbu
-backend/api/v1/routes/auth.py                        @HabiRabbu
+# Security-sensitive server paths
+server/src/auth/                                     @HabiRabbu
+server/src/middleware.rs                             @HabiRabbu
+server/src/error.rs                                  @HabiRabbu
+server/src/config/crypto.rs                          @HabiRabbu
+server/src/config/mask.rs                            @HabiRabbu
+server/src/compat/shared/auth.rs                     @HabiRabbu
+server/migrations/                                   @HabiRabbu
 frontend/src/lib/stores/authStore.svelte.ts          @HabiRabbu
 frontend/src/lib/components/settings/SettingsSecurity.svelte @HabiRabbu
-

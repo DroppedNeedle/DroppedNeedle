@@ -1,18 +1,15 @@
-# Keep pinned dependencies current. Pins stay exact (requirements*.txt, the
-# lockfile); Dependabot opens the bump PRs, you review and merge them.
-# group: minor/patch npm bumps fold into one PR so the frontend lockfile is
-# touched at most once a week; pip gets individual PRs (requirements*.txt is
-# hand-split, a combined bump would mix runtime and dev pins).
+# Keep pinned dependencies current. The lockfiles hold exact versions;
+# Dependabot opens the bump PRs, you review and merge them. Minor and patch
+# bumps are grouped so each lockfile changes at most once a week.
 version: 2
 updates:
-  - package-ecosystem: "pip"
-    directory: "/backend"
+  - package-ecosystem: "cargo"
+    directory: "/server"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
-      dev-tools:
-        dependency-type: "development"
+      minor-and-patch:
         update-types:
           - "minor"
           - "patch"
