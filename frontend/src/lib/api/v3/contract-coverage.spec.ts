@@ -8,8 +8,8 @@ import { countV3Calls, extractV3Templates } from './registryScan';
  * Registry coverage without hand-kept rows: every v3 template used in shipped
  * code under src must be a route in the generated OpenAPI snapshot (the same
  * file the contract drift gate verifies), and every builder call must spell
- * its template as a string literal so this scan cannot miss it. One case per
- * route. Specs are excluded (they may pin invalid templates on purpose);
+ * its template as a string literal so this scan cannot miss it. A failure
+ * lists every unknown template at once. Specs are excluded (they may pin invalid templates on purpose);
  * svelte-check independently rejects unknown templates at build time.
  */
 
@@ -33,16 +33,14 @@ const literalCount = sources.reduce((total, source) => total + extractV3Template
 const callCount = sources.reduce((total, source) => total + countV3Calls(source), 0);
 
 describe('v3 registry coverage', () => {
-	it('reads a non-empty generated route set', () => {
-		expect(specPaths.size).toBeGreaterThan(0);
-	});
-
 	it('spells every v3 template as a scannable literal', () => {
 		expect(sources.length).toBeGreaterThan(100);
 		expect(literalCount).toBe(callCount);
 	});
 
-	it.each(usedTemplates)('%s is a generated route', (template) => {
-		expect(specPaths.has(template)).toBe(true);
+	it('uses only routes from the generated contract', () => {
+		expect(specPaths.size).toBeGreaterThan(0);
+		expect(usedTemplates.length).toBeGreaterThan(0);
+		expect(usedTemplates.filter((template) => !specPaths.has(template))).toEqual([]);
 	});
 });
