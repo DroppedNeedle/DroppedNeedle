@@ -7,7 +7,8 @@
 --   v3 keeps the bytes in the database so they travel with backups and
 --   vanish with their playlist.
 -- * The display name a native favorite was saved with, so the favorites
---   page can label an item the catalog no longer holds.
+--   page can label an item the catalog no longer holds. It sits in its own
+--   table so this file stays safe to apply twice, like every migration.
 --
 -- It also indexes album creation time, so the player protocols' "recently
 -- added" pages walk an index instead of sorting every album.
@@ -21,7 +22,15 @@ CREATE TABLE IF NOT EXISTS playlist_covers (
     updated_at   REAL NOT NULL
 );
 
-ALTER TABLE library_user_favorites ADD COLUMN display_name TEXT;
+CREATE TABLE IF NOT EXISTS library_user_favorite_names (
+    user_id      TEXT NOT NULL,
+    item_kind    TEXT NOT NULL,
+    item_id      TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    PRIMARY KEY (user_id, item_kind, item_id),
+    FOREIGN KEY (user_id, item_kind, item_id)
+        REFERENCES library_user_favorites(user_id, item_kind, item_id) ON DELETE CASCADE
+);
 
 CREATE INDEX IF NOT EXISTS idx_playlists_user ON playlists(user_id);
 CREATE INDEX IF NOT EXISTS idx_playlist_tracks_library_file

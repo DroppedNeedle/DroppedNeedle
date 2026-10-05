@@ -661,9 +661,9 @@ async fn store_faults_render_fixed_500_envelopes() {
     }
 }
 
-/// Migration 0010 upgrades a 0005 database in place: playlists and
-/// favorites written before it stay, covers get their table, favorites
-/// gain a name column.
+/// Migration 0010 upgrades an older database in place: playlists and
+/// favorites written before it stay, covers and favorite names get their
+/// tables, and applying it again changes nothing.
 #[tokio::test]
 async fn migration_0010_upgrades_in_place() {
     use droppedneedle::schema::{MIGRATOR, apply_migrations};
@@ -698,13 +698,22 @@ async fn migration_0010_upgrades_in_place() {
     .unwrap();
 
     apply_migrations(&pool).await.unwrap();
-    let kept: (String, Option<String>) = sqlx::query_as(
-        "SELECT p.name, f.display_name FROM playlists p, library_user_favorites f WHERE p.id = 'p1'",
+    let kept: (String, String) = sqlx::query_as(
+        "SELECT p.name, f.item_id FROM playlists p, library_user_favorites f WHERE p.id = 'p1'",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(kept, ("Kept".to_owned(), None));
+    assert_eq!(kept, ("Kept".to_owned(), "a1".to_owned()));
+    let migration = MIGRATOR
+        .migrations
+        .iter()
+        .find(|migration| migration.version == 10)
+        .unwrap();
+    sqlx::raw_sql(&migration.sql)
+        .execute(&pool)
+        .await
+        .expect("0010 applies twice");
     let covers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM playlist_covers")
         .fetch_one(&pool)
         .await

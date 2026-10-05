@@ -48,9 +48,12 @@ impl FavoriteStore {
     ) -> Result<Vec<FavoriteRow>, StoreError> {
         let pool = self.db.pool()?;
         let rows = sqlx::query(
-            "SELECT item_kind, item_id, display_name, created_at FROM library_user_favorites \
-             WHERE user_id = ? AND (? IS NULL OR item_kind = ?) \
-             ORDER BY created_at DESC, item_kind, item_id",
+            "SELECT f.item_kind AS item_kind, f.item_id AS item_id, \
+             n.display_name AS display_name, f.created_at AS created_at \
+             FROM library_user_favorites f LEFT JOIN library_user_favorite_names n \
+             ON n.user_id = f.user_id AND n.item_kind = f.item_kind AND n.item_id = f.item_id \
+             WHERE f.user_id = ? AND (? IS NULL OR f.item_kind = ?) \
+             ORDER BY f.created_at DESC, f.item_kind, f.item_id",
         )
         .bind(user_id)
         .bind(kind)
@@ -150,22 +153,36 @@ impl FavoriteStore {
             .write("favorites.apply", move |tx| {
                 let now = now_real();
                 if add {
-                    let mut stmt = tx.prepare(
+                    let mut favorite = tx.prepare(
                         "INSERT INTO library_user_favorites \
-                         (user_id, item_kind, item_id, created_at, display_name) \
-                         VALUES (?1, ?2, ?3, ?4, ?5) \
+                         (user_id, item_kind, item_id, created_at) VALUES (?1, ?2, ?3, ?4) \
+                         ON CONFLICT (user_id, item_kind, item_id) DO NOTHING",
+                    )?;
+                    let mut named = tx.prepare(
+                        "INSERT INTO library_user_favorite_names \
+                         (user_id, item_kind, item_id, display_name) VALUES (?1, ?2, ?3, ?4) \
                          ON CONFLICT (user_id, item_kind, item_id) DO UPDATE SET \
-                         display_name = COALESCE(excluded.display_name, display_name)",
+                         display_name = excluded.display_name",
                     )?;
                     for (kind, id, name) in &targets {
-                        stmt.execute(params![user_id, kind, id, now, name])?;
+                        favorite.execute(params![user_id, kind, id, now])?;
+                        if let Some(name) = name {
+                            named.execute(params![user_id, kind, id, name])?;
+                        }
                     }
                 } else {
+                    // Names go first: the cascade needs foreign keys on,
+                    // and this keeps the rows clean either way.
+                    let mut unnamed = tx.prepare(
+                        "DELETE FROM library_user_favorite_names \
+                         WHERE user_id = ?1 AND item_kind = ?2 AND item_id = ?3",
+                    )?;
                     let mut stmt = tx.prepare(
                         "DELETE FROM library_user_favorites \
                          WHERE user_id = ?1 AND item_kind = ?2 AND item_id = ?3",
                     )?;
                     for (kind, id, _) in &targets {
+                        unnamed.execute(params![user_id, kind, id])?;
                         stmt.execute(params![user_id, kind, id])?;
                     }
                 }
