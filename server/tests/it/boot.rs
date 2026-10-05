@@ -137,6 +137,22 @@ async fn database_one_version_behind_is_backed_up_before_migrating() {
     runtime.shutdown().await;
 }
 
+/// A running offline import holds the data lock exclusively: the server
+/// refuses to boot before it opens, backs up or migrates the database.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn boot_refuses_while_the_offline_tool_holds_the_database() {
+    let dir = scratch("locked");
+    let config = config_in(&dir);
+    let db_path = config.library_db_path.clone();
+    let _import = droppedneedle::tooling::datalock::DataLock::exclusive(&db_path).unwrap();
+    let refused = bootstrap::build(config).await;
+    assert!(
+        matches!(refused, Err(bootstrap::BootError::DataLock(_))),
+        "boot must refuse a held database"
+    );
+    assert!(!db_path.exists(), "the database was opened under the lock");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn login_behind_a_trusted_tls_proxy_sets_a_secure_cookie() {
     let dir = scratch("proxy");
