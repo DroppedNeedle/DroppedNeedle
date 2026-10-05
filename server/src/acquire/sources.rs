@@ -65,9 +65,7 @@ async fn task_row(journal: &Arc<Journal>, task_id: &str) -> Result<TaskRow, Sour
     let owned = task_id.to_owned();
     let lookup = owned.clone();
     journal
-        .run("downloads.source_task", move |store| {
-            store.get_task(&lookup)
-        })
+        .read_task(&lookup)
         .await
         .map_err(SourceError::LocalFault)?
         .ok_or_else(|| SourceError::Rejected(format!("unknown download task {owned}")))
@@ -134,27 +132,25 @@ impl DownloadSource for SlskdSource {
         // peer this task already tried: a failover walks to the best
         // remaining group, so the list shrinking under quarantine never
         // skips a candidate.
-        let task_key = task_id.to_owned();
-        let (live, tried) = self
+        let live = self
             .journal
-            .run("downloads.slskd_exclusions", move |store| {
-                let live = store.load_quarantine_set(now_unix_f64(), QUARANTINE_TTL_SECONDS)?;
-                let mut tried = Vec::new();
-                for attempt in store.list_attempts(&task_key)? {
-                    if attempt.source != "soulseek" {
-                        continue;
-                    }
-                    if let Some(handle) = store
-                        .attempt_handle_json(&attempt.id)?
-                        .and_then(|json| serde_json::from_str::<SourceHandle>(&json).ok())
-                    {
-                        tried.push(handle.username);
-                    }
-                }
-                Ok((live, tried))
-            })
+            .read_quarantine_set(now_unix_f64(), QUARANTINE_TTL_SECONDS)
             .await
             .map_err(SourceError::LocalFault)?;
+        let mut tried = Vec::new();
+        for json in self
+            .journal
+            .read_source_handles(task_id, "soulseek")
+            .await
+            .map_err(SourceError::LocalFault)?
+        {
+            match serde_json::from_str::<SourceHandle>(&json) {
+                Ok(handle) => tried.push(handle.username),
+                Err(error) => {
+                    tracing::warn!(task_id, %error, "stored slskd handle does not decode");
+                }
+            }
+        }
         let hits: Vec<_> = hits
             .into_iter()
             .filter(|hit| !soulseek_hit_quarantined(&hit.username, &hit.filename, &live))
@@ -526,9 +522,7 @@ impl OrphanOwnership for JournalOwnership {
         let source = source.to_owned();
         let task_id = task_id.to_owned();
         self.journal
-            .run("downloads.cleanup_debt", move |store| {
-                store.has_cleanup_debt(&source, &task_id, &journal_name)
-            })
+            .read_cleanup_debt(&source, &task_id, &journal_name)
             .await
             .map_err(SourceError::LocalFault)
     }
@@ -536,9 +530,7 @@ impl OrphanOwnership for JournalOwnership {
     async fn task_status(&self, task_id: &str) -> Result<Option<String>, SourceError> {
         let task_id = task_id.to_owned();
         self.journal
-            .run("downloads.orphan_task", move |store| {
-                store.get_task(&task_id)
-            })
+            .read_task(&task_id)
             .await
             .map_err(SourceError::LocalFault)
             .map(|row| row.map(|task| task.status.as_str().to_owned()))

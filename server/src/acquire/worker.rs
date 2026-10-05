@@ -987,13 +987,12 @@ impl DownloadWorker {
         if max == 0 {
             return;
         }
-        let Some(retryable) = self
-            .step("downloads.retryable", move |store| {
-                store.list_retryable(max)
-            })
-            .await
-        else {
-            return;
+        let retryable = match self.journal.read_retryable(max).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(%error, "retryable download read failed");
+                return;
+            }
         };
         for task in retryable {
             let anchor = task.completed_at.unwrap_or(task.updated_at);
@@ -1083,28 +1082,37 @@ impl DownloadWorker {
     /// Settle one claimed cleanup row.
     async fn cleanup_one(&self, pass: &Pass, attempt: &AttemptRow) {
         let now = pass.now;
-        let attempt_id = attempt.id.clone();
-        let task_id = attempt.task_id.clone();
-        let Some((handle_json, task)) = self
-            .step("downloads.cleanup_read", move |store| {
-                Ok((
-                    store.attempt_handle_json(&attempt_id)?,
-                    store.get_task(&task_id)?,
-                ))
-            })
-            .await
-        else {
-            return;
+        let read = async {
+            Ok::<_, String>((
+                self.journal.read_attempt_handle(&attempt.id).await?,
+                self.journal.read_task(&attempt.task_id).await?,
+            ))
         };
-        let handle: SourceHandle = handle_json
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or(SourceHandle {
-                source: attempt.source.clone(),
-                username: String::new(),
-                filenames: Vec::new(),
-                job_name: attempt.job_name.clone(),
-                nzo_id: String::new(),
-            });
+        let (handle_json, task) = match read.await {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::warn!(attempt_id = %attempt.id, %error, "cleanup read failed");
+                return;
+            }
+        };
+        let decoded = handle_json.and_then(|json| match serde_json::from_str(&json) {
+            Ok(handle) => Some(handle),
+            Err(error) => {
+                tracing::warn!(
+                    attempt_id = %attempt.id,
+                    %error,
+                    "stored client handle does not decode; cleaning by job name"
+                );
+                None
+            }
+        });
+        let handle: SourceHandle = decoded.unwrap_or(SourceHandle {
+            source: attempt.source.clone(),
+            username: String::new(),
+            filenames: Vec::new(),
+            job_name: attempt.job_name.clone(),
+            nzo_id: String::new(),
+        });
         let Some(source) = pass.source_for(&attempt.source) else {
             // No adapter for this source: defer with backoff rather than
             // spinning on a row this worker can never settle.

@@ -103,6 +103,69 @@ fn unknown_value(column: &str, value: String) -> rusqlite::Error {
     )
 }
 
+/// Retryable tasks: failed or partial, under the retry ceiling, with no
+/// newer task for the same ask (the successor check).
+pub(crate) const RETRYABLE_SQL: &str = "SELECT * FROM download_tasks t \
+             WHERE t.status IN ('failed', 'partial') \
+               AND t.origin != 'upgrade' \
+               AND t.retry_count < ? \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM download_tasks n \
+                 WHERE n.user_id = t.user_id \
+                   AND n.download_type = t.download_type \
+                   AND n.release_group_mbid = t.release_group_mbid \
+                   AND COALESCE(n.recording_mbid, '') = COALESCE(t.recording_mbid, '') \
+                   AND n.origin != 'upgrade' \
+                   AND (n.created_at > t.created_at \
+                        OR (n.created_at = t.created_at AND n.rowid > t.rowid))) \
+             ORDER BY t.completed_at ASC NULLS LAST";
+
+/// Live cleanup debt for one client job.
+pub(crate) const CLEANUP_DEBT_SQL: &str = "SELECT COUNT(*) FROM download_attempts \
+     WHERE source = ? AND task_id = ? AND job_name = ? \
+       AND state NOT IN ('complete', 'preserved')";
+
+/// Live quarantine pairs at or after a cutoff.
+pub(crate) const QUARANTINE_SET_SQL: &str =
+    "SELECT source, identity FROM download_quarantine WHERE quarantined_at >= ?";
+
+/// Decode one task row read through the sqlx reader pool.
+pub(crate) fn task_from_sqlx(row: &sqlx::sqlite::SqliteRow) -> Result<TaskRow, sqlx::Error> {
+    use sqlx::Row as _;
+    let status_text: String = row.try_get("status")?;
+    let status = TaskStatus::parse(&status_text).ok_or_else(|| sqlx::Error::ColumnDecode {
+        index: "status".to_owned(),
+        source: format!("unknown status value: {status_text}").into(),
+    })?;
+    Ok(TaskRow {
+        id: row.try_get("id")?,
+        user_id: row.try_get("user_id")?,
+        artist_name: row.try_get("artist_name")?,
+        album_title: row.try_get("album_title")?,
+        status,
+        origin: row.try_get("origin")?,
+        download_type: row.try_get("download_type")?,
+        release_group_mbid: row.try_get("release_group_mbid")?,
+        recording_mbid: row.try_get("recording_mbid")?,
+        retry_count: row.try_get("retry_count")?,
+        candidate_index: row.try_get("candidate_index")?,
+        progress_percent: row.try_get("progress_percent")?,
+        total_size_bytes: row.try_get("total_size_bytes")?,
+        downloaded_bytes: row.try_get("downloaded_bytes")?,
+        quality_format: row.try_get("quality_format")?,
+        source: row.try_get("source")?,
+        download_client: row.try_get("download_client")?,
+        source_username: row.try_get("source_username")?,
+        search_job_id: row.try_get("search_job_id")?,
+        error_message: row.try_get("error_message")?,
+        created_at: row.try_get("created_at")?,
+        started_at: row.try_get("started_at")?,
+        last_polled_at: row.try_get("last_polled_at")?,
+        completed_at: row.try_get("completed_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
+}
+
 fn task_from_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
     let status_text: String = row.get("status")?;
     let status =
@@ -769,9 +832,7 @@ impl<'conn> DownloadStore<'conn> {
         job_name: &str,
     ) -> Result<bool, StoreError> {
         let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM download_attempts \
-             WHERE source = ? AND task_id = ? AND job_name = ? \
-               AND state NOT IN ('complete', 'preserved')",
+            CLEANUP_DEBT_SQL,
             rusqlite::params![source, task_id, job_name],
             |row| row.get(0),
         )?;
@@ -892,9 +953,7 @@ impl<'conn> DownloadStore<'conn> {
         now: f64,
         ttl_seconds: f64,
     ) -> Result<Vec<(String, String)>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT source, identity FROM download_quarantine WHERE quarantined_at >= ?",
-        )?;
+        let mut stmt = self.conn.prepare(QUARANTINE_SET_SQL)?;
         let rows = stmt.query_map(rusqlite::params![now - ttl_seconds], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -1031,22 +1090,7 @@ impl<'conn> DownloadStore<'conn> {
     /// exclusion on both sides: a failed upgrade never auto-retries, and
     /// a newer upgrade cannot suppress a user task's legitimate retry.
     pub fn list_retryable(&self, max_retry_count: i64) -> Result<Vec<TaskRow>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT * FROM download_tasks t \
-             WHERE t.status IN ('failed', 'partial') \
-               AND t.origin != 'upgrade' \
-               AND t.retry_count < ? \
-               AND NOT EXISTS ( \
-                 SELECT 1 FROM download_tasks n \
-                 WHERE n.user_id = t.user_id \
-                   AND n.download_type = t.download_type \
-                   AND n.release_group_mbid = t.release_group_mbid \
-                   AND COALESCE(n.recording_mbid, '') = COALESCE(t.recording_mbid, '') \
-                   AND n.origin != 'upgrade' \
-                   AND (n.created_at > t.created_at \
-                        OR (n.created_at = t.created_at AND n.rowid > t.rowid))) \
-             ORDER BY t.completed_at ASC NULLS LAST",
-        )?;
+        let mut stmt = self.conn.prepare(RETRYABLE_SQL)?;
         let rows = stmt.query_map(rusqlite::params![max_retry_count], task_from_row)?;
         let mut out = Vec::new();
         for row in rows {
