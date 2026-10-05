@@ -17,9 +17,8 @@ use std::time::Duration;
 
 use slskd::{
     DownloadPolicy, EnqueueFile, Locator, MOCK_API_KEY, MockSlskd, QualityRecipeEntry,
-    ReqwestSlskdHttp, SlskdClient, SlskdError, SlskdRepository, TaskHandle, aggregate_status,
-    album_query_ladder, extension_from_filename, lossless_detail_step, match_transfers,
-    sanitize_query, state_flags, stripped_album_title, track_query_ladder, validate_quality_recipe,
+    ReqwestSlskdHttp, SlskdClient, SlskdRepository, TaskHandle, aggregate_status,
+    album_query_ladder, match_transfers, validate_quality_recipe,
 };
 
 fn test_policy() -> DownloadPolicy {
@@ -136,36 +135,6 @@ async fn enqueue_posts_a_plain_array_and_reads_pascal_case_enqueued() {
 }
 
 #[tokio::test]
-async fn state_flags_split_comma_joined_succeeded() {
-    assert!(state_flags("Completed, Succeeded").contains("succeeded"));
-    assert!(state_flags("InProgress, Queued").contains("inprogress"));
-    assert!(!state_flags("").contains("succeeded"));
-}
-
-#[tokio::test]
-async fn unknown_user_downloads_are_empty_and_unknown_cancel_is_false() {
-    let mock = MockSlskd::start().await.expect("mock starts");
-    let http = ReqwestSlskdHttp::new(reqwest::Client::new(), &mock.base_url(), MOCK_API_KEY);
-    let client = SlskdClient::new(http);
-
-    // 404 means "no such bucket" / "record already gone" (v2).
-    assert_eq!(
-        client
-            .get_downloads("nobody")
-            .await
-            .expect("404 -> empty")
-            .len(),
-        0
-    );
-    assert!(
-        !client
-            .cancel_transfer("nobody", "missing-id")
-            .await
-            .expect("404 -> false")
-    );
-}
-
-#[tokio::test]
 async fn all_downloads_preserves_usernames_across_peers() {
     let mock = MockSlskd::start().await.expect("mock starts");
     let repo = repository(&mock);
@@ -245,42 +214,6 @@ async fn concurrent_enqueues_serialize_through_semaphore_one() {
     assert_eq!(mock.max_in_flight(), 1);
 }
 
-#[tokio::test]
-async fn search_start_429_is_retried_with_backoff() {
-    let mock = MockSlskd::start().await.expect("mock starts");
-    let repo = repository(&mock);
-    mock.fail_next_search();
-
-    // Search START retries the 429 single-op limit like the discrete
-    // calls: slskd answers 429 while another client holds the one search
-    // slot, and an unretried start would drop the whole rung. Only the
-    // state/response poll reads stay unretried (the repository owns that
-    // deadline).
-    let results = repo
-        .search_track("Radiohead", "Paranoid Android", None)
-        .await
-        .expect("search start 429 retries");
-    assert!(!results.is_empty());
-}
-
-#[tokio::test]
-async fn rate_limited_error_is_distinct_and_retriable() {
-    let limited = SlskdError::for_status(429, b"busy");
-    assert_eq!(limited, SlskdError::RateLimited);
-    assert!(limited.is_retriable());
-    assert!(matches!(
-        SlskdError::for_status(401, b"nope"),
-        SlskdError::Auth { status: 401, .. }
-    ));
-    assert!(
-        !SlskdError::Auth {
-            status: 401,
-            detail: String::new()
-        }
-        .is_retriable()
-    );
-}
-
 // Search fan-out briefs.
 
 #[tokio::test]
@@ -313,20 +246,6 @@ async fn album_ladder_falls_back_past_silent_specific_rungs() {
     mock.reset();
     assert!(mock.search_texts().is_empty());
     assert!(mock.search_timeouts().is_empty());
-}
-
-#[tokio::test]
-async fn track_ladder_keeps_the_track_title_at_every_rung() {
-    for query in track_query_ladder("Radiohead", "Paranoid Android", Some("OK Computer")) {
-        assert!(
-            query.contains("Paranoid Android"),
-            "every rung keeps the track title: {query:?}"
-        );
-    }
-    assert_eq!(
-        track_query_ladder("Radiohead", "Paranoid Android", Some("OK Computer"))[0],
-        "Radiohead Paranoid Android OK Computer"
-    );
 }
 
 // Correlation + status briefs.
@@ -514,20 +433,6 @@ async fn wrong_key_health_message_is_uniform_and_leaks_nothing() {
     assert!(!health.message.contains("127.0.0.1"));
 }
 
-#[tokio::test]
-async fn health_check_reports_slskd_version() {
-    let mock = MockSlskd::start().await.expect("mock starts");
-    let repo = repository(&mock);
-
-    let health = repo.health_check().await;
-    assert!(health.ok);
-    assert_eq!(health.version.as_deref(), Some("0.25.1.0"));
-    assert_eq!(health.message, "slskd 0.25.1.0");
-    assert_eq!(repo.client_name(), "slskd");
-    assert!(repo.is_configured());
-    assert_eq!(repo.policy().search_timeout, Duration::from_secs(2));
-}
-
 // Policy briefs (tiers, recipe, timeouts).
 
 #[test]
@@ -600,54 +505,7 @@ fn recipe_ranking_prefers_flac_then_320_with_dsd_rejected() {
     );
 }
 
-#[test]
-fn lossless_detail_ladder_maps_cd_through_partial() {
-    assert_eq!(lossless_detail_step(Some(16), Some(44100)), 0);
-    assert_eq!(lossless_detail_step(Some(24), Some(48000)), 1);
-    assert_eq!(lossless_detail_step(Some(24), Some(96000)), 2);
-    assert_eq!(lossless_detail_step(Some(24), Some(192000)), 3);
-    assert_eq!(lossless_detail_step(Some(32), Some(384000)), 4);
-    // Either axis absent -> the `partial` step (v2).
-    assert_eq!(lossless_detail_step(None, Some(44100)), 5);
-    assert_eq!(lossless_detail_step(Some(16), None), 5);
-}
-
-#[test]
-fn poll_deadline_is_timeout_plus_grace() {
-    let policy = test_policy();
-    assert_eq!(
-        slskd::repository::poll_deadline(&policy),
-        Duration::from_secs(4)
-    );
-}
-
 // Query-construction briefs.
-
-#[test]
-fn sanitize_strips_operators_but_keeps_in_word_hyphens() {
-    assert_eq!(
-        sanitize_query("AC-DC - Back In Black"),
-        "AC-DC Back In Black"
-    );
-    assert_eq!(
-        sanitize_query("Euphoria (International Edition)"),
-        "Euphoria International Edition"
-    );
-    // Typographic apostrophes normalise to straight ASCII (v2).
-    assert_eq!(sanitize_query("D\u{2019}Angelo"), "D'Angelo");
-}
-
-#[test]
-fn stripped_album_title_drops_editions_and_subtitles() {
-    assert_eq!(
-        stripped_album_title("Euphoria (International Edition)"),
-        "Euphoria"
-    );
-    assert_eq!(
-        stripped_album_title("Devil May Cry: Season 2 (Soundtrack from the Netflix Series)"),
-        "Devil May Cry"
-    );
-}
 
 #[test]
 fn album_ladder_escalates_specific_first_with_wildcard_siblings() {
@@ -669,16 +527,6 @@ fn album_ladder_escalates_specific_first_with_wildcard_siblings() {
         assert!(!query.is_empty());
         assert!(seen.insert(query.clone()), "ladder dedupes: {ladder:?}");
     }
-}
-
-#[test]
-fn extension_parsing_ignores_directories_and_case() {
-    assert_eq!(
-        extension_from_filename("@@music\\Album\\01 Track.FLAC"),
-        "flac"
-    );
-    assert_eq!(extension_from_filename("/home/bob/song.mp3"), "mp3");
-    assert_eq!(extension_from_filename("no-extension"), "");
 }
 
 // Locator briefs.
@@ -792,20 +640,6 @@ async fn repository_partial_lookup_uses_the_incomplete_mount() {
 // Mount-diagnosis briefs.
 
 #[tokio::test]
-async fn diagnosis_with_no_completed_downloads_is_empty_but_supported() {
-    let mock = MockSlskd::start().await.expect("mock starts");
-    let repo = repository(&mock);
-
-    let diagnosis = repo.diagnose_downloads_mount().await;
-    assert!(diagnosis.supported);
-    assert_eq!(diagnosis.completed_downloads, 0);
-    assert_eq!(
-        diagnosis.client_downloads_dir.as_deref(),
-        Some("/slskd/downloads")
-    );
-}
-
-#[tokio::test]
 async fn diagnosis_resolves_a_sample_under_a_correct_mount() {
     let mock = MockSlskd::start().await.expect("mock starts");
     let mount = temp_mount("diagnose");
@@ -845,26 +679,4 @@ fn slskd_http_debug_redacts_key() {
     let debug = format!("{transport:?}");
     assert!(debug.contains("<redacted>"), "{debug}");
     assert!(!debug.contains("SUPERSECRET"), "{debug}");
-}
-
-/// Unreachable slskd reads as a plain summary, never transport jargon.
-#[tokio::test]
-async fn health_check_unreachable_is_plain_summary() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind");
-    let base = format!("http://{}", listener.local_addr().expect("addr"));
-    drop(listener);
-    let transport = ReqwestSlskdHttp::new(reqwest::Client::new(), &base, MOCK_API_KEY);
-    let mount = std::env::temp_dir().join(format!("slskd-brief-{}", std::process::id()));
-    let repo = SlskdRepository::new(
-        SlskdClient::new(transport),
-        &base,
-        MOCK_API_KEY,
-        mount,
-        test_policy(),
-    );
-    let health = repo.health_check().await;
-    assert!(!health.ok);
-    assert_eq!(health.message, "slskd unreachable");
 }

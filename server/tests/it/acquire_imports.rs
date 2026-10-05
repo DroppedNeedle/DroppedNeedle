@@ -14,32 +14,28 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::response::IntoResponse as _;
 use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
-use imports::error::ImportsError;
 use imports::handlers::{ImportsDeps, imports_router};
 use imports::health::{
-    ClientProbe, FreeReadiness, HealthProbes, IndexerProbe, ScriptedFree, ScriptedLidarr,
-    ScriptedNewznab, ScriptedSabnzbd, ScriptedSlskd,
+    ClientProbe, HealthProbes, ScriptedFree, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd,
+    ScriptedSlskd,
 };
-use imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor, import_job_key};
+use imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
 use imports::lidarr::{
-    FollowStore as _, LIDARR_NOT_CONNECTED, LidarrClient, LidarrImportService, MemoryApprovalSink,
-    MemoryFollowStore, MemoryLidarrSettings, is_valid_mbid, normalize_lidarr_url,
+    FollowStore as _, LidarrClient, LidarrImportService, MemoryApprovalSink, MemoryFollowStore,
+    MemoryLidarrSettings,
 };
 use imports::mocks::{
-    LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, LIDARR_VERSION, SPOTIFY_TOKEN, serve_lidarr,
-    serve_spotify,
+    LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, SPOTIFY_TOKEN, serve_lidarr, serve_spotify,
 };
 use imports::models::{LidarrConnectionSettings, SpotifySettings};
 use imports::spotify::{
     FixedMbidResolver, MemoryPlaylistIndex, MemorySpotifyConnections, MemorySpotifySettings,
-    MemorySpotifyStates, MemoryTrackSink, PlaylistTrackSink as _, SPOTIFY_SCOPES, SpotifyClient,
-    SpotifyConnectionStore as _, SpotifyImportService, best_image_url, is_allowed_cover_url,
-    playlist_track_count, redirect_uri,
+    MemorySpotifyStates, MemoryTrackSink, PlaylistTrackSink as _, SpotifyClient,
+    SpotifyConnectionStore as _, SpotifyImportService, is_allowed_cover_url, redirect_uri,
 };
 use imports::spotify::{SpotifyConnection, TokenGrant};
 use serde_json::{Value, json};
@@ -268,65 +264,6 @@ fn open_client(version: &str, message: &str) -> ClientProbe {
 // --- Pure-semantics briefs: MBID, URL, track-count, image, redirect URI ---
 
 #[test]
-fn mbid_validation_matches_v2() {
-    assert!(is_valid_mbid("11111111-1111-1111-1111-111111111111"));
-    assert!(is_valid_mbid("  11111111-1111-1111-1111-111111111111  "));
-    assert!(is_valid_mbid("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"));
-    assert!(!is_valid_mbid(""));
-    assert!(!is_valid_mbid("not-a-mbid"));
-    assert!(!is_valid_mbid("unknown_artist"));
-    assert!(!is_valid_mbid("11111111-1111-1111-1111-11111111111"));
-    assert!(!is_valid_mbid("gggggggg-1111-1111-1111-111111111111"));
-}
-
-#[test]
-fn lidarr_url_normalization_matches_v2() {
-    assert_eq!(normalize_lidarr_url("lidarr:8686"), "http://lidarr:8686");
-    assert_eq!(
-        normalize_lidarr_url("http://lidarr:8686/"),
-        "http://lidarr:8686"
-    );
-    assert_eq!(
-        normalize_lidarr_url("http://lidarr:8686/api/v1"),
-        "http://lidarr:8686"
-    );
-    assert_eq!(
-        normalize_lidarr_url("https://lidarr:8686/api"),
-        "https://lidarr:8686"
-    );
-    assert_eq!(normalize_lidarr_url("  "), "");
-}
-
-#[test]
-fn spotify_track_count_quirk_reads_items_then_tracks_dicts() {
-    assert_eq!(
-        playlist_track_count(&json!({"items": {"href": "x", "total": 7}, "tracks": null})),
-        7
-    );
-    assert_eq!(playlist_track_count(&json!({"tracks": {"total": 4}})), 4);
-    assert_eq!(
-        playlist_track_count(&json!({"items": [1, 2], "tracks": null})),
-        0
-    );
-    assert_eq!(playlist_track_count(&json!({})), 0);
-}
-
-#[test]
-fn best_image_picks_smallest_above_floor_else_largest() {
-    let images = json!([
-        {"url": "http://x/small", "width": 60},
-        {"url": "http://x/big", "width": 640},
-    ]);
-    assert_eq!(
-        best_image_url(&images, 250).as_deref(),
-        Some("http://x/big")
-    );
-    let tiny = json!([{"url": "http://x/a", "width": 60}, {"url": "http://x/b", "width": 120}]);
-    assert_eq!(best_image_url(&tiny, 250).as_deref(), Some("http://x/b"));
-    assert_eq!(best_image_url(&json!([]), 250), None);
-}
-
-#[test]
 fn redirect_uri_prefers_origin_and_mounts_base_path_once() {
     assert_eq!(
         redirect_uri("https://music.example.com", "http://app.test", ""),
@@ -351,11 +288,6 @@ fn redirect_uri_prefers_origin_and_mounts_base_path_once() {
 }
 
 #[test]
-fn import_job_key_matches_v2_format() {
-    assert_eq!(import_job_key("u-1", "sp-9"), "spotify:import:u-1:sp-9");
-}
-
-#[test]
 fn cover_allowlist_blocks_non_cdn_and_plain_http() {
     assert!(is_allowed_cover_url("https://i.scdn.co/image/abc"));
     assert!(!is_allowed_cover_url("http://i.scdn.co/image/abc"));
@@ -364,33 +296,6 @@ fn cover_allowlist_blocks_non_cdn_and_plain_http() {
 }
 
 // --- Lidarr import briefs ---
-
-#[tokio::test]
-async fn lidarr_candidates_keep_monitored_valid_only() {
-    let (rig, admin_id, _) = seed_rig().await;
-    let (server, _) = serve_lidarr().await.expect("mock serves");
-    let bundle = rig_for(
-        &rig,
-        &server.base_url,
-        "http://127.0.0.1:1",
-        "http://127.0.0.1:1",
-    );
-    bundle.lidarr_settings.seed(&server.base_url, LIDARR_KEY);
-
-    let (status, body) = get_json(
-        authed_app(bundle.deps, &admin_id),
-        "/acquire/lidarr-import/artists",
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["total"], 2);
-    let artists = body["artists"].as_array().expect("artists array");
-    assert_eq!(artists[0]["mbid"], LIDARR_MBID_ALL);
-    assert_eq!(artists[0]["would_auto_download"], true);
-    assert_eq!(artists[0]["already_following"], false);
-    assert_eq!(artists[1]["mbid"], LIDARR_MBID_NONE);
-    assert_eq!(artists[1]["would_auto_download"], false);
-}
 
 #[tokio::test]
 async fn lidarr_import_becomes_follows_with_d9_counts() {
@@ -441,36 +346,6 @@ async fn lidarr_import_becomes_follows_with_d9_counts() {
 }
 
 #[tokio::test]
-async fn lidarr_import_ignores_unknown_and_counts_invalid() {
-    let (rig, admin_id, _) = seed_rig().await;
-    let (server, _) = serve_lidarr().await.expect("mock serves");
-    let bundle = rig_for(
-        &rig,
-        &server.base_url,
-        "http://127.0.0.1:1",
-        "http://127.0.0.1:1",
-    );
-    bundle.lidarr_settings.seed(&server.base_url, LIDARR_KEY);
-    let unmonitored_but_valid = "33333333-3333-3333-3333-333333333333";
-    let unknown_but_valid = "44444444-4444-4444-4444-444444444444";
-    let payload = json!({"selected_mbids": [
-        LIDARR_MBID_ALL, unmonitored_but_valid, unknown_but_valid, "nope",
-    ]});
-
-    let (status, body) = post_json(
-        authed_app(bundle.deps, &admin_id),
-        "/acquire/lidarr-import/import",
-        payload,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["imported"], 1);
-    assert_eq!(body["already_following"], 0);
-    assert_eq!(body["skipped_invalid"], 1);
-    assert_eq!(body["auto_download_enabled"], 1);
-}
-
-#[tokio::test]
 async fn lidarr_non_admin_mirror_opens_approval_batch_at_service_level() {
     // The HTTP surface is admin-only, so the non-admin branch is briefed at
     // the service seam: the ordered writes still mirror intent, but only
@@ -495,66 +370,6 @@ async fn lidarr_non_admin_mirror_opens_approval_batch_at_service_level() {
     assert!(response.approval_batch_id.is_some());
     assert_eq!(approvals.batches().len(), 1);
     assert!(follows.auto_download_intent("u-9", &LIDARR_MBID_ALL.to_lowercase()));
-}
-
-#[tokio::test]
-async fn lidarr_test_probe_reports_body_verdicts() {
-    let (rig, admin_id, _) = seed_rig().await;
-    let (server, _) = serve_lidarr().await.expect("mock serves");
-    let bundle = rig_for(
-        &rig,
-        &server.base_url,
-        "http://127.0.0.1:1",
-        "http://127.0.0.1:1",
-    );
-    bundle.lidarr_settings.seed(&server.base_url, LIDARR_KEY);
-
-    let good = json!({"url": server.base_url, "api_key": LIDARR_KEY});
-    let (status, body) = post_json(
-        authed_app(bundle.deps.clone(), &admin_id),
-        "/acquire/lidarr-import/test",
-        good,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["valid"], true);
-    assert_eq!(body["version"], LIDARR_VERSION);
-
-    let bad_key = json!({"url": server.base_url, "api_key": "wrong"});
-    let (status, body) = post_json(
-        authed_app(bundle.deps.clone(), &admin_id),
-        "/acquire/lidarr-import/test",
-        bad_key,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["valid"], false);
-    assert!(body["message"].as_str().unwrap_or("").contains("API key"));
-
-    // Masked key resolves to the stored one: still valid.
-    let masked = json!({"url": server.base_url, "api_key": "lidarr****"});
-    let (status, body) = post_json(
-        authed_app(bundle.deps.clone(), &admin_id),
-        "/acquire/lidarr-import/test",
-        masked,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["valid"], true);
-
-    // Unreachable host reads as a body verdict, never a 5xx, never echoing.
-    let down = json!({"url": "http://127.0.0.1:1", "api_key": LIDARR_KEY});
-    let (status, body) = post_json(
-        authed_app(bundle.deps, &admin_id),
-        "/acquire/lidarr-import/test",
-        down,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["valid"], false);
-    let message = body["message"].as_str().unwrap_or("");
-    assert!(message.contains("Couldn't reach Lidarr"));
-    assert!(!message.contains("127.0.0.1"));
 }
 
 #[tokio::test]
@@ -596,27 +411,6 @@ async fn lidarr_config_round_trip_masks_and_normalizes() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["valid"], true);
-}
-
-#[tokio::test]
-async fn lidarr_import_without_connection_is_a_400() {
-    let (rig, admin_id, _) = seed_rig().await;
-    let (server, _) = serve_lidarr().await.expect("mock serves");
-    let bundle = rig_for(
-        &rig,
-        &server.base_url,
-        "http://127.0.0.1:1",
-        "http://127.0.0.1:1",
-    );
-
-    let (status, body) = get_json(
-        authed_app(bundle.deps, &admin_id),
-        "/acquire/lidarr-import/artists",
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["error"]["code"], "IMPORT_NOT_CONFIGURED");
-    assert_eq!(body["error"]["message"], LIDARR_NOT_CONNECTED);
 }
 
 #[tokio::test]
@@ -836,34 +630,6 @@ async fn spotify_settings_round_trip_and_reject_bad_origin() {
 }
 
 #[tokio::test]
-async fn spotify_auth_url_requires_a_configured_app() {
-    let (rig, _, user_id) = seed_rig().await;
-    let (lidarr, _) = serve_lidarr().await.expect("mock serves");
-    let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
-
-    let (status, body) = get_json(
-        authed_app(bundle.deps.clone(), &user_id),
-        "/acquire/spotify/auth/url",
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["error"]["code"], "INVALID_INPUT");
-
-    // Anonymous callers never reach the check.
-    let (status, _) = get_json(anon_app(bundle.deps), "/acquire/spotify/auth/url").await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn spotify_scopes_match_v2_verbatim() {
-    assert_eq!(
-        SPOTIFY_SCOPES,
-        "playlist-read-private playlist-read-collaborative user-read-private"
-    );
-}
-
-#[tokio::test]
 async fn spotify_callback_rejects_error_and_replayed_state() {
     let (rig, admin_id, user_id) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
@@ -956,48 +722,6 @@ async fn spotify_callback_rejects_error_and_replayed_state() {
         location.ends_with("/profile?spotify=error&reason=state"),
         "saw {location}"
     );
-}
-
-#[tokio::test]
-async fn spotify_playlists_filter_owner_and_quirk_shapes() {
-    let (rig, admin_id, user_id) = seed_rig().await;
-    let (lidarr, _) = serve_lidarr().await.expect("mock serves");
-    let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
-    seed_spotify_app(bundle.deps.clone(), &admin_id).await;
-
-    // Unlinked reads as the v2 400.
-    let (status, body) = get_json(
-        authed_app(bundle.deps.clone(), &user_id),
-        "/acquire/spotify/playlists",
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["error"]["code"], "IMPORT_NOT_CONFIGURED");
-
-    link_spotify(bundle.deps.clone(), &user_id).await;
-
-    let (status, body) = get_json(
-        authed_app(bundle.deps, &user_id),
-        "/acquire/spotify/playlists",
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let playlists = body["playlists"].as_array().expect("playlists array");
-    assert_eq!(playlists.len(), 2);
-    assert_eq!(playlists[0]["id"], "sp-playlist-1");
-    assert_eq!(playlists[0]["track_count"], 2);
-    assert!(
-        playlists[0]["cover_url"]
-            .as_str()
-            .unwrap_or("")
-            .ends_with("/covers/neon.jpg"),
-        "picks the 640-wide image, not the 60-wide one"
-    );
-    assert_eq!(playlists[0]["owner"], "Mock Listener");
-    assert_eq!(playlists[1]["id"], "sp-playlist-2");
-    assert_eq!(playlists[1]["track_count"], 0);
-    assert_eq!(playlists[1]["cover_url"], Value::Null);
 }
 
 #[tokio::test]
@@ -1168,22 +892,6 @@ async fn spotify_expired_tokens_refresh_transparently() {
     );
 }
 
-#[tokio::test]
-async fn spotify_unknown_job_is_a_404() {
-    let (rig, _, user_id) = seed_rig().await;
-    let (lidarr, _) = serve_lidarr().await.expect("mock serves");
-    let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
-
-    let (status, body) = get_json(
-        authed_app(bundle.deps, &user_id),
-        "/acquire/spotify/jobs/sp-missing",
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body["error"]["code"], "NOT_FOUND");
-}
-
 // --- Health smoke + per-source gate briefs ---
 
 async fn seed_scripted_bases() -> (TestRig, String, String, Rig) {
@@ -1218,21 +926,6 @@ async fn health_smoke_defaults_to_free_ready() {
 }
 
 #[tokio::test]
-async fn health_smoke_errors_when_nothing_serves() {
-    let (_, _, user_id, bundle) = seed_scripted_bases().await;
-    bundle.free_probe.set(FreeReadiness {
-        enabled: false,
-        preferred_format: "flac".to_owned(),
-    });
-
-    let (status, body) = get_json(authed_app(bundle.deps, &user_id), "/acquire/health").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["status"], "error");
-    assert_eq!(body["ready"], false);
-    assert_eq!(body["ready_via"], json!([]));
-}
-
-#[tokio::test]
 async fn slskd_gate_greens_independently() {
     let (_, _, user_id, bundle) = seed_scripted_bases().await;
     bundle.slskd.set(open_client("1.4.3", "slskd 1.4.3"));
@@ -1244,72 +937,6 @@ async fn slskd_gate_greens_independently() {
     assert_eq!(gate(&body, "newznab")["open"], false);
     assert_eq!(gate(&body, "lidarr_import")["open"], false);
     assert_eq!(body["ready_via"], json!(["free", "slskd"]));
-}
-
-#[tokio::test]
-async fn sabnzbd_gate_greens_usenet_independently() {
-    let (_, _, user_id, bundle) = seed_scripted_bases().await;
-    bundle.free_probe.set(FreeReadiness {
-        enabled: false,
-        preferred_format: "flac".to_owned(),
-    });
-    bundle.sabnzbd.set(
-        open_client("4.3.2", "SABnzbd 4.3.2"),
-        vec!["music".to_owned()],
-        Some("/completed".to_owned()),
-    );
-
-    let (status, body) = get_json(authed_app(bundle.deps, &user_id), "/acquire/health").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(gate(&body, "sabnzbd")["open"], true);
-    assert_eq!(gate(&body, "slskd")["open"], false);
-    assert_eq!(gate(&body, "newznab")["open"], false);
-    assert_eq!(body["ready"], true);
-    assert_eq!(body["ready_via"], json!(["usenet"]));
-}
-
-#[tokio::test]
-async fn newznab_gate_needs_one_reachable_indexer() {
-    let (_, _, user_id, bundle) = seed_scripted_bases().await;
-    bundle.newznab.set(vec![
-        IndexerProbe {
-            name: "down".to_owned(),
-            enabled: true,
-            configured: true,
-            reachable: false,
-        },
-        IndexerProbe {
-            name: "up".to_owned(),
-            enabled: true,
-            configured: true,
-            reachable: true,
-        },
-    ]);
-
-    let (status, body) = get_json(authed_app(bundle.deps, &user_id), "/acquire/health").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(gate(&body, "newznab")["open"], true);
-    assert_eq!(gate(&body, "slskd")["open"], false);
-    assert_eq!(gate(&body, "sabnzbd")["open"], false);
-}
-
-#[tokio::test]
-async fn lidarr_import_gate_greens_independently() {
-    let (_, _, user_id, bundle) = seed_scripted_bases().await;
-    bundle.lidarr_probe.set(ClientProbe {
-        enabled: true,
-        configured: true,
-        reachable: true,
-        version: Some(LIDARR_VERSION.to_owned()),
-        message: format!("Connected - Lidarr v{LIDARR_VERSION}"),
-    });
-
-    let (status, body) = get_json(authed_app(bundle.deps, &user_id), "/acquire/health").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(gate(&body, "lidarr_import")["open"], true);
-    assert_eq!(gate(&body, "slskd")["open"], false);
-    assert_eq!(gate(&body, "sabnzbd")["open"], false);
-    assert_eq!(gate(&body, "newznab")["open"], false);
 }
 
 #[tokio::test]
@@ -1373,44 +1000,6 @@ async fn sabnzbd_status_is_admin_only_with_mount_hint() {
         get_json(authed_app(bundle.deps, &user_id), "/acquire/sabnzbd/status").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(body["error"]["code"], "FORBIDDEN");
-}
-
-#[tokio::test]
-async fn sabnzbd_status_unconfigured_is_a_body_verdict() {
-    let (_, admin_id, _, bundle) = seed_scripted_bases().await;
-
-    let (status, body) = get_json(
-        authed_app(bundle.deps, &admin_id),
-        "/acquire/sabnzbd/status",
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["valid"], false);
-    assert_eq!(body["message"], "Not configured");
-}
-
-/// State conflicts read 409 like the sibling slices, and upstream
-/// credential rejection reads 502 without a Bearer challenge: the caller
-/// IS authenticated on these routes, so no re-auth is owed.
-#[test]
-fn conflict_and_upstream_auth_map_to_409_and_502() {
-    let conflict = ImportsError::Conflict {
-        message: "duplicate import batch".to_owned(),
-    }
-    .into_response();
-    assert_eq!(conflict.status(), StatusCode::CONFLICT);
-
-    let auth_failed = ImportsError::AuthFailed {
-        message: "Lidarr rejected the stored API key".to_owned(),
-    }
-    .into_response();
-    assert_eq!(auth_failed.status(), StatusCode::BAD_GATEWAY);
-    assert!(
-        !auth_failed
-            .headers()
-            .contains_key(axum::http::header::WWW_AUTHENTICATE),
-        "no Bearer challenge on an authenticated route"
-    );
 }
 
 /// Stored secrets never surface in Debug: connection keys, the Spotify

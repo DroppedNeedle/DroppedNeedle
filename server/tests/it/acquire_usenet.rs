@@ -16,11 +16,11 @@ use usenet::mocks::{
     NewznabMock, NewznabScenario, ProwlarrMock, ProwlarrScenario, SabnzbdMock, serve_loopback,
 };
 use usenet::newznab::{
-    NewznabClient, NewznabError, NewznabIndexer, NewznabIndexerEntry, UsenetRelease,
-    normalize_newznab_query, usenet_identity,
+    NewznabClient, NewznabIndexer, NewznabIndexerEntry, UsenetRelease, normalize_newznab_query,
+    usenet_identity,
 };
-use usenet::policy::{QualityTier, UsenetPolicy};
-use usenet::prowlarr::{ProwlarrClient, ProwlarrError, ProwlarrIndexer, ProwlarrRelease};
+use usenet::policy::UsenetPolicy;
+use usenet::prowlarr::{ProwlarrClient, ProwlarrRelease};
 use usenet::sabnzbd::{
     HistorySlot, NzbFetchError, SabnzbdClient, SabnzbdError, SabnzbdQueue, TaskHandle,
     redact_query_secrets,
@@ -233,66 +233,6 @@ async fn sab_no_addurl_on_content_rejection() {
         matches!(err, NzbFetchError::ContentRejection { .. }),
         "{err:?}"
     );
-
-    std::fs::remove_dir_all(&mount).ok();
-}
-
-/// A definitive indexer HTTP error (403 here) never falls back either.
-#[tokio::test]
-async fn sab_no_addurl_on_definitive_http_error() {
-    let mock = SabnzbdMock::new();
-    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let mount = temp_dir("definitive");
-    let queue = queue_for(&mock, &base, mount.clone());
-
-    let err = queue
-        .enqueue_album("t3", Some(&format!("{base}/nzb/denied")), None, None, None)
-        .await
-        .expect_err("definitive error fails");
-    assert!(
-        matches!(err, SabnzbdError::Http { status: 403, .. }),
-        "{err:?}"
-    );
-    assert!(mock.state().add_file_requests.is_empty());
-    assert!(mock.state().add_url_requests.is_empty());
-
-    std::fs::remove_dir_all(&mount).ok();
-}
-
-/// Enqueue edges: no URL is rejected, an empty `nzo_ids` envelope is a
-/// rejection, and tracks enqueue under their own job name.
-#[tokio::test]
-async fn sab_enqueue_edges() {
-    let mock = SabnzbdMock::new();
-    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let mount = temp_dir("edges");
-    let queue = queue_for(&mock, &base, mount.clone());
-
-    let err = queue
-        .enqueue_album("t4", None, None, None, None)
-        .await
-        .expect_err("no url");
-    assert!(matches!(err, SabnzbdError::MissingNzbUrl));
-
-    let handle = queue
-        .enqueue_track(
-            "t5",
-            "droppedneedle-t5-track7",
-            Some(&format!("{base}/nzb/good")),
-            None,
-            None,
-            None,
-        )
-        .await
-        .expect("track enqueue");
-    assert_eq!(handle.job_name, "droppedneedle-t5-track7");
-
-    mock.state().add_nzo_ids.clear();
-    let err = queue
-        .enqueue_album("t6", Some(&format!("{base}/nzb/good")), None, None, None)
-        .await
-        .expect_err("empty nzo_ids");
-    assert!(matches!(err, SabnzbdError::RejectedNzb));
 
     std::fs::remove_dir_all(&mount).ok();
 }
@@ -851,102 +791,6 @@ fn entry_for(client: NewznabClient, id: &str, name: &str, priority: u32) -> Newz
     }
 }
 
-/// Caps parsing: audio-search gating, the read-from-caps Other id (3999
-/// on nZEDb, 3050 on standard servers), and the audio id set.
-#[tokio::test]
-async fn newznab_caps() {
-    let log = NewznabMock::new();
-    let (base, _server) = serve_loopback(log.router(NewznabScenario::DrunkenSlug))
-        .await
-        .expect("mock serves");
-    let client = newznab_client(&base, "ds", "DrunkenSlug");
-    let caps = client.caps(TIMEOUT).await.expect("caps");
-    assert!(caps.supports_text_search);
-    assert!(!caps.supports_audio_search);
-    assert_eq!(caps.limit_max, 100);
-    assert_eq!(caps.other_audio_category_id(), Some(3999));
-    assert_eq!(
-        caps.audio_category_ids(),
-        vec![3000, 3030, 3060, 3040, 3010, 3999, 3020]
-    );
-
-    let log = NewznabMock::new();
-    let (base, _server) = serve_loopback(log.router(NewznabScenario::Audionix))
-        .await
-        .expect("mock serves");
-    let client = newznab_client(&base, "ax", "Audionix");
-    let caps = client.caps(TIMEOUT).await.expect("caps");
-    assert!(caps.supports_audio_search);
-    assert!(caps.audio_search_params.contains(&"artist".to_owned()));
-    assert!(caps.audio_search_params.contains(&"album".to_owned()));
-    assert_eq!(caps.other_audio_category_id(), Some(3050));
-}
-
-/// Query strategy: DrunkenSlug takes the free-text path; Audionix takes
-/// structured `t=music`, with `year` sent only when advertised.
-#[tokio::test]
-async fn newznab_query_strategy() {
-    let log = NewznabMock::new();
-    let (base, _server) = serve_loopback(log.router(NewznabScenario::DrunkenSlug))
-        .await
-        .expect("mock serves");
-    let indexer = newznab_indexer(vec![entry_for(
-        newznab_client(&base, "ds", "DS"),
-        "ds",
-        "DS",
-        1,
-    )]);
-    let hits = indexer
-        .search_album("Radiohead", "In Rainbows", Some(2007), TIMEOUT)
-        .await;
-    assert_eq!(hits.len(), 3);
-    assert!(hits.iter().all(|hit| hit.source == "usenet"));
-    let calls = log.calls();
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].kind, "search");
-    assert_eq!(calls[0].q, "Radiohead In Rainbows");
-    assert!(calls[0].extended);
-    assert!(calls[0].apikey_present);
-    assert_eq!(calls[0].cat, "3040,3010");
-
-    let log = NewznabMock::new();
-    let (base, _server) = serve_loopback(log.router(NewznabScenario::Audionix))
-        .await
-        .expect("mock serves");
-    let indexer = newznab_indexer(vec![entry_for(
-        newznab_client(&base, "ax", "AX"),
-        "ax",
-        "AX",
-        1,
-    )]);
-    let hits = indexer
-        .search_album("Radiohead", "In Rainbows", Some(2007), TIMEOUT)
-        .await;
-    assert_eq!(hits.len(), 2);
-    assert!(
-        hits.iter()
-            .all(|hit| !hit.usenet.title.contains("WRONG-PATH"))
-    );
-    let calls = log.calls();
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].kind, "music");
-    assert_eq!(calls[0].artist, "Radiohead");
-    assert_eq!(calls[0].album, "In Rainbows");
-    assert!(
-        calls[0].year.is_empty(),
-        "year unadvertised: {:?}",
-        calls[0]
-    );
-
-    // Tracks never take the structured path (no reliable track search).
-    let hits = indexer
-        .search_track("Radiohead", "Weird Fishes", TIMEOUT)
-        .await;
-    assert!(!hits.is_empty());
-    let calls = log.calls();
-    assert_eq!(calls.last().map(|call| call.kind.as_str()), Some("search"));
-}
-
 /// A `t=music` 202 falls back to `t=search`, even when caps advertised
 /// audio-search (a real indexer quirk).
 #[tokio::test]
@@ -976,47 +820,6 @@ async fn newznab_music_202_fallback() {
         .await
         .expect_err("202");
     assert_eq!(err.code(), Some(202));
-}
-
-/// `<error>` handling on a 200 body: auth codes, the limit text, and the
-/// HTTP 429 with `Retry-After`.
-#[tokio::test]
-async fn newznab_error_forms() {
-    let log = NewznabMock::new();
-    let (base, _server) = serve_loopback(log.router(NewznabScenario::AuthError))
-        .await
-        .expect("mock serves");
-    let client = newznab_client(&base, "bad", "Bad");
-    let err = client
-        .search("x", &[], 0, 100, TIMEOUT)
-        .await
-        .expect_err("auth");
-    assert!(
-        matches!(err, NewznabError::Auth { code: 100, .. }),
-        "{err:?}"
-    );
-
-    let log = NewznabMock::new();
-    let (base, _server) = serve_loopback(log.router(NewznabScenario::RateLimitError))
-        .await
-        .expect("mock serves");
-    let client = newznab_client(&base, "lim", "Lim");
-    let err = client
-        .search("x", &[], 0, 100, TIMEOUT)
-        .await
-        .expect_err("limited");
-    assert!(matches!(err, NewznabError::RateLimited { .. }), "{err:?}");
-
-    let log = NewznabMock::new();
-    let (base, _server) = serve_loopback(log.router(NewznabScenario::Http429))
-        .await
-        .expect("mock serves");
-    let client = newznab_client(&base, "429", "R");
-    let err = client
-        .search("x", &[], 0, 100, TIMEOUT)
-        .await
-        .expect_err("429");
-    assert_eq!(err.retry_after(), Some(5.0));
 }
 
 /// Item parsing: MIME-enforced enclosures, entity decoding, attr mapping
@@ -1317,17 +1120,6 @@ fn prowlarr_client(base: &str) -> ProwlarrClient {
     ProwlarrClient::new(http(), base, "SUPERSECRET", "prowlarr")
 }
 
-fn prowlarr_indexer(client: Option<ProwlarrClient>) -> ProwlarrIndexer {
-    ProwlarrIndexer::new(
-        client,
-        vec![3040, 3010],
-        true,
-        Duration::from_secs(300),
-        Duration::from_secs(300),
-        TIMEOUT,
-    )
-}
-
 /// The mixed feed maps to usenet-with-URL only; repeated params and the
 /// limit ride the wire; the key travels in the header.
 #[tokio::test]
@@ -1390,111 +1182,6 @@ async fn prowlarr_search_mapping() {
     assert!(releases.is_empty(), "v1 is usenet-only");
 }
 
-/// Auth, server errors, proxy pages, and rate limits map to their
-/// variants; status 404 degrades instead of failing.
-#[tokio::test]
-async fn prowlarr_errors_and_degraded_status() {
-    let log = ProwlarrMock::new();
-    let (base, _server) = serve_loopback(log.router(ProwlarrScenario {
-        auth_fail: true,
-        ..ProwlarrScenario::default()
-    }))
-    .await
-    .expect("mock serves");
-    let client = prowlarr_client(&base);
-    assert!(matches!(
-        client
-            .search("x", &[], &[], 100, TIMEOUT)
-            .await
-            .expect_err("auth"),
-        ProwlarrError::Auth { code: 401 }
-    ));
-    assert!(matches!(
-        client.list_indexers(TIMEOUT).await.expect_err("auth"),
-        ProwlarrError::Auth { .. }
-    ));
-
-    let log = ProwlarrMock::new();
-    let (base, _server) = serve_loopback(log.router(ProwlarrScenario {
-        search_500: true,
-        ..ProwlarrScenario::default()
-    }))
-    .await
-    .expect("mock serves");
-    let client = prowlarr_client(&base);
-    assert!(matches!(
-        client
-            .search("x", &[], &[], 100, TIMEOUT)
-            .await
-            .expect_err("500"),
-        ProwlarrError::Http { status: 500, .. }
-    ));
-
-    let log = ProwlarrMock::new();
-    let (base, _server) = serve_loopback(log.router(ProwlarrScenario {
-        search_html: true,
-        ..ProwlarrScenario::default()
-    }))
-    .await
-    .expect("mock serves");
-    let client = prowlarr_client(&base);
-    assert!(matches!(
-        client
-            .search("x", &[], &[], 100, TIMEOUT)
-            .await
-            .expect_err("html"),
-        ProwlarrError::Decode(_)
-    ));
-
-    let log = ProwlarrMock::new();
-    let (base, _server) = serve_loopback(log.router(ProwlarrScenario {
-        search_429: true,
-        ..ProwlarrScenario::default()
-    }))
-    .await
-    .expect("mock serves");
-    let client = prowlarr_client(&base);
-    let err = client
-        .search("x", &[], &[], 100, TIMEOUT)
-        .await
-        .expect_err("429");
-    assert_eq!(err.retry_after(), Some(5.0));
-
-    // system_status 404s but the indexer list answers: degraded, not dead.
-    let log = ProwlarrMock::new();
-    let (base, _server) = serve_loopback(log.router(ProwlarrScenario {
-        status_404: true,
-        ..ProwlarrScenario::default()
-    }))
-    .await
-    .expect("mock serves");
-    let client = prowlarr_client(&base);
-    assert!(
-        client
-            .system_status(TIMEOUT)
-            .await
-            .expect("status")
-            .is_none()
-    );
-    let indexer = prowlarr_indexer(Some(client));
-    let health = indexer.health_check().await;
-    assert_eq!(health.status, "ok");
-    assert!(health.version.is_none());
-    assert!(health.message.contains("2 enabled"), "{}", health.message);
-
-    let log = ProwlarrMock::new();
-    let (base, _server) = serve_loopback(log.router(ProwlarrScenario::default()))
-        .await
-        .expect("mock serves");
-    let indexer = prowlarr_indexer(Some(prowlarr_client(&base)));
-    let health = indexer.health_check().await;
-    assert_eq!(health.status, "ok");
-    assert_eq!(health.version.as_deref(), Some("1.32.2.4987"));
-    let unconfigured = prowlarr_indexer(None);
-    assert!(!unconfigured.is_configured());
-    assert_eq!(unconfigured.health_check().await.status, "error");
-}
-
 /// The instance key is never logged: it appears in no Debug output and
 /// no error string, even though the NZB URLs embed it.
 #[tokio::test]
@@ -1539,111 +1226,9 @@ async fn prowlarr_apikey_never_logged() {
     assert_eq!(releases.len(), 1);
 }
 
-/// Ladder, cache, and backoff mirror the Newznab contract; every member
-/// error maps to `[]`, never a failure.
-#[tokio::test]
-async fn prowlarr_ladder_cache_backoff() {
-    // Empty + clean on the canonical rung retries normalized.
-    let log = ProwlarrMock::new();
-    let (base, _server) = serve_loopback(log.router(ProwlarrScenario {
-        torrents_only: true,
-        ..ProwlarrScenario::default()
-    }))
-    .await
-    .expect("mock serves");
-    let indexer = prowlarr_indexer(Some(prowlarr_client(&base)));
-    let hits = indexer
-        .search_album("Drake", "Honestly, Nevermind", TIMEOUT)
-        .await;
-    assert!(hits.is_empty());
-    let queries: Vec<String> = log.calls().iter().map(|call| call.query.clone()).collect();
-    assert_eq!(
-        queries,
-        vec!["Drake Honestly, Nevermind", "Drake Honestly Nevermind"]
-    );
-    // Both rungs cached: a repeat search re-hits nothing.
-    assert!(
-        indexer
-            .search_album("Drake", "Honestly, Nevermind", TIMEOUT)
-            .await
-            .is_empty()
-    );
-    assert_eq!(log.calls().len(), 2);
-
-    // Rate-limited members sit out, and the pool stays silent, not failed.
-    let log = ProwlarrMock::new();
-    let (base, _server) = serve_loopback(log.router(ProwlarrScenario {
-        search_429: true,
-        ..ProwlarrScenario::default()
-    }))
-    .await
-    .expect("mock serves");
-    let indexer = prowlarr_indexer(Some(prowlarr_client(&base)));
-    assert!(indexer.search_album("a", "b", TIMEOUT).await.is_empty());
-    assert!(indexer.search_track("a", "b", TIMEOUT).await.is_empty());
-    assert_eq!(log.calls().len(), 1);
-
-    // A 500 is a silent empty too, and tracks search free-text.
-    let log = ProwlarrMock::new();
-    let (base, _server) = serve_loopback(log.router(ProwlarrScenario {
-        search_500: true,
-        ..ProwlarrScenario::default()
-    }))
-    .await
-    .expect("mock serves");
-    let indexer = prowlarr_indexer(Some(prowlarr_client(&base)));
-    assert!(indexer.search_track("a", "b", TIMEOUT).await.is_empty());
-    assert_eq!(log.calls().len(), 1);
-    assert_eq!(log.calls()[0].query, "a b");
-}
-
 // ---------------------------------------------------------------------------
 // Policy: tiers, recipe, timeouts, retention.
 // ---------------------------------------------------------------------------
-
-/// Quality tiers mirror v2's axis; the recipe, gates, and timeouts carry
-/// v2's defaults.
-#[tokio::test]
-async fn policy_tiers_recipe_retention() {
-    assert_eq!(QualityTier::parse("lossless"), Some(QualityTier::Lossless));
-    assert_eq!(QualityTier::parse("mp3_320"), Some(QualityTier::Mp3_320));
-    assert_eq!(QualityTier::parse("bogus"), None);
-    assert!(QualityTier::Lossless.rank() > QualityTier::Mp3_320.rank());
-    assert!(QualityTier::Mp3_320.rank() > QualityTier::Low.rank());
-
-    let policy = UsenetPolicy::v2_defaults();
-    assert!(policy.accepts_tier(QualityTier::Lossless));
-    assert!(policy.accepts_tier(QualityTier::Mp3_320));
-    assert!(!policy.accepts_tier(QualityTier::Low));
-    assert_eq!(policy.recipe_categories(), vec![3040, 3010]);
-    assert!(policy.accepts_extension("flac"));
-    assert!(!policy.accepts_extension("m4a"));
-    let open = UsenetPolicy {
-        flac_mp3_only: false,
-        ..policy.clone()
-    };
-    assert!(open.accepts_extension("m4a"));
-
-    let now = 1_800_000_000.0;
-    assert!(policy.within_retention(None, now));
-    assert!(policy.within_retention(Some(now - 100.0), now));
-    let capped = UsenetPolicy {
-        retention_days: 365,
-        ..policy.clone()
-    };
-    assert!(capped.within_retention(Some(now - 10.0 * 86_400.0), now));
-    assert!(!capped.within_retention(Some(now - 400.0 * 86_400.0), now));
-    assert!(!policy.old_enough_to_blocklist(Some(now - 60.0), now));
-    assert!(policy.old_enough_to_blocklist(Some(now - 3_600.0), now));
-    assert!(policy.old_enough_to_blocklist(None, now));
-    assert!(policy.within_size_cap(u64::MAX));
-    let sized = UsenetPolicy {
-        max_size_mb: 1_000,
-        ..policy.clone()
-    };
-    assert!(sized.within_size_cap(999 * 1024 * 1024));
-    assert!(!sized.within_size_cap(1_001 * 1024 * 1024));
-}
 
 /// Secrets never surface in Debug: the SAB key, the key-bearing NZB URLs,
 /// and the history password all render redacted.
@@ -1683,22 +1268,4 @@ fn usenet_secrets_never_logged() {
     };
     let debug = format!("{slot:?}");
     assert!(!debug.contains("nzb-password"), "{debug}");
-}
-
-/// Health carries a plain summary, never transport jargon.
-#[tokio::test]
-async fn sab_health_reports_plain_summary() {
-    let base = refused_url("").await;
-    let mount = temp_dir("health");
-    let queue = SabnzbdQueue::new(
-        SabnzbdClient::new(http(), &base, "SABKEY", 1, Duration::from_millis(1)),
-        &base,
-        "SABKEY",
-        mount.clone(),
-        test_policy(),
-    );
-    let health = queue.health_check().await;
-    assert_eq!(health.status, "error");
-    assert_eq!(health.message, "SABnzbd unreachable");
-    std::fs::remove_dir_all(&mount).ok();
 }

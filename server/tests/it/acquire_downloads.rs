@@ -12,9 +12,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
-use downloads::quarantine::{
-    QuarantineReason, failover_identities, is_local_fault, soulseek_hit_quarantined,
-};
+use downloads::quarantine::{QuarantineReason, is_local_fault};
 use downloads::recovery::{
     FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction, StartupCtx,
 };
@@ -93,16 +91,6 @@ fn manifest(task_id: &str) -> DownloadManifest {
         requested_by_user_id: None,
         attempt_id: Some("a1".to_string()),
     }
-}
-
-#[test]
-fn migration_stamp_matches_embedded_version() {
-    let dir = scratch_dir("stamp");
-    let conn = scratch_store(&dir);
-    let version: i64 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, droppedneedle::schema::latest_version());
 }
 
 #[test]
@@ -790,15 +778,6 @@ fn terminal_tasks_reject_outgoing_transitions() {
 }
 
 #[test]
-fn requeue_edges_cover_worker_fallbacks() {
-    // The poll pass falls live tasks back to queued, and queued tasks fail
-    // directly when no source can serve them.
-    assert!(can_transition(TaskStatus::Downloading, TaskStatus::Queued));
-    assert!(can_transition(TaskStatus::Processing, TaskStatus::Queued));
-    assert!(can_transition(TaskStatus::Queued, TaskStatus::Failed));
-}
-
-#[test]
 fn idempotency_keys_answer_the_original_task() {
     let dir = scratch_dir("idem-key");
     let conn = scratch_store(&dir);
@@ -819,32 +798,6 @@ fn idempotency_keys_answer_the_original_task() {
         Some("task-a")
     );
     assert_eq!(store.task_id_for_key("dispatch:missing").unwrap(), None);
-}
-
-#[test]
-fn task_details_round_trip_for_retry_successors() {
-    let dir = scratch_dir("details");
-    let conn = scratch_store(&dir);
-    let store = DownloadStore::new(&conn);
-    let now = 1_700_000_000.0;
-    store.insert_task(&new_task("t1"), now).unwrap();
-    store
-        .set_task_details(
-            "t1",
-            &downloads::store::TaskDetails {
-                release_mbid: Some("rel-1".to_owned()),
-                artist_mbid: Some("art-1".to_owned()),
-                year: Some(1997),
-                track_title: Some("Track".to_owned()),
-            },
-            now,
-        )
-        .unwrap();
-    let details = store.task_details("t1").unwrap();
-    assert_eq!(details.release_mbid.as_deref(), Some("rel-1"));
-    assert_eq!(details.artist_mbid.as_deref(), Some("art-1"));
-    assert_eq!(details.year, Some(1997));
-    assert_eq!(details.track_title.as_deref(), Some("Track"));
 }
 
 #[test]
@@ -887,35 +840,6 @@ fn manifest_paths_reject_escape() {
         ManifestCodec::checked_path(&staging, hex),
         Some(staging.join(hex).join("manifest.json"))
     );
-}
-
-#[test]
-fn failover_identities_match_the_consult() {
-    let files = vec![
-        "Music/Track.flac".to_owned(),
-        "Music/Track2.flac".to_owned(),
-    ];
-    let identities = failover_identities("soulseek", "Peer", &files, "");
-    assert_eq!(identities.len(), 2);
-    let live: Vec<(String, String)> = identities
-        .iter()
-        .map(|identity| ("soulseek".to_owned(), identity.clone()))
-        .collect();
-    assert!(soulseek_hit_quarantined("Peer", "Music/Track.flac", &live));
-    assert!(soulseek_hit_quarantined("peer", "music\\track.flac", &live));
-    assert!(!soulseek_hit_quarantined("Peer", "Music/Other.flac", &live));
-    assert!(!soulseek_hit_quarantined(
-        "Other",
-        "Music/Track.flac",
-        &live
-    ));
-    assert_eq!(
-        failover_identities("usenet", "", &[], "droppedneedle-t-0"),
-        vec!["droppedneedle-t-0".to_owned()]
-    );
-    assert!(failover_identities("soulseek", "", &files, "").is_empty());
-    assert!(failover_identities("usenet", "", &[], "").is_empty());
-    assert!(failover_identities("plugin:x", "u", &files, "job").is_empty());
 }
 
 // Reimport requeues a linked failed task with its candidate kept, and

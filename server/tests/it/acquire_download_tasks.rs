@@ -1,6 +1,6 @@
-//! Download-task HTTP briefs: the admin reimport behind the request
-//! history card, plus the dispatch seam's journal reads that feed the
-//! request views. Scratch journal only; the worker never runs here.
+//! Download tasks: the admin reimport behind the request history card, the
+//! dispatch seam's journal reads and writes, and the worker's retry pass.
+//! Scratch journal only.
 
 use std::sync::Arc;
 
@@ -12,9 +12,14 @@ use droppedneedle::acquire::db::AcquireDb;
 use droppedneedle::acquire::dispatch::{Journal, UnifiedDispatch};
 use droppedneedle::acquire::downloads::watchdog::RetryPolicy;
 use droppedneedle::acquire::downloads::{
-    http::downloads_router, state::TaskStatus, store::NewTask,
+    http::downloads_router,
+    state::{AttemptState, TaskStatus},
+    store::NewTask,
 };
-use droppedneedle::acquire::requests::dispatch::DownloadDispatch as _;
+use droppedneedle::acquire::requests::dispatch::{
+    DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch as _,
+};
+use droppedneedle::acquire::worker::{DownloadWorker, WorkerConfig};
 use droppedneedle::ids::UuidGenerator;
 use serde_json::Value;
 use tower::ServiceExt as _;
@@ -147,4 +152,148 @@ async fn dispatch_reads_progress_and_guard_from_journal() {
     assert!(!dispatch.reimportable("t-bare").await.unwrap());
     assert!(!dispatch.reimportable("t-live").await.unwrap());
     assert!(!dispatch.reimportable("nope").await.unwrap());
+}
+
+fn dispatch_over(journal: Arc<Journal>) -> UnifiedDispatch {
+    let staging = std::env::temp_dir().join(format!(
+        "dn-dispatch-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    UnifiedDispatch::new(
+        journal,
+        Arc::new(UuidGenerator),
+        staging,
+        Arc::new(RetryPolicy::default),
+    )
+}
+
+async fn task_count(db: &AcquireDb) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM download_tasks")
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+}
+
+// A dispatch whose task insert fails keeps no idempotency key, so the
+// next dispatch with that key starts a real task instead of answering a
+// task id that was never written.
+#[tokio::test]
+async fn failed_dispatch_keeps_no_key() {
+    let db = AcquireDb::scratch().unwrap();
+    let journal = Arc::new(Journal::new(db.clone()));
+    let dispatch = dispatch_over(journal.clone());
+    let request = DispatchRequest {
+        user_id: "u-new".to_owned(),
+        kind: "album".to_owned(),
+        key: "rg-1".to_owned(),
+        artist_name: "artist".to_owned(),
+        title: "album".to_owned(),
+        origin: DispatchOrigin::User,
+        release_mbid: None,
+        idempotency_key: Some("ask-1".to_owned()),
+    };
+    // No such user yet: the task insert fails on its foreign key.
+    assert!(dispatch.dispatch(&request).await.is_err());
+
+    db.add_user("u-new", "New", "user").await.unwrap();
+    let DispatchOutcome::Dispatched { task_id } = dispatch.dispatch(&request).await.unwrap() else {
+        panic!("dispatch starts a task");
+    };
+    let row = journal
+        .run("test.read", move |store| store.get_task(&task_id))
+        .await
+        .unwrap();
+    assert!(row.is_some(), "the answered task exists");
+}
+
+// Cancel marks the live transfer for discard in the same write that
+// cancels the task, so the cleanup pass stops the client transfer.
+#[tokio::test]
+async fn cancel_hands_the_transfer_to_cleanup() {
+    let journal = journal().await;
+    journal
+        .run("test.attempt", |store| {
+            store.insert_attempt(
+                "t-live-a0",
+                "t-live",
+                "usenet",
+                0,
+                "job-1",
+                "{}",
+                AttemptState::Acquiring,
+                now_f64(),
+            )
+        })
+        .await
+        .unwrap();
+    dispatch_over(journal.clone())
+        .cancel_task("t-live")
+        .await
+        .unwrap();
+
+    let (task, attempt) = journal
+        .run("test.read", |store| {
+            Ok((store.get_task("t-live")?, store.get_attempt("t-live-a0")?))
+        })
+        .await
+        .unwrap();
+    assert_eq!(task.unwrap().status, TaskStatus::Cancelled);
+    let attempt = attempt.unwrap();
+    assert_eq!(attempt.state, AttemptState::CleanupPending);
+    assert_eq!(attempt.disposition, "discard");
+}
+
+// An auto-retry whose successor insert fails is tried again on the next
+// pass instead of being suppressed for good.
+#[tokio::test]
+async fn failed_retry_insert_retries_next_pass() {
+    let db = AcquireDb::scratch().unwrap();
+    db.add_user("u-ada", "Ada", "user").await.unwrap();
+    let journal = Arc::new(Journal::new(db.clone()));
+    journal
+        .run("test.seed", |store| {
+            store.insert_task(&task("t-failed"), 1_000.0)?;
+            store.transition_task("t-failed", TaskStatus::Failed, 1_000.0, Some("no peers"))
+        })
+        .await
+        .unwrap();
+    db.write("test.trigger", |tx| {
+        tx.execute_batch(
+            "CREATE TRIGGER fail_retry BEFORE INSERT ON download_tasks \
+             WHEN NEW.retry_count > 0 BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let staging = std::env::temp_dir().join(format!("dn-retry-{}", uuid::Uuid::new_v4().simple()));
+    let worker = DownloadWorker::fixed(
+        journal,
+        Vec::new(),
+        WorkerConfig {
+            staging_root: staging,
+            ..WorkerConfig::default()
+        },
+    );
+
+    worker.run_once(1).await;
+    assert_eq!(
+        task_count(&db).await,
+        1,
+        "the injected failure blocks the insert"
+    );
+
+    db.write("test.untrigger", |tx| {
+        tx.execute_batch("DROP TRIGGER fail_retry;")?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    worker.run_once(2).await;
+    assert_eq!(
+        task_count(&db).await,
+        2,
+        "the next pass spawns the successor"
+    );
 }
