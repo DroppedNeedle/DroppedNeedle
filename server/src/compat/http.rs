@@ -688,14 +688,19 @@ where
                 Some(principal)
             }
             Err(denied) => {
-                let _ = auth::record_auth_denial(
-                    &mut state
-                        .limits
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()),
-                    &ip,
-                    now,
-                );
+                // Code 0 is a server-side failure (the credential store
+                // broke), not a wrong guess: it must not count toward the
+                // caller's lockout.
+                if denied.code != crate::auth::compat_auth::subsonic::GENERIC {
+                    let _ = auth::record_auth_denial(
+                        &mut state
+                            .limits
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                        &ip,
+                        now,
+                    );
+                }
                 return render_denied(
                     &denied,
                     &name,

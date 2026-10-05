@@ -15,6 +15,7 @@ use super::jellyfin::{JellyfinPasswordStore, JellyfinStoreError, JellyfinUser};
 use super::subsonic::{AppSecret, SubsonicPasswordStore, SubsonicStoreError};
 use crate::auth::session::tokens;
 use crate::auth::users::models::UserRecord;
+use crate::auth::users::stores::StoreError;
 use crate::auth::users::{UsersDeps, clock_now};
 use crate::runtime_config::Crypto;
 
@@ -39,13 +40,8 @@ impl ProdCompatPasswords {
         }
     }
 
-    async fn user_row(&self, username_lower: &str) -> Option<UserRecord> {
-        self.users
-            .users
-            .get_by_username(username_lower)
-            .await
-            .ok()
-            .flatten()
+    async fn user_row(&self, username_lower: &str) -> Result<Option<UserRecord>, StoreError> {
+        self.users.users.get_by_username(username_lower).await
     }
 
     fn jellyfin_user(row: &UserRecord) -> JellyfinUser {
@@ -58,9 +54,9 @@ impl ProdCompatPasswords {
         }
     }
 
-    /// Best-effort throttled use stamp. Failures are ignored (a lost stamp
-    /// must never fail auth), and stamps closer than [`TOUCH_THROTTLE`]
-    /// apart are skipped to spare the writer.
+    /// Best-effort throttled use stamp. A failed stamp logs and never fails
+    /// auth; stamps closer than [`TOUCH_THROTTLE`] apart are skipped to
+    /// spare the writer.
     async fn touch(&self, secret: &str, client: Option<&str>) {
         let sha = tokens::hash_token(secret);
         let now = Instant::now();
@@ -79,11 +75,14 @@ impl ProdCompatPasswords {
         if !due {
             return;
         }
-        let _ = self
+        if let Err(error) = self
             .users
             .app_passwords
             .touch(&sha, clock_now(&self.users), client)
-            .await;
+            .await
+        {
+            tracing::warn!(%error, "app-password use stamp failed");
+        }
     }
 }
 
@@ -92,7 +91,11 @@ impl SubsonicPasswordStore for ProdCompatPasswords {
         &self,
         username_lower: &str,
     ) -> Result<Option<String>, SubsonicStoreError> {
-        Ok(self.user_row(username_lower).await.map(|row| row.id))
+        let row = self.user_row(username_lower).await.map_err(|error| {
+            tracing::error!(%error, "compat user lookup failed");
+            SubsonicStoreError
+        })?;
+        Ok(row.map(|row| row.id))
     }
 
     async fn active_secrets(&self, user_id: &str) -> Result<Vec<AppSecret>, SubsonicStoreError> {

@@ -329,7 +329,9 @@ async fn authed<S: JellyfinPasswordStore>(
             principal: Principal::from_user(&user, token.as_deref().unwrap_or("")),
             client,
         }),
-        Err(_) => Err(error(StatusCode::UNAUTHORIZED)),
+        Err(denied) => Err(error(
+            StatusCode::from_u16(denied.status()).unwrap_or(StatusCode::UNAUTHORIZED),
+        )),
     }
 }
 
@@ -508,7 +510,11 @@ where
     .await
     {
         Ok(user) => user,
-        Err(_) => return error(StatusCode::UNAUTHORIZED),
+        Err(denied) => {
+            return error(
+                StatusCode::from_u16(denied.status()).unwrap_or(StatusCode::UNAUTHORIZED),
+            );
+        }
     };
     let facts = SessionFacts {
         id: Uuid::new_v4().simple().to_string(),

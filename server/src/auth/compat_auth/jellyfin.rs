@@ -179,7 +179,13 @@ impl JellyfinDenied {
         }
     }
 
-    /// The wire status (401).
+    /// The credential store failed: 500, never a 401 that would count
+    /// toward the caller's lockout.
+    pub fn unavailable() -> Self {
+        Self { status: 500 }
+    }
+
+    /// The wire status (401, or 500 for a store failure).
     pub fn status(&self) -> u16 {
         self.status
     }
@@ -207,7 +213,7 @@ pub async fn authenticate_by_name<S: JellyfinPasswordStore>(
     let user = store
         .user_for_credentials(username, password)
         .await
-        .map_err(|_| JellyfinDenied::unauthorized())?;
+        .map_err(|_| JellyfinDenied::unavailable())?;
     match user {
         Some(user) => {
             store.note_use(password, client).await;
@@ -232,7 +238,7 @@ pub async fn resolve_token<S: JellyfinPasswordStore>(
     let user = store
         .user_for_token(token)
         .await
-        .map_err(|_| JellyfinDenied::unauthorized())?;
+        .map_err(|_| JellyfinDenied::unavailable())?;
     match user {
         Some(user) => {
             store.note_use(token, None).await;
