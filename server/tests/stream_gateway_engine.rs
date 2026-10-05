@@ -5,11 +5,7 @@
 //! network. Local reads use a per-test scratch dir under the system temp
 //! dir, removed afterwards.
 
-// The standalone copy compiles the whole slice but drives only the engine
-// seam; unused items are covered by the sibling briefs, not dead.
-#[allow(dead_code)]
-#[path = "../src/stream/mod.rs"]
-mod stream;
+use droppedneedle::stream;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

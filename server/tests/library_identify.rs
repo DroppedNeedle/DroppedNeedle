@@ -5,9 +5,7 @@
 //! for the durable adapters; scripted transports stand in for the wire.
 //! Nothing here touches the network or the production database.
 
-#[path = "../src/library/identify/mod.rs"]
-#[allow(dead_code)]
-mod identify;
+use droppedneedle::library::identify;
 
 use std::sync::{Arc, Mutex};
 

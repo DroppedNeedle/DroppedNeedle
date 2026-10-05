@@ -1,6 +1,6 @@
 //! Stage-4 platform slice briefs: covers, version, wrapped.
 //!
-//! The slice modules compile standalone and mount here directly. App wiring
+//! The slice routers mount here directly. App wiring
 //! landed separately (covers/version inside the deny-by-default session
 //! gate, wrapped outside it); the wrapped key gate is pinned byte for byte
 //! below, and E2E covers the wired posture.
@@ -8,8 +8,7 @@
 //! Stage-5 boundary: Fake* ports swap to real providers (art, GitHub,
 //! ListenBrainz); canned values pin handler mapping, not provider data.
 
-#[path = "../src/reads/platform/mod.rs"]
-mod platform;
+use droppedneedle::reads::platform;
 
 use std::collections::HashMap;
 use std::sync::Arc;

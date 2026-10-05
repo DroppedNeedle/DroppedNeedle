@@ -6,8 +6,7 @@
 //! the real [`gateway::content_type_for_extension`] helper, so the table is
 //! exercised on the request path, not copied.
 
-#[path = "../src/stream/routes.rs"]
-mod gateway;
+use droppedneedle::stream::routes as gateway;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

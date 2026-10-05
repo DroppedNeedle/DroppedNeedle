@@ -7,12 +7,7 @@
 //! brief pins one behavior; the dispatch fake stands in for the downloads
 //! slice, which owns durable fetch.
 
-#[path = "../src/acquire/requests/mod.rs"]
-// Partial-view harness: this file exercises a slice of the module, so
-// items it never touches read as dead or unused here (they are live in
-// the wired lib build).
-#[allow(dead_code, unused_imports)]
-mod requests;
+use droppedneedle::acquire::requests;
 
 use axum::{
     Router,

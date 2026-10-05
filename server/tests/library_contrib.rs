@@ -4,9 +4,7 @@
 //! no network, no live provider writes. The seed form is POSTed to
 //! `FakeReleaseEditor`, which stands in for the MusicBrainz release editor.
 
-#[path = "../src/library/contrib/mod.rs"]
-#[allow(dead_code)]
-mod contrib;
+use droppedneedle::library::contrib;
 
 use std::collections::HashMap;
 use std::sync::Arc;

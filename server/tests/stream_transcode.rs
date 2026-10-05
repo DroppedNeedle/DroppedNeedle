@@ -1,15 +1,10 @@
 //! Stage-6 transcode slice briefs: decide policy, ffmpeg argv, leases, cancel.
 //!
-//! The slice module compiles standalone and mounts here directly; no routes
-//! live in this slice, so every brief drives the engine. ffmpeg itself is
+//! No routes live in this slice, so every brief drives the engine. ffmpeg itself is
 //! always scripted through the injected spawner seam — no brief needs a real
 //! binary on `PATH`, and none touches the network.
 
-// The standalone copy compiles the whole engine but drives only the
-// policy seam; the rest is covered by the gateway briefs, not dead.
-#[allow(dead_code)]
-#[path = "../src/stream/transcode.rs"]
-mod transcode;
+use droppedneedle::stream::transcode;
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};

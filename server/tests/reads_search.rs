@@ -12,8 +12,7 @@
 //! Stage-5 boundary: the enrichment fakes swap to real providers; canned
 //! values pin handler mapping, not provider data.
 
-#[path = "../src/reads/search/mod.rs"]
-mod search;
+use droppedneedle::reads::search;
 
 mod common;
 

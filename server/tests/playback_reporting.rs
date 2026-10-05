@@ -6,17 +6,8 @@
 //! with the test-principal layer standing in for the sibling session
 //! middleware (auth resolution only). Loop briefs drive the manual
 //! sleeper: no real waits anywhere.
-//!
-//! Standalone slice: the playback modules compile here through `#[path]`
-//! until the integrator declares them in `lib.rs`, mirroring the stage-4
-//! slice pattern (shared items resolve through the `droppedneedle` crate
-//! name either way).
 
-// The standalone copy compiles the whole slice but drives it through the
-// fakes; unused wiring items are covered by the wired build, not dead.
-#[allow(dead_code)]
-#[path = "../src/playback/mod.rs"]
-mod playback;
+use droppedneedle::playback;
 
 use std::sync::Arc;
 use std::time::Duration;

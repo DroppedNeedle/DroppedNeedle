@@ -1,18 +1,11 @@
 //! Acquisition-flow briefs: wanted → candidate → auto-download, drop
 //! folder → quarantine → resolve, and the sweep/status-sync cadences.
 //!
-//! The flows module is still standalone (the integrator wires it into the
-//! tree), so these briefs include it via `#[path]`, the stage-4 pattern.
 //! Time is a [`ManualClock`](flows::seams::ManualClock) throughout: cadences
 //! assert by advancing the clock, never by sleeping. Databases and staging
 //! dirs are scratch temp paths; no network, no real library.
 
-#[path = "../src/acquire/flows/mod.rs"]
-// Partial-view harness: this file exercises a slice of the module, so
-// items it never touches read as dead or unused here (they are live in
-// the wired lib build).
-#[allow(dead_code, unused_imports)]
-mod flows;
+use droppedneedle::acquire::flows;
 
 use std::path::PathBuf;
 use std::sync::Arc;

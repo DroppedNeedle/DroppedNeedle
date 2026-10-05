@@ -12,13 +12,14 @@
 //!
 //! Wiring: this module is mounted as `reads::library` under `/api/v3`
 //! with [`library_router`], and its paths are registered in the utoipa
-//! document. The `reads_library` integration target still includes it via
-//! `#[path]` for the slice-side unit briefs.
+//! document.
 
 pub mod error;
 pub mod handlers;
 pub mod memory;
 pub mod models;
+#[cfg(test)]
+mod perf_tests;
 pub mod services;
 pub mod sqlite;
 pub mod stores;

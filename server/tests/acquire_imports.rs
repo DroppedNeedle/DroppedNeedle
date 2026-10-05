@@ -7,11 +7,7 @@
 //! in-repo loopback mocks or scripted probes; nothing touches a live
 //! Lidarr, Spotify, slskd, SABnzbd, or indexer.
 
-// The standalone copy compiles the whole slice but drives only this
-// seam; unused wiring items are covered by the wired build, not dead.
-#[allow(dead_code, unused_imports)]
-#[path = "../src/acquire/imports/mod.rs"]
-mod imports;
+use droppedneedle::acquire::imports;
 
 use std::sync::Arc;
 

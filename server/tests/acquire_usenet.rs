@@ -6,11 +6,7 @@
 //! multipart add; Newznab's 202 fallback; Prowlarr's never-logged key).
 //! Transport is real HTTP over `127.0.0.1` only: no live contact, ever.
 
-// The standalone copy compiles the whole slice but drives only the client
-// surface; unused wiring items are covered by the wired build, not dead.
-#[allow(dead_code, unused_imports)]
-#[path = "../src/acquire/usenet/mod.rs"]
-mod usenet;
+use droppedneedle::acquire::usenet;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -9,16 +9,8 @@
 //! (accepted-filenames handles, latest-attempt status, truncated stubs),
 //! and policy briefs (recipe validation/ranking, lossless ladder, query
 //! construction). No live contact ever.
-//!
-//! The slice is included by path so these briefs run ahead of integration
-//! wiring; the integrator replaces this include with the crate path and no
-//! brief changes.
 
-// `dead_code` is allowed here only: the wired crate reads this whole
-// public surface, but the standalone include cannot see that future use.
-#[allow(unused_imports, dead_code)]
-#[path = "../src/acquire/slskd/mod.rs"]
-mod slskd;
+use droppedneedle::acquire::slskd;
 
 use std::path::PathBuf;
 use std::time::Duration;

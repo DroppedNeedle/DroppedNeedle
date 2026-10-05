@@ -5,17 +5,8 @@
 //! manifest-absent restarts come up clean, failover hands work over only
 //! past the lease, and orphan/quarantine sweeps fail closed. Nothing here
 //! touches the real library.
-//!
-//! The slice is not wired into the crate yet, so the briefs include it by
-//! path; the integrator wires `server/src/acquire/downloads/` into the
-//! tree without changing these files.
 
-#[path = "../src/acquire/downloads/mod.rs"]
-// Partial-view harness: this file exercises a slice of the module, so
-// items it never touches read as dead or unused here (they are live in
-// the wired lib build).
-#[allow(dead_code, unused_imports)]
-mod downloads;
+use droppedneedle::acquire::downloads;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -9,8 +9,7 @@
 //! Stage-5 boundary: the in-memory stores swap to SQLite ports; canned rows
 //! pin handler mapping, not storage data.
 
-#[path = "../src/reads/collections/mod.rs"]
-mod collections;
+use droppedneedle::reads::collections;
 
 use std::sync::atomic::Ordering;
 

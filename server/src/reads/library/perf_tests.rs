@@ -9,15 +9,13 @@
 //! endpoints on a seeded 100k catalog. Nothing here touches the network;
 //! every database is a scratch file.
 
-#[path = "../src/reads/library/mod.rs"]
-#[allow(dead_code)]
-mod library;
+use crate::reads::library;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use droppedneedle::db::{DbConfig, DbRuntime, Lane, OpError, fold_text, open_runtime};
-use droppedneedle::schema::{MIGRATOR, apply_migrations, latest_version};
+use crate::db::{DbConfig, DbRuntime, Lane, OpError, fold_text, open_runtime};
+use crate::schema::{MIGRATOR, apply_migrations, latest_version};
 use library::sqlite::{
     ALBUM_COLUMNS, ALBUM_FILTER, ALBUM_JOINS, ARTIST_CREDIT_COUNTS, LibraryDb, STATS_FORMATS,
     STATS_MAIN, SqliteCatalog, TRACK_COLUMNS, TRACK_FILTER, TRACK_JOINS, TRACK_MISS_ORACLE,

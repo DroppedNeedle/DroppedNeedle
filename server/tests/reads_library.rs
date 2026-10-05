@@ -8,8 +8,7 @@
 //! Stage-5 boundary: handler fakes stand in for the SQLite adapters (lyrics
 //! gains provider fetch); canned values pin handler mapping, not data.
 
-#[path = "../src/reads/library/mod.rs"]
-mod library;
+use droppedneedle::reads::library;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

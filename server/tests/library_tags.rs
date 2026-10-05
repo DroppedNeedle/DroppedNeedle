@@ -5,11 +5,7 @@
 //! its fixture into a scratch dir first; the committed files are never
 //! written. Nothing here touches the network.
 
-// The slice compiles standalone for its briefs; the integrator wires
-// `server::library::tags` to this same tree.
-#[path = "../src/library/tags/mod.rs"]
-#[allow(dead_code)]
-mod tags;
+use droppedneedle::library::tags;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

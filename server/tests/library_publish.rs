@@ -7,18 +7,13 @@
 //! survive Apply, and hostile archives never extract. The publisher
 //! writes only under sandbox roots; nothing here touches real media.
 //!
-//! The slice is not wired into the crate yet, so the briefs include it
-//! by path. Tag staging goes through the real tags slice save
+//! Tag staging goes through the real tags slice save
 //! wrapper (stage-8 integration); publish-path briefs plant real
 //! committed fixtures, never fake bytes with audio extensions.
 
-#[path = "../src/library/publish/mod.rs"]
-#[allow(dead_code, unused_imports)]
-mod publish;
+use droppedneedle::library::publish;
 
-#[path = "../src/library/tags/mod.rs"]
-#[allow(dead_code, unused_imports)]
-mod tags;
+use droppedneedle::library::tags;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

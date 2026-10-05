@@ -8,11 +8,7 @@
 //! credential sealing/re-encryption, folder preferences, and the native
 //! route envelope. Nothing here touches a live media server.
 
-// The standalone copy compiles the whole slice but drives only the adapter
-// seam; unused wiring items are covered by the wired build, not dead.
-#[allow(dead_code)]
-#[path = "../src/remotes/mod.rs"]
-mod remotes;
+use droppedneedle::remotes;
 
 use std::sync::Arc;
 
