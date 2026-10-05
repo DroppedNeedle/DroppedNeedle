@@ -23,7 +23,7 @@ use crate::{
     admin::{AdminDb, AdminSetup, quota::reload_overrides},
     app::create_app_with_web,
     auth::{prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup},
-    compat::CompatSetup,
+    compat::{CompatSetup, settings::LiveSettings, setup::CompatDeps},
     db::{BackupService, DbConfig, error::DbError, open_runtime},
     http_client::{HttpClientError, HttpClientFactory},
     ids::UuidGenerator,
@@ -221,14 +221,15 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         contrib_recovered = library_recovery.contrib_recovered,
         "library recovery complete"
     );
-    let compat = CompatSetup::build(
+    let compat = CompatSetup::build(CompatDeps::over_reads(
         auth.users.clone(),
         crypto.clone(),
         media.playback.clone(),
         media.stream.engine.clone(),
         library.clone(),
-        &connect_apps,
-    )
+        &reads,
+        LiveSettings::from_config(config_store.clone()),
+    ))
     .with_trusted_proxies(config.trusted_proxies.clone());
     let admin = AdminSetup::new(
         auth.users.clone(),

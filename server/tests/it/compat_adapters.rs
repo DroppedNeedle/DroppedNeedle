@@ -66,7 +66,8 @@ impl StreamEngine for StubEngine {
 }
 
 fn audio(engine: &StubEngine) -> GatewayAudio<StubEngine> {
-    GatewayAudio::new(Arc::new(engine.clone()), "test-user".to_owned())
+    use droppedneedle::compat::subsonic::AudioBackend as _;
+    GatewayAudio::new(Arc::new(engine.clone())).for_caller("test-user")
 }
 
 fn stream(engine: &StubEngine) -> GatewayStream<StubEngine> {

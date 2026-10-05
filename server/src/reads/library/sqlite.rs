@@ -55,7 +55,7 @@ impl LibraryDb {
         Self::default()
     }
 
-    fn live(&self) -> Option<&SqlitePool> {
+    pub(crate) fn live(&self) -> Option<&SqlitePool> {
         self.inner.as_ref()
     }
 }

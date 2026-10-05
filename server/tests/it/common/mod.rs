@@ -45,6 +45,7 @@ pub fn hooked_state() -> AppState {
     let compat = droppedneedle::compat::CompatSetup::for_tests(
         auth.users.clone(),
         library.clone(),
+        &reads,
         ids.clone(),
     )
     .expect("compat bundle builds");
@@ -93,6 +94,7 @@ pub fn hooked_state_with_compat(subsonic: bool, jellyfin: bool) -> AppState {
     let compat = droppedneedle::compat::CompatSetup::for_tests(
         auth.users.clone(),
         library.clone(),
+        &reads,
         ids.clone(),
     )
     .expect("compat bundle builds")
@@ -142,6 +144,7 @@ pub fn prod_like_state() -> AppState {
     let compat = droppedneedle::compat::CompatSetup::for_tests(
         auth.users.clone(),
         library.clone(),
+        &reads,
         ids.clone(),
     )
     .expect("compat bundle builds");

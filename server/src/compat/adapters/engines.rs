@@ -78,15 +78,24 @@ impl<E> Clone for GatewayAudio<E> {
 }
 
 impl<E> GatewayAudio<E> {
-    /// Wrap the engine; `lease_user` is the fixed lease principal (the
-    /// audio seam carries no caller, so per-user fairness needs a seam
-    /// parameter; see `setup.rs`).
-    pub fn new(engine: Arc<E>, lease_user: String) -> Self {
-        Self { engine, lease_user }
+    /// Wrap the engine. Leases run under `compat:subsonic` until the
+    /// dispatcher scopes the backend to the caller.
+    pub fn new(engine: Arc<E>) -> Self {
+        Self {
+            engine,
+            lease_user: "compat:subsonic".to_owned(),
+        }
     }
 }
 
 impl<E: StreamEngine + 'static> AudioBackend for GatewayAudio<E> {
+    fn for_caller(&self, user_id: &str) -> Self {
+        Self {
+            engine: Arc::clone(&self.engine),
+            lease_user: user_id.to_owned(),
+        }
+    }
+
     async fn audio_facts(&self, file_id: &str) -> Result<Option<AudioFacts>, BackendError> {
         match self
             .engine
@@ -190,22 +199,26 @@ impl<E: StreamEngine + 'static> AudioBackend for GatewayAudio<E> {
 /// Jellyfin stream engine over any stream engine.
 pub struct GatewayStream<E> {
     engine: Arc<E>,
+    lease_user: String,
 }
 
 impl<E> Clone for GatewayStream<E> {
     fn clone(&self) -> Self {
         Self {
             engine: Arc::clone(&self.engine),
+            lease_user: self.lease_user.clone(),
         }
     }
 }
 
 impl<E> GatewayStream<E> {
-    /// Wrap the engine. Jellyfin audio is anonymous, so leases run under
-    /// the fixed `compat:jellyfin` principal (per-user lease fairness
-    /// needs a seam change; see the module docs in `setup.rs`).
+    /// Wrap the engine. Leases run under `compat:jellyfin` until the audio
+    /// routes scope the engine to the authenticated caller.
     pub fn new(engine: Arc<E>) -> Self {
-        Self { engine }
+        Self {
+            engine,
+            lease_user: "compat:jellyfin".to_owned(),
+        }
     }
 
     async fn open_media(
@@ -221,7 +234,7 @@ impl<E> GatewayStream<E> {
             .open(StreamOpen {
                 source: AudioSource::Local,
                 key: file_id.to_owned(),
-                user_id: "compat:jellyfin".to_owned(),
+                user_id: self.lease_user.clone(),
                 params,
             })
             .await
@@ -241,6 +254,13 @@ impl<E> GatewayStream<E> {
 }
 
 impl<E: StreamEngine + 'static> JellyfinStreamEngine for GatewayStream<E> {
+    fn for_caller(&self, user_id: &str) -> Self {
+        Self {
+            engine: Arc::clone(&self.engine),
+            lease_user: user_id.to_owned(),
+        }
+    }
+
     async fn direct(&self, file_id: &str, range: Option<&str>) -> ByteOutcome {
         let media = match self.open_media(file_id, StreamParams::default()).await {
             Ok(media) => media,

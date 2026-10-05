@@ -17,13 +17,15 @@
 //! - Streaming: [`GatewayAudio`](adapters::engines::GatewayAudio) and
 //!   [`GatewayStream`](adapters::engines::GatewayStream) over the
 //!   [`StreamEngine`](crate::stream::routes::StreamEngine). Range slicing
-//!   stays in each protocol layer (byte-identical rules); leases run under
-//!   fixed `compat:subsonic` / `compat:jellyfin` principals until the seams
-//!   carry a caller.
-//! - Library: the in-memory [`MemoryStore`](adapters::empty::MemoryStore)
-//!   (mutations round-trip, catalog reads empty) until the compat store is
-//!   joined to the v3 catalog; Jellyfin reads use the empty
-//!   [`MemoryLibrary`](jellyfin::seams::MemoryLibrary).
+//!   stays in each protocol layer (byte-identical rules); leases count
+//!   against the authenticated caller.
+//! - Library: [`CompatLibrary`](adapters::library::CompatLibrary) over the
+//!   v3 catalog and the shared collections, so playlists, favorites, queues
+//!   and bookmarks are the same rows the web UI uses.
+//!   [`SubsonicStore`](adapters::subsonic_store::SubsonicStore) and
+//!   [`JellyfinLibrary`](adapters::jellyfin_library::JellyfinLibrary) shape
+//!   it for each protocol.
+//! - Settings: [`LiveSettings`](settings::LiveSettings), read per request.
 //!
 //! # Golden format (one spelling)
 //!
@@ -50,6 +52,7 @@
 pub mod adapters;
 pub mod http;
 pub mod jellyfin;
+pub mod settings;
 pub mod setup;
 pub mod shared;
 pub mod subsonic;

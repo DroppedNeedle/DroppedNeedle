@@ -26,6 +26,8 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use uuid::Uuid;
 
+use crate::compat::settings::LiveSettings;
+
 use super::builders::{self, Builder, LIBRARY_INTERNAL_ID};
 use super::models::{
     AuthenticateRequest, BaseItemDtoQueryResult, CreatePlaylistDto, MediaSourceInfo,
@@ -34,8 +36,8 @@ use super::models::{
 };
 use super::params::{self, CiParams, SortKey};
 use super::seams::{
-    ArtistScope, ByteOutcome, DecideInput, IdMap, JellyfinSettings, LibraryRead, PlaybackSessions,
-    Principal, StreamEngine, StreamPlan, TICKS_PER_SECOND, decide, should_scrobble,
+    ArtistScope, ByteOutcome, DecideInput, IdMap, LibraryRead, PlaybackSessions, Principal,
+    StreamEngine, StreamPlan, TICKS_PER_SECOND, decide, should_scrobble,
 };
 
 // ===== State + registration =====
@@ -56,8 +58,8 @@ pub struct JellyfinState<S, L, E, P, I> {
     pub sessions: P,
     /// Opaque id map.
     pub ids: I,
-    /// Connect-apps settings subset.
-    pub settings: JellyfinSettings,
+    /// Connect-apps settings subset, read per request.
+    pub settings: LiveSettings,
     /// Deployment prefix for `TranscodingUrl` (`""` standalone; real base
     /// path when wired, so players stay inside the prefix).
     pub base_path: String,
@@ -73,7 +75,7 @@ impl<S, L, E, P, I> JellyfinState<S, L, E, P, I> {
         engine: E,
         sessions: P,
         ids: I,
-        settings: JellyfinSettings,
+        settings: impl Into<LiveSettings>,
     ) -> Self {
         Self {
             passwords,
@@ -81,7 +83,7 @@ impl<S, L, E, P, I> JellyfinState<S, L, E, P, I> {
             engine,
             sessions,
             ids,
-            settings,
+            settings: settings.into(),
             base_path: String::new(),
             server_id: server_id(),
         }
@@ -337,7 +339,7 @@ async fn authed<S: JellyfinPasswordStore>(
 
 /// The kill-switch gate: disabled → 404 before any handler lookup.
 fn gate<S, L, E, P, I>(state: &JellyfinState<S, L, E, P, I>) -> Option<Response> {
-    if state.settings.enabled {
+    if state.settings.jellyfin().enabled {
         None
     } else {
         Some(error(StatusCode::NOT_FOUND))
@@ -377,12 +379,13 @@ where
     if let Some(denied) = gate(&state) {
         return denied;
     }
+    let settings = state.settings.jellyfin();
     json(
         StatusCode::OK,
         &PublicSystemInfo {
             local_address: local_address(&state, request.headers()),
-            server_name: state.settings.server_name.clone(),
-            version: state.settings.server_version.clone(),
+            server_name: settings.server_name.clone(),
+            version: settings.server_version.clone(),
             product_name: "Jellyfin Server".to_owned(),
             operating_system: String::new(),
             id: server_id(),
@@ -412,12 +415,13 @@ where
     {
         return error(StatusCode::UNAUTHORIZED);
     }
+    let settings = state.settings.jellyfin();
     json(
         StatusCode::OK,
         &SystemInfo {
             local_address: local_address(&state, request.headers()),
-            server_name: state.settings.server_name.clone(),
-            version: state.settings.server_version.clone(),
+            server_name: settings.server_name.clone(),
+            version: settings.server_version.clone(),
             product_name: "Jellyfin Server".to_owned(),
             operating_system: String::new(),
             id: server_id(),
@@ -1724,6 +1728,7 @@ where
     let Some(track) = state.library.track("", internal).await else {
         return error(StatusCode::NOT_FOUND);
     };
+    let settings = state.settings.jellyfin();
     let plan = decide(&DecideInput {
         src_format: track.file_format.as_deref(),
         src_bitrate_kbps: track.bitrate.unwrap_or(0),
@@ -1731,10 +1736,10 @@ where
         ceiling_kbps: max_kbps,
         force_original: force,
         start_seconds,
-        transcoding_enabled: state.settings.transcoding_enabled,
-        server_max_kbps: state.settings.transcode_max_bitrate_kbps,
-        default_format: &state.settings.transcode_default_format,
-        ffmpeg: state.settings.ffmpeg_available,
+        transcoding_enabled: settings.transcoding_enabled,
+        server_max_kbps: settings.transcode_max_bitrate_kbps,
+        default_format: &settings.transcode_default_format,
+        ffmpeg: settings.ffmpeg_available,
     });
     match plan {
         StreamPlan::Direct => outcome_response(&state.engine.direct(internal, range).await),
@@ -1770,9 +1775,13 @@ where
     // holding it across an await would break the `Handler` impl.
     let headers = request.headers().clone();
     let query = request.uri().query().map(str::to_owned);
-    if let Err(denied) = authed(&state.passwords, &headers, query.as_deref()).await {
-        return denied;
-    }
+    let caller = match authed(&state.passwords, &headers, query.as_deref()).await {
+        Ok(caller) => caller,
+        Err(denied) => return denied,
+    };
+    // Leases count against the caller, like the native stream routes.
+    let mut state = state;
+    state.engine = state.engine.for_caller(&caller.principal.id);
     if tail == "universal" {
         return universal(&state, &headers, query.as_deref(), &item_id).await;
     }
@@ -1976,6 +1985,7 @@ where
     let max_kbps = max_bps
         .filter(|b| *b > 0)
         .map(|b| (b as f64 / 1000.0).round() as u32);
+    let settings = state.settings.jellyfin();
     let will_transcode = matches!(
         decide(&DecideInput {
             src_format: track.file_format.as_deref(),
@@ -1984,10 +1994,10 @@ where
             ceiling_kbps: max_kbps,
             force_original: false,
             start_seconds: 0.0,
-            transcoding_enabled: state.settings.transcoding_enabled,
-            server_max_kbps: state.settings.transcode_max_bitrate_kbps,
-            default_format: &state.settings.transcode_default_format,
-            ffmpeg: state.settings.ffmpeg_available,
+            transcoding_enabled: settings.transcoding_enabled,
+            server_max_kbps: settings.transcode_max_bitrate_kbps,
+            default_format: &settings.transcode_default_format,
+            ffmpeg: settings.ffmpeg_available,
         }),
         StreamPlan::Transcode { .. }
     );
@@ -2013,7 +2023,7 @@ where
         run_time_ticks: builders::ticks(track.duration_seconds),
         supports_direct_play: true,
         supports_direct_stream: true,
-        supports_transcoding: state.settings.transcoding_enabled && state.settings.ffmpeg_available,
+        supports_transcoding: settings.transcoding_enabled && settings.ffmpeg_available,
         default_audio_stream_index: 0,
         media_streams: vec![builders::media_stream(&track)],
         name: None,
@@ -2034,7 +2044,7 @@ where
         gen_pts_input: false,
     };
     if will_transcode {
-        let out = state.settings.transcode_default_format.clone();
+        let out = settings.transcode_default_format.clone();
         // Root-relative yet inside the deployment prefix: players resolve
         // against the advertised origin, so a bare path would escape the
         // base path under non-empty BASE_PATH deployments (v2 `_playback_info`).

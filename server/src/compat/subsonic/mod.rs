@@ -493,12 +493,18 @@ pub async fn dispatch_with<V: Verifier, S: Store, B: AudioBackend>(
                 .ok_or_else(|| SubsonicError::code_only(PARAM_MISSING))?;
             Some(verifier.verify(&credentials).await?)
         };
+        let scoped = principal
+            .as_ref()
+            .map(|principal| store.for_caller(principal.user_id()));
+        let scoped_audio = principal
+            .as_ref()
+            .map(|principal| audio.for_caller(principal.user_id()));
         let ctx = Ctx {
             endpoint_name: name.clone(),
             params: request.params.clone(),
             principal,
-            store,
-            audio,
+            store: scoped.as_ref().unwrap_or(store),
+            audio: scoped_audio.as_ref().unwrap_or(audio),
             settings,
             format,
             callback: callback.clone(),

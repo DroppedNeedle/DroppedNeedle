@@ -820,6 +820,12 @@ pub struct ByteOutcome {
 /// engine (range-capable file streams, ffmpeg pipe, concurrency leases with
 /// 429 + `Retry-After: 1`); the router only maps outcomes to responses.
 pub trait StreamEngine: Clone + Send + Sync + 'static {
+    /// The engine scoped to one authenticated caller, so stream leases
+    /// count against that user. Engines without leases return themselves.
+    fn for_caller(&self, _user_id: &str) -> Self {
+        self.clone()
+    }
+
     /// Direct bytes with range support (200/206/416 contract).
     fn direct(
         &self,

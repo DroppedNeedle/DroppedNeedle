@@ -26,6 +26,7 @@ use axum::routing::get;
 use crate::auth::compat_auth::jellyfin::{JellyfinPasswordStore, JellyfinRequest, extract_token};
 use crate::auth::session::middleware::TrustedProxies;
 use crate::client_ip::ClientIp;
+use crate::compat::settings::LiveSettings;
 use crate::compat::shared::{auth, cors, path_case, ratelimit, redact};
 use crate::compat::subsonic::auth::Principal;
 use crate::compat::subsonic::error::SubsonicError;
@@ -209,20 +210,20 @@ pub struct CompatLimits {
     pub started: Arc<Instant>,
     /// Token → user lookup for Jellyfin principal buckets.
     pub labels: Arc<dyn LabelLookup>,
-    /// Server name/version for Subsonic limit envelopes.
-    pub settings: Settings,
+    /// Server name/version for Subsonic limit envelopes, read per request.
+    pub settings: LiveSettings,
     /// Peers whose `X-Forwarded-For` names the client; loopback by default.
     pub trusted_proxies: TrustedProxies,
 }
 
 impl CompatLimits {
     /// Wrap the buckets, the label lookup, and the settings.
-    pub fn new(labels: Arc<dyn LabelLookup>, settings: Settings) -> Self {
+    pub fn new(labels: Arc<dyn LabelLookup>, settings: impl Into<LiveSettings>) -> Self {
         Self {
             limits: Arc::new(Mutex::new(ratelimit::CompatRateLimits::new())),
             started: Arc::new(Instant::now()),
             labels,
-            settings,
+            settings: settings.into(),
             trusted_proxies: TrustedProxies::default(),
         }
     }
@@ -357,11 +358,21 @@ pub async fn limits_layer(
     let now = state.now();
     let raw_query = request.uri().query().map(str::to_owned);
     if let Some(retry_after) = auth::auth_locked_out(&mut state.lock(), &ip, now) {
-        return limit_reject(&path, raw_query.as_deref(), retry_after, &state.settings);
+        return limit_reject(
+            &path,
+            raw_query.as_deref(),
+            retry_after,
+            &state.settings.subsonic(),
+        );
     }
     if !media {
         if let Some(retry_after) = state.lock().public_retry_after(&ip, now) {
-            return limit_reject(&path, raw_query.as_deref(), retry_after, &state.settings);
+            return limit_reject(
+                &path,
+                raw_query.as_deref(),
+                retry_after,
+                &state.settings.subsonic(),
+            );
         }
         if path.to_lowercase().starts_with("/jellyfin")
             && !auth::jellyfin_is_anonymous(&method, &path)
@@ -374,7 +385,12 @@ pub async fn limits_layer(
                 .lock()
                 .principal_retry_after(&principal, mutation, now)
             {
-                return limit_reject(&path, raw_query.as_deref(), retry_after, &state.settings);
+                return limit_reject(
+                    &path,
+                    raw_query.as_deref(),
+                    retry_after,
+                    &state.settings.subsonic(),
+                );
             }
         }
     }
@@ -448,8 +464,9 @@ pub struct SubsonicState<V, S, B> {
     pub store: S,
     /// Audio over the stream engine.
     pub audio: B,
-    /// Server settings (kill switch, names, transcode policy).
-    pub settings: Settings,
+    /// Server settings (kill switch, names, transcode policy), read per
+    /// request.
+    pub settings: LiveSettings,
     /// Shared buckets (same handle as the limits layer).
     pub limits: Arc<Mutex<ratelimit::CompatRateLimits>>,
     /// Clock origin for bucket timestamps.
@@ -462,7 +479,7 @@ impl<V, S, B> SubsonicState<V, S, B> {
         verifier: V,
         store: S,
         audio: B,
-        settings: Settings,
+        settings: impl Into<LiveSettings>,
         limits: Arc<Mutex<ratelimit::CompatRateLimits>>,
         started: Arc<Instant>,
     ) -> Self {
@@ -470,7 +487,7 @@ impl<V, S, B> SubsonicState<V, S, B> {
             verifier,
             store,
             audio,
-            settings,
+            settings: settings.into(),
             limits,
             started,
         }
@@ -511,14 +528,15 @@ where
     B: AudioBackend,
 {
     let (format, callback) = sniff_format(request.uri().query());
+    let settings = state.settings.subsonic();
     rendered_response(
         &render_error(
             0,
             "Unknown method",
             format,
             callback.as_deref(),
-            &state.settings.server_name,
-            &state.settings.server_version,
+            &settings.server_name,
+            &settings.server_version,
         ),
         false,
     )
@@ -563,7 +581,7 @@ where
     let (parts, body) = request.into_parts();
     let method = parts.method.to_string();
     let (format, callback) = sniff_format(raw_query.as_deref());
-    let settings = &state.settings;
+    let settings = &state.settings.subsonic();
     let envelope = |code: u8, message: &str| {
         rendered_response(
             &render_error(

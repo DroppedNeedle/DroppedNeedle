@@ -1,18 +1,14 @@
 //! Compat bundle: production seam bindings plus the mounted routers.
 //!
 //! [`CompatSetup`] is the one `AppState` field compat adds. It binds auth
-//! to the app-password store ([`ProdCompatPasswords`](crate::auth::compat_auth::prod::ProdCompatPasswords)),
-//! playback to the reporting services, and streaming to the stream engine;
-//! the library store is the in-memory [`MemoryStore`] until it is joined to
-//! the v3 catalog (see its docs). Both routers mount outside the `/api`
-//! session gate with the shared layers (case, CORS, limits) and kill
-//! switches default off.
+//! to the app-password store ([`ProdCompatPasswords`]), the library to the
+//! v3 catalog and the shared collections ([`CompatLibrary`]), queues and
+//! bookmarks to SQLite, playback to the reporting services and streaming to
+//! the stream engine. Settings (kill switches, names, transcode policy)
+//! are read per request ([`LiveSettings`]). Both routers mount outside the
+//! `/api` session gate with the shared layers (case, CORS, limits).
 //!
-//! Lease principals: Subsonic media is always authed but the audio seam
-//! carries no caller, so leases run under the fixed `compat:subsonic`
-//! principal; Jellyfin audio (anonymous by design) runs under
-//! `compat:jellyfin`. Per-user lease fairness needs a seam parameter and
-//! is a recorded follow-up.
+//! Stream leases count against the authenticated caller on both protocols.
 
 use std::sync::Arc;
 
@@ -21,20 +17,21 @@ use axum::middleware::from_fn_with_state;
 
 use crate::auth::compat_auth::prod::ProdCompatPasswords;
 use crate::auth::users::UsersDeps;
-use crate::compat::adapters::empty::MemoryStore;
 use crate::compat::adapters::engines::{GatewayAudio, GatewayStream};
+use crate::compat::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary};
+use crate::compat::adapters::library::CompatLibrary;
 use crate::compat::adapters::playback::CompatPlayback;
 use crate::compat::adapters::principal::SubsonicVerifier;
 use crate::compat::adapters::queues::CompatQueues;
+use crate::compat::adapters::subsonic_store::SubsonicStore;
 use crate::compat::http::{CompatLimits, SubsonicState, cors_layer, limits_layer, subsonic_router};
-use crate::compat::jellyfin::seams::{JellyfinSettings, MemoryIds, MemoryLibrary};
 use crate::compat::jellyfin::{JellyfinState, router as jellyfin_router};
-use crate::compat::subsonic::Settings as SubsonicSettings;
+use crate::compat::settings::LiveSettings;
 use crate::library::wiring::LibrarySetup;
 use crate::media::MediaEngine;
 use crate::playback::services::PlaybackDeps;
+use crate::reads::ReadsSetup;
 use crate::runtime_config::Crypto;
-use crate::runtime_config::sections::{AudioFormat, ConnectApps};
 
 /// Subsonic verifier over the app-password store.
 pub type CompatVerifier = SubsonicVerifier<ProdCompatPasswords, UsersDeps>;
@@ -45,81 +42,100 @@ pub type CompatAudio = GatewayAudio<MediaEngine>;
 /// Wired Jellyfin router state.
 pub type CompatJellyfinState = crate::compat::jellyfin::JellyfinState<
     ProdCompatPasswords,
-    MemoryLibrary,
+    JellyfinLibrary,
     GatewayStream<MediaEngine>,
     CompatPlayback,
-    MemoryIds,
+    CatalogIds,
 >;
+
+/// What the compat bundle is built from.
+pub struct CompatDeps {
+    /// Users and avatars.
+    pub users: UsersDeps,
+    /// Key for the app-password store.
+    pub crypto: Arc<Crypto>,
+    /// Playback reporting.
+    pub playback: PlaybackDeps,
+    /// The stream engine the native routes use.
+    pub engine: Arc<MediaEngine>,
+    /// Scan status and triggers.
+    pub scan: LibrarySetup,
+    /// Catalog, collections, lyrics and covers.
+    pub library: CompatLibrary,
+    /// Saved queues and bookmarks.
+    pub queues: CompatQueues,
+    /// Settings source.
+    pub settings: LiveSettings,
+}
+
+impl CompatDeps {
+    /// Deps over the native reads bundle, so compat shares its catalog and
+    /// collections.
+    pub fn over_reads(
+        users: UsersDeps,
+        crypto: Arc<Crypto>,
+        playback: PlaybackDeps,
+        engine: Arc<MediaEngine>,
+        scan: LibrarySetup,
+        reads: &ReadsSetup,
+        settings: LiveSettings,
+    ) -> Self {
+        Self {
+            users,
+            crypto,
+            playback,
+            engine,
+            scan,
+            library: CompatLibrary::from_reads(reads),
+            queues: CompatQueues::new(reads.collections.db.clone()),
+            settings,
+        }
+    }
+}
 
 /// Everything `create_app` needs to mount the compat routers.
 #[derive(Clone)]
 pub struct CompatSetup {
     verifier: CompatVerifier,
-    store: MemoryStore,
+    store: SubsonicStore,
     audio: CompatAudio,
     jellyfin: CompatJellyfinState,
-    subsonic_settings: SubsonicSettings,
+    settings: LiveSettings,
     limits: CompatLimits,
     router: Router,
 }
 
 impl CompatSetup {
     /// Bind the production seams.
-    pub fn build(
-        users: UsersDeps,
-        crypto: Arc<Crypto>,
-        playback_deps: PlaybackDeps,
-        engine: Arc<MediaEngine>,
-        scan: LibrarySetup,
-        connect_apps: &ConnectApps,
-    ) -> Self {
-        let passwords = ProdCompatPasswords::new(users.clone(), crypto);
-        let playback = CompatPlayback::new(playback_deps);
-        let store = MemoryStore::new(CompatQueues::new(), playback.clone(), users.clone(), scan);
-        let subsonic_settings = SubsonicSettings {
-            enabled: connect_apps.subsonic_enabled,
-            server_name: connect_apps.advertise_server_name.clone(),
-            server_version: connect_apps.advertise_server_version.clone(),
-            transcoding_enabled: connect_apps.transcoding_enabled,
-            transcode_default_format: match connect_apps.transcode_default_format {
-                AudioFormat::Opus => "opus".to_owned(),
-                AudioFormat::Mp3 | AudioFormat::Flac => "mp3".to_owned(),
-            },
-            transcode_max_bitrate_kbps: connect_apps.transcode_max_bitrate_kbps,
-            ffmpeg_available: crate::stream::transcode::ffmpeg_available(),
-            base_url: String::new(),
-        };
+    pub fn build(deps: CompatDeps) -> Self {
+        let passwords = ProdCompatPasswords::new(deps.users.clone(), deps.crypto);
+        let playback = CompatPlayback::new(deps.playback);
+        let store = SubsonicStore::new(
+            deps.library.clone(),
+            deps.queues,
+            playback.clone(),
+            deps.users.clone(),
+            deps.scan,
+        );
         let jellyfin = JellyfinState::new(
             passwords.clone(),
-            MemoryLibrary::new(),
-            GatewayStream::new(Arc::clone(&engine)),
+            JellyfinLibrary::new(deps.library.clone()),
+            GatewayStream::new(Arc::clone(&deps.engine)),
             playback,
-            MemoryIds::new(),
-            JellyfinSettings {
-                enabled: connect_apps.jellyfin_enabled,
-                server_name: connect_apps.advertise_server_name.clone(),
-                server_version: connect_apps.advertise_server_version.clone(),
-                transcoding_enabled: connect_apps.transcoding_enabled,
-                transcode_max_bitrate_kbps: connect_apps.transcode_max_bitrate_kbps.clamp(32, 1411)
-                    as u32,
-                transcode_default_format: match connect_apps.transcode_default_format {
-                    AudioFormat::Opus => "opus".to_owned(),
-                    AudioFormat::Mp3 | AudioFormat::Flac => "mp3".to_owned(),
-                },
-                ffmpeg_available: crate::stream::transcode::ffmpeg_available(),
-            },
+            CatalogIds::new(deps.library),
+            deps.settings.clone(),
         );
-        let verifier = SubsonicVerifier::new(passwords.clone(), users);
+        let verifier = SubsonicVerifier::new(passwords.clone(), deps.users);
         let limits = CompatLimits::new(
-            Arc::new(crate::compat::http::StoreLabels::new(passwords.clone())),
-            subsonic_settings.clone(),
+            Arc::new(crate::compat::http::StoreLabels::new(passwords)),
+            deps.settings.clone(),
         );
-        let audio = CompatAudio::new(engine, "compat:subsonic".to_owned());
+        let audio = CompatAudio::new(deps.engine);
         let router = Self::assemble(
             &verifier,
             &store,
             &audio,
-            &subsonic_settings,
+            &deps.settings,
             &jellyfin,
             &limits,
         );
@@ -128,23 +144,25 @@ impl CompatSetup {
             store,
             audio,
             jellyfin,
-            subsonic_settings,
+            settings: deps.settings,
             limits,
             router,
         }
     }
 
     /// Minimal bundle for unit-style app tests: real seam types, an unused
-    /// engine over an empty root, kill switches off. Tests that serve
-    /// compat use [`CompatSetup::with_enabled`] plus fixture routers.
+    /// engine over an empty root, both protocols off.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(
         users: UsersDeps,
         scan: LibrarySetup,
+        reads: &ReadsSetup,
         ids: Arc<dyn crate::ids::IdGenerator>,
     ) -> Result<Self, String> {
         use std::path::PathBuf;
 
+        use crate::compat::jellyfin::seams::JellyfinSettings;
+        use crate::compat::subsonic::Settings;
         use crate::playback::fakes::{FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks};
         use crate::playback::ports::SystemClock;
         use crate::playback::reports::ReportQueue;
@@ -180,7 +198,7 @@ impl CompatSetup {
             TranscodeSettings::default(),
             false,
         ));
-        let playback_deps = PlaybackDeps {
+        let playback = PlaybackDeps {
             catalog: Arc::new(FakeCatalog::with_tracks(Vec::new())),
             sinks: Arc::new(FakeSinks::unlinked()),
             remotes: Arc::new(ReportQueue::detached()),
@@ -194,26 +212,32 @@ impl CompatSetup {
             clock: Arc::new(SystemClock),
             ids,
         };
-        Ok(Self::build(
+        Ok(Self::build(CompatDeps::over_reads(
             users,
             crypto,
-            playback_deps,
+            playback,
             engine,
             scan,
-            &ConnectApps::default(),
-        ))
+            reads,
+            LiveSettings::fixed(Settings::default(), JellyfinSettings::default()),
+        )))
     }
 
-    /// Enable one or both protocols (wiring tests; production reads config).
+    /// Enable one or both protocols with fixed settings (wiring tests;
+    /// production reads the config per request).
     pub fn with_enabled(mut self, subsonic: bool, jellyfin: bool) -> Self {
-        self.subsonic_settings.enabled = subsonic;
-        self.jellyfin.settings.enabled = jellyfin;
-        self.limits.settings = self.subsonic_settings.clone();
+        let mut subsonic_settings = self.settings.subsonic();
+        subsonic_settings.enabled = subsonic;
+        let mut jellyfin_settings = self.settings.jellyfin();
+        jellyfin_settings.enabled = jellyfin;
+        self.settings = LiveSettings::fixed(subsonic_settings, jellyfin_settings);
+        self.jellyfin.settings = self.settings.clone();
+        self.limits.settings = self.settings.clone();
         self.router = Self::assemble(
             &self.verifier,
             &self.store,
             &self.audio,
-            &self.subsonic_settings,
+            &self.settings,
             &self.jellyfin,
             &self.limits,
         );
@@ -232,11 +256,23 @@ impl CompatSetup {
             &self.verifier,
             &self.store,
             &self.audio,
-            &self.subsonic_settings,
+            &self.settings,
             &self.jellyfin,
             &self.limits,
         );
         self
+    }
+
+    /// The bound Subsonic store, for tests that dispatch directly.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn subsonic_store(&self) -> SubsonicStore {
+        self.store.clone()
+    }
+
+    /// The bound Jellyfin state, for tests that read the library seam.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn jellyfin_state(&self) -> CompatJellyfinState {
+        self.jellyfin.clone()
     }
 
     /// The mounted compat routers with the shared layers, ready to merge
@@ -249,9 +285,9 @@ impl CompatSetup {
 
     fn assemble(
         verifier: &CompatVerifier,
-        store: &MemoryStore,
+        store: &SubsonicStore,
         audio: &CompatAudio,
-        subsonic_settings: &SubsonicSettings,
+        settings: &LiveSettings,
         jellyfin: &CompatJellyfinState,
         limits: &CompatLimits,
     ) -> Router {
@@ -259,7 +295,7 @@ impl CompatSetup {
             verifier.clone(),
             store.clone(),
             audio.clone(),
-            subsonic_settings.clone(),
+            settings.clone(),
             limits.limits.clone(),
             limits.started.clone(),
         ));

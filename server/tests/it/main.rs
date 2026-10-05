@@ -21,6 +21,7 @@ mod auth_stores;
 mod auth_users;
 mod boot;
 mod compat_adapters;
+mod compat_catalog;
 mod compat_jellyfin;
 mod compat_journeys;
 mod compat_shared;

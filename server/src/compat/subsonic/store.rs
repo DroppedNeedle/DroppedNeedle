@@ -203,6 +203,13 @@ pub trait Store: Clone + Send + Sync {
     /// Storage error; surfaced as code 0 (generic).
     type Error: std::fmt::Display + Send;
 
+    /// The store scoped to one authenticated caller, so catalog reads can
+    /// carry the caller's starred dates and play counts. Stores without
+    /// per-caller state return themselves.
+    fn for_caller(&self, _user_id: &str) -> Self {
+        self.clone()
+    }
+
     /// Artists page, optional match query (None = match-all).
     fn get_artists(
         &self,

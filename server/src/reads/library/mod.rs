@@ -20,6 +20,7 @@ pub mod memory;
 pub mod models;
 #[cfg(test)]
 mod perf_tests;
+pub mod player;
 pub mod services;
 pub mod sqlite;
 pub mod stores;

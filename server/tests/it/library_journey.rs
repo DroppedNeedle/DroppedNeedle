@@ -203,12 +203,15 @@ impl Lib {
         )
         .expect("acquire bundle builds");
         let compat = droppedneedle::compat::CompatSetup::build(
-            auth.users.clone(),
-            Arc::clone(&self.crypto),
-            media.playback.clone(),
-            media.stream.engine.clone(),
-            self.library.clone(),
-            &connect_apps,
+            droppedneedle::compat::setup::CompatDeps::over_reads(
+                auth.users.clone(),
+                Arc::clone(&self.crypto),
+                media.playback.clone(),
+                media.stream.engine.clone(),
+                self.library.clone(),
+                &reads,
+                droppedneedle::compat::settings::LiveSettings::from_config(Arc::clone(&self.store)),
+            ),
         );
         let providers = Arc::new(droppedneedle::providers::Providers::with_memory_cache());
         let admin = droppedneedle::admin::AdminSetup::for_tests(

@@ -94,6 +94,8 @@ pub trait ApprovalSeedSink: Send + Sync {
 /// and hand it to the service.
 #[derive(Clone)]
 pub struct CollectionsState {
+    /// The database the stores use (also lent to the compat queues).
+    pub db: CollectionsDb,
     /// The SQLite stores.
     pub stores: Stores,
     /// Acquire-owned pending approvals, when wired.
@@ -107,6 +109,7 @@ impl CollectionsState {
     pub fn new(db: CollectionsDb) -> Self {
         Self {
             stores: Stores::new(&db),
+            db,
             acquire_approvals: None,
             approval_seeds: None,
         }

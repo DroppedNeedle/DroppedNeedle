@@ -337,6 +337,12 @@ impl std::error::Error for BackendError {}
 /// trait: resolve plugin refs inside `audio_facts`/`read_range` so a
 /// local miss still serves when a plugin claims the track.
 pub trait AudioBackend: Clone + Send + Sync {
+    /// The backend scoped to one authenticated caller, so stream leases
+    /// count against that user. Backends without leases return themselves.
+    fn for_caller(&self, _user_id: &str) -> Self {
+        self.clone()
+    }
+
     /// Facts for a file id, or None when nothing (local or plugin)
     /// can serve the track.
     fn audio_facts(
