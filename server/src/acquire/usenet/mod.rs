@@ -25,4 +25,5 @@ pub mod newznab;
 pub mod policy;
 pub mod prowlarr;
 pub mod sabnzbd;
+pub mod sabnzbd_models;
 pub mod xml;

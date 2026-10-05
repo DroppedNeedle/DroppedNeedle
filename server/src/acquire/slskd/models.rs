@@ -73,23 +73,73 @@ pub struct SlskdEnqueueResponse {
 /// timestamps (v2 #131/#253): slskd appends one record per attempt per file,
 /// so recency-ordering records needs these. Absent on some slskd versions
 /// (v2 PR #222); left `None` there.
+/// `id` and `filename` are required: a record without them fails decoding.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "camelCase")]
 pub struct SlskdTransfer {
     pub id: String,
+    #[serde(default)]
     pub username: String,
     pub filename: String,
+    #[serde(default)]
     pub size: i64,
+    #[serde(default)]
     pub bytes_transferred: i64,
+    #[serde(default)]
     pub bytes_remaining: i64,
+    #[serde(default)]
     pub percent_complete: f64,
+    #[serde(default)]
     pub average_speed: f64,
+    #[serde(default)]
     pub state: String,
+    #[serde(default)]
     pub direction: String,
+    #[serde(default)]
     pub place_in_queue: Option<i64>,
+    #[serde(default)]
     pub exception: Option<String>,
+    #[serde(default)]
     pub requested_at: Option<String>,
+    #[serde(default)]
     pub started_at: Option<String>,
+}
+
+/// One directory of a peer's transfers.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SlskdTransferDirectory {
+    pub directory: String,
+    pub files: Vec<SlskdTransfer>,
+}
+
+/// One peer's transfers, grouped by directory (GET
+/// /api/v0/transfers/downloads/{username}, and each element of GET
+/// /api/v0/transfers/downloads).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlskdUserTransfers {
+    pub username: String,
+    #[serde(default)]
+    pub directories: Vec<SlskdTransferDirectory>,
+}
+
+impl SlskdUserTransfers {
+    /// Every transfer, each carrying the peer's username.
+    #[must_use]
+    pub fn into_transfers(self) -> Vec<SlskdTransfer> {
+        let username = self.username;
+        self.directories
+            .into_iter()
+            .flat_map(|directory| directory.files)
+            .map(|mut transfer| {
+                if transfer.username.is_empty() {
+                    transfer.username.clone_from(&username);
+                }
+                transfer
+            })
+            .collect()
+    }
 }
 
 /// `directories` block of GET /api/v0/options: where slskd saves files

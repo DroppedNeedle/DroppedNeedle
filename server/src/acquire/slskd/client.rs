@@ -16,7 +16,8 @@ use serde_json::{Map, Value};
 use super::error::SlskdError;
 use super::http::{HttpFault, HttpReply, SlskdHttp};
 use super::models::{
-    SlskdEnqueueResponse, SlskdOptions, SlskdSearchResponse, SlskdTransfer, SlskdUserSearchResponse,
+    SlskdEnqueueResponse, SlskdOptions, SlskdSearchResponse, SlskdTransfer,
+    SlskdUserSearchResponse, SlskdUserTransfers,
 };
 
 /// How many times a discrete call retries a 429 before surfacing it.
@@ -123,8 +124,8 @@ impl<T: SlskdHttp> SlskdClient<T> {
             return Ok(Vec::new());
         }
         Self::check(&reply)?;
-        let payload: Value = Self::decode(&reply)?;
-        Ok(flatten_transfers(&payload))
+        let payload: SlskdUserTransfers = Self::decode(&reply)?;
+        Ok(payload.into_transfers())
     }
 
     /// GET /api/v0/transfers/downloads (every peer), username preserved per
@@ -139,23 +140,11 @@ impl<T: SlskdHttp> SlskdClient<T> {
             return Ok(Vec::new());
         }
         Self::check(&reply)?;
-        let payload: Value = Self::decode(&reply)?;
-        let mut out = Vec::new();
-        if let Value::Array(blocks) = &payload {
-            for block in blocks {
-                let username = block
-                    .get("username")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                for mut transfer in flatten_transfers(block) {
-                    if transfer.username.is_empty() {
-                        transfer.username = username.to_owned();
-                    }
-                    out.push(transfer);
-                }
-            }
-        }
-        Ok(out)
+        let blocks: Vec<SlskdUserTransfers> = Self::decode(&reply)?;
+        Ok(blocks
+            .into_iter()
+            .flat_map(SlskdUserTransfers::into_transfers)
+            .collect())
     }
 
     /// DELETE /api/v0/transfers/downloads/{username}/{id}?remove=true.
@@ -231,37 +220,4 @@ impl<T: SlskdHttp> SlskdClient<T> {
         Self::check(&reply)?;
         Self::decode(&reply)
     }
-}
-
-/// Walk slskd's per-user transfers tree and collect transfer dicts. Robust
-/// to the exact nesting: any object carrying both `id` and `filename` is a
-/// transfer (v2 `_flatten_transfers`).
-fn flatten_transfers(payload: &Value) -> Vec<SlskdTransfer> {
-    fn walk(node: &Value, out: &mut Vec<SlskdTransfer>) {
-        match node {
-            Value::Object(map) => {
-                if map.contains_key("id")
-                    && map.contains_key("filename")
-                    && let Ok(transfer) =
-                        serde_json::from_value::<SlskdTransfer>(Value::Object(map.clone()))
-                {
-                    out.push(transfer);
-                    return;
-                }
-                for value in map.values() {
-                    walk(value, out);
-                }
-            }
-            Value::Array(items) => {
-                for item in items {
-                    walk(item, out);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut out = Vec::new();
-    walk(payload, &mut out);
-    out
 }

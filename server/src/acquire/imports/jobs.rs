@@ -11,7 +11,7 @@
 //! spawns a task; a durable downloads-backed executor can replace it
 //! without touching the handlers.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 /// Build the durable job key (v2 `task_key`, verbatim format).
@@ -70,11 +70,15 @@ pub struct JobRegistry {
     inner: Mutex<JobTables>,
 }
 
-/// Live keys plus terminal states.
+/// Terminal states kept for the status route; older ones are dropped.
+pub const KEPT_TERMINAL_STATES: usize = 256;
+
+/// Live keys plus terminal states, oldest terminal key first.
 #[derive(Debug, Default)]
 struct JobTables {
     running: HashSet<String>,
     states: HashMap<String, JobState>,
+    finished: VecDeque<String>,
 }
 
 impl JobRegistry {
@@ -129,6 +133,15 @@ impl JobRegistry {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         inner.running.remove(key);
         inner.states.insert(key.to_owned(), state);
+        inner.finished.retain(|done| done != key);
+        inner.finished.push_back(key.to_owned());
+        while inner.finished.len() > KEPT_TERMINAL_STATES {
+            if let Some(oldest) = inner.finished.pop_front()
+                && !inner.running.contains(&oldest)
+            {
+                inner.states.remove(&oldest);
+            }
+        }
     }
 }
 
@@ -185,5 +198,29 @@ where
             };
             registry.finish(&key, state);
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_states_are_bounded() {
+        let registry = JobRegistry::new();
+        for index in 0..KEPT_TERMINAL_STATES + 10 {
+            let key = format!("job-{index}");
+            assert!(registry.mark_running(&key, "p"));
+            registry.finish(
+                &key,
+                JobState::Done {
+                    playlist_id: "p".to_owned(),
+                    track_count: 1,
+                },
+            );
+        }
+        assert!(registry.state_for("job-0").is_none());
+        let last = format!("job-{}", KEPT_TERMINAL_STATES + 9);
+        assert!(registry.state_for(&last).is_some());
     }
 }
