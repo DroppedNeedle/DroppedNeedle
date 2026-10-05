@@ -31,19 +31,15 @@ use droppedneedle::{
 };
 use tower::ServiceExt as _;
 
-static SCRATCH_SEQ: AtomicUsize = AtomicUsize::new(0);
+use crate::common::ScratchDir;
 
-/// Unique scratch directory per brief.
-fn scratch_dir(name: &str) -> PathBuf {
-    let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "persist-runtime-{name}-{}-{seq}",
-        std::process::id()
-    ))
+/// Unique scratch directory per brief, removed on drop.
+fn scratch_dir(name: &str) -> ScratchDir {
+    ScratchDir::new(&format!("persist-runtime-{name}"))
 }
 
 /// Open a runtime on a fresh scratch database.
-async fn open_scratch(name: &str) -> (DbRuntime, PathBuf) {
+async fn open_scratch(name: &str) -> (DbRuntime, ScratchDir) {
     let dir = scratch_dir(name);
     let db = dir.join("library.db");
     let runtime = open_runtime(&DbConfig::new(&db)).await.unwrap();

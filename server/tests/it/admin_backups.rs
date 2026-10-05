@@ -6,7 +6,6 @@
 //! production database.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axum::Router;
@@ -21,9 +20,6 @@ use droppedneedle::db::{BACKUP_KEEP, DbConfig, DbRuntime, open_runtime};
 use serde_json::Value;
 use tower::ServiceExt as _;
 
-/// Scratch-dir sequence so parallel tests never share a database.
-static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
-
 /// One scratch deployment: migrated runtime, memory auth, wired admin.
 struct Rig {
     /// Held, never read: dropping it would close the pool out from under
@@ -33,15 +29,13 @@ struct Rig {
     admin: AdminSetup,
     admin_id: String,
     dir: std::path::PathBuf,
+    _scratch: crate::common::ScratchDir,
 }
 
 impl Rig {
     async fn open(tag: &str) -> Self {
-        let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "droppedneedle-admin-backups-{tag}-{}-{seq}",
-            std::process::id()
-        ));
+        let scratch = crate::common::ScratchDir::new(&format!("admin-backups-{tag}"));
+        let dir = scratch.to_path_buf();
         let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
             .await
             .expect("scratch runtime opens");
@@ -63,6 +57,7 @@ impl Rig {
             admin,
             admin_id: admin_user.id,
             dir,
+            _scratch: scratch,
         }
     }
 
@@ -248,11 +243,8 @@ async fn restore_report_catches_a_tampered_backup() {
 
 #[tokio::test]
 async fn pre_upgrade_backup_runs_when_stale_and_skips_when_current() {
-    let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "droppedneedle-admin-preupgrade-{}-{seq}",
-        std::process::id()
-    ));
+    let scratch = crate::common::ScratchDir::new("admin-preupgrade");
+    let dir = scratch.to_path_buf();
     std::fs::create_dir_all(&dir).expect("scratch dir builds");
     let latest = droppedneedle::schema::latest_version();
     assert!(latest >= 1, "a migration exists to be stale against");
@@ -305,11 +297,8 @@ async fn pre_upgrade_backup_runs_when_stale_and_skips_when_current() {
 
 #[tokio::test]
 async fn pre_upgrade_backup_skips_a_fresh_database_but_not_a_legacy_one() {
-    let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "droppedneedle-admin-preupgrade-fresh-{}-{seq}",
-        std::process::id()
-    ));
+    let scratch = crate::common::ScratchDir::new("admin-preupgrade-fresh");
+    let dir = scratch.to_path_buf();
     std::fs::create_dir_all(&dir).expect("scratch dir builds");
 
     // Fresh file: stamp 0, no tables — exactly what a first boot holds.

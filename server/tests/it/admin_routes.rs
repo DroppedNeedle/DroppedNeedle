@@ -5,7 +5,6 @@
 //! app. Scratch runtimes only — no network, no production database.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
@@ -21,9 +20,6 @@ use droppedneedle::providers::ProviderCache as _;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-/// Scratch-dir sequence so parallel tests never share a database.
-static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
-
 /// One scratch deployment: migrated runtime, memory auth, wired admin.
 struct Rig {
     /// Held, never read: dropping it would close the pool out from under
@@ -37,15 +33,13 @@ struct Rig {
     cache: Arc<droppedneedle::providers::InMemoryProviderCache>,
     quota: Arc<droppedneedle::acquire::requests::quota::QuotaLedger>,
     jobs: droppedneedle::jobs::wiring::JobsSetup,
+    _scratch: crate::common::ScratchDir,
 }
 
 impl Rig {
     async fn open(tag: &str) -> Self {
-        let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "droppedneedle-admin-routes-{tag}-{}-{seq}",
-            std::process::id()
-        ));
+        let scratch = crate::common::ScratchDir::new(&format!("admin-routes-{tag}"));
+        let dir = scratch.to_path_buf();
         let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
             .await
             .expect("scratch runtime opens");
@@ -73,6 +67,7 @@ impl Rig {
             cache,
             quota,
             jobs,
+            _scratch: scratch,
         }
     }
 

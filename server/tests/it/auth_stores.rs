@@ -6,9 +6,8 @@
 //! (atomic account creation, the last-admin rule, the app-password cap,
 //! the first federated admin) plus the sweeps that keep auth tables small.
 
-use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 
 use droppedneedle::auth::compat_auth::subsonic::md5_hex;
 use droppedneedle::auth::federated::oidc::OidcStateStore as _;
@@ -52,19 +51,17 @@ const LEGACY_BCRYPT: &str = "$2b$12$H1xO3d1.j6f.mzdNztsl/elXm4PG9ZcXMLsN4nN7jSco
 /// Password behind [`LEGACY_BCRYPT`].
 const LEGACY_PASSWORD: &str = "correct horse battery staple";
 
-static SCRATCH_SEQ: AtomicUsize = AtomicUsize::new(0);
-
 struct Fixture {
     runtime: DbRuntime,
     auth: ProdAuth,
     crypto: Arc<Crypto>,
     clock: Arc<ManualClock>,
+    _scratch: crate::common::ScratchDir,
 }
 
 async fn fixture(name: &str) -> Fixture {
-    let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir: PathBuf =
-        std::env::temp_dir().join(format!("auth-stores-{name}-{}-{seq}", std::process::id()));
+    let scratch = crate::common::ScratchDir::new(&format!("auth-stores-{name}"));
+    let dir = scratch.to_path_buf();
     let runtime = open_runtime(&DbConfig::new(&dir.join("auth.db")))
         .await
         .unwrap();
@@ -84,6 +81,7 @@ async fn fixture(name: &str) -> Fixture {
         auth,
         crypto,
         clock,
+        _scratch: scratch,
     }
 }
 

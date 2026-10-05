@@ -13,7 +13,6 @@
 //! - `login_p95_*`: the login latency budget, run on request.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use axum::Router;
@@ -49,9 +48,6 @@ const ORIGIN: &str = "http://e2e.test";
 /// Wrapped shared secret saved into every scratch config.
 const TEST_WRAPPED_KEY: &str = "e2e-wrapped-key-1";
 
-/// Scratch-dir sequence so parallel tests never share a database.
-static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
-
 /// One scratch deployment: migrated database, production adapters, config.
 struct E2e {
     /// Held, never read: dropping it would close the pool out from under
@@ -65,15 +61,13 @@ struct E2e {
     ids: Arc<UuidGenerator>,
     clock: Arc<SystemClock>,
     db_path: std::path::PathBuf,
+    _scratch: crate::common::ScratchDir,
 }
 
 impl E2e {
     async fn open(tag: &str) -> Self {
-        let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "droppedneedle-auth-e2e-{tag}-{}-{seq}",
-            std::process::id()
-        ));
+        let scratch = crate::common::ScratchDir::new(&format!("auth-e2e-{tag}"));
+        let dir = scratch.to_path_buf();
         let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
             .await
             .expect("scratch runtime opens");
@@ -117,6 +111,7 @@ impl E2e {
             ids,
             clock,
             db_path,
+            _scratch: scratch,
         }
     }
 

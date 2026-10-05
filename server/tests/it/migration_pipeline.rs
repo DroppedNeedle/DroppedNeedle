@@ -8,21 +8,14 @@
 //! network; every database is a scratch file.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use droppedneedle::db::WriteLane;
 use droppedneedle::runtime_config::{Crypto, Secret};
 use droppedneedle::tooling::fixture::{UNKNOWN_USER_ID, build_v2_fixture, delete_orphan_rows};
 
-/// Scratch-dir sequence so parallel tests never share a directory.
-static PIPELINE_SEQ: AtomicU64 = AtomicU64::new(0);
-
-fn scratch_dir(tag: &str) -> PathBuf {
-    let seq = PIPELINE_SEQ.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "droppedneedle-pipeline-{tag}-{}-{seq}",
-        std::process::id()
-    ))
+/// Scratch directory per brief, removed on drop.
+fn scratch_dir(tag: &str) -> crate::common::ScratchDir {
+    crate::common::ScratchDir::new(&format!("pipeline-{tag}"))
 }
 
 fn export_request(v2_root: &Path, passphrase: &str) -> droppedneedle::export::ExportRequest {
