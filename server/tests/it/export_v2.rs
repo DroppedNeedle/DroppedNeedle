@@ -3,7 +3,7 @@
 //! follows) into a sealed envelope.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use droppedneedle::export::{
     ExportError, ExportRequest, HashScheme, Opener, SealError, export_v2, export_v2_to_file,
@@ -16,16 +16,9 @@ use serde_json::{Value, json};
 const PASSPHRASE: &str = "operator passphrase";
 const INSTANCE_ID: &str = "9f2c4a1e-0000-4000-8000-0123456789ab";
 
-fn scratch_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "dn-export-test-{}-{}-{}",
-        std::process::id(),
-        name,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+/// Scratch v2 root, removed when the test ends.
+fn scratch_dir(name: &str) -> droppedneedle::tooling::scratch::ScratchDir {
+    let dir = droppedneedle::tooling::scratch::ScratchDir::new(name).unwrap();
     std::fs::create_dir_all(dir.join("config")).unwrap();
     std::fs::create_dir_all(dir.join("cache")).unwrap();
     dir
@@ -314,7 +307,7 @@ fn fixture_db(path: &Path) {
     .unwrap();
 }
 
-fn fixture_v2_root() -> (PathBuf, FernetKey) {
+fn fixture_v2_root() -> (droppedneedle::tooling::scratch::ScratchDir, FernetKey) {
     let dir = scratch_dir("full");
     let key = FernetKey::generate().unwrap();
     std::fs::write(

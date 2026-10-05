@@ -703,14 +703,12 @@ impl AcquireSetup {
         use super::imports::spotify::MemorySpotifySettings;
 
         let db = AcquireDb::scratch()?;
-        let staging_root = std::env::temp_dir().join(format!(
-            "dn-acquire-test-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|span| span.as_nanos())
-                .unwrap_or(0)
-        ));
+        // Under the scratch database's directory, so it goes with it.
+        let staging_root = db
+            .path()
+            .parent()
+            .map(|dir| dir.join("staging"))
+            .ok_or_else(|| "scratch database has no directory".to_owned())?;
         let factory =
             crate::http_client::HttpClientFactory::new().map_err(|error| error.to_string())?;
         let http = factory.shared().clone();

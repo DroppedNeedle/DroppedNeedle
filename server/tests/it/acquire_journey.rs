@@ -41,16 +41,14 @@ struct E2e {
     ids: Arc<UuidGenerator>,
     clock: Arc<SystemClock>,
     db_path: PathBuf,
+    _scratch: droppedneedle::tooling::scratch::ScratchDir,
 }
 
 impl E2e {
     async fn open(name: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "acquire-journey-{name}-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4().simple()
-        ));
-        std::fs::create_dir_all(&dir).expect("scratch dir creates");
+        let scratch =
+            droppedneedle::tooling::scratch::ScratchDir::new(name).expect("scratch dir creates");
+        let dir = scratch.to_path_buf();
         let db_path = dir.join("app.db");
         let runtime = open_runtime(&DbConfig::new(&db_path))
             .await
@@ -99,6 +97,7 @@ impl E2e {
             ids,
             clock,
             db_path,
+            _scratch: scratch,
         }
     }
 
@@ -462,12 +461,7 @@ async fn acquire_follow_approval_arms_auto_download() {
 
 #[tokio::test]
 async fn migrations_upgrade_from_baseline() {
-    let dir = std::env::temp_dir().join(format!(
-        "acquire-migration-{}-{}",
-        std::process::id(),
-        uuid::Uuid::new_v4().simple()
-    ));
-    std::fs::create_dir_all(&dir).expect("scratch dir creates");
+    let dir = droppedneedle::tooling::scratch::ScratchDir::new("migrate").expect("scratch dir");
     let db_path = dir.join("migrate.db");
 
     // Baseline only, as the oldest database would hold it.
@@ -518,7 +512,6 @@ async fn migrations_upgrade_from_baseline() {
         .expect("version reads");
     assert_eq!(version, latest_version());
     runtime.shutdown().await;
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Crash-retry usenet enqueue re-attaches instead of double-adding: the
@@ -605,6 +598,23 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
     assert_eq!(handle.job_name, job_name);
     assert!(mock.state().add_file_requests.is_empty());
     assert!(mock.state().add_url_requests.is_empty());
+    assert_eq!(handle.nzo_id, "nzo-1", "the handle keeps SABnzbd's job id");
+
+    // SABnzbd renames the finished job; the poll still finds it by id.
+    mock.state().queue_slots.clear();
+    mock.history_job(
+        "nzo-1",
+        &format!("{job_name}.1"),
+        "Completed",
+        "/downloads/complete/renamed",
+        1024,
+        "",
+    );
+    let progress = source.poll(&handle).await.expect("poll answers");
+    assert!(
+        progress.all_terminal && progress.all_succeeded,
+        "{progress:?}"
+    );
 
     let missing = "fedcba9876543210fedcba9876543210";
     let err = source

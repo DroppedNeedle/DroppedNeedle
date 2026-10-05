@@ -133,14 +133,7 @@ async fn reimport_guards_role_and_link() {
 // journal, so the request views render live task data.
 #[tokio::test]
 async fn dispatch_reads_progress_and_guard_from_journal() {
-    let journal = journal().await;
-    let staging = std::env::temp_dir().join(format!("dn-reimport-{}", std::process::id()));
-    let dispatch = UnifiedDispatch::new(
-        journal,
-        Arc::new(UuidGenerator),
-        staging,
-        Arc::new(RetryPolicy::default),
-    );
+    let dispatch = dispatch_over(journal().await);
 
     let snapshot = dispatch.task_progress("t-linked").await.unwrap().unwrap();
     assert_eq!(snapshot.status, "failed");
@@ -154,18 +147,24 @@ async fn dispatch_reads_progress_and_guard_from_journal() {
     assert!(!dispatch.reimportable("nope").await.unwrap());
 }
 
+/// Dispatch over `journal`, staging under its scratch database directory.
 fn dispatch_over(journal: Arc<Journal>) -> UnifiedDispatch {
-    let staging = std::env::temp_dir().join(format!(
-        "dn-dispatch-{}-{}",
-        std::process::id(),
-        uuid::Uuid::new_v4().simple()
-    ));
+    let staging = staging_for(&journal);
     UnifiedDispatch::new(
         journal,
         Arc::new(UuidGenerator),
         staging,
         Arc::new(RetryPolicy::default),
     )
+}
+
+fn staging_for(journal: &Journal) -> std::path::PathBuf {
+    journal
+        .db()
+        .path()
+        .parent()
+        .expect("scratch database directory")
+        .join("staging")
 }
 
 async fn task_count(db: &AcquireDb) -> i64 {
@@ -267,7 +266,7 @@ async fn failed_retry_insert_retries_next_pass() {
     })
     .await
     .unwrap();
-    let staging = std::env::temp_dir().join(format!("dn-retry-{}", uuid::Uuid::new_v4().simple()));
+    let staging = staging_for(&journal);
     let worker = DownloadWorker::fixed(
         journal,
         Vec::new(),

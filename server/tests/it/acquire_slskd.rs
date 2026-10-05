@@ -12,7 +12,6 @@
 
 use droppedneedle::acquire::slskd;
 
-use std::path::PathBuf;
 use std::time::Duration;
 
 use slskd::{
@@ -36,7 +35,8 @@ fn repository(mock: &MockSlskd) -> SlskdRepository<ReqwestSlskdHttp> {
 
 fn repository_with_key(mock: &MockSlskd, api_key: &str) -> SlskdRepository<ReqwestSlskdHttp> {
     let http = ReqwestSlskdHttp::new(reqwest::Client::new(), &mock.base_url(), api_key);
-    let mount = std::env::temp_dir().join(format!("slskd-brief-{}", std::process::id()));
+    // Never created: these repositories only talk to the mock.
+    let mount = std::env::temp_dir().join(format!("slskd-unused-{}", std::process::id()));
     SlskdRepository::new(
         SlskdClient::new(http),
         &mock.base_url(),
@@ -46,15 +46,9 @@ fn repository_with_key(mock: &MockSlskd, api_key: &str) -> SlskdRepository<Reqwe
     )
 }
 
-fn temp_mount(tag: &str) -> PathBuf {
-    let mount = std::env::temp_dir().join(format!(
-        "slskd-brief-{}-{}-{}",
-        std::process::id(),
-        tag,
-        uuid::Uuid::new_v4().simple()
-    ));
-    std::fs::create_dir_all(&mount).expect("brief mount creates");
-    mount
+/// Scratch mount, removed when the test ends.
+fn temp_mount(tag: &str) -> droppedneedle::tooling::scratch::ScratchDir {
+    droppedneedle::tooling::scratch::ScratchDir::new(tag).expect("mount creates")
 }
 
 // Wire-shape briefs.
@@ -543,7 +537,7 @@ fn locator_resolves_leaf_flat_and_username_layouts() {
         b"buried",
     )
     .expect("user file");
-    let locator = Locator::new(mount.clone(), None);
+    let locator = Locator::new(mount.to_path_buf(), None);
 
     // Step 1: {mount}/{leaf remote folder}/{filename} (v2).
     let hit = locator
@@ -580,7 +574,7 @@ fn locator_resolves_leaf_flat_and_username_layouts() {
 fn locator_refuses_size_mismatched_exact_hits_but_keeps_aliases() {
     let mount = temp_mount("sizes");
     std::fs::write(mount.join("stale.flac"), b"tiny").expect("stale file");
-    let locator = Locator::new(mount, None);
+    let locator = Locator::new(mount.to_path_buf(), None);
 
     // A same-named file with the wrong bytes is another peer's stale
     // leftover, not this transfer (v2 #397).
@@ -599,7 +593,7 @@ fn partial_lookup_is_basename_keyed_and_mount_confined() {
     std::fs::create_dir_all(incomplete.join("OK Computer")).expect("album dir");
     std::fs::write(incomplete.join("OK Computer").join("part.flac"), b"partial")
         .expect("partial file");
-    let locator = Locator::new(downloads, Some(incomplete));
+    let locator = Locator::new(downloads.to_path_buf(), Some(incomplete.to_path_buf()));
 
     // The incomplete layout is not username-scoped (v2 `_locate_partial`).
     let hit = locator
@@ -608,7 +602,8 @@ fn partial_lookup_is_basename_keyed_and_mount_confined() {
     assert_eq!(hit.file_name().unwrap(), "part.flac");
 
     // No incomplete mount disables the fallback entirely (v2).
-    let bare = Locator::new(temp_mount("bare"), None);
+    let bare_mount = temp_mount("bare");
+    let bare = Locator::new(bare_mount.to_path_buf(), None);
     assert_eq!(bare.locate_partial("anyone", "part.flac", Some(1)), None);
 }
 
@@ -623,10 +618,10 @@ async fn repository_partial_lookup_uses_the_incomplete_mount() {
         SlskdClient::new(http),
         &mock.base_url(),
         MOCK_API_KEY,
-        downloads,
+        downloads.to_path_buf(),
         test_policy(),
     )
-    .with_incomplete_mount(incomplete);
+    .with_incomplete_mount(incomplete.to_path_buf());
 
     let handle = TaskHandle::new("alice", vec!["stranded.flac".to_owned()]);
     let hit = repo
@@ -648,7 +643,7 @@ async fn diagnosis_resolves_a_sample_under_a_correct_mount() {
         SlskdClient::new(http),
         &mock.base_url(),
         MOCK_API_KEY,
-        mount.clone(),
+        mount.to_path_buf(),
         test_policy(),
     );
 
@@ -679,4 +674,89 @@ fn slskd_http_debug_redacts_key() {
     let debug = format!("{transport:?}");
     assert!(debug.contains("<redacted>"), "{debug}");
     assert!(!debug.contains("SUPERSECRET"), "{debug}");
+}
+
+// A failover walks every peer: each attempt takes the best group the task
+// has not tried yet, even as failed peers are blocklisted and the search
+// result shrinks, so no candidate is skipped.
+#[tokio::test]
+async fn failover_walks_every_peer() {
+    use droppedneedle::acquire::db::AcquireDb;
+    use droppedneedle::acquire::dispatch::Journal;
+    use droppedneedle::acquire::downloads::sources::DownloadSource as _;
+    use droppedneedle::acquire::downloads::state::AttemptState;
+    use droppedneedle::acquire::downloads::store::NewTask;
+    use droppedneedle::acquire::sources::SlskdSource;
+
+    let mock = MockSlskd::start().await.expect("mock starts");
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u1", "U", "user").await.expect("user seeds");
+    let journal = std::sync::Arc::new(Journal::new(db));
+    journal
+        .run("test.seed", |store| {
+            store.insert_task(
+                &NewTask {
+                    id: "t1".to_owned(),
+                    user_id: "u1".to_owned(),
+                    artist_name: "Massive Attack".to_owned(),
+                    album_title: "Blue Lines".to_owned(),
+                    release_group_mbid: "rg-1".to_owned(),
+                    origin: "user".to_owned(),
+                    retry_count: 0,
+                },
+                1.0,
+            )
+        })
+        .await
+        .expect("task seeds");
+    let source = SlskdSource::new(std::sync::Arc::new(repository(&mock)), journal.clone());
+
+    let mut peers: Vec<String> = Vec::new();
+    for index in 0..10 {
+        let Ok(handle) = source.enqueue("t1", index).await else {
+            break;
+        };
+        let json = serde_json::to_string(&handle).expect("handle encodes");
+        let attempt = format!("t1-a{index}");
+        let (user, files) = (handle.username.clone(), handle.filenames.clone());
+        journal
+            .run("test.fail", move |store| {
+                store.insert_attempt(
+                    &attempt,
+                    "t1",
+                    "soulseek",
+                    index,
+                    "",
+                    &json,
+                    AttemptState::Complete,
+                    1.0,
+                )?;
+                // The worker blocklists a failed peer's files.
+                for file in &files {
+                    store.record_quarantine(
+                        "soulseek",
+                        &droppedneedle::acquire::downloads::quarantine::canonical_soulseek_identity(
+                            &format!("{user}/{file}"),
+                        ),
+                        "failed",
+                        None,
+                        1.0e12,
+                        86_400.0,
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .expect("attempt records");
+        peers.push(handle.username);
+    }
+    let mut distinct = peers.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        peers.len(),
+        "no peer is tried twice: {peers:?}"
+    );
+    assert_eq!(peers.len(), 3, "every canned peer is tried: {peers:?}");
 }

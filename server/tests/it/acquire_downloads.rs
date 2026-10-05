@@ -9,7 +9,6 @@
 use droppedneedle::acquire::downloads;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use downloads::quarantine::{QuarantineReason, is_local_fault};
@@ -26,17 +25,9 @@ use downloads::{
 };
 use rusqlite::Connection;
 
-static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn scratch_dir(tag: &str) -> PathBuf {
-    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "dn-acquire-downloads-{}-{}-{id}",
-        std::process::id(),
-        tag
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// Scratch directory, removed when the test ends.
+fn scratch_dir(tag: &str) -> droppedneedle::tooling::scratch::ScratchDir {
+    droppedneedle::tooling::scratch::ScratchDir::new(tag).unwrap()
 }
 
 /// Scratch journal: a temp-file database with the real migrations applied.

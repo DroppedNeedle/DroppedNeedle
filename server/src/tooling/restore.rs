@@ -184,16 +184,11 @@ mod tests {
 
     #[test]
     fn unchecked_manifest_refuses() {
-        let dir = std::env::temp_dir().join(format!(
-            "droppedneedle-restore-{}-sidecar",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::tooling::scratch::ScratchDir::new("restore-sidecar").unwrap();
         let backup = dir.join("backup.sqlite");
         std::fs::write(&backup, b"not checked").unwrap();
         std::fs::write(dir.join("backup.sqlite.manifest.json"), b"{}").unwrap();
         let error = restore_backup(&backup, &dir.join("target"), false).unwrap_err();
         assert!(matches!(error, RestoreError::Refused(_)), "{error:?}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

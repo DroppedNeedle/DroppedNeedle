@@ -6,21 +6,12 @@
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::common;
 
-/// Scratch-dir sequence so parallel tests never share a directory.
-static CLI_SEQ: AtomicU64 = AtomicU64::new(0);
-
-fn scratch_dir(tag: &str) -> PathBuf {
-    let seq = CLI_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "droppedneedle-tooling-cli-{tag}-{}-{seq}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).expect("scratch dir creates");
-    dir
+/// Scratch directory, removed when the test ends.
+fn scratch_dir(tag: &str) -> droppedneedle::tooling::scratch::ScratchDir {
+    droppedneedle::tooling::scratch::ScratchDir::new(tag).expect("scratch dir creates")
 }
 
 /// The compiled tool binary under test: Cargo's per-test variable when

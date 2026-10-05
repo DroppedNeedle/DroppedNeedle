@@ -5,9 +5,7 @@
 //! clock, never by sleeping. Stores sit on a scratch database; downloads,
 //! search and polls are scripted seams.
 
-use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use droppedneedle::acquire::db::AcquireDb;
@@ -41,15 +39,19 @@ use droppedneedle::acquire::requests::{
 use droppedneedle::db::{DbConfig, DbRuntime, JobState, open_runtime};
 
 const NOW: i64 = 1_700_000_000;
-static SCRATCH_SEQ: AtomicUsize = AtomicUsize::new(0);
-
-fn scratch_dir(name: &str) -> PathBuf {
-    let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("acquire-flows-{name}-{}-{seq}", std::process::id()))
+/// Scratch directory, removed when the test ends.
+fn scratch_dir(name: &str) -> droppedneedle::tooling::scratch::ScratchDir {
+    droppedneedle::tooling::scratch::ScratchDir::new(name).unwrap()
 }
 
 /// A served runtime for the tests that need the job registry.
-async fn runtime(name: &str) -> (DbRuntime, AcquireDb, PathBuf) {
+async fn runtime(
+    name: &str,
+) -> (
+    DbRuntime,
+    AcquireDb,
+    droppedneedle::tooling::scratch::ScratchDir,
+) {
     let dir = scratch_dir(name);
     let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
         .await

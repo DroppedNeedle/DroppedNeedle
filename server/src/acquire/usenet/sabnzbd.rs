@@ -1627,7 +1627,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn enumerate_never_follows_symlinks() {
-        let base = std::env::temp_dir().join(format!("dn-sab-enum-{}", std::process::id()));
+        let base = crate::tooling::scratch::ScratchDir::new("sab-enum").unwrap();
         let mount = base.join("mount");
         let outside = base.join("outside");
         std::fs::create_dir_all(mount.join("release")).unwrap();
@@ -1636,7 +1636,6 @@ mod tests {
         std::fs::write(outside.join("secret.flac"), b"out").unwrap();
         std::os::unix::fs::symlink(&outside, mount.join("release/escape")).unwrap();
         let found = enumerate_audio(&mount, &mount.join("release"));
-        let _ = std::fs::remove_dir_all(&base);
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(found[0].ends_with("track.flac"));
     }

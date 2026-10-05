@@ -9,7 +9,6 @@
 use droppedneedle::acquire::usenet;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use usenet::mocks::{
@@ -49,19 +48,9 @@ fn queue_for(_mock: &SabnzbdMock, base: &str, mount: PathBuf) -> SabnzbdQueue {
     SabnzbdQueue::new(sab_client(base), base, "SABKEY", mount, test_policy())
 }
 
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Fresh scratch dir under the system temp root (no tempfile crate in
-/// this slice; best-effort cleanup at the end of each brief).
-fn temp_dir(name: &str) -> PathBuf {
-    let id = TEMP_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "acquire-usenet-{}-{}-{id}",
-        std::process::id(),
-        name
-    ));
-    std::fs::create_dir_all(&dir).expect("temp dir");
-    dir
+/// Scratch directory, removed when the test ends.
+fn temp_dir(name: &str) -> droppedneedle::tooling::scratch::ScratchDir {
+    droppedneedle::tooling::scratch::ScratchDir::new(name).expect("temp dir")
 }
 
 fn write_file(path: &std::path::Path, bytes: &[u8]) {
@@ -119,7 +108,7 @@ async fn sab_addfile_multipart_shape() {
     let mock = SabnzbdMock::new();
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let mount = temp_dir("addfile");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
 
     let handle = queue
         .enqueue_album(
@@ -172,7 +161,7 @@ async fn sab_addurl_fallback_on_transport_failure() {
     let mock = SabnzbdMock::new();
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let mount = temp_dir("addurl");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
 
     let nzb_url = refused_url("/getnzb/x.nzb?apikey=SECRET").await;
     let handle = queue
@@ -207,7 +196,7 @@ async fn sab_no_addurl_on_content_rejection() {
     let mock = SabnzbdMock::new();
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let mount = temp_dir("rejection");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
 
     let err = queue
         .enqueue_album(
@@ -342,7 +331,7 @@ async fn sab_status_walk() {
     );
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let mount = temp_dir("walk");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
     let status = status_for(&mock, &queue, "droppedneedle-a", "nzo-1").await;
     assert_eq!(status.status, "downloading");
     assert!(status.has_active_transfer);
@@ -356,7 +345,7 @@ async fn sab_status_walk() {
         let mock = SabnzbdMock::new();
         mock.queue_job("nzo-q", "droppedneedle-q", state, "100.0", "100.0", "0");
         let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-        let queue = queue_for(&mock, &base, mount.clone());
+        let queue = queue_for(&mock, &base, mount.to_path_buf());
         let status = status_for(&mock, &queue, "droppedneedle-q", "nzo-q").await;
         assert_eq!(status.status, "queued", "{state}");
         assert!(!status.has_active_transfer, "{state}");
@@ -373,7 +362,7 @@ async fn sab_status_walk() {
         "0",
     );
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
     let status = status_for(&mock, &queue, "droppedneedle-p", "nzo-p").await;
     assert_eq!(status.status, "processing");
     assert!(!status.has_active_transfer);
@@ -394,7 +383,7 @@ async fn sab_status_walk() {
     mock.history_job("nzo-d", "job-d", "Deleted", "", 0, "");
     mock.history_job("nzo-x", "job-x", "Extracting", "", 99, "");
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
     let status = status_for(&mock, &queue, "job-c", "nzo-c").await;
     assert_eq!(status.status, "completed");
     assert_eq!((status.bytes_total, status.bytes_downloaded), (42, 42));
@@ -418,7 +407,7 @@ async fn sab_status_walk() {
     mock.queue_job("nzo-amb", "job-one", "Downloading", "1.0", "1.0", "0");
     mock.queue_job("nzo-amb", "job-two", "Queued", "1.0", "1.0", "0");
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
     let err = queue
         .get_status(&handle("", "nzo-amb"))
         .await
@@ -436,7 +425,7 @@ async fn sab_history_filter_nzo_only() {
     mock.history_job("nzo-1", "renamed-by-sab", "Completed", "", 1, "");
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let mount = temp_dir("filter");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
 
     let status = queue
         .get_status(&handle("droppedneedle-t", "nzo-1"))
@@ -492,7 +481,7 @@ async fn sab_abort_and_discard_ownership() {
     );
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let mount = temp_dir("abort");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
 
     assert!(
         queue
@@ -574,7 +563,7 @@ async fn sab_remap_and_completed_files() {
         "",
     );
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
     let mut files = queue
         .list_completed_files(&handle("job1", "nzo-1"))
         .await
@@ -621,7 +610,7 @@ async fn sab_remap_and_completed_files() {
         "",
     );
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
     let files = queue
         .list_completed_files(&handle("job1", "nzo-2"))
         .await
@@ -632,7 +621,7 @@ async fn sab_remap_and_completed_files() {
     let mock = SabnzbdMock::new();
     mock.history_job("nzo-3", "job1", "Completed", "/elsewhere/job1", 4, "");
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
     let files = queue
         .list_completed_files(&handle("job1", "nzo-3"))
         .await
@@ -659,7 +648,7 @@ async fn sab_materialization_and_mount() {
         "",
     );
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
 
     let material = queue
         .inspect_materialization(&handle("job-live", "nzo-live"))
@@ -747,7 +736,7 @@ async fn sab_addurl_redaction() {
     mock.state().addurl_echo_url = true;
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let mount = temp_dir("redact");
-    let queue = queue_for(&mock, &base, mount.clone());
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
 
     let nzb_url = format!("{}/getnzb/x.nzb?i=7&r=PERUSERKEY", refused_url("").await);
     let err = queue
