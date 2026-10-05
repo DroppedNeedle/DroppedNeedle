@@ -4,8 +4,10 @@
 //! fallbacks.
 //!
 //! The `/api/v3` router carries two middleware layers, innermost first:
-//! the deny-by-default session gate, then the rate limiter. The debug-only
-//! CORS layer mounts outermost and only when the constructor enables it.
+//! the rate limiter, then the deny-by-default session gate, so the limiter
+//! keys signed-in callers by user and everyone else by client address. The
+//! debug-only CORS layer mounts outermost and only when the constructor
+//! enables it.
 //!
 //! The wrapped trio nests under `/api/v3` on its own router outside the
 //! session gate: its `X-Wrapped-API-Key` extractor is the only credential,
@@ -113,12 +115,12 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
         )
         .merge(state.reads.search_router())
         .layer(middleware::from_fn_with_state(
-            state.auth.session_auth.clone(),
-            require_session,
-        ))
-        .layer(middleware::from_fn_with_state(
             state.auth.limits.clone(),
             rate_limit,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.auth.session_auth.clone(),
+            require_session,
         ));
     if state.config.debug_cors {
         v3 = v3.layer(debug_cors_layer());

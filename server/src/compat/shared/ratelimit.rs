@@ -4,17 +4,16 @@
 //! (5/s, burst 20), per-principal browse (30/s, burst 120) and mutation
 //! (5/s, burst 20) buckets, and per-IP auth-failure backoff (5 failures
 //! in 60s locks out for 10s, doubling to 5min). Media paths are
-//! limiter-exempt; every 429 carries `Retry-After`.
+//! limiter-exempt; every 429 carries `Retry-After`. Buckets and the bounded
+//! TTL maps are the native limiter's ([`crate::auth::session::rate_limit`]).
 //!
 //! Time is an explicit `now` (monotonic seconds) so tests pin behavior
 //! without sleeping; production passes its monotonic clock.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
-/// Max tracked principals / IPs (v2 `_MAX_PRINCIPALS` / `_MAX_IPS`).
-pub const MAX_ENTRIES: usize = 10_000;
-/// Idle entry lifetime, seconds (v2 `_ENTRY_TTL_SECONDS`).
-pub const ENTRY_TTL_SECONDS: f64 = 15.0 * 60.0;
+use crate::auth::session::rate_limit::{BoundedMap, TokenBucket};
+
 /// Failures inside the window that trigger a lockout.
 pub const AUTH_FAILURE_LIMIT: usize = 5;
 /// Window those failures are counted in, seconds.
@@ -23,54 +22,6 @@ pub const AUTH_FAILURE_WINDOW_SECONDS: f64 = 60.0;
 pub const AUTH_INITIAL_COOLDOWN_SECONDS: f64 = 10.0;
 /// Longest lockout, seconds.
 pub const AUTH_MAX_COOLDOWN_SECONDS: f64 = 5.0 * 60.0;
-
-/// Token bucket (v2 `TokenBucketRateLimiter` behavior).
-#[derive(Debug, Clone)]
-pub struct TokenBucket {
-    rate: f64,
-    capacity: f64,
-    tokens: f64,
-    updated_at: f64,
-}
-
-impl TokenBucket {
-    /// Fresh full bucket stamped at `now`.
-    pub fn new(rate: f64, capacity: usize, now: f64) -> Self {
-        Self {
-            rate,
-            capacity: capacity as f64,
-            tokens: capacity as f64,
-            updated_at: now,
-        }
-    }
-
-    /// Take one token if available.
-    pub fn try_acquire(&mut self, now: f64) -> bool {
-        self.refill(now);
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Seconds until the next token (v2 `retry_after`).
-    pub fn retry_after(&mut self, now: f64) -> f64 {
-        self.refill(now);
-        if self.tokens >= 1.0 {
-            0.0
-        } else {
-            (1.0 - self.tokens) / self.rate
-        }
-    }
-
-    fn refill(&mut self, now: f64) {
-        let elapsed = (now - self.updated_at).max(0.0);
-        self.tokens = (self.tokens + elapsed * self.rate).min(self.capacity);
-        self.updated_at = now;
-    }
-}
 
 #[derive(Debug, Clone, Default)]
 struct AuthFailureState {
@@ -82,7 +33,7 @@ struct AuthFailureState {
 #[derive(Debug, Clone, Copy)]
 struct BucketSpec {
     rate: f64,
-    capacity: usize,
+    capacity: u32,
 }
 
 const PUBLIC_SPEC: BucketSpec = BucketSpec {
@@ -99,42 +50,16 @@ const MUTATION_SPEC: BucketSpec = BucketSpec {
 };
 
 fn acquire(
-    table: &mut HashMap<String, (f64, TokenBucket)>,
+    table: &mut BoundedMap<TokenBucket>,
     key: &str,
     spec: BucketSpec,
     now: f64,
 ) -> Option<u64> {
-    evict_expired(table, now);
-    if table.len() >= MAX_ENTRIES && !table.contains_key(key) {
-        evict_oldest(table);
-    }
-    let entry = table
-        .entry(key.to_owned())
-        .or_insert_with(|| (now, TokenBucket::new(spec.rate, spec.capacity, now)));
-    entry.0 = now;
-    if entry.1.try_acquire(now) {
+    let bucket = table.entry(key, now, || TokenBucket::new(spec.rate, spec.capacity, now));
+    if bucket.try_acquire(now) {
         None
     } else {
-        Some(entry.1.retry_after(now).max(1.0) as u64)
-    }
-}
-
-fn evict_expired<V>(table: &mut HashMap<String, (f64, V)>, now: f64) {
-    let cutoff = now - ENTRY_TTL_SECONDS;
-    table.retain(|_, (seen, _)| *seen > cutoff);
-}
-
-fn evict_oldest<V>(table: &mut HashMap<String, (f64, V)>) {
-    if let Some(oldest) = table
-        .iter()
-        .min_by(|a, b| {
-            a.1.0
-                .partial_cmp(&b.1.0)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .map(|(key, _)| key.clone())
-    {
-        table.remove(&oldest);
+        Some(bucket.retry_after(now))
     }
 }
 
@@ -142,10 +67,10 @@ fn evict_oldest<V>(table: &mut HashMap<String, (f64, V)>) {
 /// `CompatRateLimitState`).
 #[derive(Debug, Default)]
 pub struct CompatRateLimits {
-    public_by_ip: HashMap<String, (f64, TokenBucket)>,
-    browse_by_principal: HashMap<String, (f64, TokenBucket)>,
-    mutation_by_principal: HashMap<String, (f64, TokenBucket)>,
-    auth_failures_by_ip: HashMap<String, (f64, AuthFailureState)>,
+    public_by_ip: BoundedMap<TokenBucket>,
+    browse_by_principal: BoundedMap<TokenBucket>,
+    mutation_by_principal: BoundedMap<TokenBucket>,
+    auth_failures_by_ip: BoundedMap<AuthFailureState>,
 }
 
 impl CompatRateLimits {
@@ -166,24 +91,20 @@ impl CompatRateLimits {
         mutation: bool,
         now: f64,
     ) -> Option<u64> {
-        let spec = if mutation { MUTATION_SPEC } else { BROWSE_SPEC };
-        let table = if mutation {
-            &mut self.mutation_by_principal
+        let (table, spec) = if mutation {
+            (&mut self.mutation_by_principal, MUTATION_SPEC)
         } else {
-            &mut self.browse_by_principal
+            (&mut self.browse_by_principal, BROWSE_SPEC)
         };
         acquire(table, principal, spec, now)
     }
 
     /// Active lockout remaining for an IP, if any (v2 rounds up).
     pub fn auth_failure_retry_after(&mut self, ip: &str, now: f64) -> Option<u64> {
-        evict_expired(&mut self.auth_failures_by_ip, now);
         let state = self
             .auth_failures_by_ip
-            .entry(ip.to_owned())
-            .or_insert((now, AuthFailureState::default()));
-        state.0 = now;
-        let remaining = state.1.blocked_until - now;
+            .entry(ip, now, AuthFailureState::default);
+        let remaining = state.blocked_until - now;
         if remaining > 0.0 {
             Some((remaining + 0.999).max(1.0) as u64)
         } else {
@@ -194,31 +115,23 @@ impl CompatRateLimits {
     /// Record one auth failure; returns the fresh lockout length when
     /// this failure trips it (v2 `record_auth_failure`).
     pub fn record_auth_failure(&mut self, ip: &str, now: f64) -> Option<u64> {
-        evict_expired(&mut self.auth_failures_by_ip, now);
-        if self.auth_failures_by_ip.len() >= MAX_ENTRIES
-            && !self.auth_failures_by_ip.contains_key(ip)
-        {
-            evict_oldest(&mut self.auth_failures_by_ip);
-        }
         let state = self
             .auth_failures_by_ip
-            .entry(ip.to_owned())
-            .or_insert((now, AuthFailureState::default()));
-        state.0 = now;
+            .entry(ip, now, AuthFailureState::default);
         let cutoff = now - AUTH_FAILURE_WINDOW_SECONDS;
-        while state.1.events.front().is_some_and(|first| *first <= cutoff) {
-            state.1.events.pop_front();
+        while state.events.front().is_some_and(|first| *first <= cutoff) {
+            state.events.pop_front();
         }
-        state.1.events.push_back(now);
-        if state.1.events.len() < AUTH_FAILURE_LIMIT {
+        state.events.push_back(now);
+        if state.events.len() < AUTH_FAILURE_LIMIT {
             return None;
         }
-        state.1.events.clear();
-        state.1.strikes += 1;
+        state.events.clear();
+        state.strikes += 1;
         let cooldown = (AUTH_INITIAL_COOLDOWN_SECONDS
-            * f64::from(1u32 << state.1.strikes.saturating_sub(1).min(30)))
+            * f64::from(1u32 << state.strikes.saturating_sub(1).min(30)))
         .min(AUTH_MAX_COOLDOWN_SECONDS);
-        state.1.blocked_until = now + cooldown;
+        state.blocked_until = now + cooldown;
         Some(cooldown as u64)
     }
 

@@ -13561,6 +13561,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Too many attempts for this client or username */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     logout_handler: {

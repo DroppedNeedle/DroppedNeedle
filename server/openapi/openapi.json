@@ -1197,6 +1197,9 @@
           },
           "401": {
             "description": "Invalid username or password"
+          },
+          "429": {
+            "description": "Too many attempts for this client or username"
           }
         }
       }

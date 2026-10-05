@@ -11,14 +11,16 @@
 //!
 //! ## Layer order (wiring)
 //!
-//! In axum the last `.layer()` call is outermost. The v3 router must layer,
-//! from first call to last: `require_session` (inner, closest to handlers),
-//! then `rate_limit`, then debug-only CORS (outer). Execution order per
-//! request is then CORS -> rate limit -> session -> handler, matching v2
-//! (Starlette last-added-first). The request-scope middleware wraps the whole
-//! app outside all of these. Compat routers mount outside the
-//! session layer with their own app-password auth; no native token is ever
-//! accepted on compat paths and no app password on native paths.
+//! In axum the last `.layer()` call is outermost. The v3 router layers, from
+//! first call to last: `rate_limit` (inner, closest to handlers), then
+//! `require_session`, then debug-only CORS (outer). Per request that runs
+//! CORS -> session -> rate limit -> handler, so the limiter sees the
+//! [`CurrentSession`] this gate stashes and keys by user. Public paths reach
+//! the limiter without one and are keyed by client address. The
+//! request-scope middleware wraps the whole app outside all of these. Compat
+//! routers mount outside the session layer with their own app-password
+//! auth; no native token is ever accepted on compat paths and no app
+//! password on native paths.
 //!
 //! ## Trusted proxies
 //!

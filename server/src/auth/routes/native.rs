@@ -10,6 +10,7 @@ use crate::auth::session::login::{
     INVALID_CREDENTIALS, LoginContext, LoginError, LoginRequest, LoginService,
 };
 use crate::auth::session::middleware::TrustedProxies;
+use crate::auth::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited_response};
 use crate::auth::session::store::{SessionKind, SessionRecord, SessionStore, now_unix};
 use crate::auth::session::tokens;
 use crate::auth::users::UsersDeps;
@@ -66,6 +67,8 @@ pub struct NativeAuthState<S, V, C> {
     pub trusted_proxies: TrustedProxies,
     /// Serializes first-run setup (see `setup_handler`).
     pub setup_guard: Arc<tokio::sync::Mutex<()>>,
+    /// Request limiter; login also takes a per-username token from it.
+    pub limits: Arc<RateLimiter>,
 }
 
 impl<S, V, C> NativeAuthState<S, V, C>
@@ -90,7 +93,14 @@ where
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
             setup_guard: Arc::new(tokio::sync::Mutex::new(())),
+            limits: Arc::new(RateLimiter::new()),
         }
+    }
+
+    /// Share the app's request limiter (per-username login budget).
+    pub fn with_limits(mut self, limits: Arc<RateLimiter>) -> Self {
+        self.limits = limits;
+        self
     }
 
     /// Trust the given proxies for forwarded proto. Fed from deployment
@@ -127,7 +137,8 @@ where
     request_body = LoginBody,
     responses(
         (status = 200, description = "Authenticated user; token only in Bearer mode", body = inline(AuthSessionBody)),
-        (status = 401, description = "Invalid username or password")
+        (status = 401, description = "Invalid username or password"),
+        (status = 429, description = "Too many attempts for this client or username")
     )
 )]
 pub async fn login_handler<S, V, C>(
@@ -147,6 +158,11 @@ where
         &headers,
         state.trusted_proxies.is_trusted(peer.0),
     );
+    let username_key = format!("username:{}", body.username.trim().to_lowercase());
+    let budget = state.limits.check(LOGIN_CLASS, &username_key);
+    if !budget.allowed {
+        return Ok(rate_limited_response(LOGIN_CLASS, budget.retry_after_secs));
+    }
     let ctx = LoginContext {
         user_agent: user_agent_of(&headers),
         now_unix: now_unix(),

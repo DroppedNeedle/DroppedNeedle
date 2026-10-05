@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use super::federated::FederatedError;
 use super::federated::jellyfin_login::{JellyfinIdp, JellyfinProfile, NoopJellyfinLink};
@@ -31,7 +31,8 @@ use super::routes::federated::{
 };
 use super::routes::native::NativeAuthState;
 use super::session::middleware::SessionAuth;
-use super::session::rate_limit::RateLimiterSet;
+use super::session::middleware::TrustedProxies;
+use super::session::rate_limit::RateLimiter;
 use super::users::stores::{
     BoxFuture, Clock, HibpPolicy, LastFmAuthClient, LastFmError, LastFmSwitch, SecurityPolicy,
 };
@@ -276,8 +277,8 @@ pub struct AuthSetup {
     pub users: UsersDeps,
     /// Session gate state for the middleware layer.
     pub session_auth: SessionAuth<super::prod::SqliteSessionStore>,
-    /// Rate limiter set for the outer layer.
-    pub limits: Arc<RateLimiterSet>,
+    /// Request limiter, mounted inside the session gate.
+    pub limits: Arc<RateLimiter>,
     /// Login/logout/setup routes.
     pub native: NativeAuthState<
         super::prod::SqliteSessionStore,
@@ -345,13 +346,15 @@ impl AuthSetup {
             lastfm_switch: Arc::new(StoreLastFmSwitch::new(config_store.clone())),
             security: Arc::new(StoreSecurityPolicy::new(config_store.clone())),
         };
+        let limits = Arc::new(RateLimiter::new());
         let native = NativeAuthState::new(
             auth.sessions.clone(),
             auth.hasher.clone(),
             auth.credentials.clone(),
             users.clone(),
             base_path,
-        );
+        )
+        .with_limits(limits.clone());
         let oidc = OidcRouteState::new(
             OidcLogin::new(
                 auth.federated.clone(),
@@ -383,13 +386,30 @@ impl AuthSetup {
         Ok(Self {
             users,
             session_auth: SessionAuth::new(auth.sessions.clone(), base_path),
-            limits: Arc::new(RateLimiterSet::new(Instant::now())),
+            limits,
             native,
             oidc,
             jellyfin,
             plex,
             base_path: base_path.to_owned(),
         })
+    }
+
+    /// Trust the given reverse proxies everywhere auth reads forwarded
+    /// headers: the session gate's origin check, the login `Secure` cookie
+    /// flag, and the client address the limiter keys on
+    /// (`TRUSTED_PROXY_IPS`).
+    #[must_use]
+    pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
+        self.session_auth = self.session_auth.with_trusted_proxies(trusted.clone());
+        let limits = Arc::new(RateLimiter::new().with_trusted_proxies(trusted.clone()));
+        self.native = self
+            .native
+            .with_trusted_proxies(trusted.clone())
+            .with_limits(limits.clone());
+        self.oidc = self.oidc.with_trusted_proxies(trusted);
+        self.limits = limits;
+        self
     }
 
     /// Mount every auth router under `/api/v3`. Layers are applied by
@@ -406,18 +426,6 @@ impl AuthSetup {
             .merge(oidc_router(self.oidc.clone()))
             .merge(jellyfin_router(self.jellyfin.clone()))
             .merge(plex_router(self.plex.clone()))
-    }
-
-    /// Trust these proxies for forwarded host and proto in the session
-    /// gate and the login routes (`TRUSTED_PROXY_IPS`).
-    #[must_use]
-    pub fn with_trusted_proxies(
-        mut self,
-        trusted: crate::auth::session::middleware::TrustedProxies,
-    ) -> Self {
-        self.session_auth = self.session_auth.with_trusted_proxies(trusted.clone());
-        self.native = self.native.with_trusted_proxies(trusted);
-        self
     }
 
     /// Test bundle over unwired adapters. Nothing here touches a database:
@@ -515,7 +523,7 @@ impl AuthSetup {
         Ok(Self {
             users,
             session_auth: SessionAuth::new(sessions, ""),
-            limits: Arc::new(RateLimiterSet::new(Instant::now())),
+            limits: Arc::new(RateLimiter::new()),
             native,
             oidc,
             jellyfin,
