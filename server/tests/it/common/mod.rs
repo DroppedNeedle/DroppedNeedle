@@ -1,7 +1,10 @@
-//! Shared test doubles: a fixed-id generator proving the trait seam, and
-//! state builders for hooked and production-like apps.
+//! Shared test doubles: a fixed-id generator proving the trait seam, state
+//! builders for hooked and production-like apps, and a scratch directory
+//! that removes itself.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use droppedneedle::{
     AppConfig, AppState, config::DEFAULT_PORT, http_client::HttpClientFactory, ids::IdGenerator,
@@ -229,4 +232,43 @@ fn test_providers() -> (
     let cache = Arc::new(droppedneedle::providers::InMemoryProviderCache::new());
     let providers = Arc::new(droppedneedle::providers::Providers::new(cache.clone()));
     (providers, cache)
+}
+
+/// A fresh directory under the system temp dir, removed with everything in
+/// it when dropped. Use this for every scratch path so test runs leave
+/// nothing behind.
+#[derive(Debug)]
+pub struct ScratchDir {
+    path: PathBuf,
+}
+
+impl ScratchDir {
+    /// Create `<tmp>/dn-it-<tag>-<pid>-<seq>`.
+    pub fn new(tag: &str) -> Self {
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("dn-it-{tag}-{}-{seq}", std::process::id()));
+        std::fs::create_dir_all(&path).expect("scratch dir creates");
+        Self { path }
+    }
+}
+
+impl std::ops::Deref for ScratchDir {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl AsRef<Path> for ScratchDir {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
 }

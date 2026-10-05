@@ -3,12 +3,12 @@
 //! with scripted probes, the live probes against a loopback stub, and the
 //! cache sweep after each save.
 
-use crate::common;
+use crate::common::{self, ScratchDir};
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 
 use axum::Router;
 use axum::body::Body;
@@ -44,9 +44,6 @@ use futures_util::future::BoxFuture;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-/// Scratch-dir sequence so parallel tests never share a store.
-static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
-
 /// Post-save fan-out recorder: which sections fired, in order.
 #[derive(Default)]
 struct RecorderEffects {
@@ -68,12 +65,8 @@ impl SaveEffects for RecorderEffects {
 }
 
 /// Scratch service with a recording fan-out.
-fn scratch_service() -> (SettingsService, Arc<RecorderEffects>) {
-    let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "droppedneedle-settings-sections-{}-{seq}",
-        std::process::id()
-    ));
+fn scratch_service() -> (SettingsService, Arc<RecorderEffects>, ScratchDir) {
+    let dir = ScratchDir::new("settings-sections");
     let crypto = Crypto::from_key_bytes(&[7u8; 32]).expect("test crypto builds");
     let store = ConfigStore::open(&dir.join("config.json"), crypto).expect("store opens");
     let effects = Arc::new(RecorderEffects::default());
@@ -81,6 +74,7 @@ fn scratch_service() -> (SettingsService, Arc<RecorderEffects>) {
     (
         SettingsService::new(Arc::new(store), effects.clone(), ids),
         effects,
+        dir,
     )
 }
 
@@ -294,7 +288,7 @@ impl VerifyProbes for FakeProbes {
 /// re-saving the echo keeps the stored secret intact.
 #[tokio::test]
 async fn secret_saves_echo_masks_and_resaves_preserve() {
-    let (service, _) = scratch_service();
+    let (service, _, _scratch) = scratch_service();
     // (save, raw read, dto with the secret set, secret field, mask, plaintext)
     macro_rules! check_secret {
         ($save:ident, $raw:ident, $dto:expr, $field:ident, $mask:expr, $plain:expr) => {{
@@ -441,7 +435,7 @@ async fn secret_saves_echo_masks_and_resaves_preserve() {
 /// Indexers create, list masked, update, reorder, test raw, and delete.
 #[tokio::test]
 async fn indexers_crud_masked() {
-    let (service, _) = scratch_service();
+    let (service, _, _scratch) = scratch_service();
     let first = NewznabIndexerDto {
         name: "First".to_owned(),
         url: "https://first.example.com/api".to_owned(),
@@ -517,7 +511,7 @@ async fn advanced_round_trip_scales_and_masks() {
     use droppedneedle::runtime_config::mask::AUDIODB_API_KEY_MASK;
     use droppedneedle::runtime_config::secret_sections::AdvancedSettings;
 
-    let (service, effects) = scratch_service();
+    let (service, effects, _scratch) = scratch_service();
     let dto = AdvancedSettingsDto {
         cache_ttl_album_library: 48,
         cache_ttl_search: 30,
@@ -554,7 +548,7 @@ async fn library_round_trip_cas_and_paths() {
     use droppedneedle::runtime_config::mask::ACOUSTID_KEY_MASK;
     use droppedneedle::runtime_config::secret_sections::TypedLibrary;
 
-    let (service, effects) = scratch_service();
+    let (service, effects, _scratch) = scratch_service();
     let view = service.get_library().expect("reads default");
     assert!(!view.policy_revision.is_empty());
 
@@ -569,10 +563,7 @@ async fn library_round_trip_cas_and_paths() {
         droppedneedle::settings::error::SettingsError::StaleRevision { .. }
     ));
 
-    let dir = std::env::temp_dir().join(format!(
-        "droppedneedle-settings-library-{}",
-        std::process::id()
-    ));
+    let dir = ScratchDir::new("settings-library");
     std::fs::create_dir_all(dir.join("music")).expect("fixture dir builds");
     let root = dir.join("music").to_string_lossy().into_owned();
 

@@ -4,9 +4,9 @@
 //! quota file.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::common::ScratchDir;
 use droppedneedle::runtime_config::crypto::Crypto;
 use droppedneedle::runtime_config::mask::{
     ACOUSTID_KEY_MASK, AUDIODB_API_KEY_MASK, INDEXER_API_KEY_MASK, JELLYFIN_API_KEY_MASK,
@@ -29,21 +29,11 @@ use droppedneedle::runtime_config::sections::{
 use droppedneedle::runtime_config::store::{ConfigStore, INSTANCE_ID_KEY};
 use droppedneedle::runtime_config::{ConfigError, DROPPED_SECTIONS};
 
-fn test_dir(name: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "dn-config-test-{}-{}-{nanos}",
-        std::process::id(),
-        name
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn test_dir(name: &str) -> ScratchDir {
+    ScratchDir::new(&format!("config-{name}"))
 }
 
-fn test_store(name: &str) -> (PathBuf, ConfigStore) {
+fn test_store(name: &str) -> (ScratchDir, ConfigStore) {
     let dir = test_dir(name);
     let crypto = Crypto::from_key_bytes(&[42u8; 32]).unwrap();
     let store = ConfigStore::open(&dir.join("config.json"), crypto).unwrap();

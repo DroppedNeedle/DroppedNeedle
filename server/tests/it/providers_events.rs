@@ -4,12 +4,13 @@
 //! quota file (reserved before HTTP, charged for dispatched calls, kept
 //! across restarts).
 
+use crate::common::ScratchDir;
 use droppedneedle::providers::{geocoding, github, skiddle, ticketmaster, youtube};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::Router;
 use axum::extract::Query;
@@ -48,16 +49,13 @@ fn http() -> reqwest::Client {
     reqwest::Client::new()
 }
 
-static QUOTA_SEQ: AtomicU64 = AtomicU64::new(0);
-
-/// A unique, not-yet-created quota path nested in a fresh temp dir (so the
-/// atomic write's parent-dir creation is exercised too).
-fn quota_path(name: &str) -> PathBuf {
-    let seq = QUOTA_SEQ.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "dn-providers-events-{}-{seq}-{name}/quota/youtube_quota.json",
-        std::process::id()
-    ))
+/// A not-yet-created quota path nested in a fresh scratch dir (so the
+/// atomic write's parent-dir creation is exercised too). Keep the guard
+/// alive for the test.
+fn quota_path(name: &str) -> (ScratchDir, PathBuf) {
+    let scratch = ScratchDir::new(&format!("youtube-{name}"));
+    let path = scratch.join("quota/youtube_quota.json");
+    (scratch, path)
 }
 
 fn quota_file_json(path: &PathBuf) -> serde_json::Value {
@@ -480,7 +478,7 @@ async fn youtube_search_tolerates_unknown_fields() {
         }),
     );
     let base = serve(app).await;
-    let path = quota_path("tolerant");
+    let (_scratch, path) = quota_path("tolerant");
     let client =
         YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(80), &base).unwrap();
 
@@ -510,7 +508,7 @@ async fn youtube_quota_exhaustion_blocks_second_search() {
         }),
     );
     let base = serve(app).await;
-    let path = quota_path("exhausted");
+    let (_scratch, path) = quota_path("exhausted");
     let client =
         YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(1), &base).unwrap();
     client.set_today_override(Some("2026-05-05".to_owned()));
@@ -549,7 +547,7 @@ async fn youtube_quota_survives_client_recreation() {
         get(|| async { axum::Json(search_hit("abcdefghijk")) }),
     );
     let base = serve(app).await;
-    let path = quota_path("recreate");
+    let (_scratch, path) = quota_path("recreate");
     let first =
         YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(1), &base).unwrap();
     first.set_today_override(Some("2026-05-05".to_owned()));
@@ -587,7 +585,7 @@ async fn youtube_failures_are_charged_not_cached() {
         }),
     );
     let base = serve(app).await;
-    let path = quota_path("charged");
+    let (_scratch, path) = quota_path("charged");
     let client =
         YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(2), &base).unwrap();
     client.set_today_override(Some("2026-05-05".to_owned()));
@@ -622,7 +620,7 @@ async fn youtube_upstream_429_and_bad_payload_map() {
         }),
     );
     let base = serve(app).await;
-    let path = quota_path("upstream");
+    let (_scratch, path) = quota_path("upstream");
     let client =
         YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(80), &base).unwrap();
     client.set_today_override(Some("2026-05-05".to_owned()));

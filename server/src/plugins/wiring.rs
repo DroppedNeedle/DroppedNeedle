@@ -208,6 +208,9 @@ impl PluginsSetup {
         pool: sqlx::SqlitePool,
         lane: WriteLane,
     ) -> Self {
+        // Best-effort: the host reads a missing directory as empty and the
+        // install path creates it, so a failure here must not fail the boot.
+        let _ = std::fs::create_dir_all(&plugins_dir);
         Self::assemble(
             users,
             http,
@@ -222,7 +225,8 @@ impl PluginsSetup {
         )
     }
 
-    /// Test bundle: scratch config store and plugins directory, memory tick
+    /// Test bundle: scratch config store and plugins directory (created
+    /// only when a test installs or saves something), memory tick
     /// and scrobble stores, the production verifier and zip reader, and
     /// tick loops over the caller's registry (usually the test jobs
     /// setup's).
@@ -289,9 +293,6 @@ impl PluginsSetup {
         prefs: Arc<dyn ScrobblePrefsStore>,
         links: Arc<dyn ListenBrainzLinkStore>,
     ) -> Self {
-        // Best-effort: the host reads a missing directory as empty and the
-        // install path creates it, so a failure here must not fail the boot.
-        let _ = std::fs::create_dir_all(&plugins_dir);
         let host = Arc::new(PluginHost::new(
             plugins_dir,
             Arc::clone(&config),

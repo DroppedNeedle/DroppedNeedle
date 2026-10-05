@@ -2,10 +2,10 @@
 //! the routes, the same-era suggestion pool, and the SQLite catalog and
 //! favorites adapters over a scratch migrated database.
 
+use crate::common::ScratchDir;
 use droppedneedle::reads::library;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::Router;
 use axum::body::Body;
@@ -505,23 +505,19 @@ async fn leak_brief_every_route_hides_store_faults() {
 // SQLite briefs: the real adapters over a scratch migrated database,
 // including a missing and an excluded track proving streamable-only counts.
 
-static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
-
 struct SqliteFixture {
     #[allow(dead_code)]
     runtime: droppedneedle::db::DbRuntime,
     catalog: SqliteCatalog,
     favorites: SqliteFavorites,
+    /// Declared last so the database closes before the directory goes.
+    _scratch: ScratchDir,
 }
 
 async fn sqlite_fixture() -> SqliteFixture {
     use droppedneedle::db::{DbConfig, open_runtime};
 
-    let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "droppedneedle-reads-library-{seq}-{}",
-        std::process::id()
-    ));
+    let dir = ScratchDir::new("reads-library");
     let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
         .await
         .expect("scratch runtime opens");
@@ -598,6 +594,7 @@ async fn sqlite_fixture() -> SqliteFixture {
         runtime,
         catalog: SqliteCatalog::new(&db),
         favorites: SqliteFavorites::new(&db),
+        _scratch: dir,
     }
 }
 
