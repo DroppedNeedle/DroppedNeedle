@@ -54,12 +54,12 @@ fn every_secret_section_masks_and_keeps() {
     macro_rules! check {
         ($ty:ty, $($field:ident).+, $mask:expr, $strip:expr, $fresh:expr) => {{
             let label = stringify!($ty);
-            let masked: $ty = store.get_masked().unwrap();
+            let masked: $ty = store.get_masked::<$ty>().unwrap().into_inner();
             assert_eq!(masked.$($field).+.expose(), $fresh, "{label} fresh");
             let mut incoming = <$ty>::default();
             *incoming.$($field).+.expose_mut() = "live-secret-1".to_owned();
             store.save_secret(incoming).unwrap();
-            let masked: $ty = store.get_masked().unwrap();
+            let masked: $ty = store.get_masked::<$ty>().unwrap().into_inner();
             assert_eq!(masked.$($field).+.expose(), $mask, "{label} masked");
             let raw: $ty = store.get_raw().unwrap();
             assert_eq!(raw.$($field).+.expose(), "live-secret-1", "{label} raw");
@@ -155,7 +155,7 @@ fn events_masks_resolve_each_key_independently() {
     let raw: EventsSettings = store.get_raw().unwrap();
     assert_eq!(raw.ticketmaster_api_key.expose(), "tm-live");
     assert_eq!(raw.skiddle_api_key.expose(), "sk-next");
-    let masked: EventsSettings = store.get_masked().unwrap();
+    let masked: EventsSettings = store.get_masked::<EventsSettings>().unwrap().into_inner();
     assert_eq!(masked.ticketmaster_api_key.expose(), TICKETMASTER_KEY_MASK);
     assert_eq!(masked.skiddle_api_key.expose(), SKIDDLE_KEY_MASK);
 }
@@ -217,7 +217,7 @@ fn empty_secret_stays_empty_and_clears() {
     store.save_secret(incoming).unwrap();
     let cleared = PlexConnection::default();
     store.save_secret(cleared).unwrap();
-    let masked: PlexConnection = store.get_masked().unwrap();
+    let masked: PlexConnection = store.get_masked::<PlexConnection>().unwrap().into_inner();
     assert_eq!(masked.plex_token.expose(), "");
     let raw: PlexConnection = store.get_raw().unwrap();
     assert_eq!(raw.plex_token.expose(), "");
@@ -251,7 +251,7 @@ fn secrets_never_appear_in_debug_output() {
     *events.ticketmaster_api_key.expose_mut() = "debug-live-tm".to_owned();
     store.save_secret(events).unwrap();
     let raw_slskd: SlskdConnection = store.get_raw().unwrap();
-    let masked_slskd: SlskdConnection = store.get_masked().unwrap();
+    let masked_slskd: SlskdConnection = store.get_masked::<SlskdConnection>().unwrap().into_inner();
     let raw_events: EventsSettings = store.get_raw().unwrap();
     let crypto = Crypto::from_key_bytes(&[1u8; 32]).unwrap();
     for shown in [
@@ -297,7 +297,7 @@ fn secrets_never_reach_structured_logs() {
         *slskd.api_key.expose_mut() = "log-live-slskd-secret".to_owned();
         store.save_secret(slskd).unwrap();
         let _: SlskdConnection = store.get_raw().unwrap();
-        let _: SlskdConnection = store.get_masked().unwrap();
+        let _: SlskdConnection = store.get_masked::<SlskdConnection>().unwrap().into_inner();
         tracing::info!("round-trip done");
     });
     let text = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
@@ -478,7 +478,7 @@ fn dropped_and_unknown_keys_reported_never_read() {
     std::fs::write(
         dir.join("config.json"),
         r#"{"local_files_settings": {"enabled": true},
-            "home_settings": {},
+            "_legacy_lidarr": {},
             "jellyfin_url": "http://x",
             "future_section": {}}"#,
     )
@@ -487,7 +487,7 @@ fn dropped_and_unknown_keys_reported_never_read() {
     let store = ConfigStore::open(&dir.join("config.json"), crypto).unwrap();
     let dropped = store.dropped_sections_present().unwrap();
     assert!(dropped.contains(&"local_files_settings"));
-    assert!(dropped.contains(&"home_settings"));
+    assert!(dropped.contains(&"_legacy_lidarr"));
     assert!(dropped.contains(&"jellyfin_url"));
     let unknown = store.unknown_top_level_keys().unwrap();
     assert!(unknown.contains(&"future_section".to_owned()));

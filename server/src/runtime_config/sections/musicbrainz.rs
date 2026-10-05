@@ -1,6 +1,7 @@
 //! MusicBrainz source selection, including the BrainzMash binding.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::{Section, validation};
 use crate::runtime_config::error::ConfigError;
@@ -29,7 +30,7 @@ pub const MAX_MB_RATE_LIMIT: f64 = 500.0;
 pub const MAX_MB_CONCURRENT_SEARCHES: i64 = 64;
 
 /// MusicBrainz source tier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MbSourceMode {
     /// musicbrainz.org, hard 1 req/s ceiling.
@@ -44,7 +45,7 @@ pub enum MbSourceMode {
 }
 
 /// Active BrainzMash binding (kept; the pending proposal is transient).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct BrainzmashActiveBinding {
     /// Pinned endpoint.
@@ -78,7 +79,7 @@ impl Default for BrainzmashActiveBinding {
 }
 
 /// MusicBrainz connection settings.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct MusicBrainzSettings {
     /// Active source tier.
@@ -93,7 +94,9 @@ pub struct MusicBrainzSettings {
     pub community_acknowledged: bool,
     /// Last tier the admin chose.
     pub selected_source_mode: MbSourceMode,
-    /// Source identity.
+    /// Source identity. A fresh install mints a random id, so the schema
+    /// documents no default.
+    #[schema(schema_with = source_id_schema)]
     pub source_id: String,
     /// Source generation.
     pub generation: i64,
@@ -285,4 +288,14 @@ impl Section for MusicBrainzSettings {
             self.clamped_to_official_limits = before != (self.rate_limit, self.concurrent_searches);
         }
     }
+}
+
+/// `source_id` as a plain string with no default: the default is a
+/// freshly minted id, which would make the published contract change on
+/// every build.
+fn source_id_schema() -> utoipa::openapi::schema::Object {
+    utoipa::openapi::schema::ObjectBuilder::new()
+        .schema_type(utoipa::openapi::schema::Type::String)
+        .description(Some("Source identity."))
+        .build()
 }

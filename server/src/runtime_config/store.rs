@@ -26,7 +26,8 @@ use std::sync::RwLock;
 use super::crypto::Crypto;
 use super::error::ConfigError;
 use super::mask::{
-    INDEXER_API_KEY_MASK, PLUGIN_SECRET_MASK, SaveResolution, display_mask, resolve_on_save,
+    INDEXER_API_KEY_MASK, Masked, PLUGIN_SECRET_MASK, SaveResolution, display_mask,
+    resolve_for_probe, resolve_on_save,
 };
 use super::secret_sections::{Indexers, NewznabIndexer, SecretSection};
 use super::sections::{PlainSection, PluginConfig, Plugins, Section};
@@ -109,15 +110,32 @@ impl ConfigStore {
     }
 
     /// Read one secret section with secrets masked (safe for API responses).
-    pub fn get_masked<S: SecretSection>(&self) -> Result<S, ConfigError> {
+    pub fn get_masked<S: SecretSection>(&self) -> Result<Masked<S>, ConfigError> {
         let mut section = self.decode_section::<S>()?;
         self.decrypt_in_place(&mut section)?;
         section.normalize();
-        for field in section.secret_fields() {
-            let shown = display_mask(field.value.expose(), field.mask).to_owned();
-            *field.value.expose_mut() = shown;
+        mask_in_place(&mut section);
+        Ok(Masked::from(section))
+    }
+
+    /// Resolve submitted values for a connection probe: each secret that
+    /// still holds its mask becomes the stored plaintext, anything else is
+    /// tested as submitted (stripped where a save would strip). Nothing is
+    /// written. Server-side only; never serialize the result.
+    pub fn unmask<S: SecretSection>(&self, incoming: Masked<S>) -> Result<S, ConfigError> {
+        let mut submitted = incoming.into_inner();
+        let mut stored = self.decode_section::<S>()?;
+        self.decrypt_in_place(&mut stored)?;
+        let stored_plain: Vec<String> = stored
+            .secret_fields()
+            .iter()
+            .map(|field| field.value.expose().to_owned())
+            .collect();
+        for (field, plain) in submitted.secret_fields().into_iter().zip(stored_plain) {
+            let resolved = resolve_for_probe(field.value.expose(), field.mask, field.strip, &plain);
+            *field.value.expose_mut() = resolved;
         }
-        Ok(section)
+        Ok(submitted)
     }
 
     /// Read one secret section with secrets decrypted (server-side only;
@@ -132,8 +150,13 @@ impl ConfigStore {
     /// Save one secret section: strict validation first, then normalize,
     /// then per-field mask resolution (mask keeps the stored ciphertext,
     /// anything else is encrypted fresh; empty stays empty). Returns the
-    /// normalized stored form, whose secret fields hold ciphertext.
-    pub fn save_secret<S: SecretSection>(&self, incoming: S) -> Result<S, ConfigError> {
+    /// saved section masked, so a client that re-saves the echo keeps its
+    /// secrets instead of encrypting the mask.
+    pub fn save_secret<S: SecretSection>(
+        &self,
+        incoming: impl Into<Masked<S>>,
+    ) -> Result<Masked<S>, ConfigError> {
+        let incoming = incoming.into().into_inner();
         incoming.validate()?;
         let mut normalized = incoming;
         normalized.normalize();
@@ -170,11 +193,14 @@ impl ConfigStore {
             }
         }
         self.write_section::<S>(&normalized)?;
-        Ok(normalized)
+        // Ciphertext is empty exactly when the secret is unset, so masking
+        // the stored form gives the same echo as a fresh masked read.
+        mask_in_place(&mut normalized);
+        Ok(Masked::from(normalized))
     }
 
     /// All configured indexers, keys masked, ordered by priority.
-    pub fn get_indexers(&self) -> Result<Vec<NewznabIndexer>, ConfigError> {
+    pub fn get_indexers(&self) -> Result<Vec<Masked<NewznabIndexer>>, ConfigError> {
         let stored = self.decode_section::<Indexers>()?;
         let mut out = Vec::with_capacity(stored.0.len());
         for mut indexer in stored.0 {
@@ -184,7 +210,31 @@ impl ConfigStore {
             out.push(indexer);
         }
         out.sort_by_key(|indexer| indexer.priority);
-        Ok(out)
+        Ok(out.into_iter().map(Masked::from).collect())
+    }
+
+    /// Resolve one submitted indexer for a caps probe: a masked key
+    /// becomes the stored key of the indexer with the same id (empty when
+    /// that id is unknown), anything else is tested as submitted.
+    pub fn unmask_indexer(
+        &self,
+        incoming: Masked<NewznabIndexer>,
+    ) -> Result<NewznabIndexer, ConfigError> {
+        let mut submitted = incoming.into_inner();
+        let stored_key = self
+            .get_indexers_raw()?
+            .into_iter()
+            .find(|indexer| indexer.id == submitted.id)
+            .map(|indexer| indexer.api_key.expose().to_owned())
+            .unwrap_or_default();
+        let resolved = resolve_for_probe(
+            submitted.api_key.expose(),
+            INDEXER_API_KEY_MASK,
+            true,
+            &stored_key,
+        );
+        *submitted.api_key.expose_mut() = resolved;
+        Ok(submitted)
     }
 
     /// All configured indexers with keys decrypted and stripped
@@ -205,8 +255,11 @@ impl ConfigStore {
     /// Upsert one indexer BY ID (a new id is minted when blank). The key is
     /// encrypted, or preserved when the masked sentinel comes back.
     /// Returns the indexer id.
-    pub fn save_indexer(&self, incoming: NewznabIndexer) -> Result<String, ConfigError> {
-        let mut row = incoming;
+    pub fn save_indexer(
+        &self,
+        incoming: impl Into<Masked<NewznabIndexer>>,
+    ) -> Result<String, ConfigError> {
+        let mut row = incoming.into().into_inner();
         super::sections::normalize_http_url(&mut row.url, "https://");
         let mut stored = self.decode_section::<Indexers>()?;
         let existing = stored.0.iter().find(|item| item.id == row.id);
@@ -463,6 +516,14 @@ impl ConfigStore {
         write_json_atomically(&self.path, &snapshot)?;
         *guard = snapshot;
         Ok(())
+    }
+}
+
+/// Replace every set secret with its mask (unset stays empty).
+fn mask_in_place<S: SecretSection>(section: &mut S) {
+    for field in section.secret_fields() {
+        let shown = display_mask(field.value.expose(), field.mask).to_owned();
+        *field.value.expose_mut() = shown;
     }
 }
 

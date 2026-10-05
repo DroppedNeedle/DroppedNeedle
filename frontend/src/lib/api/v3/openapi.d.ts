@@ -4171,11 +4171,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read the advanced tunables in frontend units. */
+        /** Read the advanced tunables in form units. */
         get: operations["get_advanced"];
         /**
-         * Save the advanced tunables. Unknown fields are a 400: the shape is
-         *     a closed allowlist.
+         * Save the advanced tunables. Unknown fields are a 400: the shape is a
+         *     closed allowlist.
          */
         put: operations["put_advanced"];
         post?: never;
@@ -4192,7 +4192,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read the frontend cache TTLs in backend units (milliseconds). */
+        /** Read the frontend cache TTLs in stored units (milliseconds). */
         get: operations["get_cache_ttls"];
         put?: never;
         post?: never;
@@ -4262,9 +4262,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read the acquisition policy. */
+        /** Read the acquisition policy plus its recipe verdict. */
         get: operations["get_policy"];
-        /** Save the acquisition policy. */
+        /**
+         * Save the acquisition policy. Read-only verdict fields in the body are
+         *     ignored.
+         */
         put: operations["put_policy"];
         post?: never;
         delete?: never;
@@ -4485,10 +4488,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The vestigial home section is gone. */
-        get: operations["dropped_home"];
-        /** PUT twin of the dropped home route: gone, not moved. */
-        put: operations["dropped_home_put"];
+        /** Read the home page settings. */
+        get: operations["get_home"];
+        /** Save the home page settings. The save clears the cached home rows. */
+        put: operations["put_home"];
         post?: never;
         delete?: never;
         options?: never;
@@ -4523,10 +4526,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Persist a dragged-card priority order. Unknown or duplicate ids are
-         *     a 400, never a partial reorder.
-         */
+        /** Persist a dragged-card priority order. */
         post: operations["reorder_indexers"];
         delete?: never;
         options?: never;
@@ -4543,7 +4543,7 @@ export interface paths {
         };
         /** Read the active Usenet search backend. */
         get: operations["get_search_backend"];
-        /** Save the active Usenet search backend. */
+        /** Save the active Usenet search backend. Unknown values are a 400. */
         put: operations["put_search_backend"];
         post?: never;
         delete?: never;
@@ -4562,7 +4562,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Test one indexer's caps with the submitted url/key (a masked key
+         * Test one indexer's caps with the submitted URL and key (a masked key
          *     tests the stored one).
          */
         post: operations["test_indexer"];
@@ -4661,6 +4661,202 @@ export interface paths {
          */
         put: operations["put_library"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the Library Management settings with their revision. */
+        get: operations["get_library_management"];
+        /**
+         * Save the Library Management settings under CAS. Giving an automatic
+         *     root new write scope needs a current confirmed dry run.
+         */
+        put: operations["put_library_management"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management/activation-health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Dry-run activation health for the active automatic roots. */
+        get: operations["get_library_management_activation_health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management/impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Classify a candidate without saving it. */
+        post: operations["preview_library_management_impact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management/profile-imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import a reviewed shared profile. */
+        post: operations["import_library_management_profile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management/profile-imports/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview importing a shared profile (document or share code). */
+        post: operations["preview_library_management_profile_import"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a profile as a copy of the default profile. */
+        post: operations["create_library_management_profile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management/profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one profile. */
+        get: operations["get_library_management_profile"];
+        /** Replace one profile. The body id must match the path id. */
+        put: operations["update_library_management_profile"];
+        post?: never;
+        /** Delete one custom profile that is neither the default nor assigned. */
+        delete: operations["delete_library_management_profile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management/profiles/{profile_id}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Copy one profile under a new name. */
+        post: operations["copy_library_management_profile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management/profiles/{profile_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Export one profile as a share bundle. */
+        post: operations["export_library_management_profile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management/profiles/{profile_id}/preset-diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Which groups of a preset-tracking profile differ from the preset. */
+        get: operations["get_library_management_preset_diff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate a candidate: the same check and verdict as the impact
+         *     preview (v2 serves both paths).
+         */
+        post: operations["validate_library_management"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4868,10 +5064,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Verify a BrainzMash binding or probe a plain tier. A binding names
-         *     the exact consented proposal and probes the pinned endpoint; an
-         *     update probes its own URL (never BrainzMash). A failed probe is a
-         *     502; alternative probes are a 409 while BrainzMash is active.
+         * Verify a BrainzMash binding or probe a plain tier. A failed probe is
+         *     a 502; alternative probes are a 409 while BrainzMash is active.
          */
         post: operations["verify_musicbrainz"];
         delete?: never;
@@ -5485,16 +5679,15 @@ export interface components {
             users: components["schemas"]["UserResponse"][];
         };
         /**
-         * @description The wire shape is v2's `AdvancedSettingsFrontend` minus the dropped
-         *     internal-tuning fields: values are human units (hours/minutes/seconds)
-         *     scaled to backend units (seconds/milliseconds) on save, floored back on
-         *     read. This shape is a closed allowlist: unknown JSON fields are
-         *     rejected at decode (400), so a client holding a dropped tuning field
-         *     learns it is gone instead of believing it saved.
-         *     Advanced tunables in frontend units. See the section comment for the
-         *     unit contract and the allowlist rule.
+         * @description Advanced tunables in the form's units. This is not a copy of the
+         *     section: the form shows human units (hours, minutes, seconds) while
+         *     the section stores seconds and milliseconds, v2's
+         *     `AdvancedSettingsFrontend` contract minus the dropped internal-tuning
+         *     fields. It is a closed allowlist: unknown JSON fields are rejected at
+         *     decode (400), so a client holding a dropped tuning field learns it is
+         *     gone instead of believing it saved.
          */
-        AdvancedSettingsDto: {
+        AdvancedSettingsForm: {
             /**
              * @description AudioDB API key (masked unless unset).
              * @default
@@ -6175,6 +6368,21 @@ export interface components {
             /** @description Candidate key from the review. */
             candidate_key: string;
         };
+        /** @description Artist-credit handling. */
+        ArtistCreditSettings: {
+            /**
+             * @description Preferred locales.
+             * @default []
+             */
+            preferred_locales: string[];
+            /** @default credited */
+            standardization: components["schemas"]["ArtistStandardization"];
+            /**
+             * @description Translate names.
+             * @default false
+             */
+            translate_names: boolean;
+        };
         /** @description Enriched artist counts. Absent counts mean unknown, never zero. */
         ArtistEnrichment: {
             /**
@@ -6239,6 +6447,11 @@ export interface components {
              */
             total: number;
         };
+        /**
+         * @description Artist credit standardization.
+         * @enum {string}
+         */
+        ArtistStandardization: "credited" | "variations" | "canonical";
         /** @description One catalog artist. */
         ArtistView: {
             /**
@@ -6273,10 +6486,139 @@ export interface components {
             track_count: number;
         };
         /**
+         * @description Artwork download size.
+         * @enum {string}
+         */
+        ArtworkDownloadSize: "full" | "1200" | "500" | "250";
+        /**
+         * @description Artwork image type.
+         * @enum {string}
+         */
+        ArtworkImageType: "front" | "back" | "booklet" | "medium" | "tray" | "obi" | "spine" | "track" | "other";
+        /** @description Artwork management block. */
+        ArtworkManagementSettings: {
+            /**
+             * @description Approved art only.
+             * @default true
+             */
+            approved_only: boolean;
+            /** @default full */
+            download_size: components["schemas"]["ArtworkDownloadSize"];
+            /**
+             * @description Embed art in files.
+             * @default true
+             */
+            embedded_enabled: boolean;
+            /** @default jpeg */
+            embedded_format: components["schemas"]["ArtworkOutputFormat"];
+            /**
+             * @description Embedded front only.
+             * @default true
+             */
+            embedded_front_only: boolean;
+            /**
+             * Format: int64
+             * @description Embedded size cap (0 uncapped).
+             * @default 1200
+             */
+            embedded_maximum_size: number;
+            /**
+             * @description Write external art files.
+             * @default true
+             */
+            external_enabled: boolean;
+            /** @default original */
+            external_format: components["schemas"]["ArtworkOutputFormat"];
+            /**
+             * @description External front only.
+             * @default true
+             */
+            external_front_only: boolean;
+            /**
+             * Format: int64
+             * @description External size cap (0 uncapped).
+             * @default 0
+             */
+            external_maximum_size: number;
+            /**
+             * @description External naming script id.
+             * @default null
+             */
+            external_naming_script_id: string | null;
+            /**
+             * @description Image types to fetch.
+             * @default [
+             *       "front"
+             *     ]
+             */
+            image_types: components["schemas"]["ArtworkImageType"][];
+            /**
+             * @description Local filename patterns.
+             * @default [
+             *       "cover.jpg",
+             *       "cover.jpeg",
+             *       "cover.png",
+             *       "cover.webp",
+             *       "folder.jpg",
+             *       "folder.png",
+             *       "front.jpg",
+             *       "front.png"
+             *     ]
+             */
+            local_file_patterns: string[];
+            /**
+             * Format: int64
+             * @description Minimum height (0 any).
+             * @default 0
+             */
+            minimum_height: number;
+            /**
+             * Format: int64
+             * @description Minimum width (0 any).
+             * @default 0
+             */
+            minimum_width: number;
+            /**
+             * @description Never replace art with smaller art.
+             * @default true
+             */
+            never_replace_with_smaller: boolean;
+            /**
+             * @description Overwrite external files.
+             * @default false
+             */
+            overwrite_external_files: boolean;
+            /**
+             * @description Existing types never replaced.
+             * @default []
+             */
+            preserve_existing_types: components["schemas"]["ArtworkImageType"][];
+            /**
+             * @description Provider order.
+             * @default [
+             *       "cover_art_archive_release",
+             *       "cover_art_archive_release_group",
+             *       "local_files",
+             *       "embedded"
+             *     ]
+             */
+            providers: components["schemas"]["ArtworkProvider"][];
+        };
+        /**
+         * @description Artwork output format.
+         * @enum {string}
+         */
+        ArtworkOutputFormat: "original" | "jpeg" | "png" | "webp";
+        /**
+         * @description Artwork provider.
+         * @enum {string}
+         */
+        ArtworkProvider: "cover_art_archive_release" | "cover_art_archive_release_group" | "local_files" | "embedded" | "audiodb";
+        /**
          * @description Transcode target for remote playback.
          * @enum {string}
          */
-        AudioFormatDto: "flac" | "mp3" | "opus";
+        AudioFormat: "flac" | "mp3" | "opus";
         /** @description One pending auto-download request. */
         AutoDownloadApprovalItem: {
             /** @description Artist MBID. */
@@ -6486,8 +6828,8 @@ export interface components {
             /** @description Wide thumbnail URL, when resolved. */
             wide_thumb_url?: string | null;
         };
-        /** @description Active BrainzMash binding. */
-        BrainzmashActiveBindingDto: {
+        /** @description Active BrainzMash binding (kept; the pending proposal is transient). */
+        BrainzmashActiveBinding: {
             /**
              * @description Access revision.
              * @default
@@ -6529,7 +6871,7 @@ export interface components {
          * @description Transient pending BrainzMash proposal (process memory, echoed so the
          *     UI can drive consent/verify/activate).
          */
-        BrainzmashPendingProposalDto: {
+        BrainzmashPendingProposal: {
             /**
              * @description Proposed access revision.
              * @default
@@ -6782,7 +7124,7 @@ export interface components {
             success: boolean;
         };
         /** @description Inbound Connect Apps config. Both protocols default off. */
-        ConnectAppsDto: {
+        ConnectApps: {
             /**
              * @description Advertised server name.
              * @default DroppedNeedle
@@ -6794,7 +7136,7 @@ export interface components {
              */
             advertise_server_version: string;
             /** @default local-only */
-            discover_mode: components["schemas"]["DiscoverModeDto"];
+            discover_mode: components["schemas"]["DiscoverMode"];
             /**
              * @description Capability flag for the approval-safe exact-track endpoint.
              * @default true
@@ -6811,7 +7153,7 @@ export interface components {
              */
             subsonic_enabled: boolean;
             /** @default mp3 */
-            transcode_default_format: components["schemas"]["AudioFormatDto"];
+            transcode_default_format: components["schemas"]["AudioFormat"];
             /**
              * Format: int64
              * @description Transcode ceiling in kbps (32-1411).
@@ -6953,7 +7295,7 @@ export interface components {
          * @description Compat discovery mode.
          * @enum {string}
          */
-        DiscoverModeDto: "local-only" | "lazy-mb" | "use-scrobble-targets";
+        DiscoverMode: "local-only" | "lazy-mb" | "use-scrobble-targets";
         /** @description A discover teaser on home: one seed artist plus similar artists. */
         DiscoverPreview: {
             /** @description Similar artists. */
@@ -7202,15 +7544,12 @@ export interface components {
          * @description Who may download library files. `trusted` admits trusted and admin.
          * @enum {string}
          */
-        DownloadAccessDto: "everyone" | "trusted" | "admin";
+        DownloadAccess: "everyone" | "trusted" | "admin";
         /**
-         * @description Source-agnostic acquisition policy. Lives in its own section so a
-         *     Usenet-only install still has quality/threshold/timeout/retry settings
-         *     to read. Validation is strict on submitted bodies (never silently
-         *     clamped); the read-only recipe-status projection is recomputed at GET
-         *     time instead of persisted.
+         * @description Download policy: quality tiers, recipe v2, timeouts, retry, retention,
+         *     recycle bin, quotas, and the upgrade scan.
          */
-        DownloadPolicyDto: {
+        DownloadPolicy: {
             /**
              * Format: int64
              * @description Retry base interval.
@@ -7276,7 +7615,9 @@ export interface components {
              */
             download_stall_timeout_minutes: number;
             /**
-             * @description Reject non-FLAC/MP3 candidates. A v2 recipe requires this on.
+             * @description Reject non-FLAC/MP3 candidates. A v2 recipe requires this on: v2
+             *     gates recipe saves on it, the quality snapshot carries it, and the
+             *     matcher, free-music, and orchestrator consumers all read it.
              * @default true
              */
             flac_mp3_only: boolean;
@@ -7386,19 +7727,7 @@ export interface components {
              * @description Closed v2 quality recipe (empty means a v1 policy).
              * @default []
              */
-            quality_recipe: components["schemas"]["QualityRecipeEntryDto"][];
-            /**
-             * @description Recipe verdict detail, when any. Read-only, like the status.
-             * @default null
-             */
-            quality_recipe_error: string | null;
-            /**
-             * @description Read-only recipe verdict (`v1`, `v2`, `non_convertible`,
-             *     `invalid`). Recomputed on every read; client values are ignored
-             *     on save.
-             * @default v1
-             */
-            quality_recipe_status: string;
+            quality_recipe: components["schemas"]["QualityRecipeEntry"][];
             /**
              * @description Recycle-bin path ("" disables).
              * @default
@@ -7448,6 +7777,16 @@ export interface components {
              */
             verify_downloads: boolean;
         };
+        /**
+         * @description GET view of the acquisition policy: the stored policy plus the
+         *     read-only recipe verdict, recomputed on every read and never saved.
+         */
+        DownloadPolicyView: components["schemas"]["DownloadPolicy"] & {
+            /** @description Recipe verdict detail, when any. */
+            quality_recipe_error?: string | null;
+            /** @description Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`. */
+            quality_recipe_status: string;
+        };
         /** @description Edition-acquire outcome. */
         EditionAcquireResponse: {
             /** @description Human outcome. */
@@ -7489,6 +7828,29 @@ export interface components {
             /** @description Artists to enrich (capped per bucket, extras ignored). */
             artists?: components["schemas"]["ArtistEnrichmentRequest"][];
         };
+        /** @description Enrichment management block. */
+        EnrichmentManagementSettings: {
+            /**
+             * @default {
+             *       "enabled": false,
+             *       "preserve_existing": false,
+             *       "provider": "lrclib",
+             *       "required": false,
+             *       "write_plain": true,
+             *       "write_synced": true
+             *     }
+             */
+            lyrics: components["schemas"]["LyricsManagementSettings"];
+            /**
+             * @default {
+             *       "album_aware": true,
+             *       "enabled": false,
+             *       "mode": "preserve",
+             *       "required": false
+             *     }
+             */
+            replaygain: components["schemas"]["ReplayGainManagementSettings"];
+        };
         /** @description Enrich-batch response for both buckets plus degradation notes. */
         EnrichmentResponse: {
             /** @description Album counts, same order as the request. */
@@ -7520,7 +7882,7 @@ export interface components {
             error: components["schemas"]["ErrorBody"];
         };
         /** @description Upcoming-events sources. The sweep runs daily at `poll_time`. */
-        EventsSettingsDto: {
+        EventsSettings: {
             /**
              * @description Master switch.
              * @default false
@@ -7532,7 +7894,7 @@ export interface components {
              */
             poll_time: string;
             /**
-             * @description Skiddle key (masked unless unset).
+             * @description Skiddle key (encrypted at rest).
              * @default
              */
             skiddle_api_key: string;
@@ -7542,9 +7904,9 @@ export interface components {
              */
             skiddle_enabled: boolean;
             /** @default followed */
-            sweep_scope: components["schemas"]["EventsSweepScopeDto"];
+            sweep_scope: components["schemas"]["EventsSweepScope"];
             /**
-             * @description Ticketmaster key (masked unless unset).
+             * @description Ticketmaster key (encrypted at rest).
              * @default
              */
             ticketmaster_api_key: string;
@@ -7558,7 +7920,47 @@ export interface components {
          * @description Events sweep scope.
          * @enum {string}
          */
-        EventsSweepScopeDto: "followed" | "library";
+        EventsSweepScope: "followed" | "library";
+        /**
+         * @description Extension case policy.
+         * @enum {string}
+         */
+        ExtensionCase: "preserve" | "lower" | "upper";
+        /** @description External-server refresh after publishing. */
+        ExternalRefreshSettings: {
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * @description Refresh Jellyfin.
+             * @default false
+             */
+            jellyfin_enabled: boolean;
+            /**
+             * @description Refresh Navidrome.
+             * @default false
+             */
+            navidrome_enabled: boolean;
+            /**
+             * @description Refresh Plex.
+             * @default false
+             */
+            plex_enabled: boolean;
+            /**
+             * Format: int64
+             * @description Retry attempts.
+             * @default 3
+             */
+            retry_attempts: number;
+            /**
+             * Format: int64
+             * @description Retry delay in seconds.
+             * @default 30
+             */
+            retry_delay_seconds: number;
+        };
         /** @description Per-kind counts. */
         FavoriteCounts: {
             /** @description Favorited albums. */
@@ -7632,8 +8034,46 @@ export interface components {
             /** @description Preferred casing for display. */
             username_display: string;
         };
+        /**
+         * @description Tag-field write mode.
+         * @enum {string}
+         */
+        FieldMode: "disabled" | "replace" | "fill_missing" | "merge" | "preserve";
+        /** @description File-behavior gates. */
+        FileBehaviorSettings: {
+            /**
+             * @description Preserve permission bits.
+             * @default true
+             */
+            preserve_permissions: boolean;
+            /**
+             * @description Preserve mtimes.
+             * @default true
+             */
+            preserve_timestamps: boolean;
+            /**
+             * @description Refuse symlinked media.
+             * @default true
+             */
+            reject_symlinks: boolean;
+            /**
+             * @description Refuse writes the format cannot hold.
+             * @default true
+             */
+            strict_capability_gate: boolean;
+            /**
+             * @description Re-probe audio after writing.
+             * @default true
+             */
+            validate_technical_audio: boolean;
+            /**
+             * @description Re-read tags after writing.
+             * @default true
+             */
+            validate_written_metadata: boolean;
+        };
         /** @description Zero-dependency filesystem poller knobs. */
-        FilesystemWatcherDto: {
+        FilesystemWatcher: {
             /**
              * Format: double
              * @description Burst-collapse window in seconds (minimum 0).
@@ -7711,15 +8151,43 @@ export interface components {
             /** @description Followed artists. */
             artists: components["schemas"]["FollowedArtist"][];
         };
+        /** @description Format-compatibility handling. */
+        FormatCompatibilitySettings: {
+            /**
+             * @description Primary genre only for constrained formats.
+             * @default false
+             */
+            constrained_genres_primary_only: boolean;
+            /** @default utf8 */
+            id3_text_encoding: components["schemas"]["Id3TextEncoding"];
+            /** @default 2.4 */
+            id3_version: components["schemas"]["Id3Version"];
+            /**
+             * @description ID3v2.3 multi-value join delimiter.
+             * @default ;
+             */
+            id3v23_join_delimiter: string;
+            /** @default preserve */
+            mp3_apev2_policy: components["schemas"]["Mp3ApePolicy"];
+            /** @default save_apev2 */
+            raw_aac_tag_policy: components["schemas"]["RawAacTagPolicy"];
+            /**
+             * @description Strip ID3 chunks from FLAC.
+             * @default false
+             */
+            remove_id3_from_flac: boolean;
+            /** @default id3 */
+            wav_tag_policy: components["schemas"]["WavTagPolicy"];
+        };
         /** @description Free-music acquisition settings. */
-        FreeMusicDto: {
+        FreeMusic: {
             /**
              * @description Master switch.
              * @default true
              */
             enabled: boolean;
             /** @default flac */
-            preferred_format: components["schemas"]["AudioFormatDto"];
+            preferred_format: components["schemas"]["AudioFormat"];
         };
         /**
          * @description Frontend cache TTLs in backend units (milliseconds), verbatim from
@@ -7799,6 +8267,19 @@ export interface components {
              */
             search: number;
         };
+        /** @description One genre alias. */
+        GenreAlias: {
+            /**
+             * @description Source label.
+             * @default
+             */
+            source: string;
+            /**
+             * @description Target label.
+             * @default
+             */
+            target: string;
+        };
         /** @description Genre mosaic art: a collage of owned covers or a flat gradient. */
         GenreArtwork: {
             /** @description Owned covers composing the collage (empty for gradients). */
@@ -7860,6 +8341,99 @@ export interface components {
             /** @description Genres by descending track count, name tiebreak. */
             items: components["schemas"]["GenreView"][];
         };
+        /** @description Genre management block. */
+        GenreManagementSettings: {
+            /**
+             * @description Aliases.
+             * @default []
+             */
+            aliases: components["schemas"]["GenreAlias"][];
+            /**
+             * @description Allowed labels.
+             * @default []
+             */
+            allowlist: string[];
+            /**
+             * @description Canonicalize labels.
+             * @default true
+             */
+            canonicalize: boolean;
+            /**
+             * @description Blocked labels.
+             * @default []
+             */
+            denylist: string[];
+            /**
+             * @description Master switch.
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Format: int64
+             * @description Last.fm weight floor.
+             * @default 10
+             */
+            lastfm_minimum_weight: number;
+            /**
+             * @description Last.fm whitelisted tags only.
+             * @default true
+             */
+            lastfm_whitelist_only: boolean;
+            /**
+             * @description ListenBrainz curated tags only.
+             * @default true
+             */
+            listenbrainz_curated_only: boolean;
+            /**
+             * Format: int64
+             * @description ListenBrainz vote floor.
+             * @default 1
+             */
+            listenbrainz_minimum_count: number;
+            /**
+             * Format: int64
+             * @description Max genre-ancestry depth.
+             * @default 4
+             */
+            maximum_ancestry_depth: number;
+            /**
+             * Format: int64
+             * @description Max genres written.
+             * @default 5
+             */
+            maximum_count: number;
+            /** @default replace */
+            mode: components["schemas"]["GenreMode"];
+            /**
+             * Format: int64
+             * @description MusicBrainz vote floor.
+             * @default 1
+             */
+            musicbrainz_minimum_count: number;
+            /**
+             * @description Preferred casing.
+             * @default []
+             */
+            preferred_casing: string[];
+            /**
+             * @description Genre sources.
+             * @default [
+             *       "musicbrainz",
+             *       "listenbrainz"
+             *     ]
+             */
+            sources: components["schemas"]["GenreSource"][];
+            /**
+             * @description Primary genre only for constrained formats.
+             * @default false
+             */
+            write_primary_only_for_constrained_formats: boolean;
+        };
+        /**
+         * @description Genre write mode.
+         * @enum {string}
+         */
+        GenreMode: "replace" | "merge" | "fill_missing";
         /** @description Popular artists and albums for a genre. */
         GenrePopularSection: {
             /** @description Popular albums. */
@@ -7871,6 +8445,11 @@ export interface components {
             /** @description More artists behind the offsets. */
             has_more_artists: boolean;
         };
+        /**
+         * @description Genre source.
+         * @enum {string}
+         */
+        GenreSource: "musicbrainz" | "listenbrainz" | "lastfm" | "existing_local";
         /** @description One genre with streamable-only counts. */
         GenreView: {
             /**
@@ -7887,7 +8466,7 @@ export interface components {
             track_count: number;
         };
         /** @description Store-region settings. */
-        GetItDto: {
+        GetIt: {
             /**
              * @description Two-letter store region.
              * @default US
@@ -8034,6 +8613,34 @@ export interface components {
             your_top_albums?: null | components["schemas"]["ChartSection"];
         };
         /**
+         * @description Home page cache lifetimes and the two trending rows (v2
+         *     `HomeSettings`). The ranges are v2's, enforced on save.
+         */
+        HomeSettings: {
+            /**
+             * Format: int64
+             * @description Personal rows cache lifetime, seconds (60-3600).
+             * @default 300
+             */
+            cache_ttl_personal: number;
+            /**
+             * Format: int64
+             * @description Trending rows cache lifetime, seconds (300-86400).
+             * @default 3600
+             */
+            cache_ttl_trending: number;
+            /**
+             * @description Show the "Globally trending" row.
+             * @default true
+             */
+            show_globally_trending: boolean;
+            /**
+             * @description Show the "What's hot" row.
+             * @default true
+             */
+            show_whats_hot: boolean;
+        };
+        /**
          * @description The hub: one screen of highlights per source. Sections a source lacks
          *     stay empty rather than erroring.
          */
@@ -8057,10 +8664,20 @@ export interface components {
             stats?: null | components["schemas"]["RemotesStatsView"];
         };
         /**
+         * @description ID3 text encoding.
+         * @enum {string}
+         */
+        Id3TextEncoding: "utf8" | "utf16";
+        /**
+         * @description ID3 version for MP3 writes.
+         * @enum {string}
+         */
+        Id3Version: "2.4" | "2.3";
+        /**
          * @description Per-path identification policy.
          * @enum {string}
          */
-        IdentificationPolicyDto: "local_metadata" | "automatic" | "excluded";
+        IdentificationPolicy: "local_metadata" | "automatic" | "excluded";
         /** @description Enqueue one album for identification. */
         IdentifyBody: {
             /** @description Local album id (scan album keys read `root::directory`). */
@@ -8080,6 +8697,14 @@ export interface components {
             job_id: string;
             /** @description Job state after enqueue. */
             state: string;
+        };
+        /** @description Catalog-identity policy (no file writes). */
+        IdentityManagementSettings: {
+            /**
+             * @description Automatic edition acceptance.
+             * @default false
+             */
+            automatic_edition_acceptance_enabled: boolean;
         };
         /** @description Sealed identity after a review resolves. */
         IdentityView: {
@@ -8256,10 +8881,13 @@ export interface components {
             /** @description The YouTube data API (quota'd) is configured. */
             youtube_api?: boolean;
         };
-        /** @description Jellyfin connection. */
-        JellyfinConnectionDto: {
+        /**
+         * @description Jellyfin connection. The section URL is the single owner (the top-level
+         *     mirror and the in-memory `Settings` mutation are gone).
+         */
+        JellyfinConnection: {
             /**
-             * @description API key (masked unless unset).
+             * @description API key (encrypted at rest; v2 returned it plaintext on GET).
              * @default
              */
             api_key: string;
@@ -8360,10 +8988,10 @@ export interface components {
             username: string;
         };
         /**
-         * @description Last.fm master switch. Credentials are per-user (see
-         *     `/me/connections/lastfm`); the admin-global pair is deleted.
+         * @description Last.fm settings: master switch only (per-user credentials live in
+         *     the per-user store, not here).
          */
-        LastFmSettingsDto: {
+        LastFmSettings: {
             /**
              * @description Master switch for Last.fm fan-out.
              * @default false
@@ -8386,20 +9014,652 @@ export interface components {
             /** @description Single-use token for the session exchange. */
             token: string;
         };
+        /**
+         * @description Dry-run activation health: stale roots (saved activation no longer
+         *     matches) and blocked roots (no dry run could help).
+         */
+        LibraryManagementActivationHealthResponse: {
+            /** @description Policy error, set only with a non-empty `blocked_root_ids`. */
+            blocked_reason?: string | null;
+            /** @description Active roots no dry run could help. */
+            blocked_root_ids: string[];
+            /** @description Active roots whose activation no longer matches. */
+            stale_root_ids: string[];
+        };
+        /**
+         * @description Impact verdict for a candidate: classification, preview requirement,
+         *     affected roots, and human reasons.
+         */
+        LibraryManagementChangeImpact: {
+            /** @description Affected root ids. */
+            affected_root_ids: string[];
+            /** @description `no_change`, `harmless`, `restrictive`, or `destructive`. */
+            classification: string;
+            /** @description Current stored revision. */
+            current_settings_revision: string;
+            /** @description A current dry run must be confirmed before enabling. */
+            preview_required: boolean;
+            /** @description Normalized candidate revision. */
+            proposed_settings_revision: string;
+            /** @description Human reasons. */
+            reasons: string[];
+            /** @description The caller's revision was already stale. */
+            stale: boolean;
+        };
+        /**
+         * @description Group-level preset drift: which top-level profile groups differ from
+         *     the tracked preset, plus the preset profile for rendering.
+         */
+        LibraryManagementPresetDiff: {
+            /** @description Differing groups. */
+            changed_groups: string[];
+            /** @description Whether any group differs. */
+            differs: boolean;
+            /** @description Preset origin, when tracked. */
+            preset_origin?: string | null;
+            preset_profile?: null | components["schemas"]["LibraryManagementProfile"];
+            /**
+             * Format: int64
+             * @description Preset version, when tracked.
+             */
+            preset_version?: number | null;
+            /** @description Profile id. */
+            profile_id: string;
+            /** @description Groups a preset version upgrade would touch. */
+            version_upgrade_groups: string[];
+        };
+        /** @description One named management profile. */
+        LibraryManagementProfile: {
+            /**
+             * @default {
+             *       "approved_only": true,
+             *       "download_size": "full",
+             *       "embedded_enabled": true,
+             *       "embedded_format": "jpeg",
+             *       "embedded_front_only": true,
+             *       "embedded_maximum_size": 1200,
+             *       "external_enabled": true,
+             *       "external_format": "original",
+             *       "external_front_only": true,
+             *       "external_maximum_size": 0,
+             *       "external_naming_script_id": null,
+             *       "image_types": [
+             *         "front"
+             *       ],
+             *       "local_file_patterns": [
+             *         "cover.jpg",
+             *         "cover.jpeg",
+             *         "cover.png",
+             *         "cover.webp",
+             *         "folder.jpg",
+             *         "folder.png",
+             *         "front.jpg",
+             *         "front.png"
+             *       ],
+             *       "minimum_height": 0,
+             *       "minimum_width": 0,
+             *       "never_replace_with_smaller": true,
+             *       "overwrite_external_files": false,
+             *       "preserve_existing_types": [],
+             *       "providers": [
+             *         "cover_art_archive_release",
+             *         "cover_art_archive_release_group",
+             *         "local_files",
+             *         "embedded"
+             *       ]
+             *     }
+             */
+            artwork: components["schemas"]["ArtworkManagementSettings"];
+            /**
+             * @description Description.
+             * @default
+             */
+            description: string;
+            /**
+             * @default {
+             *       "lyrics": {
+             *         "enabled": false,
+             *         "preserve_existing": false,
+             *         "provider": "lrclib",
+             *         "required": false,
+             *         "write_plain": true,
+             *         "write_synced": true
+             *       },
+             *       "replaygain": {
+             *         "album_aware": true,
+             *         "enabled": false,
+             *         "mode": "preserve",
+             *         "required": false
+             *       }
+             *     }
+             */
+            enrichment: components["schemas"]["EnrichmentManagementSettings"];
+            /**
+             * @default {
+             *       "preserve_permissions": true,
+             *       "preserve_timestamps": true,
+             *       "reject_symlinks": true,
+             *       "strict_capability_gate": true,
+             *       "validate_technical_audio": true,
+             *       "validate_written_metadata": true
+             *     }
+             */
+            file_behavior: components["schemas"]["FileBehaviorSettings"];
+            /**
+             * @default {
+             *       "aliases": [],
+             *       "allowlist": [],
+             *       "canonicalize": true,
+             *       "denylist": [],
+             *       "enabled": true,
+             *       "lastfm_minimum_weight": 10,
+             *       "lastfm_whitelist_only": true,
+             *       "listenbrainz_curated_only": true,
+             *       "listenbrainz_minimum_count": 1,
+             *       "maximum_ancestry_depth": 4,
+             *       "maximum_count": 5,
+             *       "mode": "replace",
+             *       "musicbrainz_minimum_count": 1,
+             *       "preferred_casing": [],
+             *       "sources": [
+             *         "musicbrainz",
+             *         "listenbrainz"
+             *       ],
+             *       "write_primary_only_for_constrained_formats": false
+             *     }
+             */
+            genres: components["schemas"]["GenreManagementSettings"];
+            /**
+             * @description Profile id.
+             * @default
+             */
+            id: string;
+            /**
+             * @default {
+             *       "automatic_edition_acceptance_enabled": false
+             *     }
+             */
+            identity: components["schemas"]["IdentityManagementSettings"];
+            /**
+             * @default {
+             *       "artist_credits": {
+             *         "preferred_locales": [],
+             *         "standardization": "credited",
+             *         "translate_names": false
+             *       },
+             *       "enabled": true,
+             *       "fields": [],
+             *       "format_compatibility": {
+             *         "constrained_genres_primary_only": false,
+             *         "id3_text_encoding": "utf8",
+             *         "id3_version": "2.4",
+             *         "id3v23_join_delimiter": "; ",
+             *         "mp3_apev2_policy": "preserve",
+             *         "raw_aac_tag_policy": "save_apev2",
+             *         "remove_id3_from_flac": false,
+             *         "wav_tag_policy": "id3"
+             *       },
+             *       "preserve_embedded_art_during_scrub": true,
+             *       "preserve_fields": [],
+             *       "relationships": {
+             *         "enabled": true,
+             *         "types": [
+             *           "composer",
+             *           "lyricist",
+             *           "conductor",
+             *           "performer",
+             *           "arranger",
+             *           "remixer",
+             *           "producer"
+             *         ]
+             *       },
+             *       "scrub_unmanaged_tags": false,
+             *       "tagging_script_ids": []
+             *     }
+             */
+            metadata: components["schemas"]["MetadataManagementSettings"];
+            /**
+             * @description Display name.
+             * @default
+             */
+            name: string;
+            /**
+             * @default {
+             *       "refresh_droppedneedle": true,
+             *       "refresh_external_servers": false
+             *     }
+             */
+            notification: components["schemas"]["ProfileNotificationSettings"];
+            /**
+             * @default {
+             *       "compatibility": {
+             *         "extension_case": "preserve",
+             *         "maximum_component_length": 240,
+             *         "maximum_path_length": 4096,
+             *         "replace_non_ascii": false,
+             *         "replace_spaces_with_underscores": false,
+             *         "separator_replacement": "_",
+             *         "unicode_normalization": "NFC",
+             *         "windows_compatible": true,
+             *         "windows_legacy_path_limit": false
+             *       },
+             *       "move_enabled": true,
+             *       "move_sidecars": true,
+             *       "multi_disc_naming_script_id": null,
+             *       "naming_script_id": "69202666-cb88-52b0-bac2-0afc62b1e909",
+             *       "remove_empty_directories": true,
+             *       "rename_enabled": true,
+             *       "sidecar_patterns": [
+             *         "cover.jpg",
+             *         "cover.jpeg",
+             *         "cover.png",
+             *         "cover.webp",
+             *         "folder.jpg",
+             *         "folder.jpeg",
+             *         "folder.png",
+             *         "front.jpg",
+             *         "front.png",
+             *         "back.jpg",
+             *         "back.jpeg",
+             *         "back.png",
+             *         "back.webp",
+             *         "booklet*.jpg",
+             *         "booklet*.jpeg",
+             *         "booklet*.png",
+             *         "booklet*.webp",
+             *         "medium*.jpg",
+             *         "medium*.jpeg",
+             *         "medium*.png",
+             *         "medium*.webp",
+             *         "*.cue",
+             *         "*.log",
+             *         "*.lrc",
+             *         "*.m3u",
+             *         "*.m3u8",
+             *         "*.pls"
+             *       ],
+             *       "source_cleanup": "remove_after_confirmed_move"
+             *     }
+             */
+            organization: components["schemas"]["OrganizationManagementSettings"];
+            /**
+             * @description Preset origin.
+             * @default null
+             */
+            preset_origin: string | null;
+            /**
+             * Format: int64
+             * @description Preset version.
+             * @default null
+             */
+            preset_version: number | null;
+            /**
+             * @description Content revision.
+             * @default
+             */
+            revision: string;
+        };
+        /** @description Copy-profile request. */
+        LibraryManagementProfileCopyRequest: {
+            /** @description Compare-and-swap token from the last GET. */
+            expected_settings_revision: string;
+            /** @description Name for the copy. */
+            name: string;
+        };
+        /** @description Create-profile request (clones the default profile). */
+        LibraryManagementProfileCreateRequest: {
+            /** @description Description for the new profile. */
+            description?: string;
+            /** @description Compare-and-swap token from the last GET. */
+            expected_settings_revision: string;
+            /** @description Name for the new profile. */
+            name: string;
+        };
+        /** @description Delete-profile request. */
+        LibraryManagementProfileDeleteRequest: {
+            /** @description Compare-and-swap token from the last GET. */
+            expected_settings_revision: string;
+        };
+        /** @description Export request. */
+        LibraryManagementProfileExportRequest: {
+            /** @description Compare-and-swap token from the last GET. */
+            expected_settings_revision: string;
+        };
+        /**
+         * @description Exported bundle: a portable document plus a share code, both pinned
+         *     by the bundle hash.
+         */
+        LibraryManagementProfileExportResponse: {
+            /** @description Bundle hash (import pins to the reviewed hash). */
+            bundle_hash: string;
+            /** @description Portable document (JSON). */
+            document: string;
+            /** @description Suggested download filename. */
+            filename: string;
+            /** @description Bundle MIME type. */
+            mime_type: string;
+            /** @description Settings revision at export time. */
+            settings_revision: string;
+            /** @description Share code (`DNLP1:...`). */
+            share_code: string;
+        };
+        /** @description Import-preview request (accepts a document or a share code). */
+        LibraryManagementProfileImportPreviewRequest: {
+            /** @description Bundle document or share code. */
+            content: string;
+            /** @description Compare-and-swap token from the last GET. */
+            expected_settings_revision: string;
+        };
+        /** @description Import-preview response. */
+        LibraryManagementProfileImportPreviewResponse: {
+            /** @description Capability aspects the profile uses. */
+            aspects: string[];
+            /** @description Reviewed bundle hash (the import must pin to this). */
+            bundle_hash: string;
+            /** @description Naming scripts the bundle carries. */
+            naming_scripts: components["schemas"]["NamingScript"][];
+            /** @description Materialized profile (names resolved against stored settings). */
+            profile: components["schemas"]["LibraryManagementProfile"];
+            /** @description Settings revision at preview time. */
+            settings_revision: string;
+            /** @description Tagging scripts the bundle carries. */
+            tagging_scripts: components["schemas"]["TaggingScript"][];
+            /** @description Import warnings. */
+            warnings: components["schemas"]["LibraryManagementProfileImportWarning"][];
+        };
+        /** @description Import-confirm request. */
+        LibraryManagementProfileImportRequest: {
+            /** @description Bundle document or share code. */
+            content: string;
+            /** @description Compare-and-swap token from the last GET. */
+            expected_settings_revision: string;
+            /** @description Name for the imported profile. */
+            name: string;
+            /** @description Bundle hash the admin reviewed. */
+            reviewed_bundle_hash: string;
+        };
+        /** @description Import-confirm response. */
+        LibraryManagementProfileImportResponse: {
+            /** @description Naming scripts the import added. */
+            naming_scripts: components["schemas"]["NamingScript"][];
+            /** @description Imported profile. */
+            profile: components["schemas"]["LibraryManagementProfile"];
+            /** @description New settings revision. */
+            settings_revision: string;
+            /** @description Tagging scripts the import added. */
+            tagging_scripts: components["schemas"]["TaggingScript"][];
+        };
+        /** @description One import warning: machine code plus human title and message. */
+        LibraryManagementProfileImportWarning: {
+            /** @description Stable warning code. */
+            code: string;
+            /** @description What the profile will do. */
+            message: string;
+            /** @description `warning` or `danger`. */
+            severity: string;
+            /** @description Short title. */
+            title: string;
+        };
+        /**
+         * @description Profile-mutation acknowledgement: the saved profile plus the fresh
+         *     revision (a second read, so concurrent saves surface as staleness on
+         *     the next write instead of silently winning).
+         */
+        LibraryManagementProfileMutationResponse: {
+            /** @description Saved profile. */
+            profile: components["schemas"]["LibraryManagementProfile"];
+            /** @description Fresh settings revision. */
+            settings_revision: string;
+        };
+        /** @description Update-profile request. */
+        LibraryManagementProfileUpdateRequest: {
+            /** @description Compare-and-swap token from the last GET. */
+            expected_settings_revision: string;
+            /** @description Full replacement profile (id must match the path). */
+            profile: components["schemas"]["LibraryManagementProfile"];
+        };
+        /** @description One root-to-profile assignment. */
+        LibraryManagementRootAssignment: {
+            /**
+             * Format: double
+             * @description Activation pins (set by the activation flow).
+             * @default null
+             */
+            activation_confirmed_at: number | null;
+            /**
+             * @description Activation pins (set by the activation flow).
+             * @default null
+             */
+            activation_naming_policy_revision: string | null;
+            /**
+             * @description Activation pins (set by the activation flow).
+             * @default null
+             */
+            activation_policy_revision: string | null;
+            /**
+             * @description Activation pins (set by the activation flow).
+             * @default null
+             */
+            activation_preview_hash: string | null;
+            /**
+             * @description Activation pins (set by the activation flow).
+             * @default null
+             */
+            activation_preview_token: string | null;
+            /**
+             * @description Activation pins (set by the activation flow).
+             * @default null
+             */
+            activation_profile_revision: string | null;
+            /**
+             * @description Activation pins (set by the activation flow).
+             * @default null
+             */
+            activation_settings_revision: string | null;
+            /**
+             * @description Automatic acquisitions.
+             * @default false
+             */
+            automatic_acquisitions: boolean;
+            /**
+             * @description Automatic custom editions.
+             * @default false
+             */
+            automatic_custom_editions: boolean;
+            /**
+             * @description Automatic drop imports.
+             * @default false
+             */
+            automatic_drop_imports: boolean;
+            /**
+             * @description Automatic scan-discovered organization.
+             * @default false
+             */
+            automatic_scan_discovered: boolean;
+            /**
+             * @description Assignment switch.
+             * @default false
+             */
+            enabled: boolean;
+            /** @default null */
+            overrides: null | components["schemas"]["LibraryManagementRootOverrides"];
+            /**
+             * @description Assigned profile id.
+             * @default null
+             */
+            profile_id: string | null;
+            /**
+             * @description Library root id.
+             * @default
+             */
+            root_id: string;
+        };
+        /** @description Per-root profile overrides (`None` inherits the profile). */
+        LibraryManagementRootOverrides: {
+            /**
+             * @description Automatic edition acceptance.
+             * @default null
+             */
+            automatic_edition_acceptance_enabled: boolean | null;
+            /**
+             * @description Embedded-artwork switch.
+             * @default null
+             */
+            embedded_artwork_enabled: boolean | null;
+            /**
+             * @description External-artwork switch.
+             * @default null
+             */
+            external_artwork_enabled: boolean | null;
+            /**
+             * @description Genre switch.
+             * @default null
+             */
+            genres_enabled: boolean | null;
+            /**
+             * @description Metadata switch.
+             * @default null
+             */
+            metadata_enabled: boolean | null;
+            /**
+             * @description Move switch.
+             * @default null
+             */
+            move_enabled: boolean | null;
+            /**
+             * @description Sidecar-move switch.
+             * @default null
+             */
+            move_sidecars: boolean | null;
+            /** @default inherit */
+            multi_disc_naming_mode: components["schemas"]["MultiDiscNamingMode"];
+            /**
+             * @description Multi-disc naming script id.
+             * @default null
+             */
+            multi_disc_naming_script_id: string | null;
+            /**
+             * @description Naming script id.
+             * @default null
+             */
+            naming_script_id: string | null;
+            /**
+             * @description Timestamp preservation.
+             * @default null
+             */
+            preserve_timestamps: boolean | null;
+            /**
+             * @description Rename switch.
+             * @default null
+             */
+            rename_enabled: boolean | null;
+            /** @default null */
+            source_cleanup: null | components["schemas"]["SourceCleanupMode"];
+        };
+        /** @description PUT body: full settings plus the required CAS token. */
+        LibraryManagementSaveRequest: {
+            /** @description Compare-and-swap token from the last GET. */
+            expected_settings_revision: string;
+            /** @description Full candidate settings. */
+            settings: components["schemas"]["LibraryManagementSettings"];
+        };
+        /** @description Library management settings (secret-free on purpose). */
+        LibraryManagementSettings: {
+            /**
+             * @description Default profile id.
+             * @default
+             */
+            default_profile_id: string;
+            /**
+             * @default {
+             *       "enabled": false,
+             *       "jellyfin_enabled": false,
+             *       "navidrome_enabled": false,
+             *       "plex_enabled": false,
+             *       "retry_attempts": 3,
+             *       "retry_delay_seconds": 30
+             *     }
+             */
+            external_refresh: components["schemas"]["ExternalRefreshSettings"];
+            /**
+             * @description Naming scripts.
+             * @default []
+             */
+            naming_scripts: components["schemas"]["NamingScript"][];
+            /**
+             * Format: int64
+             * @description Preset catalog version.
+             * @default 0
+             */
+            preset_catalog_version: number;
+            /**
+             * Format: int64
+             * @description Preview retention in hours.
+             * @default 24
+             */
+            preview_retention_hours: number;
+            /**
+             * @description Named profiles.
+             * @default []
+             */
+            profiles: components["schemas"]["LibraryManagementProfile"][];
+            /**
+             * @description Recycle-bin path ("" disables).
+             * @default
+             */
+            recycle_bin_path: string;
+            /**
+             * @description Root assignments.
+             * @default []
+             */
+            root_assignments: components["schemas"]["LibraryManagementRootAssignment"][];
+            /**
+             * Format: int64
+             * @description Settings schema version.
+             * @default 1
+             */
+            schema_version: number;
+            /**
+             * @description Tagging scripts.
+             * @default []
+             */
+            tagging_scripts: components["schemas"]["TaggingScript"][];
+            /**
+             * Format: int64
+             * @description Undo retention in days.
+             * @default 90
+             */
+            undo_retention_days: number;
+        };
+        /** @description Impact/validate request body. */
+        LibraryManagementSettingsImpactRequest: {
+            /** @description Compare-and-swap token from the last GET, if any. */
+            expected_settings_revision?: string | null;
+            /** @description Full candidate settings. */
+            settings: components["schemas"]["LibraryManagementSettings"];
+        };
+        /**
+         * @description GET/PUT view of Library Management: the settings plus their content
+         *     revision (the write CAS token).
+         */
+        LibraryManagementSettingsResponse: components["schemas"]["LibraryManagementSettings"] & {
+            /** @description Settings content revision. */
+            settings_revision: string;
+        };
         /** @description Add-one-library-path body. */
         LibraryPathRequest: {
             /** @description Directory to add as a library root. */
             path: string;
         };
-        /** @description One path-policy rule inside a root (ordered by depth on save). */
-        LibraryPathRuleDto: {
+        /** @description One path-policy rule inside a root. */
+        LibraryPathRule: {
             /**
              * @description Rule id.
              * @default
              */
             id: string;
             /** @default automatic */
-            policy: components["schemas"]["IdentificationPolicyDto"];
+            policy: components["schemas"]["IdentificationPolicy"];
             /**
              * @description Path relative to the root.
              * @default
@@ -8407,7 +9667,7 @@ export interface components {
             relative_path: string;
         };
         /** @description One library root. */
-        LibraryRootDto: {
+        LibraryRoot: {
             /**
              * @description Stable root id.
              * @default
@@ -8424,15 +9684,15 @@ export interface components {
              */
             path: string;
             /** @default automatic */
-            policy: components["schemas"]["IdentificationPolicyDto"];
+            policy: components["schemas"]["IdentificationPolicy"];
             /**
              * @description Path rules.
              * @default []
              */
-            rules: components["schemas"]["LibraryPathRuleDto"][];
+            rules: components["schemas"]["LibraryPathRule"][];
         };
         /** @description Native automatic-scan schedule. */
-        LibraryScanScheduleDto: {
+        LibraryScanSchedule: {
             /**
              * @description Server-local `HH:MM` used when `scan_frequency` is `daily`.
              * @default 03:00
@@ -8450,47 +9710,26 @@ export interface components {
              */
             last_scan_success: boolean;
             /** @default 24hr */
-            scan_frequency: components["schemas"]["ScanFrequencyDto"];
+            scan_frequency: components["schemas"]["ScanFrequency"];
         };
         /**
          * @description GET payload: the persisted schedule plus the server's timezone label, so
          *     the UI can show what "daily at HH:MM" is relative to. The label is
          *     computed per request and never persisted.
          */
-        LibraryScanScheduleResponse: {
-            /**
-             * @description Server-local `HH:MM` used when `scan_frequency` is `daily`.
-             * @default 03:00
-             */
-            daily_scan_time: string;
-            /**
-             * Format: int64
-             * @description Unix time of the last scan, if any.
-             * @default null
-             */
-            last_scan: number | null;
-            /**
-             * @description Whether the last scan succeeded.
-             * @default true
-             */
-            last_scan_success: boolean;
-            /** @default 24hr */
-            scan_frequency: components["schemas"]["ScanFrequencyDto"];
-            /**
-             * @description Server-local timezone label for the daily-scan picker.
-             * @default
-             */
+        LibraryScanScheduleResponse: components["schemas"]["LibraryScanSchedule"] & {
+            /** @description Server-local timezone label for the daily-scan picker. */
             server_timezone: string;
         };
         /** @description Typed library settings: roots, policies, staging, naming, AcoustID. */
-        LibrarySettingsDto: {
+        LibrarySettings: {
             /**
-             * @description AcoustID key (masked unless unset).
+             * @description AcoustID key (encrypted at rest).
              * @default
              */
             acoustid_api_key: string;
             /**
-             * @description Master switch (excluded from the revision hash).
+             * @description Master switch: when false the app claims no new library work.
              * @default true
              */
             enabled: boolean;
@@ -8498,7 +9737,7 @@ export interface components {
              * @description Library roots.
              * @default []
              */
-            library_roots: components["schemas"]["LibraryRootDto"][];
+            library_roots: components["schemas"]["LibraryRoot"][];
             /**
              * @description Naming template.
              * @default {albumartist}/{album} ({year})/{disc:02d}{track:02d} {title}.{ext}
@@ -8511,77 +9750,32 @@ export interface components {
             staging_path: string;
         };
         /**
-         * @description GET view: settings plus the policy revision, the reconciliation
-         *     projection, and non-blocking warnings.
+         * @description GET view of the library settings: the settings (AcoustID key masked)
+         *     plus the policy revision, the reconciliation projection, and
+         *     non-blocking warnings.
          */
-        LibrarySettingsResponse: {
-            /**
-             * @description AcoustID key (masked unless unset).
-             * @default
-             */
-            acoustid_api_key: string;
-            /**
-             * @description Actions the save applied.
-             * @default []
-             */
+        LibrarySettingsResponse: components["schemas"]["LibrarySettings"] & {
+            /** @description Actions the save applied. */
             actions_applied: string[];
-            /**
-             * @description Affected scope ids.
-             * @default []
-             */
+            /** @description Affected scope ids. */
             affected_scope_ids: string[];
-            /**
-             * @description Master switch.
-             * @default true
-             */
-            enabled: boolean;
-            /**
-             * @description Library roots.
-             * @default []
-             */
-            library_roots: components["schemas"]["LibraryRootDto"][];
-            /**
-             * @description Naming template.
-             * @default {albumartist}/{album} ({year})/{disc:02d}{track:02d} {title}.{ext}
-             */
-            naming_template: string;
-            /**
-             * @description Pending revision, when awaiting reconciliation.
-             * @default null
-             */
-            pending_policy_revision: string | null;
-            /**
-             * @description Content revision (write CAS token).
-             * @default
-             */
+            /** @description Pending revision, when awaiting reconciliation. */
+            pending_policy_revision?: string | null;
+            /** @description Content revision (write CAS token). */
             policy_revision: string;
-            /**
-             * @description Whether reconciliation is still required.
-             * @default false
-             */
+            /** @description Whether reconciliation is still required. */
             reconciliation_required: boolean;
-            /**
-             * @description `applied` or `awaiting_reconciliation`.
-             * @default applied
-             */
+            /** @description `applied` or `awaiting_reconciliation`. */
             reconciliation_state: string;
-            /**
-             * @description Staging path.
-             * @default
-             */
-            staging_path: string;
-            /**
-             * @description Non-blocking warnings.
-             * @default []
-             */
+            /** @description Non-blocking warnings. */
             warnings: string[];
         };
         /** @description PUT body: full settings plus the required CAS token. */
         LibrarySettingsSaveRequest: {
             /** @description Compare-and-swap token from the last GET. */
             expected_policy_revision: string;
-            /** @description Full candidate settings. */
-            settings: components["schemas"]["LibrarySettingsDto"];
+            /** @description Full candidate settings (a masked AcoustID key keeps the stored one). */
+            settings: components["schemas"]["LibrarySettings"];
         };
         /**
          * @description One monitored Lidarr artist annotated for the requesting user (v2
@@ -8674,14 +9868,14 @@ export interface components {
             username?: string;
         };
         /** @description ListenBrainz connection. */
-        ListenBrainzConnectionDto: {
+        ListenBrainzConnection: {
             /**
              * @description Master switch.
              * @default false
              */
             enabled: boolean;
             /**
-             * @description User token (masked unless unset).
+             * @description User token (encrypted at rest; v2 returned it plaintext on GET).
              * @default
              */
             user_token: string;
@@ -8714,6 +9908,39 @@ export interface components {
             start_seconds?: number | null;
             /** @description Line text. */
             text: string;
+        };
+        /** @description Lyrics enrichment block. */
+        LyricsManagementSettings: {
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * @description Keep existing lyrics.
+             * @default false
+             */
+            preserve_existing: boolean;
+            /**
+             * @description Lyrics provider.
+             * @default lrclib
+             */
+            provider: string;
+            /**
+             * @description Lyrics required for completion.
+             * @default false
+             */
+            required: boolean;
+            /**
+             * @description Write plain lyrics.
+             * @default true
+             */
+            write_plain: boolean;
+            /**
+             * @description Write synced lyrics.
+             * @default true
+             */
+            write_synced: boolean;
         };
         /** @description Stored lyrics for one track. Missing lyrics read as 404, never empty. */
         LyricsView: {
@@ -8818,6 +10045,21 @@ export interface components {
             /** @description Restored track ids. */
             restored: string[];
         };
+        /** @description One managed tag field. */
+        ManagedField: {
+            /**
+             * @description Clear when the canonical value is missing.
+             * @default false
+             */
+            clear_when_canonical_missing: boolean;
+            /**
+             * @description Field name.
+             * @default
+             */
+            field: string;
+            /** @default replace */
+            mode: components["schemas"]["FieldMode"];
+        };
         /** @description MBID match result: the remote album behind a MusicBrainz id. */
         MatchView: {
             /** @description True when the MBID resolved to a remote album. */
@@ -8833,7 +10075,86 @@ export interface components {
          * @description MusicBrainz source tier.
          * @enum {string}
          */
-        MbSourceModeDto: "official" | "mirror" | "community" | "brainzmash";
+        MbSourceMode: "official" | "mirror" | "community" | "brainzmash";
+        /** @description Metadata management block. */
+        MetadataManagementSettings: {
+            /**
+             * @default {
+             *       "preferred_locales": [],
+             *       "standardization": "credited",
+             *       "translate_names": false
+             *     }
+             */
+            artist_credits: components["schemas"]["ArtistCreditSettings"];
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * @description Managed fields.
+             * @default []
+             */
+            fields: components["schemas"]["ManagedField"][];
+            /**
+             * @default {
+             *       "constrained_genres_primary_only": false,
+             *       "id3_text_encoding": "utf8",
+             *       "id3_version": "2.4",
+             *       "id3v23_join_delimiter": "; ",
+             *       "mp3_apev2_policy": "preserve",
+             *       "raw_aac_tag_policy": "save_apev2",
+             *       "remove_id3_from_flac": false,
+             *       "wav_tag_policy": "id3"
+             *     }
+             */
+            format_compatibility: components["schemas"]["FormatCompatibilitySettings"];
+            /**
+             * @description Keep embedded art during a scrub.
+             * @default true
+             */
+            preserve_embedded_art_during_scrub: boolean;
+            /**
+             * @description Fields never touched.
+             * @default []
+             */
+            preserve_fields: string[];
+            /**
+             * @default {
+             *       "enabled": true,
+             *       "types": [
+             *         "composer",
+             *         "lyricist",
+             *         "conductor",
+             *         "performer",
+             *         "arranger",
+             *         "remixer",
+             *         "producer"
+             *       ]
+             *     }
+             */
+            relationships: components["schemas"]["RelationshipCreditSettings"];
+            /**
+             * @description Scrub unmanaged tags.
+             * @default false
+             */
+            scrub_unmanaged_tags: boolean;
+            /**
+             * @description Tagging script ids.
+             * @default []
+             */
+            tagging_script_ids: string[];
+        };
+        /**
+         * @description APEv2 policy for MP3 writes.
+         * @enum {string}
+         */
+        Mp3ApePolicy: "preserve" | "remove";
+        /**
+         * @description Multi-disc naming mode for a root override.
+         * @enum {string}
+         */
+        MultiDiscNamingMode: "inherit" | "standard" | "script";
         /** @description Consent-bound BrainzMash binding request. */
         MusicBrainzBindingRequest: {
             /** @description Proposed access revision. */
@@ -8849,9 +10170,9 @@ export interface components {
             source_id: string;
         };
         /** @description MusicBrainz connection settings. */
-        MusicBrainzSettingsDto: {
+        MusicBrainzSettings: {
             /** @default null */
-            active_brainzmash: null | components["schemas"]["BrainzmashActiveBindingDto"];
+            active_brainzmash: null | components["schemas"]["BrainzmashActiveBinding"];
             /**
              * @description API base (canonicalized for official/brainzmash).
              * @default https://api.brainzmash.cc/ws/2
@@ -8880,8 +10201,6 @@ export interface components {
              * @default 1
              */
             generation: number;
-            /** @default null */
-            pending_brainzmash: null | components["schemas"]["BrainzmashPendingProposalDto"];
             /**
              * Format: double
              * @description Requests per second (0 = Unlimited, off-official only).
@@ -8889,14 +10208,11 @@ export interface components {
              */
             rate_limit: number;
             /** @default brainzmash */
-            selected_source_mode: components["schemas"]["MbSourceModeDto"];
-            /**
-             * @description Source identity.
-             * @default
-             */
-            source_id: string;
+            selected_source_mode: components["schemas"]["MbSourceMode"];
+            /** @description Source identity. */
+            source_id?: string;
             /** @default brainzmash */
-            source_mode: components["schemas"]["MbSourceModeDto"];
+            source_mode: components["schemas"]["MbSourceMode"];
         };
         /**
          * @description Client-submitted MusicBrainz source change. BrainzMash is never a
@@ -8926,7 +10242,14 @@ export interface components {
              */
             rate_limit: number;
             /** @default official */
-            source_mode: components["schemas"]["MbSourceModeDto"];
+            source_mode: components["schemas"]["MbSourceMode"];
+        };
+        /**
+         * @description GET view of the MusicBrainz connection: the settled settings plus the
+         *     transient pending BrainzMash proposal, when one is staged.
+         */
+        MusicBrainzSettingsView: components["schemas"]["MusicBrainzSettings"] & {
+            pending_brainzmash?: null | components["schemas"]["BrainzmashPendingProposal"];
         };
         /**
          * @description Verify payload: a BrainzMash consent binding or a plain source
@@ -8945,9 +10268,43 @@ export interface components {
          * @description Which service backs scrobble-targeted discovery.
          * @enum {string}
          */
-        MusicSourceDto: "listenbrainz" | "lastfm";
+        MusicSource: "listenbrainz" | "lastfm";
+        /** @description One naming script. */
+        NamingScript: {
+            /**
+             * @description Script id.
+             * @default
+             */
+            id: string;
+            /**
+             * @description Display name.
+             * @default
+             */
+            name: string;
+            /**
+             * @description Preset origin.
+             * @default null
+             */
+            preset_origin: string | null;
+            /**
+             * Format: int64
+             * @description Preset version.
+             * @default null
+             */
+            preset_version: number | null;
+            /**
+             * @description Content revision.
+             * @default
+             */
+            revision: string;
+            /**
+             * @description Script source.
+             * @default
+             */
+            source: string;
+        };
         /** @description Navidrome connection. */
-        NavidromeConnectionDto: {
+        NavidromeConnection: {
             /**
              * @description Master switch.
              * @default false
@@ -8959,7 +10316,7 @@ export interface components {
              */
             navidrome_url: string;
             /**
-             * @description Password (masked unless unset).
+             * @description Password (encrypted at rest).
              * @default
              */
             password: string;
@@ -9015,9 +10372,9 @@ export interface components {
          * @description One configured Newznab indexer. DroppedNeedle ships none; the user adds
          *     their own.
          */
-        NewznabIndexerDto: {
+        NewznabIndexer: {
             /**
-             * @description API key (masked unless unset; per element).
+             * @description API key (encrypted at rest, per element).
              * @default
              */
             api_key: string;
@@ -9036,12 +10393,12 @@ export interface components {
              */
             enabled: boolean;
             /**
-             * @description Stable id (blank on create; the path wins on update).
+             * @description Stable id.
              * @default
              */
             id: string;
             /**
-             * @description Display name.
+             * @description Display name (list identity for import).
              * @default
              */
             name: string;
@@ -9052,7 +10409,7 @@ export interface components {
              */
             priority: number;
             /**
-             * @description Indexer type tag.
+             * @description Indexer type tag (stored as `type`; renamed for the keyword).
              * @default newznab
              */
             type: string;
@@ -9148,14 +10505,14 @@ export interface components {
             state: string;
         };
         /** @description OIDC connection. */
-        OidcConnectionDto: {
+        OidcConnection: {
             /**
              * @description Client id.
              * @default
              */
             client_id: string;
             /**
-             * @description Client secret (masked unless unset).
+             * @description Client secret (encrypted at rest).
              * @default
              */
             client_secret: string;
@@ -9192,6 +10549,88 @@ export interface components {
             /** @description Whether the operation succeeded. */
             success: boolean;
         };
+        /** @description Organization management block. */
+        OrganizationManagementSettings: {
+            /**
+             * @default {
+             *       "extension_case": "preserve",
+             *       "maximum_component_length": 240,
+             *       "maximum_path_length": 4096,
+             *       "replace_non_ascii": false,
+             *       "replace_spaces_with_underscores": false,
+             *       "separator_replacement": "_",
+             *       "unicode_normalization": "NFC",
+             *       "windows_compatible": true,
+             *       "windows_legacy_path_limit": false
+             *     }
+             */
+            compatibility: components["schemas"]["PathCompatibilitySettings"];
+            /**
+             * @description Move files.
+             * @default true
+             */
+            move_enabled: boolean;
+            /**
+             * @description Move sidecar files along.
+             * @default true
+             */
+            move_sidecars: boolean;
+            /**
+             * @description Multi-disc naming script id.
+             * @default null
+             */
+            multi_disc_naming_script_id: string | null;
+            /**
+             * @description Naming script id.
+             * @default 69202666-cb88-52b0-bac2-0afc62b1e909
+             */
+            naming_script_id: string;
+            /**
+             * @description Remove newly empty directories.
+             * @default true
+             */
+            remove_empty_directories: boolean;
+            /**
+             * @description Rename files.
+             * @default true
+             */
+            rename_enabled: boolean;
+            /**
+             * @description Sidecar filename patterns.
+             * @default [
+             *       "cover.jpg",
+             *       "cover.jpeg",
+             *       "cover.png",
+             *       "cover.webp",
+             *       "folder.jpg",
+             *       "folder.jpeg",
+             *       "folder.png",
+             *       "front.jpg",
+             *       "front.png",
+             *       "back.jpg",
+             *       "back.jpeg",
+             *       "back.png",
+             *       "back.webp",
+             *       "booklet*.jpg",
+             *       "booklet*.jpeg",
+             *       "booklet*.png",
+             *       "booklet*.webp",
+             *       "medium*.jpg",
+             *       "medium*.jpeg",
+             *       "medium*.png",
+             *       "medium*.webp",
+             *       "*.cue",
+             *       "*.log",
+             *       "*.lrc",
+             *       "*.m3u",
+             *       "*.m3u8",
+             *       "*.pls"
+             *     ]
+             */
+            sidecar_patterns: string[];
+            /** @default remove_after_confirmed_move */
+            source_cleanup: components["schemas"]["SourceCleanupMode"];
+        };
         /** @description Change password on an account that already has one. */
         PasswordChange: {
             /** @description Current password, proving ownership. */
@@ -9207,6 +10646,50 @@ export interface components {
             recovery_code: string;
             /** @description Account username. */
             username: string;
+        };
+        /** @description Path-compatibility handling. */
+        PathCompatibilitySettings: {
+            /** @default preserve */
+            extension_case: components["schemas"]["ExtensionCase"];
+            /**
+             * Format: int64
+             * @description Max path-component length.
+             * @default 240
+             */
+            maximum_component_length: number;
+            /**
+             * Format: int64
+             * @description Max path length.
+             * @default 4096
+             */
+            maximum_path_length: number;
+            /**
+             * @description Replace non-ASCII characters.
+             * @default false
+             */
+            replace_non_ascii: boolean;
+            /**
+             * @description Replace spaces with underscores.
+             * @default false
+             */
+            replace_spaces_with_underscores: boolean;
+            /**
+             * @description Path-separator replacement.
+             * @default _
+             */
+            separator_replacement: string;
+            /** @default NFC */
+            unicode_normalization: components["schemas"]["UnicodeNormalization"];
+            /**
+             * @description Windows-safe names.
+             * @default true
+             */
+            windows_compatible: boolean;
+            /**
+             * @description Honor the legacy Windows path limit.
+             * @default false
+             */
+            windows_legacy_path_limit: boolean;
         };
         /** @description One pending personal-mix auto-request approval. */
         PersonalMixApprovalItem: {
@@ -9521,7 +11004,7 @@ export interface components {
             completed: boolean;
         };
         /** @description Plex connection. */
-        PlexConnectionDto: {
+        PlexConnection: {
             /**
              * @description Master switch.
              * @default false
@@ -9538,7 +11021,7 @@ export interface components {
              */
             music_library_ids: string[];
             /**
-             * @description Plex token (masked unless unset).
+             * @description Plex token (encrypted at rest).
              * @default
              */
             plex_token: string;
@@ -9848,9 +11331,22 @@ export interface components {
             title: string;
         };
         /** @description Primary music source selection. */
-        PrimaryMusicSourceDto: {
+        PrimaryMusicSource: {
             /** @default listenbrainz */
-            source: components["schemas"]["MusicSourceDto"];
+            source: components["schemas"]["MusicSource"];
+        };
+        /** @description Post-publish notifications. */
+        ProfileNotificationSettings: {
+            /**
+             * @description Refresh DroppedNeedle views.
+             * @default true
+             */
+            refresh_droppedneedle: boolean;
+            /**
+             * @description Refresh external servers.
+             * @default false
+             */
+            refresh_external_servers: boolean;
         };
         /**
          * @description Own profile. Identity only; connected services and library stats belong
@@ -9885,9 +11381,9 @@ export interface components {
             slots: components["schemas"]["SlotView"];
         };
         /** @description Single Prowlarr connection (Prowlarr multiplexes its own indexers). */
-        ProwlarrConnectionDto: {
+        ProwlarrConnection: {
             /**
-             * @description API key (masked unless unset).
+             * @description API key (encrypted at rest).
              * @default
              */
             api_key: string;
@@ -9921,7 +11417,7 @@ export interface components {
          *     rejected at decode so a future setting cannot silently become a
          *     different recipe.
          */
-        QualityRecipeEntryDto: {
+        QualityRecipeEntry: {
             /**
              * Format: int64
              * @description Custom FLAC bit depth.
@@ -10226,6 +11722,11 @@ export interface components {
             /** @description Seed artist name. */
             artist_name?: string;
         };
+        /**
+         * @description Raw-AAC tag policy.
+         * @enum {string}
+         */
+        RawAacTagPolicy: "save_apev2" | "do_not_write" | "remove_apev2";
         /** @description A minted recovery code. The code appears here once, never again. */
         RecoveryCodeResponse: {
             /**
@@ -10269,6 +11770,32 @@ export interface components {
             /** @description Whether the task went back in line. */
             success: boolean;
         };
+        /** @description Relationship-credit handling. */
+        RelationshipCreditSettings: {
+            /**
+             * @description Master switch.
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * @description Credited relationship types.
+             * @default [
+             *       "composer",
+             *       "lyricist",
+             *       "conductor",
+             *       "performer",
+             *       "arranger",
+             *       "remixer",
+             *       "producer"
+             *     ]
+             */
+            types: components["schemas"]["RelationshipType"][];
+        };
+        /**
+         * @description Credited relationship type.
+         * @enum {string}
+         */
+        RelationshipType: "composer" | "lyricist" | "conductor" | "performer" | "arranger" | "remixer" | "producer" | "other";
         /** @description One page of albums. */
         RemotesAlbumPage: {
             /** @description Page items. */
@@ -10561,6 +12088,31 @@ export interface components {
             /** @description Always "ok". */
             status: string;
         };
+        /** @description ReplayGain enrichment block. */
+        ReplayGainManagementSettings: {
+            /**
+             * @description Album-aware gain.
+             * @default true
+             */
+            album_aware: boolean;
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /** @default preserve */
+            mode: components["schemas"]["ReplayGainMode"];
+            /**
+             * @description Gain required for completion.
+             * @default false
+             */
+            required: boolean;
+        };
+        /**
+         * @description ReplayGain write mode.
+         * @enum {string}
+         */
+        ReplayGainMode: "preserve" | "fill_missing" | "replace";
         /** @description One request row in list views. */
         RequestItem: {
             /** @description Album title. */
@@ -10782,13 +12334,12 @@ export interface components {
             scopes: components["schemas"]["ScanScopeView"][];
         };
         /**
-         * @description SABnzbd connection. `api_key` is the full key (the add-only nzbkey
-         *     cannot do queue/history/delete); masked on read, preserved on a masked
-         *     save.
+         * @description SABnzbd connection. The key is the full key (the add-only nzbkey cannot
+         *     do queue/history/delete).
          */
-        SabnzbdConnectionDto: {
+        SabnzbdConnection: {
             /**
-             * @description Full API key (masked unless unset).
+             * @description Full API key (encrypted at rest).
              * @default
              */
             api_key: string;
@@ -10897,7 +12448,7 @@ export interface components {
          * @description Automatic-scan cadence values.
          * @enum {string}
          */
-        ScanFrequencyDto: "manual" | "5min" | "10min" | "30min" | "1hr" | "6hr" | "12hr" | "24hr" | "3d" | "7d" | "daily";
+        ScanFrequency: "Manual" | "5min" | "10min" | "30min" | "1hr" | "6hr" | "12hr" | "24hr" | "3d" | "7d" | "daily";
         /** @description Scan request answer. */
         ScanResponse: {
             /**
@@ -11051,7 +12602,7 @@ export interface components {
             };
         };
         /** @description Scrobble targets. */
-        ScrobbleSettingsDto: {
+        ScrobbleSettings: {
             /**
              * @description Scrobble to Last.fm (per-user credentials).
              * @default false
@@ -11230,7 +12781,7 @@ export interface components {
             sections: components["schemas"]["SectionPrefUpdateItem"][];
         };
         /** @description Security posture settings (no secrets; the HIBP path is a local file). */
-        SecuritySettingsDto: {
+        SecuritySettings: {
             /**
              * @description Check passwords against Have-I-Been-Pwned.
              * @default true
@@ -11258,7 +12809,7 @@ export interface components {
              */
             hsts_preload: boolean;
             /** @default everyone */
-            library_download_access: components["schemas"]["DownloadAccessDto"];
+            library_download_access: components["schemas"]["DownloadAccess"];
         };
         /** @description Server-wide year-in-review. */
         ServerWrappedResponse: {
@@ -11380,13 +12931,10 @@ export interface components {
             /** @description Free user-lane permits. */
             user_slots_available: number;
         };
-        /**
-         * @description slskd download-client connection. `api_key` is masked on read and
-         *     preserved on save when the masked sentinel comes back unchanged.
-         */
-        SlskdConnectionDto: {
+        /** @description slskd download-client connection. */
+        SlskdConnection: {
             /**
-             * @description API key (masked unless unset).
+             * @description API key (encrypted at rest).
              * @default
              */
             api_key: string;
@@ -11510,6 +13058,11 @@ export interface components {
             version?: string | null;
         };
         /**
+         * @description Source-tree cleanup after a confirmed move.
+         * @enum {string}
+         */
+        SourceCleanupMode: "keep" | "remove_after_confirmed_move";
+        /**
          * @description Per-source release gate verdict. Each source gates independently: one
          *     red gate never flips another.
          */
@@ -11537,7 +13090,7 @@ export interface components {
          *     sources are always present; well-formed `plugin:<name>` keys pass
          *     through order-preserved; anything else is dropped.
          */
-        SourcePriorityDto: {
+        SourcePriorityOrder: {
             /**
              * @description Try-order, best first.
              * @default []
@@ -11742,6 +13295,40 @@ export interface components {
              * @description Rows reconciled.
              */
             reconciled: number;
+        };
+        /** @description One tagging script. */
+        TaggingScript: {
+            /**
+             * @description Script id.
+             * @default
+             */
+            id: string;
+            /**
+             * @description Display name.
+             * @default
+             */
+            name: string;
+            /**
+             * @description Preset origin.
+             * @default null
+             */
+            preset_origin: string | null;
+            /**
+             * Format: int64
+             * @description Preset version.
+             * @default null
+             */
+            preset_version: number | null;
+            /**
+             * @description Content revision.
+             * @default
+             */
+            revision: string;
+            /**
+             * @description Script source.
+             * @default
+             */
+            source: string;
         };
         /** @description slskd test verdict: validity plus the reported version. */
         TestConnectionResponse: {
@@ -12014,6 +13601,11 @@ export interface components {
             /** @description Range key behind this page. */
             range_key: string;
         };
+        /**
+         * @description Unicode normalization for paths.
+         * @enum {string}
+         */
+        UnicodeNormalization: "NFC" | "NFKC";
         /** @description Unseen-count answer. */
         UnseenCountResponse: {
             /** @description Sightings newer than the caller's seen watermark. */
@@ -12044,21 +13636,24 @@ export interface components {
             source_type?: string | null;
         };
         /**
-         * @description Which Usenet search side is active.
+         * @description Which Usenet search side is active. Reads collapse unknown values to
+         *     `Indexers` (v2: pre-existing setups behave as before with no migration);
+         *     saves only accept known values (the derived decode and `parse` are
+         *     both strict).
          * @enum {string}
          */
-        UsenetBackendDto: "indexers" | "prowlarr";
+        UsenetBackend: "indexers" | "prowlarr";
         /**
          * @description The active Usenet search backend (either/or): `"indexers"` for the
          *     native Newznab priority list, `"prowlarr"` for the single Prowlarr
          *     connection. Unknown values are a 400, never a silent reset.
          */
-        UsenetSearchBackendDto: {
+        UsenetSearchBackend: {
             /** @default indexers */
-            backend: components["schemas"]["UsenetBackendDto"];
+            backend: components["schemas"]["UsenetBackend"];
         };
         /** @description Release-type filters for discovery and search. */
-        UserPreferencesDto: {
+        UserPreferences: {
             /**
              * @description Primary release types (album, ep, single, ...).
              * @default [
@@ -12299,7 +13894,7 @@ export interface components {
             year?: number | null;
         };
         /** @description Wanted watcher toggles. Cadence stays code constants on purpose. */
-        WantedWatcherDto: {
+        WantedWatcher: {
             /**
              * @description Off means badge-only even for auto-tier finds.
              * @default true
@@ -12328,6 +13923,11 @@ export interface components {
              */
             watch_partial_albums: boolean;
         };
+        /**
+         * @description WAV tag policy.
+         * @enum {string}
+         */
+        WavTagPolicy: "id3" | "riff_info" | "preserve_existing";
         /** @description The weekly exploration playlist shelf. */
         WeeklyExploration: {
             /** @description Playlist date (`YYYY-MM-DD`). */
@@ -12408,9 +14008,9 @@ export interface components {
             listen_count: number;
         };
         /** @description Shared secret for the wrapped endpoints (service-to-service). */
-        WrappedSettingsDto: {
+        WrappedSettings: {
             /**
-             * @description API key (masked unless unset).
+             * @description API key (encrypted at rest).
              * @default
              */
             api_key: string;
@@ -12449,14 +14049,14 @@ export interface components {
             year: number;
         };
         /** @description YouTube connection. */
-        YouTubeConnectionDto: {
+        YouTubeConnection: {
             /**
              * @description API search switch.
              * @default false
              */
             api_enabled: boolean;
             /**
-             * @description API key (masked unless unset).
+             * @description API key (encrypted at rest; v2 returned it plaintext on GET).
              * @default
              */
             api_key: string;
@@ -20683,7 +22283,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdvancedSettingsDto"];
+                    "application/json": components["schemas"]["AdvancedSettingsForm"];
                 };
             };
         };
@@ -20697,7 +22297,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AdvancedSettingsDto"];
+                "application/json": components["schemas"]["AdvancedSettingsForm"];
             };
         };
         responses: {
@@ -20707,7 +22307,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdvancedSettingsDto"];
+                    "application/json": components["schemas"]["AdvancedSettingsForm"];
                 };
             };
         };
@@ -20747,7 +22347,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConnectAppsDto"];
+                    "application/json": components["schemas"]["ConnectApps"];
                 };
             };
         };
@@ -20761,7 +22361,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ConnectAppsDto"];
+                "application/json": components["schemas"]["ConnectApps"];
             };
         };
         responses: {
@@ -20771,7 +22371,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConnectAppsDto"];
+                    "application/json": components["schemas"]["ConnectApps"];
                 };
             };
         };
@@ -20791,7 +22391,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SlskdConnectionDto"];
+                    "application/json": components["schemas"]["SlskdConnection"];
                 };
             };
         };
@@ -20805,7 +22405,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SlskdConnectionDto"];
+                "application/json": components["schemas"]["SlskdConnection"];
             };
         };
         responses: {
@@ -20815,7 +22415,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SlskdConnectionDto"];
+                    "application/json": components["schemas"]["SlskdConnection"];
                 };
             };
         };
@@ -20829,7 +22429,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SlskdConnectionDto"];
+                "application/json": components["schemas"]["SlskdConnection"];
             };
         };
         responses: {
@@ -20859,7 +22459,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DownloadPolicyDto"];
+                    "application/json": components["schemas"]["DownloadPolicyView"];
                 };
             };
         };
@@ -20873,7 +22473,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["DownloadPolicyDto"];
+                "application/json": components["schemas"]["DownloadPolicy"];
             };
         };
         responses: {
@@ -20883,7 +22483,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DownloadPolicyDto"];
+                    "application/json": components["schemas"]["DownloadPolicyView"];
                 };
             };
         };
@@ -20917,7 +22517,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["DownloadPolicyDto"];
+                "application/json": components["schemas"]["DownloadPolicy"];
             };
         };
         responses: {
@@ -20954,7 +22554,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SabnzbdConnectionDto"];
+                    "application/json": components["schemas"]["SabnzbdConnection"];
                 };
             };
         };
@@ -20968,7 +22568,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SabnzbdConnectionDto"];
+                "application/json": components["schemas"]["SabnzbdConnection"];
             };
         };
         responses: {
@@ -20978,7 +22578,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SabnzbdConnectionDto"];
+                    "application/json": components["schemas"]["SabnzbdConnection"];
                 };
             };
         };
@@ -20992,7 +22592,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SabnzbdConnectionDto"];
+                "application/json": components["schemas"]["SabnzbdConnection"];
             };
         };
         responses: {
@@ -21022,7 +22622,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SourcePriorityDto"];
+                    "application/json": components["schemas"]["SourcePriorityOrder"];
                 };
             };
         };
@@ -21036,7 +22636,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SourcePriorityDto"];
+                "application/json": components["schemas"]["SourcePriorityOrder"];
             };
         };
         responses: {
@@ -21046,7 +22646,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SourcePriorityDto"];
+                    "application/json": components["schemas"]["SourcePriorityOrder"];
                 };
             };
         };
@@ -21066,7 +22666,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WantedWatcherDto"];
+                    "application/json": components["schemas"]["WantedWatcher"];
                 };
             };
         };
@@ -21080,7 +22680,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WantedWatcherDto"];
+                "application/json": components["schemas"]["WantedWatcher"];
             };
         };
         responses: {
@@ -21090,7 +22690,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WantedWatcherDto"];
+                    "application/json": components["schemas"]["WantedWatcher"];
                 };
             };
         };
@@ -21110,7 +22710,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EventsSettingsDto"];
+                    "application/json": components["schemas"]["EventsSettings"];
                 };
             };
         };
@@ -21124,7 +22724,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["EventsSettingsDto"];
+                "application/json": components["schemas"]["EventsSettings"];
             };
         };
         responses: {
@@ -21134,7 +22734,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EventsSettingsDto"];
+                    "application/json": components["schemas"]["EventsSettings"];
                 };
             };
         };
@@ -21148,7 +22748,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["EventsSettingsDto"];
+                "application/json": components["schemas"]["EventsSettings"];
             };
         };
         responses: {
@@ -21172,7 +22772,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["EventsSettingsDto"];
+                "application/json": components["schemas"]["EventsSettings"];
             };
         };
         responses: {
@@ -21202,7 +22802,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FreeMusicDto"];
+                    "application/json": components["schemas"]["FreeMusic"];
                 };
             };
         };
@@ -21216,7 +22816,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["FreeMusicDto"];
+                "application/json": components["schemas"]["FreeMusic"];
             };
         };
         responses: {
@@ -21226,7 +22826,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FreeMusicDto"];
+                    "application/json": components["schemas"]["FreeMusic"];
                 };
             };
         };
@@ -21246,7 +22846,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GetItDto"];
+                    "application/json": components["schemas"]["GetIt"];
                 };
             };
         };
@@ -21260,7 +22860,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["GetItDto"];
+                "application/json": components["schemas"]["GetIt"];
             };
         };
         responses: {
@@ -21270,12 +22870,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GetItDto"];
+                    "application/json": components["schemas"]["GetIt"];
                 };
             };
         };
     };
-    dropped_home: {
+    get_home: {
         parameters: {
             query?: never;
             header?: never;
@@ -21284,26 +22884,41 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Section dropped in v3 */
-            410: {
+            /** @description Home page settings */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["HomeSettings"];
+                };
             };
         };
     };
-    dropped_home_put: {
+    put_home: {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HomeSettings"];
+            };
+        };
         responses: {
-            /** @description Section dropped in v3 */
-            410: {
+            /** @description Saved settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeSettings"];
+                };
+            };
+            /** @description A value is out of range */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21326,7 +22941,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NewznabIndexerDto"][];
+                    "application/json": components["schemas"]["NewznabIndexer"][];
                 };
             };
         };
@@ -21340,7 +22955,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["NewznabIndexerDto"];
+                "application/json": components["schemas"]["NewznabIndexer"];
             };
         };
         responses: {
@@ -21394,7 +23009,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UsenetSearchBackendDto"];
+                    "application/json": components["schemas"]["UsenetSearchBackend"];
                 };
             };
         };
@@ -21408,7 +23023,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UsenetSearchBackendDto"];
+                "application/json": components["schemas"]["UsenetSearchBackend"];
             };
         };
         responses: {
@@ -21418,7 +23033,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UsenetSearchBackendDto"];
+                    "application/json": components["schemas"]["UsenetSearchBackend"];
                 };
             };
         };
@@ -21432,7 +23047,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["NewznabIndexerDto"];
+                "application/json": components["schemas"]["NewznabIndexer"];
             };
         };
         responses: {
@@ -21459,7 +23074,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["NewznabIndexerDto"];
+                "application/json": components["schemas"]["NewznabIndexer"];
             };
         };
         responses: {
@@ -21512,7 +23127,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JellyfinConnectionDto"];
+                    "application/json": components["schemas"]["JellyfinConnection"];
                 };
             };
         };
@@ -21526,7 +23141,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["JellyfinConnectionDto"];
+                "application/json": components["schemas"]["JellyfinConnection"];
             };
         };
         responses: {
@@ -21536,7 +23151,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JellyfinConnectionDto"];
+                    "application/json": components["schemas"]["JellyfinConnection"];
                 };
             };
         };
@@ -21550,7 +23165,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["JellyfinConnectionDto"];
+                "application/json": components["schemas"]["JellyfinConnection"];
             };
         };
         responses: {
@@ -21580,7 +23195,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LastFmSettingsDto"];
+                    "application/json": components["schemas"]["LastFmSettings"];
                 };
             };
         };
@@ -21594,7 +23209,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LastFmSettingsDto"];
+                "application/json": components["schemas"]["LastFmSettings"];
             };
         };
         responses: {
@@ -21604,7 +23219,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LastFmSettingsDto"];
+                    "application/json": components["schemas"]["LastFmSettings"];
                 };
             };
         };
@@ -21657,6 +23272,365 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    get_library_management: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Library Management settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementSettingsResponse"];
+                };
+            };
+        };
+    };
+    put_library_management: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryManagementSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementSettingsResponse"];
+                };
+            };
+            /** @description Invalid settings, or a dry run is required */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Expected revision is stale */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_library_management_activation_health: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Activation health */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementActivationHealthResponse"];
+                };
+            };
+        };
+    };
+    preview_library_management_impact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryManagementSettingsImpactRequest"];
+            };
+        };
+        responses: {
+            /** @description Change impact */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementChangeImpact"];
+                };
+            };
+        };
+    };
+    import_library_management_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryManagementProfileImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Imported profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementProfileImportResponse"];
+                };
+            };
+            /** @description Settings or the bundle changed since review */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    preview_library_management_profile_import: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryManagementProfileImportPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Import preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementProfileImportPreviewResponse"];
+                };
+            };
+        };
+    };
+    create_library_management_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryManagementProfileCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Created profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementProfileMutationResponse"];
+                };
+            };
+        };
+    };
+    get_library_management_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Profile id */
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementProfile"];
+                };
+            };
+        };
+    };
+    update_library_management_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Profile id */
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryManagementProfileUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementProfileMutationResponse"];
+                };
+            };
+        };
+    };
+    delete_library_management_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Profile id */
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryManagementProfileDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Settings after the delete */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementSettingsResponse"];
+                };
+            };
+        };
+    };
+    copy_library_management_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Profile id */
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryManagementProfileCopyRequest"];
+            };
+        };
+        responses: {
+            /** @description Copied profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementProfileMutationResponse"];
+                };
+            };
+        };
+    };
+    export_library_management_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Profile id */
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryManagementProfileExportRequest"];
+            };
+        };
+        responses: {
+            /** @description Share bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementProfileExportResponse"];
+                };
+            };
+        };
+    };
+    get_library_management_preset_diff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Profile id */
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preset diff */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementPresetDiff"];
+                };
+            };
+        };
+    };
+    validate_library_management: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryManagementSettingsImpactRequest"];
+            };
+        };
+        responses: {
+            /** @description Change impact */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementChangeImpact"];
+                };
             };
         };
     };
@@ -21736,7 +23710,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LibraryScanScheduleDto"];
+                "application/json": components["schemas"]["LibraryScanSchedule"];
             };
         };
         responses: {
@@ -21802,7 +23776,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FilesystemWatcherDto"];
+                    "application/json": components["schemas"]["FilesystemWatcher"];
                 };
             };
         };
@@ -21816,7 +23790,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["FilesystemWatcherDto"];
+                "application/json": components["schemas"]["FilesystemWatcher"];
             };
         };
         responses: {
@@ -21826,7 +23800,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FilesystemWatcherDto"];
+                    "application/json": components["schemas"]["FilesystemWatcher"];
                 };
             };
         };
@@ -21846,7 +23820,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ListenBrainzConnectionDto"];
+                    "application/json": components["schemas"]["ListenBrainzConnection"];
                 };
             };
         };
@@ -21860,7 +23834,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ListenBrainzConnectionDto"];
+                "application/json": components["schemas"]["ListenBrainzConnection"];
             };
         };
         responses: {
@@ -21870,7 +23844,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ListenBrainzConnectionDto"];
+                    "application/json": components["schemas"]["ListenBrainzConnection"];
                 };
             };
         };
@@ -21884,7 +23858,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ListenBrainzConnectionDto"];
+                "application/json": components["schemas"]["ListenBrainzConnection"];
             };
         };
         responses: {
@@ -21921,7 +23895,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MusicBrainzSettingsDto"];
+                    "application/json": components["schemas"]["MusicBrainzSettingsView"];
                 };
             };
         };
@@ -21945,7 +23919,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MusicBrainzSettingsDto"];
+                    "application/json": components["schemas"]["MusicBrainzSettingsView"];
                 };
             };
         };
@@ -21969,7 +23943,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MusicBrainzSettingsDto"];
+                    "application/json": components["schemas"]["MusicBrainzSettingsView"];
                 };
             };
             /** @description Proposal is stale, unconsented, or unverified */
@@ -22000,7 +23974,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MusicBrainzSettingsDto"];
+                    "application/json": components["schemas"]["MusicBrainzSettingsView"];
                 };
             };
             /** @description Proposal is stale or outdated */
@@ -22027,7 +24001,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MusicBrainzSettingsDto"];
+                    "application/json": components["schemas"]["MusicBrainzSettingsView"];
                 };
             };
         };
@@ -22051,7 +24025,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MusicBrainzSettingsDto"];
+                    "application/json": components["schemas"]["MusicBrainzSettingsView"];
                 };
             };
             /** @description Proposal is stale, or BrainzMash is active */
@@ -22085,7 +24059,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NavidromeConnectionDto"];
+                    "application/json": components["schemas"]["NavidromeConnection"];
                 };
             };
         };
@@ -22099,7 +24073,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["NavidromeConnectionDto"];
+                "application/json": components["schemas"]["NavidromeConnection"];
             };
         };
         responses: {
@@ -22109,7 +24083,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NavidromeConnectionDto"];
+                    "application/json": components["schemas"]["NavidromeConnection"];
                 };
             };
         };
@@ -22157,7 +24131,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["NavidromeConnectionDto"];
+                "application/json": components["schemas"]["NavidromeConnection"];
             };
         };
         responses: {
@@ -22187,7 +24161,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OidcConnectionDto"];
+                    "application/json": components["schemas"]["OidcConnection"];
                 };
             };
         };
@@ -22201,7 +24175,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["OidcConnectionDto"];
+                "application/json": components["schemas"]["OidcConnection"];
             };
         };
         responses: {
@@ -22211,7 +24185,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OidcConnectionDto"];
+                    "application/json": components["schemas"]["OidcConnection"];
                 };
             };
         };
@@ -22225,7 +24199,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["OidcConnectionDto"];
+                "application/json": components["schemas"]["OidcConnection"];
             };
         };
         responses: {
@@ -22255,7 +24229,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PlexConnectionDto"];
+                    "application/json": components["schemas"]["PlexConnection"];
                 };
             };
         };
@@ -22269,7 +24243,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PlexConnectionDto"];
+                "application/json": components["schemas"]["PlexConnection"];
             };
         };
         responses: {
@@ -22279,7 +24253,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PlexConnectionDto"];
+                    "application/json": components["schemas"]["PlexConnection"];
                 };
             };
         };
@@ -22327,7 +24301,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PlexConnectionDto"];
+                "application/json": components["schemas"]["PlexConnection"];
             };
         };
         responses: {
@@ -22357,7 +24331,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserPreferencesDto"];
+                    "application/json": components["schemas"]["UserPreferences"];
                 };
             };
         };
@@ -22371,7 +24345,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UserPreferencesDto"];
+                "application/json": components["schemas"]["UserPreferences"];
             };
         };
         responses: {
@@ -22381,7 +24355,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserPreferencesDto"];
+                    "application/json": components["schemas"]["UserPreferences"];
                 };
             };
         };
@@ -22401,7 +24375,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PrimaryMusicSourceDto"];
+                    "application/json": components["schemas"]["PrimaryMusicSource"];
                 };
             };
         };
@@ -22415,7 +24389,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PrimaryMusicSourceDto"];
+                "application/json": components["schemas"]["PrimaryMusicSource"];
             };
         };
         responses: {
@@ -22425,7 +24399,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PrimaryMusicSourceDto"];
+                    "application/json": components["schemas"]["PrimaryMusicSource"];
                 };
             };
         };
@@ -22445,7 +24419,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ProwlarrConnectionDto"];
+                    "application/json": components["schemas"]["ProwlarrConnection"];
                 };
             };
         };
@@ -22459,7 +24433,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProwlarrConnectionDto"];
+                "application/json": components["schemas"]["ProwlarrConnection"];
             };
         };
         responses: {
@@ -22469,7 +24443,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ProwlarrConnectionDto"];
+                    "application/json": components["schemas"]["ProwlarrConnection"];
                 };
             };
         };
@@ -22483,7 +24457,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProwlarrConnectionDto"];
+                "application/json": components["schemas"]["ProwlarrConnection"];
             };
         };
         responses: {
@@ -22513,7 +24487,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ScrobbleSettingsDto"];
+                    "application/json": components["schemas"]["ScrobbleSettings"];
                 };
             };
         };
@@ -22527,7 +24501,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ScrobbleSettingsDto"];
+                "application/json": components["schemas"]["ScrobbleSettings"];
             };
         };
         responses: {
@@ -22537,7 +24511,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ScrobbleSettingsDto"];
+                    "application/json": components["schemas"]["ScrobbleSettings"];
                 };
             };
         };
@@ -22557,7 +24531,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SecuritySettingsDto"];
+                    "application/json": components["schemas"]["SecuritySettings"];
                 };
             };
         };
@@ -22571,7 +24545,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SecuritySettingsDto"];
+                "application/json": components["schemas"]["SecuritySettings"];
             };
         };
         responses: {
@@ -22581,7 +24555,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SecuritySettingsDto"];
+                    "application/json": components["schemas"]["SecuritySettings"];
                 };
             };
         };
@@ -22595,7 +24569,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SecuritySettingsDto"];
+                "application/json": components["schemas"]["SecuritySettings"];
             };
         };
         responses: {
@@ -22625,7 +24599,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WrappedSettingsDto"];
+                    "application/json": components["schemas"]["WrappedSettings"];
                 };
             };
         };
@@ -22639,7 +24613,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WrappedSettingsDto"];
+                "application/json": components["schemas"]["WrappedSettings"];
             };
         };
         responses: {
@@ -22649,7 +24623,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WrappedSettingsDto"];
+                    "application/json": components["schemas"]["WrappedSettings"];
                 };
             };
         };
@@ -22669,7 +24643,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["YouTubeConnectionDto"];
+                    "application/json": components["schemas"]["YouTubeConnection"];
                 };
             };
         };
@@ -22683,7 +24657,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["YouTubeConnectionDto"];
+                "application/json": components["schemas"]["YouTubeConnection"];
             };
         };
         responses: {
@@ -22693,7 +24667,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["YouTubeConnectionDto"];
+                    "application/json": components["schemas"]["YouTubeConnection"];
                 };
             };
         };
@@ -22707,7 +24681,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["YouTubeConnectionDto"];
+                "application/json": components["schemas"]["YouTubeConnection"];
             };
         };
         responses: {

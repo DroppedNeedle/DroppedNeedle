@@ -9,12 +9,12 @@ import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
 
-export type DownloadPolicySettings = components['schemas']['DownloadPolicyDto'];
-export type SabnzbdConnectionSettings = components['schemas']['SabnzbdConnectionDto'];
+export type DownloadPolicySettings = components['schemas']['DownloadPolicyView'];
+export type SabnzbdConnectionSettings = components['schemas']['SabnzbdConnection'];
 export type SabnzbdStatus = components['schemas']['SabnzbdStatusResponse'];
 export type SabnzbdTestResult = components['schemas']['SabnzbdTestResponse'];
-export type SourcePriority = components['schemas']['SourcePriorityDto'];
-export type WantedWatcherSettings = components['schemas']['WantedWatcherDto'];
+export type SourcePriority = components['schemas']['SourcePriorityOrder'];
+export type WantedWatcherSettings = components['schemas']['WantedWatcher'];
 
 const sourcePriorityOptions = () =>
 	queryOptions({

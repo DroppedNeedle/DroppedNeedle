@@ -14,6 +14,7 @@
 //! hold the mask) and `normalize()` never touches them.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::error::ConfigError;
 use super::mask::{
@@ -53,7 +54,7 @@ pub trait SecretSection: Section {
 // Dropped: min_bitrate_kbps (v2-deprecated, superseded by quality_min/max, zero consumers).
 
 /// slskd download-client connection.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct SlskdConnection {
     /// Master switch.
@@ -63,6 +64,7 @@ pub struct SlskdConnection {
     /// slskd base URL.
     pub url: String,
     /// API key (encrypted at rest).
+    #[schema(value_type = String)]
     pub api_key: Secret,
     /// Verify downloads after landing.
     pub verify_downloads: bool,
@@ -214,7 +216,7 @@ impl SecretSection for SlskdConnection {
 
 /// SABnzbd connection. The key is the full key (the add-only nzbkey cannot
 /// do queue/history/delete).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct SabnzbdConnection {
     /// Master switch.
@@ -224,6 +226,7 @@ pub struct SabnzbdConnection {
     /// SABnzbd base URL.
     pub url: String,
     /// Full API key (encrypted at rest).
+    #[schema(value_type = String)]
     pub api_key: Secret,
     /// Category (`*`: a fresh SABnzbd has no `droppedneedle` category).
     pub category: String,
@@ -280,7 +283,7 @@ impl SecretSection for DownloadClients {
 
 /// One configured Newznab indexer. DroppedNeedle ships none; the user adds
 /// their own.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct NewznabIndexer {
     /// Stable id.
@@ -293,6 +296,7 @@ pub struct NewznabIndexer {
     /// Indexer base URL.
     pub url: String,
     /// API key (encrypted at rest, per element).
+    #[schema(value_type = String)]
     pub api_key: Secret,
     /// Newznab categories.
     pub categories: Vec<i64>,
@@ -341,7 +345,7 @@ impl Section for Indexers {
 // --- prowlarr ---------------------------------------------------------------
 
 /// Single Prowlarr connection (Prowlarr multiplexes its own indexers).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct ProwlarrConnection {
     /// Master switch.
@@ -349,6 +353,7 @@ pub struct ProwlarrConnection {
     /// Prowlarr base URL (LAN service, `http://` default).
     pub url: String,
     /// API key (encrypted at rest).
+    #[schema(value_type = String)]
     pub api_key: Secret,
 }
 
@@ -407,12 +412,13 @@ impl SecretSection for LidarrImportConnection {
 
 /// Jellyfin connection. The section URL is the single owner (the top-level
 /// mirror and the in-memory `Settings` mutation are gone).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct JellyfinConnection {
     /// Jellyfin base URL.
     pub jellyfin_url: String,
     /// API key (encrypted at rest; v2 returned it plaintext on GET).
+    #[schema(value_type = String)]
     pub api_key: Secret,
     /// Jellyfin user id.
     pub user_id: String,
@@ -469,7 +475,7 @@ impl SecretSection for JellyfinConnection {
 // --- navidrome_settings -----------------------------------------------------
 
 /// Navidrome connection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct NavidromeConnection {
     /// Navidrome base URL.
@@ -477,6 +483,7 @@ pub struct NavidromeConnection {
     /// Username.
     pub username: String,
     /// Password (encrypted at rest).
+    #[schema(value_type = String)]
     pub password: Secret,
     /// Master switch.
     pub enabled: bool,
@@ -533,12 +540,13 @@ impl SecretSection for NavidromeConnection {
 // --- plex_settings ----------------------------------------------------------
 
 /// Plex connection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct PlexConnection {
     /// Plex base URL.
     pub plex_url: String,
     /// Plex token (encrypted at rest).
+    #[schema(value_type = String)]
     pub plex_token: Secret,
     /// Master switch.
     pub enabled: bool,
@@ -587,12 +595,13 @@ impl SecretSection for PlexConnection {
 // --- listenbrainz_settings (mask gap closed) --------------------------------
 
 /// ListenBrainz connection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct ListenBrainzConnection {
     /// Username.
     pub username: String,
     /// User token (encrypted at rest; v2 returned it plaintext on GET).
+    #[schema(value_type = String)]
     pub user_token: Secret,
     /// Master switch.
     pub enabled: bool,
@@ -615,10 +624,11 @@ impl SecretSection for ListenBrainzConnection {
 // --- youtube_settings (mask gap closed) -------------------------------------
 
 /// YouTube connection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct YouTubeConnection {
     /// API key (encrypted at rest; v2 returned it plaintext on GET).
+    #[schema(value_type = String)]
     pub api_key: Secret,
     /// Master switch.
     pub enabled: bool,
@@ -747,7 +757,7 @@ impl SecretSection for SpotifySettings {
 // --- events -----------------------------------------------------------------
 
 /// Events sweep scope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EventsSweepScope {
     /// Followed artists only.
@@ -758,7 +768,7 @@ pub enum EventsSweepScope {
 }
 
 /// Upcoming-events sources. The sweep runs daily at `poll_time`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct EventsSettings {
     /// Master switch.
@@ -766,10 +776,12 @@ pub struct EventsSettings {
     /// Ticketmaster switch.
     pub ticketmaster_enabled: bool,
     /// Ticketmaster key (encrypted at rest).
+    #[schema(value_type = String)]
     pub ticketmaster_api_key: Secret,
     /// Skiddle switch.
     pub skiddle_enabled: bool,
     /// Skiddle key (encrypted at rest).
+    #[schema(value_type = String)]
     pub skiddle_api_key: Secret,
     /// Daily sweep time, server-local `HH:MM`.
     pub poll_time: String,
@@ -826,10 +838,11 @@ impl SecretSection for EventsSettings {
 // --- wrapped_settings -------------------------------------------------------
 
 /// Shared secret for the wrapped endpoints (service-to-service).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct WrappedSettings {
     /// API key (encrypted at rest).
+    #[schema(value_type = String)]
     pub api_key: Secret,
 }
 
@@ -850,7 +863,7 @@ impl SecretSection for WrappedSettings {
 // --- oidc_settings ----------------------------------------------------------
 
 /// OIDC connection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct OidcConnection {
     /// Master switch.
@@ -860,6 +873,7 @@ pub struct OidcConnection {
     /// Client id.
     pub client_id: String,
     /// Client secret (encrypted at rest).
+    #[schema(value_type = String)]
     pub client_secret: Secret,
     /// Scopes.
     pub scopes: String,
@@ -897,7 +911,7 @@ impl SecretSection for OidcConnection {
 // --- library_settings (typed roots + policies) ------------------------------
 
 /// Per-path identification policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IdentificationPolicy {
     /// Trust local metadata only.
@@ -910,7 +924,7 @@ pub enum IdentificationPolicy {
 }
 
 /// One path-policy rule inside a root.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct LibraryPathRule {
     /// Rule id.
@@ -922,7 +936,7 @@ pub struct LibraryPathRule {
 }
 
 /// One library root.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct LibraryRoot {
     /// Stable root id.
@@ -950,7 +964,8 @@ impl Default for LibraryRoot {
 }
 
 /// Typed library settings: roots, policies, staging, naming, AcoustID.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[schema(as = LibrarySettings)]
 #[serde(default)]
 pub struct TypedLibrary {
     /// Library roots.
@@ -960,6 +975,7 @@ pub struct TypedLibrary {
     /// Naming template.
     pub naming_template: String,
     /// AcoustID key (encrypted at rest).
+    #[schema(value_type = String)]
     pub acoustid_api_key: Secret,
     /// Master switch: when false the app claims no new library work.
     pub enabled: bool,
@@ -1003,7 +1019,7 @@ impl SecretSection for TypedLibrary {
 // The AudioDB key is encrypted at rest now (v2 stored it plaintext).
 
 /// Advanced tuning: cache TTLs, HTTP trio, batching, queues, AudioDB.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct AdvancedSettings {
     /// Library album TTL.
@@ -1128,6 +1144,7 @@ pub struct AdvancedSettings {
     /// field reads as empty (then the read path falls back to the "123"
     /// default); only an explicitly stored value decrypts.
     #[serde(default)]
+    #[schema(value_type = String)]
     pub audiodb_api_key: Secret,
     /// AudioDB hit TTL.
     pub cache_ttl_audiodb_found: i64,

@@ -1,7 +1,7 @@
-//! Settings sections: secret masks that survive a re-save, unit scaling,
-//! revision checks, the admin gate, verify and save journeys over HTTP
-//! with scripted probes, the live probes against a loopback stub, and the
-//! cache sweep after each save.
+//! Settings sections: the masked secret round trip over HTTP (read masked,
+//! a re-saved mask keeps the secret, verify tests the stored secret), unit
+//! scaling, revision checks, the admin gate, the BrainzMash ceremony, the
+//! live probes against a loopback stub, and the cache sweep after a save.
 
 use crate::common::{self, ScratchDir};
 
@@ -18,26 +18,16 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
-use droppedneedle::runtime_config::mask::{
-    INDEXER_API_KEY_MASK, JELLYFIN_API_KEY_MASK, LISTENBRAINZ_TOKEN_MASK, NAVIDROME_PASSWORD_MASK,
-    OIDC_SECRET_MASK, PLEX_TOKEN_MASK, PROWLARR_API_KEY_MASK, SABNZBD_API_KEY_MASK,
-    SKIDDLE_KEY_MASK, SLSKD_API_KEY_MASK, TICKETMASTER_KEY_MASK, WRAPPED_API_KEY_MASK,
-    YOUTUBE_API_KEY_MASK,
-};
-use droppedneedle::runtime_config::{ConfigStore, Crypto};
+use droppedneedle::runtime_config::mask::{INDEXER_API_KEY_MASK, JELLYFIN_API_KEY_MASK};
+use droppedneedle::runtime_config::secret_sections::{JellyfinConnection, TypedLibrary};
+use droppedneedle::runtime_config::{ConfigStore, Crypto, Masked};
 use droppedneedle::settings::effects::{SaveEffects, SavedSection};
-use droppedneedle::settings::models::{
-    AdvancedSettingsDto, EventsSettingsDto, JellyfinConnectionDto, LibrarySettingsDto,
-    LibrarySettingsSaveRequest, ListenBrainzConnectionDto, NavidromeConnectionDto,
-    NewznabIndexerDto, OidcConnectionDto, PlexConnectionDto, ProwlarrConnectionDto,
-    SabnzbdConnectionDto, SlskdConnectionDto, WrappedSettingsDto, YouTubeConnectionDto,
-};
+use droppedneedle::settings::models::{AdvancedSettingsForm, LibrarySettingsSaveRequest};
 use droppedneedle::settings::musicbrainz::BRAINZMASH_DISCLOSURE_VERSION;
 use droppedneedle::settings::services::SettingsService;
 use droppedneedle::settings::verify::{
     JellyfinVerdict, ListenBrainzVerdict, LiveProbes, NewznabVerdict, PlexVerdict, ProbeVerdict,
     ProwlarrVerdict, SabnzbdMountDiagnosis, SabnzbdVerdict, VerifyProbes, VersionVerdict,
-    require_service_url,
 };
 use droppedneedle::settings::wiring::SettingsSetup;
 use futures_util::future::BoxFuture;
@@ -72,7 +62,12 @@ fn scratch_service() -> (SettingsService, Arc<RecorderEffects>, ScratchDir) {
     let effects = Arc::new(RecorderEffects::default());
     let ids = Arc::new(FixedIdGenerator::new(FIXED_ID));
     (
-        SettingsService::new(Arc::new(store), effects.clone(), ids),
+        SettingsService::new(
+            Arc::new(store),
+            effects.clone(),
+            ids,
+            Arc::new(FakeProbes::passing()),
+        ),
         effects,
         dir,
     )
@@ -284,226 +279,6 @@ impl VerifyProbes for FakeProbes {
 
 // --- service round-trips -----------------------------------------------------
 
-/// Every secret-section save echoes the mask, never ciphertext, and
-/// re-saving the echo keeps the stored secret intact.
-#[tokio::test]
-async fn secret_saves_echo_masks_and_resaves_preserve() {
-    let (service, _, _scratch) = scratch_service();
-    // (save, raw read, dto with the secret set, secret field, mask, plaintext)
-    macro_rules! check_secret {
-        ($save:ident, $raw:ident, $dto:expr, $field:ident, $mask:expr, $plain:expr) => {{
-            let echoed = service.$save(&$dto).await.expect("saves");
-            assert_eq!(echoed.$field, $mask, stringify!($save));
-            service.$save(&echoed).await.expect("resaves");
-            let raw = service.$raw().expect("raw reads");
-            assert_eq!(raw.$field.expose(), $plain, stringify!($save));
-        }};
-    }
-    check_secret!(
-        save_slskd,
-        get_slskd_raw,
-        SlskdConnectionDto {
-            url: "http://slskd:5030".to_owned(),
-            api_key: "slskd-secret".to_owned(),
-            ..Default::default()
-        },
-        api_key,
-        SLSKD_API_KEY_MASK,
-        "slskd-secret"
-    );
-    check_secret!(
-        save_sabnzbd,
-        get_sabnzbd_raw,
-        SabnzbdConnectionDto {
-            url: "http://sab:8080".to_owned(),
-            api_key: "sab-secret".to_owned(),
-            ..Default::default()
-        },
-        api_key,
-        SABNZBD_API_KEY_MASK,
-        "sab-secret"
-    );
-    check_secret!(
-        save_prowlarr,
-        get_prowlarr_raw,
-        ProwlarrConnectionDto {
-            url: "http://prowlarr:9696".to_owned(),
-            api_key: "prowlarr-secret".to_owned(),
-            ..Default::default()
-        },
-        api_key,
-        PROWLARR_API_KEY_MASK,
-        "prowlarr-secret"
-    );
-    check_secret!(
-        save_jellyfin,
-        get_jellyfin_raw,
-        JellyfinConnectionDto {
-            jellyfin_url: "http://jellyfin:8096".to_owned(),
-            api_key: "jellyfin-secret".to_owned(),
-            ..Default::default()
-        },
-        api_key,
-        JELLYFIN_API_KEY_MASK,
-        "jellyfin-secret"
-    );
-    check_secret!(
-        save_navidrome,
-        get_navidrome_raw,
-        NavidromeConnectionDto {
-            navidrome_url: "http://navidrome:4533".to_owned(),
-            username: "ada".to_owned(),
-            password: "navidrome-secret".to_owned(),
-            ..Default::default()
-        },
-        password,
-        NAVIDROME_PASSWORD_MASK,
-        "navidrome-secret"
-    );
-    check_secret!(
-        save_plex,
-        get_plex_raw,
-        PlexConnectionDto {
-            plex_url: "http://plex:32400".to_owned(),
-            plex_token: "plex-secret".to_owned(),
-            ..Default::default()
-        },
-        plex_token,
-        PLEX_TOKEN_MASK,
-        "plex-secret"
-    );
-    check_secret!(
-        save_listenbrainz,
-        get_listenbrainz_raw,
-        ListenBrainzConnectionDto {
-            username: "ada".to_owned(),
-            user_token: "lb-secret".to_owned(),
-            ..Default::default()
-        },
-        user_token,
-        LISTENBRAINZ_TOKEN_MASK,
-        "lb-secret"
-    );
-    check_secret!(
-        save_youtube,
-        get_youtube_raw,
-        YouTubeConnectionDto {
-            api_key: "youtube-secret".to_owned(),
-            ..Default::default()
-        },
-        api_key,
-        YOUTUBE_API_KEY_MASK,
-        "youtube-secret"
-    );
-    check_secret!(
-        save_wrapped,
-        get_wrapped_raw,
-        WrappedSettingsDto {
-            api_key: "wrapped-secret".to_owned(),
-        },
-        api_key,
-        WRAPPED_API_KEY_MASK,
-        "wrapped-secret"
-    );
-    check_secret!(
-        save_oidc,
-        get_oidc_raw,
-        OidcConnectionDto {
-            issuer: "https://id.example.com".to_owned(),
-            client_secret: "oidc-secret".to_owned(),
-            ..Default::default()
-        },
-        client_secret,
-        OIDC_SECRET_MASK,
-        "oidc-secret"
-    );
-    // Events carries two secrets in one section.
-    let events = EventsSettingsDto {
-        ticketmaster_api_key: "tm-secret".to_owned(),
-        skiddle_api_key: "skiddle-secret".to_owned(),
-        ..Default::default()
-    };
-    let echoed = service.save_events(&events).await.expect("saves");
-    assert_eq!(echoed.ticketmaster_api_key, TICKETMASTER_KEY_MASK);
-    assert_eq!(echoed.skiddle_api_key, SKIDDLE_KEY_MASK);
-    service.save_events(&echoed).await.expect("resaves");
-    let raw = service.get_events_raw().expect("raw reads");
-    assert_eq!(raw.ticketmaster_api_key.expose(), "tm-secret");
-    assert_eq!(raw.skiddle_api_key.expose(), "skiddle-secret");
-}
-
-/// Indexers create, list masked, update, reorder, test raw, and delete.
-#[tokio::test]
-async fn indexers_crud_masked() {
-    let (service, _, _scratch) = scratch_service();
-    let first = NewznabIndexerDto {
-        name: "First".to_owned(),
-        url: "https://first.example.com/api".to_owned(),
-        api_key: "first-secret".to_owned(),
-        ..Default::default()
-    };
-    let saved = service.save_indexer(&first).await.expect("creates");
-    assert!(!saved.id.is_empty());
-    let second = NewznabIndexerDto {
-        name: "Second".to_owned(),
-        url: "https://second.example.com/api".to_owned(),
-        api_key: "second-secret".to_owned(),
-        ..Default::default()
-    };
-    let saved_two = service.save_indexer(&second).await.expect("creates");
-    assert_ne!(saved.id, saved_two.id);
-
-    let listed = service.list_indexers().expect("lists");
-    assert_eq!(listed.len(), 2);
-    assert!(
-        listed
-            .iter()
-            .all(|indexer| indexer.api_key == INDEXER_API_KEY_MASK)
-    );
-    assert_eq!(
-        service
-            .get_indexer_raw(&saved.id)
-            .expect("raw reads")
-            .expect("found")
-            .api_key
-            .expose(),
-        "first-secret"
-    );
-
-    // A masked-key update keeps the stored key per element.
-    let mut edited = listed
-        .into_iter()
-        .find(|indexer| indexer.id == saved.id)
-        .expect("finds first");
-    edited.name = "First Renamed".to_owned();
-    let kept = service.save_indexer(&edited).await.expect("updates");
-    assert_eq!(kept.id, saved.id);
-    assert_eq!(
-        service
-            .get_indexer_raw(&saved.id)
-            .expect("raw reads")
-            .expect("found")
-            .api_key
-            .expose(),
-        "first-secret"
-    );
-
-    service
-        .reorder_indexers(&[saved_two.id.clone(), saved.id.clone()])
-        .await
-        .expect("reorders");
-    let listed = service.list_indexers().expect("lists");
-    assert_eq!(listed[0].id, saved_two.id);
-
-    service.delete_indexer(&saved.id).await.expect("deletes");
-    service
-        .delete_indexer("missing-id")
-        .await
-        .expect("unknown delete is silent");
-    let listed = service.list_indexers().expect("lists");
-    assert_eq!(listed.len(), 1);
-}
-
 /// Advanced tunables scale frontend units to backend units, mask the
 /// AudioDB key, and fire the Advanced fan-out.
 #[tokio::test]
@@ -512,7 +287,7 @@ async fn advanced_round_trip_scales_and_masks() {
     use droppedneedle::runtime_config::secret_sections::AdvancedSettings;
 
     let (service, effects, _scratch) = scratch_service();
-    let dto = AdvancedSettingsDto {
+    let form = AdvancedSettingsForm {
         cache_ttl_album_library: 48,
         cache_ttl_search: 30,
         frontend_ttl_home: 10,
@@ -520,7 +295,7 @@ async fn advanced_round_trip_scales_and_masks() {
         audiodb_api_key: "audiodb-secret".to_owned(),
         ..Default::default()
     };
-    let echoed = service.save_advanced(&dto).await.expect("saves");
+    let echoed = service.save_advanced(form).await.expect("saves");
     assert_eq!(echoed.cache_ttl_album_library, 48);
     assert_eq!(echoed.audiodb_api_key, AUDIODB_API_KEY_MASK);
     assert_eq!(effects.calls(), vec![SavedSection::Advanced]);
@@ -533,7 +308,7 @@ async fn advanced_round_trip_scales_and_masks() {
     assert_eq!(stored.audiodb_api_key.expose(), "audiodb-secret");
 
     // The echo re-saves cleanly: the mask keeps the stored key.
-    service.save_advanced(&echoed).await.expect("resaves");
+    service.save_advanced(echoed).await.expect("resaves");
     let stored: AdvancedSettings = service.store.get_raw().expect("raw reads");
     assert_eq!(stored.audiodb_api_key.expose(), "audiodb-secret");
 
@@ -546,7 +321,6 @@ async fn advanced_round_trip_scales_and_masks() {
 #[tokio::test]
 async fn library_round_trip_cas_and_paths() {
     use droppedneedle::runtime_config::mask::ACOUSTID_KEY_MASK;
-    use droppedneedle::runtime_config::secret_sections::TypedLibrary;
 
     let (service, effects, _scratch) = scratch_service();
     let view = service.get_library().expect("reads default");
@@ -554,10 +328,10 @@ async fn library_round_trip_cas_and_paths() {
 
     // Stale token rejected before anything persists.
     let stale = LibrarySettingsSaveRequest {
-        settings: LibrarySettingsDto::default(),
+        settings: Masked::from(TypedLibrary::default()),
         expected_policy_revision: "wrong".to_owned(),
     };
-    let error = service.save_library(&stale).await.expect_err("stale fails");
+    let error = service.save_library(stale).await.expect_err("stale fails");
     assert!(matches!(
         error,
         droppedneedle::settings::error::SettingsError::StaleRevision { .. }
@@ -567,35 +341,37 @@ async fn library_round_trip_cas_and_paths() {
     std::fs::create_dir_all(dir.join("music")).expect("fixture dir builds");
     let root = dir.join("music").to_string_lossy().into_owned();
 
-    let with_key = LibrarySettingsDto {
-        acoustid_api_key: "acoustid-secret".to_owned(),
+    let with_key = TypedLibrary {
+        acoustid_api_key: "acoustid-secret".into(),
         ..Default::default()
     };
     let saved = service
-        .save_library(&LibrarySettingsSaveRequest {
-            settings: with_key,
+        .save_library(LibrarySettingsSaveRequest {
+            settings: Masked::from(with_key),
             expected_policy_revision: view.policy_revision.clone(),
         })
         .await
         .expect("saves");
-    assert_eq!(saved.acoustid_api_key, ACOUSTID_KEY_MASK);
+    assert_eq!(saved.settings.acoustid_api_key.expose(), ACOUSTID_KEY_MASK);
     assert_eq!(effects.calls(), vec![SavedSection::Library]);
     let stored: TypedLibrary = service.store.get_raw().expect("raw reads");
     assert_eq!(stored.acoustid_api_key.expose(), "acoustid-secret");
 
     let added = service.add_library_path(&root).await.expect("adds path");
-    assert_eq!(added.library_roots.len(), 1);
-    assert_eq!(added.library_roots[0].path, root);
+    assert_eq!(added.settings.library_roots.len(), 1);
+    assert_eq!(added.settings.library_roots[0].path, root);
     // Re-adding is a silent no-op; the key survives path edits.
     let again = service.add_library_path(&root).await.expect("re-adds");
-    assert_eq!(again.library_roots.len(), 1);
-    assert_eq!(again.acoustid_api_key, ACOUSTID_KEY_MASK);
+    assert_eq!(again.settings.library_roots.len(), 1);
+    assert_eq!(again.settings.acoustid_api_key.expose(), ACOUSTID_KEY_MASK);
+    let stored: TypedLibrary = service.store.get_raw().expect("raw reads");
+    assert_eq!(stored.acoustid_api_key.expose(), "acoustid-secret");
 
     let missing = service.add_library_path("").await.expect_err("blank fails");
     assert!(format!("{missing:?}").contains("required"));
 
     let removed = service.remove_library_path(&root).await.expect("removes");
-    assert!(removed.library_roots.is_empty());
+    assert!(removed.settings.library_roots.is_empty());
     service
         .remove_library_path("/nothing/here")
         .await
@@ -709,6 +485,12 @@ async fn settings_routes_are_admin_gated() {
         ("GET", "/settings/musicbrainz"),
         ("POST", "/settings/musicbrainz/brainzmash/stage"),
         ("GET", "/settings/library/sync"),
+        ("GET", "/settings/home"),
+        ("GET", "/settings/library-management"),
+        (
+            "POST",
+            "/settings/library-management/profile-imports/preview",
+        ),
     ] {
         let body = (method == "PUT" || method == "POST").then(|| json!({}));
         let (status, _) = call(rig.app(None), method, uri, body.clone()).await;
@@ -754,6 +536,14 @@ async fn verify_resolves_masks_and_maps_verdicts() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(saved["api_key"], JELLYFIN_API_KEY_MASK);
+    let (status, read) = call(rig.admin_app(), "GET", "/settings/jellyfin", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read["api_key"], JELLYFIN_API_KEY_MASK);
+    // Re-saving the masked read keeps the stored key.
+    let (status, _) = call(rig.admin_app(), "PUT", "/settings/jellyfin", Some(read)).await;
+    assert_eq!(status, StatusCode::OK);
+    let stored: JellyfinConnection = rig.settings.service().store.get_raw().expect("raw reads");
+    assert_eq!(stored.api_key.expose(), "jellyfin-live");
     let (status, verdict) = call(
         rig.admin_app(),
         "POST",
@@ -770,6 +560,35 @@ async fn verify_resolves_masks_and_maps_verdicts() {
             .iter()
             .any(|call| call == "jellyfin(http://jellyfin:8096,jellyfin-live)"),
         "probe saw the resolved key: {:?}",
+        rig.probes.calls()
+    );
+
+    // Indexers resolve a masked key by id the same way.
+    let (status, created) = call(
+        rig.admin_app(),
+        "POST",
+        "/settings/indexers",
+        Some(json!({"name": "Stub", "url": "http://stub:8080/api", "api_key": "indexer-live"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, listed) = call(rig.admin_app(), "GET", "/settings/indexers", None).await;
+    assert_eq!(listed[0]["id"], created["id"]);
+    assert_eq!(listed[0]["api_key"], INDEXER_API_KEY_MASK);
+    let (status, _) = call(
+        rig.admin_app(),
+        "POST",
+        "/settings/indexers/test",
+        Some(listed[0].clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        rig.probes
+            .calls()
+            .iter()
+            .any(|call| call == "newznab(http://stub:8080/api,indexer-live)"),
+        "probe saw the stored indexer key: {:?}",
         rig.probes.calls()
     );
 
@@ -833,111 +652,31 @@ async fn verify_resolves_masks_and_maps_verdicts() {
     assert_eq!(limited["error"]["code"], "RATE_LIMITED");
 }
 
-/// Dropped sections answer 410 with the decision ref on both methods.
+/// The dropped catalog-sync section answers 410 on both methods; the
+/// home section is back and enforces v2's ranges.
 #[tokio::test]
 async fn dropped_routes_answer_gone() {
     let rig = Rig::open(true).await;
+    let (status, home) = call(rig.admin_app(), "GET", "/settings/home", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(home["cache_ttl_trending"], 3600);
+    let (status, _) = call(
+        rig.admin_app(),
+        "PUT",
+        "/settings/home",
+        Some(json!({"cache_ttl_trending": 10})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     for (method, uri) in [
         ("GET", "/settings/library/sync"),
         ("PUT", "/settings/library/sync"),
-        ("GET", "/settings/home"),
-        ("PUT", "/settings/home"),
     ] {
         let body = (method == "PUT").then(|| json!({}));
         let (status, gone) = call(rig.admin_app(), method, uri, body).await;
         assert_eq!(status, StatusCode::GONE, "{method} {uri}");
         assert_eq!(gone["error"]["code"], "SECTION_DROPPED");
     }
-}
-
-/// Admin edits an indexer, verifies, saves, and the provider-facing
-/// read rebuilds from the saved config (no stale cache).
-#[tokio::test]
-async fn indexer_edit_verify_save_rebuild() {
-    let rig = Rig::open(true).await;
-
-    // Create with a live key.
-    let (status, created) = call(
-        rig.admin_app(),
-        "POST",
-        "/settings/indexers",
-        Some(json!({
-            "id": "",
-            "type": "newznab",
-            "name": "Stub",
-            "url": "http://stub:8080/api",
-            "api_key": "indexer-live",
-            "categories": [3000],
-            "enabled": true,
-            "priority": 1,
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let id = created["id"].as_str().expect("id returns").to_owned();
-    assert!(!id.is_empty());
-
-    // Verify the masked echo: the fake observes the stored key.
-    let listed = call(rig.admin_app(), "GET", "/settings/indexers", None).await;
-    assert_eq!(listed.0, StatusCode::OK);
-    let echo = listed.1.as_array().expect("list reads")[0].clone();
-    assert_eq!(echo["api_key"], INDEXER_API_KEY_MASK);
-    let (status, verdict) = call(
-        rig.admin_app(),
-        "POST",
-        "/settings/indexers/test",
-        Some(echo.clone()),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(verdict["valid"], true);
-    assert!(
-        rig.probes
-            .calls()
-            .iter()
-            .any(|call| call == "newznab(http://stub:8080/api,indexer-live)"),
-        "probe saw the resolved key: {:?}",
-        rig.probes.calls()
-    );
-
-    // Edit and save; the path id wins over the body id.
-    let (status, saved) = call(
-        rig.admin_app(),
-        "PUT",
-        &format!("/settings/indexers/{id}"),
-        Some(json!({
-            "id": "ignored",
-            "type": "newznab",
-            "name": "Stub Renamed",
-            "url": "http://stub:8080/api",
-            "api_key": INDEXER_API_KEY_MASK,
-            "categories": [3000],
-            "enabled": true,
-            "priority": 1,
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(saved["id"], id);
-
-    // The provider-facing read rebuilds from saved config.
-    let (status, listed) = call(rig.admin_app(), "GET", "/settings/indexers", None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(listed[0]["name"], "Stub Renamed");
-    assert_eq!(listed[0]["api_key"], INDEXER_API_KEY_MASK);
-
-    // Delete removes it; reorder of the rest holds.
-    let (status, _) = call(
-        rig.admin_app(),
-        "DELETE",
-        &format!("/settings/indexers/{id}"),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, listed) = call(rig.admin_app(), "GET", "/settings/indexers", None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(listed.as_array().expect("list reads").len(), 0);
 }
 
 /// The BrainzMash ceremony runs over HTTP: stage, consent, verify the
@@ -1075,19 +814,6 @@ async fn section_prefs_http() {
 }
 
 // --- probe helpers ---------------------------------------------------------------
-
-/// Service URLs are required, http(s), and slash-trimmed.
-#[test]
-fn service_url_gate() {
-    assert_eq!(
-        require_service_url("http://x:1/", "Thing URL").expect("trims"),
-        "http://x:1"
-    );
-    let blank = require_service_url("  ", "Thing URL").expect_err("blank fails");
-    assert!(format!("{blank:?}").contains("required"));
-    let scheme = require_service_url("ftp://x", "Thing URL").expect_err("scheme fails");
-    assert!(format!("{scheme:?}").contains("http(s)"));
-}
 
 // --- live probes against loopback stubs --------------------------------------
 

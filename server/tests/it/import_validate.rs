@@ -250,7 +250,11 @@ fn revoked_app_password_warns() {
 #[test]
 fn dropped_sections_rejected() {
     let fixture = Fixture::shared();
-    for section in ["library_sync_settings", "_legacy_lidarr", "home_settings"] {
+    for section in [
+        "library_sync_settings",
+        "_legacy_lidarr",
+        "local_files_settings",
+    ] {
         let mut export = fixture.shell();
         export["settings"][section] = json!({});
         let report = validate_export(&export);

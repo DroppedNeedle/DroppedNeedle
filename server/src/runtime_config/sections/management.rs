@@ -2,6 +2,7 @@
 //! assignments, and external refresh (secret-free on purpose).
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::Section;
 
@@ -44,7 +45,7 @@ pub const DEFAULT_SIDECAR_PATTERNS: [&str; 27] = [
 ];
 
 /// Tag-field write mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FieldMode {
     /// Do not touch.
@@ -61,7 +62,7 @@ pub enum FieldMode {
 }
 
 /// Genre write mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GenreMode {
     /// Overwrite.
@@ -74,7 +75,7 @@ pub enum GenreMode {
 }
 
 /// Genre source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GenreSource {
     /// MusicBrainz.
@@ -88,7 +89,7 @@ pub enum GenreSource {
 }
 
 /// Artwork provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtworkProvider {
     /// CAA release.
@@ -104,7 +105,7 @@ pub enum ArtworkProvider {
 }
 
 /// Artwork image type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtworkImageType {
     /// Front cover.
@@ -128,7 +129,7 @@ pub enum ArtworkImageType {
 }
 
 /// Artwork output format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtworkOutputFormat {
     /// Keep original.
@@ -143,7 +144,7 @@ pub enum ArtworkOutputFormat {
 }
 
 /// Artwork download size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtworkDownloadSize {
     /// Full size.
@@ -161,7 +162,7 @@ pub enum ArtworkDownloadSize {
 }
 
 /// Artist credit standardization.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtistStandardization {
     /// As credited.
@@ -174,7 +175,7 @@ pub enum ArtistStandardization {
 }
 
 /// Credited relationship type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RelationshipType {
     /// Composer.
@@ -196,7 +197,7 @@ pub enum RelationshipType {
 }
 
 /// Source-tree cleanup after a confirmed move.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceCleanupMode {
     /// Leave sources alone.
@@ -207,7 +208,7 @@ pub enum SourceCleanupMode {
 }
 
 /// ID3 version for MP3 writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 pub enum Id3Version {
     /// ID3v2.4.
     #[serde(rename = "2.4")]
@@ -219,7 +220,7 @@ pub enum Id3Version {
 }
 
 /// APEv2 policy for MP3 writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Mp3ApePolicy {
     /// Preserve APEv2 tags.
@@ -230,7 +231,7 @@ pub enum Mp3ApePolicy {
 }
 
 /// Raw-AAC tag policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RawAacTagPolicy {
     /// Write APEv2.
@@ -243,7 +244,7 @@ pub enum RawAacTagPolicy {
 }
 
 /// WAV tag policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WavTagPolicy {
     /// ID3 chunk.
@@ -256,7 +257,7 @@ pub enum WavTagPolicy {
 }
 
 /// ID3 text encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Id3TextEncoding {
     /// UTF-8.
@@ -267,7 +268,7 @@ pub enum Id3TextEncoding {
 }
 
 /// Unicode normalization for paths.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 pub enum UnicodeNormalization {
     /// NFC.
     #[default]
@@ -277,7 +278,7 @@ pub enum UnicodeNormalization {
 }
 
 /// Extension case policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionCase {
     /// Keep as-is.
@@ -290,7 +291,7 @@ pub enum ExtensionCase {
 }
 
 /// ReplayGain write mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplayGainMode {
     /// Leave tags alone.
@@ -303,7 +304,7 @@ pub enum ReplayGainMode {
 }
 
 /// Multi-disc naming mode for a root override.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MultiDiscNamingMode {
     /// Inherit the profile.
@@ -316,7 +317,7 @@ pub enum MultiDiscNamingMode {
 }
 
 /// One managed tag field.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct ManagedField {
     /// Field name.
@@ -338,7 +339,7 @@ impl Default for ManagedField {
 }
 
 /// Artist-credit handling.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct ArtistCreditSettings {
     /// Standardization level.
@@ -360,7 +361,7 @@ impl Default for ArtistCreditSettings {
 }
 
 /// Relationship-credit handling.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct RelationshipCreditSettings {
     /// Master switch.
@@ -387,7 +388,7 @@ impl Default for RelationshipCreditSettings {
 }
 
 /// Format-compatibility handling.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct FormatCompatibilitySettings {
     /// ID3 version for MP3 writes.
@@ -424,7 +425,7 @@ impl Default for FormatCompatibilitySettings {
 }
 
 /// Metadata management block.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct MetadataManagementSettings {
     /// Master switch.
@@ -447,8 +448,26 @@ pub struct MetadataManagementSettings {
     pub format_compatibility: FormatCompatibilitySettings,
 }
 
+/// v2 defaults: embedded art survives a scrub unless the profile says
+/// otherwise.
+impl Default for MetadataManagementSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            fields: Vec::new(),
+            artist_credits: ArtistCreditSettings::default(),
+            relationships: RelationshipCreditSettings::default(),
+            tagging_script_ids: Vec::new(),
+            preserve_fields: Vec::new(),
+            scrub_unmanaged_tags: false,
+            preserve_embedded_art_during_scrub: true,
+            format_compatibility: FormatCompatibilitySettings::default(),
+        }
+    }
+}
+
 /// One genre alias.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct GenreAlias {
     /// Source label.
@@ -458,7 +477,7 @@ pub struct GenreAlias {
 }
 
 /// Genre management block.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct GenreManagementSettings {
     /// Master switch.
@@ -519,7 +538,7 @@ impl Default for GenreManagementSettings {
 }
 
 /// Artwork management block.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct ArtworkManagementSettings {
     /// Embed art in files.
@@ -606,7 +625,7 @@ impl Default for ArtworkManagementSettings {
 }
 
 /// Path-compatibility handling.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct PathCompatibilitySettings {
     /// Windows-safe names.
@@ -646,7 +665,7 @@ impl Default for PathCompatibilitySettings {
 }
 
 /// Organization management block.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct OrganizationManagementSettings {
     /// Rename files.
@@ -689,7 +708,7 @@ impl Default for OrganizationManagementSettings {
 }
 
 /// File-behavior gates.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct FileBehaviorSettings {
     /// Preserve mtimes.
@@ -720,7 +739,7 @@ impl Default for FileBehaviorSettings {
 }
 
 /// Lyrics enrichment block.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct LyricsManagementSettings {
     /// Master switch.
@@ -751,7 +770,7 @@ impl Default for LyricsManagementSettings {
 }
 
 /// ReplayGain enrichment block.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct ReplayGainManagementSettings {
     /// Master switch.
@@ -776,7 +795,7 @@ impl Default for ReplayGainManagementSettings {
 }
 
 /// Enrichment management block.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct EnrichmentManagementSettings {
     /// Lyrics.
@@ -786,7 +805,7 @@ pub struct EnrichmentManagementSettings {
 }
 
 /// Catalog-identity policy (no file writes).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct IdentityManagementSettings {
     /// Automatic edition acceptance.
@@ -794,7 +813,7 @@ pub struct IdentityManagementSettings {
 }
 
 /// Post-publish notifications.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct ProfileNotificationSettings {
     /// Refresh DroppedNeedle views.
@@ -813,7 +832,7 @@ impl Default for ProfileNotificationSettings {
 }
 
 /// One named management profile.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct LibraryManagementProfile {
     /// Profile id.
@@ -872,7 +891,7 @@ impl Default for LibraryManagementProfile {
 }
 
 /// One naming script.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct NamingScript {
     /// Script id.
@@ -890,7 +909,7 @@ pub struct NamingScript {
 }
 
 /// One tagging script.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct TaggingScript {
     /// Script id.
@@ -908,7 +927,7 @@ pub struct TaggingScript {
 }
 
 /// Per-root profile overrides (`None` inherits the profile).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct LibraryManagementRootOverrides {
     /// Metadata switch.
@@ -940,7 +959,7 @@ pub struct LibraryManagementRootOverrides {
 }
 
 /// One root-to-profile assignment.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct LibraryManagementRootAssignment {
     /// Library root id.
@@ -976,7 +995,7 @@ pub struct LibraryManagementRootAssignment {
 }
 
 /// External-server refresh after publishing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct ExternalRefreshSettings {
     /// Master switch.
@@ -1007,7 +1026,8 @@ impl Default for ExternalRefreshSettings {
 }
 
 /// Library management settings (secret-free on purpose).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[schema(as = LibraryManagementSettings)]
 #[serde(default)]
 pub struct LibraryManagement {
     /// Settings schema version.

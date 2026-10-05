@@ -1,6 +1,7 @@
 //! Access and inbound apps: security posture and Connect Apps.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::{AudioFormat, Section, check_range};
 use crate::runtime_config::error::ConfigError;
@@ -8,7 +9,7 @@ use crate::runtime_config::error::ConfigError;
 // --- security_settings ----------------------------------------------------
 
 /// Who may download library files. `trusted` admits trusted and admin.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DownloadAccess {
     /// Everyone.
@@ -21,7 +22,7 @@ pub enum DownloadAccess {
 }
 
 /// Security posture settings (no secrets; the HIBP path is a local file).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct SecuritySettings {
     /// Check passwords against Have-I-Been-Pwned.
@@ -70,7 +71,7 @@ impl Section for SecuritySettings {
 // --- connect_apps ---------------------------------------------------------
 
 /// Compat discovery mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 pub enum DiscoverMode {
     /// Local library only.
     #[serde(rename = "local-only")]
@@ -85,7 +86,7 @@ pub enum DiscoverMode {
 }
 
 /// Inbound Connect Apps config. Both protocols default off.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct ConnectApps {
     /// Serve the Subsonic API.

@@ -61,6 +61,7 @@ pub trait Section: Default + serde::Serialize + serde::de::DeserializeOwned {
 pub trait PlainSection: Section {}
 
 impl PlainSection for UserPreferences {}
+impl PlainSection for HomeSettings {}
 impl PlainSection for LibraryScanSchedule {}
 impl PlainSection for FilesystemWatcher {}
 impl PlainSection for WantedWatcher {}

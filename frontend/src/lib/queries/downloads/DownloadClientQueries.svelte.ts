@@ -9,7 +9,7 @@ import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
 
-export type DownloadClientConfig = components['schemas']['SlskdConnectionDto'];
+export type DownloadClientConfig = components['schemas']['SlskdConnection'];
 export type DownloadClientStatusResponse = components['schemas']['SlskdStatusResponse'];
 export type TestConnectionResult = components['schemas']['TestConnectionResponse'];
 

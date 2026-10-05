@@ -7,7 +7,7 @@
 	import { resetPlexScrobblePreference } from '$lib/player/plexPlaybackApi';
 	import type { components } from '$lib/api/v3/openapi';
 
-	type PlexConnectionSettings = components['schemas']['PlexConnectionDto'];
+	type PlexConnectionSettings = components['schemas']['PlexConnection'];
 	type PlexLibrarySection = components['schemas']['PlexLibrarySectionInfo'];
 
 	type PlexTestResult = components['schemas']['PlexVerifyResponse'];

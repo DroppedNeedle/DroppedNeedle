@@ -961,6 +961,68 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("PUT", "/api/v3/settings/get-it", Posture::Admin),
     ("GET", "/api/v3/settings/home", Posture::Admin),
     ("PUT", "/api/v3/settings/home", Posture::Admin),
+    ("GET", "/api/v3/settings/library-management", Posture::Admin),
+    ("PUT", "/api/v3/settings/library-management", Posture::Admin),
+    (
+        "GET",
+        "/api/v3/settings/library-management/activation-health",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/library-management/impact",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/library-management/validate",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/library-management/profiles",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/settings/library-management/profiles/{profile_id}",
+        Posture::Admin,
+    ),
+    (
+        "PUT",
+        "/api/v3/settings/library-management/profiles/{profile_id}",
+        Posture::Admin,
+    ),
+    (
+        "DELETE",
+        "/api/v3/settings/library-management/profiles/{profile_id}",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/library-management/profiles/{profile_id}/copy",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/settings/library-management/profiles/{profile_id}/preset-diff",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/library-management/profiles/{profile_id}/export",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/library-management/profile-imports/preview",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/library-management/profile-imports",
+        Posture::Admin,
+    ),
     ("GET", "/api/v3/settings/indexers", Posture::Admin),
     ("POST", "/api/v3/settings/indexers", Posture::Admin),
     ("POST", "/api/v3/settings/indexers/reorder", Posture::Admin),

@@ -2,6 +2,7 @@
 //! default naming template.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::{Section, check_range, is_valid_hhmm};
 use crate::runtime_config::error::ConfigError;
@@ -13,7 +14,7 @@ pub const DEFAULT_NAMING_TEMPLATE: &str =
 // --- library_scan_schedule (the v2 sync section is dropped, this one kept) -
 
 /// Automatic-scan cadence values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 pub enum ScanFrequency {
     /// Never scan automatically.
     Manual,
@@ -51,7 +52,7 @@ pub enum ScanFrequency {
 }
 
 /// Native automatic-scan schedule.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct LibraryScanSchedule {
     /// Rolling-gap cadence, or `daily` for a fixed clock time.
@@ -96,7 +97,7 @@ impl Section for LibraryScanSchedule {
 // --- library_scan_filesystem_watcher --------------------------------------
 
 /// Zero-dependency filesystem poller knobs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct FilesystemWatcher {
     /// Master switch.

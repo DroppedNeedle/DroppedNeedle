@@ -1,12 +1,12 @@
 //! Settings bundle: the section service, its save effects,
-//! the verify probes, and the HTTP surface.
+//! the verify probes, Library Management, and the HTTP surface.
 //!
 //! [`SettingsSetup`] is the one `AppState` field settings adds. It holds
 //! the [`SettingsService`](crate::settings::services::SettingsService)
 //! with its post-save fan-out wired (provider-cache invalidation over
-//! the shared cache plus the jobs-owned events kick), the MusicBrainz
-//! lifecycle over the same store, and the connection probes behind the
-//! verify endpoints.
+//! the shared cache plus the jobs-owned events kick) and the connection
+//! probes behind the verify endpoints, the MusicBrainz lifecycle and the
+//! Library Management service over the same store.
 //!
 //! [`SettingsSetup::gated_router`] serves `/api/v3/settings/*` behind
 //! [`require_admin`]: every settings route is admin-only, like v2's
@@ -32,6 +32,8 @@ use crate::ids::IdGenerator;
 use crate::runtime_config::ConfigStore;
 use crate::settings::effects::SaveEffects;
 use crate::settings::error::SettingsError;
+use crate::settings::management::StructuralCompiler;
+use crate::settings::management::service::LibraryManagementService;
 use crate::settings::musicbrainz::MusicBrainzLifecycle;
 use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
 use crate::settings::services::{PolicyImpactBuckets, SettingsService};
@@ -50,10 +52,14 @@ pub struct SectionPrefsDeps {
 pub struct SettingsSetup {
     service: Arc<SettingsService>,
     users: UsersDeps,
-    probes: Arc<dyn VerifyProbes>,
     lifecycle: Arc<MusicBrainzLifecycle>,
+    management: Arc<LibraryManagementService>,
     prefs: Option<Arc<SectionPrefsDeps>>,
     buckets: Option<Arc<dyn PolicyImpactBuckets>>,
+    /// Test bundles own their scratch config directory and remove it
+    /// when the last clone drops.
+    #[cfg(any(test, feature = "test-support"))]
+    _scratch: Option<Arc<ScratchDir>>,
 }
 
 impl SettingsSetup {
@@ -68,16 +74,44 @@ impl SettingsSetup {
         http: reqwest::Client,
         timezone: Option<String>,
     ) -> Self {
+        Self::assemble(
+            store,
+            effects,
+            ids,
+            users,
+            Arc::new(LiveProbes::new(http)),
+            timezone,
+        )
+    }
+
+    fn assemble(
+        store: Arc<ConfigStore>,
+        effects: Arc<dyn SaveEffects>,
+        ids: Arc<dyn IdGenerator>,
+        users: UsersDeps,
+        probes: Arc<dyn VerifyProbes>,
+        timezone: Option<String>,
+    ) -> Self {
         Self {
             service: Arc::new(
-                SettingsService::new(store.clone(), effects.clone(), ids.clone())
+                SettingsService::new(store.clone(), effects.clone(), ids.clone(), probes)
                     .with_timezone(timezone),
             ),
             users,
-            probes: Arc::new(LiveProbes::new(http)),
-            lifecycle: Arc::new(MusicBrainzLifecycle::new(store, ids, effects)),
+            lifecycle: Arc::new(MusicBrainzLifecycle::new(
+                store.clone(),
+                ids.clone(),
+                effects,
+            )),
+            management: Arc::new(LibraryManagementService::new(
+                store,
+                ids,
+                Arc::new(StructuralCompiler),
+            )),
             prefs: None,
             buckets: None,
+            #[cfg(any(test, feature = "test-support"))]
+            _scratch: None,
         }
     }
 
@@ -130,36 +164,28 @@ impl SettingsSetup {
         static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
 
         let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
+        let scratch = ScratchDir(std::env::temp_dir().join(format!(
             "droppedneedle-settings-test-{}-{seq}",
             std::process::id()
-        ));
+        )));
         let crypto = Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?;
         let store = Arc::new(
-            ConfigStore::open(&dir.join("config.json"), crypto)
+            ConfigStore::open(&scratch.0.join("config.json"), crypto)
                 .map_err(|error| error.to_string())?,
         );
         let cache: Arc<dyn ProviderCache> = Arc::new(InMemoryProviderCache::new());
         let effects: Arc<dyn SaveEffects> =
             Arc::new(LiveSaveEffects::new(cache, Arc::new(NoopKick)));
-        Ok(Self {
-            service: Arc::new(SettingsService::new(
-                store.clone(),
-                effects.clone(),
-                ids.clone(),
-            )),
-            users,
-            probes,
-            lifecycle: Arc::new(MusicBrainzLifecycle::new(store, ids, effects)),
-            prefs: Some(Arc::new(SectionPrefsDeps {
-                store: Arc::new(MemorySectionPrefsStore::new()),
-                links: Arc::new(StaticLinkStatus {
-                    listenbrainz: false,
-                    lastfm: false,
-                }),
-            })),
-            buckets: None,
-        })
+        let mut setup = Self::assemble(store, effects, ids, users, probes, None);
+        setup.prefs = Some(Arc::new(SectionPrefsDeps {
+            store: Arc::new(MemorySectionPrefsStore::new()),
+            links: Arc::new(StaticLinkStatus {
+                listenbrainz: false,
+                lastfm: false,
+            }),
+        }));
+        setup._scratch = Some(Arc::new(scratch));
+        Ok(setup)
     }
 
     /// The wired section service.
@@ -167,14 +193,32 @@ impl SettingsSetup {
         &self.service
     }
 
-    /// The verify probes.
-    pub fn probes(&self) -> &Arc<dyn VerifyProbes> {
-        &self.probes
-    }
-
     /// The MusicBrainz lifecycle.
     pub fn lifecycle(&self) -> &MusicBrainzLifecycle {
         &self.lifecycle
+    }
+
+    /// The Library Management service.
+    pub fn library_management(&self) -> &LibraryManagementService {
+        &self.management
+    }
+
+    /// Run one Library Management operation on the blocking pool: every
+    /// operation reads and may write the config file, and validation
+    /// checks the library roots on disk.
+    pub async fn management<T, F>(&self, op: F) -> Result<T, SettingsError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&LibraryManagementService) -> Result<T, SettingsError> + Send + 'static,
+    {
+        let management = self.management.clone();
+        match tokio::task::spawn_blocking(move || op(&management)).await {
+            Ok(result) => result,
+            Err(cause) => Err(SettingsError::internal(
+                &format!("library management task failed: {cause}"),
+                &*self.service.ids,
+            )),
+        }
     }
 
     /// The section-prefs backends, when wired.
@@ -343,9 +387,52 @@ impl SettingsSetup {
                 "/settings/library/sync",
                 get(h::dropped_library_sync).put(h::dropped_library_sync_put),
             )
+            .route("/settings/home", get(h::get_home).put(h::put_home))
             .route(
-                "/settings/home",
-                get(h::dropped_home).put(h::dropped_home_put),
+                "/settings/library-management",
+                get(h::get_library_management).put(h::put_library_management),
+            )
+            .route(
+                "/settings/library-management/activation-health",
+                get(h::get_library_management_activation_health),
+            )
+            .route(
+                "/settings/library-management/impact",
+                post(h::preview_library_management_impact),
+            )
+            .route(
+                "/settings/library-management/validate",
+                post(h::validate_library_management),
+            )
+            .route(
+                "/settings/library-management/profiles",
+                post(h::create_library_management_profile),
+            )
+            .route(
+                "/settings/library-management/profiles/{profile_id}",
+                get(h::get_library_management_profile)
+                    .put(h::update_library_management_profile)
+                    .delete(h::delete_library_management_profile),
+            )
+            .route(
+                "/settings/library-management/profiles/{profile_id}/copy",
+                post(h::copy_library_management_profile),
+            )
+            .route(
+                "/settings/library-management/profiles/{profile_id}/preset-diff",
+                get(h::get_library_management_preset_diff),
+            )
+            .route(
+                "/settings/library-management/profiles/{profile_id}/export",
+                post(h::export_library_management_profile),
+            )
+            .route(
+                "/settings/library-management/profile-imports/preview",
+                post(h::preview_library_management_profile_import),
+            )
+            .route(
+                "/settings/library-management/profile-imports",
+                post(h::import_library_management_profile),
             )
             .layer(axum::middleware::from_fn_with_state(
                 self.clone(),
@@ -410,4 +497,19 @@ async fn require_admin(
 pub struct AdminUser {
     /// Owning user id.
     pub user_id: String,
+}
+
+/// A scratch directory removed on drop (test bundles only).
+#[cfg(any(test, feature = "test-support"))]
+struct ScratchDir(std::path::PathBuf);
+
+#[cfg(any(test, feature = "test-support"))]
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.0)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, "settings test scratch dir was not removed");
+        }
+    }
 }

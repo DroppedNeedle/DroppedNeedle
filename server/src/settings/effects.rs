@@ -31,9 +31,32 @@ pub enum SavedSection {
     Advanced,
     /// Library settings (AcoustID key).
     Library,
+    /// Home page settings (cached home and discover rows, plus the
+    /// ListenBrainz and Last.fm reads they are built from).
+    Home,
     /// Anything else (no cache roots).
     Other,
 }
+
+impl SavedSection {
+    /// The fan-out for one config-file section key.
+    #[must_use]
+    pub fn for_key(key: &str) -> Self {
+        match key {
+            "listenbrainz_settings" => Self::ListenBrainz,
+            "events" => Self::Events,
+            "musicbrainz_settings" => Self::MusicBrainz,
+            "advanced_settings" => Self::Advanced,
+            "library_settings" => Self::Library,
+            "home_settings" => Self::Home,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// Composite home and discover responses a home settings save makes stale
+/// (v2 `clear_home_cache`).
+const HOME_RESPONSE_PREFIXES: &[&str] = &["home_response:", "discover_response:"];
 
 /// Post-save fan-out. Called after a section persists; failures are
 /// impossible by construction (invalidation counts, kicks collapse).
@@ -65,10 +88,16 @@ impl SaveEffects for LiveSaveEffects {
                 SavedSection::MusicBrainz => &["musicbrainz"],
                 SavedSection::Advanced => &["audiodb"],
                 SavedSection::Library => &["acoustid"],
+                SavedSection::Home => &["listenbrainz", "lastfm"],
                 SavedSection::Events | SavedSection::Other => &[],
             };
             for root in roots {
                 invalidate_source(self.cache.as_ref(), root).await;
+            }
+            if section == SavedSection::Home {
+                for prefix in HOME_RESPONSE_PREFIXES {
+                    self.cache.clear_prefix(prefix).await;
+                }
             }
             if section == SavedSection::Events {
                 self.kick.kick();

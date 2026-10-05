@@ -22,11 +22,14 @@ use sha2::{Digest, Sha256};
 
 use super::error::SettingsError;
 use super::models::{
-    IdentificationPolicyDto, LibraryPathRuleDto, LibraryPolicyImpactResponse,
-    LibraryPolicyTreeNode, LibraryPolicyTreeResponse, LibraryRootDto, LibrarySettingsDto,
+    LibraryPolicyImpactResponse, LibraryPolicyTreeNode, LibraryPolicyTreeResponse,
     LibrarySettingsResponse,
 };
 use crate::ids::IdGenerator;
+use crate::runtime_config::Masked;
+use crate::runtime_config::secret_sections::{
+    IdentificationPolicy, LibraryPathRule, LibraryRoot, TypedLibrary,
+};
 
 /// Canonical JSON: sorted keys, compact separators, ASCII-escaped
 /// strings, byte-identical to Python's
@@ -175,7 +178,7 @@ fn normalise_rule_path(path: &str) -> Result<String, SettingsError> {
 /// Normalized settings plus warnings and the content revision.
 pub struct ResolvedLibraryPolicy {
     /// Normalized settings.
-    pub settings: LibrarySettingsDto,
+    pub settings: TypedLibrary,
     /// Non-blocking warnings.
     pub warnings: Vec<String>,
     /// Content revision.
@@ -186,11 +189,11 @@ pub struct ResolvedLibraryPolicy {
 /// Mirrors v2's resolver: unique root ids, unique casefolded labels,
 /// no root inside another root or inside staging, unique rule ids per
 /// root, rules ordered by depth, warnings for unavailable paths.
-pub fn resolve(settings: &LibrarySettingsDto) -> Result<ResolvedLibraryPolicy, SettingsError> {
+pub fn resolve(settings: &TypedLibrary) -> Result<ResolvedLibraryPolicy, SettingsError> {
     let mut root_ids = BTreeSet::new();
     let mut labels = BTreeSet::new();
     let mut canonical_paths: Vec<(String, PathBuf)> = Vec::new();
-    let mut roots: Vec<LibraryRootDto> = Vec::new();
+    let mut roots: Vec<LibraryRoot> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
     let staging = if settings.staging_path.trim().is_empty() {
         None
@@ -243,7 +246,7 @@ pub fn resolve(settings: &LibrarySettingsDto) -> Result<ResolvedLibraryPolicy, S
         canonical_paths.push((root_id.clone(), canonical.clone()));
 
         let mut rule_ids = BTreeSet::new();
-        let mut rules: Vec<LibraryPathRuleDto> = Vec::new();
+        let mut rules: Vec<LibraryPathRule> = Vec::new();
         for rule in &root.rules {
             let rule_id = rule.id.trim().to_owned();
             if rule_id.is_empty() {
@@ -262,7 +265,7 @@ pub fn resolve(settings: &LibrarySettingsDto) -> Result<ResolvedLibraryPolicy, S
                     "Policy path {relative} under {label} is not currently available."
                 ));
             }
-            rules.push(LibraryPathRuleDto {
+            rules.push(LibraryPathRule {
                 id: rule_id,
                 relative_path: relative,
                 policy: rule.policy,
@@ -272,7 +275,7 @@ pub fn resolve(settings: &LibrarySettingsDto) -> Result<ResolvedLibraryPolicy, S
         if !canonical.exists() {
             warnings.push(format!("Library root {label} is not currently available."));
         }
-        roots.push(LibraryRootDto {
+        roots.push(LibraryRoot {
             id: root_id,
             path: canonical.to_string_lossy().into_owned(),
             label,
@@ -281,7 +284,7 @@ pub fn resolve(settings: &LibrarySettingsDto) -> Result<ResolvedLibraryPolicy, S
         });
     }
 
-    let normalized = LibrarySettingsDto {
+    let normalized = TypedLibrary {
         library_roots: roots,
         staging_path: settings.staging_path.clone(),
         naming_template: settings.naming_template.clone(),
@@ -298,7 +301,7 @@ pub fn resolve(settings: &LibrarySettingsDto) -> Result<ResolvedLibraryPolicy, S
 
 /// Content revision over roots plus rules (enabled, staging, naming,
 /// and keys are excluded, exactly like v2).
-pub fn revision(settings: &LibrarySettingsDto) -> String {
+pub fn revision(settings: &TypedLibrary) -> String {
     let payload = serde_json::json!({
         "roots": settings.library_roots.iter().map(|root| {
             serde_json::json!({
@@ -318,11 +321,11 @@ pub fn revision(settings: &LibrarySettingsDto) -> String {
     stable_hash(&payload)
 }
 
-fn policy_name(policy: IdentificationPolicyDto) -> &'static str {
+fn policy_name(policy: IdentificationPolicy) -> &'static str {
     match policy {
-        IdentificationPolicyDto::LocalMetadata => "local_metadata",
-        IdentificationPolicyDto::Automatic => "automatic",
-        IdentificationPolicyDto::Excluded => "excluded",
+        IdentificationPolicy::LocalMetadata => "local_metadata",
+        IdentificationPolicy::Automatic => "automatic",
+        IdentificationPolicy::Excluded => "excluded",
     }
 }
 
@@ -337,17 +340,17 @@ pub struct TransitionScope {
     /// Relative path (`.` for a whole root).
     pub relative_path: String,
     /// Effective policy under the candidate.
-    pub effective_policy: IdentificationPolicyDto,
+    pub effective_policy: IdentificationPolicy,
 }
 
 /// Resolve one absolute path to its effective policy under `settings`.
 /// None when the path sits under no root; ambiguous matches are
 /// impossible (normalization rejects overlapping roots).
 pub fn resolve_path(
-    settings: &LibrarySettingsDto,
+    settings: &TypedLibrary,
     path: &Path,
-) -> Option<(String, String, IdentificationPolicyDto)> {
-    let mut matches: Vec<(&LibraryRootDto, PathBuf)> = Vec::new();
+) -> Option<(String, String, IdentificationPolicy)> {
+    let mut matches: Vec<(&LibraryRoot, PathBuf)> = Vec::new();
     for root in &settings.library_roots {
         let root_path = PathBuf::from(&root.path);
         if path.starts_with(&root_path) {
@@ -366,7 +369,7 @@ pub fn resolve_path(
             _ => None,
         })
         .collect();
-    let mut selected: Option<&LibraryPathRuleDto> = None;
+    let mut selected: Option<&LibraryPathRule> = None;
     for rule in &root.rules {
         let parts: Vec<&str> = rule.relative_path.split('/').collect();
         if relative_parts.len() >= parts.len()
@@ -398,13 +401,13 @@ pub fn transition_scopes(
     proposed: &ResolvedLibraryPolicy,
 ) -> Vec<TransitionScope> {
     use std::collections::BTreeMap;
-    let current_roots: BTreeMap<&str, &LibraryRootDto> = current
+    let current_roots: BTreeMap<&str, &LibraryRoot> = current
         .settings
         .library_roots
         .iter()
         .map(|root| (root.id.as_str(), root))
         .collect();
-    let proposed_roots: BTreeMap<&str, &LibraryRootDto> = proposed
+    let proposed_roots: BTreeMap<&str, &LibraryRoot> = proposed
         .settings
         .library_roots
         .iter()
@@ -423,7 +426,7 @@ pub fn transition_scopes(
                     root_id: root_id.to_owned(),
                     scope_id: root_id.to_owned(),
                     relative_path: ".".to_owned(),
-                    effective_policy: IdentificationPolicyDto::Excluded,
+                    effective_policy: IdentificationPolicy::Excluded,
                 });
             }
             (None, Some(new)) => {
@@ -444,12 +447,12 @@ pub fn transition_scopes(
                     });
                     continue;
                 }
-                let old_rules: BTreeMap<&str, &LibraryPathRuleDto> = old
+                let old_rules: BTreeMap<&str, &LibraryPathRule> = old
                     .rules
                     .iter()
                     .map(|rule| (rule.id.as_str(), rule))
                     .collect();
-                let new_rules: BTreeMap<&str, &LibraryPathRuleDto> = new
+                let new_rules: BTreeMap<&str, &LibraryPathRule> = new
                     .rules
                     .iter()
                     .map(|rule| (rule.id.as_str(), rule))
@@ -672,7 +675,7 @@ pub async fn policy_tree(
 /// ids, and warnings are exact.
 pub async fn preview_impact(
     current: &ResolvedLibraryPolicy,
-    candidate: &LibrarySettingsDto,
+    candidate: &TypedLibrary,
     expected_policy_revision: Option<&str>,
     catalog: &dyn LibraryPolicyCatalog,
     ids: &dyn IdGenerator,
@@ -707,32 +710,26 @@ pub async fn preview_impact(
         on_disk_file_count: Some(on_disk),
         content_will_become_unavailable: scopes
             .iter()
-            .any(|scope| scope.effective_policy == IdentificationPolicyDto::Excluded),
+            .any(|scope| scope.effective_policy == IdentificationPolicy::Excluded),
         queued_work_will_be_cancelled: scopes
             .iter()
-            .any(|scope| scope.effective_policy != IdentificationPolicyDto::Automatic),
+            .any(|scope| scope.effective_policy != IdentificationPolicy::Automatic),
         warnings: proposed.warnings,
     })
 }
 
 /// Build the GET view: normalized settings plus revision, the applied
-/// reconciliation projection, and warnings.
-pub fn settings_response(
-    resolved: &ResolvedLibraryPolicy,
-    acoustid_masked: String,
-) -> LibrarySettingsResponse {
+/// reconciliation projection, and warnings. The caller passes settings
+/// that came from a masked read, so the AcoustID key is already masked.
+pub fn settings_response(resolved: ResolvedLibraryPolicy) -> LibrarySettingsResponse {
     LibrarySettingsResponse {
-        library_roots: resolved.settings.library_roots.clone(),
-        staging_path: resolved.settings.staging_path.clone(),
-        naming_template: resolved.settings.naming_template.clone(),
-        acoustid_api_key: acoustid_masked,
-        enabled: resolved.settings.enabled,
-        policy_revision: resolved.policy_revision.clone(),
+        settings: Masked::from(resolved.settings),
+        policy_revision: resolved.policy_revision,
         reconciliation_required: false,
         reconciliation_state: "applied".to_owned(),
         pending_policy_revision: None,
         affected_scope_ids: Vec::new(),
         actions_applied: Vec::new(),
-        warnings: resolved.warnings.clone(),
+        warnings: resolved.warnings,
     }
 }

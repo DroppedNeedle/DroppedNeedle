@@ -8911,7 +8911,7 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Read the advanced tunables in frontend units.",
+        "summary": "Read the advanced tunables in form units.",
         "operationId": "get_advanced",
         "responses": {
           "200": {
@@ -8919,7 +8919,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AdvancedSettingsDto"
+                  "$ref": "#/components/schemas/AdvancedSettingsForm"
                 }
               }
             }
@@ -8930,13 +8930,13 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Save the advanced tunables. Unknown fields are a 400: the shape is\na closed allowlist.",
+        "summary": "Save the advanced tunables. Unknown fields are a 400: the shape is a\nclosed allowlist.",
         "operationId": "put_advanced",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AdvancedSettingsDto"
+                "$ref": "#/components/schemas/AdvancedSettingsForm"
               }
             }
           },
@@ -8948,7 +8948,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AdvancedSettingsDto"
+                  "$ref": "#/components/schemas/AdvancedSettingsForm"
                 }
               }
             }
@@ -8961,7 +8961,7 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Read the frontend cache TTLs in backend units (milliseconds).",
+        "summary": "Read the frontend cache TTLs in stored units (milliseconds).",
         "operationId": "get_cache_ttls",
         "responses": {
           "200": {
@@ -8990,7 +8990,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConnectAppsDto"
+                  "$ref": "#/components/schemas/ConnectApps"
                 }
               }
             }
@@ -9007,7 +9007,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ConnectAppsDto"
+                "$ref": "#/components/schemas/ConnectApps"
               }
             }
           },
@@ -9019,7 +9019,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConnectAppsDto"
+                  "$ref": "#/components/schemas/ConnectApps"
                 }
               }
             }
@@ -9040,7 +9040,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SlskdConnectionDto"
+                  "$ref": "#/components/schemas/SlskdConnection"
                 }
               }
             }
@@ -9057,7 +9057,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SlskdConnectionDto"
+                "$ref": "#/components/schemas/SlskdConnection"
               }
             }
           },
@@ -9069,7 +9069,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SlskdConnectionDto"
+                  "$ref": "#/components/schemas/SlskdConnection"
                 }
               }
             }
@@ -9088,7 +9088,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SlskdConnectionDto"
+                "$ref": "#/components/schemas/SlskdConnection"
               }
             }
           },
@@ -9113,7 +9113,7 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Read the acquisition policy.",
+        "summary": "Read the acquisition policy plus its recipe verdict.",
         "operationId": "get_policy",
         "responses": {
           "200": {
@@ -9121,7 +9121,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DownloadPolicyDto"
+                  "$ref": "#/components/schemas/DownloadPolicyView"
                 }
               }
             }
@@ -9132,13 +9132,13 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Save the acquisition policy.",
+        "summary": "Save the acquisition policy. Read-only verdict fields in the body are\nignored.",
         "operationId": "put_policy",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DownloadPolicyDto"
+                "$ref": "#/components/schemas/DownloadPolicy"
               }
             }
           },
@@ -9150,7 +9150,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DownloadPolicyDto"
+                  "$ref": "#/components/schemas/DownloadPolicyView"
                 }
               }
             }
@@ -9190,7 +9190,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DownloadPolicyDto"
+                "$ref": "#/components/schemas/DownloadPolicy"
               }
             }
           },
@@ -9226,7 +9226,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SabnzbdConnectionDto"
+                  "$ref": "#/components/schemas/SabnzbdConnection"
                 }
               }
             }
@@ -9243,7 +9243,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SabnzbdConnectionDto"
+                "$ref": "#/components/schemas/SabnzbdConnection"
               }
             }
           },
@@ -9255,7 +9255,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SabnzbdConnectionDto"
+                  "$ref": "#/components/schemas/SabnzbdConnection"
                 }
               }
             }
@@ -9274,7 +9274,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SabnzbdConnectionDto"
+                "$ref": "#/components/schemas/SabnzbdConnection"
               }
             }
           },
@@ -9307,7 +9307,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SourcePriorityDto"
+                  "$ref": "#/components/schemas/SourcePriorityOrder"
                 }
               }
             }
@@ -9324,7 +9324,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SourcePriorityDto"
+                "$ref": "#/components/schemas/SourcePriorityOrder"
               }
             }
           },
@@ -9336,7 +9336,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SourcePriorityDto"
+                  "$ref": "#/components/schemas/SourcePriorityOrder"
                 }
               }
             }
@@ -9357,7 +9357,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WantedWatcherDto"
+                  "$ref": "#/components/schemas/WantedWatcher"
                 }
               }
             }
@@ -9374,7 +9374,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/WantedWatcherDto"
+                "$ref": "#/components/schemas/WantedWatcher"
               }
             }
           },
@@ -9386,7 +9386,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WantedWatcherDto"
+                  "$ref": "#/components/schemas/WantedWatcher"
                 }
               }
             }
@@ -9407,7 +9407,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EventsSettingsDto"
+                  "$ref": "#/components/schemas/EventsSettings"
                 }
               }
             }
@@ -9424,7 +9424,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EventsSettingsDto"
+                "$ref": "#/components/schemas/EventsSettings"
               }
             }
           },
@@ -9436,7 +9436,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EventsSettingsDto"
+                  "$ref": "#/components/schemas/EventsSettings"
                 }
               }
             }
@@ -9455,7 +9455,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EventsSettingsDto"
+                "$ref": "#/components/schemas/EventsSettings"
               }
             }
           },
@@ -9486,7 +9486,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EventsSettingsDto"
+                "$ref": "#/components/schemas/EventsSettings"
               }
             }
           },
@@ -9519,7 +9519,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FreeMusicDto"
+                  "$ref": "#/components/schemas/FreeMusic"
                 }
               }
             }
@@ -9536,7 +9536,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/FreeMusicDto"
+                "$ref": "#/components/schemas/FreeMusic"
               }
             }
           },
@@ -9548,7 +9548,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FreeMusicDto"
+                  "$ref": "#/components/schemas/FreeMusic"
                 }
               }
             }
@@ -9569,7 +9569,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GetItDto"
+                  "$ref": "#/components/schemas/GetIt"
                 }
               }
             }
@@ -9586,7 +9586,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GetItDto"
+                "$ref": "#/components/schemas/GetIt"
               }
             }
           },
@@ -9598,7 +9598,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GetItDto"
+                  "$ref": "#/components/schemas/GetIt"
                 }
               }
             }
@@ -9611,11 +9611,18 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "The vestigial home section is gone.",
-        "operationId": "dropped_home",
+        "summary": "Read the home page settings.",
+        "operationId": "get_home",
         "responses": {
-          "410": {
-            "description": "Section dropped in v3"
+          "200": {
+            "description": "Home page settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeSettings"
+                }
+              }
+            }
           }
         }
       },
@@ -9623,11 +9630,31 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "PUT twin of the dropped home route: gone, not moved.",
-        "operationId": "dropped_home_put",
+        "summary": "Save the home page settings. The save clears the cached home rows.",
+        "operationId": "put_home",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HomeSettings"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "410": {
-            "description": "Section dropped in v3"
+          "200": {
+            "description": "Saved settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A value is out of range"
           }
         }
       }
@@ -9647,7 +9674,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/NewznabIndexerDto"
+                    "$ref": "#/components/schemas/NewznabIndexer"
                   }
                 }
               }
@@ -9665,7 +9692,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NewznabIndexerDto"
+                "$ref": "#/components/schemas/NewznabIndexer"
               }
             }
           },
@@ -9690,7 +9717,7 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Persist a dragged-card priority order. Unknown or duplicate ids are\na 400, never a partial reorder.",
+        "summary": "Persist a dragged-card priority order.",
         "operationId": "reorder_indexers",
         "requestBody": {
           "content": {
@@ -9729,7 +9756,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UsenetSearchBackendDto"
+                  "$ref": "#/components/schemas/UsenetSearchBackend"
                 }
               }
             }
@@ -9740,13 +9767,13 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Save the active Usenet search backend.",
+        "summary": "Save the active Usenet search backend. Unknown values are a 400.",
         "operationId": "put_search_backend",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UsenetSearchBackendDto"
+                "$ref": "#/components/schemas/UsenetSearchBackend"
               }
             }
           },
@@ -9758,7 +9785,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UsenetSearchBackendDto"
+                  "$ref": "#/components/schemas/UsenetSearchBackend"
                 }
               }
             }
@@ -9771,13 +9798,13 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Test one indexer's caps with the submitted url/key (a masked key\ntests the stored one).",
+        "summary": "Test one indexer's caps with the submitted URL and key (a masked key\ntests the stored one).",
         "operationId": "test_indexer",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NewznabIndexerDto"
+                "$ref": "#/components/schemas/NewznabIndexer"
               }
             }
           },
@@ -9819,7 +9846,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NewznabIndexerDto"
+                "$ref": "#/components/schemas/NewznabIndexer"
               }
             }
           },
@@ -9882,7 +9909,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JellyfinConnectionDto"
+                  "$ref": "#/components/schemas/JellyfinConnection"
                 }
               }
             }
@@ -9899,7 +9926,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/JellyfinConnectionDto"
+                "$ref": "#/components/schemas/JellyfinConnection"
               }
             }
           },
@@ -9911,7 +9938,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JellyfinConnectionDto"
+                  "$ref": "#/components/schemas/JellyfinConnection"
                 }
               }
             }
@@ -9930,7 +9957,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/JellyfinConnectionDto"
+                "$ref": "#/components/schemas/JellyfinConnection"
               }
             }
           },
@@ -9963,7 +9990,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LastFmSettingsDto"
+                  "$ref": "#/components/schemas/LastFmSettings"
                 }
               }
             }
@@ -9980,7 +10007,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LastFmSettingsDto"
+                "$ref": "#/components/schemas/LastFmSettings"
               }
             }
           },
@@ -9992,7 +10019,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LastFmSettingsDto"
+                  "$ref": "#/components/schemas/LastFmSettings"
                 }
               }
             }
@@ -10049,6 +10076,469 @@
           },
           "409": {
             "description": "Expected revision is stale"
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management": {
+      "get": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Read the Library Management settings with their revision.",
+        "operationId": "get_library_management",
+        "responses": {
+          "200": {
+            "description": "Library Management settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementSettingsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Save the Library Management settings under CAS. Giving an automatic\nroot new write scope needs a current confirmed dry run.",
+        "operationId": "put_library_management",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryManagementSaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementSettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid settings, or a dry run is required"
+          },
+          "409": {
+            "description": "Expected revision is stale"
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management/activation-health": {
+      "get": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Dry-run activation health for the active automatic roots.",
+        "operationId": "get_library_management_activation_health",
+        "responses": {
+          "200": {
+            "description": "Activation health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementActivationHealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management/impact": {
+      "post": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Classify a candidate without saving it.",
+        "operationId": "preview_library_management_impact",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryManagementSettingsImpactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Change impact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementChangeImpact"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management/profile-imports": {
+      "post": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Import a reviewed shared profile.",
+        "operationId": "import_library_management_profile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryManagementProfileImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Imported profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementProfileImportResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Settings or the bundle changed since review"
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management/profile-imports/preview": {
+      "post": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Preview importing a shared profile (document or share code).",
+        "operationId": "preview_library_management_profile_import",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryManagementProfileImportPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Import preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementProfileImportPreviewResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management/profiles": {
+      "post": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Create a profile as a copy of the default profile.",
+        "operationId": "create_library_management_profile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryManagementProfileCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Created profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementProfileMutationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management/profiles/{profile_id}": {
+      "get": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Read one profile.",
+        "operationId": "get_library_management_profile",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "description": "Profile id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementProfile"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Replace one profile. The body id must match the path id.",
+        "operationId": "update_library_management_profile",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "description": "Profile id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryManagementProfileUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementProfileMutationResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Delete one custom profile that is neither the default nor assigned.",
+        "operationId": "delete_library_management_profile",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "description": "Profile id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryManagementProfileDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Settings after the delete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementSettingsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management/profiles/{profile_id}/copy": {
+      "post": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Copy one profile under a new name.",
+        "operationId": "copy_library_management_profile",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "description": "Profile id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryManagementProfileCopyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Copied profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementProfileMutationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management/profiles/{profile_id}/export": {
+      "post": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Export one profile as a share bundle.",
+        "operationId": "export_library_management_profile",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "description": "Profile id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryManagementProfileExportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Share bundle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementProfileExportResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management/profiles/{profile_id}/preset-diff": {
+      "get": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Which groups of a preset-tracking profile differ from the preset.",
+        "operationId": "get_library_management_preset_diff",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "description": "Profile id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Preset diff",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementPresetDiff"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management/validate": {
+      "post": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Validate a candidate: the same check and verdict as the impact\npreview (v2 serves both paths).",
+        "operationId": "validate_library_management",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryManagementSettingsImpactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Change impact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementChangeImpact"
+                }
+              }
+            }
           }
         }
       }
@@ -10144,7 +10634,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LibraryScanScheduleDto"
+                "$ref": "#/components/schemas/LibraryScanSchedule"
               }
             }
           },
@@ -10203,7 +10693,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FilesystemWatcherDto"
+                  "$ref": "#/components/schemas/FilesystemWatcher"
                 }
               }
             }
@@ -10220,7 +10710,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/FilesystemWatcherDto"
+                "$ref": "#/components/schemas/FilesystemWatcher"
               }
             }
           },
@@ -10232,7 +10722,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FilesystemWatcherDto"
+                  "$ref": "#/components/schemas/FilesystemWatcher"
                 }
               }
             }
@@ -10253,7 +10743,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListenBrainzConnectionDto"
+                  "$ref": "#/components/schemas/ListenBrainzConnection"
                 }
               }
             }
@@ -10270,7 +10760,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ListenBrainzConnectionDto"
+                "$ref": "#/components/schemas/ListenBrainzConnection"
               }
             }
           },
@@ -10282,7 +10772,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListenBrainzConnectionDto"
+                  "$ref": "#/components/schemas/ListenBrainzConnection"
                 }
               }
             }
@@ -10301,7 +10791,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ListenBrainzConnectionDto"
+                "$ref": "#/components/schemas/ListenBrainzConnection"
               }
             }
           },
@@ -10337,7 +10827,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MusicBrainzSettingsDto"
+                  "$ref": "#/components/schemas/MusicBrainzSettingsView"
                 }
               }
             }
@@ -10366,7 +10856,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MusicBrainzSettingsDto"
+                  "$ref": "#/components/schemas/MusicBrainzSettingsView"
                 }
               }
             }
@@ -10397,7 +10887,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MusicBrainzSettingsDto"
+                  "$ref": "#/components/schemas/MusicBrainzSettingsView"
                 }
               }
             }
@@ -10431,7 +10921,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MusicBrainzSettingsDto"
+                  "$ref": "#/components/schemas/MusicBrainzSettingsView"
                 }
               }
             }
@@ -10455,7 +10945,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MusicBrainzSettingsDto"
+                  "$ref": "#/components/schemas/MusicBrainzSettingsView"
                 }
               }
             }
@@ -10468,7 +10958,7 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Verify a BrainzMash binding or probe a plain tier. A binding names\nthe exact consented proposal and probes the pinned endpoint; an\nupdate probes its own URL (never BrainzMash). A failed probe is a\n502; alternative probes are a 409 while BrainzMash is active.",
+        "summary": "Verify a BrainzMash binding or probe a plain tier. A failed probe is\na 502; alternative probes are a 409 while BrainzMash is active.",
         "operationId": "verify_musicbrainz",
         "requestBody": {
           "content": {
@@ -10486,7 +10976,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MusicBrainzSettingsDto"
+                  "$ref": "#/components/schemas/MusicBrainzSettingsView"
                 }
               }
             }
@@ -10513,7 +11003,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NavidromeConnectionDto"
+                  "$ref": "#/components/schemas/NavidromeConnection"
                 }
               }
             }
@@ -10530,7 +11020,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NavidromeConnectionDto"
+                "$ref": "#/components/schemas/NavidromeConnection"
               }
             }
           },
@@ -10542,7 +11032,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NavidromeConnectionDto"
+                  "$ref": "#/components/schemas/NavidromeConnection"
                 }
               }
             }
@@ -10588,7 +11078,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NavidromeConnectionDto"
+                "$ref": "#/components/schemas/NavidromeConnection"
               }
             }
           },
@@ -10621,7 +11111,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OidcConnectionDto"
+                  "$ref": "#/components/schemas/OidcConnection"
                 }
               }
             }
@@ -10638,7 +11128,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/OidcConnectionDto"
+                "$ref": "#/components/schemas/OidcConnection"
               }
             }
           },
@@ -10650,7 +11140,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OidcConnectionDto"
+                  "$ref": "#/components/schemas/OidcConnection"
                 }
               }
             }
@@ -10669,7 +11159,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/OidcConnectionDto"
+                "$ref": "#/components/schemas/OidcConnection"
               }
             }
           },
@@ -10702,7 +11192,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PlexConnectionDto"
+                  "$ref": "#/components/schemas/PlexConnection"
                 }
               }
             }
@@ -10719,7 +11209,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PlexConnectionDto"
+                "$ref": "#/components/schemas/PlexConnection"
               }
             }
           },
@@ -10731,7 +11221,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PlexConnectionDto"
+                  "$ref": "#/components/schemas/PlexConnection"
                 }
               }
             }
@@ -10780,7 +11270,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PlexConnectionDto"
+                "$ref": "#/components/schemas/PlexConnection"
               }
             }
           },
@@ -10813,7 +11303,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserPreferencesDto"
+                  "$ref": "#/components/schemas/UserPreferences"
                 }
               }
             }
@@ -10830,7 +11320,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UserPreferencesDto"
+                "$ref": "#/components/schemas/UserPreferences"
               }
             }
           },
@@ -10842,7 +11332,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserPreferencesDto"
+                  "$ref": "#/components/schemas/UserPreferences"
                 }
               }
             }
@@ -10863,7 +11353,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrimaryMusicSourceDto"
+                  "$ref": "#/components/schemas/PrimaryMusicSource"
                 }
               }
             }
@@ -10880,7 +11370,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PrimaryMusicSourceDto"
+                "$ref": "#/components/schemas/PrimaryMusicSource"
               }
             }
           },
@@ -10892,7 +11382,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrimaryMusicSourceDto"
+                  "$ref": "#/components/schemas/PrimaryMusicSource"
                 }
               }
             }
@@ -10913,7 +11403,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProwlarrConnectionDto"
+                  "$ref": "#/components/schemas/ProwlarrConnection"
                 }
               }
             }
@@ -10930,7 +11420,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProwlarrConnectionDto"
+                "$ref": "#/components/schemas/ProwlarrConnection"
               }
             }
           },
@@ -10942,7 +11432,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProwlarrConnectionDto"
+                  "$ref": "#/components/schemas/ProwlarrConnection"
                 }
               }
             }
@@ -10961,7 +11451,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProwlarrConnectionDto"
+                "$ref": "#/components/schemas/ProwlarrConnection"
               }
             }
           },
@@ -10994,7 +11484,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScrobbleSettingsDto"
+                  "$ref": "#/components/schemas/ScrobbleSettings"
                 }
               }
             }
@@ -11011,7 +11501,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScrobbleSettingsDto"
+                "$ref": "#/components/schemas/ScrobbleSettings"
               }
             }
           },
@@ -11023,7 +11513,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScrobbleSettingsDto"
+                  "$ref": "#/components/schemas/ScrobbleSettings"
                 }
               }
             }
@@ -11044,7 +11534,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SecuritySettingsDto"
+                  "$ref": "#/components/schemas/SecuritySettings"
                 }
               }
             }
@@ -11061,7 +11551,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SecuritySettingsDto"
+                "$ref": "#/components/schemas/SecuritySettings"
               }
             }
           },
@@ -11073,7 +11563,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SecuritySettingsDto"
+                  "$ref": "#/components/schemas/SecuritySettings"
                 }
               }
             }
@@ -11092,7 +11582,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SecuritySettingsDto"
+                "$ref": "#/components/schemas/SecuritySettings"
               }
             }
           },
@@ -11125,7 +11615,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WrappedSettingsDto"
+                  "$ref": "#/components/schemas/WrappedSettings"
                 }
               }
             }
@@ -11142,7 +11632,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/WrappedSettingsDto"
+                "$ref": "#/components/schemas/WrappedSettings"
               }
             }
           },
@@ -11154,7 +11644,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WrappedSettingsDto"
+                  "$ref": "#/components/schemas/WrappedSettings"
                 }
               }
             }
@@ -11175,7 +11665,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/YouTubeConnectionDto"
+                  "$ref": "#/components/schemas/YouTubeConnection"
                 }
               }
             }
@@ -11192,7 +11682,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/YouTubeConnectionDto"
+                "$ref": "#/components/schemas/YouTubeConnection"
               }
             }
           },
@@ -11204,7 +11694,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/YouTubeConnectionDto"
+                  "$ref": "#/components/schemas/YouTubeConnection"
                 }
               }
             }
@@ -11223,7 +11713,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/YouTubeConnectionDto"
+                "$ref": "#/components/schemas/YouTubeConnection"
               }
             }
           },
@@ -11879,9 +12369,9 @@
           }
         }
       },
-      "AdvancedSettingsDto": {
+      "AdvancedSettingsForm": {
         "type": "object",
-        "description": "\nThe wire shape is v2's `AdvancedSettingsFrontend` minus the dropped\ninternal-tuning fields: values are human units (hours/minutes/seconds)\nscaled to backend units (seconds/milliseconds) on save, floored back on\nread. This shape is a closed allowlist: unknown JSON fields are\nrejected at decode (400), so a client holding a dropped tuning field\nlearns it is gone instead of believing it saved.\nAdvanced tunables in frontend units. See the section comment for the\nunit contract and the allowlist rule.",
+        "description": "Advanced tunables in the form's units. This is not a copy of the\nsection: the form shows human units (hours, minutes, seconds) while\nthe section stores seconds and milliseconds, v2's\n`AdvancedSettingsFrontend` contract minus the dropped internal-tuning\nfields. It is a closed allowlist: unknown JSON fields are rejected at\ndecode (400), so a client holding a dropped tuning field learns it is\ngone instead of believing it saved.",
         "properties": {
           "audiodb_api_key": {
             "type": "string",
@@ -12872,6 +13362,34 @@
           }
         }
       },
+      "ArtistCreditSettings": {
+        "type": "object",
+        "description": "Artist-credit handling.",
+        "properties": {
+          "preferred_locales": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Preferred locales.",
+            "default": []
+          },
+          "standardization": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ArtistStandardization",
+                "description": "Standardization level."
+              }
+            ],
+            "default": "credited"
+          },
+          "translate_names": {
+            "type": "boolean",
+            "description": "Translate names.",
+            "default": false
+          }
+        }
+      },
       "ArtistEnrichment": {
         "type": "object",
         "description": "Enriched artist counts. Absent counts mean unknown, never zero.",
@@ -13006,6 +13524,15 @@
           }
         }
       },
+      "ArtistStandardization": {
+        "type": "string",
+        "description": "Artist credit standardization.",
+        "enum": [
+          "credited",
+          "variations",
+          "canonical"
+        ]
+      },
       "ArtistView": {
         "type": "object",
         "description": "One catalog artist.",
@@ -13070,7 +13597,201 @@
           }
         }
       },
-      "AudioFormatDto": {
+      "ArtworkDownloadSize": {
+        "type": "string",
+        "description": "Artwork download size.",
+        "enum": [
+          "full",
+          "1200",
+          "500",
+          "250"
+        ]
+      },
+      "ArtworkImageType": {
+        "type": "string",
+        "description": "Artwork image type.",
+        "enum": [
+          "front",
+          "back",
+          "booklet",
+          "medium",
+          "tray",
+          "obi",
+          "spine",
+          "track",
+          "other"
+        ]
+      },
+      "ArtworkManagementSettings": {
+        "type": "object",
+        "description": "Artwork management block.",
+        "properties": {
+          "approved_only": {
+            "type": "boolean",
+            "description": "Approved art only.",
+            "default": true
+          },
+          "download_size": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ArtworkDownloadSize",
+                "description": "Download size."
+              }
+            ],
+            "default": "full"
+          },
+          "embedded_enabled": {
+            "type": "boolean",
+            "description": "Embed art in files.",
+            "default": true
+          },
+          "embedded_format": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ArtworkOutputFormat",
+                "description": "Embedded output format."
+              }
+            ],
+            "default": "jpeg"
+          },
+          "embedded_front_only": {
+            "type": "boolean",
+            "description": "Embedded front only.",
+            "default": true
+          },
+          "embedded_maximum_size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Embedded size cap (0 uncapped).",
+            "default": 1200
+          },
+          "external_enabled": {
+            "type": "boolean",
+            "description": "Write external art files.",
+            "default": true
+          },
+          "external_format": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ArtworkOutputFormat",
+                "description": "External output format."
+              }
+            ],
+            "default": "original"
+          },
+          "external_front_only": {
+            "type": "boolean",
+            "description": "External front only.",
+            "default": true
+          },
+          "external_maximum_size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "External size cap (0 uncapped).",
+            "default": 0
+          },
+          "external_naming_script_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "External naming script id.",
+            "default": null
+          },
+          "image_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtworkImageType"
+            },
+            "description": "Image types to fetch.",
+            "default": [
+              "front"
+            ]
+          },
+          "local_file_patterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Local filename patterns.",
+            "default": [
+              "cover.jpg",
+              "cover.jpeg",
+              "cover.png",
+              "cover.webp",
+              "folder.jpg",
+              "folder.png",
+              "front.jpg",
+              "front.png"
+            ]
+          },
+          "minimum_height": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Minimum height (0 any).",
+            "default": 0
+          },
+          "minimum_width": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Minimum width (0 any).",
+            "default": 0
+          },
+          "never_replace_with_smaller": {
+            "type": "boolean",
+            "description": "Never replace art with smaller art.",
+            "default": true
+          },
+          "overwrite_external_files": {
+            "type": "boolean",
+            "description": "Overwrite external files.",
+            "default": false
+          },
+          "preserve_existing_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtworkImageType"
+            },
+            "description": "Existing types never replaced.",
+            "default": []
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtworkProvider"
+            },
+            "description": "Provider order.",
+            "default": [
+              "cover_art_archive_release",
+              "cover_art_archive_release_group",
+              "local_files",
+              "embedded"
+            ]
+          }
+        }
+      },
+      "ArtworkOutputFormat": {
+        "type": "string",
+        "description": "Artwork output format.",
+        "enum": [
+          "original",
+          "jpeg",
+          "png",
+          "webp"
+        ]
+      },
+      "ArtworkProvider": {
+        "type": "string",
+        "description": "Artwork provider.",
+        "enum": [
+          "cover_art_archive_release",
+          "cover_art_archive_release_group",
+          "local_files",
+          "embedded",
+          "audiodb"
+        ]
+      },
+      "AudioFormat": {
         "type": "string",
         "description": "Transcode target for remote playback.",
         "enum": [
@@ -13548,9 +14269,9 @@
           }
         }
       },
-      "BrainzmashActiveBindingDto": {
+      "BrainzmashActiveBinding": {
         "type": "object",
-        "description": "Active BrainzMash binding.",
+        "description": "Active BrainzMash binding (kept; the pending proposal is transient).",
         "properties": {
           "access_revision": {
             "type": "string",
@@ -13590,7 +14311,7 @@
           }
         }
       },
-      "BrainzmashPendingProposalDto": {
+      "BrainzmashPendingProposal": {
         "type": "object",
         "description": "Transient pending BrainzMash proposal (process memory, echoed so the\nUI can drive consent/verify/activate).",
         "properties": {
@@ -14166,7 +14887,7 @@
           }
         }
       },
-      "ConnectAppsDto": {
+      "ConnectApps": {
         "type": "object",
         "description": "Inbound Connect Apps config. Both protocols default off.",
         "properties": {
@@ -14183,7 +14904,7 @@
           "discover_mode": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/DiscoverModeDto",
+                "$ref": "#/components/schemas/DiscoverMode",
                 "description": "Compat discovery mode."
               }
             ],
@@ -14207,8 +14928,8 @@
           "transcode_default_format": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/AudioFormatDto",
-                "description": "Default transcode format (`mp3` or `opus`)."
+                "$ref": "#/components/schemas/AudioFormat",
+                "description": "Default transcode format."
               }
             ],
             "default": "mp3"
@@ -14518,7 +15239,7 @@
           }
         }
       },
-      "DiscoverModeDto": {
+      "DiscoverMode": {
         "type": "string",
         "description": "Compat discovery mode.",
         "enum": [
@@ -15217,7 +15938,7 @@
           }
         }
       },
-      "DownloadAccessDto": {
+      "DownloadAccess": {
         "type": "string",
         "description": "Who may download library files. `trusted` admits trusted and admin.",
         "enum": [
@@ -15226,9 +15947,9 @@
           "admin"
         ]
       },
-      "DownloadPolicyDto": {
+      "DownloadPolicy": {
         "type": "object",
-        "description": "Source-agnostic acquisition policy. Lives in its own section so a\nUsenet-only install still has quality/threshold/timeout/retry settings\nto read. Validation is strict on submitted bodies (never silently\nclamped); the read-only recipe-status projection is recomputed at GET\ntime instead of persisted.",
+        "description": "Download policy: quality tiers, recipe v2, timeouts, retry, retention,\nrecycle bin, quotas, and the upgrade scan.",
         "properties": {
           "auto_retry_base_interval_minutes": {
             "type": "integer",
@@ -15296,7 +16017,7 @@
           },
           "flac_mp3_only": {
             "type": "boolean",
-            "description": "Reject non-FLAC/MP3 candidates. A v2 recipe requires this on.",
+            "description": "Reject non-FLAC/MP3 candidates. A v2 recipe requires this on: v2\ngates recipe saves on it, the quality snapshot carries it, and the\nmatcher, free-music, and orchestrator consumers all read it.",
             "default": true
           },
           "ignored_terms": {
@@ -15425,23 +16146,10 @@
           "quality_recipe": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/QualityRecipeEntryDto"
+              "$ref": "#/components/schemas/QualityRecipeEntry"
             },
             "description": "Closed v2 quality recipe (empty means a v1 policy).",
             "default": []
-          },
-          "quality_recipe_error": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Recipe verdict detail, when any. Read-only, like the status.",
-            "default": null
-          },
-          "quality_recipe_status": {
-            "type": "string",
-            "description": "Read-only recipe verdict (`v1`, `v2`, `non_convertible`,\n`invalid`). Recomputed on every read; client values are ignored\non save.",
-            "default": "v1"
           },
           "recycle_bin_path": {
             "type": "string",
@@ -15495,6 +16203,34 @@
             "default": true
           }
         }
+      },
+      "DownloadPolicyView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DownloadPolicy",
+            "description": "The stored policy."
+          },
+          {
+            "type": "object",
+            "required": [
+              "quality_recipe_status"
+            ],
+            "properties": {
+              "quality_recipe_error": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Recipe verdict detail, when any."
+              },
+              "quality_recipe_status": {
+                "type": "string",
+                "description": "Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`."
+              }
+            }
+          }
+        ],
+        "description": "GET view of the acquisition policy: the stored policy plus the\nread-only recipe verdict, recomputed on every read and never saved."
       },
       "EditionAcquireResponse": {
         "type": "object",
@@ -15599,6 +16335,42 @@
           }
         }
       },
+      "EnrichmentManagementSettings": {
+        "type": "object",
+        "description": "Enrichment management block.",
+        "properties": {
+          "lyrics": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LyricsManagementSettings",
+                "description": "Lyrics."
+              }
+            ],
+            "default": {
+              "enabled": false,
+              "preserve_existing": false,
+              "provider": "lrclib",
+              "required": false,
+              "write_plain": true,
+              "write_synced": true
+            }
+          },
+          "replaygain": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReplayGainManagementSettings",
+                "description": "ReplayGain."
+              }
+            ],
+            "default": {
+              "album_aware": true,
+              "enabled": false,
+              "mode": "preserve",
+              "required": false
+            }
+          }
+        }
+      },
       "EnrichmentResponse": {
         "type": "object",
         "description": "Enrich-batch response for both buckets plus degradation notes.",
@@ -15679,7 +16451,7 @@
           }
         }
       },
-      "EventsSettingsDto": {
+      "EventsSettings": {
         "type": "object",
         "description": "Upcoming-events sources. The sweep runs daily at `poll_time`.",
         "properties": {
@@ -15695,7 +16467,7 @@
           },
           "skiddle_api_key": {
             "type": "string",
-            "description": "Skiddle key (masked unless unset).",
+            "description": "Skiddle key (encrypted at rest).",
             "default": ""
           },
           "skiddle_enabled": {
@@ -15706,7 +16478,7 @@
           "sweep_scope": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/EventsSweepScopeDto",
+                "$ref": "#/components/schemas/EventsSweepScope",
                 "description": "Sweep scope."
               }
             ],
@@ -15714,7 +16486,7 @@
           },
           "ticketmaster_api_key": {
             "type": "string",
-            "description": "Ticketmaster key (masked unless unset).",
+            "description": "Ticketmaster key (encrypted at rest).",
             "default": ""
           },
           "ticketmaster_enabled": {
@@ -15724,13 +16496,60 @@
           }
         }
       },
-      "EventsSweepScopeDto": {
+      "EventsSweepScope": {
         "type": "string",
         "description": "Events sweep scope.",
         "enum": [
           "followed",
           "library"
         ]
+      },
+      "ExtensionCase": {
+        "type": "string",
+        "description": "Extension case policy.",
+        "enum": [
+          "preserve",
+          "lower",
+          "upper"
+        ]
+      },
+      "ExternalRefreshSettings": {
+        "type": "object",
+        "description": "External-server refresh after publishing.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch.",
+            "default": false
+          },
+          "jellyfin_enabled": {
+            "type": "boolean",
+            "description": "Refresh Jellyfin.",
+            "default": false
+          },
+          "navidrome_enabled": {
+            "type": "boolean",
+            "description": "Refresh Navidrome.",
+            "default": false
+          },
+          "plex_enabled": {
+            "type": "boolean",
+            "description": "Refresh Plex.",
+            "default": false
+          },
+          "retry_attempts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Retry attempts.",
+            "default": 3
+          },
+          "retry_delay_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Retry delay in seconds.",
+            "default": 30
+          }
+        }
       },
       "FavoriteCounts": {
         "type": "object",
@@ -15926,7 +16745,54 @@
           }
         }
       },
-      "FilesystemWatcherDto": {
+      "FieldMode": {
+        "type": "string",
+        "description": "Tag-field write mode.",
+        "enum": [
+          "disabled",
+          "replace",
+          "fill_missing",
+          "merge",
+          "preserve"
+        ]
+      },
+      "FileBehaviorSettings": {
+        "type": "object",
+        "description": "File-behavior gates.",
+        "properties": {
+          "preserve_permissions": {
+            "type": "boolean",
+            "description": "Preserve permission bits.",
+            "default": true
+          },
+          "preserve_timestamps": {
+            "type": "boolean",
+            "description": "Preserve mtimes.",
+            "default": true
+          },
+          "reject_symlinks": {
+            "type": "boolean",
+            "description": "Refuse symlinked media.",
+            "default": true
+          },
+          "strict_capability_gate": {
+            "type": "boolean",
+            "description": "Refuse writes the format cannot hold.",
+            "default": true
+          },
+          "validate_technical_audio": {
+            "type": "boolean",
+            "description": "Re-probe audio after writing.",
+            "default": true
+          },
+          "validate_written_metadata": {
+            "type": "boolean",
+            "description": "Re-read tags after writing.",
+            "default": true
+          }
+        }
+      },
+      "FilesystemWatcher": {
         "type": "object",
         "description": "Zero-dependency filesystem poller knobs.",
         "properties": {
@@ -16111,7 +16977,73 @@
           }
         }
       },
-      "FreeMusicDto": {
+      "FormatCompatibilitySettings": {
+        "type": "object",
+        "description": "Format-compatibility handling.",
+        "properties": {
+          "constrained_genres_primary_only": {
+            "type": "boolean",
+            "description": "Primary genre only for constrained formats.",
+            "default": false
+          },
+          "id3_text_encoding": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Id3TextEncoding",
+                "description": "ID3 text encoding."
+              }
+            ],
+            "default": "utf8"
+          },
+          "id3_version": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Id3Version",
+                "description": "ID3 version for MP3 writes."
+              }
+            ],
+            "default": "2.4"
+          },
+          "id3v23_join_delimiter": {
+            "type": "string",
+            "description": "ID3v2.3 multi-value join delimiter.",
+            "default": "; "
+          },
+          "mp3_apev2_policy": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Mp3ApePolicy",
+                "description": "APEv2 policy for MP3."
+              }
+            ],
+            "default": "preserve"
+          },
+          "raw_aac_tag_policy": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RawAacTagPolicy",
+                "description": "Raw-AAC tag policy."
+              }
+            ],
+            "default": "save_apev2"
+          },
+          "remove_id3_from_flac": {
+            "type": "boolean",
+            "description": "Strip ID3 chunks from FLAC.",
+            "default": false
+          },
+          "wav_tag_policy": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WavTagPolicy",
+                "description": "WAV tag policy."
+              }
+            ],
+            "default": "id3"
+          }
+        }
+      },
+      "FreeMusic": {
         "type": "object",
         "description": "Free-music acquisition settings.",
         "properties": {
@@ -16123,8 +17055,8 @@
           "preferred_format": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/AudioFormatDto",
-                "description": "Preferred format (`flac` or `mp3`)."
+                "$ref": "#/components/schemas/AudioFormat",
+                "description": "Preferred format."
               }
             ],
             "default": "flac"
@@ -16205,6 +17137,22 @@
             "format": "int64",
             "description": "Search TTL, ms.",
             "default": 300000
+          }
+        }
+      },
+      "GenreAlias": {
+        "type": "object",
+        "description": "One genre alias.",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Source label.",
+            "default": ""
+          },
+          "target": {
+            "type": "string",
+            "description": "Target label.",
+            "default": ""
           }
         }
       },
@@ -16369,6 +17317,128 @@
           }
         }
       },
+      "GenreManagementSettings": {
+        "type": "object",
+        "description": "Genre management block.",
+        "properties": {
+          "aliases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GenreAlias"
+            },
+            "description": "Aliases.",
+            "default": []
+          },
+          "allowlist": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Allowed labels.",
+            "default": []
+          },
+          "canonicalize": {
+            "type": "boolean",
+            "description": "Canonicalize labels.",
+            "default": true
+          },
+          "denylist": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Blocked labels.",
+            "default": []
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch.",
+            "default": true
+          },
+          "lastfm_minimum_weight": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Last.fm weight floor.",
+            "default": 10
+          },
+          "lastfm_whitelist_only": {
+            "type": "boolean",
+            "description": "Last.fm whitelisted tags only.",
+            "default": true
+          },
+          "listenbrainz_curated_only": {
+            "type": "boolean",
+            "description": "ListenBrainz curated tags only.",
+            "default": true
+          },
+          "listenbrainz_minimum_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "ListenBrainz vote floor.",
+            "default": 1
+          },
+          "maximum_ancestry_depth": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Max genre-ancestry depth.",
+            "default": 4
+          },
+          "maximum_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Max genres written.",
+            "default": 5
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GenreMode",
+                "description": "Write mode."
+              }
+            ],
+            "default": "replace"
+          },
+          "musicbrainz_minimum_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "MusicBrainz vote floor.",
+            "default": 1
+          },
+          "preferred_casing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Preferred casing.",
+            "default": []
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GenreSource"
+            },
+            "description": "Genre sources.",
+            "default": [
+              "musicbrainz",
+              "listenbrainz"
+            ]
+          },
+          "write_primary_only_for_constrained_formats": {
+            "type": "boolean",
+            "description": "Primary genre only for constrained formats.",
+            "default": false
+          }
+        }
+      },
+      "GenreMode": {
+        "type": "string",
+        "description": "Genre write mode.",
+        "enum": [
+          "replace",
+          "merge",
+          "fill_missing"
+        ]
+      },
       "GenrePopularSection": {
         "type": "object",
         "description": "Popular artists and albums for a genre.",
@@ -16401,6 +17471,16 @@
           }
         }
       },
+      "GenreSource": {
+        "type": "string",
+        "description": "Genre source.",
+        "enum": [
+          "musicbrainz",
+          "listenbrainz",
+          "lastfm",
+          "existing_local"
+        ]
+      },
       "GenreView": {
         "type": "object",
         "description": "One genre with streamable-only counts.",
@@ -16428,7 +17508,7 @@
           }
         }
       },
-      "GetItDto": {
+      "GetIt": {
         "type": "object",
         "description": "Store-region settings.",
         "properties": {
@@ -16878,6 +17958,34 @@
           }
         }
       },
+      "HomeSettings": {
+        "type": "object",
+        "description": "Home page cache lifetimes and the two trending rows (v2\n`HomeSettings`). The ranges are v2's, enforced on save.",
+        "properties": {
+          "cache_ttl_personal": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Personal rows cache lifetime, seconds (60-3600).",
+            "default": 300
+          },
+          "cache_ttl_trending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Trending rows cache lifetime, seconds (300-86400).",
+            "default": 3600
+          },
+          "show_globally_trending": {
+            "type": "boolean",
+            "description": "Show the \"Globally trending\" row.",
+            "default": true
+          },
+          "show_whats_hot": {
+            "type": "boolean",
+            "description": "Show the \"What's hot\" row.",
+            "default": true
+          }
+        }
+      },
       "HubView": {
         "type": "object",
         "description": "The hub: one screen of highlights per source. Sections a source lacks\nstay empty rather than erroring.",
@@ -16958,7 +18066,23 @@
           }
         }
       },
-      "IdentificationPolicyDto": {
+      "Id3TextEncoding": {
+        "type": "string",
+        "description": "ID3 text encoding.",
+        "enum": [
+          "utf8",
+          "utf16"
+        ]
+      },
+      "Id3Version": {
+        "type": "string",
+        "description": "ID3 version for MP3 writes.",
+        "enum": [
+          "2.4",
+          "2.3"
+        ]
+      },
+      "IdentificationPolicy": {
         "type": "string",
         "description": "Per-path identification policy.",
         "enum": [
@@ -17021,6 +18145,17 @@
           "state": {
             "type": "string",
             "description": "Job state after enqueue."
+          }
+        }
+      },
+      "IdentityManagementSettings": {
+        "type": "object",
+        "description": "Catalog-identity policy (no file writes).",
+        "properties": {
+          "automatic_edition_acceptance_enabled": {
+            "type": "boolean",
+            "description": "Automatic edition acceptance.",
+            "default": false
           }
         }
       },
@@ -17450,13 +18585,13 @@
           }
         }
       },
-      "JellyfinConnectionDto": {
+      "JellyfinConnection": {
         "type": "object",
-        "description": "Jellyfin connection.",
+        "description": "Jellyfin connection. The section URL is the single owner (the top-level\nmirror and the in-memory `Settings` mutation are gone).",
         "properties": {
           "api_key": {
             "type": "string",
-            "description": "API key (masked unless unset).",
+            "description": "API key (encrypted at rest; v2 returned it plaintext on GET).",
             "default": ""
           },
           "enabled": {
@@ -17665,9 +18800,9 @@
           }
         }
       },
-      "LastFmSettingsDto": {
+      "LastFmSettings": {
         "type": "object",
-        "description": "Last.fm master switch. Credentials are per-user (see\n`/me/connections/lastfm`); the admin-global pair is deleted.",
+        "description": "Last.fm settings: master switch only (per-user credentials live in\nthe per-user store, not here).",
         "properties": {
           "enabled": {
             "type": "boolean",
@@ -17719,6 +18854,1104 @@
           }
         }
       },
+      "LibraryManagementActivationHealthResponse": {
+        "type": "object",
+        "description": "Dry-run activation health: stale roots (saved activation no longer\nmatches) and blocked roots (no dry run could help).",
+        "required": [
+          "stale_root_ids",
+          "blocked_root_ids"
+        ],
+        "properties": {
+          "blocked_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Policy error, set only with a non-empty `blocked_root_ids`."
+          },
+          "blocked_root_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Active roots no dry run could help."
+          },
+          "stale_root_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Active roots whose activation no longer matches."
+          }
+        }
+      },
+      "LibraryManagementChangeImpact": {
+        "type": "object",
+        "description": "Impact verdict for a candidate: classification, preview requirement,\naffected roots, and human reasons.",
+        "required": [
+          "current_settings_revision",
+          "proposed_settings_revision",
+          "stale",
+          "classification",
+          "preview_required",
+          "affected_root_ids",
+          "reasons"
+        ],
+        "properties": {
+          "affected_root_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Affected root ids."
+          },
+          "classification": {
+            "type": "string",
+            "description": "`no_change`, `harmless`, `restrictive`, or `destructive`."
+          },
+          "current_settings_revision": {
+            "type": "string",
+            "description": "Current stored revision."
+          },
+          "preview_required": {
+            "type": "boolean",
+            "description": "A current dry run must be confirmed before enabling."
+          },
+          "proposed_settings_revision": {
+            "type": "string",
+            "description": "Normalized candidate revision."
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Human reasons."
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "The caller's revision was already stale."
+          }
+        }
+      },
+      "LibraryManagementPresetDiff": {
+        "type": "object",
+        "description": "Group-level preset drift: which top-level profile groups differ from\nthe tracked preset, plus the preset profile for rendering.",
+        "required": [
+          "profile_id",
+          "differs",
+          "changed_groups",
+          "version_upgrade_groups"
+        ],
+        "properties": {
+          "changed_groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Differing groups."
+          },
+          "differs": {
+            "type": "boolean",
+            "description": "Whether any group differs."
+          },
+          "preset_origin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Preset origin, when tracked."
+          },
+          "preset_profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LibraryManagementProfile",
+                "description": "The preset profile, when tracked."
+              }
+            ]
+          },
+          "preset_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Preset version, when tracked."
+          },
+          "profile_id": {
+            "type": "string",
+            "description": "Profile id."
+          },
+          "version_upgrade_groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Groups a preset version upgrade would touch."
+          }
+        }
+      },
+      "LibraryManagementProfile": {
+        "type": "object",
+        "description": "One named management profile.",
+        "properties": {
+          "artwork": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ArtworkManagementSettings",
+                "description": "Artwork block."
+              }
+            ],
+            "default": {
+              "approved_only": true,
+              "download_size": "full",
+              "embedded_enabled": true,
+              "embedded_format": "jpeg",
+              "embedded_front_only": true,
+              "embedded_maximum_size": 1200,
+              "external_enabled": true,
+              "external_format": "original",
+              "external_front_only": true,
+              "external_maximum_size": 0,
+              "external_naming_script_id": null,
+              "image_types": [
+                "front"
+              ],
+              "local_file_patterns": [
+                "cover.jpg",
+                "cover.jpeg",
+                "cover.png",
+                "cover.webp",
+                "folder.jpg",
+                "folder.png",
+                "front.jpg",
+                "front.png"
+              ],
+              "minimum_height": 0,
+              "minimum_width": 0,
+              "never_replace_with_smaller": true,
+              "overwrite_external_files": false,
+              "preserve_existing_types": [],
+              "providers": [
+                "cover_art_archive_release",
+                "cover_art_archive_release_group",
+                "local_files",
+                "embedded"
+              ]
+            }
+          },
+          "description": {
+            "type": "string",
+            "description": "Description.",
+            "default": ""
+          },
+          "enrichment": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EnrichmentManagementSettings",
+                "description": "Enrichment block."
+              }
+            ],
+            "default": {
+              "lyrics": {
+                "enabled": false,
+                "preserve_existing": false,
+                "provider": "lrclib",
+                "required": false,
+                "write_plain": true,
+                "write_synced": true
+              },
+              "replaygain": {
+                "album_aware": true,
+                "enabled": false,
+                "mode": "preserve",
+                "required": false
+              }
+            }
+          },
+          "file_behavior": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FileBehaviorSettings",
+                "description": "File-behavior gates."
+              }
+            ],
+            "default": {
+              "preserve_permissions": true,
+              "preserve_timestamps": true,
+              "reject_symlinks": true,
+              "strict_capability_gate": true,
+              "validate_technical_audio": true,
+              "validate_written_metadata": true
+            }
+          },
+          "genres": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GenreManagementSettings",
+                "description": "Genre block."
+              }
+            ],
+            "default": {
+              "aliases": [],
+              "allowlist": [],
+              "canonicalize": true,
+              "denylist": [],
+              "enabled": true,
+              "lastfm_minimum_weight": 10,
+              "lastfm_whitelist_only": true,
+              "listenbrainz_curated_only": true,
+              "listenbrainz_minimum_count": 1,
+              "maximum_ancestry_depth": 4,
+              "maximum_count": 5,
+              "mode": "replace",
+              "musicbrainz_minimum_count": 1,
+              "preferred_casing": [],
+              "sources": [
+                "musicbrainz",
+                "listenbrainz"
+              ],
+              "write_primary_only_for_constrained_formats": false
+            }
+          },
+          "id": {
+            "type": "string",
+            "description": "Profile id.",
+            "default": ""
+          },
+          "identity": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IdentityManagementSettings",
+                "description": "Identity policy."
+              }
+            ],
+            "default": {
+              "automatic_edition_acceptance_enabled": false
+            }
+          },
+          "metadata": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MetadataManagementSettings",
+                "description": "Metadata block."
+              }
+            ],
+            "default": {
+              "artist_credits": {
+                "preferred_locales": [],
+                "standardization": "credited",
+                "translate_names": false
+              },
+              "enabled": true,
+              "fields": [],
+              "format_compatibility": {
+                "constrained_genres_primary_only": false,
+                "id3_text_encoding": "utf8",
+                "id3_version": "2.4",
+                "id3v23_join_delimiter": "; ",
+                "mp3_apev2_policy": "preserve",
+                "raw_aac_tag_policy": "save_apev2",
+                "remove_id3_from_flac": false,
+                "wav_tag_policy": "id3"
+              },
+              "preserve_embedded_art_during_scrub": true,
+              "preserve_fields": [],
+              "relationships": {
+                "enabled": true,
+                "types": [
+                  "composer",
+                  "lyricist",
+                  "conductor",
+                  "performer",
+                  "arranger",
+                  "remixer",
+                  "producer"
+                ]
+              },
+              "scrub_unmanaged_tags": false,
+              "tagging_script_ids": []
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name.",
+            "default": ""
+          },
+          "notification": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProfileNotificationSettings",
+                "description": "Notifications."
+              }
+            ],
+            "default": {
+              "refresh_droppedneedle": true,
+              "refresh_external_servers": false
+            }
+          },
+          "organization": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OrganizationManagementSettings",
+                "description": "Organization block."
+              }
+            ],
+            "default": {
+              "compatibility": {
+                "extension_case": "preserve",
+                "maximum_component_length": 240,
+                "maximum_path_length": 4096,
+                "replace_non_ascii": false,
+                "replace_spaces_with_underscores": false,
+                "separator_replacement": "_",
+                "unicode_normalization": "NFC",
+                "windows_compatible": true,
+                "windows_legacy_path_limit": false
+              },
+              "move_enabled": true,
+              "move_sidecars": true,
+              "multi_disc_naming_script_id": null,
+              "naming_script_id": "69202666-cb88-52b0-bac2-0afc62b1e909",
+              "remove_empty_directories": true,
+              "rename_enabled": true,
+              "sidecar_patterns": [
+                "cover.jpg",
+                "cover.jpeg",
+                "cover.png",
+                "cover.webp",
+                "folder.jpg",
+                "folder.jpeg",
+                "folder.png",
+                "front.jpg",
+                "front.png",
+                "back.jpg",
+                "back.jpeg",
+                "back.png",
+                "back.webp",
+                "booklet*.jpg",
+                "booklet*.jpeg",
+                "booklet*.png",
+                "booklet*.webp",
+                "medium*.jpg",
+                "medium*.jpeg",
+                "medium*.png",
+                "medium*.webp",
+                "*.cue",
+                "*.log",
+                "*.lrc",
+                "*.m3u",
+                "*.m3u8",
+                "*.pls"
+              ],
+              "source_cleanup": "remove_after_confirmed_move"
+            }
+          },
+          "preset_origin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Preset origin.",
+            "default": null
+          },
+          "preset_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Preset version.",
+            "default": null
+          },
+          "revision": {
+            "type": "string",
+            "description": "Content revision.",
+            "default": ""
+          }
+        }
+      },
+      "LibraryManagementProfileCopyRequest": {
+        "type": "object",
+        "description": "Copy-profile request.",
+        "required": [
+          "name",
+          "expected_settings_revision"
+        ],
+        "properties": {
+          "expected_settings_revision": {
+            "type": "string",
+            "description": "Compare-and-swap token from the last GET."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name for the copy."
+          }
+        }
+      },
+      "LibraryManagementProfileCreateRequest": {
+        "type": "object",
+        "description": "Create-profile request (clones the default profile).",
+        "required": [
+          "name",
+          "expected_settings_revision"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Description for the new profile."
+          },
+          "expected_settings_revision": {
+            "type": "string",
+            "description": "Compare-and-swap token from the last GET."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name for the new profile."
+          }
+        }
+      },
+      "LibraryManagementProfileDeleteRequest": {
+        "type": "object",
+        "description": "Delete-profile request.",
+        "required": [
+          "expected_settings_revision"
+        ],
+        "properties": {
+          "expected_settings_revision": {
+            "type": "string",
+            "description": "Compare-and-swap token from the last GET."
+          }
+        }
+      },
+      "LibraryManagementProfileExportRequest": {
+        "type": "object",
+        "description": "Export request.",
+        "required": [
+          "expected_settings_revision"
+        ],
+        "properties": {
+          "expected_settings_revision": {
+            "type": "string",
+            "description": "Compare-and-swap token from the last GET."
+          }
+        }
+      },
+      "LibraryManagementProfileExportResponse": {
+        "type": "object",
+        "description": "Exported bundle: a portable document plus a share code, both pinned\nby the bundle hash.",
+        "required": [
+          "filename",
+          "mime_type",
+          "document",
+          "share_code",
+          "bundle_hash",
+          "settings_revision"
+        ],
+        "properties": {
+          "bundle_hash": {
+            "type": "string",
+            "description": "Bundle hash (import pins to the reviewed hash)."
+          },
+          "document": {
+            "type": "string",
+            "description": "Portable document (JSON)."
+          },
+          "filename": {
+            "type": "string",
+            "description": "Suggested download filename."
+          },
+          "mime_type": {
+            "type": "string",
+            "description": "Bundle MIME type."
+          },
+          "settings_revision": {
+            "type": "string",
+            "description": "Settings revision at export time."
+          },
+          "share_code": {
+            "type": "string",
+            "description": "Share code (`DNLP1:...`)."
+          }
+        }
+      },
+      "LibraryManagementProfileImportPreviewRequest": {
+        "type": "object",
+        "description": "Import-preview request (accepts a document or a share code).",
+        "required": [
+          "content",
+          "expected_settings_revision"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "Bundle document or share code."
+          },
+          "expected_settings_revision": {
+            "type": "string",
+            "description": "Compare-and-swap token from the last GET."
+          }
+        }
+      },
+      "LibraryManagementProfileImportPreviewResponse": {
+        "type": "object",
+        "description": "Import-preview response.",
+        "required": [
+          "profile",
+          "bundle_hash",
+          "settings_revision",
+          "naming_scripts",
+          "tagging_scripts",
+          "aspects",
+          "warnings"
+        ],
+        "properties": {
+          "aspects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Capability aspects the profile uses."
+          },
+          "bundle_hash": {
+            "type": "string",
+            "description": "Reviewed bundle hash (the import must pin to this)."
+          },
+          "naming_scripts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamingScript"
+            },
+            "description": "Naming scripts the bundle carries."
+          },
+          "profile": {
+            "$ref": "#/components/schemas/LibraryManagementProfile",
+            "description": "Materialized profile (names resolved against stored settings)."
+          },
+          "settings_revision": {
+            "type": "string",
+            "description": "Settings revision at preview time."
+          },
+          "tagging_scripts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaggingScript"
+            },
+            "description": "Tagging scripts the bundle carries."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryManagementProfileImportWarning"
+            },
+            "description": "Import warnings."
+          }
+        }
+      },
+      "LibraryManagementProfileImportRequest": {
+        "type": "object",
+        "description": "Import-confirm request.",
+        "required": [
+          "content",
+          "reviewed_bundle_hash",
+          "name",
+          "expected_settings_revision"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "Bundle document or share code."
+          },
+          "expected_settings_revision": {
+            "type": "string",
+            "description": "Compare-and-swap token from the last GET."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name for the imported profile."
+          },
+          "reviewed_bundle_hash": {
+            "type": "string",
+            "description": "Bundle hash the admin reviewed."
+          }
+        }
+      },
+      "LibraryManagementProfileImportResponse": {
+        "type": "object",
+        "description": "Import-confirm response.",
+        "required": [
+          "profile",
+          "settings_revision",
+          "naming_scripts",
+          "tagging_scripts"
+        ],
+        "properties": {
+          "naming_scripts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamingScript"
+            },
+            "description": "Naming scripts the import added."
+          },
+          "profile": {
+            "$ref": "#/components/schemas/LibraryManagementProfile",
+            "description": "Imported profile."
+          },
+          "settings_revision": {
+            "type": "string",
+            "description": "New settings revision."
+          },
+          "tagging_scripts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaggingScript"
+            },
+            "description": "Tagging scripts the import added."
+          }
+        }
+      },
+      "LibraryManagementProfileImportWarning": {
+        "type": "object",
+        "description": "One import warning: machine code plus human title and message.",
+        "required": [
+          "code",
+          "severity",
+          "title",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable warning code."
+          },
+          "message": {
+            "type": "string",
+            "description": "What the profile will do."
+          },
+          "severity": {
+            "type": "string",
+            "description": "`warning` or `danger`."
+          },
+          "title": {
+            "type": "string",
+            "description": "Short title."
+          }
+        }
+      },
+      "LibraryManagementProfileMutationResponse": {
+        "type": "object",
+        "description": "Profile-mutation acknowledgement: the saved profile plus the fresh\nrevision (a second read, so concurrent saves surface as staleness on\nthe next write instead of silently winning).",
+        "required": [
+          "profile",
+          "settings_revision"
+        ],
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/LibraryManagementProfile",
+            "description": "Saved profile."
+          },
+          "settings_revision": {
+            "type": "string",
+            "description": "Fresh settings revision."
+          }
+        }
+      },
+      "LibraryManagementProfileUpdateRequest": {
+        "type": "object",
+        "description": "Update-profile request.",
+        "required": [
+          "profile",
+          "expected_settings_revision"
+        ],
+        "properties": {
+          "expected_settings_revision": {
+            "type": "string",
+            "description": "Compare-and-swap token from the last GET."
+          },
+          "profile": {
+            "$ref": "#/components/schemas/LibraryManagementProfile",
+            "description": "Full replacement profile (id must match the path)."
+          }
+        }
+      },
+      "LibraryManagementRootAssignment": {
+        "type": "object",
+        "description": "One root-to-profile assignment.",
+        "properties": {
+          "activation_confirmed_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Activation pins (set by the activation flow).",
+            "default": null
+          },
+          "activation_naming_policy_revision": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Activation pins (set by the activation flow).",
+            "default": null
+          },
+          "activation_policy_revision": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Activation pins (set by the activation flow).",
+            "default": null
+          },
+          "activation_preview_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Activation pins (set by the activation flow).",
+            "default": null
+          },
+          "activation_preview_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Activation pins (set by the activation flow).",
+            "default": null
+          },
+          "activation_profile_revision": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Activation pins (set by the activation flow).",
+            "default": null
+          },
+          "activation_settings_revision": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Activation pins (set by the activation flow).",
+            "default": null
+          },
+          "automatic_acquisitions": {
+            "type": "boolean",
+            "description": "Automatic acquisitions.",
+            "default": false
+          },
+          "automatic_custom_editions": {
+            "type": "boolean",
+            "description": "Automatic custom editions.",
+            "default": false
+          },
+          "automatic_drop_imports": {
+            "type": "boolean",
+            "description": "Automatic drop imports.",
+            "default": false
+          },
+          "automatic_scan_discovered": {
+            "type": "boolean",
+            "description": "Automatic scan-discovered organization.",
+            "default": false
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Assignment switch.",
+            "default": false
+          },
+          "overrides": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LibraryManagementRootOverrides",
+                "description": "Per-root overrides."
+              }
+            ],
+            "default": null
+          },
+          "profile_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Assigned profile id.",
+            "default": null
+          },
+          "root_id": {
+            "type": "string",
+            "description": "Library root id.",
+            "default": ""
+          }
+        }
+      },
+      "LibraryManagementRootOverrides": {
+        "type": "object",
+        "description": "Per-root profile overrides (`None` inherits the profile).",
+        "properties": {
+          "automatic_edition_acceptance_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Automatic edition acceptance.",
+            "default": null
+          },
+          "embedded_artwork_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Embedded-artwork switch.",
+            "default": null
+          },
+          "external_artwork_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "External-artwork switch.",
+            "default": null
+          },
+          "genres_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Genre switch.",
+            "default": null
+          },
+          "metadata_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Metadata switch.",
+            "default": null
+          },
+          "move_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Move switch.",
+            "default": null
+          },
+          "move_sidecars": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Sidecar-move switch.",
+            "default": null
+          },
+          "multi_disc_naming_mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MultiDiscNamingMode",
+                "description": "Multi-disc naming mode."
+              }
+            ],
+            "default": "inherit"
+          },
+          "multi_disc_naming_script_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Multi-disc naming script id.",
+            "default": null
+          },
+          "naming_script_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Naming script id.",
+            "default": null
+          },
+          "preserve_timestamps": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Timestamp preservation.",
+            "default": null
+          },
+          "rename_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Rename switch.",
+            "default": null
+          },
+          "source_cleanup": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SourceCleanupMode",
+                "description": "Source cleanup."
+              }
+            ],
+            "default": null
+          }
+        }
+      },
+      "LibraryManagementSaveRequest": {
+        "type": "object",
+        "description": "PUT body: full settings plus the required CAS token.",
+        "required": [
+          "settings",
+          "expected_settings_revision"
+        ],
+        "properties": {
+          "expected_settings_revision": {
+            "type": "string",
+            "description": "Compare-and-swap token from the last GET."
+          },
+          "settings": {
+            "$ref": "#/components/schemas/LibraryManagementSettings",
+            "description": "Full candidate settings."
+          }
+        }
+      },
+      "LibraryManagementSettings": {
+        "type": "object",
+        "description": "Library management settings (secret-free on purpose).",
+        "properties": {
+          "default_profile_id": {
+            "type": "string",
+            "description": "Default profile id.",
+            "default": ""
+          },
+          "external_refresh": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExternalRefreshSettings",
+                "description": "External refresh."
+              }
+            ],
+            "default": {
+              "enabled": false,
+              "jellyfin_enabled": false,
+              "navidrome_enabled": false,
+              "plex_enabled": false,
+              "retry_attempts": 3,
+              "retry_delay_seconds": 30
+            }
+          },
+          "naming_scripts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamingScript"
+            },
+            "description": "Naming scripts.",
+            "default": []
+          },
+          "preset_catalog_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Preset catalog version.",
+            "default": 0
+          },
+          "preview_retention_hours": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Preview retention in hours.",
+            "default": 24
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryManagementProfile"
+            },
+            "description": "Named profiles.",
+            "default": []
+          },
+          "recycle_bin_path": {
+            "type": "string",
+            "description": "Recycle-bin path (\"\" disables).",
+            "default": ""
+          },
+          "root_assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryManagementRootAssignment"
+            },
+            "description": "Root assignments.",
+            "default": []
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Settings schema version.",
+            "default": 1
+          },
+          "tagging_scripts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaggingScript"
+            },
+            "description": "Tagging scripts.",
+            "default": []
+          },
+          "undo_retention_days": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Undo retention in days.",
+            "default": 90
+          }
+        }
+      },
+      "LibraryManagementSettingsImpactRequest": {
+        "type": "object",
+        "description": "Impact/validate request body.",
+        "required": [
+          "settings"
+        ],
+        "properties": {
+          "expected_settings_revision": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Compare-and-swap token from the last GET, if any."
+          },
+          "settings": {
+            "$ref": "#/components/schemas/LibraryManagementSettings",
+            "description": "Full candidate settings."
+          }
+        }
+      },
+      "LibraryManagementSettingsResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LibraryManagementSettings",
+            "description": "The stored settings."
+          },
+          {
+            "type": "object",
+            "required": [
+              "settings_revision"
+            ],
+            "properties": {
+              "settings_revision": {
+                "type": "string",
+                "description": "Settings content revision."
+              }
+            }
+          }
+        ],
+        "description": "GET/PUT view of Library Management: the settings plus their content\nrevision (the write CAS token)."
+      },
       "LibraryPathRequest": {
         "type": "object",
         "description": "Add-one-library-path body.",
@@ -17732,9 +19965,9 @@
           }
         }
       },
-      "LibraryPathRuleDto": {
+      "LibraryPathRule": {
         "type": "object",
-        "description": "One path-policy rule inside a root (ordered by depth on save).",
+        "description": "One path-policy rule inside a root.",
         "properties": {
           "id": {
             "type": "string",
@@ -17744,7 +19977,7 @@
           "policy": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/IdentificationPolicyDto",
+                "$ref": "#/components/schemas/IdentificationPolicy",
                 "description": "Policy for this path."
               }
             ],
@@ -17757,7 +19990,7 @@
           }
         }
       },
-      "LibraryRootDto": {
+      "LibraryRoot": {
         "type": "object",
         "description": "One library root.",
         "properties": {
@@ -17779,7 +20012,7 @@
           "policy": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/IdentificationPolicyDto",
+                "$ref": "#/components/schemas/IdentificationPolicy",
                 "description": "Default policy."
               }
             ],
@@ -17788,14 +20021,14 @@
           "rules": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/LibraryPathRuleDto"
+              "$ref": "#/components/schemas/LibraryPathRule"
             },
             "description": "Path rules.",
             "default": []
           }
         }
       },
-      "LibraryScanScheduleDto": {
+      "LibraryScanSchedule": {
         "type": "object",
         "description": "Native automatic-scan schedule.",
         "properties": {
@@ -17821,7 +20054,7 @@
           "scan_frequency": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ScanFrequencyDto",
+                "$ref": "#/components/schemas/ScanFrequency",
                 "description": "Rolling-gap cadence, or `daily` for a fixed clock time."
               }
             ],
@@ -17830,62 +20063,44 @@
         }
       },
       "LibraryScanScheduleResponse": {
-        "type": "object",
-        "description": "GET payload: the persisted schedule plus the server's timezone label, so\nthe UI can show what \"daily at HH:MM\" is relative to. The label is\ncomputed per request and never persisted.",
-        "properties": {
-          "daily_scan_time": {
-            "type": "string",
-            "description": "Server-local `HH:MM` used when `scan_frequency` is `daily`.",
-            "default": "03:00"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LibraryScanSchedule",
+            "description": "The stored schedule."
           },
-          "last_scan": {
-            "type": [
-              "integer",
-              "null"
+          {
+            "type": "object",
+            "required": [
+              "server_timezone"
             ],
-            "format": "int64",
-            "description": "Unix time of the last scan, if any.",
-            "default": null
-          },
-          "last_scan_success": {
-            "type": "boolean",
-            "description": "Whether the last scan succeeded.",
-            "default": true
-          },
-          "scan_frequency": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ScanFrequencyDto",
-                "description": "Rolling-gap cadence, or `daily` for a fixed clock time."
+            "properties": {
+              "server_timezone": {
+                "type": "string",
+                "description": "Server-local timezone label for the daily-scan picker."
               }
-            ],
-            "default": "24hr"
-          },
-          "server_timezone": {
-            "type": "string",
-            "description": "Server-local timezone label for the daily-scan picker.",
-            "default": ""
+            }
           }
-        }
+        ],
+        "description": "GET payload: the persisted schedule plus the server's timezone label, so\nthe UI can show what \"daily at HH:MM\" is relative to. The label is\ncomputed per request and never persisted."
       },
-      "LibrarySettingsDto": {
+      "LibrarySettings": {
         "type": "object",
         "description": "Typed library settings: roots, policies, staging, naming, AcoustID.",
         "properties": {
           "acoustid_api_key": {
             "type": "string",
-            "description": "AcoustID key (masked unless unset).",
+            "description": "AcoustID key (encrypted at rest).",
             "default": ""
           },
           "enabled": {
             "type": "boolean",
-            "description": "Master switch (excluded from the revision hash).",
+            "description": "Master switch: when false the app claims no new library work.",
             "default": true
           },
           "library_roots": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/LibraryRootDto"
+              "$ref": "#/components/schemas/LibraryRoot"
             },
             "description": "Library roots.",
             "default": []
@@ -17903,85 +20118,66 @@
         }
       },
       "LibrarySettingsResponse": {
-        "type": "object",
-        "description": "GET view: settings plus the policy revision, the reconciliation\nprojection, and non-blocking warnings.",
-        "properties": {
-          "acoustid_api_key": {
-            "type": "string",
-            "description": "AcoustID key (masked unless unset).",
-            "default": ""
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LibrarySettings",
+            "description": "Normalized settings, AcoustID key masked."
           },
-          "actions_applied": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Actions the save applied.",
-            "default": []
-          },
-          "affected_scope_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Affected scope ids.",
-            "default": []
-          },
-          "enabled": {
-            "type": "boolean",
-            "description": "Master switch.",
-            "default": true
-          },
-          "library_roots": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/LibraryRootDto"
-            },
-            "description": "Library roots.",
-            "default": []
-          },
-          "naming_template": {
-            "type": "string",
-            "description": "Naming template.",
-            "default": "{albumartist}/{album} ({year})/{disc:02d}{track:02d} {title}.{ext}"
-          },
-          "pending_policy_revision": {
-            "type": [
-              "string",
-              "null"
+          {
+            "type": "object",
+            "required": [
+              "policy_revision",
+              "reconciliation_required",
+              "reconciliation_state",
+              "affected_scope_ids",
+              "actions_applied",
+              "warnings"
             ],
-            "description": "Pending revision, when awaiting reconciliation.",
-            "default": null
-          },
-          "policy_revision": {
-            "type": "string",
-            "description": "Content revision (write CAS token).",
-            "default": ""
-          },
-          "reconciliation_required": {
-            "type": "boolean",
-            "description": "Whether reconciliation is still required.",
-            "default": false
-          },
-          "reconciliation_state": {
-            "type": "string",
-            "description": "`applied` or `awaiting_reconciliation`.",
-            "default": "applied"
-          },
-          "staging_path": {
-            "type": "string",
-            "description": "Staging path.",
-            "default": ""
-          },
-          "warnings": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Non-blocking warnings.",
-            "default": []
+            "properties": {
+              "actions_applied": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Actions the save applied."
+              },
+              "affected_scope_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Affected scope ids."
+              },
+              "pending_policy_revision": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Pending revision, when awaiting reconciliation."
+              },
+              "policy_revision": {
+                "type": "string",
+                "description": "Content revision (write CAS token)."
+              },
+              "reconciliation_required": {
+                "type": "boolean",
+                "description": "Whether reconciliation is still required."
+              },
+              "reconciliation_state": {
+                "type": "string",
+                "description": "`applied` or `awaiting_reconciliation`."
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Non-blocking warnings."
+              }
+            }
           }
-        }
+        ],
+        "description": "GET view of the library settings: the settings (AcoustID key masked)\nplus the policy revision, the reconciliation projection, and\nnon-blocking warnings."
       },
       "LibrarySettingsSaveRequest": {
         "type": "object",
@@ -17996,8 +20192,8 @@
             "description": "Compare-and-swap token from the last GET."
           },
           "settings": {
-            "$ref": "#/components/schemas/LibrarySettingsDto",
-            "description": "Full candidate settings."
+            "$ref": "#/components/schemas/LibrarySettings",
+            "description": "Full candidate settings (a masked AcoustID key keeps the stored one)."
           }
         }
       },
@@ -18171,7 +20367,7 @@
           }
         }
       },
-      "ListenBrainzConnectionDto": {
+      "ListenBrainzConnection": {
         "type": "object",
         "description": "ListenBrainz connection.",
         "properties": {
@@ -18182,7 +20378,7 @@
           },
           "user_token": {
             "type": "string",
-            "description": "User token (masked unless unset).",
+            "description": "User token (encrypted at rest; v2 returned it plaintext on GET).",
             "default": ""
           },
           "username": {
@@ -18245,6 +20441,42 @@
           "text": {
             "type": "string",
             "description": "Line text."
+          }
+        }
+      },
+      "LyricsManagementSettings": {
+        "type": "object",
+        "description": "Lyrics enrichment block.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch.",
+            "default": false
+          },
+          "preserve_existing": {
+            "type": "boolean",
+            "description": "Keep existing lyrics.",
+            "default": false
+          },
+          "provider": {
+            "type": "string",
+            "description": "Lyrics provider.",
+            "default": "lrclib"
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Lyrics required for completion.",
+            "default": false
+          },
+          "write_plain": {
+            "type": "boolean",
+            "description": "Write plain lyrics.",
+            "default": true
+          },
+          "write_synced": {
+            "type": "boolean",
+            "description": "Write synced lyrics.",
+            "default": true
           }
         }
       },
@@ -18500,6 +20732,31 @@
           }
         }
       },
+      "ManagedField": {
+        "type": "object",
+        "description": "One managed tag field.",
+        "properties": {
+          "clear_when_canonical_missing": {
+            "type": "boolean",
+            "description": "Clear when the canonical value is missing.",
+            "default": false
+          },
+          "field": {
+            "type": "string",
+            "description": "Field name.",
+            "default": ""
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FieldMode",
+                "description": "Write mode."
+              }
+            ],
+            "default": "replace"
+          }
+        }
+      },
       "MatchView": {
         "type": "object",
         "description": "MBID match result: the remote album behind a MusicBrainz id.",
@@ -18533,7 +20790,7 @@
           }
         }
       },
-      "MbSourceModeDto": {
+      "MbSourceMode": {
         "type": "string",
         "description": "MusicBrainz source tier.",
         "enum": [
@@ -18541,6 +20798,119 @@
           "mirror",
           "community",
           "brainzmash"
+        ]
+      },
+      "MetadataManagementSettings": {
+        "type": "object",
+        "description": "Metadata management block.",
+        "properties": {
+          "artist_credits": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ArtistCreditSettings",
+                "description": "Artist credits."
+              }
+            ],
+            "default": {
+              "preferred_locales": [],
+              "standardization": "credited",
+              "translate_names": false
+            }
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagedField"
+            },
+            "description": "Managed fields.",
+            "default": []
+          },
+          "format_compatibility": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FormatCompatibilitySettings",
+                "description": "Format compatibility."
+              }
+            ],
+            "default": {
+              "constrained_genres_primary_only": false,
+              "id3_text_encoding": "utf8",
+              "id3_version": "2.4",
+              "id3v23_join_delimiter": "; ",
+              "mp3_apev2_policy": "preserve",
+              "raw_aac_tag_policy": "save_apev2",
+              "remove_id3_from_flac": false,
+              "wav_tag_policy": "id3"
+            }
+          },
+          "preserve_embedded_art_during_scrub": {
+            "type": "boolean",
+            "description": "Keep embedded art during a scrub.",
+            "default": true
+          },
+          "preserve_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields never touched.",
+            "default": []
+          },
+          "relationships": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipCreditSettings",
+                "description": "Relationship credits."
+              }
+            ],
+            "default": {
+              "enabled": true,
+              "types": [
+                "composer",
+                "lyricist",
+                "conductor",
+                "performer",
+                "arranger",
+                "remixer",
+                "producer"
+              ]
+            }
+          },
+          "scrub_unmanaged_tags": {
+            "type": "boolean",
+            "description": "Scrub unmanaged tags.",
+            "default": false
+          },
+          "tagging_script_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tagging script ids.",
+            "default": []
+          }
+        }
+      },
+      "Mp3ApePolicy": {
+        "type": "string",
+        "description": "APEv2 policy for MP3 writes.",
+        "enum": [
+          "preserve",
+          "remove"
+        ]
+      },
+      "MultiDiscNamingMode": {
+        "type": "string",
+        "description": "Multi-disc naming mode for a root override.",
+        "enum": [
+          "inherit",
+          "standard",
+          "script"
         ]
       },
       "MusicBrainzBindingRequest": {
@@ -18572,7 +20942,7 @@
           }
         }
       },
-      "MusicBrainzSettingsDto": {
+      "MusicBrainzSettings": {
         "type": "object",
         "description": "MusicBrainz connection settings.",
         "properties": {
@@ -18582,7 +20952,7 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/BrainzmashActiveBindingDto",
+                "$ref": "#/components/schemas/BrainzmashActiveBinding",
                 "description": "Active BrainzMash binding, if any."
               }
             ],
@@ -18615,18 +20985,6 @@
             "description": "Source generation.",
             "default": 1
           },
-          "pending_brainzmash": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/BrainzmashPendingProposalDto",
-                "description": "Transient pending proposal, when one is staged."
-              }
-            ],
-            "default": null
-          },
           "rate_limit": {
             "type": "number",
             "format": "double",
@@ -18636,7 +20994,7 @@
           "selected_source_mode": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/MbSourceModeDto",
+                "$ref": "#/components/schemas/MbSourceMode",
                 "description": "Last tier the admin chose."
               }
             ],
@@ -18644,13 +21002,12 @@
           },
           "source_id": {
             "type": "string",
-            "description": "Source identity.",
-            "default": ""
+            "description": "Source identity."
           },
           "source_mode": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/MbSourceModeDto",
+                "$ref": "#/components/schemas/MbSourceMode",
                 "description": "Active source tier."
               }
             ],
@@ -18693,13 +21050,38 @@
           "source_mode": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/MbSourceModeDto",
+                "$ref": "#/components/schemas/MbSourceMode",
                 "description": "Desired source tier."
               }
             ],
             "default": "official"
           }
         }
+      },
+      "MusicBrainzSettingsView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/MusicBrainzSettings",
+            "description": "The settled settings."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "pending_brainzmash": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BrainzmashPendingProposal",
+                    "description": "Transient pending proposal, when one is staged."
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "GET view of the MusicBrainz connection: the settled settings plus the\ntransient pending BrainzMash proposal, when one is staged."
       },
       "MusicBrainzVerifyRequest": {
         "oneOf": [
@@ -18732,7 +21114,7 @@
           }
         }
       },
-      "MusicSourceDto": {
+      "MusicSource": {
         "type": "string",
         "description": "Which service backs scrobble-targeted discovery.",
         "enum": [
@@ -18740,7 +21122,50 @@
           "lastfm"
         ]
       },
-      "NavidromeConnectionDto": {
+      "NamingScript": {
+        "type": "object",
+        "description": "One naming script.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Script id.",
+            "default": ""
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name.",
+            "default": ""
+          },
+          "preset_origin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Preset origin.",
+            "default": null
+          },
+          "preset_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Preset version.",
+            "default": null
+          },
+          "revision": {
+            "type": "string",
+            "description": "Content revision.",
+            "default": ""
+          },
+          "source": {
+            "type": "string",
+            "description": "Script source.",
+            "default": ""
+          }
+        }
+      },
+      "NavidromeConnection": {
         "type": "object",
         "description": "Navidrome connection.",
         "properties": {
@@ -18756,7 +21181,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password (masked unless unset).",
+            "description": "Password (encrypted at rest).",
             "default": ""
           },
           "playlist_sync_enabled": {
@@ -18850,13 +21275,13 @@
           }
         }
       },
-      "NewznabIndexerDto": {
+      "NewznabIndexer": {
         "type": "object",
         "description": "One configured Newznab indexer. DroppedNeedle ships none; the user adds\ntheir own.",
         "properties": {
           "api_key": {
             "type": "string",
-            "description": "API key (masked unless unset; per element).",
+            "description": "API key (encrypted at rest, per element).",
             "default": ""
           },
           "categories": {
@@ -18879,12 +21304,12 @@
           },
           "id": {
             "type": "string",
-            "description": "Stable id (blank on create; the path wins on update).",
+            "description": "Stable id.",
             "default": ""
           },
           "name": {
             "type": "string",
-            "description": "Display name.",
+            "description": "Display name (list identity for import).",
             "default": ""
           },
           "priority": {
@@ -18895,7 +21320,7 @@
           },
           "type": {
             "type": "string",
-            "description": "Indexer type tag.",
+            "description": "Indexer type tag (stored as `type`; renamed for the keyword).",
             "default": "newznab"
           },
           "url": {
@@ -19097,7 +21522,7 @@
           }
         }
       },
-      "OidcConnectionDto": {
+      "OidcConnection": {
         "type": "object",
         "description": "OIDC connection.",
         "properties": {
@@ -19108,7 +21533,7 @@
           },
           "client_secret": {
             "type": "string",
-            "description": "Client secret (masked unless unset).",
+            "description": "Client secret (encrypted at rest).",
             "default": ""
           },
           "enabled": {
@@ -19163,6 +21588,109 @@
           }
         }
       },
+      "OrganizationManagementSettings": {
+        "type": "object",
+        "description": "Organization management block.",
+        "properties": {
+          "compatibility": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PathCompatibilitySettings",
+                "description": "Path compatibility."
+              }
+            ],
+            "default": {
+              "extension_case": "preserve",
+              "maximum_component_length": 240,
+              "maximum_path_length": 4096,
+              "replace_non_ascii": false,
+              "replace_spaces_with_underscores": false,
+              "separator_replacement": "_",
+              "unicode_normalization": "NFC",
+              "windows_compatible": true,
+              "windows_legacy_path_limit": false
+            }
+          },
+          "move_enabled": {
+            "type": "boolean",
+            "description": "Move files.",
+            "default": true
+          },
+          "move_sidecars": {
+            "type": "boolean",
+            "description": "Move sidecar files along.",
+            "default": true
+          },
+          "multi_disc_naming_script_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Multi-disc naming script id.",
+            "default": null
+          },
+          "naming_script_id": {
+            "type": "string",
+            "description": "Naming script id.",
+            "default": "69202666-cb88-52b0-bac2-0afc62b1e909"
+          },
+          "remove_empty_directories": {
+            "type": "boolean",
+            "description": "Remove newly empty directories.",
+            "default": true
+          },
+          "rename_enabled": {
+            "type": "boolean",
+            "description": "Rename files.",
+            "default": true
+          },
+          "sidecar_patterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Sidecar filename patterns.",
+            "default": [
+              "cover.jpg",
+              "cover.jpeg",
+              "cover.png",
+              "cover.webp",
+              "folder.jpg",
+              "folder.jpeg",
+              "folder.png",
+              "front.jpg",
+              "front.png",
+              "back.jpg",
+              "back.jpeg",
+              "back.png",
+              "back.webp",
+              "booklet*.jpg",
+              "booklet*.jpeg",
+              "booklet*.png",
+              "booklet*.webp",
+              "medium*.jpg",
+              "medium*.jpeg",
+              "medium*.png",
+              "medium*.webp",
+              "*.cue",
+              "*.log",
+              "*.lrc",
+              "*.m3u",
+              "*.m3u8",
+              "*.pls"
+            ]
+          },
+          "source_cleanup": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SourceCleanupMode",
+                "description": "Source cleanup after a confirmed move."
+              }
+            ],
+            "default": "remove_after_confirmed_move"
+          }
+        }
+      },
       "PasswordChange": {
         "type": "object",
         "description": "Change password on an account that already has one.",
@@ -19201,6 +21729,67 @@
           "username": {
             "type": "string",
             "description": "Account username."
+          }
+        }
+      },
+      "PathCompatibilitySettings": {
+        "type": "object",
+        "description": "Path-compatibility handling.",
+        "properties": {
+          "extension_case": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExtensionCase",
+                "description": "Extension case."
+              }
+            ],
+            "default": "preserve"
+          },
+          "maximum_component_length": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Max path-component length.",
+            "default": 240
+          },
+          "maximum_path_length": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Max path length.",
+            "default": 4096
+          },
+          "replace_non_ascii": {
+            "type": "boolean",
+            "description": "Replace non-ASCII characters.",
+            "default": false
+          },
+          "replace_spaces_with_underscores": {
+            "type": "boolean",
+            "description": "Replace spaces with underscores.",
+            "default": false
+          },
+          "separator_replacement": {
+            "type": "string",
+            "description": "Path-separator replacement.",
+            "default": "_"
+          },
+          "unicode_normalization": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UnicodeNormalization",
+                "description": "Unicode normalization."
+              }
+            ],
+            "default": "NFC"
+          },
+          "windows_compatible": {
+            "type": "boolean",
+            "description": "Windows-safe names.",
+            "default": true
+          },
+          "windows_legacy_path_limit": {
+            "type": "boolean",
+            "description": "Honor the legacy Windows path limit.",
+            "default": false
           }
         }
       },
@@ -19923,7 +22512,7 @@
           }
         }
       },
-      "PlexConnectionDto": {
+      "PlexConnection": {
         "type": "object",
         "description": "Plex connection.",
         "properties": {
@@ -19947,7 +22536,7 @@
           },
           "plex_token": {
             "type": "string",
-            "description": "Plex token (masked unless unset).",
+            "description": "Plex token (encrypted at rest).",
             "default": ""
           },
           "plex_url": {
@@ -20597,18 +23186,34 @@
           }
         }
       },
-      "PrimaryMusicSourceDto": {
+      "PrimaryMusicSource": {
         "type": "object",
         "description": "Primary music source selection.",
         "properties": {
           "source": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/MusicSourceDto",
+                "$ref": "#/components/schemas/MusicSource",
                 "description": "Active source."
               }
             ],
             "default": "listenbrainz"
+          }
+        }
+      },
+      "ProfileNotificationSettings": {
+        "type": "object",
+        "description": "Post-publish notifications.",
+        "properties": {
+          "refresh_droppedneedle": {
+            "type": "boolean",
+            "description": "Refresh DroppedNeedle views.",
+            "default": true
+          },
+          "refresh_external_servers": {
+            "type": "boolean",
+            "description": "Refresh external servers.",
+            "default": false
           }
         }
       },
@@ -20675,13 +23280,13 @@
           }
         }
       },
-      "ProwlarrConnectionDto": {
+      "ProwlarrConnection": {
         "type": "object",
         "description": "Single Prowlarr connection (Prowlarr multiplexes its own indexers).",
         "properties": {
           "api_key": {
             "type": "string",
-            "description": "API key (masked unless unset).",
+            "description": "API key (encrypted at rest).",
             "default": ""
           },
           "enabled": {
@@ -20729,7 +23334,7 @@
           }
         }
       },
-      "QualityRecipeEntryDto": {
+      "QualityRecipeEntry": {
         "type": "object",
         "description": "One ordered, closed format-quality recipe entry. Unknown keys are\nrejected at decode so a future setting cannot silently become a\ndifferent recipe.",
         "required": [
@@ -21433,6 +24038,15 @@
           }
         }
       },
+      "RawAacTagPolicy": {
+        "type": "string",
+        "description": "Raw-AAC tag policy.",
+        "enum": [
+          "save_apev2",
+          "do_not_write",
+          "remove_apev2"
+        ]
+      },
       "RecoveryCodeResponse": {
         "type": "object",
         "description": "A minted recovery code. The code appears here once, never again.",
@@ -21525,6 +24139,47 @@
             "description": "Whether the task went back in line."
           }
         }
+      },
+      "RelationshipCreditSettings": {
+        "type": "object",
+        "description": "Relationship-credit handling.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch.",
+            "default": true
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelationshipType"
+            },
+            "description": "Credited relationship types.",
+            "default": [
+              "composer",
+              "lyricist",
+              "conductor",
+              "performer",
+              "arranger",
+              "remixer",
+              "producer"
+            ]
+          }
+        }
+      },
+      "RelationshipType": {
+        "type": "string",
+        "description": "Credited relationship type.",
+        "enum": [
+          "composer",
+          "lyricist",
+          "conductor",
+          "performer",
+          "arranger",
+          "remixer",
+          "producer",
+          "other"
+        ]
       },
       "RemotesAlbumPage": {
         "type": "object",
@@ -22175,6 +24830,45 @@
           }
         }
       },
+      "ReplayGainManagementSettings": {
+        "type": "object",
+        "description": "ReplayGain enrichment block.",
+        "properties": {
+          "album_aware": {
+            "type": "boolean",
+            "description": "Album-aware gain.",
+            "default": true
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch.",
+            "default": false
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReplayGainMode",
+                "description": "Write mode."
+              }
+            ],
+            "default": "preserve"
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Gain required for completion.",
+            "default": false
+          }
+        }
+      },
+      "ReplayGainMode": {
+        "type": "string",
+        "description": "ReplayGain write mode.",
+        "enum": [
+          "preserve",
+          "fill_missing",
+          "replace"
+        ]
+      },
       "RequestItem": {
         "type": "object",
         "description": "One request row in list views.",
@@ -22692,13 +25386,13 @@
           }
         }
       },
-      "SabnzbdConnectionDto": {
+      "SabnzbdConnection": {
         "type": "object",
-        "description": "SABnzbd connection. `api_key` is the full key (the add-only nzbkey\ncannot do queue/history/delete); masked on read, preserved on a masked\nsave.",
+        "description": "SABnzbd connection. The key is the full key (the add-only nzbkey cannot\ndo queue/history/delete).",
         "properties": {
           "api_key": {
             "type": "string",
-            "description": "Full API key (masked unless unset).",
+            "description": "Full API key (encrypted at rest).",
             "default": ""
           },
           "category": {
@@ -22893,11 +25587,11 @@
           }
         }
       },
-      "ScanFrequencyDto": {
+      "ScanFrequency": {
         "type": "string",
         "description": "Automatic-scan cadence values.",
         "enum": [
-          "manual",
+          "Manual",
           "5min",
           "10min",
           "30min",
@@ -23230,7 +25924,7 @@
           }
         }
       },
-      "ScrobbleSettingsDto": {
+      "ScrobbleSettings": {
         "type": "object",
         "description": "Scrobble targets.",
         "properties": {
@@ -23667,7 +26361,7 @@
           }
         }
       },
-      "SecuritySettingsDto": {
+      "SecuritySettings": {
         "type": "object",
         "description": "Security posture settings (no secrets; the HIBP path is a local file).",
         "properties": {
@@ -23700,7 +26394,7 @@
           "library_download_access": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/DownloadAccessDto",
+                "$ref": "#/components/schemas/DownloadAccess",
                 "description": "Who may download library files."
               }
             ],
@@ -24013,13 +26707,13 @@
           }
         }
       },
-      "SlskdConnectionDto": {
+      "SlskdConnection": {
         "type": "object",
-        "description": "slskd download-client connection. `api_key` is masked on read and\npreserved on save when the masked sentinel comes back unchanged.",
+        "description": "slskd download-client connection.",
         "properties": {
           "api_key": {
             "type": "string",
-            "description": "API key (masked unless unset).",
+            "description": "API key (encrypted at rest).",
             "default": ""
           },
           "auto_retry_base_interval_minutes": {
@@ -24158,6 +26852,14 @@
           }
         }
       },
+      "SourceCleanupMode": {
+        "type": "string",
+        "description": "Source-tree cleanup after a confirmed move.",
+        "enum": [
+          "keep",
+          "remove_after_confirmed_move"
+        ]
+      },
       "SourceGate": {
         "type": "object",
         "description": "Per-source release gate verdict. Each source gates independently: one\nred gate never flips another.",
@@ -24205,7 +26907,7 @@
           "plex"
         ]
       },
-      "SourcePriorityDto": {
+      "SourcePriorityOrder": {
         "type": "object",
         "description": "Acquisition source try-order, e.g. `[\"soulseek\", \"usenet\"]`. Bundled\nsources are always present; well-formed `plugin:<name>` keys pass\nthrough order-preserved; anything else is dropped.",
         "properties": {
@@ -24657,6 +27359,49 @@
             "format": "int32",
             "description": "Rows reconciled.",
             "minimum": 0
+          }
+        }
+      },
+      "TaggingScript": {
+        "type": "object",
+        "description": "One tagging script.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Script id.",
+            "default": ""
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name.",
+            "default": ""
+          },
+          "preset_origin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Preset origin.",
+            "default": null
+          },
+          "preset_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Preset version.",
+            "default": null
+          },
+          "revision": {
+            "type": "string",
+            "description": "Content revision.",
+            "default": ""
+          },
+          "source": {
+            "type": "string",
+            "description": "Script source.",
+            "default": ""
           }
         }
       },
@@ -25268,6 +28013,14 @@
           }
         }
       },
+      "UnicodeNormalization": {
+        "type": "string",
+        "description": "Unicode normalization for paths.",
+        "enum": [
+          "NFC",
+          "NFKC"
+        ]
+      },
       "UnseenCountResponse": {
         "type": "object",
         "description": "Unseen-count answer.",
@@ -25359,22 +28112,22 @@
           }
         }
       },
-      "UsenetBackendDto": {
+      "UsenetBackend": {
         "type": "string",
-        "description": "Which Usenet search side is active.",
+        "description": "Which Usenet search side is active. Reads collapse unknown values to\n`Indexers` (v2: pre-existing setups behave as before with no migration);\nsaves only accept known values (the derived decode and `parse` are\nboth strict).",
         "enum": [
           "indexers",
           "prowlarr"
         ]
       },
-      "UsenetSearchBackendDto": {
+      "UsenetSearchBackend": {
         "type": "object",
         "description": "The active Usenet search backend (either/or): `\"indexers\"` for the\nnative Newznab priority list, `\"prowlarr\"` for the single Prowlarr\nconnection. Unknown values are a 400, never a silent reset.",
         "properties": {
           "backend": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/UsenetBackendDto",
+                "$ref": "#/components/schemas/UsenetBackend",
                 "description": "Active backend."
               }
             ],
@@ -25382,7 +28135,7 @@
           }
         }
       },
-      "UserPreferencesDto": {
+      "UserPreferences": {
         "type": "object",
         "description": "Release-type filters for discovery and search.",
         "properties": {
@@ -25880,7 +28633,7 @@
           }
         }
       },
-      "WantedWatcherDto": {
+      "WantedWatcher": {
         "type": "object",
         "description": "Wanted watcher toggles. Cadence stays code constants on purpose.",
         "properties": {
@@ -25912,6 +28665,15 @@
             "default": true
           }
         }
+      },
+      "WavTagPolicy": {
+        "type": "string",
+        "description": "WAV tag policy.",
+        "enum": [
+          "id3",
+          "riff_info",
+          "preserve_existing"
+        ]
       },
       "WeeklyExploration": {
         "type": "object",
@@ -26096,13 +28858,13 @@
           }
         }
       },
-      "WrappedSettingsDto": {
+      "WrappedSettings": {
         "type": "object",
         "description": "Shared secret for the wrapped endpoints (service-to-service).",
         "properties": {
           "api_key": {
             "type": "string",
-            "description": "API key (masked unless unset).",
+            "description": "API key (encrypted at rest).",
             "default": ""
           }
         }
@@ -26183,7 +28945,7 @@
           }
         }
       },
-      "YouTubeConnectionDto": {
+      "YouTubeConnection": {
         "type": "object",
         "description": "YouTube connection.",
         "properties": {
@@ -26194,7 +28956,7 @@
           },
           "api_key": {
             "type": "string",
-            "description": "API key (masked unless unset).",
+            "description": "API key (encrypted at rest; v2 returned it plaintext on GET).",
             "default": ""
           },
           "daily_quota_limit": {

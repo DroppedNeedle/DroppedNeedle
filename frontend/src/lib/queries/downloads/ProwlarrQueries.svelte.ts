@@ -9,7 +9,7 @@ import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
 
-export type ProwlarrConnectionSettings = components['schemas']['ProwlarrConnectionDto'];
+export type ProwlarrConnectionSettings = components['schemas']['ProwlarrConnection'];
 export type ProwlarrTestResult = components['schemas']['ProwlarrTestResponse'];
 
 const getProwlarrConfigQueryOptions = () =>

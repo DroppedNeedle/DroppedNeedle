@@ -37,7 +37,7 @@ use crate::reads::collections::state::{
     PendingApproval, PendingApprovalsSource, PendingBatch,
 };
 use crate::runtime_config::secret_sections::{LidarrImportConnection, SpotifySettings};
-use crate::runtime_config::{ConfigStore, Secret};
+use crate::runtime_config::{ConfigStore, Masked, Secret};
 
 /// Lidarr connection settings over the `lidarr_import` secret section.
 /// Read failures fail closed to empty (the import then reports Lidarr as
@@ -55,7 +55,11 @@ impl ConfigLidarrSettings {
 
 impl LidarrSettingsStore for ConfigLidarrSettings {
     fn get(&self) -> LidarrConnectionSettings {
-        match self.store.get_masked::<LidarrImportConnection>() {
+        match self
+            .store
+            .get_masked::<LidarrImportConnection>()
+            .map(Masked::into_inner)
+        {
             Ok(section) => LidarrConnectionSettings {
                 url: section.url,
                 api_key: section.api_key.expose().to_owned(),
@@ -107,7 +111,11 @@ impl ConfigSpotifySettings {
 
 impl SpotifySettingsStore for ConfigSpotifySettings {
     fn get(&self) -> ImportsSpotifySettings {
-        match self.store.get_masked::<SpotifySettings>() {
+        match self
+            .store
+            .get_masked::<SpotifySettings>()
+            .map(Masked::into_inner)
+        {
             Ok(section) => ImportsSpotifySettings {
                 client_id: section.client_id,
                 client_secret: section.client_secret.expose().to_owned(),

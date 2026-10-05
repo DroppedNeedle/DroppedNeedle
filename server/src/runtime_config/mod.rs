@@ -23,6 +23,7 @@ pub mod store;
 
 pub use crypto::Crypto;
 pub use error::ConfigError;
+pub use mask::Masked;
 pub use quota::{QuotaStatus, QuotaStore};
 pub use secret::Secret;
 pub use secret_sections::SecretSection;
@@ -34,6 +35,7 @@ pub use store::ConfigStore;
 /// [`ConfigStore::unknown_top_level_keys`](store::ConfigStore::unknown_top_level_keys).
 pub const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
     "user_preferences",
+    "home_settings",
     "library_scan_schedule",
     "library_scan_filesystem_watcher",
     "advanced_settings",
@@ -97,10 +99,6 @@ pub const DROPPED_SECTIONS: &[DroppedSection] = &[
         note: "Vestigial; zero consumers, no routes.",
     },
     DroppedSection {
-        key: "home_settings",
-        note: "Dead routes (500s); section prefs live elsewhere.",
-    },
-    DroppedSection {
         key: "_legacy_lidarr",
         note: "One-time backup; its plaintext key never carries forward.",
     },
@@ -115,7 +113,6 @@ pub const DROPPED_SECTION_KEYS: &[&str] = &[
     "library_sync_settings",
     "library_scan_dirty_scopes",
     "local_files_settings",
-    "home_settings",
     "_legacy_lidarr",
     "jellyfin_url",
 ];

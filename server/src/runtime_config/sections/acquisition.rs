@@ -2,6 +2,7 @@
 //! Usenet backend, Free Music, store links, and the download policy.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::{Section, check_range, validation};
 use crate::runtime_config::error::ConfigError;
@@ -39,7 +40,7 @@ pub fn derive_default_order(quality_min: &str, quality_max: &str) -> Vec<String>
 // --- wanted ---------------------------------------------------------------
 
 /// Wanted watcher toggles. Cadence stays code constants on purpose.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct WantedWatcher {
     /// Master switch (rollback lever, read per sweep).
@@ -145,8 +146,10 @@ impl Section for SourcePriority {
 
 /// Which Usenet search side is active. Reads collapse unknown values to
 /// `Indexers` (v2: pre-existing setups behave as before with no migration);
-/// saves only accept known values, via `parse`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// saves only accept known values (the derived decode and `parse` are
+/// both strict).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum UsenetBackend {
     /// The native Newznab priority list.
     #[default]
@@ -208,7 +211,7 @@ impl Section for UsenetBackendSetting {
 // --- free_music / get_it --------------------------------------------------
 
 /// Transcode target for remote playback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AudioFormat {
     /// FLAC.
@@ -221,7 +224,7 @@ pub enum AudioFormat {
 }
 
 /// Free-music acquisition settings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct FreeMusic {
     /// Master switch.
@@ -255,7 +258,7 @@ impl Section for FreeMusic {
 }
 
 /// Store-region settings.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct GetIt {
     /// Two-letter store region.
@@ -314,7 +317,7 @@ pub const QUALITY_KBPS_MAX: i64 = 2048;
 /// One ordered, closed format-quality recipe entry. Unknown keys are
 /// rejected at decode so a future setting cannot silently become a
 /// different recipe.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QualityRecipeEntry {
     /// Container: `flac` or `mp3`.
@@ -559,7 +562,7 @@ pub fn validate_quality_recipe(entries: &[QualityRecipeEntry]) -> Result<(), Con
 
 /// Download policy: quality tiers, recipe v2, timeouts, retry, retention,
 /// recycle bin, quotas, and the upgrade scan.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct DownloadPolicy {
     /// Worst accepted tier label.

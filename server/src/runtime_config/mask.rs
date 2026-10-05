@@ -13,6 +13,11 @@
 //! equals its mask can never be saved (the save reads as keep-existing),
 //! and the v2 `***`-prefix AudioDB limitation is gone (a real key starting
 //! with `***` now saves fine, because only the full mask matches).
+//!
+//! [`Masked`] carries this rule through the API: settings handlers serve
+//! and accept masked sections only.
+
+use serde::{Deserialize, Serialize};
 
 /// slskd download-client key (v2 literal kept).
 pub const SLSKD_API_KEY_MASK: &str = "slskd****";
@@ -84,11 +89,90 @@ pub fn resolve_on_save(incoming: &str, mask: &str, strip: bool) -> SaveResolutio
     }
 }
 
+/// The value a connection probe should test for one submitted secret:
+/// the stored plaintext when the mask came back, otherwise the submitted
+/// value under the same strip rule a save applies. Verify endpoints test
+/// what the form holds, so this is the save rule pointed at the stored
+/// plaintext instead of the stored ciphertext.
+#[must_use]
+pub fn resolve_for_probe(incoming: &str, mask: &str, strip: bool, stored_plain: &str) -> String {
+    match resolve_on_save(incoming, mask, strip) {
+        SaveResolution::KeepStored => stored_plain.to_owned(),
+        SaveResolution::StoreNew(value) => value,
+    }
+}
+
 /// The masked display for one decrypted secret: the mask when set, empty
 /// when unset (so clients can tell unset apart from set).
 #[must_use]
 pub fn display_mask(plaintext: &str, mask: &'static str) -> &'static str {
     if plaintext.is_empty() { "" } else { mask }
+}
+
+/// A section (or indexer) as it crosses the API boundary. Every secret
+/// field holds its mask sentinel, a new value, or "" (clear), never the
+/// stored plaintext:
+///
+/// - reads build it through [`ConfigStore::get_masked`](super::ConfigStore::get_masked),
+///   which swaps each set secret for its mask;
+/// - request bodies decode straight into it, and
+///   [`ConfigStore::save_secret`](super::ConfigStore::save_secret) resolves
+///   each field (mask keeps the stored secret, anything else is new);
+/// - [`ConfigStore::unmask`](super::ConfigStore::unmask) turns submitted
+///   values into what a connection probe should test.
+///
+/// Settings handlers serve and accept `Masked<S>` for secret sections, so
+/// a raw read (decrypted secrets) cannot be returned by accident: it has a
+/// different type. On the wire the wrapper is invisible: it serializes as
+/// `S`, and its OpenAPI schema is `S`'s.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Masked<T>(T);
+
+impl<T> Masked<T> {
+    /// The wrapped value, for reading or editing non-secret fields before
+    /// handing it back to a save (which re-wraps it through `From`).
+    #[must_use]
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+/// Values built server-side follow the same rule as a request body: each
+/// secret field holds its mask (keep), a new value, or "" (clear).
+impl<T> From<T> for Masked<T> {
+    fn from(value: T) -> Self {
+        Self(value)
+    }
+}
+
+impl<T> std::ops::Deref for Masked<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T: utoipa::PartialSchema> utoipa::PartialSchema for Masked<T> {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        T::schema()
+    }
+}
+
+impl<T: utoipa::ToSchema> utoipa::ToSchema for Masked<T> {
+    fn name() -> std::borrow::Cow<'static, str> {
+        T::name()
+    }
+
+    fn schemas(
+        schemas: &mut Vec<(
+            String,
+            utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
+        )>,
+    ) {
+        T::schemas(schemas);
+    }
 }
 
 #[cfg(test)]

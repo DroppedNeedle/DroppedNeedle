@@ -10,8 +10,8 @@
 		createVerifyListenBrainzMutation
 	} from '$lib/queries/listenbrainz/ListenBrainzMutations.svelte';
 	import type {
-		ListenBrainzConnectionDto,
-		ScrobbleSettingsDto,
+		ListenBrainzConnection,
+		ScrobbleSettings,
 		VerifyConnectionResponse
 	} from '$lib/queries/listenbrainz/types';
 
@@ -21,9 +21,9 @@
 	const saveTargets = createSaveScrobbleTargetsMutation();
 	const verify = createVerifyListenBrainzMutation();
 
-	let connDraft = $state<ListenBrainzConnectionDto | null>(null);
+	let connDraft = $state<ListenBrainzConnection | null>(null);
 	let connDirty = $state(false);
-	let targetsDraft = $state<ScrobbleSettingsDto | null>(null);
+	let targetsDraft = $state<ScrobbleSettings | null>(null);
 	let targetsDirty = $state(false);
 	let showToken = $state(false);
 	let verdict = $state<VerifyConnectionResponse | null>(null);
