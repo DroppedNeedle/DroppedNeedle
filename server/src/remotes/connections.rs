@@ -944,6 +944,64 @@ fn cache_scope(user_id: &str, source: SourceName, base_url: &str, credential: &s
     format!("user:{user_id}:{generation}")
 }
 
+/// Stores the media link a Plex or Jellyfin sign-in hands back, so the
+/// account works for playback with no extra setup (v2 auto-link). Failures
+/// log and never fail the sign-in.
+#[derive(Clone)]
+pub struct SignInLinks {
+    resolver: Arc<ConnectionResolver>,
+}
+
+impl SignInLinks {
+    /// Write links through the shared resolver.
+    pub fn new(resolver: Arc<ConnectionResolver>) -> Self {
+        Self { resolver }
+    }
+
+    async fn store(&self, user_id: &str, link: UserLink) {
+        if let Err(error) = self.resolver.save_link(user_id, &link).await {
+            tracing::warn!(
+                source = link.source().as_str(),
+                %error,
+                "could not store the signed-in media link; the user can link it by hand"
+            );
+        }
+    }
+}
+
+impl crate::auth::federated::plex::PlexConnectionLink for SignInLinks {
+    async fn link(&self, user_id: &str, profile: &crate::auth::federated::plex::PlexProfile) {
+        self.store(
+            user_id,
+            UserLink::Plex {
+                auth_token: profile.auth_token.clone(),
+                server_access_token: profile.server_access_token.clone(),
+                plex_user_id: profile.uuid.clone(),
+                username: profile.display_name.clone(),
+            },
+        )
+        .await;
+    }
+}
+
+impl crate::auth::federated::jellyfin_login::JellyfinConnectionLink for SignInLinks {
+    async fn link(
+        &self,
+        user_id: &str,
+        profile: &crate::auth::federated::jellyfin_login::JellyfinProfile,
+    ) {
+        self.store(
+            user_id,
+            UserLink::Jellyfin {
+                access_token: profile.access_token.clone(),
+                jellyfin_user_id: profile.jellyfin_user_id.clone(),
+                username: profile.username.clone(),
+            },
+        )
+        .await;
+    }
+}
+
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
