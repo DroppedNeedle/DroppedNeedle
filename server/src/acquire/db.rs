@@ -7,8 +7,6 @@
 
 use std::path::Path;
 #[cfg(any(test, feature = "test-support"))]
-use std::path::PathBuf;
-#[cfg(any(test, feature = "test-support"))]
 use std::sync::Arc;
 
 use rusqlite::Transaction;
@@ -22,7 +20,7 @@ pub struct AcquireDb {
     pool: SqlitePool,
     lane: WriteLane,
     #[cfg(any(test, feature = "test-support"))]
-    _scratch: Option<Arc<ScratchDir>>,
+    _scratch: Option<Arc<crate::tooling::scratch::ScratchDir>>,
 }
 
 impl AcquireDb {
@@ -80,20 +78,11 @@ impl AcquireDb {
     /// tokio runtime (the lane spawns its scheduler there).
     #[cfg(any(test, feature = "test-support"))]
     pub fn scratch() -> Result<Self, String> {
-        use std::sync::atomic::{AtomicU64, Ordering};
-
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|span| span.as_nanos())
-            .unwrap_or(0);
-        let dir = std::env::temp_dir().join(format!(
-            "dn-acquire-db-{}-{}-{stamp}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).map_err(|error| format!("scratch dir: {error}"))?;
-        let scratch = Arc::new(ScratchDir(dir.clone()));
+        let scratch = Arc::new(
+            crate::tooling::scratch::ScratchDir::new("acquire-db")
+                .map_err(|error| format!("scratch dir: {error}"))?,
+        );
+        let dir = scratch.to_path_buf();
         let path = dir.join("app.db");
         let conn = rusqlite::Connection::open(&path).map_err(|error| error.to_string())?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")
@@ -132,18 +121,6 @@ impl AcquireDb {
         })
         .await
         .map_err(|error| error.to_string())
-    }
-}
-
-/// Temp directory removed on drop.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug)]
-struct ScratchDir(PathBuf);
-
-#[cfg(any(test, feature = "test-support"))]
-impl Drop for ScratchDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 

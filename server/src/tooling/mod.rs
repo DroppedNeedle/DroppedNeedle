@@ -21,4 +21,5 @@ pub mod datalock;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixture;
 pub mod restore;
+#[cfg(any(test, feature = "test-support"))]
 pub mod scratch;

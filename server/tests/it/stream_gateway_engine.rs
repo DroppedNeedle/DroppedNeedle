@@ -399,7 +399,7 @@ async fn seek_then_transcode_starts_at_offset() {
 #[tokio::test]
 async fn forced_verdict_transcodes_same_codec_despite_unknown_source_bitrate() {
     // M2: the gateway re-decide sees no source bitrate, so a same-codec
-    // bitrate plan lands direct — unless the compat adapter carries the
+    // bitrate plan lands direct, unless the compat adapter carries the
     // explicit `force_transcode` verdict, which the gateway then honors.
     let root = ScratchRoot::new("forced");
     root.write("song.mp3", b"MP3-BYTES");

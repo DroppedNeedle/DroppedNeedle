@@ -336,7 +336,7 @@ async fn truncated_stub_flagged_succeeded_is_failed_not_completed() {
     let repo = repository(&mock);
 
     // Succeeded flag but only half the bytes moved: a truncated stub (v2
-    // #122) — never importable, so failed when terminal.
+    // #122): never importable, so failed when terminal.
     mock.inject_transfer_progress(
         "alice",
         "stub.flac",
@@ -479,7 +479,7 @@ fn recipe_validation_rejects_duplicates_and_overlaps() {
 fn recipe_ranking_prefers_flac_then_320_with_dsd_rejected() {
     let policy = DownloadPolicy::default();
 
-    // FLAC (bitrate unknown — NOT a fidelity axis, v2) outranks 320 MP3.
+    // FLAC (bitrate unknown, not a fidelity axis in v2) outranks 320 MP3.
     let flac = policy.recipe_rank("flac", None, Some(16), Some(44100));
     let mp3 = policy.recipe_rank("mp3", Some(320), None, None);
     let low_mp3 = policy.recipe_rank("mp3", Some(128), None, None);

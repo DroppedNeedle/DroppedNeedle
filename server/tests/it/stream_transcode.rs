@@ -1,7 +1,7 @@
 //! Transcode module tests: decide policy, ffmpeg argv, leases, cancel.
 //!
 //! No routes live in this module, so every test drives the engine. ffmpeg itself is
-//! always scripted through the injected spawner seam — no test needs a real
+//! always scripted through the injected spawner seam: no test needs a real
 //! binary on `PATH`, and none touches the network.
 
 use droppedneedle::stream::transcode;
