@@ -342,10 +342,17 @@ impl<P: Principal, S: Store, B: AudioBackend> Ctx<'_, P, S, B> {
         )
     }
 
-    /// Storage errors surface as code 0 (generic), never an auth code.
+    /// Storage errors surface as code 0 (generic), never an auth code. The
+    /// cause is logged; the client sees only the fixed internal message.
     pub fn store_err<E: std::fmt::Display>(err: E) -> SubsonicError {
-        SubsonicError::new(GENERIC, err.to_string())
+        store_failure(err)
     }
+}
+
+/// Log a storage failure and answer code 0 with the fixed message.
+fn store_failure<E: std::fmt::Display>(err: E) -> SubsonicError {
+    tracing::error!(cause = %err, "subsonic store call failed");
+    SubsonicError::new(GENERIC, crate::error::FIXED_INTERNAL_MESSAGE)
 }
 
 /// Handler outcome: an envelope payload or a binary response.
@@ -674,4 +681,16 @@ async fn run_handler<P: Principal, S: Store, B: AudioBackend>(
         }
     };
     Ok(render_outcome(outcome, ctx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn store_errors_never_reach_the_client() {
+        let error = store_failure("disk I/O error at /srv/db/droppedneedle.sqlite");
+        assert_eq!(error.code, GENERIC);
+        assert_eq!(error.message, crate::error::FIXED_INTERNAL_MESSAGE);
+    }
 }
