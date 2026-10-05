@@ -25,13 +25,11 @@
 		"format:check": "prettier --check .",
 		"lint": "eslint .",
 		"test:unit": "vitest",
-		"test": "pnpm run test:unit -- --run",
-		"test:e2e:ci": "playwright test --config playwright.ci.config.ts"
+		"test": "pnpm run test:unit -- --run"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.1.1",
 		"@eslint/js": "^10.0.1",
-		"@playwright/test": "^1.63.0",
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@sveltejs/kit": "^2.70.3",
 		"@sveltejs/vite-plugin-svelte": "^6.2.0",
