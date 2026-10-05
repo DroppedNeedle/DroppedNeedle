@@ -524,6 +524,9 @@ struct IdTable {
 pub struct CatalogIds {
     library: CompatLibrary,
     table: Arc<Mutex<IdTable>>,
+    /// One rebuild at a time: concurrent misses wait for it instead of
+    /// each reading the whole catalog.
+    rebuilding: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl CatalogIds {
@@ -532,6 +535,7 @@ impl CatalogIds {
         Self {
             library,
             table: Arc::new(Mutex::new(IdTable::default())),
+            rebuilding: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -559,6 +563,9 @@ impl CatalogIds {
     /// mapping. Rate-limited so a stream of unknown ids cannot turn into a
     /// stream of full catalog reads.
     async fn rebuild(&self) {
+        // Waiters see the rebuild that ran while they queued as recent and
+        // return; the caller then looks the id up again.
+        let _single = self.rebuilding.lock().await;
         {
             let table = self.lock();
             if table
