@@ -17,10 +17,11 @@
 //!   query spelled `""`.
 //! - Album sort names map `name`/`date_added`/`year` to Subsonic list types
 //!   with client-side reversal for descending name and ascending recency.
+//!
+//! Payloads decode into the typed shapes in [`super::navidrome_models`]; a
+//! payload missing an item id is an upstream error, not an empty item.
 
 use std::time::Duration;
-
-use serde_json::Value;
 
 use super::adapter::{AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse};
 use super::models::{
@@ -28,6 +29,7 @@ use super::models::{
     LyricLine, LyricsView, MatchView, PlaylistDetail, PlaylistSummary, SearchResults, SessionView,
     SessionsView, SourceName, StatsView, TrackView,
 };
+use super::navidrome_models::{Album, Artist, Body, Envelope, Playlist, Song};
 
 /// Request timeout per upstream call, matching the v2 repository.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -41,8 +43,18 @@ const CLIENT_NAME: &str = "droppedneedle";
 /// Stats album scan batch size, matching the v2 service.
 const STATS_BATCH: i64 = 500;
 
-/// Navidrome browse client. Built per request from the caller's stored
-/// connection plus their resolved folder scope; holds no cache.
+/// Query pairs, owned.
+type Params = Vec<(String, String)>;
+
+fn params(pairs: &[(&str, &str)]) -> Params {
+    pairs
+        .iter()
+        .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+        .collect()
+}
+
+/// Navidrome browse client. Built per request from the caller's resolved
+/// connection plus their folder scope; holds no cache.
 pub struct NavidromeAdapter {
     client: reqwest::Client,
     base_url: String,
@@ -93,30 +105,24 @@ impl NavidromeAdapter {
 
     /// Connectivity probe against `ping`. Returns the API version label.
     pub async fn validate_connection(&self) -> Result<String, AdapterError> {
-        let value = self.request("/rest/ping", &[]).await?;
-        let version = str_field(&value, "version").unwrap_or("unknown");
-        Ok(format!("Connected to Navidrome (API v{version})"))
+        let body = self.request("/rest/ping", &[]).await?;
+        Ok(format!(
+            "Connected to Navidrome (API v{})",
+            body.version.as_deref().unwrap_or("unknown")
+        ))
     }
 
     /// Music folders exposed by the server. Unscoped by design: the folder
     /// preference UI lists everything before the user picks.
     pub async fn music_folders(&self) -> Result<Vec<(String, String)>, AdapterError> {
         self.require_configured()?;
-        let value = self.unscoped_request("/rest/getMusicFolders", &[]).await?;
-        let raw = value
-            .get("musicFolders")
-            .and_then(|folders| folders.get("musicFolder"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(raw
-            .iter()
-            .map(|folder| {
-                (
-                    str_field(folder, "id").unwrap_or("").to_owned(),
-                    str_field(folder, "name").unwrap_or("").to_owned(),
-                )
-            })
+        let body = self.unscoped_request("/rest/getMusicFolders", &[]).await?;
+        Ok(body
+            .music_folders
+            .unwrap_or_default()
+            .music_folder
+            .into_iter()
+            .map(|folder| (folder.id, folder.name.unwrap_or_default()))
             .collect())
     }
 
@@ -189,7 +195,7 @@ impl NavidromeAdapter {
         let mut offset: i64 = 0;
         loop {
             let batch = self
-                .album_list("alphabeticalByName", STATS_BATCH, offset, None, None, None)
+                .album_list("alphabeticalByName", STATS_BATCH, offset, None, None)
                 .await?;
             if batch.is_empty() {
                 break;
@@ -197,7 +203,7 @@ impl NavidromeAdapter {
             total_albums += batch.len() as i64;
             total_tracks += batch
                 .iter()
-                .map(|album| album.get("songCount").and_then(value_to_i64).unwrap_or(0))
+                .map(|album| album.song_count.unwrap_or(0))
                 .sum::<i64>();
             if (batch.len() as i64) < STATS_BATCH {
                 break;
@@ -230,37 +236,24 @@ impl NavidromeAdapter {
                 _ => "alphabeticalByName",
             }
         };
-        let (from_year, to_year) = if list_type == "byYear" {
+        let years = (list_type == "byYear").then(|| {
             if browse.descending {
-                (Some(9999), Some(0))
+                (9999, 0)
             } else {
-                (Some(0), Some(9999))
+                (0, 9999)
             }
-        } else {
-            (None, None)
-        };
-        let genre = if browse.genre.is_empty() {
-            None
-        } else {
-            Some(browse.genre.as_str())
-        };
+        });
+        let genre = (!browse.genre.is_empty()).then_some(browse.genre.as_str());
         let mut raw = self
-            .album_list(
-                list_type,
-                browse.limit,
-                browse.offset,
-                genre,
-                from_year,
-                to_year,
-            )
+            .album_list(list_type, browse.limit, browse.offset, genre, years)
             .await?;
         if needs_reverse(&browse.sort_by, browse.descending, genre.is_some()) {
             raw.reverse();
         }
         let items: Vec<AlbumView> = raw
             .iter()
-            .filter(|album| known_name(album_name(album)))
-            .map(|album| self.album_view(album))
+            .filter(|album| known_name(album.display_name()))
+            .map(album_view)
             .collect();
         let total = if items.len() as i64 >= browse.limit {
             self.stats()
@@ -273,24 +266,20 @@ impl NavidromeAdapter {
         Ok(RemotePage { items, total })
     }
 
-    /// One album by id, with tracks. Out-of-scope ids read as absent, and
-    /// an empty scope reads every detail as absent.
+    /// One album by id. Out-of-scope ids read as absent, and an empty scope
+    /// reads every detail as absent.
     pub async fn album_detail(&self, id: &str) -> Result<Option<AlbumView>, AdapterError> {
         self.require_configured()?;
         if self.scope_is_empty() {
             return Ok(None);
         }
-        if self.folder_ids.is_some() && !self.album_in_scope(id).await? {
+        let Some(album) = self.get_album(id).await? else {
+            return Ok(None);
+        };
+        if self.folder_ids.is_some() && !self.album_in_scope(&album).await? {
             return Ok(None);
         }
-        let value = self
-            .unscoped_request("/rest/getAlbum", &[("id".to_owned(), id.to_owned())])
-            .await?;
-        let album = value.get("album").cloned().unwrap_or(Value::Null);
-        if album.is_null() || str_field(&album, "id").unwrap_or("").is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(self.album_view(&album)))
+        Ok(Some(album_view(&album)))
     }
 
     /// Album tracks in track order.
@@ -299,16 +288,11 @@ impl NavidromeAdapter {
         if self.scope_is_empty() {
             return Ok(Vec::new());
         }
-        let value = self
-            .unscoped_request("/rest/getAlbum", &[("id".to_owned(), id.to_owned())])
-            .await?;
-        let songs = value
-            .get("album")
-            .and_then(|album| album.get("song"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(songs.iter().map(|song| self.track_view(song)).collect())
+        Ok(self
+            .get_album(id)
+            .await?
+            .map(|album| album.song.iter().map(track_view).collect())
+            .unwrap_or_default())
     }
 
     /// One page of artists. Navidrome answers the whole artist list, so
@@ -331,15 +315,11 @@ impl NavidromeAdapter {
             artists.reverse();
         }
         let total = artists.len() as i64;
-        let start = browse.offset.max(0) as usize;
-        let end = start
-            .saturating_add(browse.limit.max(0) as usize)
-            .min(artists.len());
-        let items = if start >= artists.len() {
-            Vec::new()
-        } else {
-            artists[start..end].to_vec()
-        };
+        let items = artists
+            .into_iter()
+            .skip(browse.offset.max(0) as usize)
+            .take(browse.limit.max(0) as usize)
+            .collect();
         Ok(RemotePage { items, total })
     }
 
@@ -349,28 +329,15 @@ impl NavidromeAdapter {
         if self.scope_is_empty() {
             return Ok(Vec::new());
         }
-        let value = self.request("/rest/getArtists", &[]).await?;
-        let buckets = value
-            .get("artists")
-            .and_then(|artists| artists.get("index"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(buckets
-            .iter()
-            .map(|bucket| {
-                let artists = bucket
-                    .get("artist")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                ArtistIndexEntry {
-                    name: str_field(bucket, "name").unwrap_or("").to_owned(),
-                    artists: artists
-                        .iter()
-                        .map(|artist| self.artist_view(artist))
-                        .collect(),
-                }
+        let body = self.request("/rest/getArtists", &[]).await?;
+        Ok(body
+            .artists
+            .unwrap_or_default()
+            .index
+            .into_iter()
+            .map(|bucket| ArtistIndexEntry {
+                name: bucket.name,
+                artists: bucket.artist.iter().map(artist_view).collect(),
             })
             .collect())
     }
@@ -387,14 +354,10 @@ impl NavidromeAdapter {
                 return Ok(None);
             }
         }
-        let value = self
-            .unscoped_request("/rest/getArtist", &[("id".to_owned(), id.to_owned())])
+        let body = self
+            .unscoped_request("/rest/getArtist", &params(&[("id", id)]))
             .await?;
-        let artist = value.get("artist").cloned().unwrap_or(Value::Null);
-        if artist.is_null() || str_field(&artist, "id").unwrap_or("").is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(self.artist_view(&artist)))
+        Ok(body.artist.as_ref().map(artist_view))
     }
 
     /// Track browse via `search3`. An empty query is spelled `""`, and the
@@ -408,25 +371,27 @@ impl NavidromeAdapter {
             return Ok(empty_page());
         }
         let query = if browse.search.is_empty() {
-            "\"\"".to_owned()
+            "\"\""
         } else {
-            browse.search.clone()
+            browse.search.as_str()
         };
-        let params = vec![
-            ("query".to_owned(), query),
-            ("artistCount".to_owned(), "0".to_owned()),
-            ("albumCount".to_owned(), "0".to_owned()),
-            ("songCount".to_owned(), browse.limit.to_string()),
-            ("songOffset".to_owned(), browse.offset.to_string()),
-        ];
-        let value = self.request("/rest/search3", &params).await?;
-        let songs = value
-            .get("searchResult3")
-            .and_then(|result| result.get("song"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let items: Vec<TrackView> = songs.iter().map(|song| self.track_view(song)).collect();
+        let limit = browse.limit.to_string();
+        let offset = browse.offset.to_string();
+        let pairs = params(&[
+            ("query", query),
+            ("artistCount", "0"),
+            ("albumCount", "0"),
+            ("songCount", &limit),
+            ("songOffset", &offset),
+        ]);
+        let body = self.request("/rest/search3", &pairs).await?;
+        let items: Vec<TrackView> = body
+            .search_result3
+            .unwrap_or_default()
+            .song
+            .iter()
+            .map(track_view)
+            .collect();
         let total = if items.len() as i64 >= browse.limit {
             self.stats()
                 .await
@@ -442,53 +407,39 @@ impl NavidromeAdapter {
     pub async fn search(&self, query: &str, limit: i64) -> Result<SearchResults, AdapterError> {
         self.require_configured()?;
         if self.scope_is_empty() {
-            return Ok(empty_search());
+            return Ok(SearchResults {
+                artists: Vec::new(),
+                albums: Vec::new(),
+                tracks: Vec::new(),
+            });
         }
-        let params = vec![
-            ("query".to_owned(), query.to_owned()),
-            ("artistCount".to_owned(), limit.to_string()),
-            ("albumCount".to_owned(), limit.to_string()),
-            ("songCount".to_owned(), limit.to_string()),
-        ];
-        let value = self.request("/rest/search3", &params).await?;
-        let result = value.get("searchResult3").cloned().unwrap_or(Value::Null);
+        let limit = limit.to_string();
+        let pairs = params(&[
+            ("query", query),
+            ("artistCount", &limit),
+            ("albumCount", &limit),
+            ("songCount", &limit),
+        ]);
+        let result = self
+            .request("/rest/search3", &pairs)
+            .await?
+            .search_result3
+            .unwrap_or_default();
         Ok(SearchResults {
-            artists: bucket(&result, "artist", |item| self.artist_view(item)),
-            albums: bucket(&result, "album", |item| self.album_view(item)),
-            tracks: bucket(&result, "song", |item| self.track_view(item)),
+            artists: result.artist.iter().map(artist_view).collect(),
+            albums: result.album.iter().map(album_view).collect(),
+            tracks: result.song.iter().map(track_view).collect(),
         })
     }
 
     /// Recently played albums via `getAlbumList2 type=recent`.
     pub async fn recent(&self, limit: i64) -> Result<Vec<AlbumView>, AdapterError> {
-        self.require_configured()?;
-        if self.scope_is_empty() {
-            return Ok(Vec::new());
-        }
-        let raw = self
-            .album_list("recent", limit, 0, None, None, None)
-            .await?;
-        Ok(raw
-            .iter()
-            .filter(|album| known_name(album_name(album)))
-            .map(|album| self.album_view(album))
-            .collect())
+        self.album_feed("recent", limit).await
     }
 
     /// Recently added albums via `getAlbumList2 type=newest`.
     pub async fn recently_added(&self, limit: i64) -> Result<Vec<AlbumView>, AdapterError> {
-        self.require_configured()?;
-        if self.scope_is_empty() {
-            return Ok(Vec::new());
-        }
-        let raw = self
-            .album_list("newest", limit, 0, None, None, None)
-            .await?;
-        Ok(raw
-            .iter()
-            .filter(|album| known_name(album_name(album)))
-            .map(|album| self.album_view(album))
-            .collect())
+        self.album_feed("newest", limit).await
     }
 
     /// Starred artists, albums, and songs via `getStarred2`, up to `limit`
@@ -499,42 +450,34 @@ impl NavidromeAdapter {
             return Ok(empty_favorites());
         }
         let limit = limit.max(0) as usize;
-        let value = self.request("/rest/getStarred2", &[]).await?;
-        let starred = value.get("starred2").cloned().unwrap_or(Value::Null);
+        let starred = self
+            .request("/rest/getStarred2", &[])
+            .await?
+            .starred2
+            .unwrap_or_default();
         Ok(FavoritesView {
-            artists: bucket(&starred, "artist", |item| self.artist_view(item))
-                .into_iter()
+            artists: starred.artist.iter().take(limit).map(artist_view).collect(),
+            albums: starred
+                .album
+                .iter()
+                .filter(|album| known_name(album.display_name()))
                 .take(limit)
+                .map(album_view)
                 .collect(),
-            albums: bucket(&starred, "album", |item| self.album_view(item))
-                .into_iter()
-                .filter(|album| known_name(&album.title))
-                .take(limit)
-                .collect(),
-            tracks: bucket(&starred, "song", |item| self.track_view(item))
-                .into_iter()
-                .take(limit)
-                .collect(),
+            tracks: starred.song.iter().take(limit).map(track_view).collect(),
         })
     }
 
     /// Genre labels via `getGenres` (unscoped in v2).
     pub async fn genres(&self) -> Result<Vec<String>, AdapterError> {
         self.require_configured()?;
-        let value = self.unscoped_request("/rest/getGenres", &[]).await?;
-        let raw = value
-            .get("genres")
-            .and_then(|genres| genres.get("genre"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(raw
-            .iter()
-            .filter_map(|genre| {
-                str_field(genre, "value")
-                    .or_else(|| str_field(genre, "name"))
-                    .map(str::to_owned)
-            })
+        let body = self.unscoped_request("/rest/getGenres", &[]).await?;
+        Ok(body
+            .genres
+            .unwrap_or_default()
+            .genre
+            .into_iter()
+            .filter_map(|genre| genre.value.or(genre.name))
             .filter(|name| !name.is_empty())
             .collect())
     }
@@ -550,52 +493,34 @@ impl NavidromeAdapter {
         if self.scope_is_empty() {
             return Ok(Vec::new());
         }
-        let params = vec![
-            ("genre".to_owned(), genre.to_owned()),
-            ("count".to_owned(), limit.to_string()),
-            ("offset".to_owned(), offset.to_string()),
-        ];
-        let value = self.request("/rest/getSongsByGenre", &params).await?;
-        let songs = value
-            .get("songsByGenre")
-            .and_then(|block| block.get("song"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(songs.iter().map(|song| self.track_view(song)).collect())
+        let (limit, offset) = (limit.to_string(), offset.to_string());
+        let pairs = params(&[("genre", genre), ("count", &limit), ("offset", &offset)]);
+        let body = self.request("/rest/getSongsByGenre", &pairs).await?;
+        Ok(songs(body.songs_by_genre))
     }
 
     /// Playlists via `getPlaylists`.
     pub async fn playlists(&self) -> Result<Vec<PlaylistSummary>, AdapterError> {
         self.require_configured()?;
-        let value = self.unscoped_request("/rest/getPlaylists", &[]).await?;
-        let raw = value
-            .get("playlists")
-            .and_then(|block| block.get("playlist"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(raw.iter().map(|item| self.playlist_summary(item)).collect())
+        let body = self.unscoped_request("/rest/getPlaylists", &[]).await?;
+        Ok(body
+            .playlists
+            .unwrap_or_default()
+            .playlist
+            .iter()
+            .map(playlist_summary)
+            .collect())
     }
 
     /// One playlist with entries via `getPlaylist`. None is absence.
     pub async fn playlist_detail(&self, id: &str) -> Result<Option<PlaylistDetail>, AdapterError> {
         self.require_configured()?;
-        let value = self
-            .unscoped_request("/rest/getPlaylist", &[("id".to_owned(), id.to_owned())])
+        let body = self
+            .unscoped_request("/rest/getPlaylist", &params(&[("id", id)]))
             .await?;
-        let playlist = value.get("playlist").cloned().unwrap_or(Value::Null);
-        if playlist.is_null() || str_field(&playlist, "id").unwrap_or("").is_empty() {
-            return Ok(None);
-        }
-        let entries = playlist
-            .get("entry")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(Some(PlaylistDetail {
-            playlist: self.playlist_summary(&playlist),
-            tracks: entries.iter().map(|song| self.track_view(song)).collect(),
+        Ok(body.playlist.map(|playlist| PlaylistDetail {
+            tracks: playlist.entry.iter().map(track_view).collect(),
+            playlist: playlist_summary(&playlist),
         }))
     }
 
@@ -603,38 +528,18 @@ impl NavidromeAdapter {
     /// declines (Last.fm often unconfigured); unreachable still errors.
     pub async fn artist_info(&self, id: &str) -> Result<InfoView, AdapterError> {
         self.require_configured()?;
-        let value = match self
-            .unscoped_request("/rest/getArtistInfo2", &[("id".to_owned(), id.to_owned())])
-            .await
-        {
-            Ok(value) => value,
-            Err(AdapterError::Api(_)) => Value::Null,
-            Err(other) => return Err(other),
-        };
-        let info = value.get("artistInfo2").cloned().unwrap_or(Value::Null);
-        let similar = info
-            .get("similarArtist")
-            .and_then(Value::as_array)
-            .cloned()
+        let info = self
+            .declinable("/rest/getArtistInfo2", &params(&[("id", id)]))
+            .await?
+            .and_then(|body| body.artist_info2)
             .unwrap_or_default();
         Ok(InfoView {
             source: SourceName::Navidrome,
             id: id.to_owned(),
-            biography: str_field(&info, "biography").unwrap_or("").to_owned(),
-            musicbrainz_id: str_field(&info, "musicBrainzId").unwrap_or("").to_owned(),
-            image_url: [
-                str_field(&info, "largeImageUrl").unwrap_or(""),
-                str_field(&info, "mediumImageUrl").unwrap_or(""),
-                str_field(&info, "smallImageUrl").unwrap_or(""),
-            ]
-            .into_iter()
-            .find(|url| !url.is_empty())
-            .unwrap_or("")
-            .to_owned(),
-            similar_artists: similar
-                .iter()
-                .map(|artist| self.artist_view(artist))
-                .collect(),
+            biography: info.biography.clone().unwrap_or_default(),
+            musicbrainz_id: info.music_brainz_id.clone().unwrap_or_default(),
+            image_url: info.best_image(),
+            similar_artists: info.similar_artist.iter().map(artist_view).collect(),
         })
     }
 
@@ -642,29 +547,17 @@ impl NavidromeAdapter {
     /// decline-to-empty rule.
     pub async fn album_info(&self, id: &str) -> Result<InfoView, AdapterError> {
         self.require_configured()?;
-        let value = match self
-            .unscoped_request("/rest/getAlbumInfo2", &[("id".to_owned(), id.to_owned())])
-            .await
-        {
-            Ok(value) => value,
-            Err(AdapterError::Api(_)) => Value::Null,
-            Err(other) => return Err(other),
-        };
-        let info = value.get("albumInfo").cloned().unwrap_or(Value::Null);
+        let info = self
+            .declinable("/rest/getAlbumInfo2", &params(&[("id", id)]))
+            .await?
+            .and_then(|body| body.album_info)
+            .unwrap_or_default();
         Ok(InfoView {
             source: SourceName::Navidrome,
             id: id.to_owned(),
-            biography: str_field(&info, "notes").unwrap_or("").to_owned(),
-            musicbrainz_id: str_field(&info, "musicBrainzId").unwrap_or("").to_owned(),
-            image_url: [
-                str_field(&info, "largeImageUrl").unwrap_or(""),
-                str_field(&info, "mediumImageUrl").unwrap_or(""),
-                str_field(&info, "smallImageUrl").unwrap_or(""),
-            ]
-            .into_iter()
-            .find(|url| !url.is_empty())
-            .unwrap_or("")
-            .to_owned(),
+            biography: info.notes.clone().unwrap_or_default(),
+            musicbrainz_id: info.music_brainz_id.clone().unwrap_or_default(),
+            image_url: info.best_image(),
             similar_artists: Vec::new(),
         })
     }
@@ -679,53 +572,32 @@ impl NavidromeAdapter {
         title: Option<&str>,
     ) -> Result<Option<LyricsView>, AdapterError> {
         self.require_configured()?;
-        let structured = match self
-            .unscoped_request(
-                "/rest/getLyricsBySongId",
-                &[("id".to_owned(), id.to_owned())],
-            )
-            .await
-        {
-            Ok(value) => value,
-            Err(AdapterError::Api(_)) => Value::Null,
-            Err(other) => return Err(other),
-        };
-        let candidates = structured
-            .get("lyricsList")
-            .and_then(|list| list.get("structuredLyrics"))
-            .and_then(Value::as_array)
-            .cloned()
+        let structured = self
+            .declinable("/rest/getLyricsBySongId", &params(&[("id", id)]))
+            .await?
+            .and_then(|body| body.lyrics_list)
             .unwrap_or_default();
-        if let Some(best) = candidates.first() {
-            let synced = best.get("synced").and_then(Value::as_bool).unwrap_or(false);
-            let raw_lines = best
-                .get("line")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let mut lines = Vec::new();
-            for line in &raw_lines {
-                lines.push(LyricLine {
-                    text: str_field(line, "value").unwrap_or("").to_owned(),
-                    start_ms: if synced {
-                        line.get("start").and_then(value_to_i64)
-                    } else {
-                        None
-                    },
-                });
-            }
+        if let Some(best) = structured.structured_lyrics.first() {
+            let lines: Vec<LyricLine> = best
+                .line
+                .iter()
+                .map(|line| LyricLine {
+                    text: line.value.clone().unwrap_or_default(),
+                    start_ms: if best.synced { line.start } else { None },
+                })
+                .collect();
             let has_text = lines.iter().any(|line| !line.text.trim().is_empty());
             let has_timing = lines.iter().any(|line| line.start_ms.is_some());
             if has_text || has_timing {
                 let text = lines
                     .iter()
-                    .map(|line| line.text.clone())
+                    .map(|line| line.text.as_str())
                     .collect::<Vec<_>>()
                     .join("\n");
                 return Ok(Some(LyricsView {
                     source: SourceName::Navidrome,
                     text,
-                    is_synced: synced,
+                    is_synced: best.synced,
                     lines,
                 }));
             }
@@ -733,30 +605,21 @@ impl NavidromeAdapter {
         let (Some(artist), Some(title)) = (artist, title) else {
             return Ok(None);
         };
-        let classic = match self
-            .unscoped_request(
+        let text = self
+            .declinable(
                 "/rest/getLyrics",
-                &[
-                    ("artist".to_owned(), artist.to_owned()),
-                    ("title".to_owned(), title.to_owned()),
-                ],
+                &params(&[("artist", artist), ("title", title)]),
             )
-            .await
-        {
-            Ok(value) => value,
-            Err(AdapterError::Api(_)) => return Ok(None),
-            Err(other) => return Err(other),
-        };
-        let text = classic
-            .get("lyrics")
-            .and_then(|lyrics| str_field(lyrics, "value"))
-            .unwrap_or("");
+            .await?
+            .and_then(|body| body.lyrics)
+            .and_then(|lyrics| lyrics.value)
+            .unwrap_or_default();
         if text.is_empty() {
             return Ok(None);
         }
         Ok(Some(LyricsView {
             source: SourceName::Navidrome,
-            text: text.to_owned(),
+            text,
             is_synced: false,
             lines: Vec::new(),
         }))
@@ -769,116 +632,92 @@ impl NavidromeAdapter {
         limit: i64,
     ) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
-        let params = vec![
-            ("artist".to_owned(), artist.to_owned()),
-            ("count".to_owned(), limit.to_string()),
-        ];
-        let value = match self.unscoped_request("/rest/getTopSongs", &params).await {
-            Ok(value) => value,
-            Err(AdapterError::Api(_)) => return Ok(Vec::new()),
-            Err(other) => return Err(other),
-        };
-        let songs = value
-            .get("topSongs")
-            .and_then(|block| block.get("song"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(songs.iter().map(|song| self.track_view(song)).collect())
+        let limit = limit.to_string();
+        let body = self
+            .declinable(
+                "/rest/getTopSongs",
+                &params(&[("artist", artist), ("count", &limit)]),
+            )
+            .await?;
+        Ok(songs(body.and_then(|body| body.top_songs)))
     }
 
     /// Random songs via `getRandomSongs`, folder-scoped like the v2
     /// route (`size` + optional `genre`). Empty when declined.
     pub async fn random(&self, limit: i64, genre: &str) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
-        let mut params = vec![("size".to_owned(), limit.to_string())];
+        let mut pairs = vec![("size".to_owned(), limit.to_string())];
         if !genre.is_empty() {
-            params.push(("genre".to_owned(), genre.to_owned()));
+            pairs.push(("genre".to_owned(), genre.to_owned()));
         }
-        let value = match self.request("/rest/getRandomSongs", &params).await {
-            Ok(value) => value,
-            Err(AdapterError::Api(_)) => return Ok(Vec::new()),
+        let body = match self.request("/rest/getRandomSongs", &pairs).await {
+            Ok(body) => Some(body),
+            Err(AdapterError::Api(detail)) => {
+                tracing::debug!(%detail, "navidrome declined getRandomSongs");
+                None
+            }
             Err(other) => return Err(other),
         };
-        let songs = value
-            .get("randomSongs")
-            .and_then(|block| block.get("song"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(songs.iter().map(|song| self.track_view(song)).collect())
+        Ok(songs(body.and_then(|body| body.random_songs)))
     }
 
     /// Similar songs via `getSimilarSongs2`. Empty when declined.
     pub async fn similar(&self, id: &str, limit: i64) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
-        let params = vec![
-            ("id".to_owned(), id.to_owned()),
-            ("count".to_owned(), limit.to_string()),
-        ];
-        let value = match self
-            .unscoped_request("/rest/getSimilarSongs2", &params)
-            .await
-        {
-            Ok(value) => value,
-            Err(AdapterError::Api(_)) => return Ok(Vec::new()),
-            Err(other) => return Err(other),
-        };
-        let songs = value
-            .get("similarSongs2")
-            .and_then(|block| block.get("song"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(songs.iter().map(|song| self.track_view(song)).collect())
+        let limit = limit.to_string();
+        let body = self
+            .declinable(
+                "/rest/getSimilarSongs2",
+                &params(&[("id", id), ("count", &limit)]),
+            )
+            .await?;
+        Ok(songs(body.and_then(|body| body.similar_songs2)))
     }
 
     /// Now-playing entries via `getNowPlaying`, shaped as sessions.
     pub async fn sessions(&self) -> Result<SessionsView, AdapterError> {
         self.require_configured()?;
-        let value = self.unscoped_request("/rest/getNowPlaying", &[]).await?;
-        let entries = value
-            .get("nowPlaying")
-            .and_then(|block| block.get("entry"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let body = self.unscoped_request("/rest/getNowPlaying", &[]).await?;
+        let sessions = body
+            .now_playing
+            .unwrap_or_default()
+            .entry
+            .into_iter()
+            .map(|entry| {
+                let duration_ms = entry.duration.unwrap_or(0) * 1000;
+                let minutes_ago = entry.minutes_ago.unwrap_or(0);
+                let text = |value: &Option<String>| value.clone().unwrap_or_default();
+                SessionView {
+                    source: SourceName::Navidrome,
+                    session_id: format!(
+                        "{}:{}:{}:{}",
+                        text(&entry.username),
+                        text(&entry.player_name),
+                        text(&entry.album_id),
+                        text(&entry.title),
+                    ),
+                    user_name: text(&entry.username),
+                    device_name: text(&entry.player_name),
+                    track_title: text(&entry.title),
+                    artist_name: text(&entry.artist),
+                    album_name: text(&entry.album),
+                    // getNowPlaying reports only minutes since the play
+                    // started; v2 estimates the position from it.
+                    progress_ms: if minutes_ago > 0 {
+                        (duration_ms - minutes_ago * 60_000).max(0)
+                    } else {
+                        0
+                    },
+                    duration_ms,
+                    // getNowPlaying carries no play/pause state.
+                    is_paused: false,
+                    image_url: cover_url(entry.cover_art.as_deref()),
+                }
+            })
+            .collect();
         Ok(SessionsView {
             source: SourceName::Navidrome,
-            sessions: entries
-                .iter()
-                .map(|entry| {
-                    let duration_ms =
-                        entry.get("duration").and_then(value_to_i64).unwrap_or(0) * 1000;
-                    let minutes_ago = entry.get("minutesAgo").and_then(value_to_i64).unwrap_or(0);
-                    SessionView {
-                        source: SourceName::Navidrome,
-                        session_id: format!(
-                            "{}:{}:{}:{}",
-                            str_field(entry, "username").unwrap_or(""),
-                            str_field(entry, "playerName").unwrap_or(""),
-                            str_field(entry, "albumId").unwrap_or(""),
-                            str_field(entry, "title").unwrap_or(""),
-                        ),
-                        user_name: str_field(entry, "username").unwrap_or("").to_owned(),
-                        device_name: str_field(entry, "playerName").unwrap_or("").to_owned(),
-                        track_title: str_field(entry, "title").unwrap_or("").to_owned(),
-                        artist_name: str_field(entry, "artist").unwrap_or("").to_owned(),
-                        album_name: str_field(entry, "album").unwrap_or("").to_owned(),
-                        // getNowPlaying reports only minutes since the play
-                        // started; v2 estimates the position from it.
-                        progress_ms: if minutes_ago > 0 {
-                            (duration_ms - minutes_ago * 60_000).max(0)
-                        } else {
-                            0
-                        },
-                        duration_ms,
-                        // getNowPlaying carries no play/pause state.
-                        is_paused: false,
-                        image_url: cover_url(str_field(entry, "coverArt").unwrap_or("")),
-                    }
-                })
-                .collect(),
+            sessions,
         })
     }
 
@@ -896,35 +735,32 @@ impl NavidromeAdapter {
         size: i64,
     ) -> Result<(Vec<u8>, String), AdapterError> {
         self.require_configured()?;
-        let params = vec![
-            ("id".to_owned(), id.to_owned()),
-            ("size".to_owned(), size.to_string()),
-        ];
-        self.get_bytes("/rest/getCoverArt", &params, "image/jpeg")
-            .await
+        let size = size.to_string();
+        self.get_bytes(
+            "/rest/getCoverArt",
+            &params(&[("id", id), ("size", &size)]),
+            "image/jpeg",
+        )
+        .await
     }
 
     /// Direct audio bytes for one song id via `/rest/stream` (v2
     /// `build_stream_url` target, fetched whole for the gateway seam).
     pub async fn audio_bytes(&self, id: &str) -> Result<(Vec<u8>, String), AdapterError> {
         self.require_configured()?;
-        self.get_bytes(
-            "/rest/stream",
-            &[("id".to_owned(), id.to_owned())],
-            "audio/mpeg",
-        )
-        .await
+        self.get_bytes("/rest/stream", &params(&[("id", id)]), "audio/mpeg")
+            .await
     }
 
     /// Now-playing report via `/rest/scrobble` with `submission=false`
     /// (v2 `now_playing`).
     pub async fn report_now_playing(&self, id: &str) -> Result<(), AdapterError> {
         self.require_configured()?;
-        let params = vec![
-            ("id".to_owned(), id.to_owned()),
-            ("submission".to_owned(), "false".to_owned()),
-        ];
-        self.unscoped_request("/rest/scrobble", &params).await?;
+        self.unscoped_request(
+            "/rest/scrobble",
+            &params(&[("id", id), ("submission", "false")]),
+        )
+        .await?;
         Ok(())
     }
 
@@ -932,11 +768,9 @@ impl NavidromeAdapter {
     /// (v2 `scrobble`).
     pub async fn scrobble(&self, id: &str, time_ms: i64) -> Result<(), AdapterError> {
         self.require_configured()?;
-        let params = vec![
-            ("id".to_owned(), id.to_owned()),
-            ("time".to_owned(), time_ms.to_string()),
-        ];
-        self.unscoped_request("/rest/scrobble", &params).await?;
+        let time = time_ms.to_string();
+        self.unscoped_request("/rest/scrobble", &params(&[("id", id), ("time", &time)]))
+            .await?;
         Ok(())
     }
 
@@ -947,17 +781,15 @@ impl NavidromeAdapter {
         id: &str,
         size: i64,
     ) -> Result<(Vec<u8>, String), AdapterError> {
-        let value = self
-            .unscoped_request("/rest/getPlaylist", &[("id".to_owned(), id.to_owned())])
+        let body = self
+            .unscoped_request("/rest/getPlaylist", &params(&[("id", id)]))
             .await?;
-        let cover_art = value
-            .get("playlist")
-            .and_then(|playlist| str_field(playlist, "coverArt"))
-            .unwrap_or("");
-        if cover_art.is_empty() {
-            return Err(AdapterError::NotFound);
-        }
-        self.image_bytes(cover_art, size).await
+        let cover_art = body
+            .playlist
+            .and_then(|playlist| playlist.cover_art)
+            .filter(|cover| !cover.is_empty())
+            .ok_or(AdapterError::NotFound)?;
+        self.image_bytes(&cover_art, size).await
     }
 
     /// Resolve an MBID by searching for it and comparing `musicBrainzId`,
@@ -967,32 +799,31 @@ impl NavidromeAdapter {
         if self.scope_is_empty() {
             return Ok(no_match());
         }
-        let params = vec![
-            ("query".to_owned(), mbid.to_owned()),
-            ("artistCount".to_owned(), "0".to_owned()),
-            ("albumCount".to_owned(), "50".to_owned()),
-            ("songCount".to_owned(), "0".to_owned()),
-        ];
-        let value = self.request("/rest/search3", &params).await?;
-        let candidates = value
-            .get("searchResult3")
-            .and_then(|result| result.get("album"))
-            .and_then(Value::as_array)
-            .cloned()
+        let pairs = params(&[
+            ("query", mbid),
+            ("artistCount", "0"),
+            ("albumCount", "50"),
+            ("songCount", "0"),
+        ]);
+        let result = self
+            .request("/rest/search3", &pairs)
+            .await?
+            .search_result3
             .unwrap_or_default();
-        for candidate in &candidates {
-            if str_field(candidate, "musicBrainzId").unwrap_or("") == mbid {
-                let id = str_field(candidate, "id").unwrap_or("").to_owned();
-                let tracks = self.album_tracks(&id).await?;
-                return Ok(MatchView {
-                    source: SourceName::Navidrome,
-                    found: true,
-                    remote_album_id: Some(id),
-                    tracks,
-                });
-            }
-        }
-        Ok(no_match())
+        let Some(album) = result
+            .album
+            .iter()
+            .find(|album| album.music_brainz_id.as_deref() == Some(mbid))
+        else {
+            return Ok(no_match());
+        };
+        let tracks = self.album_tracks(&album.id).await?;
+        Ok(MatchView {
+            source: SourceName::Navidrome,
+            found: true,
+            remote_album_id: Some(album.id.clone()),
+            tracks,
+        })
     }
 
     fn require_configured(&self) -> Result<(), AdapterError> {
@@ -1009,6 +840,32 @@ impl NavidromeAdapter {
         matches!(&self.folder_ids, Some(ids) if ids.is_empty())
     }
 
+    /// One album feed (`recent`, `newest`), named albums only.
+    async fn album_feed(
+        &self,
+        list_type: &str,
+        limit: i64,
+    ) -> Result<Vec<AlbumView>, AdapterError> {
+        self.require_configured()?;
+        if self.scope_is_empty() {
+            return Ok(Vec::new());
+        }
+        let raw = self.album_list(list_type, limit, 0, None, None).await?;
+        Ok(raw
+            .iter()
+            .filter(|album| known_name(album.display_name()))
+            .map(album_view)
+            .collect())
+    }
+
+    /// `getAlbum`, unscoped. None is absence.
+    async fn get_album(&self, id: &str) -> Result<Option<Album>, AdapterError> {
+        let body = self
+            .unscoped_request("/rest/getAlbum", &params(&[("id", id)]))
+            .await?;
+        Ok(body.album)
+    }
+
     /// Scoped `getAlbumList2` with the genre/year parameter rules.
     async fn album_list(
         &self,
@@ -1016,10 +873,9 @@ impl NavidromeAdapter {
         size: i64,
         offset: i64,
         genre: Option<&str>,
-        from_year: Option<i32>,
-        to_year: Option<i32>,
-    ) -> Result<Vec<Value>, AdapterError> {
-        let mut params = vec![
+        years: Option<(i32, i32)>,
+    ) -> Result<Vec<Album>, AdapterError> {
+        let mut pairs = vec![
             ("type".to_owned(), list_type.to_owned()),
             ("size".to_owned(), size.to_string()),
             ("offset".to_owned(), offset.to_string()),
@@ -1027,83 +883,78 @@ impl NavidromeAdapter {
         if list_type == "byGenre"
             && let Some(genre) = genre
         {
-            params.push(("genre".to_owned(), genre.to_owned()));
+            pairs.push(("genre".to_owned(), genre.to_owned()));
         }
         if list_type == "byYear" {
-            params.push(("fromYear".to_owned(), from_year.unwrap_or(0).to_string()));
-            params.push(("toYear".to_owned(), to_year.unwrap_or(9999).to_string()));
+            let (from, to) = years.unwrap_or((0, 9999));
+            pairs.push(("fromYear".to_owned(), from.to_string()));
+            pairs.push(("toYear".to_owned(), to.to_string()));
         }
-        let value = self.request("/rest/getAlbumList2", &params).await?;
-        Ok(value
-            .get("albumList2")
-            .and_then(|block| block.get("album"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default())
+        let body = self.request("/rest/getAlbumList2", &pairs).await?;
+        Ok(body.album_list2.unwrap_or_default().album)
     }
 
     /// Full scoped artist list, flattened out of the index buckets.
     async fn artist_list(&self) -> Result<Vec<ArtistView>, AdapterError> {
-        let value = self.request("/rest/getArtists", &[]).await?;
-        let buckets = value
-            .get("artists")
-            .and_then(|artists| artists.get("index"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let mut artists = Vec::new();
-        for bucket in &buckets {
-            let raw = bucket
-                .get("artist")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            for artist in &raw {
-                artists.push(self.artist_view(artist));
-            }
-        }
-        Ok(artists)
+        let body = self.request("/rest/getArtists", &[]).await?;
+        Ok(body
+            .artists
+            .unwrap_or_default()
+            .index
+            .iter()
+            .flat_map(|bucket| bucket.artist.iter().map(artist_view))
+            .collect())
     }
 
     /// Scope check for album detail: the album must appear in a scoped
     /// name search, the v2 detail rule.
-    async fn album_in_scope(&self, id: &str) -> Result<bool, AdapterError> {
-        let detail = self
-            .unscoped_request("/rest/getAlbum", &[("id".to_owned(), id.to_owned())])
-            .await?;
-        let name = detail
-            .get("album")
-            .and_then(|album| str_field(album, "name"))
-            .unwrap_or("");
-        if name.is_empty() {
+    async fn album_in_scope(&self, album: &Album) -> Result<bool, AdapterError> {
+        let name = album.display_name();
+        if !known_name(name) {
             return Ok(false);
         }
-        let params = vec![
-            ("query".to_owned(), name.to_owned()),
-            ("artistCount".to_owned(), "0".to_owned()),
-            ("albumCount".to_owned(), "500".to_owned()),
-            ("songCount".to_owned(), "0".to_owned()),
-        ];
-        let value = self.request("/rest/search3", &params).await?;
-        let candidates = value
-            .get("searchResult3")
-            .and_then(|result| result.get("album"))
-            .and_then(Value::as_array)
-            .cloned()
+        let pairs = params(&[
+            ("query", name),
+            ("artistCount", "0"),
+            ("albumCount", "500"),
+            ("songCount", "0"),
+        ]);
+        let result = self
+            .request("/rest/search3", &pairs)
+            .await?
+            .search_result3
             .unwrap_or_default();
-        Ok(candidates
+        Ok(result
+            .album
             .iter()
-            .any(|candidate| str_field(candidate, "id").unwrap_or("") == id))
+            .any(|candidate| candidate.id == album.id))
     }
 
-    /// Scoped JSON call. Repeats one `musicFolderId` param per selected id;
+    /// An unscoped call the server may decline (no Last.fm, no lyrics):
+    /// a Subsonic error reads as `None`, everything else propagates.
+    async fn declinable(
+        &self,
+        endpoint: &str,
+        pairs: &[(String, String)],
+    ) -> Result<Option<Body>, AdapterError> {
+        match self.unscoped_request(endpoint, pairs).await {
+            Ok(body) => Ok(Some(body)),
+            Err(AdapterError::Api(detail)) => {
+                tracing::debug!(endpoint, %detail, "navidrome declined the call");
+                Ok(None)
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Scoped call. Repeats one `musicFolderId` param per selected id;
     /// omits the param for the all-folders scope.
     async fn request(
         &self,
         endpoint: &str,
-        params: &[(String, String)],
-    ) -> Result<Value, AdapterError> {
-        let mut full: Vec<(String, String)> = params.to_vec();
+        pairs: &[(String, String)],
+    ) -> Result<Body, AdapterError> {
+        let mut full: Params = pairs.to_vec();
         if let Some(ids) = &self.folder_ids {
             for id in ids {
                 full.push(("musicFolderId".to_owned(), id.clone()));
@@ -1112,17 +963,17 @@ impl NavidromeAdapter {
         self.unscoped_request(endpoint, &full).await
     }
 
-    /// Unscoped JSON call: auth params plus Subsonic envelope handling.
+    /// Unscoped call: auth params plus Subsonic envelope handling.
     async fn unscoped_request(
         &self,
         endpoint: &str,
-        params: &[(String, String)],
-    ) -> Result<Value, AdapterError> {
+        pairs: &[(String, String)],
+    ) -> Result<Body, AdapterError> {
         if !self.is_configured() {
             return Err(AdapterError::NotConfigured);
         }
         let mut query = auth_params(&self.username, &self.password);
-        query.extend(params.iter().cloned());
+        query.extend(pairs.iter().cloned());
         let response = self
             .client
             .get(format!("{}{endpoint}", self.base_url))
@@ -1131,25 +982,40 @@ impl NavidromeAdapter {
             .send()
             .await
             .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED
-            || response.status() == reqwest::StatusCode::FORBIDDEN
-        {
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AdapterError::Auth);
         }
-        if !response.status().is_success() {
+        if !status.is_success() {
             return Err(AdapterError::Api(format!(
-                "GET {endpoint} failed ({})",
-                response.status()
+                "GET {endpoint} failed ({status})"
             )));
         }
         let bytes = response
             .bytes()
             .await
             .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
-        let data: Value = serde_json::from_slice(&bytes).map_err(|_| {
-            AdapterError::Api(format!("Navidrome returned invalid JSON for {endpoint}"))
+        let envelope: Envelope = serde_json::from_slice(&bytes).map_err(|error| {
+            AdapterError::Api(format!(
+                "Navidrome returned an unreadable {endpoint} payload: {error}"
+            ))
         })?;
-        parse_envelope(&data)
+        let body = envelope.response;
+        if body.status != "ok" {
+            let error = body.error.unwrap_or_default();
+            if error.code == 40 || error.code == 41 {
+                return Err(AdapterError::Auth);
+            }
+            return Err(AdapterError::Api(format!(
+                "Subsonic error {}: {}",
+                error.code,
+                error
+                    .message
+                    .as_deref()
+                    .unwrap_or("Unknown Subsonic API error")
+            )));
+        }
+        Ok(body)
     }
 
     /// Raw-bytes call for cover art and audio. Auth rides the same token
@@ -1157,14 +1023,14 @@ impl NavidromeAdapter {
     async fn get_bytes(
         &self,
         endpoint: &str,
-        params: &[(String, String)],
+        pairs: &[(String, String)],
         fallback_content_type: &str,
     ) -> Result<(Vec<u8>, String), AdapterError> {
         if !self.is_configured() {
             return Err(AdapterError::NotConfigured);
         }
         let mut query = auth_params(&self.username, &self.password);
-        query.extend(params.iter().cloned());
+        query.extend(pairs.iter().cloned());
         let response = self
             .client
             .get(format!("{}{endpoint}", self.base_url))
@@ -1173,15 +1039,13 @@ impl NavidromeAdapter {
             .send()
             .await
             .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED
-            || response.status() == reqwest::StatusCode::FORBIDDEN
-        {
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AdapterError::Auth);
         }
-        if !response.status().is_success() {
+        if !status.is_success() {
             return Err(AdapterError::Api(format!(
-                "GET {endpoint} failed ({})",
-                response.status()
+                "GET {endpoint} failed ({status})"
             )));
         }
         let content_type = response
@@ -1196,93 +1060,10 @@ impl NavidromeAdapter {
             .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
         Ok((bytes.to_vec(), content_type))
     }
-
-    fn album_view(&self, album: &Value) -> AlbumView {
-        let id = str_field(album, "id").unwrap_or("").to_owned();
-        AlbumView {
-            source: SourceName::Navidrome,
-            image_url: cover_url(str_field(album, "coverArt").unwrap_or("")),
-            id,
-            title: album_name(album).to_owned(),
-            artist_name: str_field(album, "artist").unwrap_or("").to_owned(),
-            artist_id: non_empty(str_field(album, "artistId")),
-            year: album
-                .get("year")
-                .and_then(value_to_i64)
-                .map(|year| year as i32),
-            genre: non_empty(str_field(album, "genre")),
-            track_count: album
-                .get("songCount")
-                .and_then(value_to_i64)
-                .map(|count| count as i32),
-            release_mbid: non_empty(str_field(album, "musicBrainzId")),
-            release_group_mbid: None,
-            artist_mbid: None,
-        }
-    }
-
-    fn artist_view(&self, artist: &Value) -> ArtistView {
-        ArtistView {
-            source: SourceName::Navidrome,
-            id: str_field(artist, "id").unwrap_or("").to_owned(),
-            name: str_field(artist, "name").unwrap_or("Unknown").to_owned(),
-            album_count: artist
-                .get("albumCount")
-                .and_then(value_to_i64)
-                .map(|count| count as i32),
-            artist_mbid: non_empty(str_field(artist, "musicBrainzId")),
-            image_url: cover_url(str_field(artist, "coverArt").unwrap_or("")),
-        }
-    }
-
-    fn track_view(&self, song: &Value) -> TrackView {
-        TrackView {
-            source: SourceName::Navidrome,
-            id: str_field(song, "id").unwrap_or("").to_owned(),
-            title: str_field(song, "title").unwrap_or("Unknown").to_owned(),
-            album_name: str_field(song, "album").unwrap_or("").to_owned(),
-            album_id: non_empty(str_field(song, "albumId")),
-            artist_name: str_field(song, "artist").unwrap_or("").to_owned(),
-            artist_id: non_empty(str_field(song, "artistId")),
-            track_number: song.get("track").and_then(value_to_i64).map(|n| n as i32),
-            disc_number: song
-                .get("discNumber")
-                .and_then(value_to_i64)
-                .map(|n| n as i32),
-            duration_secs: song.get("duration").and_then(value_to_i64),
-            year: song
-                .get("year")
-                .and_then(value_to_i64)
-                .map(|year| year as i32),
-            recording_mbid: non_empty(str_field(song, "musicBrainzId")),
-            image_url: cover_url(str_field(song, "coverArt").unwrap_or("")),
-            part_key: None,
-        }
-    }
-
-    fn playlist_summary(&self, playlist: &Value) -> PlaylistSummary {
-        let id = str_field(playlist, "id").unwrap_or("").to_owned();
-        let cover_art = str_field(playlist, "coverArt").unwrap_or("");
-        PlaylistSummary {
-            source: SourceName::Navidrome,
-            image_url: if cover_art.is_empty() {
-                None
-            } else {
-                Some(format!("/api/v3/remotes/navidrome/covers/playlists/{id}"))
-            },
-            id,
-            name: str_field(playlist, "name").unwrap_or("").to_owned(),
-            track_count: playlist
-                .get("songCount")
-                .and_then(value_to_i64)
-                .unwrap_or(0),
-            duration_secs: playlist.get("duration").and_then(value_to_i64).unwrap_or(0),
-        }
-    }
 }
 
 /// Subsonic token auth params with a fresh random salt per call.
-fn auth_params(username: &str, password: &str) -> Vec<(String, String)> {
+fn auth_params(username: &str, password: &str) -> Params {
     let mut salt_bytes = [0u8; 3];
     if getrandom::fill(&mut salt_bytes).is_err() {
         salt_bytes = [0x4e, 0x44, 0x21];
@@ -1299,27 +1080,6 @@ fn auth_params(username: &str, password: &str) -> Vec<(String, String)> {
     ]
 }
 
-/// Unwrap the `subsonic-response` envelope. Codes 40/41 are auth failures.
-fn parse_envelope(data: &Value) -> Result<Value, AdapterError> {
-    let response = data
-        .get("subsonic-response")
-        .ok_or_else(|| AdapterError::Api("Missing subsonic-response envelope".to_owned()))?;
-    if str_field(response, "status").unwrap_or("") != "ok" {
-        let error = response.get("error").cloned().unwrap_or(Value::Null);
-        let code = error.get("code").and_then(value_to_i64).unwrap_or(0);
-        let message = str_field(&error, "message")
-            .unwrap_or("Unknown Subsonic API error")
-            .to_owned();
-        if code == 40 || code == 41 {
-            return Err(AdapterError::Auth);
-        }
-        return Err(AdapterError::Api(format!(
-            "Subsonic error {code}: {message}"
-        )));
-    }
-    Ok(response.clone())
-}
-
 /// Client-side reversal rule for album sorts, ported from the v2 route
 /// map: descending name and non-descending recency both reverse.
 fn needs_reverse(sort_by: &str, descending: bool, has_genre: bool) -> bool {
@@ -1332,47 +1092,95 @@ fn needs_reverse(sort_by: &str, descending: bool, has_genre: bool) -> bool {
     )
 }
 
-fn album_name(album: &Value) -> &str {
-    str_field(album, "name")
-        .or_else(|| str_field(album, "title"))
-        .unwrap_or("Unknown")
-}
-
 fn known_name(name: &str) -> bool {
     !name.is_empty() && name != "Unknown"
 }
 
-fn cover_url(cover_art: &str) -> Option<String> {
-    if cover_art.is_empty() {
-        None
-    } else {
-        Some(format!("/api/v3/remotes/navidrome/images/{cover_art}"))
+fn cover_url(cover_art: Option<&str>) -> Option<String> {
+    cover_art
+        .filter(|cover| !cover.is_empty())
+        .map(|cover| format!("/api/v3/remotes/navidrome/images/{cover}"))
+}
+
+fn songs(list: Option<super::navidrome_models::Songs>) -> Vec<TrackView> {
+    list.unwrap_or_default()
+        .song
+        .iter()
+        .map(track_view)
+        .collect()
+}
+
+fn album_view(album: &Album) -> AlbumView {
+    AlbumView {
+        source: SourceName::Navidrome,
+        image_url: cover_url(album.cover_art.as_deref()),
+        id: album.id.clone(),
+        title: album.display_name().to_owned(),
+        artist_name: album.artist.clone().unwrap_or_default(),
+        artist_id: non_empty(album.artist_id.as_deref()),
+        year: album.year.and_then(|year| i32::try_from(year).ok()),
+        genre: non_empty(album.genre.as_deref()),
+        track_count: album.song_count.and_then(|count| i32::try_from(count).ok()),
+        release_mbid: non_empty(album.music_brainz_id.as_deref()),
+        release_group_mbid: None,
+        artist_mbid: None,
     }
 }
 
-fn bucket<T>(result: &Value, key: &str, map: impl Fn(&Value) -> T) -> Vec<T> {
-    result
-        .get(key)
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .map(map)
-        .collect()
+fn artist_view(artist: &Artist) -> ArtistView {
+    ArtistView {
+        source: SourceName::Navidrome,
+        id: artist.id.clone(),
+        name: artist.name.clone().unwrap_or_else(|| "Unknown".to_owned()),
+        album_count: artist
+            .album_count
+            .and_then(|count| i32::try_from(count).ok()),
+        artist_mbid: non_empty(artist.music_brainz_id.as_deref()),
+        image_url: cover_url(artist.cover_art.as_deref()),
+    }
+}
+
+fn track_view(song: &Song) -> TrackView {
+    TrackView {
+        source: SourceName::Navidrome,
+        id: song.id.clone(),
+        title: song.title.clone().unwrap_or_else(|| "Unknown".to_owned()),
+        album_name: song.album.clone().unwrap_or_default(),
+        album_id: non_empty(song.album_id.as_deref()),
+        artist_name: song.artist.clone().unwrap_or_default(),
+        artist_id: non_empty(song.artist_id.as_deref()),
+        track_number: song.track.and_then(|number| i32::try_from(number).ok()),
+        disc_number: song
+            .disc_number
+            .and_then(|number| i32::try_from(number).ok()),
+        duration_secs: song.duration,
+        year: song.year.and_then(|year| i32::try_from(year).ok()),
+        recording_mbid: non_empty(song.music_brainz_id.as_deref()),
+        image_url: cover_url(song.cover_art.as_deref()),
+        part_key: None,
+    }
+}
+
+fn playlist_summary(playlist: &Playlist) -> PlaylistSummary {
+    let has_cover = playlist
+        .cover_art
+        .as_deref()
+        .is_some_and(|cover| !cover.is_empty());
+    PlaylistSummary {
+        source: SourceName::Navidrome,
+        image_url: has_cover
+            .then(|| format!("/api/v3/remotes/navidrome/covers/playlists/{}", playlist.id)),
+        id: playlist.id.clone(),
+        name: playlist.name.clone().unwrap_or_default(),
+        track_count: playlist.song_count.unwrap_or(0),
+        duration_secs: playlist.duration.unwrap_or(0),
+    }
 }
 
 fn empty_page<T>() -> RemotePage<T> {
     RemotePage {
         items: Vec::new(),
         total: 0,
-    }
-}
-
-fn empty_search() -> SearchResults {
-    SearchResults {
-        artists: Vec::new(),
-        albums: Vec::new(),
-        tracks: Vec::new(),
     }
 }
 
@@ -1419,26 +1227,10 @@ fn non_empty(value: Option<&str>) -> Option<String> {
     value.filter(|text| !text.is_empty()).map(str::to_owned)
 }
 
-fn str_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value.get(key).and_then(Value::as_str)
-}
-
-fn value_to_i64(value: &Value) -> Option<i64> {
-    if let Some(number) = value.as_i64() {
-        return Some(number);
-    }
-    value.as_u64().and_then(|number| i64::try_from(number).ok())
-}
-
 fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn trim_cause(cause: &reqwest::Error) -> String {
-    let text = cause.to_string();
-    if text.len() > 200 {
-        text[..200].to_owned()
-    } else {
-        text
-    }
+    cause.to_string().chars().take(200).collect()
 }

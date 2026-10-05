@@ -35,6 +35,7 @@ pub mod jellyfin_models;
 pub mod mocks;
 pub mod models;
 pub mod navidrome;
+pub mod navidrome_models;
 pub mod plex;
 pub mod reader;
 pub mod service;
