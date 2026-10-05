@@ -9,8 +9,9 @@ use std::sync::Arc;
 use crate::{
     acquire::AcquireSetup, admin::AdminSetup, auth::wiring::AuthSetup, compat::CompatSetup,
     config::AppConfig, http_client::HttpClientFactory, ids::IdGenerator, jobs::wiring::JobsSetup,
-    library::wiring::LibrarySetup, plugins::wiring::PluginsSetup, provider_policy::ProviderPolicy,
-    providers::Providers, reads::ReadsSetup, settings::wiring::SettingsSetup, stage6::Stage6Setup,
+    library::wiring::LibrarySetup, media::MediaSetup, plugins::wiring::PluginsSetup,
+    provider_policy::ProviderPolicy, providers::Providers, reads::ReadsSetup,
+    settings::wiring::SettingsSetup,
 };
 
 /// All long-lived server dependencies.
@@ -31,7 +32,7 @@ pub struct AppState {
     /// enrichment pair so production pacing runs through one limiter set.
     pub providers: Arc<Providers>,
     /// Stage-6 bundle: remote sources, stream gateway, playback reporting.
-    pub stage6: Stage6Setup,
+    pub media: MediaSetup,
     /// Stage-7 bundle: requests, downloads, flows, imports.
     pub acquire: AcquireSetup,
     /// Stage-8 bundle: library scan, identify, publish, contrib.
@@ -59,7 +60,7 @@ impl AppState {
         auth: AuthSetup,
         reads: ReadsSetup,
         providers: Arc<Providers>,
-        stage6: Stage6Setup,
+        media: MediaSetup,
         acquire: AcquireSetup,
         library: LibrarySetup,
         compat: CompatSetup,
@@ -75,7 +76,7 @@ impl AppState {
             auth,
             reads,
             providers,
-            stage6,
+            media,
             acquire,
             library,
             compat,

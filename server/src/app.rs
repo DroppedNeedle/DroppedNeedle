@@ -40,7 +40,7 @@ pub fn create_app(state: AppState) -> Router {
                 .auth
                 .router()
                 .merge(state.reads.gated_router())
-                .merge(state.stage6.gated_router())
+                .merge(state.media.gated_router())
                 .merge(state.acquire.gated_router())
                 .merge(state.library.gated_router())
                 .merge(state.admin.gated_router())

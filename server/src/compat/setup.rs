@@ -31,22 +31,22 @@ use crate::compat::jellyfin::seams::{JellyfinSettings, MemoryIds, MemoryLibrary}
 use crate::compat::jellyfin::{JellyfinState, router as jellyfin_router};
 use crate::compat::subsonic::Settings as SubsonicSettings;
 use crate::library::wiring::LibrarySetup;
+use crate::media::MediaEngine;
 use crate::playback::services::PlaybackDeps;
 use crate::runtime_config::Crypto;
 use crate::runtime_config::sections::{AudioFormat, ConnectApps};
-use crate::stage6::Stage6Engine;
 
 /// Stage-3-backed Subsonic verifier.
 pub type CompatVerifier = SubsonicVerifier<ProdCompatPasswords, UsersDeps>;
 
 /// Stage-6-backed Subsonic audio.
-pub type CompatAudio = GatewayAudio<Stage6Engine>;
+pub type CompatAudio = GatewayAudio<MediaEngine>;
 
 /// Wired Jellyfin router state.
 pub type CompatJellyfinState = crate::compat::jellyfin::JellyfinState<
     ProdCompatPasswords,
     MemoryLibrary,
-    GatewayStream<Stage6Engine>,
+    GatewayStream<MediaEngine>,
     CompatPlayback,
     MemoryIds,
 >;
@@ -69,7 +69,7 @@ impl CompatSetup {
         users: UsersDeps,
         crypto: Arc<Crypto>,
         playback_deps: PlaybackDeps,
-        engine: Arc<Stage6Engine>,
+        engine: Arc<MediaEngine>,
         scan: LibrarySetup,
         connect_apps: &ConnectApps,
     ) -> Self {

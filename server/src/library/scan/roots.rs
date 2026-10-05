@@ -1,7 +1,7 @@
 //! Library roots: the registry, policy resolution, and the stream seam.
 //!
 //! This stage owns the root registry, replacing the stage-6 provisional
-//! `<root>/music` fallback (`stage6::local_root`). The stream gateway keeps
+//! `<root>/music` fallback (`media::local_root`). The stream gateway keeps
 //! its single-path constructor; the [`StreamRootSeam`] below is the seam the
 //! integrator wires in so local keys resolve against real roots instead.
 //!

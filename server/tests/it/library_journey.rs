@@ -173,7 +173,7 @@ impl Lib {
             .parent()
             .map(|parent| parent.to_path_buf())
             .unwrap_or_else(std::env::temp_dir);
-        let (stage6, _worker) = droppedneedle::stage6::Stage6Setup::build(
+        let (media, _worker) = droppedneedle::media::MediaSetup::build(
             &self.db_path,
             &app_config,
             auth.users.clone(),
@@ -183,7 +183,7 @@ impl Lib {
             connect_apps.clone(),
             Some(self.library.root_source()),
         )
-        .expect("stage6 bundle builds");
+        .expect("media bundle builds");
         let mut reads = reads;
         let acquire = droppedneedle::acquire::AcquireSetup::build(
             &self.db_path,
@@ -198,8 +198,8 @@ impl Lib {
         let compat = droppedneedle::compat::CompatSetup::build(
             auth.users.clone(),
             Arc::clone(&self.crypto),
-            stage6.playback.clone(),
-            stage6.stream.engine.clone(),
+            media.playback.clone(),
+            media.stream.engine.clone(),
             self.library.clone(),
             &connect_apps,
         );
@@ -229,7 +229,7 @@ impl Lib {
             auth,
             reads,
             providers,
-            stage6,
+            media,
             acquire,
             self.library.clone(),
             compat,

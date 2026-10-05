@@ -1,7 +1,7 @@
-//! Stage-6 bundle: remote sources, stream gateway, playback reporting.
+//! Media bundle: remote sources, stream gateway, playback reporting.
 //!
-//! [`Stage6Setup`] is the single bundle `create_app` mounts: its
-//! [`Stage6Setup::gated_router`] nests under `/api/v3` inside the
+//! [`MediaSetup`] is the single bundle `create_app` mounts: its
+//! [`MediaSetup::gated_router`] nests under `/api/v3` inside the
 //! deny-by-default session gate, next to the reads nest. Connections,
 //! folder preferences, and playlist imports run on the slice memory stores
 //! (durable rows are a later-stage persistence tier); playback catalog,
@@ -40,16 +40,16 @@ use crate::stream::transcode::{
 
 /// Production stream engine: gateway over stored-connection remote reads
 /// and ffmpeg transcodes behind the shared transcode gate.
-pub type Stage6Engine =
+pub type MediaEngine =
     Gateway<RemotesRemoteReader, FfmpegTranscoder<StdFfmpegSpawner, Arc<LocalTranscodeGate>>>;
 
 /// Everything `create_app` needs to mount the stage-6 slices, built once.
 #[derive(Clone)]
-pub struct Stage6Setup {
+pub struct MediaSetup {
     /// Remote-browse deps (memory connections/folders/imports).
     pub remotes: RemotesDeps,
     /// Stream-gateway state over the production engine.
-    pub stream: StreamState<Stage6Engine>,
+    pub stream: StreamState<MediaEngine>,
     /// Playback-reporting deps (SQLite catalog/history/prefs/names).
     pub playback: PlaybackDeps,
 }
@@ -71,7 +71,7 @@ impl ReportWorker {
     }
 }
 
-impl Stage6Setup {
+impl MediaSetup {
     /// Build the production bundle. `db_path` backs the playback SQLite
     /// stores; `connect_apps` carries the transcode policy; `crypto` seals
     /// remote credentials; `library_roots` resolves local stream reads
@@ -160,7 +160,7 @@ impl Stage6Setup {
         use crate::playback::fakes::{FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks};
 
         let http = crate::http_client::HttpClientFactory::new()
-            .map_err(|error| format!("test stage6 http: {error}"))?
+            .map_err(|error| format!("test media http: {error}"))?
             .shared()
             .clone();
         let crypto = Arc::new(

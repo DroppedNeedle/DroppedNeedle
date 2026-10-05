@@ -69,7 +69,7 @@ pub fn hooked_state() -> AppState {
         auth.clone(),
         reads,
         providers,
-        test_stage6(&auth, ids.clone()),
+        test_media(&auth, ids.clone()),
         acquire,
         library,
         compat,
@@ -118,7 +118,7 @@ pub fn hooked_state_with_compat(subsonic: bool, jellyfin: bool) -> AppState {
         auth.clone(),
         reads,
         providers,
-        test_stage6(&auth, ids.clone()),
+        test_media(&auth, ids.clone()),
         acquire,
         library,
         compat,
@@ -166,7 +166,7 @@ pub fn prod_like_state() -> AppState {
         auth.clone(),
         reads,
         providers,
-        test_stage6(&auth, ids.clone()),
+        test_media(&auth, ids.clone()),
         acquire,
         library,
         compat,
@@ -188,12 +188,12 @@ fn test_acquire(
 }
 
 /// Unwired stage-6 bundle over the test auth deps.
-fn test_stage6(
+fn test_media(
     auth: &droppedneedle::auth::wiring::AuthSetup,
     ids: Arc<dyn IdGenerator>,
-) -> droppedneedle::stage6::Stage6Setup {
-    droppedneedle::stage6::Stage6Setup::for_tests(auth.users.clone(), ids)
-        .expect("test stage6 bundle builds")
+) -> droppedneedle::media::MediaSetup {
+    droppedneedle::media::MediaSetup::for_tests(auth.users.clone(), ids)
+        .expect("test media bundle builds")
 }
 
 /// Unwired reads bundle over the test auth deps.

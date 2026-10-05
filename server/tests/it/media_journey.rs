@@ -70,7 +70,7 @@ impl E2e {
     async fn open(tag: &str) -> Self {
         let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "droppedneedle-stage6-journey-{tag}-{}-{seq}",
+            "droppedneedle-media-journey-{tag}-{}-{seq}",
             std::process::id()
         ));
         let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
@@ -157,7 +157,7 @@ impl E2e {
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
         )
         .expect("library bundle builds");
-        let (stage6, _worker) = droppedneedle::stage6::Stage6Setup::build(
+        let (media, _worker) = droppedneedle::media::MediaSetup::build(
             &self.db_path,
             &app_config,
             auth.users.clone(),
@@ -167,7 +167,7 @@ impl E2e {
             connect_apps.clone(),
             Some(library.root_source()),
         )
-        .expect("stage6 bundle builds");
+        .expect("media bundle builds");
         let mut reads = reads;
         let acquire = droppedneedle::acquire::AcquireSetup::build(
             &self.db_path,
@@ -182,8 +182,8 @@ impl E2e {
         let compat = droppedneedle::compat::CompatSetup::build(
             auth.users.clone(),
             Arc::clone(&self.crypto),
-            stage6.playback.clone(),
-            stage6.stream.engine.clone(),
+            media.playback.clone(),
+            media.stream.engine.clone(),
             library.clone(),
             &connect_apps,
         );
@@ -213,7 +213,7 @@ impl E2e {
             auth,
             reads,
             providers,
-            stage6,
+            media,
             acquire,
             library,
             compat,
@@ -293,7 +293,7 @@ fn bearer(token: &str) -> String {
 }
 
 #[tokio::test]
-async fn stage6_connect_browse_play_seek_stop() {
+async fn media_connect_browse_play_seek_stop() {
     let e2e = E2e::open("plex").await;
     let app = e2e.router();
 
@@ -505,7 +505,7 @@ fn stream_header(headers: &HeaderMap, name: &str) -> Option<String> {
 }
 
 #[tokio::test]
-async fn stage6_transcode_estimate_round_trip() {
+async fn media_transcode_estimate_round_trip() {
     // Why scripted: the production gateway only transcodes local files, and
     // it never emits an estimate (track durations are unknown at that
     // layer), so the estimated-length landing is pinned here through the
@@ -675,7 +675,7 @@ impl RemoteReader for BlockingRemote {
 }
 
 #[tokio::test]
-async fn stage6_concurrent_streams_under_caps() {
+async fn media_concurrent_streams_under_caps() {
     assert_eq!(
         DIRECT_PRINCIPAL_LIMIT, 8,
         "the eight join arms below track the per-principal cap"
@@ -686,7 +686,7 @@ async fn stage6_concurrent_streams_under_caps() {
         bytes: bytes.clone(),
     };
     let root = std::env::temp_dir().join(format!(
-        "droppedneedle-stage6-caps-{}-{}",
+        "droppedneedle-media-caps-{}-{}",
         std::process::id(),
         SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed)
     ));

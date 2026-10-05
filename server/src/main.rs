@@ -16,6 +16,7 @@ use droppedneedle::{
     http_client::HttpClientFactory,
     ids::UuidGenerator,
     jobs::wiring::{JobsSetup, SHUTDOWN_GRACE},
+    media::MediaSetup,
     observability::init_tracing,
     plugins::wiring::PluginsSetup,
     providers::{Providers, adapters::production_enrichment},
@@ -32,7 +33,6 @@ use droppedneedle::{
         services::SqliteImpactBuckets,
         wiring::SettingsSetup,
     },
-    stage6::Stage6Setup,
 };
 use utoipa::OpenApi as _;
 
@@ -234,7 +234,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
     .map_err(|error| format!("library setup: {error}"))?;
     let compat_crypto = crypto.clone();
     let plugins_crypto = crypto.clone();
-    let (stage6, report_worker) = Stage6Setup::build(
+    let (media, report_worker) = MediaSetup::build(
         &config.library_db_path,
         &config,
         auth.users.clone(),
@@ -288,8 +288,8 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
     let compat = CompatSetup::build(
         auth.users.clone(),
         compat_crypto,
-        stage6.playback.clone(),
-        stage6.stream.engine.clone(),
+        media.playback.clone(),
+        media.stream.engine.clone(),
         library.clone(),
         &connect_apps,
     );
@@ -372,7 +372,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
         auth,
         reads,
         providers,
-        stage6,
+        media,
         acquire.clone(),
         library.clone(),
         compat,

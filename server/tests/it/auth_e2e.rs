@@ -182,7 +182,7 @@ impl E2e {
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
         )
         .expect("library bundle builds");
-        let (stage6, _worker) = droppedneedle::stage6::Stage6Setup::build(
+        let (media, _worker) = droppedneedle::media::MediaSetup::build(
             &self.db_path,
             &app_config,
             auth.users.clone(),
@@ -192,7 +192,7 @@ impl E2e {
             connect_apps.clone(),
             Some(library.root_source()),
         )
-        .expect("stage6 bundle builds");
+        .expect("media bundle builds");
         let mut reads = reads;
         let acquire = droppedneedle::acquire::AcquireSetup::build(
             &self.db_path,
@@ -207,8 +207,8 @@ impl E2e {
         let compat = droppedneedle::compat::CompatSetup::build(
             auth.users.clone(),
             Arc::clone(&self.crypto),
-            stage6.playback.clone(),
-            stage6.stream.engine.clone(),
+            media.playback.clone(),
+            media.stream.engine.clone(),
             library.clone(),
             &connect_apps,
         );
@@ -258,7 +258,7 @@ impl E2e {
             auth,
             reads,
             providers,
-            stage6,
+            media,
             acquire,
             library,
             compat,
