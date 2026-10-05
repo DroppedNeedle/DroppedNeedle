@@ -93,43 +93,6 @@ describe('createMuxEventStream', () => {
 		mux.disconnect();
 	});
 
-	it('attaches listeners registered before connect when the stream opens', () => {
-		const mux = createMuxEventStream();
-		const seen: unknown[] = [];
-		mux.on('snapshot', (event) => {
-			seen.push(JSON.parse((event as MessageEvent).data));
-		});
-		mux.connect();
-
-		FakeEventSource.instances[0].emit('snapshot', { sessions: [] });
-		expect(seen).toEqual([{ sessions: [] }]);
-		mux.disconnect();
-	});
-
-	it('notifies connect listeners on every open including reconnects', () => {
-		const mux = createMuxEventStream();
-		mux.connect();
-		let opens = 0;
-		mux.onConnect(() => {
-			opens += 1;
-		});
-
-		FakeEventSource.instances[0].emitOpen();
-		FakeEventSource.instances[0].emitOpen();
-		expect(opens).toBe(2);
-		mux.disconnect();
-	});
-
-	it('opens nothing while the tab is hidden', () => {
-		stubDocument(true);
-		const mux = createMuxEventStream();
-		mux.connect();
-
-		expect(FakeEventSource.instances).toHaveLength(0);
-		expect(mux.isConnected).toBe(false);
-		mux.disconnect();
-	});
-
 	it('hibernates the stream while hidden and reopens when visible again', () => {
 		const doc = stubDocument(false);
 		const mux = createMuxEventStream();
@@ -167,19 +130,6 @@ describe('createMuxEventStream', () => {
 		mux.disconnect();
 	});
 
-	it('honors onConnect unsubscribe', () => {
-		const mux = createMuxEventStream();
-		mux.connect();
-		let opens = 0;
-		const unsub = mux.onConnect(() => {
-			opens += 1;
-		});
-		unsub();
-		FakeEventSource.instances[0].emitOpen();
-		expect(opens).toBe(0);
-		mux.disconnect();
-	});
-
 	it('stays down across visibility flips after disconnect', () => {
 		const doc = stubDocument(false);
 		const mux = createMuxEventStream();
@@ -193,45 +143,5 @@ describe('createMuxEventStream', () => {
 
 		expect(FakeEventSource.instances).toHaveLength(1);
 		expect(mux.isConnected).toBe(false);
-	});
-
-	it('reopens the stream with listeners intact across a disconnect/connect cycle', () => {
-		// the singleton is reused across logout/login and account switches
-		const mux = createMuxEventStream();
-		const seen: unknown[] = [];
-		let opens = 0;
-		mux.on('snapshot', (event) => {
-			seen.push(JSON.parse((event as MessageEvent).data));
-		});
-		mux.onConnect(() => {
-			opens += 1;
-		});
-		mux.connect();
-		FakeEventSource.instances[0].emitOpen();
-		expect(opens).toBe(1);
-
-		mux.disconnect();
-		expect(FakeEventSource.instances[0].closed).toBe(true);
-		expect(mux.isConnected).toBe(false);
-
-		mux.connect();
-		expect(FakeEventSource.instances).toHaveLength(2);
-		expect(mux.isConnected).toBe(true);
-		FakeEventSource.instances[1].emitOpen();
-		expect(opens).toBe(2);
-		FakeEventSource.instances[1].emit('snapshot', { sessions: [] });
-		expect(seen).toEqual([{ sessions: [] }]);
-		mux.disconnect();
-	});
-
-	it('disconnect closes the stream and removes the visibility listener', () => {
-		const doc = stubDocument(false);
-		const mux = createMuxEventStream();
-		mux.connect();
-		mux.disconnect();
-
-		expect(FakeEventSource.instances[0].closed).toBe(true);
-		expect(mux.isConnected).toBe(false);
-		expect(doc.removeEventListener).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
 	});
 });

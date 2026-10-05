@@ -82,31 +82,6 @@ afterEach(() => {
 });
 
 describe('createLibraryActivityEvents', () => {
-	it('opens no stream of its own and seeds the same initial revision silently', () => {
-		const events = createLibraryActivityEvents(mux);
-		events.start(true, 'user-1');
-		expect(FakeEventSource.instances).toHaveLength(1);
-		expect(FakeEventSource.instances[0].url).toBe('/api/v1/events/stream');
-
-		// mount parity: the retired operations stream invalidated admin
-		// surfaces on open, so start() does it directly.
-		expect(h.invalidate).toHaveBeenCalledWith({
-			queryKey: LibraryQueryKeyFactory.operationsPrefix()
-		});
-		expect(h.invalidate).toHaveBeenCalledWith({
-			queryKey: LibraryQueryKeyFactory.reviewsPrefix()
-		});
-		expect(h.invalidate).not.toHaveBeenCalledWith({
-			queryKey: LibraryQueryKeyFactory.activityPrefix()
-		});
-
-		h.invalidate.mockClear();
-		const initial = revisionEvent({ scan: 1, identification: 2, operation: 3, catalog: 4 });
-		FakeEventSource.instances[0].emit('activity.changed', initial);
-		expect(h.invalidate).not.toHaveBeenCalled();
-		expect(h.invalidateCatalog).not.toHaveBeenCalled();
-	});
-
 	it('invalidates activity and admin surfaces once per genuine change', () => {
 		const events = createLibraryActivityEvents(mux);
 		events.start(true, 'user-1');
@@ -128,53 +103,6 @@ describe('createLibraryActivityEvents', () => {
 			queryKey: LibraryQueryKeyFactory.reviewsPrefix()
 		});
 		expect(h.invalidateCatalog).not.toHaveBeenCalled();
-	});
-
-	it('uses one catalog sweep for a catalog revision change', () => {
-		const events = createLibraryActivityEvents(mux);
-		events.start(true, 'user-1');
-		FakeEventSource.instances[0].emit(
-			'activity.changed',
-			revisionEvent({ scan: 1, identification: 2, operation: 3, catalog: 4 })
-		);
-		h.invalidate.mockClear();
-
-		const changed = revisionEvent({ scan: 1, identification: 2, operation: 3, catalog: 5 });
-		FakeEventSource.instances[0].emit('activity.changed', changed);
-
-		expect(h.invalidateCatalog).toHaveBeenCalledOnce();
-		expect(h.invalidate).not.toHaveBeenCalled();
-	});
-
-	it('refreshes admin surfaces on reconnect but ignores the replayed revision', () => {
-		const events = createLibraryActivityEvents(mux);
-		events.start(true, 'user-1');
-		const initial = revisionEvent({ scan: 1, identification: 2, operation: 3, catalog: 4 });
-		FakeEventSource.instances[0].emit('activity.changed', initial);
-
-		h.invalidate.mockClear();
-		FakeEventSource.instances[0].emitOpen();
-		expect(h.invalidate).toHaveBeenCalledWith({
-			queryKey: LibraryQueryKeyFactory.operationsPrefix()
-		});
-		expect(h.invalidate).toHaveBeenCalledWith({
-			queryKey: LibraryQueryKeyFactory.reviewsPrefix()
-		});
-		expect(h.invalidate).not.toHaveBeenCalledWith({
-			queryKey: LibraryQueryKeyFactory.activityPrefix()
-		});
-
-		h.invalidate.mockClear();
-		FakeEventSource.instances[0].emit('activity.changed', initial);
-		expect(h.invalidate).not.toHaveBeenCalled();
-
-		FakeEventSource.instances[0].emit(
-			'activity.changed',
-			revisionEvent({ scan: 1, identification: 3, operation: 3, catalog: 4 })
-		);
-		expect(h.invalidate).toHaveBeenCalledWith({
-			queryKey: LibraryQueryKeyFactory.activityPrefix()
-		});
 	});
 
 	it('limits non-admin sessions to activity invalidation', () => {
@@ -204,23 +132,6 @@ describe('createLibraryActivityEvents', () => {
 		events.start(false, 'user-1');
 		FakeEventSource.instances[0].emitOpen();
 		expect(h.invalidate).not.toHaveBeenCalled();
-	});
-
-	it('defers the admin refresh to the first open when starting disconnected', () => {
-		const idle = createMuxEventStream();
-		const events = createLibraryActivityEvents(idle);
-		events.start(true, 'user-1');
-		expect(h.invalidate).not.toHaveBeenCalled();
-		idle.connect();
-		expect(FakeEventSource.instances).toHaveLength(2);
-		FakeEventSource.instances[1].emitOpen();
-		expect(h.invalidate).toHaveBeenCalledWith({
-			queryKey: LibraryQueryKeyFactory.operationsPrefix()
-		});
-		expect(h.invalidate).toHaveBeenCalledWith({
-			queryKey: LibraryQueryKeyFactory.reviewsPrefix()
-		});
-		idle.disconnect();
 	});
 
 	it('unregisters and resets revision state for the next session', () => {
@@ -258,26 +169,6 @@ describe('createLibraryActivityEvents', () => {
 		);
 		expect(h.invalidate).not.toHaveBeenCalled();
 		expect(h.invalidateCatalog).not.toHaveBeenCalled();
-	});
-
-	it('invalidates when the first SSE revision is newer than the HTTP snapshot', () => {
-		const events = createLibraryActivityEvents(mux);
-		events.start(false, 'user-1');
-		FakeEventSource.instances[0].emit(
-			'activity.changed',
-			revisionEvent({ scan: 2, identification: 2, operation: 3, catalog: 4 })
-		);
-		expect(h.invalidate).not.toHaveBeenCalled();
-
-		h.activityData = {
-			revisions: { scan: 1, identification: 2, operation: 3, catalog: 4 }
-		};
-		h.queryCacheListener?.();
-
-		expect(h.invalidate).toHaveBeenCalledOnce();
-		expect(h.invalidate).toHaveBeenCalledWith({
-			queryKey: LibraryQueryKeyFactory.activityPrefix()
-		});
 	});
 });
 

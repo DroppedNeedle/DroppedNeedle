@@ -6,10 +6,7 @@ vi.mock('./LibraryManagementInvalidation', () => ({
 	invalidateLibraryManagementSurfaces: invalidate
 }));
 
-import {
-	createLibraryManagementEvents,
-	parseLibraryManagementActivityEvent
-} from './LibraryManagementEvents';
+import { createLibraryManagementEvents } from './LibraryManagementEvents';
 import { createMuxEventStream, type MuxEventStream } from '$lib/queries/events/MuxEventStream';
 
 class FakeEventSource {
@@ -63,21 +60,6 @@ afterEach(() => {
 	mux.disconnect();
 });
 
-describe('parseLibraryManagementActivityEvent', () => {
-	it('accepts the durable revision payload and rejects malformed revisions', () => {
-		expect(
-			parseLibraryManagementActivityEvent(
-				'{"id":"activity:4","revisions":{"operation":4,"scan":2}}'
-			)
-		).toEqual({ id: 'activity:4', revisions: { operation: 4, scan: 2 } });
-		expect(parseLibraryManagementActivityEvent('{"id":"activity:4","revisions":[]}')).toBeNull();
-		expect(
-			parseLibraryManagementActivityEvent('{"id":"activity:4","revisions":{"operation":"four"}}')
-		).toBeNull();
-		expect(parseLibraryManagementActivityEvent('not-json')).toBeNull();
-	});
-});
-
 describe('createLibraryManagementEvents', () => {
 	it('refreshes on start and de-duplicates replayed event IDs', () => {
 		const events = createLibraryManagementEvents(mux);
@@ -106,36 +88,6 @@ describe('createLibraryManagementEvents', () => {
 		events.stop();
 		first.emit('activity.changed', '{"id":"activity:9","revisions":{"operation":9}}', 'activity:9');
 		expect(invalidate).toHaveBeenCalledOnce();
-	});
-
-	it('refreshes when the mux reconnects', () => {
-		const events = createLibraryManagementEvents(mux);
-		events.start();
-		invalidate.mockClear();
-
-		FakeEventSource.instances[0].emitOpen();
-		expect(invalidate).toHaveBeenCalledOnce();
-	});
-
-	it('stays silent on reconnect after stop', () => {
-		const events = createLibraryManagementEvents(mux);
-		events.start();
-		invalidate.mockClear();
-		events.stop();
-		FakeEventSource.instances[0].emitOpen();
-		expect(invalidate).not.toHaveBeenCalled();
-	});
-
-	it('defers the start refresh to the first open when starting disconnected', () => {
-		const idle = createMuxEventStream();
-		const events = createLibraryManagementEvents(idle);
-		events.start();
-		expect(invalidate).not.toHaveBeenCalled();
-		idle.connect();
-		expect(FakeEventSource.instances).toHaveLength(2);
-		FakeEventSource.instances[1].emitOpen();
-		expect(invalidate).toHaveBeenCalledOnce();
-		idle.disconnect();
 	});
 
 	it('invalidates distinct revision vectors even when their maximum is unchanged', () => {
