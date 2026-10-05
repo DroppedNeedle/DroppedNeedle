@@ -744,31 +744,31 @@ impl ConnectionResolver {
     }
 
     /// The caller's own link first, then the admin's shared credential.
+    /// A stored link that no longer opens or is incomplete falls back to
+    /// the shared account, as v2 `PerUserClientFactory` did; it reads as
+    /// stale only when there is no shared account to fall back to.
     pub async fn resolve(
         &self,
         user_id: &str,
         source: SourceName,
     ) -> Result<ResolvedConnection, ResolveError> {
         let server = self.server(source)?.ok_or(ResolveError::NotConfigured)?;
-        if let Some(link) = self.link(user_id, source).await? {
-            return Ok(linked(user_id, &server, link));
+        let stale = match self.link(user_id, source).await {
+            Ok(Some(link)) => return Ok(linked(user_id, &server, link)),
+            Ok(None) => false,
+            Err(ResolveError::Stale) => {
+                tracing::warn!(
+                    source = source.as_str(),
+                    "stored link no longer opens; using the shared account"
+                );
+                true
+            }
+            Err(other) => return Err(other),
+        };
+        match shared(user_id, source, &server) {
+            Err(ResolveError::NotConfigured) if stale => Err(ResolveError::Stale),
+            other => other,
         }
-        shared(user_id, source, &server)
-    }
-
-    /// The caller's own link only. Playback attribution uses this so one
-    /// user's plays never land on another account.
-    pub async fn resolve_linked(
-        &self,
-        user_id: &str,
-        source: SourceName,
-    ) -> Result<ResolvedConnection, ResolveError> {
-        let server = self.server(source)?.ok_or(ResolveError::NotConfigured)?;
-        let link = self
-            .link(user_id, source)
-            .await?
-            .ok_or(ResolveError::NotConfigured)?;
-        Ok(linked(user_id, &server, link))
     }
 
     /// The admin's credential only (presence polling, shared browse).
@@ -1074,10 +1074,16 @@ mod tests {
             .expect("own resolves");
         assert_eq!(own.account_mode, "linked");
         assert_eq!(own.credential, "s3cret");
-        assert!(matches!(
-            resolver.resolve_linked("bea", SourceName::Navidrome).await,
-            Err(ResolveError::NotConfigured)
-        ));
+
+        // A link that no longer opens falls back to the shared account.
+        rows.upsert("bea", "navidrome", "v3:garbage".to_owned())
+            .await
+            .expect("row writes");
+        let fallback = resolver
+            .resolve("bea", SourceName::Navidrome)
+            .await
+            .expect("stale link falls back");
+        assert_eq!(fallback.account_mode, "shared");
     }
 
     /// A disabled or missing admin server hides every link: the URL is the

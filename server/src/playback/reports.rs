@@ -103,8 +103,10 @@ impl RemoteReporters for ReportQueue {
 }
 
 /// Drain attribution reports until every queue handle drops. Each report
-/// resolves the reporter's own linked account (never the shared admin
-/// account) and delivers exactly one upstream call; failures log and drop.
+/// resolves like v2 `_repo_for`: the reporter's own linked account, else
+/// the shared app account when there is no usable link. A linked account
+/// the upstream rejects is not retried with the shared one; every failure
+/// logs and drops after exactly one upstream call.
 pub async fn run_report_worker(
     mut rx: tokio::sync::mpsc::Receiver<QueuedReport>,
     http: reqwest::Client,
@@ -120,21 +122,21 @@ async fn deliver(queued: &QueuedReport, http: &reqwest::Client, resolver: &Conne
         return;
     };
     let resolved = match resolver
-        .resolve_linked(&queued.report.user_id, source)
+        .resolve(&queued.report.user_id, source)
         .await
     {
         Ok(resolved) => resolved,
         Err(ResolveError::NotConfigured) => {
             tracing::debug!(
                 source = source.as_str(),
-                "no linked account; dropping attribution"
+                "no linked or shared account; dropping attribution"
             );
             return;
         }
         Err(ResolveError::Stale) => {
             tracing::debug!(
                 source = source.as_str(),
-                "linked credential stale; dropping attribution"
+                "linked credential stale and no shared account; dropping attribution"
             );
             return;
         }
