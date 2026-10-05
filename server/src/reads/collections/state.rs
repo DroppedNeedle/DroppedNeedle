@@ -8,21 +8,38 @@ use super::store::Stores;
 /// Auto-download state of one follow, as the routes show it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoDownloadState {
-    /// Auto-download off.
-    Off,
+    /// Off, or on with no verdict on file.
+    None,
     /// Asked for, awaiting an admin verdict.
     Pending,
     /// On: approved, or the follower's role approves itself.
-    Active,
+    Approved,
+    /// An admin turned the ask down.
+    Rejected,
+    /// An admin withdrew an earlier grant.
+    Revoked,
 }
 
 impl AutoDownloadState {
-    /// Wire form.
+    /// Wire form (the v2 vocabulary the web client reads).
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Off => "off",
+            Self::None => "none",
             Self::Pending => "pending",
-            Self::Active => "active",
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
+            Self::Revoked => "revoked",
+        }
+    }
+
+    /// Parse a stored approval state; unknown text reads as no verdict.
+    pub fn from_approval(state: &str) -> Self {
+        match state {
+            "pending" => Self::Pending,
+            "approved" => Self::Approved,
+            "rejected" => Self::Rejected,
+            "revoked" => Self::Revoked,
+            _ => Self::None,
         }
     }
 }

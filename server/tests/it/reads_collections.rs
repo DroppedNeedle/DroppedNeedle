@@ -4,6 +4,11 @@
 //! users, everything survives a restart, pins never write identity, and
 //! store faults stay hidden.
 
+use std::sync::Arc;
+
+use droppedneedle::acquire::db::AcquireDb;
+use droppedneedle::acquire::requests::sqlite::FollowApprovalStore;
+use droppedneedle::acquire::settings::{ApprovalSeedBridge, RequestsPendingSource};
 use droppedneedle::db::{DbConfig, DbRuntime, open_runtime};
 use droppedneedle::reads::collections::{self, CollectionsState, db::CollectionsDb};
 
@@ -68,11 +73,14 @@ impl Rig {
             .unwrap()
     }
 
+    /// Collections wired to the acquire approval store, as production is.
     fn state(&self) -> CollectionsState {
-        CollectionsState::new(CollectionsDb::new(
-            self.runtime.pool().clone(),
-            self.runtime.lane().clone(),
-        ))
+        let (pool, lane) = (self.runtime.pool().clone(), self.runtime.lane().clone());
+        let approvals = FollowApprovalStore::new(AcquireDb::new(pool.clone(), lane.clone()));
+        let mut state = CollectionsState::new(CollectionsDb::new(pool, lane));
+        state.acquire_approvals = Some(Arc::new(RequestsPendingSource::new(approvals.clone())));
+        state.approval_seeds = Some(Arc::new(ApprovalSeedBridge::new(approvals)));
+        state
     }
 
     fn app(&self) -> Router {
@@ -454,7 +462,7 @@ async fn follow_auto_download_states_and_admin_reads() {
         )
         .await;
         let want = if identity == TRUSTED {
-            "active"
+            "approved"
         } else {
             "pending"
         };
@@ -485,13 +493,7 @@ async fn follow_auto_download_states_and_admin_reads() {
         None,
     )
     .await;
-    let bob = batches["batches"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|batch| batch["user_id"] == "u-bob")
-        .unwrap();
-    assert_eq!(bob["artist_count"], 2);
+    assert_eq!(batches["count"], 0, "single asks are not import batches");
 
     let (_, off) = call(
         &app,
@@ -501,7 +503,16 @@ async fn follow_auto_download_states_and_admin_reads() {
         Some(json!({"enabled": false})),
     )
     .await;
-    assert_eq!(off["auto_download_state"], "off");
+    assert_eq!(off["auto_download_state"], "none");
+    let (_, approvals) = call(
+        &app,
+        Method::GET,
+        "/requests/auto-download-approvals",
+        Some(ADMIN),
+        None,
+    )
+    .await;
+    assert_eq!(approvals["count"], 2, "turning it off withdraws the ask");
     let (_, list) = call(&app, Method::GET, "/following/artists", Some(BOB), None).await;
     assert_eq!(
         list["artists"].as_array().unwrap().len(),

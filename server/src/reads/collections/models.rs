@@ -395,7 +395,7 @@ pub struct FollowStatusResponse {
     pub followed: bool,
     /// Whether auto-download is wanted.
     pub auto_download: bool,
-    /// Approval state: off, pending, or active.
+    /// Approval state: none, pending, approved, rejected or revoked.
     pub auto_download_state: String,
 }
 
@@ -424,7 +424,7 @@ pub struct FollowedArtist {
     pub name: String,
     /// Whether auto-download is wanted.
     pub auto_download: bool,
-    /// Approval state: off, pending, or active.
+    /// Approval state: none, pending, approved, rejected or revoked.
     pub auto_download_state: String,
     /// When the follow started, epoch seconds.
     pub followed_at: u64,

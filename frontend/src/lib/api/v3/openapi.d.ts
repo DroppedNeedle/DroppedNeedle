@@ -8281,7 +8281,7 @@ export interface components {
             artist_mbid: string;
             /** @description Whether auto-download is wanted. */
             auto_download: boolean;
-            /** @description Approval state: off, pending, or active. */
+            /** @description Approval state: none, pending, approved, rejected or revoked. */
             auto_download_state: string;
             /** @description Whether the caller follows the artist. */
             followed: boolean;
@@ -8292,7 +8292,7 @@ export interface components {
             artist_mbid: string;
             /** @description Whether auto-download is wanted. */
             auto_download: boolean;
-            /** @description Approval state: off, pending, or active. */
+            /** @description Approval state: none, pending, approved, rejected or revoked. */
             auto_download_state: string;
             /**
              * Format: int64

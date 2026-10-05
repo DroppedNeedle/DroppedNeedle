@@ -22,14 +22,24 @@ const RECENT_WINDOW_DAYS: i64 = 30;
 /// A follow's state: intent off is off; on is active once approved or when
 /// the follower's role approves itself, pending otherwise.
 pub(crate) fn derive_state(row: &FollowRow) -> AutoDownloadState {
-    if !row.auto_download {
-        return AutoDownloadState::Off;
-    }
-    let self_approving = Role::parse(&row.user_role).is_some_and(Role::is_curator);
-    if self_approving || row.approval_state.as_deref() == Some("approved") {
-        AutoDownloadState::Active
+    let verdict = row
+        .approval_state
+        .as_deref()
+        .map_or(AutoDownloadState::None, AutoDownloadState::from_approval);
+    if row.auto_download {
+        // Curators approve themselves and carry no approval row (v2 DD3).
+        if Role::parse(&row.user_role).is_some_and(Role::is_curator) {
+            AutoDownloadState::Approved
+        } else {
+            verdict
+        }
+    } else if matches!(
+        verdict,
+        AutoDownloadState::Rejected | AutoDownloadState::Revoked
+    ) {
+        verdict
     } else {
-        AutoDownloadState::Pending
+        AutoDownloadState::None
     }
 }
 
@@ -45,7 +55,7 @@ fn status(artist_mbid: &str, row: Option<&FollowRow>) -> FollowStatusResponse {
             artist_mbid: artist_mbid.to_owned(),
             followed: false,
             auto_download: false,
-            auto_download_state: AutoDownloadState::Off.as_str().to_owned(),
+            auto_download_state: AutoDownloadState::None.as_str().to_owned(),
         },
     }
 }

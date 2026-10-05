@@ -2,10 +2,9 @@
 //!
 //! A follow row carries the auto-download intent; the approval verdict
 //! lives in `auto_download_approvals`, which the acquisition approval
-//! store owns. This store reads the verdict to show a follow's state and
-//! writes it only when a verdict arrives for an ask it never filed (see
-//! [`FollowStore::arm`]). Rows key on the lowercased MBID, as in v2, so
-//! imported follows and follows made here are one row.
+//! store alone writes. This store only reads the verdict to show a
+//! follow's state. Rows key on the lowercased MBID, as in v2, so imported
+//! follows and follows made here are one row.
 //!
 //! New releases come from `new_release_feed` joined to the user's follows;
 //! albums already in the library drop out of the to-do list (v2 rule).
@@ -289,8 +288,7 @@ impl FollowStore {
 
     /// An approval verdict arrived: turn auto-download on, following the
     /// artist first when the ask came from a request rather than a follow
-    /// toggle, and record the approved verdict. The approval store records
-    /// it too when it filed the ask; the upsert keeps both writes one truth.
+    /// toggle. The verdict itself is the approval store's write.
     pub async fn arm(
         &self,
         user_id: &str,
@@ -312,15 +310,6 @@ impl FollowStore {
                      VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5) \
                      ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
                      auto_download = 1, updated_at = ?5",
-                    params![user_id, mbid, lower, name, now],
-                )?;
-                tx.execute(
-                    "INSERT INTO auto_download_approvals (user_id, artist_mbid, \
-                     artist_mbid_lower, artist_name, state, requested_at, reviewed_at) \
-                     VALUES (?1, ?2, ?3, ?4, 'approved', ?5, ?5) \
-                     ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
-                     state = 'approved', reviewed_at = COALESCE(reviewed_at, ?5) \
-                     WHERE state != 'approved'",
                     params![user_id, mbid, lower, name, now],
                 )?;
                 Ok(())

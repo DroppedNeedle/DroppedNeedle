@@ -18199,7 +18199,7 @@
           },
           "auto_download_state": {
             "type": "string",
-            "description": "Approval state: off, pending, or active."
+            "description": "Approval state: none, pending, approved, rejected or revoked."
           },
           "followed": {
             "type": "boolean",
@@ -18228,7 +18228,7 @@
           },
           "auto_download_state": {
             "type": "string",
-            "description": "Approval state: off, pending, or active."
+            "description": "Approval state: none, pending, approved, rejected or revoked."
           },
           "followed_at": {
             "type": "integer",

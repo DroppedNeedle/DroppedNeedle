@@ -464,7 +464,33 @@ async fn acquire_follow_approval_arms_auto_download() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["auto_download_state"], "active");
+    assert_eq!(body["auto_download_state"], "approved");
+
+    // Revoking flips the intent off and the verdict shows.
+    let (status, body) = call(
+        app.clone(),
+        "POST",
+        &format!("/api/v3/requests/auto-download-approvals/{molly_id}/{ARTIST_MBID}/revoke"),
+        &[("authorization", admin.as_str())],
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, body) = call(
+        app.clone(),
+        "GET",
+        &format!("/api/v3/artists/{ARTIST_MBID}/follow-status"),
+        &[("authorization", molly.as_str())],
+        None,
+    )
+    .await;
+    assert_eq!(
+        (
+            body["auto_download"].as_bool(),
+            body["auto_download_state"].as_str()
+        ),
+        (Some(false), Some("revoked"))
+    );
 }
 
 // ---------------------------------------------------------------------------
