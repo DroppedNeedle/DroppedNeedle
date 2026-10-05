@@ -10,14 +10,14 @@
 //!   by the reads/catalog slice (v2 `invalidate_catalog_scope` / `on_identified`).
 //! - Provider reads (`DiscogsContrib`, `MusicBrainzContrib`) are satisfied by
 //!   the stage-5 provider adapters; every signature takes an explicit
-//!   [`RequestPriority`](droppedneedle::providers::slots::RequestPriority) so
+//!   [`RequestPriority`](crate::providers::slots::RequestPriority) so
 //!   the background lane stays honest at each call site.
 //!
 //! Futures are boxed by hand per repo idiom (no async-trait dependency).
 
 use std::collections::HashMap;
 
-use droppedneedle::providers::slots::RequestPriority;
+use crate::providers::slots::RequestPriority;
 use futures_util::future::BoxFuture;
 
 use super::error::ContribError;
@@ -302,7 +302,6 @@ pub enum VerificationJobState {
     Succeeded,
     NeedsReview,
     // v2 terminal state, kept so the store enum stays complete.
-    #[allow(dead_code)]
     Failed,
     Cancelled,
 }

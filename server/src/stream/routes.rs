@@ -61,6 +61,9 @@
 
 use std::sync::Arc;
 
+use crate::auth::session::middleware::CurrentSession;
+use crate::error::{ErrorBody, ErrorEnvelope};
+use crate::ids::IdGenerator;
 use axum::{
     Router,
     body::Body,
@@ -73,9 +76,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use droppedneedle::auth::session::middleware::CurrentSession;
-use droppedneedle::error::{ErrorBody, ErrorEnvelope};
-use droppedneedle::ids::IdGenerator;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -507,8 +507,8 @@ impl StreamError {
             ),
             Self::Upstream { message } => (UPSTREAM_UNAVAILABLE.to_owned(), message.clone(), None),
             Self::Internal { error_id } => (
-                droppedneedle::error::INTERNAL_ERROR.to_owned(),
-                droppedneedle::error::FIXED_INTERNAL_MESSAGE.to_owned(),
+                crate::error::INTERNAL_ERROR.to_owned(),
+                crate::error::FIXED_INTERNAL_MESSAGE.to_owned(),
                 Some(json!({ "error_id": error_id })),
             ),
         };

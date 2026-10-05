@@ -13,7 +13,7 @@
 //!   counts streamable-only.
 //! - Text filters match the pre-folded columns (`title_folded`,
 //!   `album_artist_name_folded`, `folded_name`) with an escaped LIKE pattern
-//!   folded by the shared [`fold_text`](droppedneedle::db::fold_text), the
+//!   folded by the shared [`fold_text`](crate::db::fold_text), the
 //!   same fold the scan path writes.
 //! - Optional filters bind NULL-means-absent so every statement keeps a
 //!   static bind list; only id IN-lists build placeholders.
@@ -61,7 +61,7 @@ impl LibraryDb {
 }
 
 fn internal(op: &str, error: sqlx::Error) -> StoreError {
-    StoreError::Internal(droppedneedle::db::map_sqlx_busy(op, error).to_string())
+    StoreError::Internal(crate::db::map_sqlx_busy(op, error).to_string())
 }
 
 fn unwired_store() -> StoreError {
@@ -71,7 +71,7 @@ fn unwired_store() -> StoreError {
 /// Escape the LIKE metacharacters in a folded filter, then wrap for
 /// substring matching.
 fn like_pattern(raw: &str) -> String {
-    let mut folded = droppedneedle::db::fold_text(raw);
+    let mut folded = crate::db::fold_text(raw);
     folded = folded
         .replace('\\', "\\\\")
         .replace('%', "\\%")
@@ -92,7 +92,7 @@ fn in_placeholders(len: usize) -> String {
 /// quoting, so both fall back to LIKE.
 /// Visible to the plan briefs, which assemble the same statements.
 pub(crate) fn fts_match_phrase(raw: &str) -> Option<String> {
-    let folded = droppedneedle::db::fold_text(raw);
+    let folded = crate::db::fold_text(raw);
     if folded.chars().count() < 3 || folded.contains('\0') {
         return None;
     }
@@ -836,7 +836,7 @@ impl LibraryCatalog for SqliteCatalog {
             let genre = filter
                 .genre
                 .as_deref()
-                .map(|name| droppedneedle::db::fold_text(name.trim()));
+                .map(|name| crate::db::fold_text(name.trim()));
             let order = track_order(sort, descending);
             let rows = sqlx::query(&format!(
                 "SELECT {TRACK_COLUMNS} {TRACK_JOINS} WHERE {TRACK_FILTER} \
@@ -1019,7 +1019,7 @@ impl LibraryCatalog for SqliteCatalog {
             let Some(pool) = self.db.live() else {
                 return Err(unwired_store());
             };
-            let folded = droppedneedle::db::fold_text(genre_folded.trim());
+            let folded = crate::db::fold_text(genre_folded.trim());
             let filter = "t.availability = 'indexed' AND \
                 (EXISTS (SELECT 1 FROM local_track_genres g \
                  WHERE g.local_track_id = t.id AND g.folded_name = ?) \

@@ -9,8 +9,8 @@
 
 use std::sync::Arc;
 
-use droppedneedle::stream::gateway::{RemoteMedia, RemoteReader};
-use droppedneedle::stream::routes::{AudioSource, StreamFault};
+use crate::stream::gateway::{RemoteMedia, RemoteReader};
+use crate::stream::routes::{AudioSource, StreamFault};
 
 use super::adapter::AdapterError;
 use super::connections::{ConnectionStore, CredentialCoder, ResolveError, resolve_connection};

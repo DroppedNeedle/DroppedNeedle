@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use droppedneedle::providers::slots::RequestPriority;
+use crate::providers::slots::RequestPriority;
 use futures_util::future::BoxFuture;
 
 use super::error::ContribError;

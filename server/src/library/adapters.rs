@@ -482,7 +482,7 @@ impl MusicBrainzContrib for UnavailableMusicBrainz {
         &'a self,
         _url: &'a str,
         _relation: UrlRelation,
-        _priority: droppedneedle::providers::slots::RequestPriority,
+        _priority: crate::providers::slots::RequestPriority,
         _bypass_cache: bool,
     ) -> BoxFuture<'a, Result<MusicBrainzUrlResolution, ContribError>> {
         Box::pin(async move {
@@ -495,7 +495,7 @@ impl MusicBrainzContrib for UnavailableMusicBrainz {
     fn get_release_for_verification<'a>(
         &'a self,
         _release_mbid: &'a str,
-        _priority: droppedneedle::providers::slots::RequestPriority,
+        _priority: crate::providers::slots::RequestPriority,
         _bypass_cache: bool,
     ) -> BoxFuture<'a, Result<Option<MusicBrainzVerifiedRelease>, ProviderFailure>> {
         Box::pin(async move {
@@ -509,7 +509,7 @@ impl MusicBrainzContrib for UnavailableMusicBrainz {
         &'a self,
         _facts: &'a DuplicateSearchFacts,
         _limit: usize,
-        _priority: droppedneedle::providers::slots::RequestPriority,
+        _priority: crate::providers::slots::RequestPriority,
     ) -> BoxFuture<'a, Result<Vec<MusicBrainzVerifiedRelease>, ContribError>> {
         Box::pin(async move {
             Err(ContribError::Data(

@@ -19,14 +19,6 @@
 //!   [`memory::FakeReleaseEditor`] - no live provider writes, ever.
 //! - [`worker::spawn_verification_worker`] exposes the background loop; the
 //!   stage-8 integrator owns supervision and `main.rs` wiring.
-//!
-//! Wiring note: this module is intentionally freestanding (only
-//! `droppedneedle::providers::slots` from the crate). Tests include it via
-//! `#[path]`; the integrator mounts it under `server/src/library`.
-
-// The `#[path]` test harness only reaches the curated root piecemeal; the
-// re-exports below are the integrator-facing API, not dead imports.
-#![allow(unused_imports)]
 
 pub mod error;
 pub mod memory;

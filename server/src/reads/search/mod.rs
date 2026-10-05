@@ -43,7 +43,7 @@ pub struct SearchDeps {
     /// Enrichment seam (stage-5 providers implement this).
     pub enrichment: Arc<dyn ports::EnrichmentPort>,
     /// Fresh ids for error correlation.
-    pub ids: Arc<dyn droppedneedle::ids::IdGenerator>,
+    pub ids: Arc<dyn crate::ids::IdGenerator>,
 }
 
 impl SearchDeps {
@@ -51,7 +51,7 @@ impl SearchDeps {
     pub fn new(
         service: service::SearchService,
         enrichment: Arc<dyn ports::EnrichmentPort>,
-        ids: Arc<dyn droppedneedle::ids::IdGenerator>,
+        ids: Arc<dyn crate::ids::IdGenerator>,
     ) -> Self {
         Self {
             service,

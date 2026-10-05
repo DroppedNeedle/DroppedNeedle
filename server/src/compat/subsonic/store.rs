@@ -187,7 +187,6 @@ pub struct TranscodeDecisionData {
 /// Client playback capabilities (getTranscodeDecision JSON body).
 /// Read by the integrator's `advanced_decide`, not by this slice.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
 pub struct ClientInfo {
     /// Client name.
     pub name: String,

@@ -20,15 +20,15 @@ use super::models::{
     ScanFrequencyDto, ScrobbleSettingsDto, SecuritySettingsDto, SourcePriorityDto,
     UsenetBackendDto, UsenetSearchBackendDto, UserPreferencesDto, WantedWatcherDto,
 };
-use droppedneedle::ids::IdGenerator;
-use droppedneedle::runtime_config::secret_sections::{EventsSweepScope, IdentificationPolicy};
-use droppedneedle::runtime_config::sections::{
+use crate::ids::IdGenerator;
+use crate::runtime_config::secret_sections::{EventsSweepScope, IdentificationPolicy};
+use crate::runtime_config::sections::{
     AudioFormat, ConnectApps, DiscoverMode, DownloadAccess, FilesystemWatcher, FreeMusic, GetIt,
     LastFmSettings, LibraryScanSchedule, MbSourceMode, MusicSource, PrimaryMusicSource,
     ScanFrequency, ScrobbleSettings, SecuritySettings, SourcePriority, UsenetBackend,
     UsenetBackendSetting, UserPreferences, WantedWatcher,
 };
-use droppedneedle::runtime_config::{ConfigError, ConfigStore};
+use crate::runtime_config::{ConfigError, ConfigStore};
 
 // --- enum bridges (variant-to-variant; wire strings stay v2-shaped) ----------
 
@@ -1390,9 +1390,9 @@ impl SettingsService {
     }
 }
 
-use droppedneedle::runtime_config::Section as _;
-use droppedneedle::runtime_config::secret_sections::NewznabIndexer;
-use droppedneedle::runtime_config::sections::{
+use crate::runtime_config::Section as _;
+use crate::runtime_config::secret_sections::NewznabIndexer;
+use crate::runtime_config::sections::{
     DownloadPolicy, QualityRecipeEntry, derive_default_order, validate_quality_recipe,
 };
 
@@ -1484,7 +1484,7 @@ impl PolicyImpactBuckets for SqliteImpactBuckets {
 /// is set, empty when unset. Mirrors the store's own read masking so
 /// path edits round-trip the key without touching it.
 fn masked_acoustid(stored: &TypedLibrary) -> String {
-    use droppedneedle::runtime_config::mask::{ACOUSTID_KEY_MASK, display_mask};
+    use crate::runtime_config::mask::{ACOUSTID_KEY_MASK, display_mask};
     display_mask(stored.acoustid_api_key.expose(), ACOUSTID_KEY_MASK).to_owned()
 }
 
@@ -1876,7 +1876,7 @@ impl From<super::models::NewznabIndexerDto> for NewznabIndexer {
 
 // --- connection bridges (DTO <-> section; secrets are plain strings both sides) ---
 
-use droppedneedle::runtime_config::secret_sections::{
+use crate::runtime_config::secret_sections::{
     AdvancedSettings, DownloadClients, EventsSettings, JellyfinConnection, LibraryPathRule,
     LibraryRoot, ListenBrainzConnection, NavidromeConnection, OidcConnection, PlexConnection,
     ProwlarrConnection, SabnzbdConnection, SlskdConnection, TypedLibrary, WrappedSettings,

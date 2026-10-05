@@ -26,7 +26,7 @@ use super::models::{
     LibraryPolicyTreeNode, LibraryPolicyTreeResponse, LibraryRootDto, LibrarySettingsDto,
     LibrarySettingsResponse,
 };
-use droppedneedle::ids::IdGenerator;
+use crate::ids::IdGenerator;
 
 /// Canonical JSON: sorted keys, compact separators, ASCII-escaped
 /// strings — byte-identical to Python's

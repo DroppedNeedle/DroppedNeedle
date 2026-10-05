@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use droppedneedle::auth::times::to_iso;
-use droppedneedle::db::{WriteLane, writer::Lane};
+use crate::auth::times::to_iso;
+use crate::db::{WriteLane, writer::Lane};
 
 use super::runtime::BoxFuture;
 
@@ -294,7 +294,7 @@ const LISTENBRAINZ_SERVICE: &str = "listenbrainz";
 
 /// Seal one link into the `{user_token, username}` JSON both stores persist.
 fn seal_link(
-    crypto: &droppedneedle::runtime_config::crypto::Crypto,
+    crypto: &crate::runtime_config::crypto::Crypto,
     username: &str,
     token: &str,
 ) -> Result<String, String> {
@@ -306,7 +306,7 @@ fn seal_link(
 /// Open one sealed link into its username and token. Anything unopenable
 /// reads as absent; the caller decides whether to log.
 fn open_link(
-    crypto: &droppedneedle::runtime_config::crypto::Crypto,
+    crypto: &crate::runtime_config::crypto::Crypto,
     sealed: &str,
 ) -> Option<(String, String)> {
     let plaintext = crypto.decrypt(sealed).ok()?;
@@ -324,7 +324,7 @@ struct SealedLink {
 
 /// In-memory link store with sealed tokens.
 pub struct MemoryListenBrainzLinkStore {
-    crypto: Arc<droppedneedle::runtime_config::crypto::Crypto>,
+    crypto: Arc<crate::runtime_config::crypto::Crypto>,
     links: Mutex<HashMap<String, SealedLink>>,
 }
 
@@ -337,7 +337,7 @@ impl std::fmt::Debug for MemoryListenBrainzLinkStore {
 
 impl MemoryListenBrainzLinkStore {
     /// Empty store under one stage-2 key.
-    pub fn new(crypto: Arc<droppedneedle::runtime_config::crypto::Crypto>) -> Self {
+    pub fn new(crypto: Arc<crate::runtime_config::crypto::Crypto>) -> Self {
         Self {
             crypto,
             links: Mutex::new(HashMap::new()),
@@ -415,7 +415,7 @@ impl ListenBrainzLinkStore for MemoryListenBrainzLinkStore {
 pub struct SqliteListenBrainzLinkStore {
     pool: sqlx::SqlitePool,
     lane: WriteLane,
-    crypto: Arc<droppedneedle::runtime_config::crypto::Crypto>,
+    crypto: Arc<crate::runtime_config::crypto::Crypto>,
 }
 
 impl std::fmt::Debug for SqliteListenBrainzLinkStore {
@@ -431,7 +431,7 @@ impl SqliteListenBrainzLinkStore {
     pub fn new(
         pool: sqlx::SqlitePool,
         lane: WriteLane,
-        crypto: Arc<droppedneedle::runtime_config::crypto::Crypto>,
+        crypto: Arc<crate::runtime_config::crypto::Crypto>,
     ) -> Self {
         Self { pool, lane, crypto }
     }

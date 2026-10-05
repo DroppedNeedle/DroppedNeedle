@@ -10,14 +10,14 @@
 
 use std::sync::Arc;
 
-use droppedneedle::remotes::adapter::AdapterError;
-use droppedneedle::remotes::connections::{
+use crate::remotes::adapter::AdapterError;
+use crate::remotes::connections::{
     ConnectionStore, CredentialCoder, ResolveError, resolve_connection,
 };
-use droppedneedle::remotes::jellyfin::JellyfinAdapter;
-use droppedneedle::remotes::models::SourceName;
-use droppedneedle::remotes::navidrome::NavidromeAdapter;
-use droppedneedle::remotes::plex::PlexAdapter;
+use crate::remotes::jellyfin::JellyfinAdapter;
+use crate::remotes::models::SourceName;
+use crate::remotes::navidrome::NavidromeAdapter;
+use crate::remotes::plex::PlexAdapter;
 
 use super::ports::{ProviderFailure, RemoteReport, RemoteReporters};
 

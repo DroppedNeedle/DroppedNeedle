@@ -10,7 +10,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use droppedneedle::providers::cache::{ProviderCache, invalidate_source};
+use crate::providers::cache::{ProviderCache, invalidate_source};
 use futures_util::future::BoxFuture;
 
 /// Sections whose save invalidates provider caches, and the events

@@ -7,7 +7,7 @@
 //! `spawn_*` constructor following the stage-5/6 pattern — single-flight
 //! registry, log-and-continue passes, shutdown through the sleeper — that
 //! registers the loop as
-//! [`JobKind::Ephemeral`](droppedneedle::db::JobKind) and returns a handle
+//! [`JobKind::Ephemeral`](crate::db::JobKind) and returns a handle
 //! the integrator awaits. Nothing here touches `main.rs`.
 //!
 //! Cadences are v2-exact (`backend/core/tasks.py`); each constant cites its
@@ -19,7 +19,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use droppedneedle::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
+use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
 
 use super::seams::{
     CandidateSearch, Clock, DispatchKind, DispatchRequest, DownloadDispatch, ReleasePoll, TickSink,

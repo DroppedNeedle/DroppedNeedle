@@ -8,10 +8,10 @@
 
 use std::collections::HashMap;
 
-use droppedneedle::providers::acoustid::{AcoustIdClient, Outcome};
-use droppedneedle::providers::degradation::DegradationSink;
-use droppedneedle::providers::limiter::Pacer;
-use droppedneedle::providers::musicbrainz::{
+use crate::providers::acoustid::{AcoustIdClient, Outcome};
+use crate::providers::degradation::DegradationSink;
+use crate::providers::limiter::Pacer;
+use crate::providers::musicbrainz::{
     Criticality, MbTransport, MusicBrainzClient, ReleaseSearchHit, credit_display_name, hit_score,
 };
 

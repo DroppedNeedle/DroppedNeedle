@@ -33,10 +33,7 @@ pub enum SearchError {
 impl SearchError {
     /// Build a server fault, logging the real cause with its id. Call sites
     /// pass the id generator from the search deps.
-    pub fn internal(
-        cause: &dyn std::fmt::Display,
-        ids: &dyn droppedneedle::ids::IdGenerator,
-    ) -> Self {
+    pub fn internal(cause: &dyn std::fmt::Display, ids: &dyn crate::ids::IdGenerator) -> Self {
         let error_id = ids.new_id();
         tracing::error!(error_id, %cause, "search request failed");
         Self::Internal { error_id }
@@ -47,8 +44,8 @@ impl IntoResponse for SearchError {
     fn into_response(self) -> Response {
         match self {
             SearchError::InvalidQuery { message } => {
-                let body = droppedneedle::error::ErrorEnvelope {
-                    error: droppedneedle::error::ErrorBody {
+                let body = crate::error::ErrorEnvelope {
+                    error: crate::error::ErrorBody {
                         code: INVALID_INPUT.to_owned(),
                         message,
                         details: None,
@@ -56,13 +53,11 @@ impl IntoResponse for SearchError {
                 };
                 (StatusCode::BAD_REQUEST, axum::Json(body)).into_response()
             }
-            SearchError::UnknownBucket => droppedneedle::error::ApiError::NotFound.into_response(),
-            SearchError::Internal { error_id } => {
-                droppedneedle::error::ApiError::server_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &error_id,
-                )
-            }
+            SearchError::UnknownBucket => crate::error::ApiError::NotFound.into_response(),
+            SearchError::Internal { error_id } => crate::error::ApiError::server_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &error_id,
+            ),
         }
     }
 }

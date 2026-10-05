@@ -10,7 +10,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use droppedneedle::providers::slots::RequestPriority;
+use crate::providers::slots::RequestPriority;
 
 use super::error::ContribError;
 use super::models::*;

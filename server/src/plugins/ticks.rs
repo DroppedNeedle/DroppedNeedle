@@ -10,19 +10,19 @@
 //! it through the plugin-scoped [`TickStateAccess`], which is what makes
 //! their state survive restarts and reinstalls.
 //!
-//! [`jobs_tick_host`]: droppedneedle::jobs::plugin_ticks::TickHost
-//! [`jobs_tick_store`]: droppedneedle::jobs::plugin_ticks::TickStore
-//! [`sync_ticks`]: droppedneedle::jobs::plugin_ticks::sync_ticks
+//! [`jobs_tick_host`]: crate::jobs::plugin_ticks::TickHost
+//! [`jobs_tick_store`]: crate::jobs::plugin_ticks::TickStore
+//! [`sync_ticks`]: crate::jobs::plugin_ticks::sync_ticks
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use droppedneedle::jobs::plugin_ticks::{
+use crate::jobs::plugin_ticks::{
     MemoryTickStore, SqliteTickStore, TickHost as JobsTickHost, TickPlugin as JobsTickPlugin,
     TickSpec, TickStore as JobsTickStore, TickStoreError, TickSyncState, clamp_interval_minutes,
     sync_ticks,
 };
-use droppedneedle::jobs::registry::{JobRegistry, RegistryStore};
+use crate::jobs::registry::{JobRegistry, RegistryStore};
 
 use super::host::PluginHost;
 use super::runtime::{BoxFuture, TickContext, TickStateAccess};
@@ -67,7 +67,7 @@ impl JobsTickStore for TickStoreKind {
         &self,
         plugin: &str,
         key: &str,
-    ) -> droppedneedle::jobs::registry::BoxFuture<'_, Result<Option<Vec<u8>>, TickStoreError>> {
+    ) -> crate::jobs::registry::BoxFuture<'_, Result<Option<Vec<u8>>, TickStoreError>> {
         match self {
             Self::Memory(store) => store.read(plugin, key),
             Self::Sqlite(store) => store.read(plugin, key),
@@ -79,7 +79,7 @@ impl JobsTickStore for TickStoreKind {
         plugin: &str,
         key: &str,
         bytes: Vec<u8>,
-    ) -> droppedneedle::jobs::registry::BoxFuture<'_, Result<(), TickStoreError>> {
+    ) -> crate::jobs::registry::BoxFuture<'_, Result<(), TickStoreError>> {
         match self {
             Self::Memory(store) => store.write(plugin, key, bytes),
             Self::Sqlite(store) => store.write(plugin, key, bytes),
@@ -168,7 +168,7 @@ impl<T: JobsTickStore> JobsTickPlugin for ModuleTick<T> {
         &self.name
     }
 
-    fn on_tick(&self) -> droppedneedle::jobs::registry::BoxFuture<'_, Result<(), String>> {
+    fn on_tick(&self) -> crate::jobs::registry::BoxFuture<'_, Result<(), String>> {
         let host = Arc::clone(&self.host);
         let name = self.name.clone();
         let access = JobsStateAccess::new(self.store.clone(), &self.name);
@@ -317,11 +317,9 @@ mod tests {
             "[plugin]\nname = \"toy\"\napi_version = 1\nentrypoint = \"plugin:Toy\"\ncapabilities = [\"scheduler\"]\n[schedule]\ninterval_minutes = 60\n",
         )
         .unwrap();
-        let crypto =
-            droppedneedle::runtime_config::crypto::Crypto::from_key_bytes(&[7u8; 32]).unwrap();
+        let crypto = crate::runtime_config::crypto::Crypto::from_key_bytes(&[7u8; 32]).unwrap();
         let config = Arc::new(
-            droppedneedle::runtime_config::ConfigStore::open(&dir.join("config.json"), crypto)
-                .unwrap(),
+            crate::runtime_config::ConfigStore::open(&dir.join("config.json"), crypto).unwrap(),
         );
         let loader = Arc::new(super::super::fakes::FakeLoader::new());
         loader.insert(

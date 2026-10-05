@@ -23,8 +23,8 @@ use tokio::sync::watch;
 use super::fs::FsCoordinator;
 use super::models::{
     Counters, Disposition, RequestedControl, ScanControl, ScanFailureRecord, ScanKind, ScanPhase,
-    ScanRequest, ScanRequestResult, ScanRun, ScanScope, ScanState, ScanTrigger,
-    ScopeDiscoveryState, Verdict, counter_names, failure_codes,
+    ScanRequest, ScanRequestResult, ScanRun, ScanScope, ScanState, ScopeDiscoveryState, Verdict,
+    counter_names, failure_codes,
 };
 use super::pool::BlockingPool;
 use super::roots::{PolicyResolver, RootRegistry};
@@ -1336,6 +1336,7 @@ pub struct IndexCounts {
 
 #[cfg(test)]
 mod tests {
+    use super::super::models::ScanTrigger;
     use super::super::roots::LibraryRoot;
     use super::super::seams::{NullIdentifyQueue, NullTagReader};
     use super::super::store::MemoryScanStore;

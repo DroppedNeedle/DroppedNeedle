@@ -26,9 +26,9 @@ pub mod stores;
 
 use std::sync::Arc;
 
+use crate::auth::users::UsersDeps;
+use crate::ids::IdGenerator;
 use axum::{Router, routing::get};
-use droppedneedle::auth::users::UsersDeps;
-use droppedneedle::ids::IdGenerator;
 
 use stores::{FavoriteReads, LibraryCatalog, LyricsPort};
 

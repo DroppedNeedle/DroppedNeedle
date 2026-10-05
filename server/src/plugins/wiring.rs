@@ -24,16 +24,16 @@ use axum::Router;
 
 // Shared items resolve through the `droppedneedle` crate name, slice
 // siblings through `super`.
-use droppedneedle::auth::users::{UsersDeps, roles::Role};
-use droppedneedle::db::WriteLane;
-use droppedneedle::http_client::HttpClientFactory;
-use droppedneedle::ids::IdGenerator;
-use droppedneedle::jobs::plugin_ticks::{MemoryTickStore, SqliteTickStore};
-use droppedneedle::jobs::registry::JobRegistry;
-use droppedneedle::jobs::wiring::StoreKind;
-use droppedneedle::providers::InMemoryProviderCache;
-use droppedneedle::providers::cache::{ProviderCache, invalidate_source};
-use droppedneedle::runtime_config::{ConfigStore, Crypto};
+use crate::auth::users::{UsersDeps, roles::Role};
+use crate::db::WriteLane;
+use crate::http_client::HttpClientFactory;
+use crate::ids::IdGenerator;
+use crate::jobs::plugin_ticks::{MemoryTickStore, SqliteTickStore};
+use crate::jobs::registry::JobRegistry;
+use crate::jobs::wiring::StoreKind;
+use crate::providers::InMemoryProviderCache;
+use crate::providers::cache::{ProviderCache, invalidate_source};
+use crate::runtime_config::{ConfigStore, Crypto};
 
 use super::handlers::{
     ExtRateLimiter, PluginsDeps, ScrobbleHttpDeps, UserRoles, plugins_router, scrobble_router,

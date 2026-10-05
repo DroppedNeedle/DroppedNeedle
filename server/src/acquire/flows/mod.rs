@@ -8,11 +8,6 @@
 //! plumbing. [`seams`] holds the boundary this slice does not own
 //! (downloads dispatch, provider/indexer search), and [`stores`] the memory
 //! state the flows read and write.
-//!
-//! Wiring note: this module is intentionally standalone — the integration
-//! briefs include it via `#[path]`, and the stage integrator wires it into
-//! the tree with plain `mod` declarations. Internal paths use `super::` so
-//! the tree resolves identically in both shapes.
 
 pub mod loops;
 pub mod operations;

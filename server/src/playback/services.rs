@@ -30,7 +30,7 @@ use super::{
         TrackCatalog, TrackInfo, VISIBILITY_FULL, VISIBILITY_OFFLINE, VISIBILITY_TRACK_HIDDEN,
     },
 };
-use droppedneedle::ids::IdGenerator;
+use crate::ids::IdGenerator;
 
 /// Session time-to-live in seconds (v2 `_SESSION_TTL_SECONDS`, 2h).
 pub const SESSION_TTL_SECS: i64 = 2 * 60 * 60;

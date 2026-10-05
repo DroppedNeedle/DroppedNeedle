@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use droppedneedle::auth::users::roles::Role;
+use crate::auth::users::roles::Role;
 
 use super::host::{ArchiveEntry, ArchiveFetcher, ArchiveUnpacker};
 use super::manifest::PluginManifest;

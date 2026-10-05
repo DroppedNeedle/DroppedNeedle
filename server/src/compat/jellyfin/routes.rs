@@ -13,16 +13,16 @@
 //! deliberately NO `/jellyfin/socket` endpoint (v2 gap: uvicorn 403s the
 //! websocket scope; Finamp PlayOn only, non-blocking).
 
+use crate::auth::compat_auth::jellyfin::{
+    JellyfinPasswordStore, JellyfinRequest, SessionFacts, authenticate_by_name, extract_client,
+    extract_device, extract_token, login_echo_json, resolve_token, server_id,
+};
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
-use droppedneedle::auth::compat_auth::jellyfin::{
-    JellyfinPasswordStore, JellyfinRequest, SessionFacts, authenticate_by_name, extract_client,
-    extract_device, extract_token, login_echo_json, resolve_token, server_id,
-};
 use uuid::Uuid;
 
 use super::builders::{self, Builder, LIBRARY_INTERNAL_ID};

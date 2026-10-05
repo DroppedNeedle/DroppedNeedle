@@ -32,8 +32,8 @@ use super::models::{
     OrganizationManagementSettingsDto, RawAacTagPolicyDto, ReplayGainModeDto, SourceCleanupModeDto,
     TaggingScriptDto, WavTagPolicyDto,
 };
-use droppedneedle::ids::IdGenerator;
-use droppedneedle::runtime_config::sections::DEFAULT_NAMING_TEMPLATE;
+use crate::ids::IdGenerator;
+use crate::runtime_config::sections::DEFAULT_NAMING_TEMPLATE;
 
 /// Management settings schema version.
 pub const MANAGEMENT_SCHEMA_VERSION: i64 = 1;

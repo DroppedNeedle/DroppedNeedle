@@ -2,7 +2,7 @@
 //!
 //! Each row pins one user to one remote source: the server URL plus the
 //! credential, sealed at rest with the stage-2 secrets core
-//! ([`Crypto`](droppedneedle::runtime_config::crypto::Crypto)). Reads
+//! ([`Crypto`](crate::runtime_config::crypto::Crypto)). Reads
 //! decrypt on the way out; status views never carry credential material.
 //!
 //! Account modes follow the v2 factory rule: the server URL and enabled
@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use droppedneedle::runtime_config::crypto::{Crypto, CryptoError};
+use crate::runtime_config::crypto::{Crypto, CryptoError};
 use sha2::{Digest, Sha256};
 
 use super::adapter::BoxFuture;

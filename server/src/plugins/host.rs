@@ -17,8 +17,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use droppedneedle::runtime_config::ConfigStore;
-use droppedneedle::runtime_config::sections::PluginConfig;
+use crate::runtime_config::ConfigStore;
+use crate::runtime_config::sections::PluginConfig;
 
 use super::manifest::{PluginManifest, active_capabilities, load_manifest};
 use super::models::PluginSource;

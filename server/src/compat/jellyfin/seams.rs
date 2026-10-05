@@ -3,7 +3,7 @@
 //! SEAMS (the integrator binds the real adapters; the router is generic over
 //! every trait here):
 //!
-//! - Auth: [`droppedneedle::auth::compat_auth::jellyfin::JellyfinPasswordStore`]
+//! - Auth: [`crate::auth::compat_auth::jellyfin::JellyfinPasswordStore`]
 //!   (owned by the auth slice). This file only adds the thin [`Principal`]
 //!   view over its `JellyfinUser`. Login bodies reuse the auth slice's
 //!   `login_echo_json`, so the Finamp/Manet login contract has one owner.
@@ -24,7 +24,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
-use droppedneedle::auth::compat_auth::jellyfin::{JellyfinUser, effective_name};
+use crate::auth::compat_auth::jellyfin::{JellyfinUser, effective_name};
 use sha2::{Digest, Sha256};
 
 use super::models::UserDto;

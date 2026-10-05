@@ -2531,7 +2531,7 @@ pub struct OrganizationManagementSettingsDto {
 
 impl Default for OrganizationManagementSettingsDto {
     fn default() -> Self {
-        use droppedneedle::runtime_config::sections::{
+        use crate::runtime_config::sections::{
             DEFAULT_SIDECAR_PATTERNS, PICARD_ORGANIZER_NAMING_SCRIPT_ID,
         };
         Self {

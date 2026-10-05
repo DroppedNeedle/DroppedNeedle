@@ -4,7 +4,7 @@
 //! `DropImportService._tasks`): a restart lost them without a trace, the
 //! unregistered gap this slice closes. Here each operation registers in the
 //! durable job registry ([`FREE_MUSIC_JOB`], [`DROP_IMPORT_JOB`]) as
-//! [`JobKind::Durable`](droppedneedle::db::JobKind), moves through
+//! [`JobKind::Durable`](crate::db::JobKind), moves through
 //! running/heartbeat/stopped states on the registry, persists its own
 //! record in the [`OpStore`], and emits its ticks beside those writes
 //! (stage plan D11: plugin ticks move to registry + store).
@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use droppedneedle::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
+use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
 
 use super::seams::{
     CandidateSearch, Clock, DispatchKind, DispatchRequest, DownloadDispatch, DropVerify,

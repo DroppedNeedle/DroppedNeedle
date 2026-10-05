@@ -12,8 +12,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use droppedneedle::auth::times::to_iso;
-use droppedneedle::ids::IdGenerator;
+use crate::auth::times::to_iso;
+use crate::ids::IdGenerator;
 
 use super::ports::{
     Clock, DisplayNames, ListeningPrefs, PlayHistory, PlayRecord, ProviderFailure, ScrobblePrefs,

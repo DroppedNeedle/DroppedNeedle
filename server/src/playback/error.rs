@@ -14,7 +14,7 @@ use axum::{
 };
 use serde_json::json;
 
-use droppedneedle::{
+use crate::{
     error::{ErrorBody, ErrorEnvelope},
     ids::IdGenerator,
 };
@@ -91,7 +91,7 @@ impl PlaybackError {
             Self::Unauthorized { message } => (UNAUTHORIZED.to_owned(), message.clone(), None),
             Self::NotFound => (
                 NOT_FOUND.to_owned(),
-                droppedneedle::error::NOT_FOUND_MESSAGE.to_owned(),
+                crate::error::NOT_FOUND_MESSAGE.to_owned(),
                 None,
             ),
             Self::InvalidInput { message } => (INVALID_INPUT.to_owned(), message.clone(), None),
@@ -101,8 +101,8 @@ impl PlaybackError {
                 Some(json!({ "error_id": error_id })),
             ),
             Self::Internal { error_id } => (
-                droppedneedle::error::INTERNAL_ERROR.to_owned(),
-                droppedneedle::error::FIXED_INTERNAL_MESSAGE.to_owned(),
+                crate::error::INTERNAL_ERROR.to_owned(),
+                crate::error::FIXED_INTERNAL_MESSAGE.to_owned(),
                 Some(json!({ "error_id": error_id })),
             ),
         };

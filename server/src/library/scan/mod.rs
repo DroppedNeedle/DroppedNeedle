@@ -1,10 +1,5 @@
 //! Library scan: roots, discovery, scheduling, and supervision.
-
-// Re-exports below are the integrator surface; most are unused by this
-// slice's own tests, which is expected.
-#![allow(unused_imports)]
 //!
-
 //! Stage-8 scan slice. Owns the library root registry (replacing the
 //! stage-6 provisional `<root>/music`), the filesystem walk, scan runs,
 //! the rolling scheduler, the filesystem watcher, worker supervision, and

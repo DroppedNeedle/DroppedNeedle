@@ -9,17 +9,17 @@
 
 use std::sync::Arc;
 
+use crate::acquire::dispatch::Journal;
+use crate::acquire::requests::{
+    auth::{Principal, gate},
+    error::RequestsError,
+};
 use axum::{
     Json, Router,
     extract::{Path, State},
     middleware,
     response::IntoResponse,
     routing,
-};
-use droppedneedle::acquire::dispatch::Journal;
-use droppedneedle::acquire::requests::{
-    auth::{Principal, gate},
-    error::RequestsError,
 };
 use serde::Serialize;
 use utoipa::ToSchema;

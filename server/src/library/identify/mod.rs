@@ -9,8 +9,7 @@
 //! `queue` the scheduling policy, `stores` the ports, `memory` the
 //! test fakes, `providers` the MusicBrainz + AcoustID seams over the
 //! stage-5 clients, `review` the curator operations, and `service`
-//! the orchestrator. Briefs include this module via `#[path]` until
-//! the stage-8 wiring lands, the same pattern earlier slices used.
+//! the orchestrator.
 
 pub mod memory;
 pub mod models;

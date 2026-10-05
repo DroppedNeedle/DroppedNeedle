@@ -52,7 +52,7 @@ pub trait RemoteReader: Send + Sync {
 /// and injected ffmpeg execution behind the routes' engine seam.
 pub struct Gateway<R, T> {
     local_root: PathBuf,
-    library_roots: Option<droppedneedle::library::wiring::RootSource>,
+    library_roots: Option<crate::library::wiring::RootSource>,
     remote: R,
     transcoder: T,
     settings: TranscodeSettings,
@@ -88,7 +88,7 @@ impl<R, T> Gateway<R, T> {
     /// usable root configured, local reads honestly 404. Root ids
     /// inside playback keys stay a catalog-slice concern: bare keys
     /// resolve under the primary root.
-    pub fn with_library_roots(mut self, roots: droppedneedle::library::wiring::RootSource) -> Self {
+    pub fn with_library_roots(mut self, roots: crate::library::wiring::RootSource) -> Self {
         self.library_roots = Some(roots);
         self
     }
@@ -240,7 +240,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         }
         let root = match &self.library_roots {
             Some(source) => {
-                match droppedneedle::library::scan::roots::StreamRootSeam::new(source())
+                match crate::library::scan::roots::StreamRootSeam::new(source())
                     .primary_music_root()
                 {
                     Some(primary) => primary,

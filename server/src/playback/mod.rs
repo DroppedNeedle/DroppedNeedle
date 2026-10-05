@@ -60,7 +60,4 @@ pub mod warmup;
 
 pub use handlers::playback_router;
 pub use services::PlaybackDeps;
-// The standalone briefs below reach the warmup items through their module
-// paths; the integrator-facing re-exports stay for the wired build.
-#[allow(unused_imports)]
 pub use warmup::{TokioSleeper, WarmupHandles, WarmupScope, WarmupStats, spawn_warmup_loops};

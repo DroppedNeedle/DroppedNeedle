@@ -22,10 +22,10 @@ use axum::{
 };
 use serde::de::DeserializeOwned;
 
-use droppedneedle::auth::session::middleware::CurrentSession;
-use droppedneedle::auth::users::roles::Role;
-use droppedneedle::ids::IdGenerator;
-use droppedneedle::runtime_config::ConfigStore;
+use crate::auth::session::middleware::CurrentSession;
+use crate::auth::users::roles::Role;
+use crate::ids::IdGenerator;
+use crate::runtime_config::ConfigStore;
 
 use super::error::PluginError;
 use super::host::{

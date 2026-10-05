@@ -10,14 +10,14 @@
 //! failures are server faults (500). No variant carries secret material,
 //! so validation reasons render verbatim.
 
+use crate::error::{ErrorBody, ErrorEnvelope};
+use crate::ids::IdGenerator;
 use axum::{
     Json,
     extract::{FromRequest, Query, Request},
     http::{HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
-use droppedneedle::error::{ErrorBody, ErrorEnvelope};
-use droppedneedle::ids::IdGenerator;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
@@ -112,11 +112,8 @@ impl SettingsError {
 
     /// Map a config failure: validation and decode faults blame the caller,
     /// IO/lock/crypto faults blame the server. Reasons never carry secrets.
-    pub fn from_config(
-        error: droppedneedle::runtime_config::ConfigError,
-        ids: &dyn IdGenerator,
-    ) -> Self {
-        use droppedneedle::runtime_config::ConfigError as Source;
+    pub fn from_config(error: crate::runtime_config::ConfigError, ids: &dyn IdGenerator) -> Self {
+        use crate::runtime_config::ConfigError as Source;
         match error {
             Source::Validation {
                 section,
@@ -153,7 +150,7 @@ impl SettingsError {
             Self::Forbidden { message } => (FORBIDDEN.to_owned(), message.clone(), None),
             Self::NotFound => (
                 NOT_FOUND.to_owned(),
-                droppedneedle::error::NOT_FOUND_MESSAGE.to_owned(),
+                crate::error::NOT_FOUND_MESSAGE.to_owned(),
                 None,
             ),
             Self::InvalidInput { message } => (INVALID_INPUT.to_owned(), message.clone(), None),
@@ -166,8 +163,8 @@ impl SettingsError {
                 (SERVICE_UNAVAILABLE.to_owned(), message.clone(), None)
             }
             Self::Internal { error_id } => (
-                droppedneedle::error::INTERNAL_ERROR.to_owned(),
-                droppedneedle::error::FIXED_INTERNAL_MESSAGE.to_owned(),
+                crate::error::INTERNAL_ERROR.to_owned(),
+                crate::error::FIXED_INTERNAL_MESSAGE.to_owned(),
                 Some(json!({ "error_id": error_id })),
             ),
         };

@@ -24,7 +24,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use droppedneedle::http_client::{DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT, USER_AGENT};
+use crate::http_client::{DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT, USER_AGENT};
 use serde::Deserialize;
 use thiserror::Error;
 
