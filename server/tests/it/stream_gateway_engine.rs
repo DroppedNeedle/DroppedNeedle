@@ -12,9 +12,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use futures_util::StreamExt as _;
 use stream::gateway::{Gateway, RemoteMedia, RemoteReader};
 use stream::leases::DirectGate;
-use stream::routes::{AudioSource, OpenMedia, StreamEngine, StreamFault, StreamOpen, StreamParams};
+use stream::routes::{
+    AudioSource, MediaBody, OpenMedia, StreamEngine, StreamFault, StreamOpen, StreamParams,
+    file_range,
+};
 use stream::transcode::{StreamPlan, TranscodeBody, TranscodeError, TranscodeSettings, Transcoder};
 
 /// Unique scratch root per test. Removed by [`ScratchRoot::drop`].
@@ -68,9 +72,11 @@ impl RemoteReader for FakeRemote {
     }
 }
 
-/// Scripted ffmpeg body: canned chunks, no process.
+/// Scripted ffmpeg body: canned chunks, no process. A stalling body never
+/// ends after its chunks, like a transcode still running.
 struct FakeBody {
     chunks: Vec<Vec<u8>>,
+    stall: bool,
 }
 
 impl TranscodeBody for FakeBody {
@@ -79,6 +85,9 @@ impl TranscodeBody for FakeBody {
         _is_disconnected: Option<&(dyn Fn() -> bool + Sync)>,
     ) -> Result<Option<Vec<u8>>, TranscodeError> {
         if self.chunks.is_empty() {
+            if self.stall {
+                std::future::pending::<()>().await;
+            }
             Ok(None)
         } else {
             Ok(Some(self.chunks.remove(0)))
@@ -92,6 +101,7 @@ impl TranscodeBody for FakeBody {
 #[derive(Clone)]
 struct FakeTranscoder {
     chunks: Vec<Vec<u8>>,
+    stall: bool,
     fault: Option<TranscodeError>,
     calls: Arc<std::sync::Mutex<Vec<StreamPlan>>>,
 }
@@ -100,6 +110,7 @@ impl FakeTranscoder {
     fn succeeding(chunks: Vec<Vec<u8>>) -> Self {
         Self {
             chunks,
+            stall: false,
             fault: None,
             calls: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
@@ -108,6 +119,7 @@ impl FakeTranscoder {
     fn failing(fault: TranscodeError) -> Self {
         Self {
             chunks: Vec::new(),
+            stall: false,
             fault: Some(fault),
             calls: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
@@ -129,6 +141,7 @@ impl Transcoder for FakeTranscoder {
         }
         Ok(FakeBody {
             chunks: self.chunks.clone(),
+            stall: self.stall,
         })
     }
 }
@@ -507,4 +520,51 @@ async fn cancelled_acquire_leaves_no_waiter() {
     assert_eq!(gate.waiter_count(), 1);
     drop(waiter);
     assert_eq!(gate.waiter_count(), 0);
+}
+
+// The streaming open reads lazily: a direct file comes back as the file
+// and its size, HEAD of a transcode never starts ffmpeg, and transcode
+// output arrives before the transcode ends.
+#[tokio::test]
+async fn streaming_open_reads_lazily() {
+    let root = ScratchRoot::new("lazy");
+    root.write("song.flac", b"FLAC-BYTES");
+    let mut transcoder = FakeTranscoder::succeeding(vec![b"FIRST".to_vec()]);
+    transcoder.stall = true;
+    let calls = Arc::clone(&transcoder.calls);
+    let app = engine(&root, FakeRemote::default(), transcoder, true);
+
+    let direct = app
+        .open_stream(open(AudioSource::Local, "song.flac"), false)
+        .await
+        .unwrap();
+    assert_eq!(direct.total_len, 10);
+    let MediaBody::File(path) = direct.body else {
+        panic!("direct reads stream from the file");
+    };
+    let slice: Vec<u8> = file_range(path, 2, 3)
+        .map(|chunk| chunk.unwrap())
+        .concat()
+        .await;
+    assert_eq!(slice, b"AC-");
+
+    let head = app
+        .open_stream(open_transcode("song.flac", "mp3"), true)
+        .await
+        .unwrap();
+    assert!(head.transcoded);
+    assert!(matches!(head.body, MediaBody::Empty));
+    assert!(calls.lock().unwrap().is_empty(), "HEAD runs no ffmpeg");
+
+    let live = app
+        .open_stream(open_transcode("song.flac", "mp3"), false)
+        .await
+        .unwrap();
+    let MediaBody::Chunks(mut chunks) = live.body else {
+        panic!("transcodes stream chunk by chunk");
+    };
+    let first = tokio::time::timeout(std::time::Duration::from_secs(5), chunks.next())
+        .await
+        .expect("the first chunk arrives while the transcode runs");
+    assert_eq!(first.unwrap().unwrap(), b"FIRST");
 }

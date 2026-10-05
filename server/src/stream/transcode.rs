@@ -750,7 +750,7 @@ impl FfmpegSpawner for StdFfmpegSpawner {
             move || drain_stderr(stderr, stderr_text)
         });
         Ok(StdFfmpegChild {
-            child,
+            child: Some(child),
             stdout: Arc::new(Mutex::new(stdout)),
             stderr_text,
         })
@@ -780,12 +780,51 @@ fn drain_stderr(stderr: ChildStderr, captured: Arc<Mutex<String>>) {
 }
 
 /// Production ffmpeg child. Stdout reads hop onto the blocking pool; exit
-/// waits poll on `try_wait` so nothing blocks a runtime thread.
+/// waits poll on `try_wait` so nothing blocks a runtime thread. A killed
+/// child that has not exited yet is handed to a reaper that waits for it
+/// off the async threads, so no zombie is left behind.
 #[derive(Debug)]
 pub struct StdFfmpegChild {
-    child: Child,
+    child: Option<Child>,
     stdout: Arc<Mutex<ChildStdout>>,
     stderr_text: Arc<Mutex<String>>,
+}
+
+impl StdFfmpegChild {
+    /// OS process id while the child is still owned here.
+    pub fn id(&self) -> Option<u32> {
+        self.child.as_ref().map(Child::id)
+    }
+
+    /// Exit status if the child has ended (reaping it); `None` while it
+    /// runs or once it was handed to the reaper.
+    fn try_wait(&mut self) -> Option<std::io::Result<Option<std::process::ExitStatus>>> {
+        self.child.as_mut().map(Child::try_wait)
+    }
+}
+
+impl Drop for StdFfmpegChild {
+    fn drop(&mut self) {
+        self.kill();
+    }
+}
+
+/// Wait for a killed child on a blocking thread so it never lingers as a
+/// zombie.
+fn reap(mut child: Child) {
+    let wait = move || {
+        if let Err(error) = child.wait() {
+            tracing::warn!(%error, "ffmpeg child could not be reaped");
+        }
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn_blocking(wait);
+        }
+        Err(_) => {
+            std::thread::spawn(wait);
+        }
+    }
 }
 
 impl FfmpegChild for StdFfmpegChild {
@@ -811,8 +850,9 @@ impl FfmpegChild for StdFfmpegChild {
     async fn finish(&mut self) {
         let settled = tokio::time::timeout(EXIT_WAIT, async {
             loop {
-                match self.child.try_wait() {
-                    Ok(Some(status)) => {
+                match self.try_wait() {
+                    None => return,
+                    Some(Ok(Some(status))) => {
                         if !status.success() {
                             let detail = self
                                 .stderr_text
@@ -827,8 +867,8 @@ impl FfmpegChild for StdFfmpegChild {
                         }
                         return;
                     }
-                    Ok(None) => tokio::time::sleep(CHILD_POLL_INTERVAL).await,
-                    Err(_) => return,
+                    Some(Ok(None)) => tokio::time::sleep(CHILD_POLL_INTERVAL).await,
+                    Some(Err(_)) => return,
                 }
             }
         })
@@ -839,21 +879,18 @@ impl FfmpegChild for StdFfmpegChild {
     }
 
     async fn shutdown(&mut self) {
-        if self
-            .child
-            .try_wait()
-            .map(|ended| ended.is_some())
-            .unwrap_or(true)
-        {
-            return;
+        match self.try_wait() {
+            Some(Ok(None)) => {}
+            _ => return,
         }
-        terminate_child(&mut self.child);
+        if let Some(child) = self.child.as_mut() {
+            terminate_child(child);
+        }
         let exited = tokio::time::timeout(TERMINATE_WAIT, async {
             loop {
-                match self.child.try_wait() {
-                    Ok(Some(_)) => return,
-                    Ok(None) => tokio::time::sleep(CHILD_POLL_INTERVAL).await,
-                    Err(_) => return,
+                match self.try_wait() {
+                    Some(Ok(None)) => tokio::time::sleep(CHILD_POLL_INTERVAL).await,
+                    _ => return,
                 }
             }
         })
@@ -865,8 +902,19 @@ impl FfmpegChild for StdFfmpegChild {
     }
 
     fn kill(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.try_wait();
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        match child.try_wait() {
+            // Already exited and now reaped.
+            Ok(Some(_)) => {}
+            _ => {
+                if let Err(error) = child.kill() {
+                    tracing::debug!(%error, "ffmpeg kill failed");
+                }
+                reap(child);
+            }
+        }
     }
 }
 
@@ -913,7 +961,7 @@ pub trait TranscodeBody: Send {
 /// engine rejects direct plans defensively.
 pub trait Transcoder: Send + Sync {
     /// Per-request byte stream this service produces.
-    type Body: TranscodeBody;
+    type Body: TranscodeBody + 'static;
 
     /// Take a lease, spawn ffmpeg for the plan, and hand back the byte
     /// stream. The lease travels inside the body and releases exactly once

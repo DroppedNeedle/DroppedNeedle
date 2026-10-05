@@ -809,3 +809,28 @@ fn ffmpeg_probe_agrees_with_itself() {
     // absent/present landings with the flag itself. This just pins stability.
     assert_eq!(ffmpeg_available(), ffmpeg_available());
 }
+
+/// A killed child is reaped, not left behind as a zombie.
+#[cfg(unix)]
+#[tokio::test]
+async fn killed_child_is_reaped() {
+    let Some(binary) = ["/bin/sleep", "/usr/bin/sleep"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|candidate| candidate.is_file())
+    else {
+        return;
+    };
+    let child = StdFfmpegSpawner::with_path(binary)
+        .spawn(&["ffmpeg".to_owned(), "30".to_owned()])
+        .expect("sleep starts");
+    let proc_dir = PathBuf::from(format!("/proc/{}", child.id().expect("pid")));
+    drop(child);
+    for _ in 0..100 {
+        if !proc_dir.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!proc_dir.exists(), "the killed child was reaped");
+}

@@ -31,10 +31,11 @@
 //! * Engine: [`StreamEngine`] is the engine seam; [`super::gateway::Gateway`]
 //!   implements it (leases + `Transcoder` + direct/transcode reads). The
 //!   range/HEAD/envelope/header logic stays in this file.
-//! * Whole-object reads: the engine hands routes the whole object as
-//!   `bytes` so range slicing stays byte-exact here. If the engine grows a
-//!   ranged-read method, thread the already-parsed [`ByteRange`] through
-//!   instead; the 206/416 decisions must not move.
+//! * Streaming reads: routes call [`StreamEngine::open_stream`], which
+//!   hands back a [`MediaBody`]: a local file read by range on demand, a
+//!   transcode read chunk by chunk, or in-memory bytes (remote objects and
+//!   engines that only implement `open`). HEAD never reads a body and never
+//!   starts ffmpeg. The 206/416 decisions stay here.
 //! * Mounting: [`stream_routes`] returns a relative-path router merged into
 //!   the `/api/v3` nest inside the deny-by-default session gate. Playback
 //!   reporting (`start`/`progress`/`stop`/`scrobble`/`now-playing`/`stopped`)
@@ -51,10 +52,15 @@
 //! Range parsing ports `LocalFilesService.stream_track` rule for rule:
 //! single `bytes=start-end` only (suffix and open forms included), end
 //! clamped to size-1, suffix longer than the file clamped to the whole file,
-//! anything else 416. The 416 carries `Content-Range: bytes */N` (v2 compat
+//! anything else 416, except a multi-range request, which is answered whole
+//! with 200 (RFC 9110 lets a server ignore Range). The 416 carries `Content-Range: bytes */N` (v2 compat
 //! routers), and 429 carries `Retry-After: 1` (v2 subsonic router).
 
+use std::path::PathBuf;
 use std::sync::Arc;
+
+use futures_util::StreamExt as _;
+use futures_util::stream::BoxStream;
 
 use crate::auth::session::middleware::CurrentSession;
 use crate::error::{ErrorBody, ErrorEnvelope};
@@ -205,6 +211,59 @@ pub struct OpenMedia {
     pub bytes: Vec<u8>,
 }
 
+/// Body chunks of a streamed response.
+pub type ChunkStream = BoxStream<'static, Result<Vec<u8>, std::io::Error>>;
+
+/// Where the response body comes from.
+pub enum MediaBody {
+    /// The whole object in memory (remote reads, whole-object engines).
+    Bytes(Vec<u8>),
+    /// A local file, read by range when the response streams.
+    File(PathBuf),
+    /// Live transcode output, chunk by chunk.
+    Chunks(ChunkStream),
+    /// Nothing to send: HEAD of a transcode, answered without ffmpeg.
+    Empty,
+}
+
+impl std::fmt::Debug for MediaBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bytes(bytes) => write!(f, "Bytes({} bytes)", bytes.len()),
+            Self::File(path) => write!(f, "File({})", path.display()),
+            Self::Chunks(_) => f.write_str("Chunks"),
+            Self::Empty => f.write_str("Empty"),
+        }
+    }
+}
+
+/// One opened media object for the stream routes.
+#[derive(Debug)]
+pub struct StreamMedia {
+    /// Engine-resolved content type.
+    pub content_type: String,
+    /// Exact object length for direct reads; unknown (0) for transcodes.
+    pub total_len: u64,
+    /// Transcode landing: ranges are refused, never honored.
+    pub transcoded: bool,
+    /// Estimated length for the optional transcode `Content-Length`.
+    pub estimated_len: Option<u64>,
+    /// The body source.
+    pub body: MediaBody,
+}
+
+impl From<OpenMedia> for StreamMedia {
+    fn from(media: OpenMedia) -> Self {
+        Self {
+            content_type: media.content_type,
+            total_len: media.total_len,
+            transcoded: media.transcoded,
+            estimated_len: media.estimated_len,
+            body: MediaBody::Bytes(media.bytes),
+        }
+    }
+}
+
 /// Engine failures, mapped to the wire in [`serve`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StreamFault {
@@ -238,11 +297,22 @@ pub enum StreamFault {
 /// Minimal engine stand-in: open one media object or fail with a [`StreamFault`].
 /// [`super::gateway::Gateway`] is the production implementation.
 pub trait StreamEngine: Send + Sync {
-    /// Resolve and read one media object for `request`.
+    /// Resolve and read one media object for `request`, whole.
     fn open(
         &self,
         request: StreamOpen,
     ) -> impl Future<Output = Result<OpenMedia, StreamFault>> + Send;
+
+    /// Resolve one media object for streaming. `head_only` asks for the
+    /// metadata alone. The default reads the whole object through `open`.
+    fn open_stream(
+        &self,
+        request: StreamOpen,
+        head_only: bool,
+    ) -> impl Future<Output = Result<StreamMedia, StreamFault>> + Send {
+        let _ = head_only;
+        async move { self.open(request).await.map(StreamMedia::from) }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -644,24 +714,27 @@ async fn serve<E: StreamEngine>(
     })?;
     let media = state
         .engine
-        .open(StreamOpen {
-            source,
-            key: key.to_owned(),
-            user_id: user.user_id.clone(),
-            params: StreamParams {
-                format: query.format.clone(),
-                max_bitrate_kbps: query.max_bitrate,
-                estimate_content_length: query.estimate_content_length,
-                start_seconds: query.start_seconds,
-                force_transcode: false,
+        .open_stream(
+            StreamOpen {
+                source,
+                key: key.to_owned(),
+                user_id: user.user_id.clone(),
+                params: StreamParams {
+                    format: query.format.clone(),
+                    max_bitrate_kbps: query.max_bitrate,
+                    estimate_content_length: query.estimate_content_length,
+                    start_seconds: query.start_seconds,
+                    force_transcode: false,
+                },
             },
-        })
+            head_only,
+        )
         .await
         .map_err(|fault| map_fault(fault, source, state.ids.as_ref()))?;
 
     if media.transcoded {
         return transcode_response(
-            &media,
+            media,
             query.estimate_content_length,
             head_only,
             state.ids.as_ref(),
@@ -672,12 +745,16 @@ async fn serve<E: StreamEngine>(
         None => None,
         Some(value) => {
             let text = value.to_str().unwrap_or("");
-            match parse_range(text, media.total_len) {
-                Some(resolved) => Some(resolved),
-                None => {
-                    return Err(StreamError::Unsatisfiable {
-                        total_len: media.total_len,
-                    });
+            if is_multi_range(text) {
+                None
+            } else {
+                match parse_range(text, media.total_len) {
+                    Some(resolved) => Some(resolved),
+                    None => {
+                        return Err(StreamError::Unsatisfiable {
+                            total_len: media.total_len,
+                        });
+                    }
                 }
             }
         }
@@ -692,36 +769,9 @@ async fn serve<E: StreamEngine>(
         HeaderValue::from_static("identity"),
     );
 
-    let (status, body) = match range {
-        None => {
-            response_headers.insert(
-                header::CONTENT_LENGTH,
-                header_value(&media.total_len.to_string(), state.ids.as_ref())?,
-            );
-            let body = if head_only {
-                Body::empty()
-            } else {
-                Body::from(media.bytes)
-            };
-            (StatusCode::OK, body)
-        }
+    let (status, start, len) = match range {
+        None => (StatusCode::OK, 0, media.total_len),
         Some(resolved) => {
-            let start = usize::try_from(resolved.start).unwrap_or(usize::MAX);
-            let end = usize::try_from(resolved.end).unwrap_or(0);
-            let slice = media
-                .bytes
-                .get(start..=end)
-                .filter(|slice| slice.len() as u64 == resolved.len())
-                .ok_or_else(|| {
-                    StreamError::internal(
-                        &"engine short-read the ranged object",
-                        state.ids.as_ref(),
-                    )
-                })?;
-            response_headers.insert(
-                header::CONTENT_LENGTH,
-                header_value(&slice.len().to_string(), state.ids.as_ref())?,
-            );
             response_headers.insert(
                 header::CONTENT_RANGE,
                 header_value(
@@ -732,13 +782,17 @@ async fn serve<E: StreamEngine>(
                     state.ids.as_ref(),
                 )?,
             );
-            let body = if head_only {
-                Body::empty()
-            } else {
-                Body::from(slice.to_vec())
-            };
-            (StatusCode::PARTIAL_CONTENT, body)
+            (StatusCode::PARTIAL_CONTENT, resolved.start, resolved.len())
         }
+    };
+    response_headers.insert(
+        header::CONTENT_LENGTH,
+        header_value(&len.to_string(), state.ids.as_ref())?,
+    );
+    let body = if head_only {
+        Body::empty()
+    } else {
+        direct_body(media.body, start, len, state.ids.as_ref())?
     };
 
     let mut response = (status, body).into_response();
@@ -746,10 +800,110 @@ async fn serve<E: StreamEngine>(
     Ok(response)
 }
 
+/// True for a `bytes=` request naming more than one range.
+fn is_multi_range(header: &str) -> bool {
+    header
+        .trim()
+        .strip_prefix("bytes=")
+        .is_some_and(|spec| spec.contains(','))
+}
+
+/// Body for `len` bytes of a direct object starting at `start`.
+fn direct_body(
+    body: MediaBody,
+    start: u64,
+    len: u64,
+    ids: &dyn IdGenerator,
+) -> Result<Body, StreamError> {
+    match body {
+        MediaBody::Bytes(bytes) => {
+            let from = usize::try_from(start).unwrap_or(usize::MAX);
+            let to = usize::try_from(len)
+                .ok()
+                .and_then(|len| from.checked_add(len))
+                .unwrap_or(usize::MAX);
+            if from == 0 && to == bytes.len() {
+                return Ok(Body::from(bytes));
+            }
+            let slice = bytes.get(from..to).ok_or_else(|| {
+                StreamError::internal(&"engine short-read the ranged object", ids)
+            })?;
+            Ok(Body::from(slice.to_vec()))
+        }
+        MediaBody::File(path) => Ok(Body::from_stream(file_range(path, start, len))),
+        MediaBody::Chunks(_) | MediaBody::Empty => Err(StreamError::internal(
+            &"engine returned no direct body",
+            ids,
+        )),
+    }
+}
+
+/// Read size of one file chunk.
+const FILE_CHUNK: u64 = 64 * 1024;
+
+/// Stream `len` bytes of `path` from `start`, one chunk per blocking read.
+/// A file that ends early fails the stream instead of sending short.
+pub fn file_range(path: PathBuf, start: u64, len: u64) -> ChunkStream {
+    struct Cursor {
+        path: PathBuf,
+        file: Option<std::fs::File>,
+        offset: u64,
+        remaining: u64,
+    }
+    let cursor = Cursor {
+        path,
+        file: None,
+        offset: start,
+        remaining: len,
+    };
+    futures_util::stream::unfold(Some(cursor), |state| async move {
+        let mut cursor = state?;
+        if cursor.remaining == 0 {
+            return None;
+        }
+        let read = tokio::task::spawn_blocking(move || {
+            use std::io::{Read as _, Seek as _, SeekFrom};
+            let mut file = match cursor.file.take() {
+                Some(file) => file,
+                None => {
+                    let mut file = std::fs::File::open(&cursor.path)?;
+                    file.seek(SeekFrom::Start(cursor.offset))?;
+                    file
+                }
+            };
+            let want = usize::try_from(cursor.remaining.min(FILE_CHUNK)).unwrap_or(0);
+            let mut buf = vec![0u8; want];
+            let read = file.read(&mut buf)?;
+            buf.truncate(read);
+            cursor.file = Some(file);
+            Ok::<_, std::io::Error>((cursor, buf))
+        })
+        .await;
+        match read {
+            Ok(Ok((_, buf))) if buf.is_empty() => Some((
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "file ended before the advertised length",
+                )),
+                None,
+            )),
+            Ok(Ok((mut cursor, buf))) => {
+                let read = buf.len() as u64;
+                cursor.offset += read;
+                cursor.remaining = cursor.remaining.saturating_sub(read);
+                Some((Ok(buf), Some(cursor)))
+            }
+            Ok(Err(error)) => Some((Err(error), None)),
+            Err(error) => Some((Err(std::io::Error::other(error.to_string())), None)),
+        }
+    })
+    .boxed()
+}
+
 /// Transcode landing: 200, no ranges, no caching, identity encoding, and the
 /// estimated length only when the client asked for it (v2 headers).
 fn transcode_response(
-    media: &OpenMedia,
+    media: StreamMedia,
     want_estimate: bool,
     head_only: bool,
     ids: &dyn IdGenerator,
@@ -772,26 +926,28 @@ fn transcode_response(
     };
     if let Some(len) = estimated {
         response_headers.insert(header::CONTENT_LENGTH, header_value(&len.to_string(), ids)?);
-    } else if head_only {
-        // Without an estimate GET's length is the router's automatic stamp
-        // of the buffered body; HEAD's body is empty (auto-stamp 0), so pin
-        // the same actual length explicitly for GET/HEAD parity.
+    } else if let (true, MediaBody::Bytes(bytes)) = (head_only, &media.body) {
+        // A whole-object engine knows the length: pin it on HEAD for
+        // GET/HEAD parity (GET's buffered body gets it stamped).
         response_headers.insert(
             header::CONTENT_LENGTH,
-            header_value(&media.bytes.len().to_string(), ids)?,
+            header_value(&bytes.len().to_string(), ids)?,
         );
     }
     let body = if head_only {
         Body::empty()
     } else {
-        Body::from(media.bytes.clone())
+        match media.body {
+            MediaBody::Bytes(bytes) => Body::from(bytes),
+            MediaBody::Chunks(chunks) => Body::from_stream(chunks),
+            MediaBody::File(path) => Body::from_stream(file_range(path, 0, media.total_len)),
+            MediaBody::Empty => Body::empty(),
+        }
     };
     let mut response = (StatusCode::OK, body).into_response();
     response.headers_mut().extend(response_headers);
-    // Without an estimate no Content-Length is set here for GET; the router
-    // stamps one for buffered bodies with an exact size, while the
-    // production transcode stream (unknown size) stays lengthless at serve
-    // time.
+    // A live transcode has no known size, so GET without an estimate
+    // carries no Content-Length and streams chunked.
     Ok(response)
 }
 
@@ -843,29 +999,28 @@ mod tests {
         }
     }
 
-    fn transcode_media() -> OpenMedia {
+    fn transcode_media() -> StreamMedia {
         let bytes = b"fake-transcoded-mp3-bytes".to_vec();
-        OpenMedia {
+        StreamMedia {
             content_type: "audio/mpeg".to_owned(),
-            total_len: bytes.len() as u64,
+            total_len: 0,
             transcoded: true,
-            estimated_len: Some(48_000),
-            bytes,
+            estimated_len: Some(bytes.len() as u64),
+            body: MediaBody::Bytes(bytes),
         }
     }
 
     #[test]
     fn transcode_response_sets_length_only_with_estimate() {
-        let media = transcode_media();
         let ids = TestIds;
 
-        let estimated = transcode_response(&media, true, false, &ids).expect("renders");
+        let estimated = transcode_response(transcode_media(), true, false, &ids).expect("renders");
         assert_eq!(
             estimated.headers().get(header::CONTENT_LENGTH),
-            Some(&HeaderValue::from_static("48000"))
+            Some(&HeaderValue::from_static("25"))
         );
 
-        let plain = transcode_response(&media, false, false, &ids).expect("renders");
+        let plain = transcode_response(transcode_media(), false, false, &ids).expect("renders");
         assert_eq!(plain.headers().get(header::CONTENT_LENGTH), None);
         assert_eq!(
             plain.headers().get(header::ACCEPT_RANGES),
