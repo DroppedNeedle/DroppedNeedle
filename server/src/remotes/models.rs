@@ -450,35 +450,90 @@ pub struct ConnectionStatus {
     pub account_label: String,
 }
 
-/// Save payload for one source connection. Secrets stay write-only.
+/// Link the caller's own Navidrome or Jellyfin account on the server the
+/// admin configured. The password is checked live, then kept sealed
+/// (Navidrome) or traded for a user token and dropped (Jellyfin). It is
+/// never echoed back.
 #[derive(Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ConnectionSave {
-    /// Server base URL. Empty keeps the stored URL.
-    pub base_url: Option<String>,
-    /// Login name or API-key label, depending on the source.
-    pub username: Option<String>,
-    /// Password, API key, or token. Never echoed back.
-    pub credential: Option<String>,
-    /// Plex client identifier, Plex only.
-    pub client_id: Option<String>,
-    /// Jellyfin user id hint, Jellyfin only.
-    pub user_id: Option<String>,
-    /// Plex music section id, Plex only.
-    pub section_id: Option<String>,
+    /// Login name on the server.
+    pub username: String,
+    /// Password on the server.
+    pub password: String,
 }
 
-/// Manual `Debug` that redacts the credential, mirroring
-/// [`StoredConnection`](super::connections::StoredConnection).
+/// Manual `Debug` that redacts the password.
 impl std::fmt::Debug for ConnectionSave {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ConnectionSave")
-            .field("base_url", &self.base_url)
             .field("username", &self.username)
-            .field("client_id", &self.client_id)
-            .field("user_id", &self.user_id)
-            .field("section_id", &self.section_id)
             .finish_non_exhaustive()
     }
+}
+
+/// One account the caller linked, on any service. Never carries the
+/// stored secret.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct LinkedAccount {
+    /// Service tag (`navidrome`, `jellyfin`, `plex`, `listenbrainz`,
+    /// `lastfm`, `spotify`).
+    pub service: String,
+    /// Whether the link is enabled.
+    pub enabled: bool,
+    /// Linked account name, empty when the service stores none.
+    pub username: String,
+}
+
+/// The caller's linked accounts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct LinkedAccounts {
+    /// One entry per linked service.
+    pub connections: Vec<LinkedAccount>,
+}
+
+/// Jellyfin filter facets for the album browser.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct FilterFacetsView {
+    /// Release years, newest first.
+    pub years: Vec<i32>,
+    /// Tags, sorted.
+    pub tags: Vec<String>,
+    /// Studios (labels), sorted.
+    pub studios: Vec<String>,
+}
+
+/// One row of a listening top list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AnalyticsItem {
+    /// Artist, album, or track name.
+    pub name: String,
+    /// Artist name for album and track rows, empty for artists.
+    pub subtitle: String,
+    /// Plays counted.
+    pub play_count: i64,
+}
+
+/// Listening analytics over the server's history (Plex).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AnalyticsView {
+    /// Most-played artists.
+    pub top_artists: Vec<AnalyticsItem>,
+    /// Most-played albums.
+    pub top_albums: Vec<AnalyticsItem>,
+    /// Most-played tracks.
+    pub top_tracks: Vec<AnalyticsItem>,
+    /// History entries counted.
+    pub total_listens: i64,
+    /// Plays in the last 7 days.
+    pub listens_last_7_days: i64,
+    /// Plays in the last 30 days.
+    pub listens_last_30_days: i64,
+    /// Listening time in hours, one decimal.
+    pub total_hours: f64,
+    /// False when the history was longer than the analysis window.
+    pub is_complete: bool,
+    /// Entries read.
+    pub entries_analyzed: i64,
 }
 
 /// One Navidrome music folder.
@@ -516,6 +571,7 @@ pub struct FolderSave {
 
 /// Shared pagination query: `limit`/`offset` with sane clamps.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct PageQuery {
     /// Max items (1-500, default 50).
     pub limit: Option<i64>,
@@ -534,6 +590,7 @@ impl PageQuery {
 
 /// Album browse filters shared by every source.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct AlbumBrowseQuery {
     /// Max items (1-500, default 50).
     pub limit: Option<i64>,
@@ -553,6 +610,7 @@ pub struct AlbumBrowseQuery {
 
 /// Artist browse filters shared by every source.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ArtistBrowseQuery {
     /// Max items (1-500, default 50).
     pub limit: Option<i64>,
@@ -568,6 +626,7 @@ pub struct ArtistBrowseQuery {
 
 /// Track browse filters shared by every source.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct TrackBrowseQuery {
     /// Max items (1-500, default 50).
     pub limit: Option<i64>,
@@ -585,6 +644,7 @@ pub struct TrackBrowseQuery {
 
 /// Unified search query.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct SearchQuery {
     /// Query text.
     pub q: String,
@@ -594,6 +654,7 @@ pub struct SearchQuery {
 
 /// Genre songs query.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct GenreSongsQuery {
     /// Genre label.
     pub genre: String,
@@ -606,6 +667,7 @@ pub struct GenreSongsQuery {
 /// Random-tracks query. Limits mirror the v2 Navidrome route
 /// (`size` 1-50, default 20) so the hub page keeps its batch size.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct RandomQuery {
     /// Max tracks (1-50, default 20).
     pub limit: Option<i64>,
@@ -616,6 +678,7 @@ pub struct RandomQuery {
 /// Plex discovery-hubs query. The count mirrors the v2 Plex route
 /// (1-20, default 10).
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct DiscoveryQuery {
     /// Items per hub (1-20, default 10).
     pub count: Option<i64>,
@@ -623,6 +686,7 @@ pub struct DiscoveryQuery {
 
 /// Image size query for images/covers bytes routes.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ImageQuery {
     /// Square edge in px (1-2000, default 500).
     pub size: Option<i64>,
@@ -637,6 +701,7 @@ impl ImageQuery {
 
 /// MBID match query.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct MatchQuery {
     /// MusicBrainz release or release-group id.
     pub mbid: String,
@@ -644,6 +709,7 @@ pub struct MatchQuery {
 
 /// Lyrics query: plain id lookup, with artist/title fallback for Navidrome.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct LyricsQuery {
     /// Artist name fallback (Navidrome classic lyrics).
     pub artist: Option<String>,
@@ -653,6 +719,7 @@ pub struct LyricsQuery {
 
 /// History pagination query.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct HistoryQuery {
     /// Max items (1-200, default 50).
     pub limit: Option<i64>,
@@ -669,24 +736,60 @@ impl HistoryQuery {
     }
 }
 
+/// Favorites query.
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct FavoritesQuery {
+    /// Max items per kind (1-100, default 50).
+    pub limit: Option<i64>,
+}
+
+impl FavoritesQuery {
+    /// Clamp to the v2 range.
+    pub fn clamped(&self) -> i64 {
+        self.limit.unwrap_or(50).clamp(1, 100)
+    }
+}
+
+/// Most-played query.
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct MostPlayedQuery {
+    /// Max items (1-50, default 10).
+    pub limit: Option<i64>,
+}
+
+impl MostPlayedQuery {
+    /// Clamp to the v2 range.
+    pub fn clamped(&self) -> i64 {
+        self.limit.unwrap_or(10).clamp(1, 50)
+    }
+}
+
+/// Instant-mix seed query.
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct MixQuery {
+    /// Seed kind: `item` (default), `artist`, or `genre`.
+    pub kind: Option<String>,
+    /// Max tracks (1-200, default 50).
+    pub limit: Option<i64>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::ConnectionSave;
 
-    /// The manual `Debug` must never print the credential. A regression
+    /// The manual `Debug` must never print the password. A regression
     /// here would leak secrets into logs through one `{:?}`.
     #[test]
-    fn connection_save_debug_redacts_credential() {
+    fn connection_save_debug_redacts_the_password() {
         let save = ConnectionSave {
-            base_url: Some("http://music.invalid".to_owned()),
-            username: Some("ada".to_owned()),
-            credential: Some("super-secret-token".to_owned()),
-            client_id: None,
-            user_id: None,
-            section_id: None,
+            username: "ada".to_owned(),
+            password: "super-secret".to_owned(),
         };
         let rendered = format!("{save:?}");
-        assert!(!rendered.contains("super-secret-token"));
-        assert!(rendered.contains("http://music.invalid"));
+        assert!(!rendered.contains("super-secret"));
+        assert!(rendered.contains("ada"));
     }
 }

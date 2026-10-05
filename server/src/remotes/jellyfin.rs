@@ -22,9 +22,9 @@ use serde_json::Value;
 
 use super::adapter::{AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse};
 use super::models::{
-    AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, HistoryPage, HubView, InfoView,
-    LyricLine, LyricsView, MatchView, PlaylistDetail, PlaylistSummary, SearchResults, SessionView,
-    SessionsView, SourceName, StatsView, TrackView,
+    AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, FilterFacetsView, HistoryPage, HubView,
+    InfoView, LyricLine, LyricsView, MatchView, PlaylistDetail, PlaylistSummary, SearchResults,
+    SessionView, SessionsView, SourceName, StatsView, TrackView,
 };
 
 /// Request timeout per upstream call, matching the v2 repository.
@@ -141,7 +141,7 @@ impl JellyfinAdapter {
             self.stats(),
             self.recent(20),
             self.recently_added(20),
-            self.favorites(),
+            self.favorites(50),
             self.most_played_artists(10),
             self.albums(&preview_browse),
             self.genres(),
@@ -443,16 +443,17 @@ impl JellyfinAdapter {
         Ok(raw.iter().map(|item| self.album_view(item)).collect())
     }
 
-    /// Favorite artists, albums, and tracks.
-    pub async fn favorites(&self) -> Result<FavoritesView, AdapterError> {
+    /// Favorite artists, albums, and tracks, up to `limit` of each.
+    pub async fn favorites(&self, limit: i64) -> Result<FavoritesView, AdapterError> {
         self.require_configured()?;
         if self.user_id.is_empty() {
             return Ok(empty_favorites());
         }
+        let limit = limit.to_string();
         let artist_params = vec![
             ("isFavorite".to_owned(), "true".to_owned()),
             ("enableUserData".to_owned(), "true".to_owned()),
-            ("limit".to_owned(), "50".to_owned()),
+            ("limit".to_owned(), limit.clone()),
             ("Fields".to_owned(), "ProviderIds".to_owned()),
         ];
         let artists_value = self
@@ -463,7 +464,7 @@ impl JellyfinAdapter {
             ("includeItemTypes".to_owned(), "MusicAlbum".to_owned()),
             ("isFavorite".to_owned(), "true".to_owned()),
             ("enableUserData".to_owned(), "true".to_owned()),
-            ("limit".to_owned(), "50".to_owned()),
+            ("limit".to_owned(), limit.clone()),
             ("recursive".to_owned(), "true".to_owned()),
         ];
         let albums_value = self
@@ -474,7 +475,7 @@ impl JellyfinAdapter {
             ("includeItemTypes".to_owned(), "Audio".to_owned()),
             ("isFavorite".to_owned(), "true".to_owned()),
             ("enableUserData".to_owned(), "true".to_owned()),
-            ("limit".to_owned(), "50".to_owned()),
+            ("limit".to_owned(), limit.clone()),
             ("recursive".to_owned(), "true".to_owned()),
             ("Fields".to_owned(), "ProviderIds".to_owned()),
         ];
@@ -507,6 +508,134 @@ impl JellyfinAdapter {
             .filter(|item| play_count(item) > 0)
             .map(|item| self.artist_view(item))
             .collect())
+    }
+
+    /// Most-played albums: `PlayCount` sort with the zero-play filter
+    /// (v2 `get_most_played_albums`).
+    pub async fn most_played_albums(&self, limit: i64) -> Result<Vec<AlbumView>, AdapterError> {
+        self.require_configured()?;
+        if self.user_id.is_empty() {
+            return Ok(Vec::new());
+        }
+        let params = vec![
+            ("includeItemTypes".to_owned(), "MusicAlbum".to_owned()),
+            ("sortBy".to_owned(), "PlayCount".to_owned()),
+            ("sortOrder".to_owned(), "Descending".to_owned()),
+            ("enableUserData".to_owned(), "true".to_owned()),
+            ("limit".to_owned(), limit.to_string()),
+            ("recursive".to_owned(), "true".to_owned()),
+        ];
+        let value = self.get("/Items", &params).await?.unwrap_or(Value::Null);
+        Ok(items_array(&value)
+            .into_iter()
+            .filter(|item| play_count(item) > 0)
+            .map(|item| self.album_view(item))
+            .collect())
+    }
+
+    /// Album filter facets via `/Items/Filters` (v2 `get_filter_facets`):
+    /// years newest first, tags and studios sorted, empty studios dropped.
+    pub async fn filter_facets(&self) -> Result<FilterFacetsView, AdapterError> {
+        self.require_configured()?;
+        let params = vec![("includeItemTypes".to_owned(), "MusicAlbum".to_owned())];
+        let value = self
+            .get("/Items/Filters", &params)
+            .await?
+            .unwrap_or(Value::Null);
+        let strings = |key: &str| -> Vec<String> {
+            value
+                .get(key)
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .filter(|text| !text.is_empty())
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let mut years: Vec<i32> = value
+            .get("Years")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(value_to_i64)
+                    .map(|year| year as i32)
+                    .collect()
+            })
+            .unwrap_or_default();
+        years.sort_unstable_by(|left, right| right.cmp(left));
+        let mut tags = strings("Tags");
+        tags.sort();
+        let mut studios = strings("Studios");
+        studios.sort();
+        Ok(FilterFacetsView {
+            years,
+            tags,
+            studios,
+        })
+    }
+
+    /// Trade a Jellyfin username and password for a user session via
+    /// `POST /Users/AuthenticateByName` (v2 `_authenticate_with_jellyfin`).
+    /// 401 and 403 read as a rejected login; the password is not kept.
+    pub async fn authenticate_by_name(
+        client: &reqwest::Client,
+        base_url: &str,
+        device_id: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<JellyfinSession, AdapterError> {
+        let base_url = base_url.trim_end_matches('/');
+        if base_url.is_empty() {
+            return Err(AdapterError::NotConfigured);
+        }
+        let header = format!(
+            "MediaBrowser Client=\"DroppedNeedle\", Device=\"DroppedNeedle\", DeviceId=\"{device_id}\", Version=\"1.4.0\""
+        );
+        let response = client
+            .post(format!("{base_url}/Users/AuthenticateByName"))
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .header("Authorization", header)
+            .body(serde_json::json!({ "Username": username, "Pw": password }).to_string())
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await
+            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            || response.status() == reqwest::StatusCode::FORBIDDEN
+        {
+            return Err(AdapterError::Auth);
+        }
+        if !response.status().is_success() {
+            return Err(AdapterError::Api(format!(
+                "POST /Users/AuthenticateByName failed ({})",
+                response.status()
+            )));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+        let value: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| AdapterError::Api("Jellyfin returned an invalid response".to_owned()))?;
+        let user = value.get("User").cloned().unwrap_or(Value::Null);
+        let user_id = str_field(&user, "Id").unwrap_or("").to_owned();
+        let access_token = str_field(&value, "AccessToken").unwrap_or("").to_owned();
+        if user_id.is_empty() || access_token.is_empty() {
+            return Err(AdapterError::Api(
+                "Jellyfin returned incomplete auth data".to_owned(),
+            ));
+        }
+        Ok(JellyfinSession {
+            user_name: str_field(&user, "Name").unwrap_or(username).to_owned(),
+            user_id,
+            access_token,
+        })
     }
 
     /// Genre labels via `/MusicGenres`.
@@ -1173,6 +1302,26 @@ impl JellyfinAdapter {
                 .map(|ticks| ticks / 10_000_000)
                 .unwrap_or(0),
         }
+    }
+}
+
+/// A Jellyfin user session from `AuthenticateByName`. The `Debug` impl
+/// redacts the token.
+pub struct JellyfinSession {
+    /// Jellyfin-side user id.
+    pub user_id: String,
+    /// Jellyfin display name.
+    pub user_name: String,
+    /// User-scoped access token.
+    pub access_token: String,
+}
+
+impl std::fmt::Debug for JellyfinSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JellyfinSession")
+            .field("user_id", &self.user_id)
+            .field("user_name", &self.user_name)
+            .finish_non_exhaustive()
     }
 }
 

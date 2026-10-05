@@ -182,6 +182,9 @@ impl Lib {
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             connect_apps.clone(),
             Some(self.library.root_source()),
+            self.runtime.pool().clone(),
+            self.runtime.lane().clone(),
+            Arc::clone(&self.store),
         )
         .expect("media bundle builds");
         let mut reads = reads;

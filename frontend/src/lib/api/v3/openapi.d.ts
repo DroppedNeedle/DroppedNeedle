@@ -2321,6 +2321,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/me/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's linked accounts across every service. */
+        get: operations["me_list_connections"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/me/connections/lastfm": {
         parameters: {
             query?: never;
@@ -2879,9 +2896,9 @@ export interface paths {
             cookie?: never;
         };
         /** Navidrome folder preference resolution for the caller. */
-        get: operations["get_folders"];
+        get: operations["remotes_get_navidrome_folders"];
         /** Save the Navidrome folder preference. */
-        put: operations["put_folders"];
+        put: operations["remotes_put_navidrome_folders"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2897,7 +2914,7 @@ export interface paths {
             cookie?: never;
         };
         /** One page of albums. */
-        get: operations["list_albums"];
+        get: operations["remotes_list_albums"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2914,7 +2931,7 @@ export interface paths {
             cookie?: never;
         };
         /** One album by id. */
-        get: operations["get_album"];
+        get: operations["remotes_get_album"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2931,7 +2948,24 @@ export interface paths {
             cookie?: never;
         };
         /** Tracks of one album. */
-        get: operations["list_album_tracks"];
+        get: operations["remotes_list_album_tracks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/remotes/{source}/analytics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Listening analytics over the history (Plex). */
+        get: operations["remotes_get_analytics"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2948,7 +2982,7 @@ export interface paths {
             cookie?: never;
         };
         /** One page of artists. */
-        get: operations["list_artists"];
+        get: operations["remotes_list_artists"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2965,7 +2999,7 @@ export interface paths {
             cookie?: never;
         };
         /** Full alphabetic artist index. */
-        get: operations["get_artist_index"];
+        get: operations["remotes_get_artist_index"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2982,7 +3016,7 @@ export interface paths {
             cookie?: never;
         };
         /** One artist by id. */
-        get: operations["get_artist"];
+        get: operations["remotes_get_artist"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2999,12 +3033,15 @@ export interface paths {
             cookie?: never;
         };
         /** Connection status for one source. Never carries credential material. */
-        get: operations["get_connection"];
-        /** Save one source connection. Secrets stay write-only. */
-        put: operations["put_connection"];
+        get: operations["remotes_get_connection"];
+        /**
+         * Link the caller's own Navidrome or Jellyfin account. The password is
+         *     checked against the server first and never echoed.
+         */
+        put: operations["remotes_put_connection"];
         post?: never;
-        /** Delete one source connection. */
-        delete: operations["delete_connection"];
+        /** Remove the caller's own link for one source. */
+        delete: operations["remotes_delete_connection"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3018,7 +3055,7 @@ export interface paths {
             cookie?: never;
         };
         /** Playlist cover bytes. Never cached: playlist art follows membership. */
-        get: operations["get_playlist_cover"];
+        get: operations["remotes_get_playlist_cover"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3034,11 +3071,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Plex discovery shelves (Plex only, following the mix-route precedent:
-         *     the shape is source-specific, so the gate lives in the handler).
-         */
-        get: operations["get_discovery"];
+        /** Discovery shelves (Plex). */
+        get: operations["remotes_get_discovery"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3054,8 +3088,25 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Favorites grouped by kind. */
-        get: operations["get_favorites"];
+        /** Favorite artists, albums, and tracks. */
+        get: operations["remotes_get_favorites"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/remotes/{source}/filters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Album filter facets (Jellyfin). */
+        get: operations["remotes_get_filters"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3072,7 +3123,7 @@ export interface paths {
             cookie?: never;
         };
         /** Genre labels. */
-        get: operations["list_genres"];
+        get: operations["remotes_list_genres"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3089,7 +3140,7 @@ export interface paths {
             cookie?: never;
         };
         /** Tracks carrying one genre label. */
-        get: operations["list_genre_songs"];
+        get: operations["remotes_list_genre_songs"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3106,7 +3157,7 @@ export interface paths {
             cookie?: never;
         };
         /** Listening history, newest first. */
-        get: operations["list_history"];
+        get: operations["remotes_list_history"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3123,7 +3174,7 @@ export interface paths {
             cookie?: never;
         };
         /** Hub highlights for one source. */
-        get: operations["get_hub"];
+        get: operations["remotes_get_hub"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3143,7 +3194,7 @@ export interface paths {
          * Item image bytes. Immutable and cacheable for a year: image URLs carry
          *     the upstream tag, so a new tag is a new URL.
          */
-        get: operations["get_image"];
+        get: operations["remotes_get_image"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3160,7 +3211,7 @@ export interface paths {
             cookie?: never;
         };
         /** Album info passthrough. */
-        get: operations["get_album_info"];
+        get: operations["remotes_get_album_info"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3177,7 +3228,7 @@ export interface paths {
             cookie?: never;
         };
         /** Artist info passthrough. */
-        get: operations["get_artist_info"];
+        get: operations["remotes_get_artist_info"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3193,8 +3244,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Lyrics passthrough. */
-        get: operations["get_lyrics"];
+        /** Lyrics for one track. */
+        get: operations["remotes_get_lyrics"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3210,8 +3261,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** MBID match for one source. */
-        get: operations["match_album"];
+        /** The remote album behind a MusicBrainz id. */
+        get: operations["remotes_match_album"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3227,8 +3278,59 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Instant mix for an item, artist, or genre id (Jellyfin only). */
-        get: operations["get_mix"];
+        /** Instant mix for an item, artist, or genre id (Jellyfin). */
+        get: operations["remotes_get_mix"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/remotes/{source}/moods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Mood labels (Plex). */
+        get: operations["remotes_list_moods"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/remotes/{source}/most-played/albums": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Most-played albums (Jellyfin). */
+        get: operations["remotes_list_most_played_albums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/remotes/{source}/most-played/artists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Most-played artists (Jellyfin). */
+        get: operations["remotes_list_most_played_artists"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3244,8 +3346,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Playlists. */
-        get: operations["list_playlists"];
+        /** The caller's playlists on the server. */
+        get: operations["remotes_list_playlists"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3262,7 +3364,7 @@ export interface paths {
             cookie?: never;
         };
         /** One playlist with its tracks. */
-        get: operations["get_playlist"];
+        get: operations["remotes_get_playlist"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3280,8 +3382,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Import one remote playlist into the local catalog. */
-        post: operations["import_playlist"];
+        /** Import one remote playlist into the caller's playlists. */
+        post: operations["remotes_import_playlist"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3299,7 +3401,7 @@ export interface paths {
          * Random tracks, optionally filtered by genre. Limits mirror the v2
          *     Navidrome route (default 20, max 50); Plex answers unsupported.
          */
-        get: operations["get_random"];
+        get: operations["remotes_list_random"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3316,7 +3418,7 @@ export interface paths {
             cookie?: never;
         };
         /** Recently played albums. */
-        get: operations["get_recent"];
+        get: operations["remotes_list_recent"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3333,7 +3435,7 @@ export interface paths {
             cookie?: never;
         };
         /** Recently added albums. */
-        get: operations["get_recently_added"];
+        get: operations["remotes_list_recently_added"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3350,7 +3452,7 @@ export interface paths {
             cookie?: never;
         };
         /** Unified search across artists, albums, and tracks. */
-        get: operations["search"];
+        get: operations["remotes_search"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3367,7 +3469,7 @@ export interface paths {
             cookie?: never;
         };
         /** Active audio sessions. */
-        get: operations["list_sessions"];
+        get: operations["remotes_list_sessions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3384,7 +3486,7 @@ export interface paths {
             cookie?: never;
         };
         /** Tracks similar to one track. */
-        get: operations["get_similar"];
+        get: operations["remotes_list_similar"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3401,7 +3503,7 @@ export interface paths {
             cookie?: never;
         };
         /** Library totals for one source. */
-        get: operations["get_stats"];
+        get: operations["remotes_get_stats"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3418,7 +3520,7 @@ export interface paths {
             cookie?: never;
         };
         /** Top songs for one artist name. */
-        get: operations["get_top_songs"];
+        get: operations["remotes_list_top_songs"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3435,7 +3537,7 @@ export interface paths {
             cookie?: never;
         };
         /** One page of tracks. */
-        get: operations["list_tracks"];
+        get: operations["remotes_list_tracks"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6293,6 +6395,54 @@ export interface components {
              */
             year?: number | null;
         };
+        /** @description One row of a listening top list. */
+        AnalyticsItem: {
+            /** @description Artist, album, or track name. */
+            name: string;
+            /**
+             * Format: int64
+             * @description Plays counted.
+             */
+            play_count: number;
+            /** @description Artist name for album and track rows, empty for artists. */
+            subtitle: string;
+        };
+        /** @description Listening analytics over the server's history (Plex). */
+        AnalyticsView: {
+            /**
+             * Format: int64
+             * @description Entries read.
+             */
+            entries_analyzed: number;
+            /** @description False when the history was longer than the analysis window. */
+            is_complete: boolean;
+            /**
+             * Format: int64
+             * @description Plays in the last 30 days.
+             */
+            listens_last_30_days: number;
+            /**
+             * Format: int64
+             * @description Plays in the last 7 days.
+             */
+            listens_last_7_days: number;
+            /** @description Most-played albums. */
+            top_albums: components["schemas"]["AnalyticsItem"][];
+            /** @description Most-played artists. */
+            top_artists: components["schemas"]["AnalyticsItem"][];
+            /** @description Most-played tracks. */
+            top_tracks: components["schemas"]["AnalyticsItem"][];
+            /**
+             * Format: double
+             * @description Listening time in hours, one decimal.
+             */
+            total_hours: number;
+            /**
+             * Format: int64
+             * @description History entries counted.
+             */
+            total_listens: number;
+        };
         /** @description Create an app password. */
         AppPasswordCreate: {
             /** @description Name; defaults to `App password`. */
@@ -7166,20 +7316,17 @@ export interface components {
              */
             transcoding_enabled: boolean;
         };
-        /** @description Save payload for one source connection. Secrets stay write-only. */
+        /**
+         * @description Link the caller's own Navidrome or Jellyfin account on the server the
+         *     admin configured. The password is checked live, then kept sealed
+         *     (Navidrome) or traded for a user token and dropped (Jellyfin). It is
+         *     never echoed back.
+         */
         ConnectionSave: {
-            /** @description Server base URL. Empty keeps the stored URL. */
-            base_url?: string | null;
-            /** @description Plex client identifier, Plex only. */
-            client_id?: string | null;
-            /** @description Password, API key, or token. Never echoed back. */
-            credential?: string | null;
-            /** @description Plex music section id, Plex only. */
-            section_id?: string | null;
-            /** @description Jellyfin user id hint, Jellyfin only. */
-            user_id?: string | null;
-            /** @description Login name or API-key label, depending on the source. */
-            username?: string | null;
+            /** @description Password on the server. */
+            password: string;
+            /** @description Login name on the server. */
+            username: string;
         };
         /** @description Connection status for one source. Never carries credential material. */
         ConnectionStatus: {
@@ -8091,6 +8238,15 @@ export interface components {
              * @default 300
              */
             poll_interval_seconds: number;
+        };
+        /** @description Jellyfin filter facets for the album browser. */
+        FilterFacetsView: {
+            /** @description Studios (labels), sorted. */
+            studios: string[];
+            /** @description Tags, sorted. */
+            tags: string[];
+            /** @description Release years, newest first. */
+            years: number[];
         };
         /** @description Navidrome folder preference resolution for the caller. */
         FolderResolutionView: {
@@ -9855,6 +10011,26 @@ export interface components {
             valid: boolean;
             /** @description Lidarr version from `system/status`, when the probe reached it. */
             version?: string | null;
+        };
+        /**
+         * @description One account the caller linked, on any service. Never carries the
+         *     stored secret.
+         */
+        LinkedAccount: {
+            /** @description Whether the link is enabled. */
+            enabled: boolean;
+            /**
+             * @description Service tag (`navidrome`, `jellyfin`, `plex`, `listenbrainz`,
+             *     `lastfm`, `spotify`).
+             */
+            service: string;
+            /** @description Linked account name, empty when the service stores none. */
+            username: string;
+        };
+        /** @description The caller's linked accounts. */
+        LinkedAccounts: {
+            /** @description One entry per linked service. */
+            connections: components["schemas"]["LinkedAccount"][];
         };
         /**
          * @description ListenBrainz connect request. The username is required: it drives every
@@ -18813,6 +18989,26 @@ export interface operations {
             };
         };
     };
+    me_list_connections: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Linked accounts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkedAccounts"];
+                };
+            };
+        };
+    };
     lastfm_status: {
         parameters: {
             query?: never;
@@ -20624,7 +20820,7 @@ export interface operations {
             };
         };
     };
-    get_folders: {
+    remotes_get_navidrome_folders: {
         parameters: {
             query?: never;
             header?: never;
@@ -20644,14 +20840,18 @@ export interface operations {
             };
         };
     };
-    put_folders: {
+    remotes_put_navidrome_folders: {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderSave"];
+            };
+        };
         responses: {
             /** @description Folder resolution */
             200: {
@@ -20664,11 +20864,29 @@ export interface operations {
             };
         };
     };
-    list_albums: {
+    remotes_list_albums: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Max items (1-500, default 50). */
+                limit?: number;
+                /** @description Records to skip (default 0). */
+                offset?: number;
+                /** @description Sort field (source-native name, default SortName/titleSort). */
+                sort_by?: string;
+                /** @description "asc" or "desc" (default asc). */
+                sort_order?: string;
+                /** @description Genre filter. */
+                genre?: string;
+                /** @description Exact year filter. */
+                year?: number;
+                /** @description Decade filter in `"2020s"` spelling (Plex honors it, others ignore it). */
+                decade?: string;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20684,11 +20902,16 @@ export interface operations {
             };
         };
     };
-    get_album: {
+    remotes_get_album: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+                /** @description Remote album id */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20698,15 +20921,22 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RemotesAlbumView"];
+                };
             };
         };
     };
-    list_album_tracks: {
+    remotes_list_album_tracks: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+                /** @description Remote album id */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20722,11 +20952,48 @@ export interface operations {
             };
         };
     };
-    list_artists: {
+    remotes_get_analytics: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Listening analytics */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsView"];
+                };
+            };
+        };
+    };
+    remotes_list_artists: {
+        parameters: {
+            query?: {
+                /** @description Max items (1-500, default 50). */
+                limit?: number;
+                /** @description Records to skip (default 0). */
+                offset?: number;
+                /** @description Sort field (source-native name). */
+                sort_by?: string;
+                /** @description "asc" or "desc" (default asc). */
+                sort_order?: string;
+                /** @description Name filter. */
+                search?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20742,11 +21009,14 @@ export interface operations {
             };
         };
     };
-    get_artist_index: {
+    remotes_get_artist_index: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20762,11 +21032,16 @@ export interface operations {
             };
         };
     };
-    get_artist: {
+    remotes_get_artist: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+                /** @description Remote artist id */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20776,15 +21051,20 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RemotesArtistView"];
+                };
             };
         };
     };
-    get_connection: {
+    remotes_get_connection: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20800,11 +21080,41 @@ export interface operations {
             };
         };
     };
-    put_connection: {
+    remotes_put_connection: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionSave"];
+            };
+        };
+        responses: {
+            /** @description Connection status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionStatus"];
+                };
+            };
+        };
+    };
+    remotes_delete_connection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20820,31 +21130,19 @@ export interface operations {
             };
         };
     };
-    delete_connection: {
+    remotes_get_playlist_cover: {
         parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Connection status */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConnectionStatus"];
-                };
+            query?: {
+                /** @description Square edge in px (1-2000, default 500). */
+                size?: number;
             };
-        };
-    };
-    get_playlist_cover: {
-        parameters: {
-            query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+                /** @description Remote playlist id */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20858,11 +21156,17 @@ export interface operations {
             };
         };
     };
-    get_discovery: {
+    remotes_get_discovery: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Items per hub (1-20, default 10). */
+                count?: number;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20878,11 +21182,17 @@ export interface operations {
             };
         };
     };
-    get_favorites: {
+    remotes_get_favorites: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Max items per kind (1-100, default 50). */
+                limit?: number;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20898,11 +21208,37 @@ export interface operations {
             };
         };
     };
-    list_genres: {
+    remotes_get_filters: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Filter facets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilterFacetsView"];
+                };
+            };
+        };
+    };
+    remotes_list_genres: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20912,15 +21248,27 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": string[];
+                };
             };
         };
     };
-    list_genre_songs: {
+    remotes_list_genre_songs: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description Genre label. */
+                genre: string;
+                /** @description Max items (1-500, default 50). */
+                limit?: number;
+                /** @description Records to skip (default 0). */
+                offset?: number;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20936,11 +21284,19 @@ export interface operations {
             };
         };
     };
-    list_history: {
+    remotes_list_history: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Max items (1-200, default 50). */
+                limit?: number;
+                /** @description Records to skip (default 0). */
+                offset?: number;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20956,11 +21312,14 @@ export interface operations {
             };
         };
     };
-    get_hub: {
+    remotes_get_hub: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20976,11 +21335,19 @@ export interface operations {
             };
         };
     };
-    get_image: {
+    remotes_get_image: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Square edge in px (1-2000, default 500). */
+                size?: number;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+                /** @description Remote image id */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -20994,11 +21361,16 @@ export interface operations {
             };
         };
     };
-    get_album_info: {
+    remotes_get_album_info: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+                /** @description Remote album id */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21014,11 +21386,16 @@ export interface operations {
             };
         };
     };
-    get_artist_info: {
+    remotes_get_artist_info: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+                /** @description Remote artist id */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21034,11 +21411,21 @@ export interface operations {
             };
         };
     };
-    get_lyrics: {
+    remotes_get_lyrics: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Artist name fallback (Navidrome classic lyrics). */
+                artist?: string;
+                /** @description Title fallback (Navidrome classic lyrics). */
+                title?: string;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+                /** @description Remote track id */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21054,11 +21441,17 @@ export interface operations {
             };
         };
     };
-    match_album: {
+    remotes_match_album: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description MusicBrainz release or release-group id. */
+                mbid: string;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21074,11 +21467,21 @@ export interface operations {
             };
         };
     };
-    get_mix: {
+    remotes_get_mix: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Seed kind: `item` (default), `artist`, or `genre`. */
+                kind?: string;
+                /** @description Max tracks (1-200, default 50). */
+                limit?: number;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+                /** @description Seed id or genre name */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21094,11 +21497,89 @@ export interface operations {
             };
         };
     };
-    list_playlists: {
+    remotes_list_moods: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mood labels */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+        };
+    };
+    remotes_list_most_played_albums: {
+        parameters: {
+            query?: {
+                /** @description Max items (1-50, default 10). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Most-played albums */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemotesAlbumView"][];
+                };
+            };
+        };
+    };
+    remotes_list_most_played_artists: {
+        parameters: {
+            query?: {
+                /** @description Max items (1-50, default 10). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Most-played artists */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemotesArtistView"][];
+                };
+            };
+        };
+    };
+    remotes_list_playlists: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21114,11 +21595,16 @@ export interface operations {
             };
         };
     };
-    get_playlist: {
+    remotes_get_playlist: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+                /** @description Remote playlist id */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21134,11 +21620,16 @@ export interface operations {
             };
         };
     };
-    import_playlist: {
+    remotes_import_playlist: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+                /** @description Remote playlist id */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21154,11 +21645,19 @@ export interface operations {
             };
         };
     };
-    get_random: {
+    remotes_list_random: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Max tracks (1-50, default 20). */
+                limit?: number;
+                /** @description Genre label filter, when present. */
+                genre?: string;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21174,11 +21673,19 @@ export interface operations {
             };
         };
     };
-    get_recent: {
+    remotes_list_recent: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Max items (1-500, default 50). */
+                limit?: number;
+                /** @description Records to skip (default 0). */
+                offset?: number;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21188,15 +21695,25 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RemotesAlbumView"][];
+                };
             };
         };
     };
-    get_recently_added: {
+    remotes_list_recently_added: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Max items (1-500, default 50). */
+                limit?: number;
+                /** @description Records to skip (default 0). */
+                offset?: number;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21206,15 +21723,25 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RemotesAlbumView"][];
+                };
             };
         };
     };
-    search: {
+    remotes_search: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description Query text. */
+                q: string;
+                /** @description Per-bucket cap (1-100, default 20). */
+                limit?: number;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21230,11 +21757,14 @@ export interface operations {
             };
         };
     };
-    list_sessions: {
+    remotes_list_sessions: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21250,11 +21780,21 @@ export interface operations {
             };
         };
     };
-    get_similar: {
+    remotes_list_similar: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Max items (1-500, default 50). */
+                limit?: number;
+                /** @description Records to skip (default 0). */
+                offset?: number;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+                /** @description Remote track id */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21270,11 +21810,14 @@ export interface operations {
             };
         };
     };
-    get_stats: {
+    remotes_get_stats: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21290,11 +21833,21 @@ export interface operations {
             };
         };
     };
-    get_top_songs: {
+    remotes_list_top_songs: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Max items (1-500, default 50). */
+                limit?: number;
+                /** @description Records to skip (default 0). */
+                offset?: number;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+                /** @description Artist name */
+                artist: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -21310,11 +21863,27 @@ export interface operations {
             };
         };
     };
-    list_tracks: {
+    remotes_list_tracks: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Max items (1-500, default 50). */
+                limit?: number;
+                /** @description Records to skip (default 0). */
+                offset?: number;
+                /** @description Sort field (source-native name). */
+                sort_by?: string;
+                /** @description "asc" or "desc" (default asc). */
+                sort_order?: string;
+                /** @description Title filter. */
+                search?: string;
+                /** @description Genre filter. */
+                genre?: string;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Remote source */
+                source: components["schemas"]["SourceName"];
+            };
             cookie?: never;
         };
         requestBody?: never;

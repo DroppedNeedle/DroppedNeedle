@@ -544,7 +544,7 @@ impl PlexAdapter {
     }
 
     /// Plex exposes no favorites endpoint; the unified shape stays empty.
-    pub async fn favorites(&self) -> Result<FavoritesView, AdapterError> {
+    pub async fn favorites(&self, _limit: i64) -> Result<FavoritesView, AdapterError> {
         self.require_configured()?;
         Ok(FavoritesView {
             artists: Vec::new(),

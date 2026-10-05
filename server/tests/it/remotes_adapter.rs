@@ -19,8 +19,8 @@ use remotes::adapter::{
     AdapterError, AlbumBrowse, ArtistBrowse, MemoryImportSink, RemoteHandle, TrackBrowse,
 };
 use remotes::connections::{
-    ConnectionDraft, ConnectionStore, CredentialCoder, MemoryConnectionStore, ResolveError,
-    rekey_store, resolve_connection, save_connection,
+    ConnectionResolver, CredentialCoder, FixedServers, MemoryConnectionStore, ServerSettings,
+    SharedCredential, SqliteConnectionStore, UserLink,
 };
 use remotes::folders::{FolderPreference, MemoryFolderStore, resolve_scope};
 use remotes::handlers::{RemotesDeps, remotes_router};
@@ -29,9 +29,10 @@ use remotes::mocks::{
     JELLYFIN_KEY, MATCH_MBID, NAVIDROME_USER, PLEX_TOKEN, serve_jellyfin, serve_navidrome,
     serve_plex,
 };
-use remotes::models::{ConnectionSave, SourceName};
+use remotes::models::SourceName;
 use remotes::navidrome::NavidromeAdapter;
 use remotes::plex::PlexAdapter;
+use remotes::service::RemotesService;
 use serde_json::Value;
 use tower::ServiceExt as _;
 
@@ -52,10 +53,6 @@ fn test_crypto() -> Crypto {
     Crypto::from_key_bytes(&[9u8; 32]).expect("test key builds")
 }
 
-fn other_crypto() -> Crypto {
-    Crypto::from_key_bytes(&[4u8; 32]).expect("test key builds")
-}
-
 fn http_client() -> reqwest::Client {
     reqwest::Client::new()
 }
@@ -66,18 +63,37 @@ async fn auth_bundle() -> (TestRig, String) {
     (rig, user.id)
 }
 
-fn deps_for(rig: &TestRig) -> (RemotesDeps, Arc<MemoryConnectionStore>) {
-    let connections = Arc::new(MemoryConnectionStore::new());
-    let deps = RemotesDeps {
-        http: http_client(),
-        connections: connections.clone(),
-        coder: Arc::new(CredentialCoder::new(Arc::new(test_crypto()))),
-        folders: Arc::new(MemoryFolderStore::new()),
-        imports: Arc::new(MemoryImportSink::new()),
+/// Route deps over memory rows and the given admin servers.
+fn deps_for(rig: &TestRig, servers: FixedServers) -> RemotesDeps {
+    let resolver = Arc::new(ConnectionResolver::new(
+        Arc::new(MemoryConnectionStore::new()),
+        Arc::new(CredentialCoder::new(Arc::new(test_crypto()))),
+        Arc::new(servers),
+    ));
+    RemotesDeps {
+        service: RemotesService::new(
+            http_client(),
+            resolver,
+            Arc::new(MemoryFolderStore::new()),
+            Arc::new(MemoryImportSink::new()),
+        ),
         auth: rig.deps.clone(),
         ids: Arc::new(FixedIdGenerator),
-    };
-    (deps, connections)
+    }
+}
+
+/// One admin server with a shared credential.
+fn server(base_url: &str, username: &str, credential: &str, user_id: &str) -> ServerSettings {
+    ServerSettings {
+        base_url: base_url.to_owned(),
+        shared: Some(SharedCredential {
+            username: username.to_owned(),
+            credential: credential.to_owned(),
+            user_id: user_id.to_owned(),
+        }),
+        client_id: String::new(),
+        section_ids: Vec::new(),
+    }
 }
 
 fn authed_app(deps: RemotesDeps, user_id: &str) -> Router {
@@ -582,161 +598,89 @@ async fn upstream_forbidden_maps_to_auth_on_every_source() {
 // Connection store
 // ---------------------------------------------------------------------------
 
-#[test]
-fn connection_debug_output_redacts_the_credential() {
-    let save = ConnectionSave {
-        base_url: Some("http://plex.test".to_owned()),
-        username: Some("ada".to_owned()),
-        credential: Some("super-secret-token".to_owned()),
-        client_id: None,
-        user_id: None,
-        section_id: None,
-    };
-    let draft = ConnectionDraft {
-        base_url: save.base_url.clone(),
-        username: save.username.clone(),
-        credential: save.credential.clone(),
-        client_id: None,
-        user_id: None,
-        section_id: None,
-    };
-    for rendered in [format!("{save:?}"), format!("{draft:?}")] {
-        assert!(!rendered.contains("super-secret-token"), "{rendered}");
-        assert!(rendered.contains("http://plex.test"), "{rendered}");
-    }
-}
-
+/// A linked account and a folder preference are SQLite rows: they survive
+/// closing and reopening the database, and the credential is sealed at
+/// rest.
 #[tokio::test]
-async fn connections_seal_credentials_and_resolve_modes() {
-    let store = MemoryConnectionStore::new();
-    let coder = CredentialCoder::new(Arc::new(test_crypto()));
-    save_connection(
-        &store,
-        &coder,
-        "ada",
-        SourceName::Navidrome,
-        ConnectionDraft {
-            base_url: Some("http://navidrome.test".to_owned()),
-            username: Some("ada".to_owned()),
-            credential: Some("s3cret".to_owned()),
-            client_id: None,
-            user_id: None,
-            section_id: None,
-        },
-    )
-    .await
-    .expect("save works");
+async fn linked_connections_survive_a_restart() {
+    use droppedneedle::db::{DbConfig, open_runtime};
+    use remotes::folders::{FolderStore as _, SqliteFolderStore};
 
-    let row = store
-        .get("ada", SourceName::Navidrome)
-        .await
-        .expect("row exists");
-    assert_ne!(
-        row.sealed_credential, "s3cret",
-        "ciphertext at rest, never plaintext"
-    );
-    assert!(row.sealed_credential.starts_with("v3:"));
-
-    let resolved = resolve_connection(&store, &coder, "ada", SourceName::Navidrome)
-        .await
-        .expect("own row resolves");
-    assert_eq!(resolved.credential, "s3cret");
-    assert_eq!(resolved.account_mode, "linked");
-    assert_eq!(resolved.account_label, "ada");
-    assert!(resolved.cache_scope.starts_with("user:ada:"));
-    assert_eq!(store.list_owner("ada").await.len(), 1);
-    assert!(store.list_owner("bea").await.is_empty());
-
-    save_connection(
-        &store,
-        &coder,
-        remotes::connections::SHARED_OWNER,
-        SourceName::Plex,
-        ConnectionDraft {
-            base_url: Some("http://plex.test".to_owned()),
-            username: None,
-            credential: Some("shared-token".to_owned()),
-            client_id: None,
-            user_id: None,
-            section_id: None,
-        },
-    )
-    .await
-    .expect("shared save works");
-    let shared = resolve_connection(&store, &coder, "ada", SourceName::Plex)
-        .await
-        .expect("shared row resolves");
-    assert_eq!(shared.account_mode, "shared");
-
-    assert!(matches!(
-        resolve_connection(&store, &coder, "ada", SourceName::Jellyfin).await,
-        Err(ResolveError::NotConfigured)
-    ));
-}
-
-#[tokio::test]
-async fn connections_rekey_rotates_and_flags_stale_rows() {
-    let store = MemoryConnectionStore::new();
-    let old = CredentialCoder::new(Arc::new(test_crypto()));
-    let new = CredentialCoder::new(Arc::new(other_crypto()));
-    save_connection(
-        &store,
-        &old,
-        "ada",
-        SourceName::Plex,
-        ConnectionDraft {
-            base_url: Some("http://plex.test".to_owned()),
-            username: None,
-            credential: Some("tok".to_owned()),
-            client_id: None,
-            user_id: None,
-            section_id: None,
-        },
-    )
-    .await
-    .expect("save works");
-
-    // Corrupt one row so it no longer opens under any key.
-    let mut row = store
-        .get("ada", SourceName::Plex)
-        .await
-        .expect("row exists");
-    row.sealed_credential = "v3:corrupted-ciphertext".to_owned();
-    store.put(row).await;
-    save_connection(
-        &store,
-        &old,
-        "bea",
-        SourceName::Plex,
-        ConnectionDraft {
-            base_url: Some("http://plex.test".to_owned()),
-            username: None,
-            credential: Some("tok2".to_owned()),
-            client_id: None,
-            user_id: None,
-            section_id: None,
-        },
-    )
-    .await
-    .expect("save works");
-
-    let stale = rekey_store(&store, &old, &new).await;
-    assert_eq!(stale, vec![("ada".to_owned(), SourceName::Plex)]);
-    assert_eq!(
-        resolve_connection(&store, &new, "bea", SourceName::Plex)
+    let dir = crate::common::ScratchDir::new("remotes-durable");
+    let db = dir.join("library.db");
+    let servers = || {
+        FixedServers::default().with(
+            SourceName::Navidrome,
+            ServerSettings {
+                base_url: "http://navidrome.test".to_owned(),
+                shared: None,
+                client_id: String::new(),
+                section_ids: Vec::new(),
+            },
+        )
+    };
+    let coder = || Arc::new(CredentialCoder::new(Arc::new(test_crypto())));
+    {
+        let runtime = open_runtime(&DbConfig::new(&db)).await.expect("db opens");
+        runtime
+            .lane()
+            .write(droppedneedle::db::Lane::Foreground, "seed", |tx| {
+                tx.execute(
+                    "INSERT INTO auth_users (id, username, display_name, role, created_at) \
+                     VALUES ('user-ada', 'ada', 'Ada', 'user', '2026-01-01T00:00:00Z')",
+                    [],
+                )?;
+                Ok(())
+            })
             .await
-            .expect("rotated resolves")
-            .credential,
-        "tok2"
-    );
-    assert!(matches!(
-        resolve_connection(&store, &old, "bea", SourceName::Plex).await,
-        Err(ResolveError::Stale)
-    ));
-    assert!(matches!(
-        resolve_connection(&store, &new, "ada", SourceName::Plex).await,
-        Err(ResolveError::Stale)
-    ));
+            .expect("user seeds");
+        let rows = SqliteConnectionStore::new(runtime.pool().clone(), runtime.lane().clone());
+        let resolver = ConnectionResolver::new(Arc::new(rows), coder(), Arc::new(servers()));
+        resolver
+            .save_link(
+                "user-ada",
+                &UserLink::Navidrome {
+                    username: "ada".to_owned(),
+                    password: "s3cret".to_owned(),
+                },
+            )
+            .await
+            .expect("link saves");
+        SqliteFolderStore::new(runtime.pool().clone(), runtime.lane().clone())
+            .set(
+                "user-ada",
+                FolderPreference {
+                    mode: "selected".to_owned(),
+                    selected_folder_ids: vec!["folder-1".to_owned()],
+                    server_identity: Some("server-a".to_owned()),
+                },
+            )
+            .await
+            .expect("preference saves");
+        let stored: String = sqlx::query_scalar(
+            "SELECT connection_data FROM user_connections WHERE user_id = 'user-ada'",
+        )
+        .fetch_one(runtime.pool())
+        .await
+        .expect("row reads");
+        assert!(!stored.contains("s3cret"), "sealed at rest");
+        runtime.shutdown().await;
+    }
+    let runtime = open_runtime(&DbConfig::new(&db)).await.expect("db reopens");
+    let rows = SqliteConnectionStore::new(runtime.pool().clone(), runtime.lane().clone());
+    let resolver = ConnectionResolver::new(Arc::new(rows), coder(), Arc::new(servers()));
+    let resolved = resolver
+        .resolve("user-ada", SourceName::Navidrome)
+        .await
+        .expect("link resolves after restart");
+    assert_eq!(resolved.account_mode, "linked");
+    assert_eq!(resolved.credential, "s3cret");
+    let preference = SqliteFolderStore::new(runtime.pool().clone(), runtime.lane().clone())
+        .get("user-ada")
+        .await
+        .expect("preference reads");
+    assert_eq!(preference.selected_folder_ids, vec!["folder-1".to_owned()]);
+    runtime.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -775,70 +719,33 @@ async fn folders_fail_closed_on_server_change_or_outage() {
 // Routes
 // ---------------------------------------------------------------------------
 
+/// A plain user with no links of their own, on an instance where the admin
+/// configured all three servers with shared credentials (the v2 shared
+/// mode). Every route below runs through the admin's accounts.
 async fn connected_testbed() -> (Router, String) {
     let (rig, user_id) = auth_bundle().await;
-    let (deps, connections) = deps_for(&rig);
-    let coder = CredentialCoder::new(Arc::new(test_crypto()));
     // Mocks leak for the life of the test process; routes need their URLs
     // after this helper returns, so the servers stay up detached.
     let jellyfin = Box::leak(Box::new(serve_jellyfin().await.expect("mock serves")));
     let navidrome = Box::leak(Box::new(serve_navidrome().await.expect("mock serves")));
     let plex = Box::leak(Box::new(serve_plex().await.expect("mock serves")));
-    save_connection(
-        connections.as_ref(),
-        &coder,
-        &user_id,
-        SourceName::Jellyfin,
-        ConnectionDraft {
-            base_url: Some(jellyfin.base_url.clone()),
-            username: Some("Listener".to_owned()),
-            credential: Some(JELLYFIN_KEY.to_owned()),
-            client_id: None,
-            user_id: Some("jf-user-1".to_owned()),
-            section_id: None,
-        },
-    )
-    .await
-    .expect("jellyfin connects");
-    save_connection(
-        connections.as_ref(),
-        &coder,
-        &user_id,
-        SourceName::Navidrome,
-        ConnectionDraft {
-            base_url: Some(navidrome.base_url.clone()),
-            username: Some(NAVIDROME_USER.to_owned()),
-            credential: Some("nd-pass".to_owned()),
-            client_id: None,
-            user_id: None,
-            section_id: None,
-        },
-    )
-    .await
-    .expect("navidrome connects");
-    save_connection(
-        connections.as_ref(),
-        &coder,
-        &user_id,
-        SourceName::Plex,
-        ConnectionDraft {
-            base_url: Some(plex.base_url.clone()),
-            username: None,
-            credential: Some(PLEX_TOKEN.to_owned()),
-            client_id: None,
-            user_id: None,
-            section_id: None,
-        },
-    )
-    .await
-    .expect("plex connects");
-    (authed_app(deps, &user_id), user_id)
+    let servers = FixedServers::default()
+        .with(
+            SourceName::Jellyfin,
+            server(&jellyfin.base_url, "", JELLYFIN_KEY, "jf-user-1"),
+        )
+        .with(
+            SourceName::Navidrome,
+            server(&navidrome.base_url, NAVIDROME_USER, "nd-pass", ""),
+        )
+        .with(SourceName::Plex, server(&plex.base_url, "", PLEX_TOKEN, ""));
+    (authed_app(deps_for(&rig, servers), &user_id), user_id)
 }
 
 #[tokio::test]
 async fn routes_reject_anonymous_callers_with_challenge() {
     let (rig, _) = auth_bundle().await;
-    let (deps, _) = deps_for(&rig);
+    let deps = deps_for(&rig, FixedServers::default());
     let response = remotes_router(deps)
         .oneshot(
             Request::get("/remotes/plex/hub")
@@ -881,8 +788,7 @@ async fn routes_reject_unknown_sources_and_bad_queries_in_envelope() {
 #[tokio::test]
 async fn routes_report_unconfigured_sources() {
     let (rig, user_id) = auth_bundle().await;
-    let (deps, _) = deps_for(&rig);
-    let app = authed_app(deps, &user_id);
+    let app = authed_app(deps_for(&rig, FixedServers::default()), &user_id);
     let (status, body) = get_json(app, "/remotes/plex/hub").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error_code(&body), "REMOTE_NOT_CONFIGURED");
@@ -1021,27 +927,54 @@ async fn routes_serve_images_with_cache_contract() {
     );
 }
 
+/// A plain user sees the admin's shared account until they link their own;
+/// the link never echoes the password, lists under `/me/connections`, and
+/// unlinking falls back to the shared account.
 #[tokio::test]
-async fn routes_manage_connections_without_echoing_secrets() {
-    let (rig, user_id) = auth_bundle().await;
-    let (deps, _) = deps_for(&rig);
-    let app = authed_app(deps, &user_id);
-    let payload = serde_json::json!({
-        "base_url": "http://plex.test",
-        "credential": "super-secret-token",
-    });
-    let (status, body) = put_json(app.clone(), "/remotes/plex/connection", payload).await;
+async fn routes_link_own_accounts_over_the_shared_admin_account() {
+    let (app, _) = connected_testbed().await;
+    let (status, body) = get_json(app.clone(), "/remotes/navidrome/connection").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.get("connected").and_then(Value::as_bool), Some(true));
-    assert!(!body.to_string().contains("super-secret-token"));
+    assert_eq!(
+        body.get("account_mode").and_then(Value::as_str),
+        Some("shared")
+    );
 
-    let (status, body) = get_json(app.clone(), "/remotes/plex/connection").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body.get("connected").and_then(Value::as_bool), Some(true));
+    let payload = serde_json::json!({"username": NAVIDROME_USER, "password": "super-secret"});
+    let (status, body) = put_json(app.clone(), "/remotes/navidrome/connection", payload).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body.get("account_mode").and_then(Value::as_str),
+        Some("linked")
+    );
+    assert!(!body.to_string().contains("super-secret"));
 
-    let (status, body) = delete_json(app.clone(), "/remotes/plex/connection").await;
+    let (status, body) = get_json(app.clone(), "/me/connections").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body.get("connected").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        body.pointer("/connections/0/service")
+            .and_then(Value::as_str),
+        Some("navidrome")
+    );
+    assert_eq!(
+        body.pointer("/connections/0/username")
+            .and_then(Value::as_str),
+        Some(NAVIDROME_USER)
+    );
+    assert!(!body.to_string().contains("super-secret"));
+
+    let wrong = serde_json::json!({"username": "stranger", "password": "nope"});
+    let (status, body) = put_json(app.clone(), "/remotes/navidrome/connection", wrong).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error_code(&body), "INVALID_INPUT");
+
+    let (status, body) = delete_json(app.clone(), "/remotes/navidrome/connection").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body.get("account_mode").and_then(Value::as_str),
+        Some("shared")
+    );
 }
 
 #[tokio::test]

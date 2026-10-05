@@ -8,9 +8,6 @@
 //! another library's catalog. When the source is down the resolution still
 //! echoes the stored preference with `source_available` false.
 
-use std::collections::HashMap;
-use std::sync::Mutex;
-
 use super::adapter::BoxFuture;
 
 /// Stored folder preference for one user.
@@ -58,21 +55,108 @@ pub struct FolderResolution {
     pub source_available: bool,
 }
 
-/// Folder preference persistence port.
+/// Folder preference persistence. Errors carry a log-only cause.
 pub trait FolderStore: Send + Sync {
-    /// Fetch one user's preference. Missing rows read as the "all" default.
-    fn get<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, FolderPreference>;
+    /// Fetch one user's preference. A missing row reads as the "all" default.
+    fn get<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Result<FolderPreference, String>>;
 
     /// Replace one user's preference.
-    fn set<'a>(&'a self, user_id: &'a str, preference: FolderPreference) -> BoxFuture<'a, ()>;
+    fn set<'a>(
+        &'a self,
+        user_id: &'a str,
+        preference: FolderPreference,
+    ) -> BoxFuture<'a, Result<(), String>>;
 }
 
-/// In-memory folder preference store.
+/// Preferences in `user_navidrome_folder_preferences`.
+#[derive(Clone)]
+pub struct SqliteFolderStore {
+    pool: sqlx::SqlitePool,
+    lane: crate::db::WriteLane,
+}
+
+impl SqliteFolderStore {
+    /// Bind the store to a migrated database.
+    pub fn new(pool: sqlx::SqlitePool, lane: crate::db::WriteLane) -> Self {
+        Self { pool, lane }
+    }
+}
+
+impl FolderStore for SqliteFolderStore {
+    fn get<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Result<FolderPreference, String>> {
+        Box::pin(async move {
+            let row: Option<(String, String, Option<String>)> = sqlx::query_as(
+                "SELECT mode, selected_ids_json, server_identity \
+                 FROM user_navidrome_folder_preferences WHERE user_id = ?1",
+            )
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| crate::db::map_sqlx_busy("remotes.folders.get", error).to_string())?;
+            let Some((mode, selected, server_identity)) = row else {
+                return Ok(FolderPreference::default());
+            };
+            let selected_folder_ids: Vec<String> = serde_json::from_str(&selected)
+                .map_err(|error| format!("folder preference ids are not a JSON list: {error}"))?;
+            Ok(FolderPreference {
+                mode,
+                selected_folder_ids,
+                server_identity,
+            })
+        })
+    }
+
+    fn set<'a>(
+        &'a self,
+        user_id: &'a str,
+        preference: FolderPreference,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        let user_id = user_id.to_owned();
+        Box::pin(async move {
+            let selected = serde_json::to_string(&preference.selected_folder_ids)
+                .map_err(|error| error.to_string())?;
+            self.lane
+                .write(
+                    crate::db::Lane::Foreground,
+                    "remotes.folders.set",
+                    move |tx| {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|elapsed| elapsed.as_secs_f64())
+                            .unwrap_or(0.0);
+                        tx.execute(
+                            "INSERT INTO user_navidrome_folder_preferences \
+                             (user_id, mode, selected_ids_json, server_identity, updated_at) \
+                             VALUES (?1, ?2, ?3, ?4, ?5) \
+                             ON CONFLICT (user_id) DO UPDATE SET mode = excluded.mode, \
+                             selected_ids_json = excluded.selected_ids_json, \
+                             server_identity = excluded.server_identity, \
+                             updated_at = excluded.updated_at",
+                            rusqlite::params![
+                                user_id,
+                                preference.mode,
+                                selected,
+                                preference.server_identity,
+                                now
+                            ],
+                        )?;
+                        Ok(())
+                    },
+                )
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+}
+
+/// In-memory folder preferences for tests.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryFolderStore {
-    inner: Mutex<HashMap<String, FolderPreference>>,
+    inner: std::sync::Mutex<std::collections::HashMap<String, FolderPreference>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryFolderStore {
     /// Empty store.
     pub fn new() -> Self {
@@ -80,22 +164,30 @@ impl MemoryFolderStore {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FolderStore for MemoryFolderStore {
-    fn get<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, FolderPreference> {
-        Box::pin(async move {
-            self.inner
-                .lock()
-                .map(|guard| guard.get(user_id).cloned().unwrap_or_default())
-                .unwrap_or_default()
-        })
+    fn get<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Result<FolderPreference, String>> {
+        let preference = self
+            .inner
+            .lock()
+            .map(|guard| guard.get(user_id).cloned().unwrap_or_default())
+            .map_err(|_| "folder store lock poisoned".to_owned());
+        Box::pin(async move { preference })
     }
 
-    fn set<'a>(&'a self, user_id: &'a str, preference: FolderPreference) -> BoxFuture<'a, ()> {
-        Box::pin(async move {
-            if let Ok(mut guard) = self.inner.lock() {
+    fn set<'a>(
+        &'a self,
+        user_id: &'a str,
+        preference: FolderPreference,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        let stored = self
+            .inner
+            .lock()
+            .map(|mut guard| {
                 guard.insert(user_id.to_owned(), preference);
-            }
-        })
+            })
+            .map_err(|_| "folder store lock poisoned".to_owned());
+        Box::pin(async move { stored })
     }
 }
 

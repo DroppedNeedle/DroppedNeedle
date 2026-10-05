@@ -5264,6 +5264,27 @@
         }
       }
     },
+    "/api/v3/me/connections": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "The caller's linked accounts across every service.",
+        "operationId": "me_list_connections",
+        "responses": {
+          "200": {
+            "description": "Linked accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedAccounts"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/me/connections/lastfm": {
       "get": {
         "tags": [
@@ -6981,7 +7002,7 @@
           "crate::remotes::handlers"
         ],
         "summary": "Navidrome folder preference resolution for the caller.",
-        "operationId": "get_folders",
+        "operationId": "remotes_get_navidrome_folders",
         "responses": {
           "200": {
             "description": "Folder resolution",
@@ -7000,7 +7021,17 @@
           "crate::remotes::handlers"
         ],
         "summary": "Save the Navidrome folder preference.",
-        "operationId": "put_folders",
+        "operationId": "remotes_put_navidrome_folders",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderSave"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Folder resolution",
@@ -7021,7 +7052,84 @@
           "crate::remotes::handlers"
         ],
         "summary": "One page of albums.",
-        "operationId": "list_albums",
+        "operationId": "remotes_list_albums",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items (1-500, default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Records to skip (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "description": "Sort field (source-native name, default SortName/titleSort).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "description": "\"asc\" or \"desc\" (default asc).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "genre",
+            "in": "query",
+            "description": "Genre filter.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "description": "Exact year filter.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "decade",
+            "in": "query",
+            "description": "Decade filter in `\"2020s\"` spelling (Plex honors it, others ignore it).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Album page",
@@ -7042,10 +7150,37 @@
           "crate::remotes::handlers"
         ],
         "summary": "One album by id.",
-        "operationId": "get_album",
+        "operationId": "remotes_get_album",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Remote album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Album detail"
+            "description": "Album detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesAlbumView"
+                }
+              }
+            }
           }
         }
       }
@@ -7056,7 +7191,27 @@
           "crate::remotes::handlers"
         ],
         "summary": "Tracks of one album.",
-        "operationId": "list_album_tracks",
+        "operationId": "remotes_list_album_tracks",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Remote album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Album tracks",
@@ -7071,13 +7226,103 @@
         }
       }
     },
+    "/api/v3/remotes/{source}/analytics": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Listening analytics over the history (Plex).",
+        "operationId": "remotes_get_analytics",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Listening analytics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/remotes/{source}/artists": {
       "get": {
         "tags": [
           "crate::remotes::handlers"
         ],
         "summary": "One page of artists.",
-        "operationId": "list_artists",
+        "operationId": "remotes_list_artists",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items (1-500, default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Records to skip (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "description": "Sort field (source-native name).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "description": "\"asc\" or \"desc\" (default asc).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Name filter.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Artist page",
@@ -7098,7 +7343,18 @@
           "crate::remotes::handlers"
         ],
         "summary": "Full alphabetic artist index.",
-        "operationId": "get_artist_index",
+        "operationId": "remotes_get_artist_index",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Artist index",
@@ -7119,10 +7375,37 @@
           "crate::remotes::handlers"
         ],
         "summary": "One artist by id.",
-        "operationId": "get_artist",
+        "operationId": "remotes_get_artist",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Remote artist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Artist detail"
+            "description": "Artist detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemotesArtistView"
+                }
+              }
+            }
           }
         }
       }
@@ -7133,7 +7416,18 @@
           "crate::remotes::handlers"
         ],
         "summary": "Connection status for one source. Never carries credential material.",
-        "operationId": "get_connection",
+        "operationId": "remotes_get_connection",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Connection status",
@@ -7151,8 +7445,29 @@
         "tags": [
           "crate::remotes::handlers"
         ],
-        "summary": "Save one source connection. Secrets stay write-only.",
-        "operationId": "put_connection",
+        "summary": "Link the caller's own Navidrome or Jellyfin account. The password is\nchecked against the server first and never echoed.",
+        "operationId": "remotes_put_connection",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionSave"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Connection status",
@@ -7170,8 +7485,19 @@
         "tags": [
           "crate::remotes::handlers"
         ],
-        "summary": "Delete one source connection.",
-        "operationId": "delete_connection",
+        "summary": "Remove the caller's own link for one source.",
+        "operationId": "remotes_delete_connection",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Connection status",
@@ -7192,7 +7518,37 @@
           "crate::remotes::handlers"
         ],
         "summary": "Playlist cover bytes. Never cached: playlist art follows membership.",
-        "operationId": "get_playlist_cover",
+        "operationId": "remotes_get_playlist_cover",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Remote playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "Square edge in px (1-2000, default 500).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Playlist cover bytes"
@@ -7205,8 +7561,29 @@
         "tags": [
           "crate::remotes::handlers"
         ],
-        "summary": "Plex discovery shelves (Plex only, following the mix-route precedent:\nthe shape is source-specific, so the gate lives in the handler).",
-        "operationId": "get_discovery",
+        "summary": "Discovery shelves (Plex).",
+        "operationId": "remotes_get_discovery",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "description": "Items per hub (1-20, default 10).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Discovery shelves",
@@ -7226,8 +7603,29 @@
         "tags": [
           "crate::remotes::handlers"
         ],
-        "summary": "Favorites grouped by kind.",
-        "operationId": "get_favorites",
+        "summary": "Favorite artists, albums, and tracks.",
+        "operationId": "remotes_get_favorites",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items per kind (1-100, default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Favorites",
@@ -7242,16 +7640,69 @@
         }
       }
     },
+    "/api/v3/remotes/{source}/filters": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Album filter facets (Jellyfin).",
+        "operationId": "remotes_get_filters",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Filter facets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FilterFacetsView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/remotes/{source}/genres": {
       "get": {
         "tags": [
           "crate::remotes::handlers"
         ],
         "summary": "Genre labels.",
-        "operationId": "list_genres",
+        "operationId": "remotes_list_genres",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Genre labels"
+            "description": "Genre labels",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -7262,7 +7713,47 @@
           "crate::remotes::handlers"
         ],
         "summary": "Tracks carrying one genre label.",
-        "operationId": "list_genre_songs",
+        "operationId": "remotes_list_genre_songs",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "genre",
+            "in": "query",
+            "description": "Genre label.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items (1-500, default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Records to skip (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Genre tracks",
@@ -7283,7 +7774,38 @@
           "crate::remotes::handlers"
         ],
         "summary": "Listening history, newest first.",
-        "operationId": "list_history",
+        "operationId": "remotes_list_history",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items (1-200, default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Records to skip (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "History page",
@@ -7304,7 +7826,18 @@
           "crate::remotes::handlers"
         ],
         "summary": "Hub highlights for one source.",
-        "operationId": "get_hub",
+        "operationId": "remotes_get_hub",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Hub highlights",
@@ -7325,7 +7858,37 @@
           "crate::remotes::handlers"
         ],
         "summary": "Item image bytes. Immutable and cacheable for a year: image URLs carry\nthe upstream tag, so a new tag is a new URL.",
-        "operationId": "get_image",
+        "operationId": "remotes_get_image",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Remote image id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "Square edge in px (1-2000, default 500).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Image bytes"
@@ -7339,7 +7902,27 @@
           "crate::remotes::handlers"
         ],
         "summary": "Album info passthrough.",
-        "operationId": "get_album_info",
+        "operationId": "remotes_get_album_info",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Remote album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Album info",
@@ -7360,7 +7943,27 @@
           "crate::remotes::handlers"
         ],
         "summary": "Artist info passthrough.",
-        "operationId": "get_artist_info",
+        "operationId": "remotes_get_artist_info",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Remote artist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Artist info",
@@ -7380,8 +7983,46 @@
         "tags": [
           "crate::remotes::handlers"
         ],
-        "summary": "Lyrics passthrough.",
-        "operationId": "get_lyrics",
+        "summary": "Lyrics for one track.",
+        "operationId": "remotes_get_lyrics",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Remote track id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artist",
+            "in": "query",
+            "description": "Artist name fallback (Navidrome classic lyrics).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "title",
+            "in": "query",
+            "description": "Title fallback (Navidrome classic lyrics).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Lyrics",
@@ -7401,8 +8042,28 @@
         "tags": [
           "crate::remotes::handlers"
         ],
-        "summary": "MBID match for one source.",
-        "operationId": "match_album",
+        "summary": "The remote album behind a MusicBrainz id.",
+        "operationId": "remotes_match_album",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "mbid",
+            "in": "query",
+            "description": "MusicBrainz release or release-group id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Match result",
@@ -7422,8 +8083,47 @@
         "tags": [
           "crate::remotes::handlers"
         ],
-        "summary": "Instant mix for an item, artist, or genre id (Jellyfin only).",
-        "operationId": "get_mix",
+        "summary": "Instant mix for an item, artist, or genre id (Jellyfin).",
+        "operationId": "remotes_get_mix",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Seed id or genre name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Seed kind: `item` (default), `artist`, or `genre`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max tracks (1-200, default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Instant mix",
@@ -7438,13 +8138,149 @@
         }
       }
     },
+    "/api/v3/remotes/{source}/moods": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Mood labels (Plex).",
+        "operationId": "remotes_list_moods",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mood labels",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/most-played/albums": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Most-played albums (Jellyfin).",
+        "operationId": "remotes_list_most_played_albums",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items (1-50, default 10).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Most-played albums",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RemotesAlbumView"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/remotes/{source}/most-played/artists": {
+      "get": {
+        "tags": [
+          "crate::remotes::handlers"
+        ],
+        "summary": "Most-played artists (Jellyfin).",
+        "operationId": "remotes_list_most_played_artists",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items (1-50, default 10).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Most-played artists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RemotesArtistView"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/remotes/{source}/playlists": {
       "get": {
         "tags": [
           "crate::remotes::handlers"
         ],
-        "summary": "Playlists.",
-        "operationId": "list_playlists",
+        "summary": "The caller's playlists on the server.",
+        "operationId": "remotes_list_playlists",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Playlists",
@@ -7465,7 +8301,27 @@
           "crate::remotes::handlers"
         ],
         "summary": "One playlist with its tracks.",
-        "operationId": "get_playlist",
+        "operationId": "remotes_get_playlist",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Remote playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Playlist detail",
@@ -7485,8 +8341,28 @@
         "tags": [
           "crate::remotes::handlers"
         ],
-        "summary": "Import one remote playlist into the local catalog.",
-        "operationId": "import_playlist",
+        "summary": "Import one remote playlist into the caller's playlists.",
+        "operationId": "remotes_import_playlist",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Remote playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Import receipt",
@@ -7507,7 +8383,37 @@
           "crate::remotes::handlers"
         ],
         "summary": "Random tracks, optionally filtered by genre. Limits mirror the v2\nNavidrome route (default 20, max 50); Plex answers unsupported.",
-        "operationId": "get_random",
+        "operationId": "remotes_list_random",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max tracks (1-50, default 20).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "genre",
+            "in": "query",
+            "description": "Genre label filter, when present.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Random tracks",
@@ -7528,10 +8434,51 @@
           "crate::remotes::handlers"
         ],
         "summary": "Recently played albums.",
-        "operationId": "get_recent",
+        "operationId": "remotes_list_recent",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items (1-500, default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Records to skip (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Recently played"
+            "description": "Recently played",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RemotesAlbumView"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -7542,10 +8489,51 @@
           "crate::remotes::handlers"
         ],
         "summary": "Recently added albums.",
-        "operationId": "get_recently_added",
+        "operationId": "remotes_list_recently_added",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items (1-500, default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Records to skip (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Recently added"
+            "description": "Recently added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RemotesAlbumView"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -7556,7 +8544,37 @@
           "crate::remotes::handlers"
         ],
         "summary": "Unified search across artists, albums, and tracks.",
-        "operationId": "search",
+        "operationId": "remotes_search",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Query text.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Per-bucket cap (1-100, default 20).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Search results",
@@ -7577,7 +8595,18 @@
           "crate::remotes::handlers"
         ],
         "summary": "Active audio sessions.",
-        "operationId": "list_sessions",
+        "operationId": "remotes_list_sessions",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Sessions",
@@ -7598,7 +8627,47 @@
           "crate::remotes::handlers"
         ],
         "summary": "Tracks similar to one track.",
-        "operationId": "get_similar",
+        "operationId": "remotes_list_similar",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Remote track id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items (1-500, default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Records to skip (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Similar tracks",
@@ -7619,7 +8688,18 @@
           "crate::remotes::handlers"
         ],
         "summary": "Library totals for one source.",
-        "operationId": "get_stats",
+        "operationId": "remotes_get_stats",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Library totals",
@@ -7640,7 +8720,47 @@
           "crate::remotes::handlers"
         ],
         "summary": "Top songs for one artist name.",
-        "operationId": "get_top_songs",
+        "operationId": "remotes_list_top_songs",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "artist",
+            "in": "path",
+            "description": "Artist name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items (1-500, default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Records to skip (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Top songs",
@@ -7661,7 +8781,74 @@
           "crate::remotes::handlers"
         ],
         "summary": "One page of tracks.",
-        "operationId": "list_tracks",
+        "operationId": "remotes_list_tracks",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Remote source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceName"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items (1-500, default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Records to skip (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "description": "Sort field (source-native name).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "description": "\"asc\" or \"desc\" (default asc).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Title filter.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "genre",
+            "in": "query",
+            "description": "Genre filter.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Track page",
@@ -13179,6 +14366,97 @@
           }
         }
       },
+      "AnalyticsItem": {
+        "type": "object",
+        "description": "One row of a listening top list.",
+        "required": [
+          "name",
+          "subtitle",
+          "play_count"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Artist, album, or track name."
+          },
+          "play_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plays counted."
+          },
+          "subtitle": {
+            "type": "string",
+            "description": "Artist name for album and track rows, empty for artists."
+          }
+        }
+      },
+      "AnalyticsView": {
+        "type": "object",
+        "description": "Listening analytics over the server's history (Plex).",
+        "required": [
+          "top_artists",
+          "top_albums",
+          "top_tracks",
+          "total_listens",
+          "listens_last_7_days",
+          "listens_last_30_days",
+          "total_hours",
+          "is_complete",
+          "entries_analyzed"
+        ],
+        "properties": {
+          "entries_analyzed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Entries read."
+          },
+          "is_complete": {
+            "type": "boolean",
+            "description": "False when the history was longer than the analysis window."
+          },
+          "listens_last_30_days": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plays in the last 30 days."
+          },
+          "listens_last_7_days": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plays in the last 7 days."
+          },
+          "top_albums": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalyticsItem"
+            },
+            "description": "Most-played albums."
+          },
+          "top_artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalyticsItem"
+            },
+            "description": "Most-played artists."
+          },
+          "top_tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalyticsItem"
+            },
+            "description": "Most-played tracks."
+          },
+          "total_hours": {
+            "type": "number",
+            "format": "double",
+            "description": "Listening time in hours, one decimal."
+          },
+          "total_listens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "History entries counted."
+          }
+        }
+      },
       "AppPasswordCreate": {
         "type": "object",
         "description": "Create an app password.",
@@ -14949,49 +16227,19 @@
       },
       "ConnectionSave": {
         "type": "object",
-        "description": "Save payload for one source connection. Secrets stay write-only.",
+        "description": "Link the caller's own Navidrome or Jellyfin account on the server the\nadmin configured. The password is checked live, then kept sealed\n(Navidrome) or traded for a user token and dropped (Jellyfin). It is\nnever echoed back.",
+        "required": [
+          "username",
+          "password"
+        ],
         "properties": {
-          "base_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Server base URL. Empty keeps the stored URL."
-          },
-          "client_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Plex client identifier, Plex only."
-          },
-          "credential": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Password, API key, or token. Never echoed back."
-          },
-          "section_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Plex music section id, Plex only."
-          },
-          "user_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Jellyfin user id hint, Jellyfin only."
+          "password": {
+            "type": "string",
+            "description": "Password on the server."
           },
           "username": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Login name or API-key label, depending on the source."
+            "type": "string",
+            "description": "Login name on the server."
           }
         }
       },
@@ -16812,6 +18060,39 @@
             "format": "double",
             "description": "Stat-snapshot cadence in seconds (minimum 1).",
             "default": 300.0
+          }
+        }
+      },
+      "FilterFacetsView": {
+        "type": "object",
+        "description": "Jellyfin filter facets for the album browser.",
+        "required": [
+          "years",
+          "tags",
+          "studios"
+        ],
+        "properties": {
+          "studios": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Studios (labels), sorted."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tags, sorted."
+          },
+          "years": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "Release years, newest first."
           }
         }
       },
@@ -20347,6 +21628,45 @@
               "null"
             ],
             "description": "Lidarr version from `system/status`, when the probe reached it."
+          }
+        }
+      },
+      "LinkedAccount": {
+        "type": "object",
+        "description": "One account the caller linked, on any service. Never carries the\nstored secret.",
+        "required": [
+          "service",
+          "enabled",
+          "username"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the link is enabled."
+          },
+          "service": {
+            "type": "string",
+            "description": "Service tag (`navidrome`, `jellyfin`, `plex`, `listenbrainz`,\n`lastfm`, `spotify`)."
+          },
+          "username": {
+            "type": "string",
+            "description": "Linked account name, empty when the service stores none."
+          }
+        }
+      },
+      "LinkedAccounts": {
+        "type": "object",
+        "description": "The caller's linked accounts.",
+        "required": [
+          "connections"
+        ],
+        "properties": {
+          "connections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinkedAccount"
+            },
+            "description": "One entry per linked service."
           }
         }
       },

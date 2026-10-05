@@ -11,9 +11,7 @@
 use std::sync::Arc;
 
 use crate::remotes::adapter::AdapterError;
-use crate::remotes::connections::{
-    ConnectionStore, CredentialCoder, ResolveError, resolve_connection,
-};
+use crate::remotes::connections::{ConnectionResolver, ResolveError};
 use crate::remotes::jellyfin::JellyfinAdapter;
 use crate::remotes::models::SourceName;
 use crate::remotes::navidrome::NavidromeAdapter;
@@ -105,46 +103,50 @@ impl RemoteReporters for ReportQueue {
 }
 
 /// Drain attribution reports until every queue handle drops. Each report
-/// resolves the reporter's own stored connection and delivers exactly one
-/// upstream call; failures log and drop.
+/// resolves the reporter's own linked account (never the shared admin
+/// account) and delivers exactly one upstream call; failures log and drop.
 pub async fn run_report_worker(
     mut rx: tokio::sync::mpsc::Receiver<QueuedReport>,
     http: reqwest::Client,
-    connections: Arc<dyn ConnectionStore>,
-    coder: Arc<CredentialCoder>,
+    resolver: Arc<ConnectionResolver>,
 ) {
     while let Some(queued) = rx.recv().await {
-        deliver(&queued, &http, connections.as_ref(), coder.as_ref()).await;
+        deliver(&queued, &http, resolver.as_ref()).await;
     }
 }
 
-async fn deliver(
-    queued: &QueuedReport,
-    http: &reqwest::Client,
-    connections: &dyn ConnectionStore,
-    coder: &CredentialCoder,
-) {
+async fn deliver(queued: &QueuedReport, http: &reqwest::Client, resolver: &ConnectionResolver) {
     let Some(source) = SourceName::parse(&queued.source) else {
         return;
     };
-    let resolved =
-        match resolve_connection(connections, coder, &queued.report.user_id, source).await {
-            Ok(resolved) => resolved,
-            Err(ResolveError::NotConfigured) => {
-                tracing::debug!(
-                    source = source.as_str(),
-                    "no stored connection; dropping attribution"
-                );
-                return;
-            }
-            Err(ResolveError::Stale) => {
-                tracing::debug!(
-                    source = source.as_str(),
-                    "stored credential stale; dropping attribution"
-                );
-                return;
-            }
-        };
+    let resolved = match resolver
+        .resolve_linked(&queued.report.user_id, source)
+        .await
+    {
+        Ok(resolved) => resolved,
+        Err(ResolveError::NotConfigured) => {
+            tracing::debug!(
+                source = source.as_str(),
+                "no linked account; dropping attribution"
+            );
+            return;
+        }
+        Err(ResolveError::Stale) => {
+            tracing::debug!(
+                source = source.as_str(),
+                "linked credential stale; dropping attribution"
+            );
+            return;
+        }
+        Err(ResolveError::Store(cause)) => {
+            tracing::warn!(
+                source = source.as_str(),
+                %cause,
+                "connection lookup failed; dropping attribution"
+            );
+            return;
+        }
+    };
     let outcome = match source {
         SourceName::Jellyfin => {
             let adapter = JellyfinAdapter::new(

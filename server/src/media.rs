@@ -2,12 +2,12 @@
 //!
 //! [`MediaSetup`] is the single bundle `create_app` mounts: its
 //! [`MediaSetup::gated_router`] nests under `/api/v3` inside the
-//! deny-by-default session gate, next to the reads nest. Connections,
-//! folder preferences, and playlist imports run on in-memory stores (they
-//! have no durable rows yet); playback catalog, history, prefs, and
-//! display names read the SQLite schema through a
+//! deny-by-default session gate, next to the reads nest. Remote
+//! connections and Navidrome folder preferences are SQLite rows; the admin
+//! servers are read from the config store on every call. Playback catalog,
+//! history, prefs, and display names read the SQLite schema through a
 //! dedicated rusqlite handle. Outbound remote attribution drains through
-//! the [`ReportWorker`] `main` spawns beside the warmup loops.
+//! the [`ReportWorker`] boot spawns beside the other loops.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,6 +17,7 @@ use axum::Router;
 
 use crate::auth::users::UsersDeps;
 use crate::config::AppConfig;
+use crate::db::WriteLane;
 use crate::ids::IdGenerator;
 use crate::playback::ports::{ReportTrack, ScrobbleSinks, ServiceOutcome, SystemClock};
 use crate::playback::reports::{ReportQueue, run_report_worker};
@@ -25,10 +26,14 @@ use crate::playback::services::{
 };
 use crate::playback::sqlite::PlaybackDb;
 use crate::remotes::adapter::MemoryImportSink;
-use crate::remotes::connections::{CredentialCoder, MemoryConnectionStore};
-use crate::remotes::folders::MemoryFolderStore;
+use crate::remotes::connections::{
+    ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
+};
+use crate::remotes::folders::SqliteFolderStore;
 use crate::remotes::handlers::{RemotesDeps, remotes_router};
 use crate::remotes::reader::RemotesRemoteReader;
+use crate::remotes::service::RemotesService;
+use crate::runtime_config::ConfigStore;
 use crate::runtime_config::crypto::Crypto;
 use crate::runtime_config::sections::{AudioFormat, ConnectApps};
 use crate::stream::gateway::Gateway;
@@ -47,7 +52,7 @@ pub type MediaEngine =
 /// playback routes, built once.
 #[derive(Clone)]
 pub struct MediaSetup {
-    /// Remote-browse deps (memory connections/folders/imports).
+    /// Remote-source route deps.
     pub remotes: RemotesDeps,
     /// Stream-gateway state over the production engine.
     pub stream: StreamState<MediaEngine>,
@@ -55,59 +60,66 @@ pub struct MediaSetup {
     pub playback: PlaybackDeps,
 }
 
-/// Outbound attribution drain. `main` spawns [`ReportWorker::run`] and
+/// Outbound attribution drain. Boot spawns [`ReportWorker::run`] and
 /// awaits it after serve; the worker exits once every queue handle in the
 /// app drops.
 pub struct ReportWorker {
     rx: tokio::sync::mpsc::Receiver<crate::playback::reports::QueuedReport>,
     http: reqwest::Client,
-    connections: Arc<dyn crate::remotes::connections::ConnectionStore>,
-    coder: Arc<CredentialCoder>,
+    resolver: Arc<ConnectionResolver>,
 }
 
 impl ReportWorker {
     /// Drain attribution reports until the app drops its queue handles.
     pub async fn run(self) {
-        run_report_worker(self.rx, self.http, self.connections, self.coder).await;
+        run_report_worker(self.rx, self.http, self.resolver).await;
     }
 }
 
 impl MediaSetup {
-    /// Build the production bundle. `db_path` backs the playback SQLite
-    /// stores; `connect_apps` carries the transcode policy; `crypto` seals
-    /// remote credentials; `library_roots` resolves local stream reads
-    /// against the live library registry (`None` keeps the constructor
-    /// fallback for unwired builds).
+    /// Build the production bundle. `db_path` backs the playback stores;
+    /// `pool` and `lane` back the connection and folder rows; `config`
+    /// holds the admin's server settings; `connect_apps` carries the
+    /// transcode policy; `crypto` seals linked credentials;
+    /// `library_roots` resolves local stream reads against the live
+    /// library registry (`None` keeps the constructor fallback for unwired
+    /// builds).
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         db_path: &Path,
-        config: &AppConfig,
+        app_config: &AppConfig,
         users: UsersDeps,
         crypto: Arc<Crypto>,
         http: reqwest::Client,
         ids: Arc<dyn IdGenerator>,
         connect_apps: ConnectApps,
         library_roots: Option<crate::library::wiring::RootSource>,
+        pool: sqlx::SqlitePool,
+        lane: WriteLane,
+        config: Arc<ConfigStore>,
     ) -> Result<(Self, ReportWorker), String> {
-        let connections: Arc<MemoryConnectionStore> = Arc::new(MemoryConnectionStore::new());
-        let folders: Arc<MemoryFolderStore> = Arc::new(MemoryFolderStore::new());
-        let imports: Arc<MemoryImportSink> = Arc::new(MemoryImportSink::new());
-        let coder = Arc::new(CredentialCoder::new(crypto));
+        let resolver = Arc::new(ConnectionResolver::new(
+            Arc::new(SqliteConnectionStore::new(pool.clone(), lane.clone())),
+            Arc::new(CredentialCoder::new(crypto)),
+            Arc::new(ConfigServers::new(config)),
+        ));
+        let service = RemotesService::new(
+            http.clone(),
+            resolver.clone(),
+            Arc::new(SqliteFolderStore::new(pool, lane)),
+            Arc::new(MemoryImportSink::new()),
+        );
         let remotes = RemotesDeps {
-            http: http.clone(),
-            connections: connections.clone(),
-            coder: coder.clone(),
-            folders,
-            imports,
+            service,
             auth: users,
             ids: ids.clone(),
         };
-        let reader = RemotesRemoteReader::new(http.clone(), connections.clone(), coder.clone());
+        let reader = RemotesRemoteReader::with_resolver(http.clone(), resolver.clone());
         let spawner = StdFfmpegSpawner::detect()
             .unwrap_or_else(|| StdFfmpegSpawner::with_path(PathBuf::from("ffmpeg")));
         let transcoder = FfmpegTranscoder::new(spawner, Arc::new(LocalTranscodeGate::new()));
         let gateway = Gateway::new(
-            local_root(config),
+            local_root(app_config),
             reader,
             transcoder,
             transcode_settings(&connect_apps),
@@ -137,12 +149,7 @@ impl MediaSetup {
             clock: Arc::new(SystemClock),
             ids: ids.clone(),
         };
-        let worker = ReportWorker {
-            rx,
-            http,
-            connections,
-            coder,
-        };
+        let worker = ReportWorker { rx, http, resolver };
         Ok((
             Self {
                 remotes,
@@ -153,12 +160,14 @@ impl MediaSetup {
         ))
     }
 
-    /// Test bundle over memory stores and fakes. The catalog is empty (so
-    /// reads 404), attribution drops, and ffmpeg is absent, so
-    /// every transcode decision lands direct.
+    /// Test bundle over memory stores and fakes. No admin server is
+    /// configured, the catalog is empty (so reads 404), attribution drops,
+    /// and ffmpeg is absent, so every transcode decision lands direct.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         use crate::playback::fakes::{FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks};
+        use crate::remotes::connections::{MemoryConnectionStore, NoServers};
+        use crate::remotes::folders::MemoryFolderStore;
 
         let http = crate::http_client::HttpClientFactory::new()
             .map_err(|error| format!("test media http: {error}"))?
@@ -167,18 +176,22 @@ impl MediaSetup {
         let crypto = Arc::new(
             Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| format!("test key: {error}"))?,
         );
-        let connections: Arc<MemoryConnectionStore> = Arc::new(MemoryConnectionStore::new());
-        let coder = Arc::new(CredentialCoder::new(crypto));
+        let resolver = Arc::new(ConnectionResolver::new(
+            Arc::new(MemoryConnectionStore::new()),
+            Arc::new(CredentialCoder::new(crypto)),
+            Arc::new(NoServers),
+        ));
         let remotes = RemotesDeps {
-            http: http.clone(),
-            connections: connections.clone(),
-            coder: coder.clone(),
-            folders: Arc::new(MemoryFolderStore::new()),
-            imports: Arc::new(MemoryImportSink::new()),
+            service: RemotesService::new(
+                http.clone(),
+                resolver.clone(),
+                Arc::new(MemoryFolderStore::new()),
+                Arc::new(MemoryImportSink::new()),
+            ),
             auth: users,
             ids: ids.clone(),
         };
-        let reader = RemotesRemoteReader::new(http, connections, coder);
+        let reader = RemotesRemoteReader::with_resolver(http, resolver);
         let transcoder = FfmpegTranscoder::new(
             StdFfmpegSpawner::with_path(PathBuf::from("ffmpeg")),
             Arc::new(LocalTranscodeGate::new()),

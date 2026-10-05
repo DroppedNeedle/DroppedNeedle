@@ -13,31 +13,42 @@ use crate::stream::gateway::{RemoteMedia, RemoteReader};
 use crate::stream::routes::{AudioSource, StreamFault};
 
 use super::adapter::AdapterError;
-use super::connections::{ConnectionStore, CredentialCoder, ResolveError, resolve_connection};
+use super::connections::{
+    ConnectionResolver, ConnectionStore, CredentialCoder, NoServers, ResolveError,
+};
 use super::jellyfin::JellyfinAdapter;
 use super::models::SourceName;
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
 
-/// Gateway remote reads over per-user stored connections.
+/// Gateway remote reads over the caller's connection (own link first,
+/// then the admin's shared account, like every other remote read).
 pub struct RemotesRemoteReader {
     http: reqwest::Client,
-    connections: Arc<dyn ConnectionStore>,
-    coder: Arc<CredentialCoder>,
+    resolver: Arc<ConnectionResolver>,
 }
 
 impl RemotesRemoteReader {
-    /// Build a reader over the shared client, connection rows, and coder.
+    /// A reader with no admin servers configured: every remote read is
+    /// unknown. For builds that never stream remote media.
     pub fn new(
         http: reqwest::Client,
         connections: Arc<dyn ConnectionStore>,
         coder: Arc<CredentialCoder>,
     ) -> Self {
-        Self {
+        Self::with_resolver(
             http,
-            connections,
-            coder,
-        }
+            Arc::new(ConnectionResolver::new(
+                connections,
+                coder,
+                Arc::new(NoServers),
+            )),
+        )
+    }
+
+    /// A reader over the shared resolver.
+    pub fn with_resolver(http: reqwest::Client, resolver: Arc<ConnectionResolver>) -> Self {
+        Self { http, resolver }
     }
 }
 
@@ -60,13 +71,16 @@ impl RemoteReader for RemotesRemoteReader {
             AudioSource::Navidrome => SourceName::Navidrome,
             AudioSource::Plex => SourceName::Plex,
         };
-        let resolved = resolve_connection(self.connections.as_ref(), &self.coder, user_id, name)
+        let resolved = self
+            .resolver
+            .resolve(user_id, name)
             .await
             .map_err(|error| match error {
-                // Without a stored connection the item is unresolvable,
+                // Without a usable connection the item is unresolvable,
                 // which reads as unknown rather than forbidden.
                 ResolveError::NotConfigured => StreamFault::NotFound,
                 ResolveError::Stale => StreamFault::Upstream { source },
+                ResolveError::Store(cause) => StreamFault::Internal { cause },
             })?;
         let handle = match name {
             SourceName::Jellyfin => super::adapter::RemoteHandle::Jellyfin(JellyfinAdapter::new(

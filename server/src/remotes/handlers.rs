@@ -1,19 +1,18 @@
-//! Native `/api/v3` remote-browse handlers and the router constructor.
+//! Native `/api/v3` remote-source handlers and the router constructor.
 //!
-//! Handlers are thin: extract the caller, resolve their per-source handle,
-//! call one adapter method, render the unified shape. Status mapping lives
-//! in [`RemotesError`](super::error::RemotesError); query strings parse
-//! through [`ValidQuery`] and bodies through [`ValidJson`] so malformed
-//! input stays inside the shared envelope. `MediaSetup` mounts
-//! [`remotes_router`] inside the session gate; every handler also takes the
-//! remotes user extractor, so every route 401s anonymously.
+//! Each handler parses the caller, the path, and the query, calls one
+//! [`RemotesService`] method, and renders the result. Failures map to the
+//! shared envelope in [`render`]; query strings parse through
+//! [`ValidQuery`] and bodies through [`ValidJson`] so malformed input stays
+//! inside the envelope. `MediaSetup` mounts [`remotes_router`] inside the
+//! session gate, and every handler takes the [`RemotesUser`] extractor, so
+//! every route 401s anonymously. Operation ids carry a `remotes_` prefix so
+//! they never collide with the library routes of the same shape.
 
 use std::sync::Arc;
 
-use crate::auth::session::extract::Transport;
 use crate::auth::session::middleware::CurrentSession;
 use crate::auth::users::UsersDeps;
-use crate::auth::users::roles::AuthContext;
 use crate::auth::users::stores::StoreError as UserStoreError;
 use crate::ids::IdGenerator;
 use axum::{
@@ -23,54 +22,37 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use serde::Deserialize;
-use utoipa::IntoParams;
 
-use super::adapter::{
-    AdapterError, AlbumBrowse, ArtistBrowse, ImportSink, RemoteHandle, TrackBrowse, album_page,
-    artist_page, playlist_collection, track_page,
-};
-use super::connections::{
-    ConnectionDraft, ConnectionStore, CredentialCoder, ResolveError, SaveError, resolve_connection,
-    save_connection,
-};
+use super::adapter::{AlbumBrowse, ArtistBrowse, TrackBrowse};
 use super::error::{RemotesError, ValidJson, ValidQuery};
-use super::folders::{FolderSaveError, FolderStore, checked_preference, resolve_scope};
-use super::jellyfin::JellyfinAdapter;
+use super::jellyfin::MixSeed;
 use super::models::{
-    AlbumBrowseQuery, AlbumPage, ArtistBrowseQuery, ArtistIndex, ArtistPage, ConnectionSave,
-    ConnectionStatus, DiscoveryQuery, DiscoveryView, FavoritesView, FolderResolutionView,
-    FolderSave, GenreSongsQuery, HistoryPage, HistoryQuery, HubView, ImageQuery, ImportResult,
-    InfoView, LyricsQuery, LyricsView, MatchQuery, MatchView, MusicFolderView, PageQuery,
-    PlaylistCollection, PlaylistDetail, RandomQuery, SearchQuery, SearchResults, SessionsView,
-    SourceName, StatsView, TrackBrowseQuery, TrackPage,
+    AlbumBrowseQuery, AlbumPage, AlbumView, AnalyticsView, ArtistBrowseQuery, ArtistIndex,
+    ArtistPage, ArtistView, ConnectionSave, ConnectionStatus, DiscoveryQuery, DiscoveryView,
+    FavoritesQuery, FavoritesView, FilterFacetsView, FolderResolutionView, FolderSave,
+    GenreSongsQuery, HistoryPage, HistoryQuery, HubView, ImageQuery, ImportResult, InfoView,
+    LinkedAccount, LinkedAccounts, LyricsQuery, LyricsView, MatchQuery, MatchView, MixQuery,
+    MostPlayedQuery, PageQuery, PlaylistCollection, PlaylistDetail, RandomQuery, SearchQuery,
+    SearchResults, SessionsView, SourceName, StatsView, TrackBrowseQuery, TrackPage,
 };
-use super::navidrome::NavidromeAdapter;
-use super::plex::PlexAdapter;
+use super::service::{AccountLogin, RemotesFailure, RemotesService};
 
 /// Every dependency the remotes routes need, injected by constructor.
 #[derive(Clone)]
 pub struct RemotesDeps {
-    /// Shared outbound HTTP client.
-    pub http: reqwest::Client,
-    /// Per-user connection rows.
-    pub connections: Arc<dyn ConnectionStore>,
-    /// Credential seal/open under the config key.
-    pub coder: Arc<CredentialCoder>,
-    /// Navidrome folder preferences.
-    pub folders: Arc<dyn FolderStore>,
-    /// Playlist import sink.
-    pub imports: Arc<dyn ImportSink>,
+    /// The remotes service.
+    pub service: RemotesService,
     /// Auth bundle, used only to resolve the caller.
     pub auth: UsersDeps,
     /// Fresh ids for 5xx error ids.
     pub ids: Arc<dyn IdGenerator>,
 }
 
-/// Authenticated read router. Paths are relative: the app nests this under
+/// Authenticated router. Paths are relative: the app nests this under
 /// `/api/v3` inside the deny-by-default session gate.
 pub fn remotes_router(deps: RemotesDeps) -> axum::Router {
     axum::Router::new()
+        .route("/me/connections", get(list_links))
         .route("/remotes/{source}/hub", get(get_hub))
         .route("/remotes/{source}/stats", get(get_stats))
         .route("/remotes/{source}/albums", get(list_albums))
@@ -89,6 +71,16 @@ pub fn remotes_router(deps: RemotesDeps) -> axum::Router {
         .route("/remotes/{source}/favorites", get(get_favorites))
         .route("/remotes/{source}/genres", get(list_genres))
         .route("/remotes/{source}/genres/songs", get(list_genre_songs))
+        .route("/remotes/{source}/moods", get(list_moods))
+        .route("/remotes/{source}/filters", get(get_filters))
+        .route(
+            "/remotes/{source}/most-played/albums",
+            get(list_most_played_albums),
+        )
+        .route(
+            "/remotes/{source}/most-played/artists",
+            get(list_most_played_artists),
+        )
         .route("/remotes/{source}/playlists", get(list_playlists))
         .route("/remotes/{source}/playlists/{id}", get(get_playlist))
         .route(
@@ -105,6 +97,7 @@ pub fn remotes_router(deps: RemotesDeps) -> axum::Router {
         .route("/remotes/{source}/mix/{id}", get(get_mix))
         .route("/remotes/{source}/sessions", get(list_sessions))
         .route("/remotes/{source}/history", get(list_history))
+        .route("/remotes/{source}/analytics", get(get_analytics))
         .route("/remotes/{source}/images/{id}", get(get_image))
         .route(
             "/remotes/{source}/covers/playlists/{id}",
@@ -124,9 +117,9 @@ pub fn remotes_router(deps: RemotesDeps) -> axum::Router {
         .with_state(deps)
 }
 
-/// Any authenticated user. Missing session or a session whose account is
-/// gone reads as 401, mirroring the users role extractors.
-pub struct RemotesUser(pub AuthContext);
+/// Any authenticated user. A missing session or a session whose account
+/// is gone reads as 401, mirroring the users role extractors.
+pub struct RemotesUser(pub String);
 
 impl FromRequestParts<RemotesDeps> for RemotesUser {
     type Rejection = RemotesError;
@@ -135,13 +128,13 @@ impl FromRequestParts<RemotesDeps> for RemotesUser {
         parts: &mut axum::http::request::Parts,
         state: &RemotesDeps,
     ) -> Result<Self, Self::Rejection> {
-        let session =
-            parts
-                .extensions
-                .get::<CurrentSession>()
-                .ok_or(RemotesError::Unauthorized {
-                    message: "Authentication required".to_owned(),
-                })?;
+        let unauthorized = || RemotesError::Unauthorized {
+            message: "Authentication required".to_owned(),
+        };
+        let session = parts
+            .extensions
+            .get::<CurrentSession>()
+            .ok_or_else(unauthorized)?;
         let user = state
             .auth
             .users
@@ -155,27 +148,42 @@ impl FromRequestParts<RemotesDeps> for RemotesUser {
                     RemotesError::internal(&cause, state.ids.as_ref())
                 }
             })?
-            .ok_or(RemotesError::Unauthorized {
-                message: "Authentication required".to_owned(),
-            })?;
-        Ok(Self(AuthContext {
-            user_id: user.id,
-            username: user.username,
-            role: user.role,
-            session_id: session.session_id.clone(),
-            session_kind: session.kind,
-            via_cookie: session.transport == Transport::Cookie,
-        }))
+            .ok_or_else(unauthorized)?;
+        Ok(Self(user.id))
     }
 }
 
-/// Instant-mix seed query. `kind` is `item` (default), `artist`, or `genre`.
-#[derive(Debug, Clone, Deserialize, IntoParams)]
-pub struct MixQuery {
-    /// Seed kind: `item`, `artist`, or `genre`.
-    pub kind: Option<String>,
-    /// Max tracks (1-200, default 50).
-    pub limit: Option<i64>,
+/// Map a service failure to the wire. Upstream detail reaches the log
+/// only; callers get a fixed user-safe summary per source.
+fn render(failure: RemotesFailure, ids: &dyn IdGenerator) -> RemotesError {
+    match failure {
+        RemotesFailure::NotConfigured(source) => RemotesError::NotConfigured {
+            message: format!("{} is not connected", source.display()),
+        },
+        RemotesFailure::AuthFailed(source) => RemotesError::AuthFailed {
+            message: format!(
+                "{} rejected the stored credential; reconnect it",
+                source.display()
+            ),
+        },
+        RemotesFailure::Upstream { source, detail } => {
+            tracing::warn!(source = source.as_str(), %detail, "remote API error");
+            RemotesError::Unavailable {
+                message: format!("{} answered with an error", source.display()),
+            }
+        }
+        RemotesFailure::Unreachable { source, detail } => {
+            tracing::warn!(source = source.as_str(), %detail, "remote unreachable");
+            RemotesError::Unavailable {
+                message: format!("{} is unreachable", source.display()),
+            }
+        }
+        RemotesFailure::NotFound => RemotesError::NotFound,
+        RemotesFailure::Unsupported(message) => RemotesError::Unsupported { message },
+        RemotesFailure::InvalidInput(message) => RemotesError::InvalidInput { message },
+        RemotesFailure::Conflict(message) => RemotesError::Conflict { message },
+        RemotesFailure::Internal(cause) => RemotesError::internal(&cause, ids),
+    }
 }
 
 /// Parse a `{source}` path segment into a source or a 400.
@@ -185,733 +193,612 @@ fn parse_source(raw: &str) -> Result<SourceName, RemotesError> {
     })
 }
 
-/// Map an adapter failure to the wire. Upstream detail reaches the log
-/// only; callers get a fixed user-safe summary per source.
-fn failed(source: SourceName, error: AdapterError) -> RemotesError {
-    let name = source.display();
-    match error {
-        AdapterError::NotConfigured => RemotesError::NotConfigured {
-            message: format!("{name} is not connected"),
-        },
-        AdapterError::Auth => RemotesError::AuthFailed {
-            message: format!("{name} rejected the stored credential; reconnect it"),
-        },
-        AdapterError::Api(detail) => {
-            tracing::warn!(source = source.as_str(), %detail, "remote API error");
-            RemotesError::Unavailable {
-                message: format!("{name} answered with an error"),
-            }
-        }
-        AdapterError::Transport(detail) => {
-            tracing::warn!(source = source.as_str(), %detail, "remote unreachable");
-            RemotesError::Unavailable {
-                message: format!("{name} is unreachable"),
-            }
-        }
-        AdapterError::NotFound => RemotesError::NotFound,
-        AdapterError::Unsupported(message) => RemotesError::Unsupported { message },
-    }
+/// Shorthand for the handlers below: render a service result as JSON.
+fn reply<T>(
+    deps: &RemotesDeps,
+    result: Result<T, RemotesFailure>,
+) -> Result<Json<T>, RemotesError> {
+    result
+        .map(Json)
+        .map_err(|failure| render(failure, deps.ids.as_ref()))
 }
 
-/// Resolve the caller's handle for one source, threading their Navidrome
-/// folder scope when the source is Navidrome.
-async fn handle_for(
-    deps: &RemotesDeps,
-    user_id: &str,
-    source: SourceName,
-) -> Result<RemoteHandle, RemotesError> {
-    let resolved = resolve_connection(deps.connections.as_ref(), &deps.coder, user_id, source)
-        .await
-        .map_err(|error| match error {
-            ResolveError::NotConfigured => RemotesError::NotConfigured {
-                message: format!("{} is not connected", source.display()),
-            },
-            ResolveError::Stale => RemotesError::AuthFailed {
-                message: format!(
-                    "The stored {} credential no longer opens; reconnect it",
-                    source.display()
-                ),
-            },
-        })?;
-    match source {
-        SourceName::Jellyfin => Ok(RemoteHandle::Jellyfin(JellyfinAdapter::new(
-            deps.http.clone(),
-            resolved.base_url,
-            resolved.credential,
-            resolved.user_id,
-        ))),
-        SourceName::Navidrome => {
-            let adapter = NavidromeAdapter::new(
-                deps.http.clone(),
-                resolved.base_url,
-                resolved.username,
-                resolved.credential,
-            );
-            let preference = deps.folders.get(user_id).await;
-            let identity = adapter.server_identity();
-            let folders = match adapter.music_folders().await {
-                Ok(folders) => Some(folders),
-                Err(AdapterError::Auth) => {
-                    return Err(RemotesError::AuthFailed {
-                        message: "Navidrome rejected the stored credential; reconnect it"
-                            .to_owned(),
-                    });
-                }
-                Err(_) => None,
-            };
-            let resolution = resolve_scope(&preference, folders.as_deref(), &identity);
-            Ok(RemoteHandle::Navidrome(
-                adapter.with_folders(resolution.scope.folder_ids),
-            ))
-        }
-        SourceName::Plex => Ok(RemoteHandle::Plex(PlexAdapter::new(
-            deps.http.clone(),
-            resolved.base_url,
-            resolved.credential,
-            resolved.client_id,
-            resolved.section_ids,
-        ))),
-    }
+/// The caller's linked accounts across every service.
+#[utoipa::path(get, path = "/api/v3/me/connections", operation_id = "me_list_connections",
+    responses((status = 200, description = "Linked accounts", body = LinkedAccounts)))]
+pub async fn list_links(
+    State(deps): State<RemotesDeps>,
+    RemotesUser(user): RemotesUser,
+) -> Result<Json<LinkedAccounts>, RemotesError> {
+    let links = deps.service.links(&user).await.map(|links| LinkedAccounts {
+        connections: links
+            .into_iter()
+            .map(|link| LinkedAccount {
+                service: link.service,
+                enabled: link.enabled,
+                username: link.username,
+            })
+            .collect(),
+    });
+    reply(&deps, links)
 }
 
 /// Hub highlights for one source.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/hub",
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/hub", operation_id = "remotes_get_hub",
+    params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Hub highlights", body = HubView)))]
 pub async fn get_hub(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
 ) -> Result<Json<HubView>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    handle
-        .hub()
-        .await
-        .map(Json)
-        .map_err(|error| failed(source, error))
+    reply(&deps, deps.service.hub(&user, source).await)
 }
 
 /// Library totals for one source.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/stats",
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/stats", operation_id = "remotes_get_stats",
+    params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Library totals", body = StatsView)))]
 pub async fn get_stats(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
 ) -> Result<Json<StatsView>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    handle
-        .stats()
-        .await
-        .map(Json)
-        .map_err(|error| failed(source, error))
+    reply(&deps, deps.service.stats(&user, source).await)
 }
 
 /// One page of albums.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/albums",
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/albums", operation_id = "remotes_list_albums",
+    params(("source" = SourceName, Path, description = "Remote source"), AlbumBrowseQuery),
     responses((status = 200, description = "Album page", body = AlbumPage)))]
 pub async fn list_albums(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<AlbumBrowseQuery>,
 ) -> Result<Json<AlbumPage>, RemotesError> {
     let source = parse_source(&source)?;
-    let limit = query.limit.unwrap_or(50).clamp(1, 500);
-    let offset = query.offset.unwrap_or(0).max(0);
     let browse = AlbumBrowse {
-        limit,
-        offset,
-        sort_by: query.sort_by.clone().unwrap_or_default(),
+        limit: query.limit.unwrap_or(50).clamp(1, 500),
+        offset: query.offset.unwrap_or(0).max(0),
+        sort_by: query.sort_by.unwrap_or_default(),
         descending: matches!(query.sort_order.as_deref(), Some("desc")),
-        genre: query.genre.clone().unwrap_or_default(),
+        genre: query.genre.unwrap_or_default(),
         year: query.year,
-        decade: query.decade.clone().unwrap_or_default(),
+        decade: query.decade.unwrap_or_default(),
     };
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let page = handle
-        .albums(&browse)
-        .await
-        .map_err(|error| failed(source, error))?;
-    Ok(Json(album_page(page, offset, limit)))
+    reply(&deps, deps.service.albums(&user, source, browse).await)
 }
 
 /// One album by id.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/albums/{id}",
-    responses((status = 200, description = "Album detail")))]
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/albums/{id}", operation_id = "remotes_get_album",
+    params(("source" = SourceName, Path, description = "Remote source"),
+        ("id" = String, Path, description = "Remote album id")),
+    responses((status = 200, description = "Album detail", body = AlbumView)))]
 pub async fn get_album(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
-) -> Result<Json<super::models::AlbumView>, RemotesError> {
+) -> Result<Json<AlbumView>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let album = handle
-        .album_detail(&id)
-        .await
-        .map_err(|error| failed(source, error))?
-        .ok_or(RemotesError::NotFound)?;
-    Ok(Json(album))
+    reply(&deps, deps.service.album(&user, source, id).await)
 }
 
 /// Tracks of one album.
 #[utoipa::path(get, path = "/api/v3/remotes/{source}/albums/{id}/tracks",
+    operation_id = "remotes_list_album_tracks",
+    params(("source" = SourceName, Path, description = "Remote source"),
+        ("id" = String, Path, description = "Remote album id")),
     responses((status = 200, description = "Album tracks", body = TrackPage)))]
 pub async fn list_album_tracks(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
 ) -> Result<Json<TrackPage>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let items = handle
-        .album_tracks(&id)
-        .await
-        .map_err(|error| failed(source, error))?;
-    let total = items.len() as i64;
-    Ok(Json(TrackPage {
-        items,
-        total,
-        offset: 0,
-        limit: total,
-    }))
+    reply(&deps, deps.service.album_tracks(&user, source, id).await)
 }
 
 /// One page of artists.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/artists",
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/artists", operation_id = "remotes_list_artists",
+    params(("source" = SourceName, Path, description = "Remote source"), ArtistBrowseQuery),
     responses((status = 200, description = "Artist page", body = ArtistPage)))]
 pub async fn list_artists(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<ArtistBrowseQuery>,
 ) -> Result<Json<ArtistPage>, RemotesError> {
     let source = parse_source(&source)?;
-    let limit = query.limit.unwrap_or(50).clamp(1, 500);
-    let offset = query.offset.unwrap_or(0).max(0);
     let browse = ArtistBrowse {
-        limit,
-        offset,
-        sort_by: query.sort_by.clone().unwrap_or_default(),
+        limit: query.limit.unwrap_or(50).clamp(1, 500),
+        offset: query.offset.unwrap_or(0).max(0),
+        sort_by: query.sort_by.unwrap_or_default(),
         descending: matches!(query.sort_order.as_deref(), Some("desc")),
-        search: query.search.clone().unwrap_or_default(),
+        search: query.search.unwrap_or_default(),
     };
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let page = handle
-        .artists(&browse)
-        .await
-        .map_err(|error| failed(source, error))?;
-    Ok(Json(artist_page(page, offset, limit)))
+    reply(&deps, deps.service.artists(&user, source, browse).await)
 }
 
 /// Full alphabetic artist index.
 #[utoipa::path(get, path = "/api/v3/remotes/{source}/artists/index",
+    operation_id = "remotes_get_artist_index",
+    params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Artist index", body = ArtistIndex)))]
 pub async fn get_artist_index(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
 ) -> Result<Json<ArtistIndex>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let index = handle
-        .artist_index()
+    let index = deps
+        .service
+        .artist_index(&user, source)
         .await
-        .map_err(|error| failed(source, error))?;
-    Ok(Json(ArtistIndex { index }))
+        .map(|index| ArtistIndex { index });
+    reply(&deps, index)
 }
 
 /// One artist by id.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/artists/{id}",
-    responses((status = 200, description = "Artist detail")))]
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/artists/{id}", operation_id = "remotes_get_artist",
+    params(("source" = SourceName, Path, description = "Remote source"),
+        ("id" = String, Path, description = "Remote artist id")),
+    responses((status = 200, description = "Artist detail", body = ArtistView)))]
 pub async fn get_artist(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
-) -> Result<Json<super::models::ArtistView>, RemotesError> {
+) -> Result<Json<ArtistView>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let artist = handle
-        .artist_detail(&id)
-        .await
-        .map_err(|error| failed(source, error))?
-        .ok_or(RemotesError::NotFound)?;
-    Ok(Json(artist))
+    reply(&deps, deps.service.artist(&user, source, id).await)
 }
 
 /// One page of tracks.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/tracks",
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/tracks", operation_id = "remotes_list_tracks",
+    params(("source" = SourceName, Path, description = "Remote source"), TrackBrowseQuery),
     responses((status = 200, description = "Track page", body = TrackPage)))]
 pub async fn list_tracks(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<TrackBrowseQuery>,
 ) -> Result<Json<TrackPage>, RemotesError> {
     let source = parse_source(&source)?;
-    let limit = query.limit.unwrap_or(50).clamp(1, 500);
-    let offset = query.offset.unwrap_or(0).max(0);
     let browse = TrackBrowse {
-        limit,
-        offset,
-        sort_by: query.sort_by.clone().unwrap_or_default(),
+        limit: query.limit.unwrap_or(50).clamp(1, 500),
+        offset: query.offset.unwrap_or(0).max(0),
+        sort_by: query.sort_by.unwrap_or_default(),
         descending: matches!(query.sort_order.as_deref(), Some("desc")),
-        search: query.search.clone().unwrap_or_default(),
-        genre: query.genre.clone().unwrap_or_default(),
+        search: query.search.unwrap_or_default(),
+        genre: query.genre.unwrap_or_default(),
     };
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let page = handle
-        .tracks(&browse)
-        .await
-        .map_err(|error| failed(source, error))?;
-    Ok(Json(track_page(page, offset, limit)))
+    reply(&deps, deps.service.tracks(&user, source, browse).await)
 }
 
 /// Unified search across artists, albums, and tracks.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/search",
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/search", operation_id = "remotes_search",
+    params(("source" = SourceName, Path, description = "Remote source"), SearchQuery),
     responses((status = 200, description = "Search results", body = SearchResults)))]
 pub async fn search(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<SearchQuery>,
 ) -> Result<Json<SearchResults>, RemotesError> {
     let source = parse_source(&source)?;
-    if query.q.trim().is_empty() {
-        return Err(RemotesError::InvalidInput {
-            message: "Search query must not be empty".to_owned(),
-        });
-    }
     let limit = query.limit.unwrap_or(20).clamp(1, 100);
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    handle
-        .search(&query.q, limit)
-        .await
-        .map(Json)
-        .map_err(|error| failed(source, error))
+    reply(
+        &deps,
+        deps.service.search(&user, source, query.q, limit).await,
+    )
 }
 
 /// Recently played albums.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/recent",
-    responses((status = 200, description = "Recently played")))]
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/recent", operation_id = "remotes_list_recent",
+    params(("source" = SourceName, Path, description = "Remote source"), PageQuery),
+    responses((status = 200, description = "Recently played", body = Vec<AlbumView>)))]
 pub async fn get_recent(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<PageQuery>,
-) -> Result<Json<Vec<super::models::AlbumView>>, RemotesError> {
+) -> Result<Json<Vec<AlbumView>>, RemotesError> {
     let source = parse_source(&source)?;
     let (limit, _) = query.clamped();
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    handle
-        .recent(limit)
-        .await
-        .map(Json)
-        .map_err(|error| failed(source, error))
+    reply(&deps, deps.service.recent(&user, source, limit).await)
 }
 
 /// Recently added albums.
 #[utoipa::path(get, path = "/api/v3/remotes/{source}/recently-added",
-    responses((status = 200, description = "Recently added")))]
+    operation_id = "remotes_list_recently_added",
+    params(("source" = SourceName, Path, description = "Remote source"), PageQuery),
+    responses((status = 200, description = "Recently added", body = Vec<AlbumView>)))]
 pub async fn get_recently_added(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<PageQuery>,
-) -> Result<Json<Vec<super::models::AlbumView>>, RemotesError> {
+) -> Result<Json<Vec<AlbumView>>, RemotesError> {
     let source = parse_source(&source)?;
     let (limit, _) = query.clamped();
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    handle
-        .recently_added(limit)
-        .await
-        .map(Json)
-        .map_err(|error| failed(source, error))
+    reply(
+        &deps,
+        deps.service.recently_added(&user, source, limit).await,
+    )
 }
 
-/// Favorites grouped by kind.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/favorites",
+/// Favorite artists, albums, and tracks.
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/favorites", operation_id = "remotes_get_favorites",
+    params(("source" = SourceName, Path, description = "Remote source"), FavoritesQuery),
     responses((status = 200, description = "Favorites", body = FavoritesView)))]
 pub async fn get_favorites(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
+    ValidQuery(query): ValidQuery<FavoritesQuery>,
 ) -> Result<Json<FavoritesView>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    handle
-        .favorites()
-        .await
-        .map(Json)
-        .map_err(|error| failed(source, error))
+    reply(
+        &deps,
+        deps.service.favorites(&user, source, query.clamped()).await,
+    )
 }
 
 /// Genre labels.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/genres",
-    responses((status = 200, description = "Genre labels")))]
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/genres", operation_id = "remotes_list_genres",
+    params(("source" = SourceName, Path, description = "Remote source")),
+    responses((status = 200, description = "Genre labels", body = Vec<String>)))]
 pub async fn list_genres(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
 ) -> Result<Json<Vec<String>>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    handle
-        .genres()
-        .await
-        .map(Json)
-        .map_err(|error| failed(source, error))
+    reply(&deps, deps.service.genres(&user, source).await)
 }
 
 /// Tracks carrying one genre label.
 #[utoipa::path(get, path = "/api/v3/remotes/{source}/genres/songs",
+    operation_id = "remotes_list_genre_songs",
+    params(("source" = SourceName, Path, description = "Remote source"), GenreSongsQuery),
     responses((status = 200, description = "Genre tracks", body = TrackPage)))]
 pub async fn list_genre_songs(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<GenreSongsQuery>,
 ) -> Result<Json<TrackPage>, RemotesError> {
     let source = parse_source(&source)?;
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
     let offset = query.offset.unwrap_or(0).max(0);
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let items = handle
-        .genre_songs(&query.genre, limit, offset)
-        .await
-        .map_err(|error| failed(source, error))?;
-    let total = items.len() as i64;
-    Ok(Json(TrackPage {
-        items,
-        total,
-        offset,
-        limit,
-    }))
+    reply(
+        &deps,
+        deps.service
+            .genre_songs(&user, source, query.genre, limit, offset)
+            .await,
+    )
 }
 
-/// Playlists.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/playlists",
+/// Mood labels (Plex).
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/moods", operation_id = "remotes_list_moods",
+    params(("source" = SourceName, Path, description = "Remote source")),
+    responses((status = 200, description = "Mood labels", body = Vec<String>)))]
+pub async fn list_moods(
+    State(deps): State<RemotesDeps>,
+    RemotesUser(user): RemotesUser,
+    Path(source): Path<String>,
+) -> Result<Json<Vec<String>>, RemotesError> {
+    let source = parse_source(&source)?;
+    reply(&deps, deps.service.moods(&user, source).await)
+}
+
+/// Album filter facets (Jellyfin).
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/filters", operation_id = "remotes_get_filters",
+    params(("source" = SourceName, Path, description = "Remote source")),
+    responses((status = 200, description = "Filter facets", body = FilterFacetsView)))]
+pub async fn get_filters(
+    State(deps): State<RemotesDeps>,
+    RemotesUser(user): RemotesUser,
+    Path(source): Path<String>,
+) -> Result<Json<FilterFacetsView>, RemotesError> {
+    let source = parse_source(&source)?;
+    reply(&deps, deps.service.filters(&user, source).await)
+}
+
+/// Most-played albums (Jellyfin).
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/most-played/albums",
+    operation_id = "remotes_list_most_played_albums",
+    params(("source" = SourceName, Path, description = "Remote source"), MostPlayedQuery),
+    responses((status = 200, description = "Most-played albums", body = Vec<AlbumView>)))]
+pub async fn list_most_played_albums(
+    State(deps): State<RemotesDeps>,
+    RemotesUser(user): RemotesUser,
+    Path(source): Path<String>,
+    ValidQuery(query): ValidQuery<MostPlayedQuery>,
+) -> Result<Json<Vec<AlbumView>>, RemotesError> {
+    let source = parse_source(&source)?;
+    reply(
+        &deps,
+        deps.service
+            .most_played_albums(&user, source, query.clamped())
+            .await,
+    )
+}
+
+/// Most-played artists (Jellyfin).
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/most-played/artists",
+    operation_id = "remotes_list_most_played_artists",
+    params(("source" = SourceName, Path, description = "Remote source"), MostPlayedQuery),
+    responses((status = 200, description = "Most-played artists", body = Vec<ArtistView>)))]
+pub async fn list_most_played_artists(
+    State(deps): State<RemotesDeps>,
+    RemotesUser(user): RemotesUser,
+    Path(source): Path<String>,
+    ValidQuery(query): ValidQuery<MostPlayedQuery>,
+) -> Result<Json<Vec<ArtistView>>, RemotesError> {
+    let source = parse_source(&source)?;
+    reply(
+        &deps,
+        deps.service
+            .most_played_artists(&user, source, query.clamped())
+            .await,
+    )
+}
+
+/// The caller's playlists on the server.
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/playlists", operation_id = "remotes_list_playlists",
+    params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Playlists", body = PlaylistCollection)))]
 pub async fn list_playlists(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
 ) -> Result<Json<PlaylistCollection>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let items = handle
-        .playlists()
-        .await
-        .map_err(|error| failed(source, error))?;
-    Ok(Json(playlist_collection(items)))
+    reply(&deps, deps.service.playlists(&user, source).await)
 }
 
 /// One playlist with its tracks.
 #[utoipa::path(get, path = "/api/v3/remotes/{source}/playlists/{id}",
+    operation_id = "remotes_get_playlist",
+    params(("source" = SourceName, Path, description = "Remote source"),
+        ("id" = String, Path, description = "Remote playlist id")),
     responses((status = 200, description = "Playlist detail", body = PlaylistDetail)))]
 pub async fn get_playlist(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
 ) -> Result<Json<PlaylistDetail>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let detail = handle
-        .playlist_detail(&id)
-        .await
-        .map_err(|error| failed(source, error))?
-        .ok_or(RemotesError::NotFound)?;
-    Ok(Json(detail))
+    reply(&deps, deps.service.playlist(&user, source, id).await)
 }
 
-/// Import one remote playlist into the local catalog.
+/// Import one remote playlist into the caller's playlists.
 #[utoipa::path(post, path = "/api/v3/remotes/{source}/playlists/{id}/import",
+    operation_id = "remotes_import_playlist",
+    params(("source" = SourceName, Path, description = "Remote source"),
+        ("id" = String, Path, description = "Remote playlist id")),
     responses((status = 200, description = "Import receipt", body = ImportResult)))]
 pub async fn import_playlist(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
 ) -> Result<Json<ImportResult>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let detail = handle
-        .playlist_detail(&id)
-        .await
-        .map_err(|error| failed(source, error))?
-        .ok_or(RemotesError::NotFound)?;
-    let receipt = deps
-        .imports
-        .import(
-            &ctx.user_id,
-            source,
-            &id,
-            &detail.playlist.name,
-            detail.tracks,
-        )
-        .await;
-    Ok(Json(ImportResult::from(receipt)))
+    reply(&deps, deps.service.import_playlist(&user, source, id).await)
 }
 
 /// Artist info passthrough.
 #[utoipa::path(get, path = "/api/v3/remotes/{source}/info/artists/{id}",
+    operation_id = "remotes_get_artist_info",
+    params(("source" = SourceName, Path, description = "Remote source"),
+        ("id" = String, Path, description = "Remote artist id")),
     responses((status = 200, description = "Artist info", body = InfoView)))]
 pub async fn get_artist_info(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
 ) -> Result<Json<InfoView>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    handle
-        .artist_info(&id)
-        .await
-        .map(Json)
-        .map_err(|error| failed(source, error))
+    reply(&deps, deps.service.artist_info(&user, source, id).await)
 }
 
 /// Album info passthrough.
 #[utoipa::path(get, path = "/api/v3/remotes/{source}/info/albums/{id}",
+    operation_id = "remotes_get_album_info",
+    params(("source" = SourceName, Path, description = "Remote source"),
+        ("id" = String, Path, description = "Remote album id")),
     responses((status = 200, description = "Album info", body = InfoView)))]
 pub async fn get_album_info(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
 ) -> Result<Json<InfoView>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    handle
-        .album_info(&id)
-        .await
-        .map(Json)
-        .map_err(|error| failed(source, error))
+    reply(&deps, deps.service.album_info(&user, source, id).await)
 }
 
-/// Lyrics passthrough.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/lyrics/{id}",
+/// Lyrics for one track.
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/lyrics/{id}", operation_id = "remotes_get_lyrics",
+    params(("source" = SourceName, Path, description = "Remote source"),
+        ("id" = String, Path, description = "Remote track id"), LyricsQuery),
     responses((status = 200, description = "Lyrics", body = LyricsView)))]
 pub async fn get_lyrics(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
     ValidQuery(query): ValidQuery<LyricsQuery>,
 ) -> Result<Json<LyricsView>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let lyrics = handle
-        .lyrics(&id, query.artist.as_deref(), query.title.as_deref())
-        .await
-        .map_err(|error| failed(source, error))?
-        .ok_or(RemotesError::NotFound)?;
-    Ok(Json(lyrics))
+    reply(
+        &deps,
+        deps.service
+            .lyrics(&user, source, id, query.artist, query.title)
+            .await,
+    )
 }
 
 /// Top songs for one artist name.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/top/{artist}",
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/top/{artist}", operation_id = "remotes_list_top_songs",
+    params(("source" = SourceName, Path, description = "Remote source"),
+        ("artist" = String, Path, description = "Artist name"), PageQuery),
     responses((status = 200, description = "Top songs", body = TrackPage)))]
 pub async fn get_top_songs(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path((source, artist)): Path<(String, String)>,
     ValidQuery(query): ValidQuery<PageQuery>,
 ) -> Result<Json<TrackPage>, RemotesError> {
     let source = parse_source(&source)?;
     let (limit, _) = query.clamped();
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let items = handle
-        .top_songs(&artist, limit)
-        .await
-        .map_err(|error| failed(source, error))?;
-    let total = items.len() as i64;
-    Ok(Json(TrackPage {
-        items,
-        total,
-        offset: 0,
-        limit,
-    }))
+    reply(
+        &deps,
+        deps.service.top_songs(&user, source, artist, limit).await,
+    )
 }
 
 /// Tracks similar to one track.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/similar/{id}",
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/similar/{id}", operation_id = "remotes_list_similar",
+    params(("source" = SourceName, Path, description = "Remote source"),
+        ("id" = String, Path, description = "Remote track id"), PageQuery),
     responses((status = 200, description = "Similar tracks", body = TrackPage)))]
 pub async fn get_similar(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
     ValidQuery(query): ValidQuery<PageQuery>,
 ) -> Result<Json<TrackPage>, RemotesError> {
     let source = parse_source(&source)?;
     let (limit, _) = query.clamped();
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let items = handle
-        .similar(&id, limit)
-        .await
-        .map_err(|error| failed(source, error))?;
-    let total = items.len() as i64;
-    Ok(Json(TrackPage {
-        items,
-        total,
-        offset: 0,
-        limit,
-    }))
+    reply(&deps, deps.service.similar(&user, source, id, limit).await)
 }
 
 /// Random tracks, optionally filtered by genre. Limits mirror the v2
 /// Navidrome route (default 20, max 50); Plex answers unsupported.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/random",
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/random", operation_id = "remotes_list_random",
+    params(("source" = SourceName, Path, description = "Remote source"), RandomQuery),
     responses((status = 200, description = "Random tracks", body = TrackPage)))]
 pub async fn get_random(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<RandomQuery>,
 ) -> Result<Json<TrackPage>, RemotesError> {
     let source = parse_source(&source)?;
     let limit = query.limit.unwrap_or(20).clamp(1, 50);
-    let genre = query.genre.as_deref().unwrap_or("");
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let items = handle
-        .random(limit, genre)
-        .await
-        .map_err(|error| failed(source, error))?;
-    let total = items.len() as i64;
-    Ok(Json(TrackPage {
-        items,
-        total,
-        offset: 0,
-        limit,
-    }))
+    reply(
+        &deps,
+        deps.service
+            .random(&user, source, limit, query.genre.unwrap_or_default())
+            .await,
+    )
 }
 
-/// Plex discovery shelves (Plex only, following the mix-route precedent:
-/// the shape is source-specific, so the gate lives in the handler).
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/discovery",
+/// Discovery shelves (Plex).
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/discovery", operation_id = "remotes_get_discovery",
+    params(("source" = SourceName, Path, description = "Remote source"), DiscoveryQuery),
     responses((status = 200, description = "Discovery shelves", body = DiscoveryView)))]
 pub async fn get_discovery(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<DiscoveryQuery>,
 ) -> Result<Json<DiscoveryView>, RemotesError> {
     let source = parse_source(&source)?;
-    if source != SourceName::Plex {
-        return Err(RemotesError::Unsupported {
-            message: format!("{} has no discovery shelves", source.display()),
-        });
-    }
     let count = query.count.unwrap_or(10).clamp(1, 20);
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let RemoteHandle::Plex(adapter) = handle else {
-        return Err(RemotesError::internal(
-            &"discovery resolved a non-Plex handle",
-            deps.ids.as_ref(),
-        ));
-    };
-    adapter
-        .discovery(count)
-        .await
-        .map(Json)
-        .map_err(|error| failed(source, error))
+    reply(&deps, deps.service.discovery(&user, source, count).await)
 }
 
-/// Instant mix for an item, artist, or genre id (Jellyfin only).
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/mix/{id}",
+/// Instant mix for an item, artist, or genre id (Jellyfin).
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/mix/{id}", operation_id = "remotes_get_mix",
+    params(("source" = SourceName, Path, description = "Remote source"),
+        ("id" = String, Path, description = "Seed id or genre name"), MixQuery),
     responses((status = 200, description = "Instant mix", body = TrackPage)))]
 pub async fn get_mix(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
     ValidQuery(query): ValidQuery<MixQuery>,
 ) -> Result<Json<TrackPage>, RemotesError> {
     let source = parse_source(&source)?;
-    if source != SourceName::Jellyfin {
-        return Err(RemotesError::Unsupported {
-            message: format!("{} has no instant-mix endpoint", source.display()),
-        });
-    }
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
     let seed = match query.kind.as_deref().unwrap_or("item") {
-        "item" => super::jellyfin::MixSeed::Item(id),
-        "artist" => super::jellyfin::MixSeed::Artist(id),
-        "genre" => super::jellyfin::MixSeed::Genre(id),
+        "item" => MixSeed::Item(id),
+        "artist" => MixSeed::Artist(id),
+        "genre" => MixSeed::Genre(id),
         other => {
             return Err(RemotesError::InvalidInput {
                 message: format!("Unknown mix kind '{other}': want item, artist, or genre"),
             });
         }
     };
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let RemoteHandle::Jellyfin(adapter) = handle else {
-        return Err(RemotesError::internal(
-            &"mix resolved a non-Jellyfin handle",
-            deps.ids.as_ref(),
-        ));
-    };
-    let items = adapter
-        .mix(&seed, limit)
-        .await
-        .map_err(|error| failed(source, error))?;
-    let total = items.len() as i64;
-    Ok(Json(TrackPage {
-        items,
-        total,
-        offset: 0,
-        limit,
-    }))
+    reply(&deps, deps.service.mix(&user, source, seed, limit).await)
 }
 
 /// Active audio sessions.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/sessions",
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/sessions", operation_id = "remotes_list_sessions",
+    params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Sessions", body = SessionsView)))]
 pub async fn list_sessions(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
 ) -> Result<Json<SessionsView>, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    handle
-        .sessions()
-        .await
-        .map(Json)
-        .map_err(|error| failed(source, error))
+    reply(&deps, deps.service.sessions(&user, source).await)
 }
 
 /// Listening history, newest first.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/history",
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/history", operation_id = "remotes_list_history",
+    params(("source" = SourceName, Path, description = "Remote source"), HistoryQuery),
     responses((status = 200, description = "History page", body = HistoryPage)))]
 pub async fn list_history(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<HistoryQuery>,
 ) -> Result<Json<HistoryPage>, RemotesError> {
     let source = parse_source(&source)?;
     let (limit, offset) = query.clamped();
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    handle
-        .history(limit, offset)
-        .await
-        .map(Json)
-        .map_err(|error| failed(source, error))
+    reply(
+        &deps,
+        deps.service.history(&user, source, limit, offset).await,
+    )
+}
+
+/// Listening analytics over the history (Plex).
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/analytics", operation_id = "remotes_get_analytics",
+    params(("source" = SourceName, Path, description = "Remote source")),
+    responses((status = 200, description = "Listening analytics", body = AnalyticsView)))]
+pub async fn get_analytics(
+    State(deps): State<RemotesDeps>,
+    RemotesUser(user): RemotesUser,
+    Path(source): Path<String>,
+) -> Result<Json<AnalyticsView>, RemotesError> {
+    let source = parse_source(&source)?;
+    reply(&deps, deps.service.analytics(&user, source).await)
 }
 
 /// Item image bytes. Immutable and cacheable for a year: image URLs carry
 /// the upstream tag, so a new tag is a new URL.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/images/{id}",
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/images/{id}", operation_id = "remotes_get_image",
+    params(("source" = SourceName, Path, description = "Remote source"),
+        ("id" = String, Path, description = "Remote image id"), ImageQuery),
     responses((status = 200, description = "Image bytes")))]
 pub async fn get_image(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
     ValidQuery(query): ValidQuery<ImageQuery>,
 ) -> Result<Response, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let (bytes, content_type) = handle
-        .image_bytes(&id, query.clamped())
+    let (bytes, content_type) = deps
+        .service
+        .image(&user, source, id, query.clamped())
         .await
-        .map_err(|error| failed(source, error))?;
+        .map_err(|failure| render(failure, deps.ids.as_ref()))?;
     Ok(bytes_response(
         bytes,
         &content_type,
@@ -921,19 +808,22 @@ pub async fn get_image(
 
 /// Playlist cover bytes. Never cached: playlist art follows membership.
 #[utoipa::path(get, path = "/api/v3/remotes/{source}/covers/playlists/{id}",
+    operation_id = "remotes_get_playlist_cover",
+    params(("source" = SourceName, Path, description = "Remote source"),
+        ("id" = String, Path, description = "Remote playlist id"), ImageQuery),
     responses((status = 200, description = "Playlist cover bytes")))]
 pub async fn get_playlist_cover(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
     ValidQuery(query): ValidQuery<ImageQuery>,
 ) -> Result<Response, RemotesError> {
     let source = parse_source(&source)?;
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    let (bytes, content_type) = handle
-        .playlist_cover_bytes(&id, query.clamped())
+    let (bytes, content_type) = deps
+        .service
+        .playlist_cover(&user, source, id, query.clamped())
         .await
-        .map_err(|error| failed(source, error))?;
+        .map_err(|failure| render(failure, deps.ids.as_ref()))?;
     Ok(bytes_response(bytes, &content_type, "private, no-store"))
 }
 
@@ -958,230 +848,97 @@ fn bytes_response(bytes: Vec<u8>, content_type: &str, cache_control: &'static st
         .into_response()
 }
 
-/// MBID match for one source.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/match",
+/// The remote album behind a MusicBrainz id.
+#[utoipa::path(get, path = "/api/v3/remotes/{source}/match", operation_id = "remotes_match_album",
+    params(("source" = SourceName, Path, description = "Remote source"), MatchQuery),
     responses((status = 200, description = "Match result", body = MatchView)))]
 pub async fn match_album(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<MatchQuery>,
 ) -> Result<Json<MatchView>, RemotesError> {
     let source = parse_source(&source)?;
-    if query.mbid.trim().is_empty() {
-        return Err(RemotesError::InvalidInput {
-            message: "Match mbid must not be empty".to_owned(),
-        });
-    }
-    let handle = handle_for(&deps, &ctx.user_id, source).await?;
-    handle
-        .match_album(&query.mbid)
-        .await
-        .map(Json)
-        .map_err(|error| failed(source, error))
+    reply(
+        &deps,
+        deps.service.match_album(&user, source, query.mbid).await,
+    )
 }
 
 /// Connection status for one source. Never carries credential material.
 #[utoipa::path(get, path = "/api/v3/remotes/{source}/connection",
+    operation_id = "remotes_get_connection",
+    params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Connection status", body = ConnectionStatus)))]
 pub async fn get_connection(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
 ) -> Result<Json<ConnectionStatus>, RemotesError> {
     let source = parse_source(&source)?;
-    let status = match resolve_connection(
-        deps.connections.as_ref(),
-        &deps.coder,
-        &ctx.user_id,
-        source,
-    )
-    .await
-    {
-        Ok(resolved) => ConnectionStatus {
-            source,
-            connected: true,
-            account_mode: resolved.account_mode,
-            account_label: resolved.account_label,
-        },
-        Err(ResolveError::Stale) => ConnectionStatus {
-            source,
-            connected: false,
-            account_mode: "linked".to_owned(),
-            account_label: "Reconnect required".to_owned(),
-        },
-        Err(ResolveError::NotConfigured) => ConnectionStatus {
-            source,
-            connected: false,
-            account_mode: "linked".to_owned(),
-            account_label: String::new(),
-        },
-    };
-    Ok(Json(status))
+    reply(&deps, deps.service.connection(&user, source).await)
 }
 
-/// Save one source connection. Secrets stay write-only.
+/// Link the caller's own Navidrome or Jellyfin account. The password is
+/// checked against the server first and never echoed.
 #[utoipa::path(put, path = "/api/v3/remotes/{source}/connection",
+    operation_id = "remotes_put_connection",
+    params(("source" = SourceName, Path, description = "Remote source")),
+    request_body = ConnectionSave,
     responses((status = 200, description = "Connection status", body = ConnectionStatus)))]
 pub async fn put_connection(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidJson(payload): ValidJson<ConnectionSave>,
 ) -> Result<Json<ConnectionStatus>, RemotesError> {
     let source = parse_source(&source)?;
-    save_connection(
-        deps.connections.as_ref(),
-        &deps.coder,
-        &ctx.user_id,
-        source,
-        ConnectionDraft {
-            base_url: payload.base_url,
-            username: payload.username,
-            credential: payload.credential,
-            client_id: payload.client_id,
-            user_id: payload.user_id,
-            section_id: payload.section_id,
-        },
-    )
-    .await
-    .map_err(|error| match error {
-        SaveError::SealFailed => RemotesError::internal(&error, deps.ids.as_ref()),
-        SaveError::MissingCredential | SaveError::MissingBaseUrl => RemotesError::InvalidInput {
-            message: error.to_string(),
-        },
-    })?;
-    get_connection(
-        State(deps),
-        RemotesUser(ctx),
-        Path(source.as_str().to_owned()),
-    )
-    .await
+    let login = AccountLogin {
+        username: payload.username,
+        password: payload.password,
+    };
+    reply(&deps, deps.service.connect(&user, source, login).await)
 }
 
-/// Delete one source connection.
+/// Remove the caller's own link for one source.
 #[utoipa::path(delete, path = "/api/v3/remotes/{source}/connection",
+    operation_id = "remotes_delete_connection",
+    params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Connection status", body = ConnectionStatus)))]
 pub async fn delete_connection(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
 ) -> Result<Json<ConnectionStatus>, RemotesError> {
     let source = parse_source(&source)?;
-    deps.connections.delete(&ctx.user_id, source).await;
-    Ok(Json(ConnectionStatus {
-        source,
-        connected: false,
-        account_mode: "linked".to_owned(),
-        account_label: String::new(),
-    }))
+    reply(&deps, deps.service.disconnect(&user, source).await)
 }
 
 /// Navidrome folder preference resolution for the caller.
 #[utoipa::path(get, path = "/api/v3/remotes/navidrome/folders",
+    operation_id = "remotes_get_navidrome_folders",
     responses((status = 200, description = "Folder resolution", body = FolderResolutionView)))]
 pub async fn get_folders(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
 ) -> Result<Json<FolderResolutionView>, RemotesError> {
-    let preference = deps.folders.get(&ctx.user_id).await;
-    let resolved = resolve_connection(
-        deps.connections.as_ref(),
-        &deps.coder,
-        &ctx.user_id,
-        SourceName::Navidrome,
-    )
-    .await
-    .map_err(|error| match error {
-        ResolveError::NotConfigured => RemotesError::NotConfigured {
-            message: "Navidrome is not connected".to_owned(),
-        },
-        ResolveError::Stale => RemotesError::AuthFailed {
-            message: "The stored Navidrome credential no longer opens; reconnect it".to_owned(),
-        },
-    })?;
-    let adapter = NavidromeAdapter::new(
-        deps.http.clone(),
-        resolved.base_url,
-        resolved.username,
-        resolved.credential,
-    );
-    let identity = adapter.server_identity();
-    let folders = adapter.music_folders().await;
-    let resolution = match &folders {
-        Ok(folders) => resolve_scope(&preference, Some(folders), &identity),
-        Err(error) => {
-            tracing::warn!(
-                error = ?error,
-                "navidrome folders unavailable; rendering the degraded view"
-            );
-            resolve_scope(&preference, None, &identity)
-        }
-    };
-    Ok(Json(FolderResolutionView {
-        mode: resolution.scope.mode,
-        folder_ids: resolution.scope.folder_ids.unwrap_or_default(),
-        available_folders: resolution
-            .available_folders
-            .into_iter()
-            .map(|(id, name)| MusicFolderView { id, name })
-            .collect(),
-        stale_folder_ids: resolution.stale_folder_ids,
-        source_available: resolution.source_available,
-    }))
+    reply(&deps, deps.service.folders(&user).await)
 }
 
 /// Save the Navidrome folder preference.
 #[utoipa::path(put, path = "/api/v3/remotes/navidrome/folders",
+    operation_id = "remotes_put_navidrome_folders",
+    request_body = FolderSave,
     responses((status = 200, description = "Folder resolution", body = FolderResolutionView)))]
 pub async fn put_folders(
     State(deps): State<RemotesDeps>,
-    RemotesUser(ctx): RemotesUser,
+    RemotesUser(user): RemotesUser,
     ValidJson(payload): ValidJson<FolderSave>,
 ) -> Result<Json<FolderResolutionView>, RemotesError> {
-    let resolved = resolve_connection(
-        deps.connections.as_ref(),
-        &deps.coder,
-        &ctx.user_id,
-        SourceName::Navidrome,
+    reply(
+        &deps,
+        deps.service
+            .save_folders(&user, &payload.mode, &payload.selected_folder_ids)
+            .await,
     )
-    .await
-    .map_err(|error| match error {
-        ResolveError::NotConfigured => RemotesError::NotConfigured {
-            message: "Navidrome is not connected".to_owned(),
-        },
-        ResolveError::Stale => RemotesError::AuthFailed {
-            message: "The stored Navidrome credential no longer opens; reconnect it".to_owned(),
-        },
-    })?;
-    let adapter = NavidromeAdapter::new(
-        deps.http.clone(),
-        resolved.base_url,
-        resolved.username,
-        resolved.credential,
-    );
-    let identity = adapter.server_identity();
-    let folders = adapter
-        .music_folders()
-        .await
-        .map_err(|error| failed(SourceName::Navidrome, error))?;
-    let preference = checked_preference(
-        &payload.mode,
-        &payload.selected_folder_ids,
-        &folders,
-        &identity,
-    )
-    .map_err(|error: FolderSaveError| match error {
-        FolderSaveError::DuplicateIds => RemotesError::Conflict {
-            message: error.to_string(),
-        },
-        FolderSaveError::InvalidMode
-        | FolderSaveError::AllWithIds
-        | FolderSaveError::EmptySelection
-        | FolderSaveError::UnknownIds => RemotesError::InvalidInput {
-            message: error.to_string(),
-        },
-    })?;
-    deps.folders.set(&ctx.user_id, preference).await;
-    get_folders(State(deps), RemotesUser(ctx)).await
 }

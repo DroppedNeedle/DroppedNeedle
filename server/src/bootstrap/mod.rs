@@ -178,6 +178,9 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         ids.clone(),
         connect_apps.clone(),
         Some(library.root_source()),
+        runtime.pool().clone(),
+        runtime.lane().clone(),
+        config_store.clone(),
     )
     .map_err(stage("media setup"))?;
     let acquire = AcquireSetup::build(

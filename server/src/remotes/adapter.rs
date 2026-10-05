@@ -414,12 +414,12 @@ impl RemoteHandle {
         }
     }
 
-    /// Favorites grouped by kind.
-    pub async fn favorites(&self) -> Result<FavoritesView, AdapterError> {
+    /// Favorites grouped by kind, up to `limit` of each.
+    pub async fn favorites(&self, limit: i64) -> Result<FavoritesView, AdapterError> {
         match self {
-            Self::Jellyfin(inner) => inner.favorites().await,
-            Self::Navidrome(inner) => inner.favorites().await,
-            Self::Plex(inner) => inner.favorites().await,
+            Self::Jellyfin(inner) => inner.favorites(limit).await,
+            Self::Navidrome(inner) => inner.favorites(limit).await,
+            Self::Plex(inner) => inner.favorites(limit).await,
         }
     }
 

@@ -143,7 +143,7 @@ impl NavidromeAdapter {
         let (stats, recent, favorites, preview, genres) = tokio::join!(
             self.stats(),
             self.recent(20),
-            self.favorites(),
+            self.favorites(50),
             self.albums(&preview_browse),
             self.genres(),
         );
@@ -491,21 +491,30 @@ impl NavidromeAdapter {
             .collect())
     }
 
-    /// Starred artists, albums, and songs via `getStarred2`.
-    pub async fn favorites(&self) -> Result<FavoritesView, AdapterError> {
+    /// Starred artists, albums, and songs via `getStarred2`, up to `limit`
+    /// of each (the endpoint answers everything at once).
+    pub async fn favorites(&self, limit: i64) -> Result<FavoritesView, AdapterError> {
         self.require_configured()?;
         if self.scope_is_empty() {
             return Ok(empty_favorites());
         }
+        let limit = limit.max(0) as usize;
         let value = self.request("/rest/getStarred2", &[]).await?;
         let starred = value.get("starred2").cloned().unwrap_or(Value::Null);
         Ok(FavoritesView {
-            artists: bucket(&starred, "artist", |item| self.artist_view(item)),
+            artists: bucket(&starred, "artist", |item| self.artist_view(item))
+                .into_iter()
+                .take(limit)
+                .collect(),
             albums: bucket(&starred, "album", |item| self.album_view(item))
                 .into_iter()
                 .filter(|album| known_name(&album.title))
+                .take(limit)
                 .collect(),
-            tracks: bucket(&starred, "song", |item| self.track_view(item)),
+            tracks: bucket(&starred, "song", |item| self.track_view(item))
+                .into_iter()
+                .take(limit)
+                .collect(),
         })
     }
 
