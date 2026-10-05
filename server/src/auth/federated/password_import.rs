@@ -9,10 +9,10 @@
 //! verify so bad-user and bad-password stay indistinguishable.
 //!
 //! Sessions do not survive import ([`SESSIONS_SURVIVE_IMPORT`]): the export
-//! carries no sessions or transient rows (recovery codes, OIDC states,
-//! Spotify states), so each user logs in once more. App passwords do
-//! survive: `secret_sha256` carries over verbatim and `secret_encrypted` is
-//! re-sealed under the v3 key at import.
+//! carries no sessions and no transient OIDC or Spotify states, so each
+//! user logs in once more. Recovery codes and app passwords do survive:
+//! recovery code hashes carry over, `secret_sha256` carries over verbatim,
+//! and `secret_encrypted` is re-sealed under the v3 key at import.
 
 /// Hash scheme tag for a local credential row. Imports land as
 /// [`HashScheme::Bcrypt`]; every new or rehashed row is
@@ -137,7 +137,7 @@ pub fn verify_and_maybe_rehash<H: PasswordHasher>(
 }
 
 /// Import drops every session: users log in once more after migration.
-/// None of `auth_tokens`, `auth_password_recovery_codes`,
-/// `auth_oidc_states` or `spotify_oauth_states` is exported from v2, while
-/// app passwords are and still verify after import.
+/// None of `auth_tokens`, `auth_oidc_states` or `spotify_oauth_states` is
+/// exported from v2, while recovery codes and app passwords are, and app
+/// passwords still verify after import.
 pub const SESSIONS_SURVIVE_IMPORT: bool = false;

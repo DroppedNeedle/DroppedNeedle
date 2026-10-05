@@ -14,9 +14,10 @@
 //!   `library::identify`. Scan calls them only through [`seams::TagReader`]
 //!   and [`seams::IdentifyQueue`]; the null implementations exist for
 //!   tests only.
-//! * The stream gateway resolves local keys under a single root.
-//!   [`roots::StreamRootSeam`] is the per-root resolution seam it does not
-//!   use yet; see its docs.
+//! * The stream gateway resolves bare local keys under the primary root of
+//!   [`roots::StreamRootSeam`] (via `Gateway::with_library_roots`). Per-root
+//!   `resolve_key` is unused because playback keys carry no root id; see
+//!   its docs.
 //! * Settings storage owns inclusion rules under excluded roots; the
 //!   scheduler resolves [`scheduler::InclusionRule`] values carried as
 //!   parameters.

@@ -1,9 +1,10 @@
 //! Library roots: the registry, policy resolution, and the stream seam.
 //!
-//! The root registry. The stream gateway still uses its single-path
-//! constructor (`media::local_root`); the [`StreamRootSeam`] below would
-//! let local keys resolve against the real roots instead, but nothing
-//! wires it yet.
+//! The root registry. The stream gateway takes the registry through
+//! `Gateway::with_library_roots` and resolves bare local keys under the
+//! [`StreamRootSeam`]'s primary music root; per-root
+//! [`StreamRootSeam::resolve_key`] is unused because playback keys carry no
+//! root id.
 //!
 //! The policy surface is minimal on purpose: roots plus an enabled flag
 //! plus a revision string. There are no per-subpath rules yet; every scope
@@ -152,14 +153,13 @@ impl std::fmt::Display for RootSeamError {
 
 impl std::error::Error for RootSeamError {}
 
-/// Root-resolution seam for the stream gateway (not wired yet).
+/// Root-resolution seam for the stream gateway.
 ///
-/// Today `Gateway::new` takes one `local_root` path and
-/// `sandboxed_path(key)` joins a bare key under it. This seam replaces that
-/// single root with per-root resolution: the gateway parses the root id out
-/// of the playback key (format owned by the catalog), calls
-/// [`StreamRootSeam::resolve_key`], and keeps its existing refusal
-/// behavior. Sandboxing mirrors `sandboxed_path` exactly: component
+/// With library roots wired (`Gateway::with_library_roots`), the gateway's
+/// `sandboxed_path(key)` joins a bare key under
+/// [`StreamRootSeam::primary_music_root`]. Per-root resolution through
+/// [`StreamRootSeam::resolve_key`] is unused: playback keys carry no root
+/// id yet, so the gateway cannot pick a root per key. Sandboxing mirrors `sandboxed_path` exactly: component
 /// screening first, then canonicalize both sides so a symlink inside the
 /// root cannot point outside it; unresolvable paths skip the prefix check
 /// and fall through to the read, which reports them.
