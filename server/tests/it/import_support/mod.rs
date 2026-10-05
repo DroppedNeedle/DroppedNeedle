@@ -1,14 +1,13 @@
-//! Shared harness for the stage-11 import briefs: sealed export
-//! fixtures, scratch databases, and scratch config dirs.
+//! Shared harness for the import tests: sealed export fixtures, scratch
+//! databases, and scratch config dirs.
 //!
 //! Fixtures seal through the real exporter sealer
-//! (`droppedneedle::export::seal::Sealer`), so every brief also proves
-//! the two slices agree on the wire format. Databases are in-memory
-//! scratch pools; config files live under the system temp dir in
-//! per-brief unique dirs, left for the OS to reclaim.
+//! (`droppedneedle::export::seal::Sealer`), so every test also proves the
+//! exporter and importer agree on the wire format. Databases are in-memory
+//! pools; config files live in a `ScratchDir` that is removed on drop.
 
+use crate::common::ScratchDir;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use droppedneedle::export::seal::Sealer;
 use droppedneedle::runtime_config::Crypto;
@@ -24,8 +23,6 @@ pub const BCRYPT_HASH: &str = "$2b$04$abcdefghijklmnopqrstuu01234567890123456789
 
 /// A well-formed MBID for follow/approval rows.
 pub const MBID: &str = "01234567-89ab-cdef-0123-456789abcdef";
-
-static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// One sealing context plus fixture builders bound to it.
 pub struct Fixture {
@@ -162,12 +159,11 @@ pub fn test_crypto() -> Crypto {
     Crypto::from_key_bytes(&[7u8; 32]).unwrap()
 }
 
-/// Scratch config dir with a deterministic v3 key. Returns the config
-/// file path and the crypto handle.
-pub fn scratch_config(tag: &str) -> (PathBuf, PathBuf, Crypto) {
-    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("dn-import-{}-{}-{id}", std::process::id(), tag));
-    std::fs::create_dir_all(&dir).unwrap();
+/// Scratch config dir with a deterministic v3 key. Returns the dir guard
+/// (removed on drop, so keep it alive), the config file path and the
+/// crypto handle.
+pub fn scratch_config(tag: &str) -> (ScratchDir, PathBuf, Crypto) {
+    let dir = ScratchDir::new(&format!("import-{tag}"));
     let config_path = dir.join("config.json");
     let crypto = Crypto::from_key_bytes(&[7u8; 32]).unwrap();
     (dir, config_path, crypto)
