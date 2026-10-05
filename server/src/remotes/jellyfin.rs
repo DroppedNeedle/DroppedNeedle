@@ -596,7 +596,7 @@ impl JellyfinAdapter {
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED
             || response.status() == reqwest::StatusCode::FORBIDDEN
         {
@@ -611,7 +611,7 @@ impl JellyfinAdapter {
         let bytes = response
             .bytes()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         let result: AuthenticationResult = decode("/Users/AuthenticateByName", &bytes)?;
         if result.user.id.is_empty() || result.access_token.is_empty() {
             return Err(AdapterError::Api(
@@ -1028,7 +1028,7 @@ impl JellyfinAdapter {
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AdapterError::Auth);
@@ -1044,7 +1044,7 @@ impl JellyfinAdapter {
         let bytes = response
             .bytes()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         if bytes.is_empty() {
             return Ok(None);
         }
@@ -1066,7 +1066,7 @@ impl JellyfinAdapter {
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AdapterError::Auth);
@@ -1098,7 +1098,7 @@ impl JellyfinAdapter {
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AdapterError::Auth);
@@ -1117,7 +1117,7 @@ impl JellyfinAdapter {
         let bytes = response
             .bytes()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         Ok((bytes.to_vec(), content_type))
     }
 
@@ -1267,7 +1267,8 @@ fn bucket_index(mut artists: Vec<ArtistView>) -> Vec<ArtistIndexEntry> {
     buckets
 }
 
-fn trim_cause(cause: &reqwest::Error) -> String {
-    let text = cause.to_string();
-    text.chars().take(200).collect()
+/// Transport cause for logs and errors. The URL is stripped first: it can
+/// carry credentials (Subsonic `u`/`t`/`s`, Plex and Jellyfin tokens).
+fn trim_cause(cause: reqwest::Error) -> String {
+    cause.without_url().to_string().chars().take(200).collect()
 }

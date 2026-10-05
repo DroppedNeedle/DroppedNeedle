@@ -980,7 +980,7 @@ impl NavidromeAdapter {
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AdapterError::Auth);
@@ -993,7 +993,7 @@ impl NavidromeAdapter {
         let bytes = response
             .bytes()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         let envelope: Envelope = serde_json::from_slice(&bytes).map_err(|error| {
             AdapterError::Api(format!(
                 "Navidrome returned an unreadable {endpoint} payload: {error}"
@@ -1037,7 +1037,7 @@ impl NavidromeAdapter {
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AdapterError::Auth);
@@ -1056,7 +1056,7 @@ impl NavidromeAdapter {
         let bytes = response
             .bytes()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         Ok((bytes.to_vec(), content_type))
     }
 }
@@ -1230,6 +1230,8 @@ fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn trim_cause(cause: &reqwest::Error) -> String {
-    cause.to_string().chars().take(200).collect()
+/// Transport cause for logs and errors. The URL is stripped first: it can
+/// carry credentials (Subsonic `u`/`t`/`s`, Plex and Jellyfin tokens).
+fn trim_cause(cause: reqwest::Error) -> String {
+    cause.without_url().to_string().chars().take(200).collect()
 }

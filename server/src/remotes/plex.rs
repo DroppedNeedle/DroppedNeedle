@@ -1023,7 +1023,7 @@ impl PlexAdapter {
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         self.maybe_upgrade_base(&url, response.url());
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
@@ -1037,7 +1037,7 @@ impl PlexAdapter {
         let bytes = response
             .bytes()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         let envelope: Envelope = serde_json::from_slice(&bytes).map_err(|error| {
             AdapterError::Api(format!(
                 "Plex returned an unreadable {endpoint} payload: {error}"
@@ -1073,7 +1073,7 @@ impl PlexAdapter {
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AdapterError::Auth);
@@ -1092,7 +1092,7 @@ impl PlexAdapter {
         let bytes = response
             .bytes()
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
         Ok((bytes.to_vec(), content_type))
     }
 
@@ -1304,8 +1304,10 @@ fn non_empty(value: Option<&str>) -> Option<String> {
     value.filter(|text| !text.is_empty()).map(str::to_owned)
 }
 
-fn trim_cause(cause: &reqwest::Error) -> String {
-    cause.to_string().chars().take(200).collect()
+/// Transport cause for logs and errors. The URL is stripped first: it can
+/// carry credentials (Subsonic `u`/`t`/`s`, Plex and Jellyfin tokens).
+fn trim_cause(cause: reqwest::Error) -> String {
+    cause.without_url().to_string().chars().take(200).collect()
 }
 
 /// Validate a Plex part key exactly as v2 `proxy_get_stream` does: a
