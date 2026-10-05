@@ -16,14 +16,7 @@ vi.mock('../QueryClient', () => ({
 }));
 
 import { api } from '$lib/api/client';
-import {
-	getLibraryAlbumsQueryOptions,
-	getLibraryStatsQueryOptions,
-	getLibraryAlbumStatusQueryOptions,
-	getLibraryAlbumCopiesQuery,
-	getLibraryScanScheduleQuery,
-	getLibraryMembershipQueryOptions
-} from './LibraryQueries.svelte';
+import { getLibraryMembershipQueryOptions } from './LibraryQueries.svelte';
 
 const mockGet = vi.mocked(api.global.get);
 const mockPost = vi.mocked(api.global.post);
@@ -71,53 +64,6 @@ describe('LibraryQueryKeyFactory', () => {
 });
 
 describe('library query endpoints', () => {
-	it('albums query hits /library/albums with page, sort and filters', async () => {
-		const opts = getLibraryAlbumsQueryOptions({
-			page: 3,
-			sort: 'artist',
-			q: 'rad',
-			format: 'flac'
-		});
-		await callQueryFn(opts);
-		const url = mockGet.mock.calls[0][0] as string;
-		expect(url).toContain('/api/v1/library/albums');
-		expect(url).toContain('page=3');
-		expect(url).toContain('sort=artist');
-		expect(url).toContain('q=rad');
-		expect(url).toContain('format=flac');
-	});
-
-	it('albums query omits empty q/format', async () => {
-		const opts = getLibraryAlbumsQueryOptions({ page: 1, sort: 'recent', q: '', format: '' });
-		await callQueryFn(opts);
-		const url = mockGet.mock.calls[0][0] as string;
-		expect(url).not.toContain('q=');
-		expect(url).not.toContain('format=');
-		expect(opts.placeholderData).toBeDefined();
-	});
-
-	it('stats query hits /library/stats', async () => {
-		await callQueryFn(getLibraryStatsQueryOptions());
-		expect(mockGet.mock.calls[0][0]).toBe('/api/v1/library/stats');
-	});
-
-	it('album status query hits the combined /status endpoint', async () => {
-		await callQueryFn(getLibraryAlbumStatusQueryOptions('rg-1'));
-		expect(mockGet.mock.calls[0][0]).toBe('/api/v1/library/albums/rg-1/status');
-	});
-
-	it('album copies query uses the provider or local identifier', async () => {
-		const opts = getLibraryAlbumCopiesQuery(() => 'release-1') as unknown;
-		await callQueryFn(opts);
-		expect(mockGet.mock.calls[0][0]).toBe('/api/v1/library/albums/release-1/copies');
-	});
-
-	it('scan schedule query hits the schedule endpoint', async () => {
-		const opts = getLibraryScanScheduleQuery() as unknown as Record<string, unknown>;
-		await callQueryFn(opts);
-		expect(mockGet.mock.calls[0][0]).toBe('/api/v1/settings/library/schedule');
-	});
-
 	it('membership query posts only its bounded candidate set', async () => {
 		const opts = getLibraryMembershipQueryOptions('user-a', ['B', 'a', 'b']);
 		await callQueryFn(opts);

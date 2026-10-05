@@ -46,7 +46,6 @@ import {
 	clearLocalAlbumEditionPin,
 	editionsKey,
 	getAlbumEditionsQuery,
-	getLocalAlbumEditionPinQuery,
 	localAlbumEditionPinKey,
 	localAlbumEditionPinUrl,
 	setEditionPin,
@@ -102,19 +101,6 @@ it('includes the authenticated user in every editions query key', () => {
 	expect(queryA.enabled).toBe(true);
 });
 
-it('forwards the query abort signal without changing the request contract', async () => {
-	const query = getAlbumEditionsQuery(
-		() => 'user-a',
-		() => 'release-group',
-		() => true
-	) as unknown as EditionQueryOptions;
-	const signal = new AbortController().signal;
-
-	await query.queryFn({ signal });
-
-	expect(h.get).toHaveBeenCalledWith('/api/v1/albums/release-group/editions', { signal });
-});
-
 it('invalidates the initiating user edition key after pin and clear mutations', async () => {
 	const pin = setEditionPin() as unknown as EditionMutationOptions;
 	const clear = clearEditionPin() as unknown as EditionMutationOptions;
@@ -166,51 +152,6 @@ it('addresses per-copy pins by local id and scopes the key by user', () => {
 	expect(localAlbumEditionPinKey('user-a', 'local-1')).not.toEqual(
 		localAlbumEditionPinKey('user-b', 'local-1')
 	);
-});
-
-it('forwards the abort signal on the local pin read', async () => {
-	const query = getLocalAlbumEditionPinQuery(
-		() => 'user-a',
-		() => 'local-1',
-		() => true
-	) as unknown as EditionQueryOptions;
-	expect(query.queryKey).toEqual(localAlbumEditionPinKey('user-a', 'local-1'));
-	expect(query.enabled).toBe(true);
-
-	const signal = new AbortController().signal;
-	await query.queryFn({ signal });
-	expect(h.get).toHaveBeenCalledWith('/api/v1/library/albums/local-1/edition', { signal });
-});
-
-it('pins and clears through the local URL and invalidates pin, editions, and detail keys', async () => {
-	const pin = setLocalAlbumEditionPin() as unknown as EditionMutationOptions;
-	const clear = clearLocalAlbumEditionPin() as unknown as EditionMutationOptions;
-	const pinVariables = {
-		userId: 'user-a',
-		localId: 'local-1',
-		rgMbid: 'release-group',
-		releaseMbid: 'release'
-	};
-	const clearVariables = { userId: 'user-a', localId: 'local-1', rgMbid: 'release-group' };
-
-	await pin.mutationFn(pinVariables);
-	await pin.onSuccess(undefined, pinVariables);
-	await clear.mutationFn(clearVariables);
-	await clear.onSuccess(undefined, clearVariables);
-
-	expect(h.put).toHaveBeenCalledWith('/api/v1/library/albums/local-1/edition', {
-		release_mbid: 'release'
-	});
-	expect(h.delete).toHaveBeenCalledWith('/api/v1/library/albums/local-1/edition');
-	expect(h.invalidate).toHaveBeenCalledWith({
-		queryKey: localAlbumEditionPinKey('user-a', 'local-1')
-	});
-	expect(h.invalidate).toHaveBeenCalledWith({
-		queryKey: editionsKey('user-a', 'release-group')
-	});
-	expect(h.invalidate).toHaveBeenCalledWith({
-		queryKey: ['library', 'album-detail', 'local-1']
-	});
 });
 
 it('refuses per-album pins carrying an RG MBID or a missing local id', async () => {

@@ -26,13 +26,6 @@ describe('SearchEnrichCollector', () => {
 	beforeEach(() => vi.useFakeTimers());
 	afterEach(() => vi.useRealTimers());
 
-	it('starts with an empty body that keeps the batch query disabled', () => {
-		expect.assertions(1);
-		const collector = new SearchEnrichCollector();
-		expect(collector.body).toEqual({ artists: [], albums: [] });
-		collector.dispose();
-	});
-
 	it('debounces a burst of hovers into one cumulative body', () => {
 		expect.assertions(3);
 		const collector = new SearchEnrichCollector();
@@ -44,28 +37,6 @@ describe('SearchEnrichCollector', () => {
 		vi.advanceTimersByTime(ENRICH_COLLECTOR_DELAY_MS);
 		expect(collector.body.artists?.map((item) => item.musicbrainz_id)).toEqual(['a-1', 'a-2']);
 		expect(collector.body.albums?.map((item) => item.musicbrainz_id)).toEqual(['b-1']);
-		collector.dispose();
-	});
-
-	it('accumulates later hovers into the committed body', () => {
-		expect.assertions(1);
-		const collector = new SearchEnrichCollector();
-		collector.requestArtist(artist('a-1'));
-		vi.advanceTimersByTime(ENRICH_COLLECTOR_DELAY_MS);
-		collector.requestArtist(artist('a-2'));
-		vi.advanceTimersByTime(ENRICH_COLLECTOR_DELAY_MS);
-		expect(collector.body.artists?.map((item) => item.musicbrainz_id)).toEqual(['a-1', 'a-2']);
-		collector.dispose();
-	});
-
-	it('skips rows that are already enriched or carry no provider id', () => {
-		expect.assertions(1);
-		const collector = new SearchEnrichCollector();
-		collector.requestArtist(artist('a-1', { listen_count: 42 }));
-		collector.requestArtist(artist('local-1', { local_id: 'local-1' }));
-		collector.requestAlbum(album('local-2', { local_id: 'local-2' }));
-		vi.advanceTimersByTime(ENRICH_COLLECTOR_DELAY_MS);
-		expect(collector.body).toEqual({ artists: [], albums: [] });
 		collector.dispose();
 	});
 

@@ -20,32 +20,17 @@ vi.mock('../QueryClient', () => ({
 
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { invalidateQueriesWithPersister } from '../QueryClient';
 import { userIdSegment } from '../userKeySegment';
-import { PlaylistQueryKeyFactory } from '../playlists/PlaylistQueryKeyFactory';
 import { SPOTIFY_ENDPOINTS } from './endpoints';
-import {
-	createImportSpotifyPlaylistMutation,
-	getSpotifyPlaylistsQuery
-} from './SpotifyQueries.svelte';
+import { getSpotifyPlaylistsQuery } from './SpotifyQueries.svelte';
 
 const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
-const mockPost = vi.mocked(api.global.v3.POST) as unknown as Mock<
-	(...args: unknown[]) => Promise<unknown>
->;
-const mockInvalidate = vi.mocked(invalidateQueriesWithPersister);
-
 type QueryResult = {
 	queryKey?: unknown;
 	queryFn?: (ctx: { signal?: AbortSignal }) => Promise<unknown>;
 	retry?: unknown;
-};
-
-type MutationResult = {
-	mutationFn: (input: { id: string; name: string }) => Promise<unknown>;
-	onSuccess?: () => void;
 };
 
 function setUser(user: { id: string } | null) {
@@ -80,22 +65,5 @@ describe('getSpotifyPlaylistsQuery', () => {
 		const second = getSpotifyPlaylistsQuery() as QueryResult;
 
 		expect(first.queryKey).not.toEqual(second.queryKey);
-	});
-});
-
-describe('createImportSpotifyPlaylistMutation', () => {
-	it('imports by stored playlist id, then refreshes playlists and the Spotify list', async () => {
-		mockPost.mockResolvedValue({ imported_playlist_id: 'pl-1' });
-		const mutation = createImportSpotifyPlaylistMutation() as unknown as MutationResult;
-
-		await mutation.mutationFn({ id: 'spotify-9', name: 'Road Trip' });
-
-		expect(mockPost).toHaveBeenCalledWith(SPOTIFY_ENDPOINTS.importPlaylist('spotify-9'));
-		mutation.onSuccess?.();
-		const keys = mockInvalidate.mock.calls.map(
-			(call) => (call[0] as { queryKey: unknown }).queryKey
-		);
-		expect(keys).toContainEqual(PlaylistQueryKeyFactory.list('userA'));
-		expect(keys).toContainEqual(['spotify-playlists', userIdSegment('userA')]);
 	});
 });

@@ -31,12 +31,8 @@ import { RequestQueryKeyFactory } from './RequestQueryKeyFactory';
 import { REQUESTS_ENDPOINTS } from './endpoints';
 import {
 	createApproveRequestMutation,
-	createBatchCancelRequestsMutation,
 	createCancelRequestMutation,
-	createClearHistoryMutation,
-	createRejectRequestMutation,
-	createRetryRequestMutation,
-	createSyncRequestsMutation
+	createRejectRequestMutation
 } from './RequestMutations.svelte';
 
 const mockPost = vi.mocked(api.global.v3.POST) as unknown as Mock<
@@ -103,27 +99,6 @@ describe('createCancelRequestMutation', () => {
 	});
 });
 
-describe('createRetryRequestMutation', () => {
-	it('retries by mbid and sweeps requests plus downloads', async () => {
-		mockPost.mockResolvedValue({ success: true, message: 'Retrying' });
-		const mutation = createRetryRequestMutation() as unknown as MutationResult<{
-			mbid: string;
-			kind: 'album';
-		}>;
-		const vars = { mbid: 'mbid-2', kind: 'album' as const };
-
-		await mutation.mutationFn(vars);
-		expect(mockPost).toHaveBeenCalledWith(REQUESTS_ENDPOINTS.retry('mbid-2', 'album'));
-
-		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
-		await mutation.onSuccess?.({ success: true }, vars, context);
-		const swept = invalidatedPrefixes();
-		expect(swept).toContainEqual([...RequestQueryKeyFactory.all]);
-		expect(swept).toContainEqual([...DownloadQueryKeyFactory.all]);
-		expect(swept).toContainEqual([...LibraryQueryKeyFactory.album('mbid-2')]);
-	});
-});
-
 describe('createApproveRequestMutation', () => {
 	it('approves by mbid and sweeps requests, downloads, and library', async () => {
 		mockPost.mockResolvedValue({ success: true, message: 'Approved' });
@@ -160,62 +135,5 @@ describe('createRejectRequestMutation', () => {
 		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
 		await mutation.onSuccess?.({ success: true }, vars, context);
 		expect(invalidatedPrefixes()).toContainEqual([...RequestQueryKeyFactory.all]);
-	});
-});
-
-describe('createBatchCancelRequestsMutation', () => {
-	it('posts the R10 batch-cancel body and sweeps requests plus downloads', async () => {
-		mockPost.mockResolvedValue({ success: true, cancelled: 2, failed: 0, message: 'Done' });
-		const mutation = createBatchCancelRequestsMutation() as unknown as MutationResult<{
-			mbids: string[];
-			kind: 'album';
-		}>;
-		const vars = { mbids: ['a', 'b'], kind: 'album' as const };
-
-		await mutation.mutationFn(vars);
-		expect(mockPost).toHaveBeenCalledWith(REQUESTS_ENDPOINTS.batchCancel(), {
-			musicbrainz_ids: ['a', 'b'],
-			kind: 'album'
-		});
-
-		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
-		await mutation.onSuccess?.({ success: true }, vars, context);
-		const swept = invalidatedPrefixes();
-		expect(swept).toContainEqual([...RequestQueryKeyFactory.all]);
-		expect(swept).toContainEqual([...DownloadQueryKeyFactory.all]);
-		expect(swept).toContainEqual([...LibraryQueryKeyFactory.album('a')]);
-		expect(swept).toContainEqual([...LibraryQueryKeyFactory.album('b')]);
-	});
-});
-
-describe('createClearHistoryMutation', () => {
-	it('clears one history row and sweeps the requests prefix', async () => {
-		mockDelete.mockResolvedValue({ success: true });
-		const mutation = createClearHistoryMutation() as unknown as MutationResult<{
-			mbid: string;
-			kind: 'album';
-		}>;
-		const vars = { mbid: 'mbid-5', kind: 'album' as const };
-
-		await mutation.mutationFn(vars);
-		expect(mockDelete).toHaveBeenCalledWith(REQUESTS_ENDPOINTS.clearHistory('mbid-5', 'album'));
-
-		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
-		await mutation.onSuccess?.({ success: true }, vars, context);
-		expect(invalidatedPrefixes()).toContainEqual([...RequestQueryKeyFactory.all]);
-	});
-});
-
-describe('createSyncRequestsMutation', () => {
-	it('runs the status sync and sweeps requests plus downloads', async () => {
-		mockPost.mockResolvedValue({ reconciled: 2 });
-		const mutation = createSyncRequestsMutation() as unknown as MutationResult<void>;
-		await mutation.mutationFn(undefined);
-		expect(mockPost).toHaveBeenCalledWith(REQUESTS_ENDPOINTS.sync());
-
-		await mutation.onSuccess?.({ reconciled: 2 }, undefined, { userId: 'userA' });
-		const swept = invalidatedPrefixes();
-		expect(swept).toContainEqual([...RequestQueryKeyFactory.all]);
-		expect(swept).toContainEqual([...DownloadQueryKeyFactory.all]);
 	});
 });

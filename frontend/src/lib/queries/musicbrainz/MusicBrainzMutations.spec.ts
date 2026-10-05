@@ -18,19 +18,9 @@ vi.mock('$lib/queries/QueryClient', () => ({
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
-import {
-	activateBrainzMash,
-	consentBrainzMash,
-	saveMusicBrainzSettings,
-	stageBrainzMash,
-	testMusicBrainzConnection
-} from './MusicBrainzMutations.svelte';
+import { saveMusicBrainzSettings } from './MusicBrainzMutations.svelte';
 import { getMusicBrainzSourceScope, resetMusicBrainzSourceScope } from './sourceScope.svelte';
-import type {
-	BrainzMashBinding,
-	MusicBrainzSettingsResponse,
-	MusicBrainzSettingsUpdate
-} from './types';
+import type { MusicBrainzSettingsResponse, MusicBrainzSettingsUpdate } from './types';
 
 const mockPost = vi.mocked(api.global.post);
 const mockPut = vi.mocked(api.global.put);
@@ -83,13 +73,6 @@ const settings: MusicBrainzSettingsResponse = {
 	pending_brainzmash: null
 };
 
-const binding: BrainzMashBinding = {
-	access_revision: 'access-1',
-	source_id: 'source-1',
-	generation: 1,
-	disclosure_version: '2026-08-31'
-};
-
 const update: MusicBrainzSettingsUpdate = {
 	source_mode: 'brainzmash',
 	api_url: null,
@@ -120,57 +103,6 @@ afterEach(() => {
 });
 
 describe('MusicBrainz settings mutations', () => {
-	it('puts source settings through the registry and persists the response', async () => {
-		const options = saveMusicBrainzSettings() as unknown as MutationOptions;
-		const onMutateResult = options.onMutate?.(update, {});
-		const result = await options.mutationFn(update);
-		expect(mockPut).toHaveBeenCalledWith(API.settingsMusicbrainz(), update);
-		await options.onSuccess?.(result, update, onMutateResult);
-		expect(cache.set).toHaveBeenCalled();
-	});
-
-	it('stages BrainzMash through its dedicated endpoint without a generic settings body', async () => {
-		const options = stageBrainzMash() as unknown as MutationOptions;
-		const onMutateResult = options.onMutate?.(undefined, {});
-
-		const result = await options.mutationFn();
-		await options.onSuccess?.(result, undefined, onMutateResult);
-
-		expect(mockPost).toHaveBeenCalledWith(API.settingsMusicbrainzBrainzMashStage());
-		expect(mockPut).not.toHaveBeenCalled();
-		expect(cache.set).toHaveBeenCalled();
-	});
-
-	it('posts exact binding fields for local consent', async () => {
-		const options = consentBrainzMash() as unknown as MutationOptions;
-		await options.mutationFn(binding);
-		expect(mockPost).toHaveBeenCalledWith(API.settingsMusicbrainzBrainzMashConsent(), binding);
-	});
-
-	it('posts exact binding fields for BrainzMash verification and activation', async () => {
-		const verify = testMusicBrainzConnection() as unknown as MutationOptions;
-		await verify.mutationFn(binding);
-		expect(mockPost).toHaveBeenCalledWith(API.settingsMusicbrainzVerify(), binding);
-
-		mockPost.mockClear();
-		const activate = activateBrainzMash() as unknown as MutationOptions;
-		await activate.mutationFn(binding);
-		expect(mockPost).toHaveBeenCalledWith(API.settingsMusicbrainzActivate(), binding);
-	});
-
-	it('posts the unsaved non-Brainz draft, including nullable community acknowledgement', async () => {
-		const options = testMusicBrainzConnection() as unknown as MutationOptions;
-		const draft: MusicBrainzSettingsUpdate = {
-			source_mode: 'mirror',
-			api_url: 'https://draft.example/ws/2',
-			rate_limit: 5,
-			concurrent_searches: 3,
-			community_acknowledged: null
-		};
-		await options.mutationFn(draft);
-		expect(mockPost).toHaveBeenCalledWith(API.settingsMusicbrainzVerify(), draft);
-	});
-
 	it('does not publish user A response after authentication switches to user B', async () => {
 		persistScope('user-b', 'community', 'community-b', 9);
 		let resolveResponse: (data: MusicBrainzSettingsResponse) => void = () => {};

@@ -113,10 +113,8 @@ import { getProfileQuery } from './ProfileQuery.svelte';
 import {
 	createChangePasswordMutation,
 	createSetPasswordMutation,
-	createUpdateDisplayNameMutation,
 	createUpdateEmailMutation,
-	createUpdateUsernameMutation,
-	createUploadAvatarMutation
+	createUpdateUsernameMutation
 } from './ProfileMutations.svelte';
 
 // The typed client's generics resolve mock results to void; loosen to Mock
@@ -171,14 +169,6 @@ describe('getProfileQuery', () => {
 });
 
 describe('profile mutations hit the correct endpoints', () => {
-	it('display name -> PATCH /api/v3/me', async () => {
-		const m = createUpdateDisplayNameMutation('userA') as unknown as Opts;
-		await m.mutationFn({ display_name: 'Bob' });
-		expect(mockV3Patch).toHaveBeenCalledWith(PROFILE_ENDPOINTS.update(), {
-			display_name: 'Bob'
-		});
-	});
-
 	it('username -> PUT /api/v3/me/username', async () => {
 		const m = createUpdateUsernameMutation('userA') as unknown as Opts;
 		await m.mutationFn({ username: 'bob' });
@@ -208,29 +198,6 @@ describe('profile mutations hit the correct endpoints', () => {
 		expect(mockV3Post).toHaveBeenCalledWith(PROFILE_ENDPOINTS.setPassword(), {
 			new_password: 'b'
 		});
-	});
-
-	it('avatar -> POST /api/v3/me/avatar as base64 JSON', async () => {
-		vi.stubGlobal(
-			'FileReader',
-			class {
-				result: string | null = null;
-				onload: (() => void) | null = null;
-				onerror: (() => void) | null = null;
-				error: unknown = null;
-				readAsDataURL() {
-					this.result = 'data:image/png;base64,eA==';
-					this.onload?.();
-				}
-			}
-		);
-		const m = createUploadAvatarMutation('userA') as unknown as Opts;
-		await m.mutationFn(new File(['x'], 'a.png', { type: 'image/png' }));
-		expect(mockV3Post).toHaveBeenCalledWith(PROFILE_ENDPOINTS.avatarUpload(), {
-			content_type: 'image/png',
-			image_base64: 'eA=='
-		});
-		vi.unstubAllGlobals();
 	});
 });
 

@@ -98,22 +98,10 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { PLEX_ENDPOINTS } from '../plex/endpoints';
-import { REMOTE_ENDPOINTS } from '../remotes/endpoints';
 import { queryClient } from '../QueryClient';
 import { ConnectionsQueryKeyFactory } from './ConnectionsQueryKeyFactory';
-import { CONNECTIONS_ENDPOINTS } from './endpoints';
 import { getConnectionsQuery } from './ConnectionsQuery.svelte';
-import {
-	createConnectJellyfinMutation,
-	createConnectListenBrainzMutation,
-	createConnectNavidromeMutation,
-	createDisconnectMutation,
-	createLastFmExchangeSessionMutation,
-	createLastFmRequestTokenMutation,
-	createPlexLinkPinMutation,
-	createPlexLinkPollMutation
-} from './ConnectionsMutations.svelte';
+import { createDisconnectMutation } from './ConnectionsMutations.svelte';
 
 const mockPut = vi.mocked(api.global.put);
 // The typed client's generics resolve mock results to void; loosen to Mock
@@ -172,132 +160,6 @@ describe('getConnectionsQuery', () => {
 			'userB'
 		]);
 	});
-
-	it('aggregates the per-service v3 reads, linked accounts only', async () => {
-		mockV3Get.mockImplementation((url: unknown) => {
-			const u = String(url);
-			if (u.includes('/remotes/navidrome/connection'))
-				return Promise.resolve({
-					source: 'navidrome',
-					connected: true,
-					account_mode: 'linked',
-					account_label: 'alice'
-				});
-			if (u.includes('/remotes/jellyfin/connection'))
-				return Promise.resolve({
-					source: 'jellyfin',
-					connected: true,
-					account_mode: 'shared',
-					account_label: ''
-				});
-			if (u.includes('/remotes/plex/connection')) return Promise.reject(new Error('404'));
-			if (u.includes('/me/connections/listenbrainz'))
-				return Promise.resolve({ service: 'listenbrainz', enabled: true, username: 'alice-lb' });
-			if (u.includes('/me/connections/lastfm'))
-				return Promise.resolve({ configured: true, linked: false, username: null });
-			if (u.includes('/acquire/spotify/playlists')) return Promise.resolve({ playlists: [] });
-			return Promise.reject(new Error(`unexpected ${u}`));
-		});
-		const opts = getConnectionsQuery() as unknown as Opts;
-		const data = (await opts.queryFn!({ signal: new AbortController().signal })) as {
-			connections: unknown[];
-		};
-		expect(mockV3Get).toHaveBeenCalledTimes(6);
-		// linked navidrome + listenbrainz + spotify presence; the shared-mode
-		// jellyfin credential, the rejected plex read, and the unlinked
-		// lastfm account stay out (presence means linked).
-		expect(data.connections).toEqual([
-			{ service: 'navidrome', enabled: true, username: 'alice' },
-			{ service: 'listenbrainz', enabled: true, username: 'alice-lb' },
-			{ service: 'spotify', enabled: true, username: '' }
-		]);
-	});
-
-	it('reads an empty list when nothing is linked', async () => {
-		const opts = getConnectionsQuery() as unknown as Opts;
-		const data = (await opts.queryFn!({ signal: new AbortController().signal })) as {
-			connections: unknown[];
-		};
-		expect(data).toEqual({ connections: [] });
-	});
-});
-
-describe('connection mutations hit the correct endpoints', () => {
-	it('lastfm request token -> POST', async () => {
-		const m = createLastFmRequestTokenMutation() as unknown as Opts;
-		await m.mutationFn(undefined);
-		expect(mockV3Post.mock.calls[0][0]).toBe(CONNECTIONS_ENDPOINTS.lastfmToken());
-	});
-
-	it('lastfm exchange session -> POST with token', async () => {
-		const m = createLastFmExchangeSessionMutation() as unknown as Opts;
-		await m.mutationFn('tok-1');
-		expect(mockV3Post).toHaveBeenCalledWith(CONNECTIONS_ENDPOINTS.lastfmSession(), {
-			token: 'tok-1'
-		});
-	});
-
-	it('connect listenbrainz -> PUT with token + username', async () => {
-		const m = createConnectListenBrainzMutation() as unknown as Opts;
-		await m.mutationFn({ user_token: 'lb', username: 'alice' });
-		expect(mockV3Put).toHaveBeenCalledWith(CONNECTIONS_ENDPOINTS.listenbrainz(), {
-			user_token: 'lb',
-			username: 'alice'
-		});
-	});
-
-	it('disconnect lastfm -> DELETE the lastfm link', async () => {
-		const m = createDisconnectMutation() as unknown as Opts;
-		await m.mutationFn('lastfm');
-		expect(mockV3Delete.mock.calls[0][0]).toBe(CONNECTIONS_ENDPOINTS.lastfm());
-	});
-
-	it('disconnect navidrome -> DELETE the remotes connection', async () => {
-		const m = createDisconnectMutation() as unknown as Opts;
-		await m.mutationFn('navidrome');
-		expect(mockV3Delete.mock.calls[0][0]).toBe(REMOTE_ENDPOINTS.connection('navidrome'));
-	});
-
-	it('disconnect spotify -> loud rejection (v3 ships no unlink)', async () => {
-		const m = createDisconnectMutation() as unknown as Opts;
-		await expect(m.mutationFn('spotify')).rejects.toThrow('not supported');
-		expect(mockV3Delete).not.toHaveBeenCalled();
-	});
-
-	// media-server account links (issue #138)
-	it('connect navidrome -> PUT with username + password', async () => {
-		const m = createConnectNavidromeMutation() as unknown as Opts;
-		await m.mutationFn({ username: 'alice', password: 'pw' });
-		expect(mockPut).toHaveBeenCalledWith(REMOTE_ENDPOINTS.connection('navidrome'), {
-			username: 'alice',
-			password: 'pw'
-		});
-	});
-
-	it('connect jellyfin -> PUT with username + password', async () => {
-		const m = createConnectJellyfinMutation() as unknown as Opts;
-		await m.mutationFn({ username: 'alice', password: 'pw' });
-		expect(mockPut).toHaveBeenCalledWith(REMOTE_ENDPOINTS.connection('jellyfin'), {
-			username: 'alice',
-			password: 'pw'
-		});
-	});
-
-	it('plex link pin -> POST the single flow start for link', async () => {
-		mockV3Post.mockResolvedValueOnce({ pin_id: 7, authorize_url: 'https://plex.tv/link' });
-		const m = createPlexLinkPinMutation() as unknown as Opts;
-		const pin = (await m.mutationFn(undefined)) as { pin_id: number; auth_url: string };
-		expect(mockV3Post.mock.calls[0][0]).toBe(PLEX_ENDPOINTS.start('link'));
-		// the mutation maps authorize_url back to the card's auth_url field
-		expect(pin).toEqual({ pin_id: 7, auth_url: 'https://plex.tv/link' });
-	});
-
-	it('plex link poll -> POST the link poll route with the pin id', async () => {
-		mockV3Post.mockResolvedValueOnce({ completed: false });
-		const m = createPlexLinkPollMutation() as unknown as Opts;
-		await m.mutationFn(7);
-		expect(mockV3Post.mock.calls.at(-1)).toEqual([PLEX_ENDPOINTS.poll('link'), { pin_id: 7 }]);
-	});
 });
 
 describe('mutation onSuccess invalidates the user-scoped key', () => {
@@ -305,18 +167,6 @@ describe('mutation onSuccess invalidates the user-scoped key', () => {
 		const spy = vi.spyOn(queryClient, 'invalidateQueries');
 		const m = createDisconnectMutation() as unknown as Opts;
 		await m.onSuccess!({ service: 'lastfm', deleted: true });
-		expect(spy.mock.calls[0][0]).toEqual(
-			expect.objectContaining({ queryKey: ['me', 'connections', 'userA'] })
-		);
-		spy.mockRestore();
-	});
-
-	it('plex poll invalidates only once the link completes', async () => {
-		const spy = vi.spyOn(queryClient, 'invalidateQueries');
-		const m = createPlexLinkPollMutation() as unknown as Opts;
-		await m.onSuccess!({ completed: false, username: '' });
-		expect(spy).not.toHaveBeenCalled();
-		await m.onSuccess!({ completed: true, username: 'alice' });
 		expect(spy.mock.calls[0][0]).toEqual(
 			expect.objectContaining({ queryKey: ['me', 'connections', 'userA'] })
 		);

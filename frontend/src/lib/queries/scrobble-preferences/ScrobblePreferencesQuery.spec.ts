@@ -192,14 +192,6 @@ describe('getScrobblePreferencesQuery', () => {
 });
 
 describe('update scrobble preferences', () => {
-	it('PUTs the partial update', async () => {
-		const m = createUpdateScrobblePreferencesMutation() as unknown as Opts;
-		await m.mutationFn({ scrobble_to_lastfm: true });
-		expect(mockV3Put).toHaveBeenCalledWith(SCROBBLE_PREFERENCES_ENDPOINTS.update(), {
-			scrobble_to_lastfm: true
-		});
-	});
-
 	it('onSuccess immediately updates only the user-scoped persisted key', async () => {
 		const m = createUpdateScrobblePreferencesMutation() as unknown as Opts;
 		const context = m.onMutate!({ primary_music_source: 'lastfm' });

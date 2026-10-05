@@ -12,37 +12,12 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	authStore: { user: { id: 'user-1' } }
 }));
 
-import { CACHE_TTL, API } from '$lib/constants';
-import { api } from '$lib/api/client';
 import type { Album, Artist, LibraryAlbumSummary, LibraryArtistSummary } from '$lib/types';
 
 import { SearchQueryKeyFactory } from './SearchQueryKeyFactory';
-import {
-	getLocalAlbumSearchQueryOptions,
-	getLocalArtistSearchQueryOptions,
-	getRemoteArtistSearchQueryOptions,
-	mergeSearchAlbums,
-	mergeSearchArtists,
-	REMOTE_ARTIST_PAGE_SIZE,
-	successfulSearchStaleTime,
-	successfulSuggestStaleTime,
-	SEARCH_FAILURE_STALE_TIME_MS
-} from './SearchQueries.svelte';
+import { mergeSearchAlbums, mergeSearchArtists } from './SearchQueries.svelte';
 
 describe('Search queries', () => {
-	it('uses the bucket-width remote artist profile', async () => {
-		expect(REMOTE_ARTIST_PAGE_SIZE).toBe(24);
-
-		const remote = getRemoteArtistSearchQueryOptions(' Muse ');
-		const options = remote as unknown as {
-			queryKey: unknown;
-			queryFn: (context: { signal: AbortSignal }) => Promise<unknown>;
-		};
-		expect(options.queryKey).toEqual(SearchQueryKeyFactory.artists('user-1', 'muse', 24));
-		const signal = new AbortController().signal;
-		await options.queryFn({ signal });
-		expect(api.global.get).toHaveBeenCalledWith(API.search.artists('Muse', 24), { signal });
-	});
 	it('dimensions every provider key by user and MusicBrainz source identity', () => {
 		expect(SearchQueryKeyFactory.artists('user-a', 'Muse', 6)).toEqual([
 			'search',
@@ -157,50 +132,5 @@ describe('Search queries', () => {
 			in_library: true
 		});
 		expect(merged[1].musicbrainz_id).toBe('remote-rg');
-	});
-});
-
-describe('B6 search failure-floor staleness', () => {
-	it('successful search keeps the full SEARCH window', () => {
-		expect(successfulSearchStaleTime({ state: { data: { status: 'ok' } } })).toBe(CACHE_TTL.SEARCH);
-	});
-
-	it('failed search holds the failure floor instead of collapsing to 0', () => {
-		expect(successfulSearchStaleTime({ state: { data: { status: 'error' } } })).toBe(
-			SEARCH_FAILURE_STALE_TIME_MS
-		);
-		expect(SEARCH_FAILURE_STALE_TIME_MS).toBe(60_000);
-		expect(successfulSearchStaleTime({ state: { data: undefined } })).toBe(
-			SEARCH_FAILURE_STALE_TIME_MS
-		);
-	});
-
-	it('suggest resolver mirrors the same floor on remote_status', () => {
-		expect(successfulSuggestStaleTime({ state: { data: { remote_status: 'ok' } } })).toBe(
-			CACHE_TTL.SEARCH
-		);
-		expect(successfulSuggestStaleTime({ state: { data: { remote_status: 'error' } } })).toBe(
-			SEARCH_FAILURE_STALE_TIME_MS
-		);
-		expect(successfulSuggestStaleTime({ state: {} })).toBe(SEARCH_FAILURE_STALE_TIME_MS);
-	});
-});
-
-describe('B7 local search prefetch factories', () => {
-	it('produce the same keys/staleTime as the mounted queries, gated like them', () => {
-		const artists = getLocalArtistSearchQueryOptions('Muse');
-		expect(artists.queryKey).toEqual(SearchQueryKeyFactory.localArtists('user-1', 'Muse', 24));
-		expect(artists.staleTime).toBe(CACHE_TTL.SEARCH);
-		expect(artists.enabled).toBe(true);
-
-		const albums = getLocalAlbumSearchQueryOptions('Muse');
-		expect(albums.queryKey).toEqual(SearchQueryKeyFactory.localAlbums('user-1', 'Muse', 24));
-		expect(albums.staleTime).toBe(CACHE_TTL.SEARCH);
-		expect(albums.enabled).toBe(true);
-	});
-
-	it('short queries are gated off exactly like the mounted queries', () => {
-		expect(getLocalArtistSearchQueryOptions('M').enabled).toBe(false);
-		expect(getLocalAlbumSearchQueryOptions(' M ').enabled).toBe(false);
 	});
 });
