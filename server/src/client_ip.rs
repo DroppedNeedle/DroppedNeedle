@@ -114,4 +114,16 @@ mod tests {
             "198.51.100.1"
         );
     }
+
+    #[test]
+    fn trust_all_takes_the_leftmost_readable_hop() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "198.51.100.9, 203.0.113.4, 10.0.0.7".parse().unwrap(),
+        );
+        let all = TrustedProxies::parse("*").unwrap();
+        let peer = "192.0.2.1:1".parse().unwrap();
+        assert_eq!(client_ip(peer, &headers, &all).to_string(), "198.51.100.9");
+    }
 }

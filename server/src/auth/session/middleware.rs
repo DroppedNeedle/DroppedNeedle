@@ -64,9 +64,12 @@ pub struct CurrentSession {
 
 /// Proxies trusted to set `X-Forwarded-*` headers.
 ///
-/// The list holds IPs and CIDRs, comma-separated, with `*` trusting every
-/// peer (the v2 spelling with the same warning: only behind infrastructure
-/// that strips spoofed headers). Default is loopback, the v2 default.
+/// The list holds IPs and CIDRs, comma-separated. `*` is an explicit
+/// operator opt-in that trusts every peer and every forwarded hop, so
+/// [`crate::client_ip::client_ip`] takes the leftmost readable
+/// `X-Forwarded-For` entry as the client (the v2 spelling with the same
+/// warning: only behind infrastructure that strips spoofed headers).
+/// Default is loopback, the v2 default.
 #[derive(Debug, Clone)]
 pub struct TrustedProxies {
     trust_all: bool,
