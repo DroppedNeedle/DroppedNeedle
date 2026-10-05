@@ -1,9 +1,9 @@
-# DroppedNeedle v3 image (stage-3 auth service). Single-process by design: the
+# DroppedNeedle v3 image. Single-process by design: the
 # binary is one tokio runtime and compose must never scale it past 1, because
 # durable-operation ownership lives in-process.
 FROM rust:1.89-bookworm AS builder
 
-# Stage-8 audio decode: opusic-sys (via symphonia-adapter-libopus) builds a
+# Audio decode: opusic-sys (via symphonia-adapter-libopus) builds a
 # bundled C library through the `cmake` crate, which shells out to the cmake
 # binary. The rust base image ships gcc but not cmake.
 RUN apt-get update \
