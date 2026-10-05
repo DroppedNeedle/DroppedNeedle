@@ -169,7 +169,7 @@ pub async fn clear_history_handler(
 }
 
 /// Fill the selected edition's missing tracks and upgrade its below-cutoff
-/// owned tracks (A:12). `POST /api/v3/albums/{album_id}/edition/acquire`.
+/// owned tracks. `POST /api/v3/albums/{album_id}/edition/acquire`.
 /// Curator only. Never retags existing files.
 #[utoipa::path(
     post,

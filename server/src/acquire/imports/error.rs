@@ -87,7 +87,7 @@ impl ImportsError {
     /// Build a 500, logging the real cause with its id.
     pub fn internal(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
         let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "imports slice failed");
+        tracing::error!(error_id, %cause, "imports request failed");
         Self::Internal { error_id }
     }
 

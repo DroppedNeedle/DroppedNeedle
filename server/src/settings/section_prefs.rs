@@ -471,8 +471,8 @@ impl SectionPrefsStore for SqliteSectionPrefsStore {
 
 /// Build one page: catalog entries overlaid with the disabled set,
 /// `available` from requirements plus link state. The Last.fm master
-/// switch gates `lastfm` sections (v2 required the global creds that R7
-/// deleted); the library is always present.
+/// switch gates `lastfm` sections (v2 required global creds, which v3
+/// dropped); the library is always present.
 pub async fn page(
     store: &dyn SectionPrefsStore,
     links: &dyn LinkStatus,
@@ -578,7 +578,7 @@ pub async fn save_page(
 }
 
 /// In-memory disabled sets, one per user page. Test wiring only: the
-/// settings test bundle mounts the prefs routes over this so briefs
+/// settings test bundle mounts the prefs routes over this so tests
 /// round-trip without a database.
 #[cfg(any(test, feature = "test-support"))]
 pub struct MemorySectionPrefsStore {
@@ -639,7 +639,7 @@ impl SectionPrefsStore for MemorySectionPrefsStore {
     }
 }
 
-/// Fixed link state. Test wiring only: briefs pin availability both
+/// Fixed link state. Test wiring only: tests pin availability both
 /// ways without seeding connection rows.
 #[cfg(any(test, feature = "test-support"))]
 pub struct StaticLinkStatus {

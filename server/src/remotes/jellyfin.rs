@@ -83,7 +83,7 @@ impl JellyfinAdapter {
     }
 
     /// Full MBID-to-item index over the album catalog, 500 rows per page.
-    /// The integrator's warmup loop calls this; `match_album` prefers the
+    /// The MBID warmup loop is meant to call this; `match_album` prefers the
     /// cheap search fallback and only scans when search misses.
     pub async fn mbid_index(&self) -> Result<HashMap<String, String>, AdapterError> {
         let mut index = HashMap::new();
@@ -827,7 +827,7 @@ impl JellyfinAdapter {
 
     /// Session report to `/Sessions/Playing`, `/Sessions/Playing/Progress`,
     /// or `/Sessions/Playing/Stopped` (v2 `report_playback_*`; the play
-    /// session id is empty because stage 6 never opens a playback session).
+    /// session id is empty because v3 never opens a playback session).
     pub async fn report_session(
         &self,
         endpoint: &str,

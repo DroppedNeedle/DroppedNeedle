@@ -1,11 +1,11 @@
-//! Stage-6 stream-gateway routes: one source-keyed GET/HEAD surface over the engine.
+//! Stream-gateway routes: one source-keyed GET/HEAD surface over the engine.
 //!
 //! This file owns the HTTP layer only: route shapes, the typed query, range
 //! parsing, byte-exact 200/206/416/HEAD headers, and the error envelope. Byte
 //! sourcing, leases, and transcode execution live in the engine behind the
 //! [`StreamEngine`] seam below.
 //!
-//! # Routes (relative; the integrator nests these under `/api/v3`)
+//! # Routes (relative; `MediaSetup` nests these under `/api/v3`)
 //!
 //! ```text
 //! GET  /stream/{source}/{*key}   full or ranged audio bytes
@@ -18,36 +18,31 @@
 //! keys are `format`, `max_bitrate`, and `estimate_content_length` (see
 //! [`StreamQuery`]).
 //!
-//! # Deep-link note (stage 12)
+//! # Deep links
 //!
-//! The R2/R1 player call sites migrate in stage 12, so these shapes are kept
-//! deliberately small and stable: one handler shape
+//! Players link to `/api/v3/stream/{source}/{key}` with those three query
+//! keys. The shapes stay small and stable: one handler shape
 //! `(State, StreamUser, Path, HeaderMap, ValidatedQuery)`, path params only
-//! for identity, query only for transcode hints. Stage 12 should deep-link
-//! players at `/api/v3/stream/{source}/{key}` with those three query keys
-//! and treat any new gateway capability as a new query key, not a new route.
+//! for identity, query only for transcode hints. A new gateway capability
+//! should be a new query key, not a new route.
 //!
-//! # Integrator seams
+//! # Seams
 //!
-//! * Engine: [`StreamEngine`] is a minimal local stand-in. The sibling
-//!   `gateway.rs` slice owns the real engine (leases + `Transcoder` +
-//!   direct/transcode reads); when it lands, delete this trait and the
-//!   [`StreamOpen`]/[`OpenMedia`]/[`StreamFault`] types and re-point the
-//!   handlers at the sibling spelling. The range/HEAD/envelope/header logic
-//!   in this file stays untouched.
-//! * Whole-object reads: the stand-in hands routes the whole object as
-//!   `bytes` so range slicing stays byte-exact here. If the real engine
-//!   grows a ranged-read method, thread the already-parsed [`ByteRange`]
-//!   through instead; the 206/416 decisions must not move.
-//! * Mounting: [`stream_routes`] returns a relative-path router. Merge it
-//!   into the `/api/v3` nest inside the deny-by-default session gate in
-//!   `create_app`, and extend `AppState` with the engine plus ids. Reporting
-//!   (`start`/`progress`/`stop`/`scrobble`/`now-playing`/`stopped`) is owned
-//!   by the sibling reporting slice, not this router.
-//! * [`RETRY_AFTER_SECONDS`] duplicates the sibling transcode constant;
-//!   keep one spelling when the slices merge.
+//! * Engine: [`StreamEngine`] is the engine seam; [`super::gateway::Gateway`]
+//!   implements it (leases + `Transcoder` + direct/transcode reads). The
+//!   range/HEAD/envelope/header logic stays in this file.
+//! * Whole-object reads: the engine hands routes the whole object as
+//!   `bytes` so range slicing stays byte-exact here. If the engine grows a
+//!   ranged-read method, thread the already-parsed [`ByteRange`] through
+//!   instead; the 206/416 decisions must not move.
+//! * Mounting: [`stream_routes`] returns a relative-path router merged into
+//!   the `/api/v3` nest inside the deny-by-default session gate. Playback
+//!   reporting (`start`/`progress`/`stop`/`scrobble`/`now-playing`/`stopped`)
+//!   lives in `playback`, not this router.
+//! * [`RETRY_AFTER_SECONDS`] duplicates the transcode constant of the same
+//!   name; the two could share one spelling.
 //! * [`content_type_for_extension`] ports the v2 `CONTENT_TYPE_MAP` minus
-//!   WMA, which never streams per the stage cut. The engine resolves the
+//!   WMA, which v3 does not support. The engine resolves the
 //!   final content type (upstream wins for remotes); local reads go through
 //!   this table.
 //!
@@ -99,7 +94,7 @@ pub const STREAM_CAPACITY_EXHAUSTED: &str = "STREAM_CAPACITY_EXHAUSTED";
 /// The remote source failed the read.
 pub const UPSTREAM_UNAVAILABLE: &str = "UPSTREAM_UNAVAILABLE";
 
-/// Challenge sent on every 401, mirroring the sibling slices.
+/// Challenge sent on every 401, matching the other routes.
 pub const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
 /// Retry hint on every 429 (v2 sends 1; duplicates the transcode constant).
 pub const RETRY_AFTER_SECONDS: u64 = 1;
@@ -241,7 +236,7 @@ pub enum StreamFault {
 }
 
 /// Minimal engine stand-in: open one media object or fail with a [`StreamFault`].
-/// The sibling `gateway.rs` slice replaces this trait; handlers stay the same.
+/// [`super::gateway::Gateway`] is the production implementation.
 pub trait StreamEngine: Send + Sync {
     /// Resolve and read one media object for `request`.
     fn open(
@@ -286,7 +281,7 @@ pub struct ByteRange {
 impl ByteRange {
     /// Length of the slice in bytes. Ranges are never empty by
     /// construction (`parse_range` only returns `start <= end`), so there
-    /// is deliberately no `is_empty`.
+    /// is no `is_empty`.
     #[allow(clippy::len_without_is_empty)]
     pub fn len(self) -> u64 {
         self.end - self.start + 1
@@ -302,7 +297,7 @@ pub fn parse_range(header: &str, total_len: u64) -> Option<ByteRange> {
     if total_len == 0 {
         return None;
     }
-    // Surrounding whitespace is insignificant (the Subsonic slice trims
+    // Surrounding whitespace is insignificant (the Subsonic code trims
     // too, so `"bytes=0-1 "` is a 206 on every path, never a 416).
     let spec = header.trim().strip_prefix("bytes=")?;
     let (start_str, end_str) = spec.split_once('-')?;
@@ -387,7 +382,7 @@ impl<E: Send + Sync> FromRequestParts<StreamState<E>> for StreamUser {
 
 /// Transcode hints. All optional; `format`/`max_bitrate` pass straight to
 /// the engine's `decide()`, and `estimate_content_length=true` asks a
-/// transcode landing for its estimated length. Stage-12 deep links freeze
+/// transcode landing for its estimated length. Player deep links rely on
 /// these three keys.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct StreamQuery {

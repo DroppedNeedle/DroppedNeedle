@@ -77,7 +77,7 @@ pub enum Refusal {
     EmptyVorbisValue { key: String },
     #[error("mixed ID3v2.3 tag: {detail}")]
     MixedId3v23 { detail: String },
-    #[error("edit key {key:?} is outside this slice's surface")]
+    #[error("edit key {key:?} is outside the editable tag set")]
     UnsupportedEdit { key: ItemKey },
     #[error("post-save verify found an out-of-edit delta: {detail}")]
     VerifyMismatch { detail: String },

@@ -518,7 +518,7 @@ pub struct RefreshResponse {
     pub status: String,
 }
 
-/// Edition-acquire outcome (A:12).
+/// Edition-acquire outcome.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct EditionAcquireResponse {
     /// `started`, `already_in_progress`, or `already_complete`.

@@ -1,4 +1,4 @@
-//! Stage-10 settings bundle: the section service, its save effects,
+//! Settings bundle: the section service, its save effects,
 //! the verify probes, and the HTTP surface.
 //!
 //! [`SettingsSetup`] is the one `AppState` field settings adds. It holds

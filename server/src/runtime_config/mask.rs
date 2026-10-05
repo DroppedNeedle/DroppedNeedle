@@ -1,4 +1,4 @@
-//! Exact-match mask sentinels (D12).
+//! Exact-match mask sentinels.
 //!
 //! v2 used four different sentinel schemes: exact match (most sections),
 //! `startswith` prefix match (Last.fm secrets, wrapped), a `***`-prefix DTO
@@ -6,7 +6,7 @@
 //! (jellyfin, ListenBrainz, YouTube returned plaintext on GET). v3 uses one
 //! rule everywhere: the masked getter returns the section's `MASK` constant
 //! when a secret is set (empty string when unset), and a save whose incoming
-//! value EQUALS the mask keeps the stored ciphertext. Anything else,
+//! value equals the mask keeps the stored ciphertext. Anything else,
 //! including a value that merely starts with the mask, is a new secret.
 //!
 //! Two consequences worth stating plainly: a real secret that literally
@@ -24,18 +24,18 @@ pub const PROWLARR_API_KEY_MASK: &str = "prowlarr****";
 pub const INDEXER_API_KEY_MASK: &str = "indexer****";
 /// Lidarr import key (v2 literal kept).
 pub const LIDARR_API_KEY_MASK: &str = "lidarr****";
-/// Jellyfin key. NEW: v2 had no mask and GET returned plaintext.
+/// Jellyfin key. New in v3: v2 had no mask and GET returned plaintext.
 pub const JELLYFIN_API_KEY_MASK: &str = "jellyfin****";
 /// Navidrome password (v2 literal kept).
 pub const NAVIDROME_PASSWORD_MASK: &str = "********";
 /// Plex token (v2 literal kept).
 pub const PLEX_TOKEN_MASK: &str = "plex****";
-/// ListenBrainz user token. NEW: v2 had no mask and GET returned plaintext.
+/// ListenBrainz user token. New in v3: v2 had no mask and GET returned plaintext.
 pub const LISTENBRAINZ_TOKEN_MASK: &str = "listenbrainz****";
-/// YouTube key. NEW: v2 had no mask and GET returned plaintext.
+/// YouTube key. New in v3: v2 had no mask and GET returned plaintext.
 pub const YOUTUBE_API_KEY_MASK: &str = "youtube****";
-/// Per-user Last.fm credentials (R7 deleted the admin-global pair, so this
-/// mask serves the per-user store). Normalized from the v2 `••••••••` +
+/// Per-user Last.fm credentials (v3 has no admin-global pair, so this mask
+/// serves the per-user store). Normalized from the v2 `••••••••` +
 /// last-4 prefix match, which leaked key material into responses.
 pub const LASTFM_SECRET_MASK: &str = "lastfm****";
 /// Spotify client secret (v2 literal kept).
@@ -50,7 +50,7 @@ pub const WRAPPED_API_KEY_MASK: &str = "wrapped****";
 pub const OIDC_SECRET_MASK: &str = "oidc****";
 /// AcoustID key (v2 literal kept).
 pub const ACOUSTID_KEY_MASK: &str = "acoustid****";
-/// AudioDB key. NEW literal replacing the v2 `***...last3` DTO mask, which
+/// AudioDB key. New literal replacing the v2 `***...last3` DTO mask, which
 /// leaked the last three characters and was stored plaintext.
 pub const AUDIODB_API_KEY_MASK: &str = "audiodb****";
 /// Plugin secret-flagged values (v2 literal kept; now encrypted at rest -

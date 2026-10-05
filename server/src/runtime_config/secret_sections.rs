@@ -403,10 +403,10 @@ impl SecretSection for LidarrImportConnection {
     }
 }
 
-// --- jellyfin_settings (D8: section owns the URL; mask gap closed) ---------
+// --- jellyfin_settings (the section owns the URL; mask gap closed) ---------
 
 /// Jellyfin connection. The section URL is the single owner (the top-level
-/// mirror and the in-memory `Settings` mutation are gone per D8).
+/// mirror and the in-memory `Settings` mutation are gone).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct JellyfinConnection {
@@ -991,7 +991,7 @@ impl SecretSection for TypedLibrary {
     }
 }
 
-// --- advanced_settings (export §3.2 closed allowlist) ----------------------
+// --- advanced_settings (closed export allowlist) ---------------------------
 // Kept: user-meaningful TTL/perf fields below. Dropped as internal tuning:
 // artist_discovery_warm_interval, artist_discovery_warm_delay,
 // artist_discovery_precache_delay, artist_discovery_precache_concurrency,

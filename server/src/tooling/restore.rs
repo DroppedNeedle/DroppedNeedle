@@ -1,9 +1,9 @@
-//! Offline database restore: the stage-11 CLI half of stage-10 backups.
+//! Offline database restore: the CLI half of server backups.
 //!
 //! The mechanism is [`BackupService::restore`](crate::db::BackupService):
 //! verify the backup (integrity plus schema stamp), copy it into an empty
 //! directory as `library.db`, and verify the copy. This module adds the
-//! operator face: a read-only preflight over the stage-10 restore report
+//! operator face: a read-only preflight over the backup restore report
 //! (manifest identity when a sidecar exists), fail-closed refusals with
 //! plain messages, and a small JSON summary on success.
 //!
@@ -95,7 +95,7 @@ pub fn restore_backup(
     })
 }
 
-/// Read-only preflight over the stage-10 restore report. Returns the names
+/// Read-only preflight over the backup restore report. Returns the names
 /// of the checks that passed. Files that cannot take the preflight (names
 /// outside the backups-dir convention) skip it; the restore itself still
 /// verifies integrity and the schema stamp.

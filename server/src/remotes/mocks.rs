@@ -3,11 +3,11 @@
 //! These axum apps are the executable record of the live-verified quirks
 //! the adapters port: the Navidrome mock pins the 0.62.0 single-folder
 //! probe (same `musicFolderId` twice accepted, unknown folders ignored for
-//! catalog endpoints, two-folder behavior deliberately unmodeled), the
+//! catalog endpoints, two-folder behavior not modeled), the
 //! Jellyfin mock pins the 10.11 auth-header rule (the `MediaBrowser`
 //! header passes, the legacy Emby headers 401), and the Plex mock pins the
-//! container-paging and composite-fallback shapes. No test in this slice
-//! touches a live media server; every parity brief runs against these on
+//! container-paging and composite-fallback shapes. No test touches a live
+//! media server; every parity test runs against these on
 //! loopback.
 
 use std::collections::HashMap;
@@ -31,7 +31,7 @@ const ALBUM_ONE: &str = "Neon Meridian";
 const ALBUM_TWO: &str = "Glass Tides";
 const ALBUM_THREE: &str = "Paper Satellites";
 const GENRE: &str = "Synthwave";
-/// Release MBID for "Neon Meridian", used by every match brief.
+/// Release MBID for "Neon Meridian", used by every match test.
 pub const MATCH_MBID: &str = "11111111-1111-1111-1111-111111111111";
 
 /// Credentials the mocks accept.
@@ -56,7 +56,7 @@ pub fn canned_stream_bytes(source_tag: u8) -> Vec<u8> {
         .collect()
 }
 
-/// Recorded upstream calls for brief assertions.
+/// Recorded upstream calls for test assertions.
 #[derive(Debug, Clone, Default)]
 pub struct RecordedCalls {
     /// `Authorization` header values seen by the Jellyfin mock.
@@ -634,7 +634,7 @@ async fn jf_image(
 
 fn image_bytes() -> Response {
     // Minimal valid JPEG: SOI, empty scan, EOI. Decoders accept the shape;
-    // briefs assert bytes and content type, not pixels.
+    // tests assert bytes and content type, not pixels.
     let bytes = vec![0xFF, 0xD8, 0xFF, 0xD9];
     (
         StatusCode::OK,
@@ -1478,7 +1478,7 @@ async fn px_composite(State(recorder): State<MockRecorder>, headers: HeaderMap) 
     if !px_authorized(&headers, &recorder) {
         return px_unauthorized();
     }
-    // Fallback composite path: distinct trailing marker so the brief can
+    // Fallback composite path: distinct trailing marker so the test can
     // tell it apart from a playlist's own composite path.
     let bytes = vec![0xFF, 0xD8, 0xFF, 0xD9, 0x02];
     (

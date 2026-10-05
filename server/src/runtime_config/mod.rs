@@ -6,11 +6,11 @@
 //! user-editable at runtime lives here as a typed section with a schema and
 //! a getter on [`ConfigStore`](store::ConfigStore). Secrets follow the
 //! exact-match mask-sentinel rule ([`mask`]) and are encrypted at rest by
-//! [`Crypto`](crypto::Crypto); they are never logged (brief-enforced).
+//! [`Crypto`](crypto::Crypto); they are never logged (a test enforces it).
 //!
-//! No HTTP surface lives here; stage 10 owns the settings routes, stage 11
-//! the v2 importer (which re-encrypts under this key), and stage 5 the
-//! YouTube client around [`QuotaStore`](quota::QuotaStore).
+//! No HTTP surface lives here: `settings` owns the settings routes,
+//! `import` the v2 importer (which re-encrypts under this key), and
+//! `providers::youtube` the client around [`QuotaStore`](quota::QuotaStore).
 
 pub mod crypto;
 pub mod error;
@@ -82,7 +82,7 @@ pub struct DroppedSection {
     pub note: &'static str,
 }
 
-/// Sections v3 dropped. The stage-11 validator rejects these in exports;
+/// Sections v3 dropped. The import validator rejects these in exports;
 /// [`ConfigStore::dropped_sections_present`](store::ConfigStore::dropped_sections_present)
 /// reports them when a v2 file is opened directly.
 pub const DROPPED_SECTIONS: &[DroppedSection] = &[

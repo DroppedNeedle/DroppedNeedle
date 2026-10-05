@@ -1,4 +1,4 @@
-//! Dev-only covers-debug tooling route (R11).
+//! Dev-only covers-debug tooling route.
 //!
 //! v2 shipped `GET /covers/debug/artist/{id}` on the prod API; v3 keeps the
 //! diagnostics but moves them off the API entirely. This module serves the

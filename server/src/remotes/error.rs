@@ -1,7 +1,7 @@
 //! Slice errors rendered into the shared envelope.
 //!
 //! Every failure renders as `{"error": {code, message, details}}` with a
-//! SCREAMING_SNAKE code. Statuses follow the reads slices: 401 carries the
+//! SCREAMING_SNAKE code. Statuses match the reads routes: 401 carries the
 //! `Bearer` challenge, 4xx messages are user-safe, and 5xx bodies stay fixed
 //! with only an error id while the cause goes to the structured log.
 
@@ -36,7 +36,7 @@ pub const REMOTE_UNSUPPORTED: &str = "REMOTE_UNSUPPORTED";
 /// Challenge sent on every 401.
 pub const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
 
-/// Every failure this slice can return to a caller.
+/// Every failure the remotes routes can return to a caller.
 #[derive(Debug)]
 pub enum RemotesError {
     /// No valid session.
@@ -87,7 +87,7 @@ impl RemotesError {
     /// Build a 500, logging the real cause with its id.
     pub fn internal(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
         let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "remotes slice failed");
+        tracing::error!(error_id, %cause, "remotes request failed");
         Self::Internal { error_id }
     }
 

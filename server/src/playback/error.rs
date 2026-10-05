@@ -65,14 +65,14 @@ impl PlaybackError {
     /// Build a 500, logging the real cause with its id.
     pub fn internal(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
         let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "playback slice failed");
+        tracing::error!(error_id, %cause, "playback request failed");
         Self::Internal { error_id }
     }
 
     /// Build a 502, logging the real cause with its id.
     pub fn upstream(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
         let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "playback slice upstream failed");
+        tracing::error!(error_id, %cause, "playback request upstream failed");
         Self::Upstream { error_id }
     }
 

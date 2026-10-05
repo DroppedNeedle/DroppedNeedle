@@ -24,7 +24,7 @@ pub enum DispatchOrigin {
     Wanted,
     /// An upgrade of owned files (size-neutral, quota-exempt).
     Upgrade,
-    /// An edition fill/upgrade (A:12).
+    /// An edition fill/upgrade.
     Edition,
 }
 

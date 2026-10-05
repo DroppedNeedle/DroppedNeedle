@@ -1,35 +1,32 @@
-//! Stage-6 transcode policy and execution engine.
+//! Transcode policy and execution engine.
 //!
-//! A faithful port of the v2 Python reference
-//! (`backend/services/compat/transcode_service.py`, with leases from
-//! `backend/services/compat/stream_concurrency.py`). `decide()` keeps the v2
+//! A faithful port of v2's compat transcode service, with leases from its
+//! stream concurrency module. `decide()` keeps the v2
 //! rule order and quirk citations; `build_cmd()` keeps the exact ffmpeg argv;
 //! the streaming body keeps the disconnect, timeout, and stderr-drain
 //! behavior. Nothing is removed or "improved": where v2 has a wart, the port
 //! keeps it and says so.
 //!
-//! Engine only: there are no routes in this slice. The gateway slice owns the
-//! HTTP surface and consumes the [`Transcoder`] seam defined below.
+//! Engine only: there are no routes here. The gateway owns the HTTP
+//! surface and consumes the [`Transcoder`] seam defined below.
 //!
-//! # Integrator seams
+//! # Seams
 //!
-//! * Leases: this slice talks to [`TranscodeLeasePool`] / [`TranscodeLease`]
-//!   only. [`LocalTranscodeGate`] is a minimal standalone gate (same 2 global
-//!   / 1 per-principal limits as v2) so the engine and its briefs run without
-//!   the gateway; unify it with the shared gateway gate by implementing
-//!   [`TranscodeLeasePool`] for the shared type and passing that as `P`.
+//! * Leases: the engine talks to [`TranscodeLeasePool`] / [`TranscodeLease`]
+//!   only. [`LocalTranscodeGate`] is the gate production uses (same 2 global
+//!   / 1 per-principal limits as v2); it is separate from the gateway's
+//!   direct gate.
 //! * Service: [`Transcoder`] is the trait the gateway calls,
 //!   [`FfmpegTranscoder`] the implementation, [`TranscodeBody`] /
-//!   [`TranscodeStream`] the per-request byte stream. If the gateway slice
-//!   lands its own spelling first, keep one and delete the other.
+//!   [`TranscodeStream`] the per-request byte stream.
 //! * Inputs: [`TrackInfo`] mirrors the track fields `decide()` reads from the
 //!   gateway view model (`file_format`, `bitrate` in kbps, `duration_seconds`);
 //!   [`TranscodeSettings`] mirrors the `connect_apps` section
 //!   (`transcoding_enabled`, `transcode_default_format`,
-//!   `transcode_max_bitrate_kbps`). Map and delete when the shared types land.
+//!   `transcode_max_bitrate_kbps`).
 //! * Failures: [`TranscodeError::Capacity`] is the gateway's 429. v2 routers
 //!   answer capacity exhaustion with status 429 plus `Retry-After: 1`
-//!   (`backend/api/compat/subsonic/router.py`, `_stream_decided`); see
+//!   (the Subsonic router's `_stream_decided`); see
 //!   [`CAPACITY_STATUS_CODE`] and [`RETRY_AFTER_SECONDS`].
 
 use std::collections::HashMap;
@@ -111,7 +108,7 @@ pub enum OutFormat {
 }
 
 /// The track fields `decide()` reads. Minimal mirror of the gateway view
-/// model; unify when the shared type lands (integrator seam).
+/// model.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackInfo {
     /// Source container/codec tag, e.g. "flac". Compared case-insensitively.
@@ -123,7 +120,7 @@ pub struct TrackInfo {
 }
 
 /// The settings fields `decide()` reads. Minimal mirror of the `connect_apps`
-/// section; the gateway maps its three fields onto this (integrator seam).
+/// section; the gateway maps its three fields onto this.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranscodeSettings {
     /// Master switch (`transcoding_enabled`).
@@ -453,7 +450,7 @@ fn sanitized_io_detail(err: &std::io::Error) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Lease seam (shared with the gateway slice)
+// Lease seam
 // ---------------------------------------------------------------------------
 
 /// One held transcode slot. Consuming release makes double-release
@@ -463,9 +460,8 @@ pub trait TranscodeLease: Send + 'static {
     fn release(self);
 }
 
-/// Source of transcode leases. The engine depends only on this trait; the
-/// integrator unifies it with the shared gateway lease scheme by implementing
-/// it for the shared gate type. Exhaustion surfaces as
+/// Source of transcode leases. The engine depends only on this trait;
+/// production implements it for [`LocalTranscodeGate`]. Exhaustion surfaces as
 /// [`TranscodeError::Capacity`] so the gateway can answer its 429.
 pub trait TranscodeLeasePool: Send + Sync {
     /// Lease type this pool hands out.
@@ -490,12 +486,11 @@ struct TranscodeGateState {
     waiters: usize,
 }
 
-/// Minimal standalone transcode gate: 2 global slots, 1 per principal, a
-/// bounded waiter queue, and a 5s wait deadline, matching v2
-/// `StreamConcurrencyService` transcode-pool defaults. Waiting acquirers race
-/// on a broadcast wake rather than v2's first-eligible scan; at this pool
-/// size that is close enough for the standalone engine, and the shared
-/// gateway gate remains the real fairness story (integrator seam).
+/// Transcode gate: 2 global slots, 1 per principal, a bounded waiter queue,
+/// and a 5s wait deadline, matching v2 `StreamConcurrencyService`
+/// transcode-pool defaults. Waiting acquirers race on a broadcast wake
+/// rather than v2's first-eligible scan; at this pool size the difference
+/// does not matter, and the gateway's direct gate bounds the reads.
 #[derive(Debug)]
 pub struct LocalTranscodeGate {
     state: Mutex<TranscodeGateState>,
@@ -517,7 +512,7 @@ impl LocalTranscodeGate {
         )
     }
 
-    /// Gate with explicit limits, for briefs that need a short wait deadline.
+    /// Gate with explicit limits, for tests that need a short wait deadline.
     pub fn with_limits(
         global_limit: usize,
         principal_limit: usize,
@@ -667,7 +662,7 @@ impl TranscodeLeasePool for Arc<LocalTranscodeGate> {
 // Process seam (dependency-injected ffmpeg)
 // ---------------------------------------------------------------------------
 
-/// One running ffmpeg child, behind a trait so briefs script it instead of
+/// One running ffmpeg child, behind a trait so tests script it instead of
 /// needing a real binary on `PATH`.
 pub trait FfmpegChild: Send + 'static {
     /// Read the next stdout chunk; `None` is natural EOF.
@@ -679,7 +674,7 @@ pub trait FfmpegChild: Send + 'static {
     /// exit. Port of the tail of v2 `_body`.
     fn finish(&mut self) -> impl Future<Output = ()> + Send;
 
-    /// Graceful stop: terminate, brief wait, then kill. Port of v2
+    /// Graceful stop: terminate, short wait, then kill. Port of v2
     /// `_terminate`.
     fn shutdown(&mut self) -> impl Future<Output = ()> + Send;
 
@@ -688,7 +683,7 @@ pub trait FfmpegChild: Send + 'static {
 }
 
 /// Spawns ffmpeg children. The engine depends only on this trait; production
-/// passes [`StdFfmpegSpawner`], briefs pass a scripted fake.
+/// passes [`StdFfmpegSpawner`], tests pass a scripted fake.
 pub trait FfmpegSpawner: Send + Sync {
     /// Child type this spawner produces.
     type Child: FfmpegChild;
@@ -892,12 +887,11 @@ fn terminate_child(child: &mut Child) {
 }
 
 // ---------------------------------------------------------------------------
-// Transcoder seam (consumed by the gateway slice)
+// Transcoder seam (consumed by the gateway)
 // ---------------------------------------------------------------------------
 
 /// Byte stream for one transcode, behind a trait so the gateway programs to
-/// the seam rather than the struct. Integrator seam: if the gateway slice
-/// lands its own spelling first, keep one and delete the other.
+/// the seam rather than the struct.
 pub trait TranscodeBody: Send {
     /// Pull the next output chunk; `None` is the end of the stream and fuses
     /// (later calls keep returning `None`). The disconnect probe, when given,
@@ -914,10 +908,9 @@ pub trait TranscodeBody: Send {
     fn close(&mut self) -> impl Future<Output = ()> + Send;
 }
 
-/// Transcode service seam the gateway slice consumes. The gateway calls
+/// Transcode service seam the gateway consumes. The gateway calls
 /// [`decide()`] first and only reaches `stream` on a transcode plan; the
-/// engine rejects direct plans defensively. Integrator seam: if the gateway
-/// slice lands its own spelling first, keep one and delete the other.
+/// engine rejects direct plans defensively.
 pub trait Transcoder: Send + Sync {
     /// Per-request byte stream this service produces.
     type Body: TranscodeBody;
@@ -991,7 +984,7 @@ impl<S: FfmpegSpawner, P: TranscodeLeasePool> Transcoder for FfmpegTranscoder<S,
 
 /// One live transcode: the lease plus the child. The lease releases exactly
 /// once no matter how the stream ends (EOF, error, `close`, or drop),
-/// because every path funnels through `Option::take` — the structural
+/// because every path funnels through `Option::take`: the structural
 /// version of v2's idempotent `lease.release()` plus `BackgroundTask`.
 pub struct TranscodeStream<L: TranscodeLease, C: FfmpegChild> {
     lease: Option<L>,

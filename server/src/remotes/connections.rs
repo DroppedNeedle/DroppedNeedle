@@ -1,7 +1,7 @@
 //! Per-user remote connections with encrypted credentials.
 //!
 //! Each row pins one user to one remote source: the server URL plus the
-//! credential, sealed at rest with the stage-2 secrets core
+//! credential, sealed at rest with the secrets core
 //! ([`Crypto`](crate::runtime_config::crypto::Crypto)). Reads
 //! decrypt on the way out; status views never carry credential material.
 //!
@@ -95,8 +95,8 @@ impl std::fmt::Debug for ResolvedConnection {
     }
 }
 
-/// Connection persistence port. The slice ships a memory store; SQLite
-/// arrives with the integrator's persistence tier.
+/// Connection persistence port. Only a memory store exists so far; there
+/// is no SQLite implementation yet.
 pub trait ConnectionStore: Send + Sync {
     /// Fetch one owner's row for one source. None is absence.
     fn get<'a>(
@@ -198,14 +198,14 @@ impl ConnectionStore for MemoryConnectionStore {
     }
 }
 
-/// Seals and opens connection credentials under one stage-2 key.
+/// Seals and opens connection credentials under one config key.
 #[derive(Debug)]
 pub struct CredentialCoder {
     crypto: Arc<Crypto>,
 }
 
 impl CredentialCoder {
-    /// Wrap the shared stage-2 key.
+    /// Wrap the shared config key.
     pub fn new(crypto: Arc<Crypto>) -> Self {
         Self { crypto }
     }

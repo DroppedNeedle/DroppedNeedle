@@ -6,7 +6,7 @@
 //! and hands the routes whole bytes plus response metadata. Range slicing,
 //! 206/416 decisions, and headers stay in the routes file.
 //!
-//! Two honest limits, both forced by the whole-bytes seam: the direct lease
+//! Two known limits, both forced by the whole-bytes seam: the direct lease
 //! covers the open+read only (it releases before the response is sent, so
 //! it bounds read concurrency, not response concurrency), and remote reads
 //! are direct-only (the ffmpeg service takes a local path; per-source
@@ -36,7 +36,7 @@ pub struct RemoteMedia {
     pub bytes: Vec<u8>,
 }
 
-/// Remote byte source. The integrator implements this over the remotes
+/// Remote byte source. `media` implements this over the remotes
 /// adapter (per-user connections + credential store); tests script it.
 pub trait RemoteReader: Send + Sync {
     /// Fetch one remote object, or fail with a routable [`StreamFault`].
@@ -85,8 +85,8 @@ impl<R, T> Gateway<R, T> {
     /// Resolve local reads against the live library root registry
     /// instead of the constructor root. The registry re-reads on
     /// every open, so root changes apply without a restart; with no
-    /// usable root configured, local reads honestly 404. Root ids
-    /// inside playback keys stay a catalog-slice concern: bare keys
+    /// usable root configured, local reads 404. Root ids inside playback
+    /// keys stay a catalog concern: bare keys
     /// resolve under the primary root.
     pub fn with_library_roots(mut self, roots: crate::library::wiring::RootSource) -> Self {
         self.library_roots = Some(roots);
@@ -122,7 +122,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             })?;
         // Track facts for decide(): the extension is exact; bitrate and
         // duration are unknown at this layer, so a client cap alone never
-        // triggers a transcode here — only a codec mismatch does.
+        // triggers a transcode here; only a codec mismatch does.
         let track = TrackInfo {
             file_format: extension.to_owned(),
             bitrate_kbps: None,
@@ -143,7 +143,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             &self.settings,
             self.ffmpeg_present,
         );
-        // Compat verdict carry: the protocol slices decide with real source
+        // Compat verdict carry: the protocol modules decide with real source
         // bitrate facts, while this re-run sees `bitrate_kbps: None`, so a
         // bitrate-triggered same-codec plan would land direct here. When the
         // adapter carries `force_transcode`, honor the compat verdict (codec
@@ -230,7 +230,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
     /// Component screening runs first; then both sides canonicalize so a
     /// symlink inside the root cannot point at a file outside it. Paths
     /// that do not resolve (missing files, missing root) skip the prefix
-    /// check and fall through to the read, which reports them honestly.
+    /// check and fall through to the read, which reports them.
     /// With library roots wired, the primary registry root replaces the
     /// constructor root; an empty registry 404s instead of reading the
     /// stale fallback.

@@ -246,7 +246,7 @@ pub struct HubView {
 pub struct DiscoveryHubView {
     /// Hub title, e.g. "Recommended for you".
     pub title: String,
-    /// Hub kind; always `"album"` (other hub kinds are dropped, as in v1).
+    /// Hub kind; always `"album"` (other hub kinds are dropped, as in v2).
     pub hub_type: String,
     /// Albums on this shelf.
     pub albums: Vec<AlbumView>,
@@ -603,7 +603,7 @@ pub struct GenreSongsQuery {
     pub offset: Option<i64>,
 }
 
-/// Random-tracks query. Limits mirror the v1 Navidrome route
+/// Random-tracks query. Limits mirror the v2 Navidrome route
 /// (`size` 1-50, default 20) so the hub page keeps its batch size.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 pub struct RandomQuery {
@@ -613,7 +613,7 @@ pub struct RandomQuery {
     pub genre: Option<String>,
 }
 
-/// Plex discovery-hubs query. The count mirrors the v1 Plex route
+/// Plex discovery-hubs query. The count mirrors the v2 Plex route
 /// (1-20, default 10).
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 pub struct DiscoveryQuery {

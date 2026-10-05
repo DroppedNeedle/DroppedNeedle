@@ -4,9 +4,9 @@
 //! here (or in `secret_sections` when it holds secrets). Sections are plain
 //! serde data with two hooks:
 //!
-//! - `validate()` runs on the SAVE path and REJECTS bad submitted values
+//! - `validate()` runs on the save path and rejects bad submitted values
 //!   with typed errors. It never heals: a save either lands or fails.
-//! - `normalize()` runs on both paths and HEALS stored drift the way v2
+//! - `normalize()` runs on both paths and heals stored drift the way v2
 //!   `__post_init__` did (unknown tier labels fall back, out-of-range
 //!   optional bounds clear to `None`). Loading an old or hand-edited file
 //!   never bricks the boot.
@@ -42,7 +42,7 @@ pub trait Section: Default + Serialize + serde::de::DeserializeOwned {
 /// `ConfigStore::save`; secret sections must go through `save_secret` (and
 /// indexers/plugins through their dedicated methods), so storing a secret
 /// as plaintext is a compile error rather than a code-review catch.
-/// `Plugins` is deliberately NOT plain: its secret-flagged values need the
+/// `Plugins` is not plain, on purpose: its secret-flagged values need the
 /// manifest's secret-key set at save time.
 pub trait PlainSection: Section {}
 
@@ -223,7 +223,7 @@ impl Section for UserPreferences {
     const KEY: &'static str = "user_preferences";
 }
 
-// --- library_scan_schedule (R8: sync section dropped, this one kept) ------
+// --- library_scan_schedule (the v2 sync section is dropped, this one kept) -
 
 /// Automatic-scan cadence values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -798,7 +798,7 @@ impl Section for ConnectApps {
 // Dropped from storage: quality_recipe_status / quality_recipe_error. In v2
 // those are read-only projections computed at GET time (route surfaces
 // "v2"/"non_convertible"/"invalid"); persisting them would pin stale
-// verdicts, so stage 7/10 recompute the verdict instead (export §3.2).
+// verdicts, so readers recompute the verdict instead.
 // The save-time cross-check stays live here: a v2 recipe requires
 // flac_mp3_only, and validate() refuses anything else (v2 gates recipe
 // saves in both settings.py and save_download_policy).
@@ -1567,7 +1567,7 @@ impl Section for DownloadPolicy {
 }
 
 // --- musicbrainz_settings -------------------------------------------------
-// Dropped transients (export §3.2): pending_brainzmash, source_quarantined,
+// Dropped transients: pending_brainzmash, source_quarantined,
 // quarantine_reason. Kept: source_mode, api_url, rate_limit,
 // concurrent_searches, community_acknowledged, selected_source_mode,
 // source_id, generation, active_brainzmash.
@@ -1652,7 +1652,7 @@ pub struct MusicBrainzSettings {
     pub concurrent_searches: i64,
     /// Community-tier disclosure acknowledged.
     pub community_acknowledged: bool,
-    /// Last deliberately chosen tier.
+    /// Last tier the admin chose.
     pub selected_source_mode: MbSourceMode,
     /// Source identity.
     pub source_id: String,
@@ -1848,14 +1848,13 @@ impl Section for MusicBrainzSettings {
     }
 }
 
-// --- lastfm_settings (R7: per-user only) ----------------------------------
+// --- lastfm_settings (per-user credentials only) --------------------------
 // The admin-global credential pair is deleted; the section keeps only the
-// master switch. This reads export §3.1's "1:1" as superseded by the
-// explicit R7 owner decision: §3.1 carves this section out (switch only),
-// the stage-11 importer decrypts sealed lastfm secrets then drops them,
-// and stage 3 owns the per-user store behind LASTFM_SECRET_MASK.
+// master switch. The v2 importer decrypts sealed lastfm secrets, then
+// drops them, and the per-user store behind LASTFM_SECRET_MASK holds the
+// credentials.
 
-/// Last.fm settings: master switch only (R7 per-user credentials live in
+/// Last.fm settings: master switch only (per-user credentials live in
 /// the per-user store, not here).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -1868,7 +1867,7 @@ impl Section for LastFmSettings {
     const KEY: &'static str = "lastfm_settings";
 }
 
-// --- lyrics_settings (stage 5: read-path lyrics provider) -------------------
+// --- lyrics_settings (read-path lyrics provider) ---------------------------
 // The master switch for live LRCLIB lyrics on the library read path. This is
 // the read-path provider toggle, not the library-management write block
 // (`LyricsManagementSettings`): with this off, lyrics reads stay on the
@@ -1930,7 +1929,7 @@ impl Section for Plugins {
 }
 
 // --- _internal ------------------------------------------------------------
-// Kept (export §3.2): plex_client_id, droppedneedle_device_id,
+// Kept: plex_client_id, droppedneedle_device_id,
 // brainzmash_consent_admin. Dropped as recomputed/derived: audiodb sweep
 // cursor + completion, release_type_policy_revision,
 // musicbrainz_settings_revision, official_source_selected.
@@ -1952,7 +1951,7 @@ impl Section for InternalState {
     const KEY: &'static str = "_internal";
 }
 
-// --- library_management (deliberately secret-free) ------------------------
+// --- library_management (secret-free on purpose) ------------------------
 
 /// Settings schema version (v2 `LIBRARY_MANAGEMENT_SCHEMA_VERSION`).
 pub const LIBRARY_MANAGEMENT_SCHEMA_VERSION: i64 = 1;
@@ -2906,19 +2905,19 @@ pub struct LibraryManagementRootAssignment {
     pub automatic_scan_discovered: bool,
     /// Automatic custom editions.
     pub automatic_custom_editions: bool,
-    /// Activation pins (set by the activation flow, stage 8).
+    /// Activation pins (set by the activation flow).
     pub activation_profile_revision: Option<String>,
-    /// Activation pins (set by the activation flow, stage 8).
+    /// Activation pins (set by the activation flow).
     pub activation_naming_policy_revision: Option<String>,
-    /// Activation pins (set by the activation flow, stage 8).
+    /// Activation pins (set by the activation flow).
     pub activation_policy_revision: Option<String>,
-    /// Activation pins (set by the activation flow, stage 8).
+    /// Activation pins (set by the activation flow).
     pub activation_settings_revision: Option<String>,
-    /// Activation pins (set by the activation flow, stage 8).
+    /// Activation pins (set by the activation flow).
     pub activation_preview_token: Option<String>,
-    /// Activation pins (set by the activation flow, stage 8).
+    /// Activation pins (set by the activation flow).
     pub activation_preview_hash: Option<String>,
-    /// Activation pins (set by the activation flow, stage 8).
+    /// Activation pins (set by the activation flow).
     pub activation_confirmed_at: Option<f64>,
 }
 
@@ -2953,7 +2952,7 @@ impl Default for ExternalRefreshSettings {
     }
 }
 
-/// Library management settings (deliberately secret-free).
+/// Library management settings (secret-free on purpose).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LibraryManagement {

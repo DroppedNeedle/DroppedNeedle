@@ -10,7 +10,7 @@
 //! Probes reuse the production clients (media adapters, slskd and
 //! Usenet clients, the ListenBrainz verifier), so a passing verify
 //! means the same code path the app uses can reach the upstream. The
-//! [`VerifyProbes`] port keeps tests hermetic: HTTP briefs run against
+//! [`VerifyProbes`] port keeps tests hermetic: HTTP tests run against
 //! scripted fakes while the live probes prove themselves against
 //! loopback stubs with explicit base URLs.
 
@@ -254,7 +254,7 @@ pub fn require_service_url(url: &str, label: &str) -> Result<String, SettingsErr
 
 /// Collapse a transport error to one line. URLs and hosts never ride
 /// in probe errors: reqwest's display can embed them, so only the
-/// error KIND is ever rendered.
+/// error kind is ever rendered.
 fn transport_kind(error: &reqwest::Error) -> &'static str {
     if error.is_timeout() {
         "timed out"

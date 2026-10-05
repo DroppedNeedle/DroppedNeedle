@@ -1,6 +1,6 @@
 //! Typed failures for the v3 config system.
 //!
-//! Every variant names the section and field involved so a stage-10 handler
+//! Every variant names the section and field involved so a settings handler
 //! can render a precise 4xx without ever interpolating secret material. No
 //! variant carries plaintext secrets: crypto failures are fixed strings.
 

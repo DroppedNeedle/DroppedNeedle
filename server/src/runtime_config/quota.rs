@@ -14,7 +14,7 @@
 //! - Reserve/refund serialize on a mutex (the v2 `asyncio.Lock` shape).
 //!
 //! Intended changes: the API is synchronous (`&self` with interior
-//! locking; stage-5 callers wrap it in `spawn_blocking`), so the v2
+//! locking; async callers wrap it in `spawn_blocking`), so the v2
 //! cancel-mid-write rollback has no await point to exist at; and stores
 //! are constructor-injected (no global per-path registry). The clock is
 //! constructor-injected too, so date rollover is testable without time

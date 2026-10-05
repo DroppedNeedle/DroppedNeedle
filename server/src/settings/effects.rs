@@ -40,7 +40,7 @@ pub trait EventsKick: Send + Sync {
     fn kick(&self);
 }
 
-/// No-op kick. Used until the integrator wires the jobs-owned sweep.
+/// No-op kick, for tests.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct NoopKick;
@@ -50,7 +50,7 @@ impl EventsKick for NoopKick {
     fn kick(&self) {}
 }
 
-/// Closure adapter so the integrator wires the real sweep with one line.
+/// Closure adapter so wiring passes the real sweep with one line.
 pub struct FnKick<F> {
     /// Kick closure.
     pub kick_fn: F,

@@ -446,7 +446,7 @@ impl Default for ConnectAppsDto {
     }
 }
 
-// --- lastfm_settings (R7: switch only) ---------------------------------------
+// --- lastfm_settings (switch only) ------------------------------------------
 
 /// Last.fm master switch. Credentials are per-user (see
 /// `/me/connections/lastfm`); the admin-global pair is deleted.
@@ -889,7 +889,7 @@ pub struct ProwlarrTestResponse {
 
 /// SABnzbd test verdict: version plus the category list (for the picker),
 /// the SABnzbd-side completed dir (the mount hint), and the mount
-/// diagnosis over the SUBMITTED mount.
+/// diagnosis over the submitted mount.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct SabnzbdTestResponse {
     /// Whether the submitted values checked out.
@@ -1097,7 +1097,7 @@ pub struct PolicySummaryResponse {
     pub quality_recipe_error: Option<String>,
 }
 
-/// Admin preview of an UNSAVED policy against persisted state:
+/// Admin preview of an unsaved policy against persisted state:
 /// persisted-state bucket counts only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PolicyImpactResponse {
@@ -1285,7 +1285,7 @@ pub struct MusicBrainzSettingsDto {
     pub concurrent_searches: i64,
     /// Community-tier disclosure acknowledged.
     pub community_acknowledged: bool,
-    /// Last deliberately chosen tier.
+    /// Last tier the admin chose.
     pub selected_source_mode: MbSourceModeDto,
     /// Source identity.
     pub source_id: String,
@@ -1590,7 +1590,7 @@ pub struct LibraryPolicyImpactResponse {
 /// The wire shape is v2's `AdvancedSettingsFrontend` minus the dropped
 /// internal-tuning fields: values are human units (hours/minutes/seconds)
 /// scaled to backend units (seconds/milliseconds) on save, floored back on
-/// read. This shape is a CLOSED allowlist: unknown JSON fields are
+/// read. This shape is a closed allowlist: unknown JSON fields are
 /// rejected at decode (400), so a client holding a dropped tuning field
 /// learns it is gone instead of believing it saved.
 /// Advanced tunables in frontend units. See the section comment for the
@@ -1820,7 +1820,7 @@ impl Default for AdvancedSettingsDto {
     }
 }
 
-/// Frontend cache TTLs in BACKEND units (milliseconds), verbatim from
+/// Frontend cache TTLs in backend units (milliseconds), verbatim from
 /// the stored advanced section. The SPA reads this one endpoint instead
 /// of the whole advanced surface.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -2869,7 +2869,7 @@ impl Default for ExternalRefreshSettingsDto {
     }
 }
 
-/// Full management settings (deliberately secret-free).
+/// Full management settings (secret-free on purpose).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct LibraryManagementSettingsDto {

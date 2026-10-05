@@ -694,7 +694,7 @@ impl PlexAdapter {
     }
 
     /// Discovery shelves via `/hubs/sections/{section}?count=`, album-type
-    /// hubs only (v1 `get_discovery_hubs` semantics: first configured
+    /// hubs only (v2 `get_discovery_hubs` semantics: first configured
     /// section, `Metadata` rows as albums). Empty shelves when nothing
     /// resolves or the hubs call is declined.
     pub async fn discovery(&self, count: i64) -> Result<DiscoveryView, AdapterError> {

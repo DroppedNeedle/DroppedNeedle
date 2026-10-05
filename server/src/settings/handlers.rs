@@ -2,7 +2,7 @@
 //! errors; section logic lives in the service, probes behind the
 //! verify port.
 //!
-//! Verify endpoints test the SUBMITTED values, never the stored
+//! Verify endpoints test the submitted values, never the stored
 //! config, so Test works before the first save and reflects edits. A
 //! masked secret resolves to the stored one first; an empty secret
 //! fails the verdict without a network round trip.
@@ -420,7 +420,7 @@ pub async fn verify_plex(
     }))
 }
 
-/// List Plex music libraries over the STORED connection. Unconfigured
+/// List Plex music libraries over the stored connection. Unconfigured
 /// is a 400; an unreachable Plex is a 502.
 #[utoipa::path(
     get,
@@ -1323,7 +1323,7 @@ pub async fn get_policy_summary(
     settings.service().policy_summary().map(Json)
 }
 
-/// Impact preview of an UNSAVED policy body against persisted rows.
+/// Impact preview of an unsaved policy body against persisted rows.
 /// Needs the database; unwired states answer 503.
 #[utoipa::path(
     post,

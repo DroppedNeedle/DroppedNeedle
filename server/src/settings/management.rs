@@ -7,7 +7,7 @@
 //! content revisions (settings, profile, script, naming-policy) hash
 //! byte-compatibly with v2 (ASCII-escaped canonical JSON), so migrated
 //! activations and CAS tokens keep working. Golden vectors minted from
-//! v2 pin this in the settings briefs.
+//! v2 pin this in the settings tests.
 //!
 //! Script validation rides behind the [`ScriptCompiler`] port: the
 //! shipped structural compiler checks the documented rules (naming
@@ -2010,7 +2010,7 @@ pub struct ProfileImportWarningDto {
     pub message: String,
 }
 
-/// Bundle canonical JSON: sorted keys, compact separators, raw UTF-8 —
+/// Bundle canonical JSON: sorted keys, compact separators, raw UTF-8,
 /// byte-identical to Python's `json.dumps(value, ensure_ascii=False,
 /// separators=(",", ":"), sort_keys=True)` for the shapes hashed here.
 fn bundle_canonical_json(value: &Value) -> String {

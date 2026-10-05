@@ -432,7 +432,7 @@ pub async fn revoke_mix_handler(
     ))
 }
 
-/// Refresh one user's personal mix (A:393).
+/// Refresh one user's personal mix.
 /// `POST /api/v3/requests/personal-mix/refresh`. Repeat calls while a build
 /// runs answer `already_running`; unlinked users get 400.
 #[utoipa::path(

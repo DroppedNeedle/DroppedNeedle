@@ -1174,7 +1174,7 @@ impl Default for PersonalMixStore {
     }
 }
 
-/// One in-flight edition acquire (A:12).
+/// One in-flight edition acquire.
 #[derive(Debug, Clone)]
 pub struct EditionMark {
     /// Lowercased release-group MBID.

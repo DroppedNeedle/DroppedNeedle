@@ -3,7 +3,7 @@
 //! v2 kept a Fernet key as `DATA_ENC_KEY` in `<config>/config/.env` (a
 //! different `.env` from the app one) and, worse, treated undecryptable
 //! ciphertext as legacy plaintext: deleting the key file minted a fresh key
-//! and every stored Fernet token silently BECAME the credential. v3 keeps
+//! and every stored Fernet token silently became the credential. v3 keeps
 //! the two halves of that apart:
 //!
 //! - The v3 key lives in `<config_dir>/data_enc.key` (base64, mode 0600),
@@ -11,7 +11,7 @@
 //!   `load` refuses to mint, for contexts that must fail closed.
 //! - `decrypt` fails closed with a typed error on any undecryptable input.
 //!   There is no legacy-plaintext passthrough here; that lives only in the
-//!   stage-11 importer, which resolves v2 values through v2 semantics and
+//!   v2 importer, which resolves v2 values through v2 semantics and
 //!   immediately re-encrypts under this key.
 //!
 //! Ciphertext shape is `v3:<base64 nonce||ciphertext>` (ChaCha20-Poly1305,
@@ -43,7 +43,7 @@ const NONCE_LEN: usize = 12;
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum CryptoError {
     /// The key file is absent and this context refuses to mint one (the
-    /// stage-11 exporter/importer use this to refuse rather than silently
+    /// v2 exporter/importer use this to refuse rather than silently
     /// re-keying, which is what corrupted v2 credentials on key loss).
     #[error("key file {} is missing; refusing to mint a fresh key here", .path.display())]
     KeyMissing {
@@ -141,7 +141,7 @@ impl Crypto {
         }
     }
 
-    /// Build from raw key bytes (tests and the stage-11 importer, which
+    /// Build from raw key bytes (tests and the v2 importer, which
     /// holds the v3 key in memory after unlocking the export envelope).
     pub fn from_key_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
         if bytes.len() != KEY_LEN {

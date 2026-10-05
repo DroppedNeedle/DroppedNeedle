@@ -69,7 +69,7 @@ impl DirectGate {
         )
     }
 
-    /// Gate with explicit limits, for briefs that need tiny pools.
+    /// Gate with explicit limits, for tests that need tiny pools.
     pub fn with_limits(
         global_limit: usize,
         principal_limit: usize,
@@ -228,8 +228,8 @@ impl Drop for DirectLease<'_> {
 }
 
 /// Removes a queued waiter when its acquire is cancelled. Timeouts take the
-/// normal path (the guard is disarmed first); only a dropped future — which
-/// skips the code below the wait — triggers the guard.
+/// normal path (the guard is disarmed first); only a dropped future (which
+/// skips the code below the wait) triggers the guard.
 #[derive(Debug)]
 struct CancelGuard<'a> {
     gate: &'a DirectGate,

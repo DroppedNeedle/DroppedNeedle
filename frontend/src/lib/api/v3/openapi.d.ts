@@ -87,7 +87,7 @@ export interface paths {
         put?: never;
         /**
          * Test submitted Lidarr credentials against `system/status` (v2 Test
-         *     route): the SUBMITTED url/key are probed so Test works before the first
+         *     route): the submitted url/key are probed so Test works before the first
          *     save, a masked key resolves to the stored one, and reachable/bad-key
          *     verdicts travel in the body, never as a leaked 5xx, never echoing the
          *     URL or host.
@@ -402,8 +402,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Jellyfin accounts available for import. Honest 503 until the live
-         *     Jellyfin client lands (same posture as the login flows).
+         * List Jellyfin accounts available for import. 503 until a live Jellyfin
+         *     client exists (same posture as the login flows).
          */
         get: operations["admin_import_list_jellyfin"];
         put?: never;
@@ -422,8 +422,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Plex accounts available for import. Honest 503 until the live Plex
-         *     client lands (same posture as the login flows).
+         * List Plex accounts available for import. 503 until a live Plex client
+         *     exists (same posture as the login flows).
          */
         get: operations["admin_import_list_plex"];
         put?: never;
@@ -604,7 +604,7 @@ export interface paths {
         put?: never;
         /**
          * Fill the selected edition's missing tracks and upgrade its below-cutoff
-         *     owned tracks (A:12). `POST /api/v3/albums/{album_id}/edition/acquire`.
+         *     owned tracks. `POST /api/v3/albums/{album_id}/edition/acquire`.
          *     Curator only. Never retags existing files.
          */
         post: operations["acquire_edition_handler"];
@@ -927,7 +927,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List the caller's sessions for the R6 UI. */
+        /** List the caller's sessions for the session-list UI. */
         get: operations["list_sessions"];
         put?: never;
         post?: never;
@@ -967,7 +967,7 @@ export interface paths {
          * First-admin setup. Creates the admin and logs them in (201 + session,
          *     v2 parity) iff no users exist; otherwise 409. Concurrent setups serialize
          *     on the state guard: the loser probes after the winner commits and lands
-         *     on 409. (The users slice has no empty-table constraint, so without the
+         *     on 409. (The users table has no empty-table constraint, so without the
          *     guard two distinct usernames would both succeed.)
          */
         post: operations["setup_handler"];
@@ -3296,7 +3296,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Random tracks, optionally filtered by genre. Limits mirror the v1
+         * Random tracks, optionally filtered by genre. Limits mirror the v2
          *     Navidrome route (default 20, max 50); Plex answers unsupported.
          */
         get: operations["get_random"];
@@ -3765,7 +3765,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Cancel a batch of asks (R10). `POST /api/v3/requests/batches/cancel`.
+         * Cancel a batch of asks. `POST /api/v3/requests/batches/cancel`.
          *     Non-admins detach from shared rows and cancel their own; admins cancel
          *     anything live.
          */
@@ -3906,7 +3906,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Refresh one user's personal mix (A:393).
+         * Refresh one user's personal mix.
          *     `POST /api/v3/requests/personal-mix/refresh`. Repeat calls while a build
          *     runs answer `already_running`; unlinked users get 400.
          */
@@ -4303,7 +4303,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Impact preview of an UNSAVED policy body against persisted rows.
+         * Impact preview of an unsaved policy body against persisted rows.
          *     Needs the database; unwired states answer 503.
          */
         post: operations["post_policy_impact"];
@@ -4996,7 +4996,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Plex music libraries over the STORED connection. Unconfigured
+         * List Plex music libraries over the stored connection. Unconfigured
          *     is a 400; an unreachable Plex is a 502.
          */
         get: operations["get_plex_libraries"];
@@ -5488,7 +5488,7 @@ export interface components {
          * @description The wire shape is v2's `AdvancedSettingsFrontend` minus the dropped
          *     internal-tuning fields: values are human units (hours/minutes/seconds)
          *     scaled to backend units (seconds/milliseconds) on save, floored back on
-         *     read. This shape is a CLOSED allowlist: unknown JSON fields are
+         *     read. This shape is a closed allowlist: unknown JSON fields are
          *     rejected at decode (400), so a client holding a dropped tuning field
          *     learns it is gone instead of believing it saved.
          *     Advanced tunables in frontend units. See the section comment for the
@@ -5998,8 +5998,8 @@ export interface components {
             musicbrainz_id: string;
         };
         /**
-         * @description Album intake body. Names may be omitted only when they resolve; this
-         *     slice has no catalog lookup, so blank or literal-"Unknown" names are
+         * @description Album intake body. Names may be omitted only when they resolve; intake
+         *     has no catalog lookup, so blank or literal-"Unknown" names are
          *     rejected (v2 `request_service._meaningful_name` quirk).
          */
         AlbumIntake: {
@@ -6390,14 +6390,14 @@ export interface components {
             /** @description Restored track ids. */
             restored: string[];
         };
-        /** @description Batch-cancel body (R10). Dedupe is by exact string before lookup. */
+        /** @description Batch-cancel body. Dedupe is by exact string before lookup. */
         BatchCancelBody: {
             /** @description Request kind; defaults to album. */
             kind?: string | null;
             /** @description MBIDs to cancel. */
             musicbrainz_ids: string[];
         };
-        /** @description Batch-cancel response (R10). */
+        /** @description Batch-cancel response. */
         BatchCancelResponse: {
             /**
              * Format: int32
@@ -7181,7 +7181,7 @@ export interface components {
         DiscoveryHubView: {
             /** @description Albums on this shelf. */
             albums: components["schemas"]["RemotesAlbumView"][];
-            /** @description Hub kind; always `"album"` (other hub kinds are dropped, as in v1). */
+            /** @description Hub kind; always `"album"` (other hub kinds are dropped, as in v2). */
             hub_type: string;
             /** @description Hub title, e.g. "Recommended for you". */
             title: string;
@@ -7448,7 +7448,7 @@ export interface components {
              */
             verify_downloads: boolean;
         };
-        /** @description Edition-acquire outcome (A:12). */
+        /** @description Edition-acquire outcome. */
         EditionAcquireResponse: {
             /** @description Human outcome. */
             message: string;
@@ -7722,7 +7722,7 @@ export interface components {
             preferred_format: components["schemas"]["AudioFormatDto"];
         };
         /**
-         * @description Frontend cache TTLs in BACKEND units (milliseconds), verbatim from
+         * @description Frontend cache TTLs in backend units (milliseconds), verbatim from
          *     the stored advanced section. The SPA reads this one endpoint instead
          *     of the whole advanced surface.
          */
@@ -7911,8 +7911,8 @@ export interface components {
         };
         /**
          * @description Health payload. `status` plus the running message keep the v2 shape;
-         *     stage 10 adds the latest checkpoint pass (`None` until the checkpoint
-         *     loop records one, or on states without a checkpoint service).
+         *     `checkpoint` adds the latest checkpoint pass (`None` until the
+         *     checkpoint loop records one, or on states without a checkpoint service).
          */
         HealthResponse: {
             checkpoint?: null | components["schemas"]["CheckpointView"];
@@ -8611,7 +8611,7 @@ export interface components {
         };
         /**
          * @description Admin-configured read-only Lidarr import connection (v2
-         *     `LidarrImportConnectionSettings`, D5). NOT a management integration.
+         *     `LidarrImportConnectionSettings`). Not a management integration.
          */
         LidarrConnectionSettings: {
             /** @description API key, Fernet-encrypted at rest, masked on read. */
@@ -8627,7 +8627,7 @@ export interface components {
         /**
          * @description Import summary (v2 `LidarrImportResponse`). `imported` counts brand-new
          *     follows only; `already_following` is the disjoint pre-existing subset;
-         *     `auto_download_enabled` counts brand-new auto-download follows only (D9).
+         *     `auto_download_enabled` counts brand-new auto-download follows only.
          */
         LidarrImportResponse: {
             /**
@@ -9068,8 +9068,8 @@ export interface components {
             device?: string | null;
         };
         /**
-         * @description One live session, already privacy-projected (same JSON as the stage-4
-         *     read shape so the integrator swap stays transparent).
+         * @description One live session, already privacy-projected (same JSON as the
+         *     `reads::discover` now-playing shape, so clients see no difference).
          */
         NowPlayingEntry: {
             /** @description Album title (none when redacted or unknown). */
@@ -9415,7 +9415,7 @@ export interface components {
              */
             updated_at: number;
         };
-        /** @description Sync report, field for field with the v1 result shape. */
+        /** @description Sync report, field for field with the v2 result shape. */
         PlaylistSyncResult: {
             /** @description Human summary of the run. */
             message: string;
@@ -9635,7 +9635,7 @@ export interface components {
         };
         /**
          * @description One linked external account. Never carries the secret, only the name.
-         *     The schema rename keeps this distinct from the stage-6 remotes
+         *     The schema rename keeps this distinct from the remotes
          *     `ConnectionStatus` in the one OpenAPI document; the wire shape is
          *     unchanged.
          */
@@ -9744,7 +9744,7 @@ export interface components {
             };
         };
         /**
-         * @description Admin preview of an UNSAVED policy against persisted state:
+         * @description Admin preview of an unsaved policy against persisted state:
          *     persisted-state bucket counts only.
          */
         PolicyImpactResponse: {
@@ -9854,7 +9854,7 @@ export interface components {
         };
         /**
          * @description Own profile. Identity only; connected services and library stats belong
-         *     to the connections and library slices.
+         *     to the connections and library routes.
          */
         ProfileResponse: components["schemas"]["UserResponse"];
         /** @description One provider's limiter posture. */
@@ -10598,7 +10598,7 @@ export interface components {
              */
             eta?: number | null;
             /**
-             * @description Whether the album is in the library. None: the intake slice has
+             * @description Whether the album is in the library. None: intake has
              *     no library seam; callers treat unknown as present for imported
              *     rows, which only land after the task completes.
              */
@@ -10667,8 +10667,8 @@ export interface components {
             year?: number | null;
         };
         /**
-         * @description One grouped status detail behind the request card's expander. The
-         *     intake slice has no producer for these yet (v2 never sent them
+         * @description One grouped status detail behind the request card's expander. Intake
+         *     has no producer for these yet (v2 never sent them
          *     either), so views answer None until one exists.
          */
         RequestStatusMessage: {
@@ -10678,8 +10678,8 @@ export interface components {
             title?: string | null;
         };
         /**
-         * @description Personal-mix refresh outcome (A:393). The schema renames to avoid the
-         *     discover slice's unrelated `RefreshResponse` in the shared document.
+         * @description Personal-mix refresh outcome. The schema renames to avoid discover's
+         *     unrelated `RefreshResponse` in the shared document.
          */
         RequestsRefreshResponse: {
             /** @description `started` or `already_running`. */
@@ -10703,7 +10703,7 @@ export interface components {
         };
         /**
          * @description Pre-restore verification report. Read-only: nothing here writes or moves
-         *     the live database (the actual restore stays an offline CLI in stage 11).
+         *     the live database (the actual restore stays an offline CLI).
          */
         RestoreReport: {
             /** @description Backup file name the report covers. */
@@ -10849,7 +10849,7 @@ export interface components {
         /**
          * @description SABnzbd test verdict: version plus the category list (for the picker),
          *     the SABnzbd-side completed dir (the mount hint), and the mount
-         *     diagnosis over the SUBMITTED mount.
+         *     diagnosis over the submitted mount.
          */
         SabnzbdTestResponse: {
             /** @description Known categories. */
@@ -11114,10 +11114,10 @@ export interface components {
          */
         SearchKind: "artist" | "album" | "track";
         /**
-         * @description Per-bucket provider health for one search call. The values mirror v1's
+         * @description Per-bucket provider health for one search call. The values mirror v2's
          *     `SearchRemoteStatus` exactly so the same notice and stale-time logic
-         *     applies. The local-only stage always emits `Ok`; stage-5 provider
-         *     fan-out fills in the real values.
+         *     applies. Local-only search always emits `Ok`; a provider fan-out would
+         *     fill in the real values.
          * @enum {string}
          */
         SearchRemoteStatus: "ok" | "partial" | "timeout" | "error" | "stale";
@@ -11143,7 +11143,7 @@ export interface components {
             tracks: components["schemas"]["SearchResultItem"][];
         };
         /**
-         * @description One search hit. Cover art is deliberately absent: the covers endpoints
+         * @description One search hit. Cover art is absent on purpose: the covers endpoints
          *     serve art by id, so search never duplicates those URLs.
          */
         SearchResultItem: {
@@ -11151,7 +11151,7 @@ export interface components {
             artist?: string | null;
             /** @description Local catalog id. */
             id: string;
-            /** @description True for every local hit; provider hits in stage 5 vary. */
+            /** @description True for every local hit; provider hits would vary. */
             in_library: boolean;
             /** @description Result bucket. */
             kind: components["schemas"]["SearchKind"];
@@ -11160,7 +11160,7 @@ export interface components {
              *     accepted identity. Absent means unidentified, never failure.
              */
             musicbrainz_id?: string | null;
-            /** @description Always false in stage 4; the requests slice owns this flag. */
+            /** @description Always false here; the requests module owns this flag. */
             requested: boolean;
             /**
              * Format: int32
@@ -11497,7 +11497,7 @@ export interface components {
         };
         /**
          * @description Live slskd client status (v2 `DownloadClientStatusResponse`, trimmed to
-         *     the client half; the mount half belongs to the downloads slice).
+         *     the client half; the mount half belongs to the downloads module).
          */
         SlskdStatusResponse: {
             /** @description Credentials/URL present. */

@@ -778,7 +778,7 @@ impl NavidromeAdapter {
         Ok(songs.iter().map(|song| self.track_view(song)).collect())
     }
 
-    /// Random songs via `getRandomSongs`, folder-scoped like the v1
+    /// Random songs via `getRandomSongs`, folder-scoped like the v2
     /// route (`size` + optional `genre`). Empty when declined.
     pub async fn random(&self, limit: i64, genre: &str) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;

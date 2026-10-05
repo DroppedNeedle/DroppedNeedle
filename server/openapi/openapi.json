@@ -118,7 +118,7 @@
         "tags": [
           "crate::acquire::imports::handlers"
         ],
-        "summary": "Test submitted Lidarr credentials against `system/status` (v2 Test\nroute): the SUBMITTED url/key are probed so Test works before the first\nsave, a masked key resolves to the stored one, and reachable/bad-key\nverdicts travel in the body, never as a leaked 5xx, never echoing the\nURL or host.",
+        "summary": "Test submitted Lidarr credentials against `system/status` (v2 Test\nroute): the submitted url/key are probed so Test works before the first\nsave, a masked key resolves to the stored one, and reachable/bad-key\nverdicts travel in the body, never as a leaked 5xx, never echoing the\nURL or host.",
         "operationId": "test_lidarr",
         "responses": {
           "200": {
@@ -541,7 +541,7 @@
         "tags": [
           "crate::auth::users::handlers"
         ],
-        "summary": "List Jellyfin accounts available for import. Honest 503 until the live\nJellyfin client lands (same posture as the login flows).",
+        "summary": "List Jellyfin accounts available for import. 503 until a live Jellyfin\nclient exists (same posture as the login flows).",
         "operationId": "admin_import_list_jellyfin",
         "responses": {
           "200": {
@@ -562,7 +562,7 @@
         "tags": [
           "crate::auth::users::handlers"
         ],
-        "summary": "List Plex accounts available for import. Honest 503 until the live Plex\nclient lands (same posture as the login flows).",
+        "summary": "List Plex accounts available for import. 503 until a live Plex client\nexists (same posture as the login flows).",
         "operationId": "admin_import_list_plex",
         "responses": {
           "200": {
@@ -925,7 +925,7 @@
         "tags": [
           "crate::acquire::requests::intake"
         ],
-        "summary": "Fill the selected edition's missing tracks and upgrade its below-cutoff\nowned tracks (A:12). `POST /api/v3/albums/{album_id}/edition/acquire`.\nCurator only. Never retags existing files.",
+        "summary": "Fill the selected edition's missing tracks and upgrade its below-cutoff\nowned tracks. `POST /api/v3/albums/{album_id}/edition/acquire`.\nCurator only. Never retags existing files.",
         "operationId": "acquire_edition_handler",
         "parameters": [
           {
@@ -1504,7 +1504,7 @@
         "tags": [
           "crate::auth::users::handlers"
         ],
-        "summary": "List the caller's sessions for the R6 UI.",
+        "summary": "List the caller's sessions for the session-list UI.",
         "operationId": "list_sessions",
         "responses": {
           "200": {
@@ -1550,7 +1550,7 @@
         "tags": [
           "crate::auth::routes::native"
         ],
-        "summary": "First-admin setup. Creates the admin and logs them in (201 + session,\nv2 parity) iff no users exist; otherwise 409. Concurrent setups serialize\non the state guard: the loser probes after the winner commits and lands\non 409. (The users slice has no empty-table constraint, so without the\nguard two distinct usernames would both succeed.)",
+        "summary": "First-admin setup. Creates the admin and logs them in (201 + session,\nv2 parity) iff no users exist; otherwise 409. Concurrent setups serialize\non the state guard: the loser probes after the winner commits and lands\non 409. (The users table has no empty-table constraint, so without the\nguard two distinct usernames would both succeed.)",
         "operationId": "setup_handler",
         "requestBody": {
           "content": {
@@ -7503,7 +7503,7 @@
         "tags": [
           "crate::remotes::handlers"
         ],
-        "summary": "Random tracks, optionally filtered by genre. Limits mirror the v1\nNavidrome route (default 20, max 50); Plex answers unsupported.",
+        "summary": "Random tracks, optionally filtered by genre. Limits mirror the v2\nNavidrome route (default 20, max 50); Plex answers unsupported.",
         "operationId": "get_random",
         "responses": {
           "200": {
@@ -8161,7 +8161,7 @@
         "tags": [
           "crate::acquire::requests::intake"
         ],
-        "summary": "Cancel a batch of asks (R10). `POST /api/v3/requests/batches/cancel`.\nNon-admins detach from shared rows and cancel their own; admins cancel\nanything live.",
+        "summary": "Cancel a batch of asks. `POST /api/v3/requests/batches/cancel`.\nNon-admins detach from shared rows and cancel their own; admins cancel\nanything live.",
         "operationId": "cancel_batch_handler",
         "requestBody": {
           "content": {
@@ -8362,7 +8362,7 @@
         "tags": [
           "crate::acquire::requests::views"
         ],
-        "summary": "Refresh one user's personal mix (A:393).\n`POST /api/v3/requests/personal-mix/refresh`. Repeat calls while a build\nruns answer `already_running`; unlinked users get 400.",
+        "summary": "Refresh one user's personal mix.\n`POST /api/v3/requests/personal-mix/refresh`. Repeat calls while a build\nruns answer `already_running`; unlinked users get 400.",
         "operationId": "refresh_mix_handler",
         "responses": {
           "200": {
@@ -9181,7 +9181,7 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Impact preview of an UNSAVED policy body against persisted rows.\nNeeds the database; unwired states answer 503.",
+        "summary": "Impact preview of an unsaved policy body against persisted rows.\nNeeds the database; unwired states answer 503.",
         "operationId": "post_policy_impact",
         "requestBody": {
           "content": {
@@ -10741,7 +10741,7 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "List Plex music libraries over the STORED connection. Unconfigured\nis a 400; an unreachable Plex is a 502.",
+        "summary": "List Plex music libraries over the stored connection. Unconfigured\nis a 400; an unreachable Plex is a 502.",
         "operationId": "get_plex_libraries",
         "responses": {
           "200": {
@@ -11878,7 +11878,7 @@
       },
       "AdvancedSettingsDto": {
         "type": "object",
-        "description": "\nThe wire shape is v2's `AdvancedSettingsFrontend` minus the dropped\ninternal-tuning fields: values are human units (hours/minutes/seconds)\nscaled to backend units (seconds/milliseconds) on save, floored back on\nread. This shape is a CLOSED allowlist: unknown JSON fields are\nrejected at decode (400), so a client holding a dropped tuning field\nlearns it is gone instead of believing it saved.\nAdvanced tunables in frontend units. See the section comment for the\nunit contract and the allowlist rule.",
+        "description": "\nThe wire shape is v2's `AdvancedSettingsFrontend` minus the dropped\ninternal-tuning fields: values are human units (hours/minutes/seconds)\nscaled to backend units (seconds/milliseconds) on save, floored back on\nread. This shape is a closed allowlist: unknown JSON fields are\nrejected at decode (400), so a client holding a dropped tuning field\nlearns it is gone instead of believing it saved.\nAdvanced tunables in frontend units. See the section comment for the\nunit contract and the allowlist rule.",
         "properties": {
           "audiodb_api_key": {
             "type": "string",
@@ -12470,7 +12470,7 @@
       },
       "AlbumIntake": {
         "type": "object",
-        "description": "Album intake body. Names may be omitted only when they resolve; this\nslice has no catalog lookup, so blank or literal-\"Unknown\" names are\nrejected (v2 `request_service._meaningful_name` quirk).",
+        "description": "Album intake body. Names may be omitted only when they resolve; intake\nhas no catalog lookup, so blank or literal-\"Unknown\" names are\nrejected (v2 `request_service._meaningful_name` quirk).",
         "required": [
           "musicbrainz_id"
         ],
@@ -13333,7 +13333,7 @@
       },
       "BatchCancelBody": {
         "type": "object",
-        "description": "Batch-cancel body (R10). Dedupe is by exact string before lookup.",
+        "description": "Batch-cancel body. Dedupe is by exact string before lookup.",
         "required": [
           "musicbrainz_ids"
         ],
@@ -13356,7 +13356,7 @@
       },
       "BatchCancelResponse": {
         "type": "object",
-        "description": "Batch-cancel response (R10).",
+        "description": "Batch-cancel response.",
         "required": [
           "success",
           "cancelled",
@@ -15172,7 +15172,7 @@
           },
           "hub_type": {
             "type": "string",
-            "description": "Hub kind; always `\"album\"` (other hub kinds are dropped, as in v1)."
+            "description": "Hub kind; always `\"album\"` (other hub kinds are dropped, as in v2)."
           },
           "title": {
             "type": "string",
@@ -15495,7 +15495,7 @@
       },
       "EditionAcquireResponse": {
         "type": "object",
-        "description": "Edition-acquire outcome (A:12).",
+        "description": "Edition-acquire outcome.",
         "required": [
           "status",
           "message"
@@ -16130,7 +16130,7 @@
       },
       "FrontendCacheTTLs": {
         "type": "object",
-        "description": "Frontend cache TTLs in BACKEND units (milliseconds), verbatim from\nthe stored advanced section. The SPA reads this one endpoint instead\nof the whole advanced surface.",
+        "description": "Frontend cache TTLs in backend units (milliseconds), verbatim from\nthe stored advanced section. The SPA reads this one endpoint instead\nof the whole advanced surface.",
         "properties": {
           "discover": {
             "type": "integer",
@@ -16480,7 +16480,7 @@
       },
       "HealthResponse": {
         "type": "object",
-        "description": "Health payload. `status` plus the running message keep the v2 shape;\nstage 10 adds the latest checkpoint pass (`None` until the checkpoint\nloop records one, or on states without a checkpoint service).",
+        "description": "Health payload. `status` plus the running message keep the v2 shape;\n`checkpoint` adds the latest checkpoint pass (`None` until the\ncheckpoint loop records one, or on states without a checkpoint service).",
         "required": [
           "status",
           "message"
@@ -18055,7 +18055,7 @@
       },
       "LidarrConnectionSettings": {
         "type": "object",
-        "description": "Admin-configured read-only Lidarr import connection (v2\n`LidarrImportConnectionSettings`, D5). NOT a management integration.",
+        "description": "Admin-configured read-only Lidarr import connection (v2\n`LidarrImportConnectionSettings`). Not a management integration.",
         "required": [
           "url",
           "api_key"
@@ -18089,7 +18089,7 @@
       },
       "LidarrImportResponse": {
         "type": "object",
-        "description": "Import summary (v2 `LidarrImportResponse`). `imported` counts brand-new\nfollows only; `already_following` is the disjoint pre-existing subset;\n`auto_download_enabled` counts brand-new auto-download follows only (D9).",
+        "description": "Import summary (v2 `LidarrImportResponse`). `imported` counts brand-new\nfollows only; `already_following` is the disjoint pre-existing subset;\n`auto_download_enabled` counts brand-new auto-download follows only.",
         "required": [
           "imported",
           "already_following",
@@ -18634,7 +18634,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/MbSourceModeDto",
-                "description": "Last deliberately chosen tier."
+                "description": "Last tier the admin chose."
               }
             ],
             "default": "brainzmash"
@@ -18917,7 +18917,7 @@
       },
       "NowPlayingEntry": {
         "type": "object",
-        "description": "One live session, already privacy-projected (same JSON as the stage-4\nread shape so the integrator swap stays transparent).",
+        "description": "One live session, already privacy-projected (same JSON as the\n`reads::discover` now-playing shape, so clients see no difference).",
         "required": [
           "id",
           "user_name",
@@ -19699,7 +19699,7 @@
       },
       "PlaylistSyncResult": {
         "type": "object",
-        "description": "Sync report, field for field with the v1 result shape.",
+        "description": "Sync report, field for field with the v2 result shape.",
         "required": [
           "success",
           "message",
@@ -20151,7 +20151,7 @@
       },
       "PluginConnectionStatus": {
         "type": "object",
-        "description": "One linked external account. Never carries the secret, only the name.\nThe schema rename keeps this distinct from the stage-6 remotes\n`ConnectionStatus` in the one OpenAPI document; the wire shape is\nunchanged.",
+        "description": "One linked external account. Never carries the secret, only the name.\nThe schema rename keeps this distinct from the remotes\n`ConnectionStatus` in the one OpenAPI document; the wire shape is\nunchanged.",
         "required": [
           "service"
         ],
@@ -20414,7 +20414,7 @@
       },
       "PolicyImpactResponse": {
         "type": "object",
-        "description": "Admin preview of an UNSAVED policy against persisted state:\npersisted-state bucket counts only.",
+        "description": "Admin preview of an unsaved policy against persisted state:\npersisted-state bucket counts only.",
         "required": [
           "manual_search_jobs",
           "queued_without_attempts",
@@ -20616,7 +20616,7 @@
             "description": "The account."
           }
         ],
-        "description": "Own profile. Identity only; connected services and library stats belong\nto the connections and library slices."
+        "description": "Own profile. Identity only; connected services and library stats belong\nto the connections and library routes."
       },
       "ProviderLimiterView": {
         "type": "object",
@@ -22252,7 +22252,7 @@
               "boolean",
               "null"
             ],
-            "description": "Whether the album is in the library. None: the intake slice has\nno library seam; callers treat unknown as present for imported\nrows, which only land after the task completes."
+            "description": "Whether the album is in the library. None: intake has\nno library seam; callers treat unknown as present for imported\nrows, which only land after the task completes."
           },
           "musicbrainz_id": {
             "type": "string",
@@ -22389,7 +22389,7 @@
       },
       "RequestStatusMessage": {
         "type": "object",
-        "description": "One grouped status detail behind the request card's expander. The\nintake slice has no producer for these yet (v2 never sent them\neither), so views answer None until one exists.",
+        "description": "One grouped status detail behind the request card's expander. Intake\nhas no producer for these yet (v2 never sent them\neither), so views answer None until one exists.",
         "required": [
           "messages"
         ],
@@ -22412,7 +22412,7 @@
       },
       "RequestsRefreshResponse": {
         "type": "object",
-        "description": "Personal-mix refresh outcome (A:393). The schema renames to avoid the\ndiscover slice's unrelated `RefreshResponse` in the shared document.",
+        "description": "Personal-mix refresh outcome. The schema renames to avoid discover's\nunrelated `RefreshResponse` in the shared document.",
         "required": [
           "status"
         ],
@@ -22470,7 +22470,7 @@
       },
       "RestoreReport": {
         "type": "object",
-        "description": "Pre-restore verification report. Read-only: nothing here writes or moves\nthe live database (the actual restore stays an offline CLI in stage 11).",
+        "description": "Pre-restore verification report. Read-only: nothing here writes or moves\nthe live database (the actual restore stays an offline CLI).",
         "required": [
           "backup",
           "ok",
@@ -22779,7 +22779,7 @@
       },
       "SabnzbdTestResponse": {
         "type": "object",
-        "description": "SABnzbd test verdict: version plus the category list (for the picker),\nthe SABnzbd-side completed dir (the mount hint), and the mount\ndiagnosis over the SUBMITTED mount.",
+        "description": "SABnzbd test verdict: version plus the category list (for the picker),\nthe SABnzbd-side completed dir (the mount hint), and the mount\ndiagnosis over the submitted mount.",
         "required": [
           "valid",
           "message",
@@ -23365,7 +23365,7 @@
       },
       "SearchRemoteStatus": {
         "type": "string",
-        "description": "Per-bucket provider health for one search call. The values mirror v1's\n`SearchRemoteStatus` exactly so the same notice and stale-time logic\napplies. The local-only stage always emits `Ok`; stage-5 provider\nfan-out fills in the real values.",
+        "description": "Per-bucket provider health for one search call. The values mirror v2's\n`SearchRemoteStatus` exactly so the same notice and stale-time logic\napplies. Local-only search always emits `Ok`; a provider fan-out would\nfill in the real values.",
         "enum": [
           "ok",
           "partial",
@@ -23456,7 +23456,7 @@
       },
       "SearchResultItem": {
         "type": "object",
-        "description": "One search hit. Cover art is deliberately absent: the covers endpoints\nserve art by id, so search never duplicates those URLs.",
+        "description": "One search hit. Cover art is absent on purpose: the covers endpoints\nserve art by id, so search never duplicates those URLs.",
         "required": [
           "kind",
           "id",
@@ -23479,7 +23479,7 @@
           },
           "in_library": {
             "type": "boolean",
-            "description": "True for every local hit; provider hits in stage 5 vary."
+            "description": "True for every local hit; provider hits would vary."
           },
           "kind": {
             "$ref": "#/components/schemas/SearchKind",
@@ -23494,7 +23494,7 @@
           },
           "requested": {
             "type": "boolean",
-            "description": "Always false in stage 4; the requests slice owns this flag."
+            "description": "Always false here; the requests module owns this flag."
           },
           "score": {
             "type": "integer",
@@ -24127,7 +24127,7 @@
       },
       "SlskdStatusResponse": {
         "type": "object",
-        "description": "Live slskd client status (v2 `DownloadClientStatusResponse`, trimmed to\nthe client half; the mount half belongs to the downloads slice).",
+        "description": "Live slskd client status (v2 `DownloadClientStatusResponse`, trimmed to\nthe client half; the mount half belongs to the downloads module).",
         "required": [
           "configured",
           "reachable",

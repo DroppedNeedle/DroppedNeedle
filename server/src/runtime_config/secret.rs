@@ -2,7 +2,7 @@
 //!
 //! `Secret` serializes as its inner string (both the ciphertext store shape
 //! and the masked API shape need the plain JSON string) but its `Debug`
-//! output never contains the value. There is deliberately no `Display`
+//! output never contains the value. There is no `Display`
 //! impl: writing a secret to a log takes an explicit `expose()` call, which
 //! is easy to grep for in review.
 

@@ -12,7 +12,7 @@
 //! The revision hash is byte-compatible with v2 (`sort_keys`, compact
 //! separators, ASCII-escaped JSON over the same payload), so a migrated
 //! config keeps its revisions. Golden vectors minted from v2 pin this in
-//! the settings briefs.
+//! the settings tests.
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
@@ -29,7 +29,7 @@ use super::models::{
 use crate::ids::IdGenerator;
 
 /// Canonical JSON: sorted keys, compact separators, ASCII-escaped
-/// strings — byte-identical to Python's
+/// strings, byte-identical to Python's
 /// `json.dumps(value, sort_keys=True, separators=(",", ":"))` for the
 /// shapes hashed here (ASCII keys, ints, bools, null, short floats).
 pub fn canonical_json(value: &serde_json::Value) -> String {

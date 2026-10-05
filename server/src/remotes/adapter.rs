@@ -1,4 +1,4 @@
-//! The unified remote-source adapter surface (R1).
+//! The unified remote-source adapter surface.
 //!
 //! One handle, three sources. [`RemoteHandle`] is enum-dispatched over the
 //! per-source adapters so every browse concept (hub, albums, artists,
@@ -185,7 +185,7 @@ impl From<ImportReceipt> for ImportResult {
 }
 
 /// Where imported playlist tracks land. The native playlist store plugs in
-/// here; the slice ships a memory sink for tests and standalone use.
+/// here; a memory sink serves tests and standalone use.
 pub trait ImportSink: Send + Sync {
     /// Store `tracks` under `playlist_name` for `owner_id`, keyed by the
     /// remote identity for idempotency.

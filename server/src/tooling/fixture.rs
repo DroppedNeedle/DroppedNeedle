@@ -8,7 +8,7 @@
 //! approval reviewed by an unknown user), kept/partial settings sections
 //! (Fernet secrets, plaintext AudioDB/plugin secrets, ordered indexers),
 //! and a legacy `library_sync_settings` section with no new schedule so
-//! the R8 one-shot fires.
+//! the one-shot scan-schedule carry fires.
 //!
 //! The deleted-ID rows are cascade violations a healthy v2 database cannot
 //! hold (v2 enforces its foreign keys); they simulate a corrupt instance.
@@ -26,8 +26,8 @@ use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 use thiserror::Error;
 
-/// User id no fixture user holds; orphan rows hang under it. Deliberately
-/// not UUID-shaped: it only ever compares for equality, never for shape.
+/// User id no fixture user holds; orphan rows hang under it. Not
+/// UUID-shaped on purpose: it only ever compares for equality, never for shape.
 pub const UNKNOWN_USER_ID: &str = "fixture-unknown-user";
 
 /// Fresh random id in UUID shape (user ids, MBIDs, instance id).
@@ -202,7 +202,7 @@ pub fn delete_orphan_rows(db_path: &Path) -> Result<usize, FixtureError> {
 
 /// v2 `config.json`: kept sections, partial sections with kept + dropped
 /// fields, secret positions in v2 rest form, and the legacy sync section
-/// (never exported; the R8 carry reads it directly).
+/// (never exported; the scan-schedule carry reads it directly).
 fn fixture_config(
     fernet: &crate::export::fernet::FernetKey,
     secrets: &FixtureSecrets,
@@ -289,8 +289,8 @@ fn fixture_config(
         }),
     );
     config.insert("wanted".to_owned(), json!({"enabled": true}));
-    // Legacy section: excluded from the export stream, read by the R8
-    // one-shot straight from this file.
+    // Legacy section: excluded from the export stream, read by the
+    // scan-schedule carry straight from this file.
     config.insert(
         "library_sync_settings".to_owned(),
         json!({"sync_frequency": "6hr", "last_sync": 1_700_000_000}),

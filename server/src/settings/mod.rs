@@ -1,4 +1,4 @@
-//! Stage-10 settings slice: section DTOs, services, and helpers for
+//! Settings: section DTOs, services, and helpers for
 //! the `/api/v3/settings` surface.
 
 pub mod effects;

@@ -17,7 +17,7 @@
 //!   values encrypted at rest, unlike v2).
 //!
 //! The store emits no logs at all: there must be no code path on which a
-//! secret can reach structured output. See the secrets-never-logged brief.
+//! secret can reach structured output. See the secrets-never-logged test.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -108,7 +108,7 @@ impl ConfigStore {
         Ok(normalized)
     }
 
-    /// Read one secret section with secrets MASKED (safe for API responses).
+    /// Read one secret section with secrets masked (safe for API responses).
     pub fn get_masked<S: SecretSection>(&self) -> Result<S, ConfigError> {
         let mut section = self.decode_section::<S>()?;
         self.decrypt_in_place(&mut section)?;
@@ -120,7 +120,7 @@ impl ConfigStore {
         Ok(section)
     }
 
-    /// Read one secret section with secrets DECRYPTED (server-side only;
+    /// Read one secret section with secrets decrypted (server-side only;
     /// never serialize into a response).
     pub fn get_raw<S: SecretSection>(&self) -> Result<S, ConfigError> {
         let mut section = self.decode_section::<S>()?;
@@ -173,7 +173,7 @@ impl ConfigStore {
         Ok(normalized)
     }
 
-    /// All configured indexers, keys MASKED, ordered by priority.
+    /// All configured indexers, keys masked, ordered by priority.
     pub fn get_indexers(&self) -> Result<Vec<NewznabIndexer>, ConfigError> {
         let stored = self.decode_section::<Indexers>()?;
         let mut out = Vec::with_capacity(stored.0.len());
@@ -187,7 +187,7 @@ impl ConfigStore {
         Ok(out)
     }
 
-    /// All configured indexers with keys DECRYPTED and stripped
+    /// All configured indexers with keys decrypted and stripped
     /// (server-side only). Stripped on read so a key saved with stray
     /// whitespace before the strip fix still authenticates.
     pub fn get_indexers_raw(&self) -> Result<Vec<NewznabIndexer>, ConfigError> {
@@ -263,7 +263,7 @@ impl ConfigStore {
         Ok(stored.0.get(name).cloned().unwrap_or_default())
     }
 
-    /// One plugin's state with secret-flagged values MASKED (safe for API
+    /// One plugin's state with secret-flagged values masked (safe for API
     /// responses). `secret_keys` comes from the plugin manifest.
     pub fn get_plugin_masked(
         &self,
@@ -280,7 +280,7 @@ impl ConfigStore {
         Ok(config)
     }
 
-    /// One plugin's state with secret-flagged values DECRYPTED
+    /// One plugin's state with secret-flagged values decrypted
     /// (server-side only; passed to the plugin host).
     pub fn get_plugin_raw(
         &self,
@@ -401,7 +401,7 @@ impl ConfigStore {
     }
 
     /// Dropped sections still present in the file (a v2 file opened
-    /// directly, or a hand edit). The stage-11 validator rejects these in
+    /// directly, or a hand edit). The import validator rejects these in
     /// exports; here they are reported, never read.
     pub fn dropped_sections_present(&self) -> Result<Vec<&'static str>, ConfigError> {
         let guard = self

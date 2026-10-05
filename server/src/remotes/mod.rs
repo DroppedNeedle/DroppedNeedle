@@ -1,7 +1,7 @@
-//! Stage-6 remote sources: one adapter for Jellyfin, Navidrome, and Plex (R1).
+//! Remote sources: one adapter for Jellyfin, Navidrome, and Plex.
 //!
 //! The v2 backend carried three parallel browse stacks (~86 endpoints);
-//! this slice collapses them to one adapter surface and one set of native
+//! v3 collapses them to one adapter surface and one set of native
 //! `/api/v3` routes with unified shapes. [`RemoteHandle`](adapter::RemoteHandle)
 //! is the single browse entry point: per-source adapters translate their
 //! server's payloads into the [`models`] views, and handlers resolve a
@@ -15,10 +15,9 @@
 //!
 //! Layout: `adapter` holds the unified surface plus the import sink,
 //! `jellyfin`/`navidrome`/`plex` hold the source clients, `connections`
-//! and `folders` hold per-user credentials (sealed with the stage-2
-//! secrets core) and Navidrome folder preferences, `handlers` owns the
-//! routes, and `mocks` carries the loopback mock servers the parity
-//! briefs run against. Wiring: the integrator mounts
+//! and `folders` hold per-user credentials (sealed with the secrets core) and Navidrome folder preferences, `handlers` owns the
+//! routes, and `mocks` carries the loopback mock servers the parity tests
+//! run against. `MediaSetup` mounts
 //! [`remotes_router`](handlers::remotes_router) inside the session gate.
 
 pub mod adapter;

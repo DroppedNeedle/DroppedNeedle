@@ -4,9 +4,9 @@
 //! call one adapter method, render the unified shape. Status mapping lives
 //! in [`RemotesError`](super::error::RemotesError); query strings parse
 //! through [`ValidQuery`] and bodies through [`ValidJson`] so malformed
-//! input stays inside the shared envelope. The integrator mounts
+//! input stays inside the shared envelope. `MediaSetup` mounts
 //! [`remotes_router`] inside the session gate; every handler also takes the
-//! slice-local user extractor, so every route 401s anonymously.
+//! remotes user extractor, so every route 401s anonymously.
 
 use std::sync::Arc;
 
@@ -48,14 +48,14 @@ use super::models::{
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
 
-/// Every dependency this slice needs, injected by constructor.
+/// Every dependency the remotes routes need, injected by constructor.
 #[derive(Clone)]
 pub struct RemotesDeps {
     /// Shared outbound HTTP client.
     pub http: reqwest::Client,
     /// Per-user connection rows.
     pub connections: Arc<dyn ConnectionStore>,
-    /// Credential seal/open under the stage-2 key.
+    /// Credential seal/open under the config key.
     pub coder: Arc<CredentialCoder>,
     /// Navidrome folder preferences.
     pub folders: Arc<dyn FolderStore>,
@@ -756,7 +756,7 @@ pub async fn get_similar(
     }))
 }
 
-/// Random tracks, optionally filtered by genre. Limits mirror the v1
+/// Random tracks, optionally filtered by genre. Limits mirror the v2
 /// Navidrome route (default 20, max 50); Plex answers unsupported.
 #[utoipa::path(get, path = "/api/v3/remotes/{source}/random",
     responses((status = 200, description = "Random tracks", body = TrackPage)))]
