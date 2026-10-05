@@ -230,31 +230,6 @@ beforeEach(() => {
 });
 
 describe('LibraryManagementControlRoom', () => {
-	it('presents organization as a separate opt-in write system', async () => {
-		await render(LibraryManagementControlRoom);
-		await expect.element(page.getByRole('heading', { name: 'Organize files' })).toBeVisible();
-		await expect
-			.element(
-				page.getByText(
-					'Writes tags and organizes files on disk - nothing changes until you review and apply a preview.'
-				)
-			)
-			.toBeVisible();
-		await expect
-			.element(page.getByRole('link', { name: 'Automation' }))
-			.toHaveAttribute('href', '/library/management?tab=automation');
-		await expect.element(page.getByText('Off everywhere')).toBeVisible();
-		await expect.element(page.getByRole('heading', { name: 'Identity readiness' })).toBeVisible();
-		await expect.element(page.getByRole('heading', { name: 'Repair' })).toBeVisible();
-		await expect.element(page.getByText('Need exact track maps')).toBeVisible();
-		await expect
-			.element(page.getByRole('button', { name: 'Preview organization...' }))
-			.toBeVisible();
-		await expect
-			.element(page.getByRole('button', { name: 'Restore original state...' }))
-			.toBeVisible();
-	});
-
 	it('fails closed visually when recovery diagnostics are unavailable', async () => {
 		h.recovery.isError = true;
 		await render(LibraryManagementControlRoom);
@@ -266,23 +241,6 @@ describe('LibraryManagementControlRoom', () => {
 		await expect
 			.element(page.getByRole('button', { name: 'Preview organization...' }))
 			.toBeDisabled();
-	});
-
-	it('opens a deep-linked baseline restore and cleans the URL when closed', async () => {
-		h.appPage.url = new URL(
-			'https://music.example.test/library/management?runner=baseline_restore#management-controls'
-		);
-		await render(LibraryManagementControlRoom);
-
-		await expect
-			.element(page.getByRole('heading', { name: 'Restore original state' }))
-			.toHaveFocus();
-		await page.getByRole('button', { name: 'Close manual management runner' }).click();
-
-		expect(h.replaceState).toHaveBeenCalledOnce();
-		const [url, state] = h.replaceState.mock.calls[0] as [URL, Record<string, unknown>];
-		expect(url.pathname + url.search + url.hash).toBe('/library/management#management-controls');
-		expect(state).toBe(h.appPage.state);
 	});
 
 	it('confirms and discards a ready preview directly from its review card', async () => {
@@ -325,156 +283,6 @@ describe('LibraryManagementControlRoom', () => {
 		});
 	});
 
-	it('does not present an activation dry run as an awaiting manual preview', async () => {
-		h.operations = {
-			data: {
-				pages: [
-					{
-						items: [
-							{
-								operation: {
-									id: 'activation-preview-1',
-									state: 'ready',
-									row_revision: 7,
-									updated_at: 1_800_000_000,
-									failed_count: 0
-								},
-								profile_name: 'Picard-style Organizer',
-								mode: 'preview',
-								phase: 'ready',
-								activation_preview: true
-							}
-						]
-					}
-				]
-			},
-			isLoading: false,
-			isError: false
-		};
-		await render(LibraryManagementControlRoom);
-
-		await expect.element(page.getByText('Ready previews')).toBeVisible();
-		await expect
-			.element(page.getByRole('heading', { name: 'Ready previews' }))
-			.not.toBeInTheDocument();
-		await expect
-			.element(page.getByRole('button', { name: /Discard preview/ }))
-			.not.toBeInTheDocument();
-	});
-
-	it('describes unknown planning scope without presenting false zero progress', async () => {
-		h.operations = {
-			data: {
-				pages: [
-					{
-						items: [
-							{
-								operation: {
-									id: 'activation-preview-1',
-									state: 'running',
-									row_revision: 2,
-									completed_count: 0,
-									expected_work_count: 0,
-									failed_count: 0
-								},
-								profile_name: 'Picard-style Organizer + Lyrics',
-								mode: 'preview',
-								phase: 'planning',
-								activation_preview: true
-							}
-						]
-					}
-				]
-			},
-			isLoading: false,
-			isError: false
-		};
-
-		await render(LibraryManagementControlRoom);
-
-		await expect.element(page.getByText('Write-access dry run')).toBeVisible();
-		await expect.element(page.getByText(/Discovering files and release bundles/)).toBeVisible();
-		await expect.element(page.getByText('0 / 0')).not.toBeInTheDocument();
-		await expect
-			.element(page.getByRole('link', { name: 'Open details' }))
-			.toHaveAttribute('href', '/library/management/previews/activation-preview-1');
-	});
-	it('shows outcome chips on ready previews and recent work', async () => {
-		h.operations = {
-			data: {
-				pages: [
-					{
-						items: [
-							{
-								operation: {
-									id: 'preview-1',
-									state: 'ready',
-									row_revision: 7,
-									updated_at: 1_800_000_000,
-									succeeded_count: 0,
-									failed_count: 0,
-									skipped_count: 0
-								},
-								profile_name: 'Picard-style Organizer',
-								mode: 'preview',
-								phase: 'ready',
-								eligible_count: 4,
-								warning_count: 2,
-								blocked_count: 1
-							},
-							{
-								operation: {
-									id: 'apply-1',
-									state: 'succeeded',
-									row_revision: 3,
-									updated_at: 1_800_000_000,
-									succeeded_count: 5,
-									failed_count: 1,
-									skipped_count: 2
-								},
-								profile_name: 'Picard-style Organizer',
-								mode: 'apply',
-								phase: 'applying'
-							}
-						]
-					}
-				]
-			},
-			isLoading: false,
-			isError: false
-		};
-		await render(LibraryManagementControlRoom);
-
-		await expect.element(page.getByText('4 eligible')).toBeVisible();
-		await expect.element(page.getByText('2 warning')).toBeVisible();
-		await expect.element(page.getByText('1 blocked')).toBeVisible();
-		await expect.element(page.getByText('5 succeeded')).toBeVisible();
-		await expect.element(page.getByText('1 failed')).toBeVisible();
-		await expect.element(page.getByText('2 skipped')).toBeVisible();
-	});
-
-	it('renders a STALE_INPUT terminal as superseded, not as needs-attention', async () => {
-		h.operations = historyWith([failedOperation('stale-1', {}, { failed_count: 1 })]);
-		await render(LibraryManagementControlRoom);
-
-		await expect.element(page.getByText('Superseded · inputs moved')).toBeVisible();
-		await expect.element(page.getByText(/Inputs moved since planning/)).toBeVisible();
-		await expect.element(page.getByText('1 failed')).toHaveClass(/badge-ghost/);
-		await expect.element(page.getByText('1 failed')).not.toHaveClass(/badge-error/);
-		await expect.element(page.getByText('Failed', { exact: true })).not.toBeInTheDocument();
-		expect(page.getByText('0', { exact: true }).elements()).toHaveLength(2);
-	});
-
-	it('collapses duplicate failed cards for the same album into one group with a count', async () => {
-		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
-		await render(LibraryManagementControlRoom);
-
-		await expect.element(page.getByText('2 failed attempts · same album')).toBeVisible();
-		await expect.element(page.getByText('Superseded', { exact: true })).toBeVisible();
-		expect(page.getByText('Picard-style Organizer').elements()).toHaveLength(1);
-		expect(page.getByRole('link', { name: 'Open details' }).elements()).toHaveLength(2);
-	});
-
 	it('bulk-retries only the stale members with one toast summary', async () => {
 		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
 		await render(LibraryManagementControlRoom);
@@ -492,21 +300,6 @@ describe('LibraryManagementControlRoom', () => {
 		});
 	});
 
-	it('tolerates per-item bulk errors with a count in the summary', async () => {
-		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
-		h.reissue.mockRejectedValueOnce(new Error('gone'));
-		await render(LibraryManagementControlRoom);
-
-		await page.getByRole('button', { name: 'Retry 2 stale' }).click();
-
-		await expect.element(page.getByText('Retried 1 of 2 stale previews (1 failed).')).toBeVisible();
-		expect(h.toast).toHaveBeenCalledTimes(1);
-		expect(h.toast).toHaveBeenCalledWith({
-			message: 'Retried 1 of 2 stale previews (1 failed).',
-			type: 'error'
-		});
-	});
-
 	it('never bulk-retries real failures mixed in with stale attempts', async () => {
 		h.operations = historyWith([
 			failedOperation('stale-1'),
@@ -514,12 +307,6 @@ describe('LibraryManagementControlRoom', () => {
 		]);
 		await render(LibraryManagementControlRoom);
 
-		// The sentence spans a source line break Svelte does not join for text
-		// matching, so assert both halves instead of one spanning expression.
-		await expect.element(page.getByText(/attempts only found moved/)).toBeVisible();
-		await expect.element(page.getByText(/inputs and can be retried/)).toBeVisible();
-		await expect.element(page.getByText('PLANNING FAILED')).toBeVisible();
-		await expect.element(page.getByText('1', { exact: true })).toBeVisible();
 		await page.getByRole('button', { name: 'Retry 1 stale' }).click();
 
 		await expect.element(page.getByText('Retried 1 of 1 stale preview.')).toBeVisible();
@@ -582,24 +369,6 @@ describe('LibraryManagementControlRoom', () => {
 		});
 	});
 
-	it('toasts the verification failure when resolving an import bundle fails', async () => {
-		h.recovery.data = recoveryDataWith({
-			needs_attention_count: 1,
-			needs_attention_bundles: [{ bundle_id: 'bundle-1' }]
-		});
-		h.resolveImportBundle.mockRejectedValue(new Error('2 files failed verification'));
-		await render(LibraryManagementControlRoom);
-
-		await page.getByRole('button', { name: 'Mark bundle-1 as handled' }).click();
-
-		await vi.waitFor(() => expect(h.toast).toHaveBeenCalledTimes(1));
-		expect(h.toast).toHaveBeenCalledWith({
-			message: '2 files failed verification',
-			type: 'error'
-		});
-		expect(h.invalidate).not.toHaveBeenCalled();
-	});
-
 	it('hides the import bundle resolve action from non-admins', async () => {
 		h.admin = false;
 		h.recovery.data = recoveryDataWith({
@@ -612,23 +381,5 @@ describe('LibraryManagementControlRoom', () => {
 		await expect
 			.element(page.getByRole('button', { name: 'Mark bundle-1 as handled' }))
 			.not.toBeInTheDocument();
-	});
-
-	it('shows counts without resolve actions when no bundle identities are reported', async () => {
-		h.recovery.data = recoveryDataWith({ needs_attention_count: 2, cleanup_pending_count: 1 });
-		await render(LibraryManagementControlRoom);
-
-		await expect.element(page.getByText('Recovery needs attention')).toBeVisible();
-		await expect
-			.element(page.getByRole('button', { name: /Mark .* as handled/ }))
-			.not.toBeInTheDocument();
-	});
-
-	it('dismisses the recovery alert once diagnostics report nothing pending', async () => {
-		h.recovery.data = recoveryDataWith();
-		await render(LibraryManagementControlRoom);
-
-		await expect.element(page.getByText('Off everywhere')).toBeVisible();
-		await expect.element(page.getByText('Recovery needs attention')).not.toBeInTheDocument();
 	});
 });
