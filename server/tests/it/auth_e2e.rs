@@ -171,6 +171,9 @@ impl E2e {
             self.runtime.pool().clone(),
             self.runtime.lane().clone(),
             Arc::clone(&self.store),
+            Arc::new(droppedneedle::remotes::adapter::PlaylistImportSink::new(
+                reads.collections.clone(),
+            )),
         )
         .expect("media bundle builds");
         let mut reads = reads;

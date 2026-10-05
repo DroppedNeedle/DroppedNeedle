@@ -28,7 +28,7 @@ use crate::playback::services::{
 };
 use crate::playback::sqlite::PlaybackDb;
 use crate::plugins::scrobble::SqliteListenBrainzLinkStore;
-use crate::remotes::adapter::MemoryImportSink;
+use crate::remotes::adapter::ImportSink;
 use crate::remotes::connections::{
     ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
 };
@@ -91,7 +91,7 @@ impl MediaSetup {
     /// transcode policy; `crypto` seals linked credentials;
     /// `library_roots` resolves local stream reads against the live
     /// library registry (`None` keeps the constructor fallback for unwired
-    /// builds).
+    /// builds); `imports` is where remote playlist imports land.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         db_path: &Path,
@@ -105,6 +105,7 @@ impl MediaSetup {
         pool: sqlx::SqlitePool,
         lane: WriteLane,
         config: Arc<ConfigStore>,
+        imports: Arc<dyn ImportSink>,
     ) -> Result<(Self, MediaWorkers), String> {
         let resolver = Arc::new(
             ConnectionResolver::new(
@@ -128,7 +129,7 @@ impl MediaSetup {
             http.clone(),
             resolver.clone(),
             Arc::new(SqliteFolderStore::new(pool, lane)),
-            Arc::new(MemoryImportSink::new()),
+            imports,
         );
         let remotes = RemotesDeps {
             service,
@@ -196,6 +197,7 @@ impl MediaSetup {
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         use crate::playback::fakes::{FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks};
+        use crate::remotes::adapter::MemoryImportSink;
         use crate::remotes::connections::{MemoryConnectionStore, NoServers};
         use crate::remotes::folders::MemoryFolderStore;
 

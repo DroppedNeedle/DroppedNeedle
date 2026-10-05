@@ -619,9 +619,10 @@ impl CollectionsService<'_> {
         )
     }
 
-    /// Import a remote playlist into the owner's playlists. The same
-    /// remote playlist imported again refreshes the existing copy instead
-    /// of making a second one. Returns the local id and whether it is new.
+    /// Import a remote playlist into the owner's playlists, keyed by its
+    /// provenance (`<source>:<id>`). A remote playlist already imported by
+    /// this user is not copied again (v2): the answer names the existing
+    /// copy. Returns the local id and whether it already existed.
     pub async fn import_playlist(
         &self,
         owner_id: &str,
@@ -631,17 +632,20 @@ impl CollectionsService<'_> {
     ) -> Result<(String, bool), CollectionsError> {
         let playlists = &self.state.stores.playlists;
         if let Some(existing) = playlists.find_by_source(owner_id, source_ref).await? {
-            found(playlists.replace_entries(&existing, entries).await?)?;
-            return Ok((existing, false));
+            return Ok((existing, true));
         }
         let name = clean_name(name).or_else(|_| clean_name("Imported playlist"))?;
-        let id = playlists
-            .create(owner_id, &name, Some(source_ref))
-            .await?
-            .ok_or_else(|| CollectionsError::Conflict {
-                message: "This playlist was already imported".to_owned(),
-            })?;
-        found(playlists.insert(&id, None, entries).await?)?;
-        Ok((id, true))
+        let Some(id) = playlists.create(owner_id, &name, Some(source_ref)).await? else {
+            // A concurrent import won the race; answer with its copy.
+            let existing = playlists
+                .find_by_source(owner_id, source_ref)
+                .await?
+                .ok_or(CollectionsError::NotFound)?;
+            return Ok((existing, true));
+        };
+        if !entries.is_empty() {
+            found(playlists.insert(&id, None, entries).await?)?;
+        }
+        Ok((id, false))
     }
 }

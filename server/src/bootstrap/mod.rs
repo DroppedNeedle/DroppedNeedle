@@ -33,6 +33,7 @@ use crate::{
     plugins::wiring::PluginsSetup,
     providers::{InMemoryProviderCache, Providers, adapters::production_enrichment},
     reads::{ReadsSetup, collections::db::CollectionsDb, platform::wrapped::ConfigWrappedKey},
+    remotes::adapter::PlaylistImportSink,
     runtime_config::{
         ConfigStore, Crypto,
         crypto::CryptoError,
@@ -185,6 +186,8 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         runtime.pool().clone(),
         runtime.lane().clone(),
         config_store.clone(),
+        // Remote playlist imports land in the user's playlists.
+        Arc::new(PlaylistImportSink::new(reads.collections.clone())),
     )
     .map_err(stage("media setup"))?;
     let acquire = AcquireSetup::build(

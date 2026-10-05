@@ -8,10 +8,8 @@
 //! the adapter structs; handlers resolve a handle per request from the
 //! caller's stored connection and never touch a source client directly.
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Mutex;
 
 use super::jellyfin::JellyfinAdapter;
 use super::models::{
@@ -184,11 +182,11 @@ impl From<ImportReceipt> for ImportResult {
     }
 }
 
-/// Where imported playlist tracks land. The native playlist store plugs in
-/// here; a memory sink serves tests and standalone use.
+/// Where imported playlist tracks land: the user's playlists in
+/// production ([`PlaylistImportSink`]), a memory sink in tests.
 pub trait ImportSink: Send + Sync {
     /// Store `tracks` under `playlist_name` for `owner_id`, keyed by the
-    /// remote identity for idempotency.
+    /// remote identity for idempotency. The error text goes to the log.
     fn import<'a>(
         &'a self,
         owner_id: &'a str,
@@ -196,24 +194,108 @@ pub trait ImportSink: Send + Sync {
         remote_playlist_id: &'a str,
         playlist_name: &'a str,
         tracks: Vec<TrackView>,
-    ) -> BoxFuture<'a, ImportReceipt>;
+    ) -> BoxFuture<'a, Result<ImportReceipt, String>>;
+}
+
+/// Imports into the user's native playlists, so an imported Plex,
+/// Navidrome or Jellyfin playlist shows on the playlists page and in the
+/// compat clients. Each entry keeps the remote id it streams from (the
+/// Plex part key for Plex, the item id elsewhere); Plex tracks without a
+/// part key cannot play and count as failed (v2).
+#[derive(Clone)]
+pub struct PlaylistImportSink {
+    collections: crate::reads::collections::CollectionsState,
+}
+
+impl PlaylistImportSink {
+    /// Sink over the shared collections.
+    pub fn new(collections: crate::reads::collections::CollectionsState) -> Self {
+        Self { collections }
+    }
+}
+
+impl ImportSink for PlaylistImportSink {
+    fn import<'a>(
+        &'a self,
+        owner_id: &'a str,
+        source: SourceName,
+        remote_playlist_id: &'a str,
+        playlist_name: &'a str,
+        tracks: Vec<TrackView>,
+    ) -> BoxFuture<'a, Result<ImportReceipt, String>> {
+        use crate::reads::collections::service::CollectionsService;
+        use crate::reads::collections::store::playlists::NewEntry;
+
+        Box::pin(async move {
+            let source_type = source.as_str().to_owned();
+            let mut failed = 0_i64;
+            let entries = tracks
+                .into_iter()
+                .filter_map(|track| {
+                    let (source_id, rating_key) = if source == SourceName::Plex {
+                        match track.part_key.clone() {
+                            Some(part) => (part, Some(track.id.clone())),
+                            None => {
+                                failed += 1;
+                                return None;
+                            }
+                        }
+                    } else {
+                        (track.id.clone(), None)
+                    };
+                    Some(NewEntry {
+                        track_name: track.title,
+                        artist_name: track.artist_name,
+                        album_name: track.album_name,
+                        album_id: track.album_id,
+                        artist_id: track.artist_id,
+                        track_source_id: Some(source_id),
+                        cover_url: track.image_url,
+                        source_type: source_type.clone(),
+                        available_sources: Some(vec![source_type.clone()]),
+                        format: None,
+                        track_number: track.track_number,
+                        disc_number: track.disc_number,
+                        duration: track.duration_secs.map(|secs| secs as f64),
+                        plex_rating_key: rating_key,
+                        library_file_id: None,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let imported = entries.len() as i64;
+            let source_ref = format!("{}:{remote_playlist_id}", source.as_str());
+            let (local_playlist_id, already_imported) = CollectionsService::new(&self.collections)
+                .import_playlist(owner_id, &source_ref, playlist_name, entries)
+                .await
+                .map_err(|error| format!("playlist import failed: {error:?}"))?;
+            Ok(ImportReceipt {
+                local_playlist_id,
+                tracks_imported: if already_imported { 0 } else { imported },
+                tracks_failed: if already_imported { 0 } else { failed },
+                already_imported,
+            })
+        })
+    }
 }
 
 /// In-memory import sink. Idempotency key is
 /// `owner + source + remote playlist id`, mirroring the v2 import flow
 /// which refuses to duplicate an already-imported remote playlist.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryImportSink {
-    inner: Mutex<MemoryImports>,
+    inner: std::sync::Mutex<MemoryImports>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 struct MemoryImports {
-    receipts: HashMap<String, ImportReceipt>,
-    stored: HashMap<String, Vec<TrackView>>,
+    receipts: std::collections::HashMap<String, ImportReceipt>,
+    stored: std::collections::HashMap<String, Vec<TrackView>>,
     next_id: u64,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryImportSink {
     /// Empty sink.
     pub fn new() -> Self {
@@ -221,7 +303,6 @@ impl MemoryImportSink {
     }
 
     /// Tracks stored under one local playlist id, for tests.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn stored(&self, local_playlist_id: &str) -> Vec<TrackView> {
         self.inner
             .lock()
@@ -236,6 +317,7 @@ impl MemoryImportSink {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ImportSink for MemoryImportSink {
     fn import<'a>(
         &'a self,
@@ -244,7 +326,7 @@ impl ImportSink for MemoryImportSink {
         remote_playlist_id: &'a str,
         playlist_name: &'a str,
         tracks: Vec<TrackView>,
-    ) -> BoxFuture<'a, ImportReceipt> {
+    ) -> BoxFuture<'a, Result<ImportReceipt, String>> {
         let _ = playlist_name;
         Box::pin(async move {
             let key = format!("{owner_id}\0{}\0{remote_playlist_id}", source.as_str());
@@ -255,7 +337,7 @@ impl ImportSink for MemoryImportSink {
             if let Some(receipt) = guard.receipts.get(&key) {
                 let mut repeat = receipt.clone();
                 repeat.already_imported = true;
-                return repeat;
+                return Ok(repeat);
             }
             guard.next_id += 1;
             let local_playlist_id = format!("local-playlist-{}", guard.next_id);
@@ -269,7 +351,7 @@ impl ImportSink for MemoryImportSink {
                 already_imported: false,
             };
             guard.receipts.insert(key, receipt.clone());
-            receipt
+            Ok(receipt)
         })
     }
 }

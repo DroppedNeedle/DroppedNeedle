@@ -575,6 +575,62 @@ async fn pins_steer_display_and_never_write_identity() {
 }
 
 #[tokio::test]
+async fn remote_playlist_import_lands_in_the_users_playlists() {
+    use droppedneedle::remotes::adapter::{ImportSink as _, PlaylistImportSink};
+    use droppedneedle::remotes::models::{SourceName, TrackView};
+
+    let rig = Rig::open().await;
+    let sink = PlaylistImportSink::new(rig.state());
+    let track = |id: &str, part: Option<&str>| TrackView {
+        source: SourceName::Plex,
+        id: id.to_owned(),
+        title: format!("Song {id}"),
+        album_name: "Album".to_owned(),
+        album_id: None,
+        artist_name: "Artist".to_owned(),
+        artist_id: None,
+        track_number: Some(1),
+        disc_number: Some(1),
+        duration_secs: Some(200),
+        year: None,
+        recording_mbid: None,
+        image_url: None,
+        part_key: part.map(str::to_owned),
+    };
+    let tracks = vec![track("1", Some("/library/parts/1")), track("2", None)];
+
+    let first = sink
+        .import(
+            "u-ada",
+            SourceName::Plex,
+            "pl9",
+            "Road Trip",
+            tracks.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!((first.tracks_imported, first.tracks_failed), (1, 1));
+    let again = sink
+        .import("u-ada", SourceName::Plex, "pl9", "Road Trip", tracks)
+        .await
+        .unwrap();
+    assert!(again.already_imported);
+    assert_eq!(again.local_playlist_id, first.local_playlist_id);
+
+    let (_, detail) = call(
+        &rig.app(),
+        Method::GET,
+        &format!("/playlists/{}", first.local_playlist_id),
+        Some(ADA),
+        None,
+    )
+    .await;
+    assert_eq!(detail["source_ref"], "plex:pl9");
+    assert_eq!(detail["tracks"][0]["track_source_id"], "/library/parts/1");
+    assert_eq!(detail["tracks"][0]["plex_rating_key"], "1");
+}
+
+#[tokio::test]
 async fn store_faults_render_fixed_500_envelopes() {
     let app = collections::collections_router(CollectionsState::unwired());
     for uri in [

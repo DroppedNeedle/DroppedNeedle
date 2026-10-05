@@ -684,28 +684,4 @@ impl PlaylistStore {
             })
             .await
     }
-
-    /// Replace a playlist's entries wholesale (remote re-import), in one
-    /// transaction.
-    pub async fn replace_entries(
-        &self,
-        playlist_id: &str,
-        entries: Vec<NewEntry>,
-    ) -> Result<Written<usize>, StoreError> {
-        let playlist_id = playlist_id.to_owned();
-        self.db
-            .write("playlists.replace", move |tx| {
-                let now = now_epoch();
-                if !touch(tx, &playlist_id, now)? {
-                    return Ok(Written::Missing);
-                }
-                tx.execute(
-                    "DELETE FROM playlist_tracks WHERE playlist_id = ?1",
-                    params![playlist_id],
-                )?;
-                let added = insert_entries(tx, &playlist_id, None, &entries, now)?;
-                Ok(Written::Done(added.len()))
-            })
-            .await
-    }
 }

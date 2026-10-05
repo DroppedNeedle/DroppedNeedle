@@ -555,7 +555,8 @@ impl RemotesService {
         let receipt = self
             .imports
             .import(user_id, source, &id, &detail.playlist.name, detail.tracks)
-            .await;
+            .await
+            .map_err(RemotesFailure::Internal)?;
         Ok(ImportResult::from(receipt))
     }
 
