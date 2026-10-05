@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use droppedneedle::{
     AppConfig, AppState,
-    admin::{AdminDb, AdminSetup, backups::ensure_pre_upgrade_backup, quota::reload_overrides},
+    admin::{AdminDb, AdminSetup, quota::reload_overrides},
     auth::{prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup},
     compat::CompatSetup,
     create_app,
@@ -26,7 +26,6 @@ use droppedneedle::{
         secret_sections::{ListenBrainzConnection, WrappedSettings},
         sections::{ConnectApps, LyricsSettings},
     },
-    schema::apply_migrations,
     settings::{
         effects::{LiveSaveEffects, SaveEffects},
         section_prefs::{SqliteLinkStatus, SqliteSectionPrefsStore},
@@ -134,18 +133,8 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
     #[cfg(not(debug_assertions))]
     let _ = tooling_routes;
     let http = HttpClientFactory::with_settings(&config.http).map_err(|error| error.to_string())?;
+    // Takes a verified backup first when the schema is behind, then migrates.
     let runtime = open_runtime(&DbConfig::new(&config.library_db_path))
-        .await
-        .map_err(|error| error.to_string())?;
-    // Pre-upgrade safety net: a verified backup before any schema change.
-    // A failure here is fatal: migrating without one risks the catalog.
-    ensure_pre_upgrade_backup(
-        &config.library_db_path,
-        &config.root_app_dir.join("backups"),
-    )
-    .await
-    .map_err(|error| format!("pre-upgrade backup failed: {error}"))?;
-    apply_migrations(runtime.pool())
         .await
         .map_err(|error| error.to_string())?;
     // Two handles over one key file: the store owns its copy outright, so
@@ -302,7 +291,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
     .with_db(AdminDb::new(runtime.pool().clone(), runtime.lane().clone()))
     .with_backups(BackupService::new(
         &config.library_db_path,
-        &config.root_app_dir.join("backups"),
+        runtime.backups().backup_dir(),
     ))
     .with_checkpoint(runtime.checkpoint().clone());
     // Durable quota overrides back into the live ledger. A failure here

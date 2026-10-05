@@ -2,9 +2,12 @@
 //!
 //! [`open_runtime`] runs the boot checks in order: create the parent
 //! directory, refuse symlinks and network filesystems, open the reader pool
-//! with the full pragma set, run the schema migrations and assert
-//! `user_version`, then start the writer lane and wire the checkpoint,
-//! wakeup, and backup services.
+//! with the full pragma set, take a verified backup when the schema is
+//! behind, run the schema migrations and assert `user_version`, then start
+//! the writer lane and wire the checkpoint, wakeup, and backup services.
+//!
+//! Backups live in `backups/` next to the database file, so they share its
+//! volume and filesystem (the backup stages and renames in place).
 //!
 //! Connection budget: the pool carries 7 reader connections and the writer
 //! lane owns 1 dedicated connection outside the pool, for 8 handles total
@@ -40,7 +43,7 @@ use super::{
     durable::DurableWorkWakeups,
     error::DbError,
     fs::{reject_remote_filesystem, reject_symlink},
-    writer::WriteLane,
+    writer::{CancelFlag, WriteLane},
 };
 
 /// Reader connections in the pool. The writer lane owns one more outside.
@@ -109,6 +112,13 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     reject_symlink(&path)?;
     reject_remote_filesystem(&path)?;
 
+    let backup_dir = path
+        .parent()
+        .map(|parent| parent.join("backups"))
+        .unwrap_or_else(|| PathBuf::from("backups"));
+    let backups = BackupService::new(&path, &backup_dir);
+    backup_before_upgrade(&path, &backups).await?;
+
     let reads_frozen = Arc::new(AtomicBool::new(false));
     let pool = open_pool(
         &path,
@@ -124,11 +134,6 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     let lane = WriteLane::open(&path)?;
     let checkpoint = CheckpointService::new(&path, pool.clone(), lane.idle_state());
     let wakeups = DurableWorkWakeups::new(pool.clone());
-    let backup_dir = path
-        .parent()
-        .map(|parent| parent.join("backups"))
-        .unwrap_or_else(|| PathBuf::from("backups"));
-    let backups = BackupService::new(&path, &backup_dir);
 
     Ok(DbRuntime {
         path,
@@ -138,6 +143,49 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
         wakeups,
         backups,
     })
+}
+
+/// Take one verified backup when the stamp is behind the binary, before
+/// the runtime opens a connection or migrates. A missing or fresh database
+/// (stamp 0, no tables) has nothing to lose and skips; a stamp-0 file with
+/// tables is a real database and gets its backup. A failure stops the
+/// boot: migrating without a way back risks the catalog.
+async fn backup_before_upgrade(path: &Path, backups: &BackupService) -> Result<(), DbError> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let probe = path.to_owned();
+    let (found, tables) = tokio::task::spawn_blocking(move || schema_stamp(&probe))
+        .await
+        .map_err(|_| DbError::WriteFailed {
+            operation: "pre-upgrade check".to_owned(),
+            cause: "schema check task failed to join".to_owned(),
+        })??;
+    let expected = crate::schema::latest_version();
+    if found >= expected || (found == 0 && tables == 0) {
+        return Ok(());
+    }
+    tracing::info!(
+        found,
+        expected,
+        "schema upgrade pending; taking a backup first"
+    );
+    let report = backups.backup(None, &CancelFlag::never()).await?;
+    tracing::info!(backup = %report.path.display(), "pre-upgrade backup complete");
+    Ok(())
+}
+
+/// `user_version` and the user table count, read without writing.
+fn schema_stamp(path: &Path) -> Result<(i64, i64), DbError> {
+    let connection =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let found = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let tables = connection.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok((found, tables))
 }
 
 impl DbRuntime {
