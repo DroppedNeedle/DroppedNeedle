@@ -22,7 +22,7 @@ ARG COMMIT_TAG=dev
 ARG BUILD_DATE=unknown
 
 LABEL org.opencontainers.image.title="DroppedNeedle v3" \
-      org.opencontainers.image.description="DroppedNeedle v3 backend (Rust auth service)" \
+      org.opencontainers.image.description="DroppedNeedle v3 server: music requests, library management and streaming" \
       org.opencontainers.image.url="https://github.com/DroppedNeedle/DroppedNeedle" \
       org.opencontainers.image.source="https://github.com/DroppedNeedle/DroppedNeedle" \
       org.opencontainers.image.version="${COMMIT_TAG}" \
