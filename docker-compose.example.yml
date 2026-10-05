@@ -19,11 +19,12 @@ services:
       - SLSKD_DOWNLOADS_PATH=/data/slskd/complete  # path inside the common media mount below
       # - BIND_HOST=auto      # dual-stack (IPv4 + IPv6) listener; set 0.0.0.0 to pin IPv4 only
       # - TRUSTED_PROXY_IPS=172.17.0.1  # your reverse proxy's IP/CIDR; defaults to the loopbacks 127.0.0.1,::1
+      # - BASE_PATH=/music      # serve under a sub-path behind a reverse proxy; /health moves too
     ports:
       - "8688:8688"          # host:container; publishes on IPv4 and IPv6 when the Docker daemon has IPv6 enabled
     volumes:
-      - ./config:/app/config       # config + database
-      - ./cache:/app/cache         # cover art and metadata cache
+      - ./config:/app/config       # settings and encryption key
+      - ./cache:/app/cache         # database, backups, cover art and metadata cache
       - ./plugins:/app/plugins     # installed plugins; omit and they vanish on recreate
       # One common-parent mount keeps the library and completed downloads on one container
       # mount boundary, enabling fast atomic moves. Configure the library root as /data/music.

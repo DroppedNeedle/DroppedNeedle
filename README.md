@@ -236,11 +236,34 @@ Everything user-editable lives in the web UI and lands in `config/config.json`. 
 | `UMASK` | `027` | Creation mask for new files; `002` for trusted group-writable media |
 | `PORT` | `8688` | Port the app listens on |
 | `BIND_HOST` | `auto` | `auto` listens on IPv4 and IPv6, dropping to IPv4 alone where IPv6 is off. Set `0.0.0.0`, `::`, or one interface IP to pin it |
-| `TRUSTED_PROXY_IPS` | `127.0.0.1,::1` | IPs/CIDRs whose `X-Forwarded-*` headers are trusted; point it at your reverse proxy, listing every address family it arrives on |
-| `TZ` | `Etc/UTC` | Container timezone |
+| `TRUSTED_PROXY_IPS` | `127.0.0.1,::1` | IPs/CIDRs whose `X-Forwarded-*` headers are trusted; point it at your reverse proxy, listing every address family it arrives on. `*` trusts every peer: only behind a proxy that strips spoofed headers |
+| `BASE_PATH` | empty | Serve under a sub-path behind a reverse proxy, e.g. `/music`. Letters, digits and `.` `_` `~` `-` only, no trailing slash, and it cannot start with `/api` |
+| `TZ` | `UTC` | Container timezone |
 | `SLSKD_DOWNLOADS_PATH` | `/data/downloads/slskd` | Exact in-container path to slskd completions (the compose example uses `/data/slskd/complete`) |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR` |
 
-The app answers on IPv4 and IPv6, but Docker still has to publish the port on both. `docker port droppedneedle` should list `0.0.0.0:8688` and `[::]:8688`; if only the first appears, turn on IPv6 for the daemon (`"ipv6"` and `"ip6tables"` in `/etc/docker/daemon.json`). Pinning `BIND_HOST` to one interface IP answers only there: the upgrade readiness probe follows the pin automatically, but the container `HEALTHCHECK` still uses localhost, so keep a wildcard or loopback value unless you check that address yourself.
+The app answers on IPv4 and IPv6, but Docker still has to publish the port on both. `docker port droppedneedle` should list `0.0.0.0:8688` and `[::]:8688`; if only the first appears, turn on IPv6 for the daemon (`"ipv6"` and `"ip6tables"` in `/etc/docker/daemon.json`). Pinning `BIND_HOST` to one interface IP answers only there, but the container `HEALTHCHECK` still uses localhost, so keep a wildcard or loopback value unless you check that address yourself.
+
+With `BASE_PATH` set, everything moves under it: the web UI, `/api/v3`, the Subsonic and Jellyfin APIs, and `/health` (the container health check follows it). Point your proxy at the prefix without stripping it.
+
+<details>
+<summary>Rarely needed variables</summary>
+
+| Variable | Default | What it is |
+|-|-|-|
+| `CONTACT_EMAIL` | `contact@droppedneedle.com` | Contact address in the outbound User-Agent; MusicBrainz asks for one, so set your own if you run many lookups |
+| `SHUTDOWN_GRACE_PERIOD` | `10` | Seconds to finish open requests and stop background work on shutdown |
+| `HTTP_TIMEOUT` | `30` | Outbound request timeout, seconds |
+| `HTTP_CONNECT_TIMEOUT` | `10` | Outbound connect timeout, seconds |
+| `HTTP_MAX_KEEPALIVE` | `50` | Idle outbound connections kept per host |
+| `RUST_LOG` | unset | Full log filter (e.g. `info,droppedneedle::library=debug`); wins over `LOG_LEVEL` |
+| `ROOT_APP_DIR` | `/app` | Base for the paths below and for `/app/plugins` and `/app/imports` |
+| `CACHE_DIR` | `/app/cache` | Database, backups, served web UI, caches |
+| `LIBRARY_DB_PATH` | `/app/cache/library.db` | The database file; backups go in `backups/` next to it |
+| `CONFIG_FILE_PATH` | `/app/config/config.json` | Settings file; the encryption key sits next to it |
+| `DROPPEDNEEDLE_STATIC_DIR` | `/app/static` | The web UI build shipped in the image |
+
+</details>
 
 <details>
 <summary>Permissions and NAS notes</summary>
@@ -255,8 +278,8 @@ Unraid commonly uses `nobody:users` (PUID 99, PGID 100). Point PUID and PGID at 
 
 | Data | Container path | Notes |
 |-|-|-|
-| Config and database | `/app/config` | Persist it |
-| Cover art and metadata cache | `/app/cache` | Persist it |
+| Settings and encryption key | `/app/config` | Persist it |
+| Database, backups, cover art and metadata cache | `/app/cache` | Persist it |
 | Plugins | `/app/plugins` | Persist it or installs vanish on recreate |
 | Drop-import staging | `/app/imports` | Optional; without it, large uploads and unmatched files live on the container layer |
 | Media | `/data` | Shared parent for library (`/data/music`) and client completions |
