@@ -4,8 +4,9 @@
 //! one endpoint-specific key, so [`Body`] carries each key the adapter
 //! reads as an optional field. Unknown keys and fields are ignored and
 //! optional fields default. Identity is required: an album, artist, song,
-//! playlist, or folder without an `id` fails decoding and the adapter
-//! reports an upstream error instead of rendering an item nobody can open.
+//! playlist, or folder without an `id` (or with an empty one) fails
+//! decoding and the adapter reports an upstream error instead of rendering
+//! an item nobody can open.
 //! Folder ids arrive as numbers on some servers and strings on others;
 //! both decode to a string.
 
@@ -91,7 +92,7 @@ pub struct MusicFolders {
 #[derive(Debug, Clone, Deserialize)]
 pub struct MusicFolder {
     /// Folder id, number or string upstream.
-    #[serde(deserialize_with = "string_or_number")]
+    #[serde(deserialize_with = "folder_id")]
     pub id: String,
     /// Folder name.
     #[serde(default)]
@@ -129,6 +130,7 @@ pub struct IndexBucket {
 #[serde(rename_all = "camelCase")]
 pub struct Artist {
     /// Artist id.
+    #[serde(deserialize_with = "non_empty")]
     pub id: String,
     /// Name.
     #[serde(default)]
@@ -149,6 +151,7 @@ pub struct Artist {
 #[serde(rename_all = "camelCase")]
 pub struct Album {
     /// Album id.
+    #[serde(deserialize_with = "non_empty")]
     pub id: String,
     /// Name (`getAlbumList2`, `getAlbum`).
     #[serde(default)]
@@ -197,6 +200,7 @@ impl Album {
 #[serde(rename_all = "camelCase")]
 pub struct Song {
     /// Song id.
+    #[serde(deserialize_with = "non_empty")]
     pub id: String,
     /// Title.
     #[serde(default)]
@@ -285,6 +289,7 @@ pub struct Playlists {
 #[serde(rename_all = "camelCase")]
 pub struct Playlist {
     /// Playlist id.
+    #[serde(deserialize_with = "non_empty")]
     pub id: String,
     /// Name.
     #[serde(default)]
@@ -409,25 +414,39 @@ pub struct NowPlayingEntry {
     pub duration: Option<i64>,
 }
 
-/// Accept a JSON string or number as a string id.
-fn string_or_number<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+/// A required string id; empty reads as missing.
+fn non_empty<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let id = String::deserialize(deserializer)?;
+    if id.is_empty() {
+        return Err(serde::de::Error::custom("empty id"));
+    }
+    Ok(id)
+}
+
+/// A folder id, JSON string or number; empty reads as missing.
+fn folder_id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Id {
         Text(String),
         Number(i64),
     }
-    Ok(match Id::deserialize(deserializer)? {
+    let id = match Id::deserialize(deserializer)? {
         Id::Text(text) => text,
         Id::Number(number) => number.to_string(),
-    })
+    };
+    if id.is_empty() {
+        return Err(serde::de::Error::custom("empty id"));
+    }
+    Ok(id)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A song without an id must not decode into an unplayable track, and
+    /// A song without an id, or with an empty one, must not decode into an
+    /// unplayable track, and
     /// numeric folder ids still read as ids.
     #[test]
     fn identity_is_required_and_folder_ids_may_be_numbers() {
@@ -435,6 +454,10 @@ mod tests {
             r#"{"subsonic-response":{"status":"ok","randomSongs":{"song":[{"title":"Ghost"}]}}}"#,
         );
         assert!(missing.is_err());
+        let empty = serde_json::from_str::<Envelope>(
+            r#"{"subsonic-response":{"status":"ok","randomSongs":{"song":[{"id":"","title":"Ghost"}]}}}"#,
+        );
+        assert!(empty.is_err());
         let folders = serde_json::from_str::<Envelope>(
             r#"{"subsonic-response":{"status":"ok","musicFolders":{"musicFolder":[{"id":1,"name":"Music"}]}}}"#,
         )
