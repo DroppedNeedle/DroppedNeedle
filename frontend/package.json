@@ -64,7 +64,7 @@
 		"@tanstack/svelte-query": "^6.1.48",
 		"@tanstack/svelte-query-devtools": "^6.1.48",
 		"@tanstack/svelte-query-persist-client": "^6.1.48",
-		"dompurify": "^3.4.15",
+		"dompurify": "^3.4.16",
 		"idb-keyval": "^6.3.0",
 		"lucide-svelte": "^1.0.1",
 		"marked": "^18.0.13",
