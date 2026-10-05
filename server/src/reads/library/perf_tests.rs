@@ -32,7 +32,6 @@ use sqlx::sqlite::SqlitePoolOptions;
 static PERF_SEQ: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
-    #[allow(dead_code)]
     runtime: DbRuntime,
     pool: SqlitePool,
     catalog: SqliteCatalog,

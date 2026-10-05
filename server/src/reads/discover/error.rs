@@ -18,14 +18,10 @@ use crate::{
 
 /// Missing or invalid session.
 pub const UNAUTHORIZED: &str = "UNAUTHORIZED";
-/// Valid session lacking rights.
-pub const FORBIDDEN: &str = "FORBIDDEN";
 /// Unknown id, or a foreign id the caller must not learn about.
 pub const NOT_FOUND: &str = "NOT_FOUND";
 /// The request itself is wrong. The message is user-facing.
 pub const INVALID_INPUT: &str = "INVALID_INPUT";
-/// The request conflicts with current state. The message is user-facing.
-pub const CONFLICT: &str = "CONFLICT";
 /// A downstream provider failed. Body is fixed; the cause stays in the log.
 pub const UPSTREAM_ERROR: &str = "UPSTREAM_ERROR";
 
@@ -43,21 +39,11 @@ pub enum ReadsError {
         /// User-safe reason, e.g. "Authentication required".
         message: String,
     },
-    /// Valid session lacking rights.
-    Forbidden {
-        /// User-safe reason.
-        message: String,
-    },
     /// Unknown or foreign id. Always the same fixed message.
     NotFound,
     /// Bad input. The message is shown to the user.
     InvalidInput {
         /// What was wrong.
-        message: String,
-    },
-    /// State conflict. The message is shown to the user.
-    Conflict {
-        /// What conflicted.
         message: String,
     },
     /// Downstream failure. Fixed body plus the request-tied id.
@@ -90,10 +76,8 @@ impl ReadsError {
     fn status(&self) -> StatusCode {
         match self {
             Self::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
-            Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::InvalidInput { .. } => StatusCode::BAD_REQUEST,
-            Self::Conflict { .. } => StatusCode::CONFLICT,
             Self::Upstream { .. } => StatusCode::BAD_GATEWAY,
             Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -102,14 +86,12 @@ impl ReadsError {
     fn envelope(&self) -> ErrorEnvelope {
         let (code, message, details) = match self {
             Self::Unauthorized { message } => (UNAUTHORIZED.to_owned(), message.clone(), None),
-            Self::Forbidden { message } => (FORBIDDEN.to_owned(), message.clone(), None),
             Self::NotFound => (
                 NOT_FOUND.to_owned(),
                 crate::error::NOT_FOUND_MESSAGE.to_owned(),
                 None,
             ),
             Self::InvalidInput { message } => (INVALID_INPUT.to_owned(), message.clone(), None),
-            Self::Conflict { message } => (CONFLICT.to_owned(), message.clone(), None),
             Self::Upstream { error_id } => (
                 UPSTREAM_ERROR.to_owned(),
                 FIXED_UPSTREAM_MESSAGE.to_owned(),

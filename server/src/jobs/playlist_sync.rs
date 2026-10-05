@@ -268,10 +268,19 @@ where
         .with_state(state)
 }
 
-/// Run one sync now. Admin-only: the export writes files, so v2's
-/// settings-wide admin gate applies here too. No request body: the target
-/// comes from saved settings.
-async fn sync_now<T, E>(
+// Admin-only: the export writes files, so v2's settings-wide admin gate
+// applies here too. No request body: the target comes from saved settings.
+/// Run one Navidrome playlist sync now.
+#[utoipa::path(
+    post,
+    path = "/api/v3/settings/navidrome/playlist-sync",
+    responses(
+        (status = 200, description = "Sync report", body = PlaylistSyncResult),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin access required"),
+    )
+)]
+pub(crate) async fn sync_now<T, E>(
     State(state): State<PlaylistSyncState<T, E>>,
     _admin: SyncAdmin,
 ) -> Json<PlaylistSyncResult>
@@ -288,20 +297,3 @@ where
     };
     Json(state.exporter.sync(config).await)
 }
-
-// ---------------------------------------------------------------------------
-// OpenAPI stub (never mounted; the handler is generic over its seams)
-// ---------------------------------------------------------------------------
-
-/// Run one Navidrome playlist sync now.
-#[utoipa::path(
-    post,
-    path = "/api/v3/settings/navidrome/playlist-sync",
-    responses(
-        (status = 200, description = "Sync report", body = PlaylistSyncResult),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin access required"),
-    )
-)]
-#[allow(dead_code)]
-pub(crate) fn doc_sync_now() {}

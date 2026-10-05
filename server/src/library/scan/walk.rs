@@ -281,8 +281,6 @@ pub struct InventoryScanner<S: ScanStore> {
     detached_reap_multiplier: f64,
     pending_probes: Arc<AtomicUsize>,
     probe_max_workers: usize,
-    leaked_walkers: AtomicU64,
-    wedged_probes: AtomicU64,
     clock: Clock,
 }
 
@@ -299,8 +297,6 @@ impl<S: ScanStore> InventoryScanner<S> {
             detached_reap_multiplier: DETACHED_WALKER_REAP_MULTIPLIER,
             pending_probes: Arc::new(AtomicUsize::new(0)),
             probe_max_workers: 1,
-            leaked_walkers: AtomicU64::new(0),
-            wedged_probes: AtomicU64::new(0),
             clock: Arc::new(system_clock),
         }
     }
@@ -308,38 +304,6 @@ impl<S: ScanStore> InventoryScanner<S> {
     pub fn with_filesystem(mut self, fs: FsCoordinator) -> Self {
         self.fs = Some(fs);
         self
-    }
-
-    pub fn with_walk_deadline(mut self, deadline: Duration) -> Self {
-        self.walk_deadline = deadline;
-        self
-    }
-
-    pub fn with_max_detached_walkers(mut self, max: usize) -> Self {
-        self.max_detached_walkers = max;
-        self
-    }
-
-    pub fn with_clock(mut self, clock: Clock) -> Self {
-        self.clock = clock;
-        self
-    }
-
-    /// Probes abandoned past their deadline (v2 `wedged_probe_count`,
-    /// F-023): each one means a stat is still blocked on the filesystem.
-    pub fn wedged_probe_count(&self) -> u64 {
-        self.wedged_probes.load(Ordering::Relaxed)
-    }
-
-    /// Walkers refused past the detach cap (v2 `leaked_walker_count`,
-    /// F-024): monotonic, never shrinks.
-    pub fn leaked_walker_count(&self) -> u64 {
-        self.leaked_walkers.load(Ordering::Relaxed)
-    }
-
-    /// Pending probe slots held (v2 `probe_pending_count`).
-    pub fn probe_pending_count(&self) -> usize {
-        self.pending_probes.load(Ordering::Relaxed)
     }
 
     fn reap_stale_detached_walkers(&self) -> usize {
@@ -383,7 +347,6 @@ impl<S: ScanStore> InventoryScanner<S> {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             if detached.len() >= self.max_detached_walkers {
-                self.leaked_walkers.fetch_add(1, Ordering::Relaxed);
                 tracing::warn!(
                     max = self.max_detached_walkers,
                     "library_scan event=detached_walker_cap_exceeded"
@@ -503,7 +466,6 @@ impl<S: ScanStore> InventoryScanner<S> {
             Err(_) => {
                 // F-023: tombstone the slot so it is recovered instead of
                 // staying occupied for the process lifetime.
-                self.wedged_probes.fetch_add(1, Ordering::Relaxed);
                 if !released.swap(true, Ordering::SeqCst) {
                     self.pending_probes.fetch_sub(1, Ordering::SeqCst);
                 }

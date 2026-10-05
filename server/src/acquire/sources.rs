@@ -106,10 +106,6 @@ impl SlskdSource {
 }
 
 impl DownloadSource for SlskdSource {
-    fn name(&self) -> &str {
-        "slskd"
-    }
-
     async fn enqueue(
         &self,
         task_id: &str,
@@ -309,10 +305,6 @@ impl SabnzbdSource {
 }
 
 impl DownloadSource for SabnzbdSource {
-    fn name(&self) -> &str {
-        "sabnzbd"
-    }
-
     async fn enqueue(
         &self,
         task_id: &str,

@@ -261,7 +261,6 @@ pub mod failure_codes {
     pub const WALK_NAME_ENCODING: &str = "WALK_NAME_ENCODING";
     pub const NFC_TWIN_COLLISION: &str = "NFC_TWIN_COLLISION";
     pub const TAG_READ_DEFERRED: &str = "TAG_READ_DEFERRED";
-    pub const TAG_READ_TIMEOUT: &str = "TAG_READ_TIMEOUT";
     pub const TAG_READ_FAILED: &str = "TAG_READ_FAILED";
     pub const MTIME_SKEW: &str = "MTIME_SKEW";
     pub const SUPERSEDED_POLICY_CHANGED: &str = "SUPERSEDED_POLICY_CHANGED";

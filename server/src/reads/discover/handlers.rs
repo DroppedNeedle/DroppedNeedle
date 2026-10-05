@@ -45,8 +45,6 @@ use crate::auth::session::middleware::CurrentSession;
 pub struct AuthenticatedUser {
     /// Owning user id.
     pub user_id: String,
-    /// Authenticating session id.
-    pub session_id: String,
 }
 
 impl AuthenticatedUser {
@@ -57,7 +55,6 @@ impl AuthenticatedUser {
             .get::<CurrentSession>()
             .map(|session| Self {
                 user_id: session.user_id.clone(),
-                session_id: session.session_id.clone(),
             })
             .ok_or_else(|| ReadsError::Unauthorized {
                 message: "Authentication required".to_owned(),

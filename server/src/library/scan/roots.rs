@@ -176,10 +176,6 @@ impl StreamRootSeam {
         Self { registry }
     }
 
-    pub fn registry(&self) -> &RootRegistry {
-        &self.registry
-    }
-
     /// Join `key` under root `root_id`, refusing anything that escapes it.
     pub fn resolve_key(&self, root_id: &str, key: &str) -> Result<PathBuf, RootSeamError> {
         let root = self

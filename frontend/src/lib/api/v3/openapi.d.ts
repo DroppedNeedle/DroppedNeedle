@@ -4908,7 +4908,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Run one Navidrome playlist sync now. */
-        post: operations["doc_sync_now"];
+        post: operations["sync_now"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5216,13 +5216,13 @@ export interface paths {
             cookie?: never;
         };
         /** Full or ranged audio bytes. */
-        get: operations["doc_stream_get"];
+        get: operations["stream_get"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         /** Same headers as GET, no body. */
-        head: operations["doc_stream_head"];
+        head: operations["stream_head"];
         patch?: never;
         trace?: never;
     };
@@ -22107,7 +22107,7 @@ export interface operations {
             };
         };
     };
-    doc_sync_now: {
+    sync_now: {
         parameters: {
             query?: never;
             header?: never;
@@ -22715,7 +22715,7 @@ export interface operations {
             };
         };
     };
-    doc_stream_get: {
+    stream_get: {
         parameters: {
             query?: {
                 /** @description Requested output codec: mp3, opus, or raw */
@@ -22801,7 +22801,7 @@ export interface operations {
             };
         };
     };
-    doc_stream_head: {
+    stream_head: {
         parameters: {
             query?: never;
             header?: never;

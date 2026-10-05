@@ -1029,15 +1029,6 @@ impl FakeLastFmAuthClient {
     pub async fn fail_token_with(&self, error: LastFmError) {
         self.state.lock().await.token_error = Some(error);
     }
-
-    /// Fail one token's exchange with `error`.
-    pub async fn fail_exchange_with(&self, token: &str, error: LastFmError) {
-        self.state
-            .lock()
-            .await
-            .sessions
-            .insert(token.to_owned(), Err(error));
-    }
 }
 
 impl LastFmAuthClient for FakeLastFmAuthClient {
@@ -1193,14 +1184,8 @@ pub struct TestRig {
     pub users: Arc<MemoryUserStore>,
     /// Session store handle (stands in for the sibling store).
     pub sessions: Arc<MemorySessionManager>,
-    /// App-password store handle.
-    pub app_passwords: Arc<MemoryAppPasswordStore>,
     /// Last.fm store handle.
     pub lastfm: Arc<MemoryLastFmStore>,
-    /// Recovery store handle.
-    pub recovery: Arc<MemoryRecoveryStore>,
-    /// Avatar store handle.
-    pub avatars: Arc<MemoryAvatarStore>,
     /// Clock handle for time travel.
     pub clock: Arc<ManualClock>,
     /// Last.fm fake for scripting approvals and faults.
@@ -1254,10 +1239,7 @@ impl TestRig {
             deps,
             users,
             sessions,
-            app_passwords,
             lastfm,
-            recovery,
-            avatars,
             clock,
             lastfm_client,
         })

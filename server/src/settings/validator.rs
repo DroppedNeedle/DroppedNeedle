@@ -1,4 +1,4 @@
-//! Dropped-section rejection (D2/D3/D4/D5/D8/D15).
+//! Dropped-section rejection.
 //!
 //! Six config keys from v2 have no v3 counterpart: the legacy catalog sync
 //! (one-shot import only), transient scan hints (runtime-only), the
@@ -10,40 +10,39 @@
 
 use super::error::SettingsError;
 
-/// One dropped key with its decision ref.
+/// One dropped key with the reason it is gone.
 pub struct DroppedKey {
     /// Former config-file key.
     pub key: &'static str,
-    /// Decision ref (D-list, R-answer, or export spec section).
-    pub decision: &'static str,
+    /// Why v3 has no such section; shown in the error message.
+    pub reason: &'static str,
 }
 
-/// Every dropped section key. Mirrors the stage-2 registry; the message
-/// names the decision so the caller can look it up.
+/// Every dropped section key.
 pub const DROPPED: &[DroppedKey] = &[
     DroppedKey {
         key: "library_sync_settings",
-        decision: "D2/R8",
+        reason: "the v2 catalog sync is a one-shot import now",
     },
     DroppedKey {
         key: "library_scan_dirty_scopes",
-        decision: "D15",
+        reason: "scan hints are runtime state",
     },
     DroppedKey {
         key: "local_files_settings",
-        decision: "D3",
+        reason: "it had no effect",
     },
     DroppedKey {
         key: "home_settings",
-        decision: "D4",
+        reason: "it had no effect",
     },
     DroppedKey {
         key: "_legacy_lidarr",
-        decision: "D5",
+        reason: "the Lidarr backup key does not carry forward",
     },
     DroppedKey {
         key: "jellyfin_url",
-        decision: "D8",
+        reason: "jellyfin_settings holds the Jellyfin URL",
     },
 ];
 
@@ -53,7 +52,7 @@ pub fn ensure_kept_section(key: &str) -> Result<(), SettingsError> {
         Some(dropped) => Err(SettingsError::Dropped {
             message: format!(
                 "The {:?} section was removed from v3 ({}); it cannot be read or saved.",
-                dropped.key, dropped.decision
+                dropped.key, dropped.reason
             ),
         }),
         None => Ok(()),

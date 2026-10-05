@@ -77,14 +77,6 @@ impl Sandbox {
         &self.meta_dir
     }
 
-    /// All root ids, sorted, for deterministic multi-root lease order.
-    pub fn sorted_root_ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self.roots.iter().map(|root| root.id.clone()).collect();
-        ids.sort();
-        ids.dedup();
-        ids
-    }
-
     /// Resolve a root-relative path to an absolute path, rejecting
     /// traversal, absolute inputs, and NUL bytes. The result is
     /// guaranteed to stay under the root directory.
@@ -243,13 +235,6 @@ pub fn collision_key(root_id: &str, relative: &str) -> CollisionKey {
     let normalized: String = relative.nfc().collect();
     let folded = caseless::default_case_fold_str(&normalized);
     CollisionKey(format!("{root_id}\u{1f}{folded}"))
-}
-
-impl CollisionKey {
-    /// Borrow the folded key text.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
 }
 
 fn assert_no_symlink_component(journal_id: &str) -> Result<(), PublishError> {

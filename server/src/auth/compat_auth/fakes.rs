@@ -16,10 +16,6 @@ struct FakeCompatUser {
     username_display: String,
     display_name: String,
     role: String,
-    // Write-only by design: the fake knows the account password yet no
-    // lookup ever consults it, which is exactly the rejection contract.
-    #[allow(dead_code)]
-    account_password: String,
     secrets: Vec<String>,
 }
 
@@ -41,15 +37,16 @@ impl FakeCompatPasswords {
         Self::default()
     }
 
-    /// Seed a user. The username is stored lowercased (v2 parity); the
-    /// account password is recorded only to prove it never verifies.
+    /// Seed a user. The username is stored lowercased (v2 parity). The
+    /// account password is accepted and dropped: compat logins never
+    /// verify against it, only against app passwords.
     pub fn add_user(
         &self,
         user_id: &str,
         username: &str,
         display_name: &str,
         role: &str,
-        account_password: &str,
+        _account_password: &str,
         app_secrets: &[&str],
     ) {
         if let Ok(mut rows) = self.rows.lock() {
@@ -61,7 +58,6 @@ impl FakeCompatPasswords {
                     username_display: username.to_owned(),
                     display_name: display_name.to_owned(),
                     role: role.to_owned(),
-                    account_password: account_password.to_owned(),
                     secrets: app_secrets
                         .iter()
                         .map(|secret| secret.to_string())

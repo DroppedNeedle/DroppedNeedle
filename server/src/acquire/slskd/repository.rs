@@ -10,7 +10,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio::sync::Semaphore;
 use unicode_normalization::UnicodeNormalization;
@@ -26,11 +25,6 @@ use super::query::{album_query_ladder, track_query_ladder};
 /// the mount (v2 `_DIAGNOSIS_SAMPLE`). Small: it is a settings-page check
 /// and a wrong mount makes each a full walk.
 const DIAGNOSIS_SAMPLE: usize = 3;
-
-/// Lossless containers slskd advertises (v2 `_LOSSLESS_EXT`). Only `flac`
-/// satisfies the closed quality recipe; the rest are recognized as audio
-/// the recipe does not admit.
-pub const LOSSLESS_EXTENSIONS: [&str; 5] = ["flac", "alac", "wav", "ape", "wv"];
 
 /// Correlation key for one enqueue: slskd returns no batch GUID, so the
 /// `(username, filenames)` pair is the task identity (v2 C2).
@@ -124,8 +118,6 @@ pub struct MountDiagnosis {
 /// Search and acquisition over one slskd instance.
 pub struct SlskdRepository<T: SlskdHttp> {
     client: SlskdClient<T>,
-    #[allow(dead_code)]
-    url: String,
     // The key itself lives only in the HTTP layer; the repository keeps
     // just the configured bit for `is_configured`.
     configured: bool,
@@ -147,7 +139,6 @@ impl<T: SlskdHttp> SlskdRepository<T> {
     ) -> Self {
         Self {
             client,
-            url: url.to_owned(),
             configured: !url.is_empty() && !api_key.is_empty(),
             downloads_mount,
             incomplete_mount: None,
@@ -934,9 +925,9 @@ fn mount_has_any_file(mount: &std::path::Path) -> bool {
     false
 }
 
-/// Poll slack for tests: a repository whose policy uses `CompletionGrace`
-/// separate from the search window. Exposed for the contract briefs.
+/// Total poll window: the search timeout plus the completion grace.
+#[cfg(any(test, feature = "test-support"))]
 #[must_use]
-pub fn poll_deadline(policy: &DownloadPolicy) -> Duration {
+pub fn poll_deadline(policy: &DownloadPolicy) -> std::time::Duration {
     policy.search_timeout + policy.completion_grace
 }

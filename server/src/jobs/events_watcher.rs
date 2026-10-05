@@ -63,19 +63,11 @@ pub struct WallTime {
 
 impl WallTime {
     /// Midnight `days` after the epoch.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn day(days_since_epoch: i64) -> Self {
         Self {
             days_since_epoch,
             minutes_since_midnight: 0,
-        }
-    }
-
-    /// Shift forward by whole minutes, rolling days over.
-    pub fn add_minutes(self, minutes: u64) -> Self {
-        let total = u64::from(self.minutes_since_midnight) + minutes;
-        Self {
-            days_since_epoch: self.days_since_epoch + (total / 1440) as i64,
-            minutes_since_midnight: (total % 1440) as u16,
         }
     }
 }

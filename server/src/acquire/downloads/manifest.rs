@@ -198,24 +198,6 @@ impl ManifestCodec {
         Ok(manifest)
     }
 
-    /// Read a task's manifest from the staging root.
-    pub fn read(
-        &self,
-        staging_root: &Path,
-        task_id: &str,
-    ) -> Result<DownloadManifest, ManifestError> {
-        let Some(path) = Self::checked_path(staging_root, task_id) else {
-            return Err(ManifestError::InvalidTaskId {
-                task_id: task_id.to_owned(),
-            });
-        };
-        let bytes = std::fs::read(&path).map_err(|source| ManifestError::Io {
-            path: path.clone(),
-            detail: source.to_string(),
-        })?;
-        self.decode(&bytes)
-    }
-
     /// Write a task's manifest, creating the task directory first.
     pub fn write(
         &self,

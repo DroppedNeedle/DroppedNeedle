@@ -16,8 +16,6 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::PublishError;
-
 /// A semantic tag document: managed fields, custom tags, and opaque
 /// unknown native frames (raw ID3 frames, stray atoms, and similar).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,15 +39,5 @@ impl TagDocument {
             custom: BTreeMap::new(),
             unknown_frames: BTreeMap::new(),
         }
-    }
-
-    /// Serialize for snapshot blobs.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, PublishError> {
-        serde_json::to_vec(self).map_err(PublishError::from)
-    }
-
-    /// Parse back from a snapshot blob.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, PublishError> {
-        serde_json::from_slice(bytes).map_err(PublishError::from)
     }
 }

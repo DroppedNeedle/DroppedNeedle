@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
 
 /// Tags for one file, as the indexer needs them. The real tag shape is
@@ -43,13 +44,15 @@ pub trait TagReader: Send + Sync {
     fn read_tags(&self, path: &Path) -> Result<ScannedTags, TagReadError>;
 }
 
-/// Null tag reader: every file reads clean with empty tags. The scan-rate
-/// briefs use this to measure discovery and indexing without a tag stack.
+/// Null tag reader: every file reads clean with empty tags, so tests can
+/// measure discovery and indexing without a tag stack.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct NullTagReader {
     reads: Mutex<u64>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl NullTagReader {
     pub fn new() -> Self {
         Self::default()
@@ -63,6 +66,7 @@ impl NullTagReader {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl TagReader for NullTagReader {
     fn read_tags(&self, _path: &Path) -> Result<ScannedTags, TagReadError> {
         *self
@@ -73,70 +77,17 @@ impl TagReader for NullTagReader {
     }
 }
 
-/// Tag reader that defers one nominated file, for the re-offer brief.
-#[derive(Debug, Default)]
-pub struct DeferOnceTagReader {
-    inner: NullTagReader,
-    defer_basename: Mutex<Option<String>>,
-    deferred: Mutex<Vec<String>>,
-}
-
-impl DeferOnceTagReader {
-    pub fn deferring(basename: &str) -> Self {
-        Self {
-            inner: NullTagReader::new(),
-            defer_basename: Mutex::new(Some(basename.to_owned())),
-            deferred: Mutex::new(Vec::new()),
-        }
-    }
-
-    pub fn reads(&self) -> u64 {
-        self.inner.reads()
-    }
-
-    pub fn deferred(&self) -> Vec<String> {
-        self.deferred
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-}
-
-impl TagReader for DeferOnceTagReader {
-    fn read_tags(&self, path: &Path) -> Result<ScannedTags, TagReadError> {
-        let basename = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned());
-        let mut slot = self
-            .defer_basename
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if slot
-            .as_ref()
-            .is_some_and(|wanted| Some(wanted) == basename.as_ref())
-        {
-            *slot = None;
-            self.deferred
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .push(path.display().to_string());
-            return Err(TagReadError::Deferred);
-        }
-        drop(slot);
-        self.inner.read_tags(path)
-    }
-}
-
 /// Tag reader that defers armed basenames once, then reads clean.
-/// Tests arm a file mid-suite to reproduce exhaustion against an already
-/// indexed catalog row (the exact F-12 re-offer shape).
+/// Tests arm a file mid-suite to reproduce deferral exhaustion against an
+/// already indexed catalog row.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ArmableDeferTagReader {
     inner: NullTagReader,
     armed: Mutex<std::collections::HashSet<String>>,
-    deferred: Mutex<Vec<String>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ArmableDeferTagReader {
     pub fn new() -> Self {
         Self::default()
@@ -148,19 +99,9 @@ impl ArmableDeferTagReader {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(basename.to_owned());
     }
-
-    pub fn reads(&self) -> u64 {
-        self.inner.reads()
-    }
-
-    pub fn deferred(&self) -> Vec<String> {
-        self.deferred
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl TagReader for ArmableDeferTagReader {
     fn read_tags(&self, path: &Path) -> Result<ScannedTags, TagReadError> {
         let basename = path
@@ -173,10 +114,6 @@ impl TagReader for ArmableDeferTagReader {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .remove(&basename)
         {
-            self.deferred
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .push(path.display().to_string());
             return Err(TagReadError::Deferred);
         }
         self.inner.read_tags(path)
@@ -244,53 +181,4 @@ impl IdentifyQueue for NullIdentifyQueue {
 /// change superseded the run, never a filesystem error (v2 F-INDEXREC-06).
 pub trait Checkpoint: Send + Sync {
     fn check(&self, run_id: &str, frozen_policy_revision: &str) -> bool;
-}
-
-/// Checkpoint that always allows progress. Unit-test only.
-#[derive(Debug, Default)]
-pub struct AllowAll;
-
-impl Checkpoint for AllowAll {
-    fn check(&self, _run_id: &str, _frozen_policy_revision: &str) -> bool {
-        true
-    }
-}
-
-/// Checkpoint backed by a closure. Test-only.
-pub struct FnCheckpoint<F> {
-    check: F,
-}
-
-impl<F> FnCheckpoint<F>
-where
-    F: Fn(&str, &str) -> bool + Send + Sync,
-{
-    pub fn new(check: F) -> Self {
-        Self { check }
-    }
-}
-
-impl<F> Checkpoint for FnCheckpoint<F>
-where
-    F: Fn(&str, &str) -> bool + Send + Sync,
-{
-    fn check(&self, run_id: &str, frozen_policy_revision: &str) -> bool {
-        (self.check)(run_id, frozen_policy_revision)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn defer_once_defers_exactly_one_read() {
-        let reader = DeferOnceTagReader::deferring("a.flac");
-        assert_eq!(
-            reader.read_tags(Path::new("/music/a.flac")),
-            Err(TagReadError::Deferred)
-        );
-        assert!(reader.read_tags(Path::new("/music/a.flac")).is_ok());
-        assert_eq!(reader.deferred().len(), 1);
-    }
 }

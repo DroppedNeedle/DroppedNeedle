@@ -21,14 +21,6 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex_encode(&hasher.finalize())
 }
 
-/// SHA-256 hex of a file, streamed so large audio never sits in memory.
-pub fn sha256_file(path: &Path) -> Result<String, PublishError> {
-    let mut file = std::fs::File::open(path).map_err(PublishError::from)?;
-    let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher).map_err(PublishError::from)?;
-    Ok(hex_encode(&hasher.finalize()))
-}
-
 fn hex_encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -103,22 +95,6 @@ impl BlobStore {
         }
         Ok(bytes)
     }
-
-    /// Whether the blob exists with verified bytes.
-    pub fn contains(&self, sha256: &str) -> bool {
-        self.get(sha256).is_ok()
-    }
-}
-
-/// One reference from an owner (operation, artwork, metadata) to a blob.
-#[derive(Debug, Clone)]
-pub struct SnapshotRef {
-    /// Content hash of the referenced blob.
-    pub sha256: String,
-    /// Owner kind: operation, artwork, or metadata.
-    pub owner_kind: String,
-    /// Owner id: operation or bundle id.
-    pub owner_id: String,
 }
 
 /// Per-operation before-state snapshots (E4, E32). Each successful

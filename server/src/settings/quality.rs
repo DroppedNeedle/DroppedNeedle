@@ -11,9 +11,6 @@ use serde::{Deserialize, Serialize};
 /// Canonical five tiers, best first.
 pub const TIER_KEYS_BEST_FIRST: [&str; 5] = ["lossless", "mp3_320", "mp3_256", "mp3_192", "low"];
 
-/// Lossy band floors, best first.
-const LOSSY_BANDS: [(i64, &str); 3] = [(320, "mp3_320"), (256, "mp3_256"), (192, "mp3_192")];
-
 /// Tier label for the summary sentence.
 fn tier_label(key: &str) -> &str {
     match key {
@@ -301,14 +298,4 @@ pub fn is_legacy_default_shape(
         && lossy_min_bitrate_kbps.is_none()
         && lossy_max_bitrate_kbps.is_none()
         && unknown_quality_behavior == "allow_as_fallback"
-}
-
-/// Lossy band for a bitrate (best-first scan).
-pub fn band_for_bitrate(rate: i64) -> &'static str {
-    for (floor, key) in LOSSY_BANDS {
-        if rate >= floor {
-            return key;
-        }
-    }
-    "low"
 }

@@ -76,21 +76,6 @@ pub fn wants_favorites(params: &CiParams) -> bool {
         .any(|f| f.eq_ignore_ascii_case("isfavorite"))
 }
 
-/// `?IsPlayed=true` or `Filters` containing `IsPlayed` (v2 `_wants_played`).
-/// Parsed for parity; browse currently honors favorites only, like v2.
-pub fn wants_played(params: &CiParams) -> bool {
-    if params
-        .get("isPlayed")
-        .unwrap_or("")
-        .eq_ignore_ascii_case("true")
-    {
-        return true;
-    }
-    csv_param(params, "Filters")
-        .iter()
-        .any(|f| f.eq_ignore_ascii_case("isplayed"))
-}
-
 /// Lenient int query: missing/empty/unparseable falls back (v2 `_qint`).
 pub fn qint(params: &CiParams, key: &str, default: i64) -> i64 {
     match params.get(key) {

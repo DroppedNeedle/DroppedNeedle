@@ -56,15 +56,6 @@ pub struct Materialization {
     pub paths: Vec<PathBuf>,
 }
 
-/// Terminal fetch result for one candidate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FetchOutcome {
-    /// Every transfer terminal and succeeded.
-    Completed,
-    /// Every transfer terminal, at least one failed.
-    Terminal,
-}
-
 /// Source failures. Local faults (disk full, mount gone) must surface as
 /// [`SourceError::LocalFault`] so callers retry with backoff instead of
 /// blocklisting a healthy release.
@@ -85,9 +76,6 @@ pub enum SourceError {
 /// method returns an opaque future so adapters can be async without this
 /// slice depending on an executor.
 pub trait DownloadSource: Send + Sync {
-    /// Adapter name (`slskd`, `sabnzbd`, `plugin:<key>`).
-    fn name(&self) -> &str;
-
     /// Enqueue a candidate; returns the correlation handle.
     fn enqueue(
         &self,

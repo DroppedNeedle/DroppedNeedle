@@ -34,9 +34,6 @@ pub struct ProwlarrCategory {
     /// Newznab category id.
     #[serde(default)]
     pub id: i32,
-    /// Display name.
-    #[serde(default)]
-    pub name: String,
 }
 
 /// One `ReleaseResource` from `/api/v1/search` (usenet + torrent mixed;

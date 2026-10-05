@@ -396,10 +396,9 @@ async fn require_admin(
         }
         .into_response();
     }
-    request.extensions_mut().insert(AdminUser {
-        user_id: user.id,
-        username: user.username,
-    });
+    request
+        .extensions_mut()
+        .insert(AdminUser { user_id: user.id });
     next.run(request).await
 }
 
@@ -409,6 +408,4 @@ async fn require_admin(
 pub struct AdminUser {
     /// Owning user id.
     pub user_id: String,
-    /// Login username, when the account has one.
-    pub username: Option<String>,
 }

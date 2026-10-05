@@ -10553,7 +10553,7 @@
           "crate::jobs::playlist_sync"
         ],
         "summary": "Run one Navidrome playlist sync now.",
-        "operationId": "doc_sync_now",
+        "operationId": "sync_now",
         "responses": {
           "200": {
             "description": "Sync report",
@@ -11246,7 +11246,7 @@
           "crate::stream::routes"
         ],
         "summary": "Full or ranged audio bytes.",
-        "operationId": "doc_stream_get",
+        "operationId": "stream_get",
         "parameters": [
           {
             "name": "source",
@@ -11330,7 +11330,7 @@
           "crate::stream::routes"
         ],
         "summary": "Same headers as GET, no body.",
-        "operationId": "doc_stream_head",
+        "operationId": "stream_head",
         "parameters": [
           {
             "name": "source",

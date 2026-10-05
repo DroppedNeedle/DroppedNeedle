@@ -16,7 +16,7 @@ use crate::auth::times::to_iso;
 use crate::ids::IdGenerator;
 
 use super::ports::{
-    Clock, DisplayNames, ListeningPrefs, PlayHistory, PlayRecord, ProviderFailure, ScrobblePrefs,
+    DisplayNames, ListeningPrefs, PlayHistory, PlayRecord, ProviderFailure, ScrobblePrefs,
     TrackCatalog, TrackInfo, VISIBILITY_FULL,
 };
 
@@ -190,18 +190,5 @@ impl DisplayNames for PlaybackDb {
             .flatten()
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| user_id.to_owned())
-    }
-}
-
-/// Production clock over the system time.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PlaybackClock;
-
-impl Clock for PlaybackClock {
-    fn now_unix(&self) -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs() as i64)
-            .unwrap_or(0)
     }
 }

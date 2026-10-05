@@ -18,7 +18,7 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use lofty::file::{AudioFile as _, TaggedFile, TaggedFileExt as _};
+use lofty::file::{TaggedFile, TaggedFileExt as _};
 use lofty::probe::Probe;
 use lofty::tag::{ItemKey, Tag, TagType};
 
@@ -79,14 +79,6 @@ pub fn read_tags(path: &Path) -> Result<(AudioTag, super::AudioInfo), TagsError>
     Ok((tag, info))
 }
 
-/// Tag text plus the raw lofty bit depth for one file.
-pub struct TagFromBytes {
-    pub tag: AudioTag,
-    /// Raw header bit depth (`None` when lofty reports none or zero).
-    /// Suppression rules stay with the caller.
-    pub lofty_bit_depth: Option<u8>,
-}
-
 /// Read the tag half only. The probe half lives in [`super::probe`].
 pub fn read_tag_only(path: &Path, format: AudioFormat) -> Result<AudioTag, TagsError> {
     if format == AudioFormat::Aac {
@@ -107,14 +99,11 @@ pub fn read_tag_from_bytes(
     bytes: &[u8],
     path: &Path,
     format: AudioFormat,
-) -> Result<TagFromBytes, TagsError> {
+) -> Result<AudioTag, TagsError> {
     if format == AudioFormat::Aac {
         let tag =
             parse_apev2(bytes).map_or_else(AudioTag::default, |items| ape_tag_from_items(&items));
-        return Ok(TagFromBytes {
-            tag,
-            lofty_bit_depth: None,
-        });
+        return Ok(tag);
     }
     let Some(file_type) = lofty::file::FileType::from_path(path) else {
         // Same unknown-format error `read_from_path` raises on an
@@ -132,10 +121,7 @@ pub fn read_tag_from_bytes(
             path: path.display().to_string(),
             reason: error.to_string(),
         })?;
-    Ok(TagFromBytes {
-        tag: select_tag(&tagged, format).map_or_else(AudioTag::default, audio_tag_from_items),
-        lofty_bit_depth: tagged.properties().bit_depth().filter(|depth| *depth > 0),
-    })
+    Ok(select_tag(&tagged, format).map_or_else(AudioTag::default, audio_tag_from_items))
 }
 
 /// Preferred tag for the format, else the first tag lofty parsed.

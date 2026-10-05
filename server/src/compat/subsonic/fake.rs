@@ -30,11 +30,6 @@ pub const USERNAME: &str = "user";
 /// Admin username.
 pub const ADMIN_USERNAME: &str = "admin";
 
-/// Current time for time-derived fields (fixed for goldens).
-pub fn now_unix() -> f64 {
-    NOW_UNIX
-}
-
 /// Fake principal.
 #[derive(Debug, Clone)]
 pub struct FakePrincipal {

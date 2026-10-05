@@ -42,22 +42,8 @@ pub const NOT_IMPORTABLE_EXTENSIONS: [&str; 3] = ["dsd", "dsf", "dff"];
 pub const LOSSLESS_DETAIL_STEPS: [&str; 6] =
     ["cd", "24_48", "24_96", "24_192", "hi_res", "partial"];
 
-/// Legacy comparator floor used ONLY as a ranking stand-in for an ABSENT
-/// axis (v2): a known axis may prove a cap rejection but cannot prove a
-/// positive step.
-pub const LEGACY_FLOOR_BIT_DEPTH: i32 = 16;
-pub const LEGACY_FLOOR_SAMPLE_RATE: i32 = 44100;
-
-/// `(depth, rate)` comparison axes with the legacy floor filled in for an
-/// ABSENT axis (v2 `detail_comparator_axes`; preserves migrated Soulseek
-/// FLAC ordering, labelled partial).
-#[must_use]
-pub fn detail_comparator_axes(bit_depth: Option<i32>, sample_rate_hz: Option<i32>) -> (i32, i32) {
-    (
-        bit_depth.unwrap_or(LEGACY_FLOOR_BIT_DEPTH),
-        sample_rate_hz.unwrap_or(LEGACY_FLOOR_SAMPLE_RATE),
-    )
-}
+/// CD bit depth: the ceiling of the `cd` step.
+pub const CD_BIT_DEPTH: i32 = 16;
 
 /// Map trusted depth/rate onto the fixed ladder (v2
 /// `lossless_detail_step`). Both axes present -> steps 0-4 by ascending
@@ -68,7 +54,7 @@ pub fn lossless_detail_step(bit_depth: Option<i32>, sample_rate_hz: Option<i32>)
     let (Some(depth), Some(rate)) = (bit_depth, sample_rate_hz) else {
         return 5;
     };
-    if depth <= LEGACY_FLOOR_BIT_DEPTH && rate <= 48_000 {
+    if depth <= CD_BIT_DEPTH && rate <= 48_000 {
         0
     } else if depth <= 24 && rate <= 48_000 {
         1

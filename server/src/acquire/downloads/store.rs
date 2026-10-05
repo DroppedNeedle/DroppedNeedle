@@ -240,27 +240,6 @@ pub struct QuarantineRow {
     pub quarantined_at: f64,
 }
 
-/// Held-import row fields the management retry sweep needs.
-#[derive(Debug, Clone)]
-pub struct HeldRow {
-    /// Row id.
-    pub id: i64,
-    /// Owning user id.
-    pub user_id: String,
-    /// Owning download task, when known.
-    pub source_task_id: Option<String>,
-    /// `held`, `imported`, or `discarded`.
-    pub status: String,
-    /// Why it is held (`management:*` rows are sweep-eligible).
-    pub reason: String,
-    /// Path of the held file.
-    pub held_path: String,
-    /// Management retry generation.
-    pub management_retry_count: i64,
-    /// Next sweep time (unix seconds), when scheduled.
-    pub management_next_retry_at: Option<f64>,
-}
-
 /// The download journal over one SQLite connection.
 pub struct DownloadStore<'conn> {
     conn: &'conn Connection,

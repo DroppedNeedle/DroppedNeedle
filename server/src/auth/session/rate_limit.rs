@@ -9,7 +9,7 @@
 //! (v2's search/discover/covers overrides are endpoint slices' business.)
 
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use axum::{
     Json,
@@ -266,11 +266,6 @@ pub fn rate_limited_response(class: RateClass, retry_after_secs: u64) -> Respons
     response
 }
 
-/// How long until a class refills one token from empty (for tests/docs).
-pub fn refill_delay(class: RateClass) -> Duration {
-    Duration::from_secs_f64(1.0 / class.rate_per_sec)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,7 +299,7 @@ mod tests {
         let denied = bucket.try_acquire_at(start);
         assert!(!denied.allowed);
         assert!(denied.retry_after_secs >= 1);
-        let later = start + Duration::from_secs(3);
+        let later = start + std::time::Duration::from_secs(3);
         assert!(bucket.try_acquire_at(later).allowed);
     }
 }

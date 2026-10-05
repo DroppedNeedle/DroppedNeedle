@@ -18,17 +18,13 @@ use tokio::sync::watch;
 use super::coordinator::LibraryScanCoordinator;
 use super::models::{Disposition, ScanKind, ScanRequest, ScanScope, ScanTrigger};
 use super::roots::RootRegistry;
-use super::scheduler::{
-    InclusionRule, ScheduleSettings, scheduled_scopes, seconds_until_due, tick,
-};
+use super::scheduler::{InclusionRule, ScheduleSettings, scheduled_scopes, tick};
 use super::seams::{IdentifyQueue, TagReader};
 use super::store::ScanStore;
 use super::watcher::{DirtyScopes, WorkWakeups};
 
 /// Idle recovery ceiling (v2 `EMPTY_RECOVERY_INTERVAL_SECONDS`).
 pub const EMPTY_RECOVERY_INTERVAL_SECS: f64 = 47.0;
-/// Failed-iteration retry (v2 `ERROR_RETRY_INTERVAL_SECONDS`).
-pub const ERROR_RETRY_INTERVAL_SECS: f64 = 1.0;
 
 /// Supervisor loop inputs. Getters are re-read every iteration.
 pub struct SupervisorInputs {
@@ -271,22 +267,6 @@ pub async fn supervise_target_scans<S, T, Q>(
             )
             .await;
     }
-}
-
-/// Seconds until the next automatic scan, for operator visibility.
-/// Thin wrapper over the schedule math (None when manual or unresolvable).
-pub fn seconds_until_next_scan(
-    settings: &ScheduleSettings,
-    terminal_at: Option<f64>,
-    now: f64,
-) -> Option<f64> {
-    seconds_until_due(
-        &settings.frequency,
-        &settings.daily_time,
-        terminal_at,
-        now,
-        &settings.timezone_name,
-    )
 }
 
 #[cfg(test)]

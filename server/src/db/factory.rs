@@ -33,7 +33,6 @@ use sqlx::{
         SqliteSynchronous,
     },
 };
-use tokio::sync::Notify;
 
 use super::{
     backup::BackupService,
@@ -96,7 +95,6 @@ pub struct DbRuntime {
     checkpoint: CheckpointService,
     wakeups: DurableWorkWakeups,
     backups: BackupService,
-    checkpoint_stop: Arc<Notify>,
 }
 
 /// Open the runtime against one database file, running every boot check.
@@ -139,7 +137,6 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
         checkpoint,
         wakeups,
         backups,
-        checkpoint_stop: Arc::new(Notify::new()),
     })
 }
 
@@ -176,21 +173,12 @@ impl DbRuntime {
         &self.backups
     }
 
-    /// Run the steady-state checkpoint loop until [`DbRuntime::shutdown`].
-    /// Spawn once per process; pass failures are recorded, never fatal.
-    pub async fn run_checkpoint_loop(&self) {
-        self.checkpoint
-            .run_forever(Arc::clone(&self.checkpoint_stop))
-            .await;
-    }
-
-    /// Clean shutdown in order: stop the checkpoint loop, drain the writer
-    /// lane, reclaim the WAL, then close the pool. Draining first means no
+    /// Clean shutdown in order: drain the writer lane, reclaim the WAL,
+    /// then close the pool. Draining first means no
     /// write lands after the reclaim; the reclaim itself is best effort (a
     /// held lock leaves the WAL in place), so a quiet shutdown leaves no
     /// `-wal` or `-shm` behind.
     pub async fn shutdown(self) {
-        self.checkpoint_stop.notify_waiters();
         self.lane.shutdown().await;
         let checkpoint = self.checkpoint.clone();
         let _ = tokio::task::spawn_blocking(move || checkpoint.shutdown_truncate()).await;

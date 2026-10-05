@@ -20,7 +20,7 @@ pub const PLUGIN_API_VERSION: i64 = 1;
 /// Legacy API version, kept byte-identical.
 pub const PLUGIN_API_VERSION_LEGACY: i64 = 0;
 /// Every API version the host speaks.
-pub const SUPPORTED_API_VERSIONS: [i64; 2] = [0, 1];
+pub const SUPPORTED_API_VERSIONS: [i64; 2] = [PLUGIN_API_VERSION_LEGACY, PLUGIN_API_VERSION];
 
 /// Capabilities a v0 manifest may activate.
 pub const V0_ACTIVE_CAPABILITIES: &[&str] = &["scrobbler", "purchase_links"];

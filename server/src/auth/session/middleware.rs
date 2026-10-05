@@ -354,11 +354,6 @@ fn internal_error() -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
 }
 
-/// Read back the session the middleware stashed, if any.
-pub fn current_session(request: &Request) -> Option<&CurrentSession> {
-    request.extensions().get::<CurrentSession>()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -200,19 +200,8 @@ pub trait LidarrSettingsStore: Send + Sync {
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryFollowStore {
-    inner: Mutex<HashMap<(String, String), MemoryFollow>>,
-}
-
-/// One in-memory follow row. The descriptive fields mirror the durable
-/// row shape; only intent is read back.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct MemoryFollow {
-    name: String,
-    auto_download: bool,
-    followed_at: u64,
-    seq: u64,
+    /// Auto-download intent per `(user_id, lowercased mbid)` follow.
+    inner: Mutex<HashMap<(String, String), bool>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -242,16 +231,10 @@ impl FollowStore for MemoryFollowStore {
             .inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let seq = inner.len() as u64;
-        for (index, (mbid, name)) in pairs.iter().enumerate() {
+        for (mbid, _name) in pairs {
             inner
                 .entry((user_id.to_owned(), mbid.to_lowercase()))
-                .or_insert_with(|| MemoryFollow {
-                    name: name.clone(),
-                    auto_download: false,
-                    followed_at: seq + index as u64,
-                    seq: seq + index as u64,
-                });
+                .or_insert(false);
         }
     }
 
@@ -261,8 +244,8 @@ impl FollowStore for MemoryFollowStore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         for mbid in mbids {
-            if let Some(row) = inner.get_mut(&(user_id.to_owned(), mbid.to_lowercase())) {
-                row.auto_download = intent;
+            if let Some(auto_download) = inner.get_mut(&(user_id.to_owned(), mbid.to_lowercase())) {
+                *auto_download = intent;
             }
         }
     }
@@ -274,7 +257,7 @@ impl FollowStore for MemoryFollowStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         inner
             .get(&(user_id.to_owned(), mbid_lower.to_owned()))
-            .is_some_and(|row| row.auto_download)
+            .is_some_and(|auto_download| *auto_download)
     }
 }
 

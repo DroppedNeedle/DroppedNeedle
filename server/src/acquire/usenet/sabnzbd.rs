@@ -960,8 +960,6 @@ pub struct Health {
 /// trip the stall/queued watchdogs.
 pub struct SabnzbdQueue {
     client: SabnzbdClient,
-    #[allow(dead_code)]
-    url: String,
     // The key itself lives only in the raw client; the queue keeps just
     // the configured bit for `is_configured`.
     configured: bool,
@@ -982,7 +980,6 @@ impl SabnzbdQueue {
     ) -> Self {
         SabnzbdQueue {
             client,
-            url: url.to_owned(),
             configured: !url.is_empty() && !api_key.is_empty(),
             mount: downloads_mount,
             policy,

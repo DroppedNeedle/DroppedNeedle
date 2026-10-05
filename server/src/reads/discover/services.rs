@@ -51,8 +51,6 @@ pub enum ServiceError {
     NotFound,
     /// Bad input with a user-facing reason.
     InvalidInput(String),
-    /// State conflict with a user-facing reason.
-    Conflict(String),
     /// A provider failed; the cause is log-only.
     Upstream(String),
     /// The store failed; the cause is log-only.
@@ -65,7 +63,6 @@ impl ServiceError {
         match self {
             Self::NotFound => ReadsError::NotFound,
             Self::InvalidInput(message) => ReadsError::InvalidInput { message },
-            Self::Conflict(message) => ReadsError::Conflict { message },
             Self::Upstream(cause) => ReadsError::upstream(&cause, ids),
             Self::Internal(cause) => ReadsError::internal(&cause, ids),
         }

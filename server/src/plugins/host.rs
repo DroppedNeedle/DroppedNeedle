@@ -176,16 +176,6 @@ pub trait ArchiveUnpacker: Send + Sync {
     fn unpack(&self, bytes: &[u8]) -> Result<Vec<ArchiveEntry>, String>;
 }
 
-/// Placeholder unpacker that fails every install loudly, so a missing
-/// reader is never mistaken for an empty archive.
-pub struct MissingUnpacker;
-
-impl ArchiveUnpacker for MissingUnpacker {
-    fn unpack(&self, _bytes: &[u8]) -> Result<Vec<ArchiveEntry>, String> {
-        Err("plugin archives need a zip reader; the integrator wires one here".to_owned())
-    }
-}
-
 /// Every way an install can fail. All but `Io` render as user-facing 400s
 /// with the message below; `Io` is a 500 with a fixed body.
 #[derive(Debug, Clone, PartialEq, Eq)]

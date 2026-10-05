@@ -13,14 +13,10 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-/// Task name for the poller loop.
-pub const LIBRARY_REVISION_POLLER_TASK_NAME: &str = "library-revision-poller";
 /// Channel carrying revision publications.
 pub const LIBRARY_REVISIONS_CHANNEL: &str = "library-revisions";
 /// Event name for changed revisions.
 pub const ACTIVITY_CHANGED_EVENT: &str = "activity.changed";
-/// Poll interval (v2 `ACTIVITY_POLL_INTERVAL_SECONDS`).
-pub const ACTIVITY_POLL_INTERVAL_SECS: f64 = 2.0;
 
 /// Revision source: one read of every stream revision (v2
 /// `ActivityRevisionSource`). Fallible so transient DB errors stay

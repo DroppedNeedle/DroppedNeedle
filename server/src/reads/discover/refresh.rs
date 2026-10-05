@@ -273,59 +273,6 @@ where
     refresh_guarded(registry, scope, work).await
 }
 
-/// Shared handle bundle for the spawned loops.
-#[derive(Debug, Clone)]
-pub struct RefreshHandles {
-    /// Loop tasks. Each carries an error-logging completion hook.
-    pub tasks: Vec<Arc<tokio::task::JoinHandle<()>>>,
-    /// Single-flight registry shared with manual triggers.
-    pub registry: Arc<RefreshRegistry>,
-}
-
-/// Spawn the discover and home refresh loops. Shutdown flips the sender;
-/// each task logs its own failure on completion (spawned tasks are never
-/// silently dropped).
-pub fn spawn_refresh_loops<S, D, H>(sleeper: S, discover_work: D, home_work: H) -> RefreshHandles
-where
-    S: Sleeper + Clone + Send + 'static,
-    D: FnMut() -> std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
-        + Send
-        + 'static,
-    H: FnMut() -> std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
-        + Send
-        + 'static,
-{
-    fn spawn_one<S, F>(
-        sleeper: S,
-        scope: RefreshScope,
-        registry: Arc<RefreshRegistry>,
-        work: F,
-    ) -> Arc<tokio::task::JoinHandle<()>>
-    where
-        S: Sleeper + Clone + Send + 'static,
-        F: FnMut() -> std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
-            + Send
-            + 'static,
-    {
-        let task_registry = registry.clone();
-        Arc::new(tokio::spawn(async move {
-            run_refresh_loop(task_registry, sleeper, scope, work).await;
-        }))
-    }
-
-    let registry = Arc::new(RefreshRegistry::new());
-    let tasks = vec![
-        spawn_one(
-            sleeper.clone(),
-            RefreshScope::Discover,
-            registry.clone(),
-            discover_work,
-        ),
-        spawn_one(sleeper, RefreshScope::Home, registry.clone(), home_work),
-    ];
-    RefreshHandles { tasks, registry }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

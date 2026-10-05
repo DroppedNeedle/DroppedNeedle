@@ -183,11 +183,7 @@ impl AdminSetup {
 /// Admin gate: 401 when no session is stashed or the account is gone, 403
 /// when the account is not an admin. The role rereads the user row every
 /// request, so promotions and demotions land on the next call.
-async fn require_admin(
-    State(admin): State<AdminSetup>,
-    mut request: Request,
-    next: Next,
-) -> Response {
+async fn require_admin(State(admin): State<AdminSetup>, request: Request, next: Next) -> Response {
     let missing = || AdminError::Unauthorized {
         message: "Authentication required".to_owned(),
     };
@@ -208,18 +204,5 @@ async fn require_admin(
         }
         .into_response();
     }
-    request.extensions_mut().insert(AdminUser {
-        user_id: user.id,
-        username: user.username,
-    });
     next.run(request).await
-}
-
-/// The gated admin principal, stashed for handlers that need it.
-#[derive(Debug, Clone)]
-pub struct AdminUser {
-    /// Owning user id.
-    pub user_id: String,
-    /// Login username, when the account has one.
-    pub username: Option<String>,
 }

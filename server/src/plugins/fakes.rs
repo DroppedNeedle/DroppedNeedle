@@ -35,12 +35,8 @@ pub enum FakeTickBehavior {
 /// How a fake answers `/ext/` calls.
 #[derive(Debug, Clone)]
 pub enum FakeRouteScript {
-    /// Answer 200 with a JSON body.
-    Answer(serde_json::Value),
     /// Answer with a chosen status and body.
     Status(i32, serde_json::Value),
-    /// Fail with a message (the host answers 502).
-    Fail(String),
 }
 
 /// Scripted plugin module. Records every call for assertions.
@@ -170,11 +166,9 @@ impl PluginModule for FakeModule {
                 .ok()
                 .and_then(|guard| guard.last().cloned());
             match script {
-                Some(FakeRouteScript::Answer(body)) => Ok(PluginRouteResponse::ok(body)),
                 Some(FakeRouteScript::Status(status, body)) => {
                     Ok(PluginRouteResponse { status, body })
                 }
-                Some(FakeRouteScript::Fail(reason)) => Err(reason),
                 None => Ok(PluginRouteResponse::ok(serde_json::json!({"ok": true}))),
             }
         })
@@ -201,13 +195,6 @@ impl FakeLoader {
     pub fn insert(&self, name: &str, module: Arc<FakeModule>) {
         if let Ok(mut guard) = self.modules.lock() {
             guard.insert(name.to_owned(), module);
-        }
-    }
-
-    /// Fail one plugin's load with a reason.
-    pub fn fail(&self, name: &str, reason: &str) {
-        if let Ok(mut guard) = self.failures.lock() {
-            guard.insert(name.to_owned(), reason.to_owned());
         }
     }
 }
@@ -358,13 +345,6 @@ impl FakeVerifier {
             message: "Successfully connected".to_owned(),
             rate_limited: false,
         })
-    }
-
-    /// Script one pair's outcome.
-    pub fn insert(&self, username: &str, token: &str, outcome: VerifyOutcome) {
-        if let Ok(mut guard) = self.outcomes.lock() {
-            guard.insert((username.to_owned(), token.to_owned()), outcome);
-        }
     }
 }
 

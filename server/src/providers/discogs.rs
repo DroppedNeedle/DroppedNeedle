@@ -183,12 +183,6 @@ pub struct WireSearchFormat {
     /// Format name.
     #[serde(default)]
     pub name: String,
-    /// Quantity string.
-    #[serde(default)]
-    pub qty: String,
-    /// Format descriptions.
-    #[serde(default)]
-    pub descriptions: Vec<String>,
 }
 
 /// One `/database/search` hit on the wire.

@@ -104,7 +104,7 @@ fn read_tags_buffered(
         let parsed = super::tags::read::read_tag_from_bytes(&bytes, path, format)
             .map_err(map_tag_read_error);
         let tag = match parsed {
-            Ok(parsed) => parsed.tag,
+            Ok(tag) => tag,
             Err(error) => return Some(Err(error)),
         };
         let duration_secs =

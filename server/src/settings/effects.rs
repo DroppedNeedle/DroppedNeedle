@@ -8,7 +8,6 @@
 //! and the jobs-owned sweep.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::providers::cache::{ProviderCache, invalidate_source};
 use futures_util::future::BoxFuture;
@@ -60,38 +59,6 @@ pub struct FnKick<F> {
 impl<F: Fn() + Send + Sync> EventsKick for FnKick<F> {
     fn kick(&self) {
         (self.kick_fn)();
-    }
-}
-
-/// Single-flight kick over an injected sweep closure.
-pub struct SingleFlightKick<F> {
-    /// Sweep closure.
-    pub sweep: F,
-    /// In-flight guard.
-    pub running: AtomicBool,
-}
-
-impl<F: Fn() + Send + Sync> SingleFlightKick<F> {
-    /// Wrap a sweep closure.
-    pub fn new(sweep: F) -> Self {
-        Self {
-            sweep,
-            running: AtomicBool::new(false),
-        }
-    }
-}
-
-impl<F: Fn() + Send + Sync> EventsKick for SingleFlightKick<F> {
-    fn kick(&self) {
-        if self
-            .running
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return;
-        }
-        (self.sweep)();
-        self.running.store(false, Ordering::SeqCst);
     }
 }
 

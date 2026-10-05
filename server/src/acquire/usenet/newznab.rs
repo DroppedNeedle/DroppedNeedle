@@ -770,18 +770,15 @@ fn parse_items(
                 );
                 return Vec::new();
             }
-            Err(ItemFault::Skipped(_)) => {
-                // One bad item must not sink the feed.
-            }
         }
     }
     releases
 }
 
+/// Why a feed item stops the parse: only a Torznab enclosure does; a bad
+/// item is skipped as `Ok(None)` so it cannot sink the feed.
 enum ItemFault {
     Torznab,
-    #[allow(dead_code)]
-    Skipped(String),
 }
 
 fn parse_item(

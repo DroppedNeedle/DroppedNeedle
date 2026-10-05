@@ -152,16 +152,7 @@ pub struct ModuleTick<T> {
     store: T,
 }
 
-impl<T> ModuleTick<T> {
-    /// Wrap one plugin's scheduling.
-    pub fn new(host: Arc<PluginHost>, name: &str, store: T) -> Self {
-        Self {
-            host,
-            name: name.to_owned(),
-            store,
-        }
-    }
-}
+impl<T> ModuleTick<T> {}
 
 impl<T: JobsTickStore> JobsTickPlugin for ModuleTick<T> {
     fn name(&self) -> &str {
@@ -265,11 +256,6 @@ impl<S, T> PluginTickLoops<S, T> {
             store,
             grace,
         }
-    }
-
-    /// The underlying registry, for assertions.
-    pub fn registry(&self) -> &JobRegistry<S> {
-        &self.registry
     }
 }
 

@@ -19,9 +19,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::PublishError;
 use super::planner::{FileFingerprint, ReleaseIdentity};
 use super::tags_seam::TagDocument;
-use super::{PublishError, paths};
 
 /// Exact before state captured by a successful publisher call: the
 /// semantic audio snapshot, the prior management state, and the
@@ -328,9 +328,4 @@ pub fn confirm_baseline_purge(
         return Err(PublishError::Validation("no baselines to purge".into()));
     }
     Ok(baseline_count)
-}
-
-/// Read a symlink-free regular file for undo/restore verification.
-pub fn read_managed_file(path: &std::path::Path) -> Result<Vec<u8>, PublishError> {
-    paths::read_regular_file(path)
 }

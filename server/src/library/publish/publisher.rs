@@ -22,7 +22,7 @@ use super::planner::{
     CapabilityGate, CollisionGate, DiskPreflight, PlanBundle, PlanKind, SealError, SealRecheck,
     SealedPreview, SpaceProbe,
 };
-use super::snapshots::{BlobStore, SnapshotStore, sha256_file, sha256_hex};
+use super::snapshots::{BlobStore, SnapshotStore, sha256_hex};
 use super::tags_seam::TagDocument;
 use super::{PublishError, paths};
 
@@ -176,49 +176,6 @@ impl Catalog for SqliteCatalog {
     }
 }
 
-/// No-op catalog for briefs that never reach commit.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone, Default)]
-pub struct NullCatalog {
-    revision: std::cell::Cell<u64>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Catalog for NullCatalog {
-    fn revision(&self, _conn: &Connection) -> Result<u64, PublishError> {
-        Ok(self.revision.get())
-    }
-
-    fn locate(
-        &self,
-        _conn: &Connection,
-        _track_id: &str,
-    ) -> Result<Option<(String, String, String, String)>, PublishError> {
-        Ok(None)
-    }
-
-    fn commit_bundle(&self, _conn: &Connection, commit: &BundleCommit) -> Result<(), PublishError> {
-        if commit.expected_catalog_revision != self.revision.get() {
-            return Err(PublishError::Catalog("null catalog revision moved".into()));
-        }
-        self.revision.set(self.revision.get() + 1);
-        Ok(())
-    }
-
-    fn invalidate(
-        &self,
-        _conn: &Connection,
-        _bundle_id: &str,
-        _track_ids: &[String],
-    ) -> Result<(), PublishError> {
-        Ok(())
-    }
-
-    fn mark_missing(&self, _conn: &Connection, _track_id: &str) -> Result<(), PublishError> {
-        Ok(())
-    }
-}
-
 /// Crash-injection point between durable steps. Each variant names the
 /// last completed step; recovery must resume or compensate from there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,17 +271,13 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         })
     }
 
-    /// Arm one crash-injection point. Test-only; production never calls this.
+    /// Arm one crash-injection point. Tests only; production never calls this.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_crash_point(&mut self, point: Option<CrashPoint>) {
         self.injector = point;
     }
 
-    /// Borrow the sandbox.
-    pub fn sandbox(&self) -> &Sandbox {
-        &self.sandbox
-    }
-
-    /// Borrow the database connection for brief assertions.
+    /// Borrow the publisher's database connection.
     pub fn connection(&self) -> &Connection {
         &self.conn
     }
@@ -976,10 +929,4 @@ fn prune_empty_parents(
         cursor = dir.parent().map(Path::to_path_buf);
     }
     Ok(())
-}
-
-/// SHA-256 of a sandbox file for seal rechecks and recovery.
-pub fn fingerprint_file(sandbox: &Sandbox, root: &str, rel: &str) -> Result<String, PublishError> {
-    let path = sandbox.resolve_no_symlink(root, rel)?;
-    sha256_file(&path)
 }

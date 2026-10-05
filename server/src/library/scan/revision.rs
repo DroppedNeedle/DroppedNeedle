@@ -15,17 +15,6 @@ pub fn exact_stat_revision(file_size_bytes: u64, file_mtime_ns: i64) -> String {
     format!("{file_size_bytes}:{file_mtime_ns}")
 }
 
-/// Revision string from live metadata.
-pub fn revision_from_metadata(meta: &Metadata) -> String {
-    let mtime_ns = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
-        .unwrap_or(0);
-    exact_stat_revision(meta.len(), mtime_ns)
-}
-
 /// mtime nanoseconds from live metadata (0 when unavailable).
 pub fn mtime_ns_from_metadata(meta: &Metadata) -> i64 {
     meta.modified()

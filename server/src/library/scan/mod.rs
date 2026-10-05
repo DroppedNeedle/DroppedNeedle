@@ -80,19 +80,14 @@ pub use poller::{
     revision_event_id,
 };
 pub use pool::BlockingPool;
-pub use revision::{
-    exact_stat_revision, legacy_mtime_eps_seconds, mtime_ns_from_metadata, revision_from_metadata,
-};
+pub use revision::{exact_stat_revision, legacy_mtime_eps_seconds, mtime_ns_from_metadata};
 pub use roots::{
     LibraryRoot, PolicyResolver, RootRegistry, RootSeamError, StreamRootSeam, fingerprint_roots,
 };
 pub use scheduler::{InclusionRule, ScheduleSettings, scheduled_scopes, seconds_until_due};
 #[cfg(any(test, feature = "test-support"))]
-pub use seams::NullIdentifyQueue;
-pub use seams::{
-    AllowAll, ArmableDeferTagReader, Checkpoint, DeferOnceTagReader, FnCheckpoint, IdentifyQueue,
-    NullTagReader, ScannedTags, TagReadError, TagReader,
-};
+pub use seams::{ArmableDeferTagReader, NullIdentifyQueue, NullTagReader};
+pub use seams::{Checkpoint, IdentifyQueue, ScannedTags, TagReadError, TagReader};
 pub use sqlite_store::SqliteScanStore;
 #[cfg(any(test, feature = "test-support"))]
 pub use store::MemoryScanStore;

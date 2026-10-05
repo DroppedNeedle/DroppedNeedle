@@ -40,14 +40,6 @@ impl ManualClock {
             now: Arc::new(Mutex::new(start)),
         }
     }
-
-    /// Move the clock forward by `secs`.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn advance(&self, secs: i64) {
-        if let Ok(mut now) = self.now.lock() {
-            *now += secs;
-        }
-    }
 }
 
 impl Clock for ManualClock {

@@ -450,26 +450,9 @@ pub trait AsyncSleep {
     fn sleep(&mut self, duration: Duration) -> impl std::future::Future<Output = ()> + Send;
 }
 
-/// Real async sleep.
-pub struct TokioSleep;
-
-impl AsyncSleep for TokioSleep {
-    async fn sleep(&mut self, duration: Duration) {
-        tokio::time::sleep(duration).await;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn wakeups_signal_revision_waiters() {
-        let wakeups = WorkWakeups::new();
-        assert_eq!(wakeups.revision("scan"), 0);
-        wakeups.notify("scan");
-        assert_eq!(wakeups.revision("scan"), 1);
-    }
 
     #[tokio::test]
     async fn wait_returns_true_on_notify() {

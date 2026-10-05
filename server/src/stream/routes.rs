@@ -573,7 +573,29 @@ where
 }
 
 /// Full or ranged audio bytes.
-async fn stream_get<E: StreamEngine>(
+#[utoipa::path(
+    get,
+    path = "/api/v3/stream/{source}/{key}",
+    params(
+        ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, or plex"),
+        ("key" = String, Path, description = "Local file id, remote item id, or Plex part key"),
+        ("format" = Option<String>, Query, description = "Requested output codec: mp3, opus, or raw"),
+        ("max_bitrate" = Option<i64>, Query, description = "Client bitrate cap in kbps (0 or unset means uncapped)"),
+        ("estimate_content_length" = Option<bool>, Query, description = "Ask a transcode landing for its estimated Content-Length"),
+    ),
+    responses(
+        (status = 200, description = "Full audio bytes or transcode output"),
+        (status = 206, description = "Ranged audio bytes"),
+        (status = 400, description = "Unknown source or unsupported format"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Playback refused"),
+        (status = 404, description = "Unknown audio id"),
+        (status = 416, description = "Range not satisfiable"),
+        (status = 429, description = "Stream capacity exhausted"),
+        (status = 502, description = "Remote source failed the read"),
+    )
+)]
+pub(crate) async fn stream_get<E: StreamEngine>(
     State(state): State<StreamState<E>>,
     user: StreamUser,
     Path((source, key)): Path<(String, String)>,
@@ -584,7 +606,24 @@ async fn stream_get<E: StreamEngine>(
 }
 
 /// Same headers as GET, no body.
-async fn stream_head<E: StreamEngine>(
+#[utoipa::path(
+    head,
+    path = "/api/v3/stream/{source}/{key}",
+    params(
+        ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, or plex"),
+        ("key" = String, Path, description = "Local file id, remote item id, or Plex part key"),
+    ),
+    responses(
+        (status = 200, description = "Stream headers, no body"),
+        (status = 400, description = "Unknown source or unsupported format"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Playback refused"),
+        (status = 404, description = "Unknown audio id"),
+        (status = 429, description = "Stream capacity exhausted"),
+        (status = 502, description = "Remote source failed the read"),
+    )
+)]
+pub(crate) async fn stream_head<E: StreamEngine>(
     State(state): State<StreamState<E>>,
     user: StreamUser,
     Path((source, key)): Path<(String, String)>,
@@ -796,57 +835,6 @@ fn header_value(text: &str, ids: &dyn IdGenerator) -> Result<HeaderValue, Stream
 fn upstream_content_type(content_type: &str) -> HeaderValue {
     HeaderValue::from_str(content_type).unwrap_or_else(|_| HeaderValue::from_static("audio/mpeg"))
 }
-
-// ---------------------------------------------------------------------------
-// OpenAPI stubs (never mounted; the handlers are generic over the engine)
-// ---------------------------------------------------------------------------
-
-/// Full or ranged audio bytes.
-#[utoipa::path(
-    get,
-    path = "/api/v3/stream/{source}/{key}",
-    params(
-        ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, or plex"),
-        ("key" = String, Path, description = "Local file id, remote item id, or Plex part key"),
-        ("format" = Option<String>, Query, description = "Requested output codec: mp3, opus, or raw"),
-        ("max_bitrate" = Option<i64>, Query, description = "Client bitrate cap in kbps (0 or unset means uncapped)"),
-        ("estimate_content_length" = Option<bool>, Query, description = "Ask a transcode landing for its estimated Content-Length"),
-    ),
-    responses(
-        (status = 200, description = "Full audio bytes or transcode output"),
-        (status = 206, description = "Ranged audio bytes"),
-        (status = 400, description = "Unknown source or unsupported format"),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Playback refused"),
-        (status = 404, description = "Unknown audio id"),
-        (status = 416, description = "Range not satisfiable"),
-        (status = 429, description = "Stream capacity exhausted"),
-        (status = 502, description = "Remote source failed the read"),
-    )
-)]
-#[allow(dead_code)]
-pub(crate) fn doc_stream_get() {}
-
-/// Same headers as GET, no body.
-#[utoipa::path(
-    head,
-    path = "/api/v3/stream/{source}/{key}",
-    params(
-        ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, or plex"),
-        ("key" = String, Path, description = "Local file id, remote item id, or Plex part key"),
-    ),
-    responses(
-        (status = 200, description = "Stream headers, no body"),
-        (status = 400, description = "Unknown source or unsupported format"),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Playback refused"),
-        (status = 404, description = "Unknown audio id"),
-        (status = 429, description = "Stream capacity exhausted"),
-        (status = 502, description = "Remote source failed the read"),
-    )
-)]
-#[allow(dead_code)]
-pub(crate) fn doc_stream_head() {}
 
 #[cfg(test)]
 mod tests {

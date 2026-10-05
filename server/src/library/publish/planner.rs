@@ -617,9 +617,6 @@ pub enum AutomaticHold {
     NoAcceptedRelease,
     /// At least one affected file lacks an accepted track mapping.
     MissingTrackMapping(String),
-    /// A required gate (capability, collision, space, validation)
-    /// failed; the message names it.
-    RequiredGate(String),
 }
 
 /// Automatic eligibility: enabled root plus enabled trigger plus an

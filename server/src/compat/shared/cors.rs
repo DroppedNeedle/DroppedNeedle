@@ -8,9 +8,6 @@
 
 use super::path_case;
 
-/// Path prefixes this CORS policy covers.
-pub const PREFIXES: [&str; 2] = ["/subsonic", "/jellyfin"];
-
 /// Header set stamped on every compat response (v2 `_CORS_HEADERS`).
 pub const HEADERS: [(&str, &str); 5] = [
     ("Access-Control-Allow-Origin", "*"),
@@ -31,14 +28,6 @@ pub const HEADERS: [(&str, &str); 5] = [
 
 /// Preflight short-circuit status (v2 returns 204, pre-auth).
 pub const PREFLIGHT_STATUS: u16 = 204;
-
-/// Whether a request path falls under compat CORS (exact registered
-/// casing; edge routing uses the case-insensitive
-/// [`path_case::is_compat_path`] instead, since `/SUBSONIC/...` must
-/// redispatch and preflight exactly like `/subsonic/...`).
-pub fn is_compat_path(path: &str) -> bool {
-    PREFIXES.iter().any(|prefix| path.starts_with(prefix))
-}
 
 /// Whether this request is a preflight to short-circuit (OPTIONS on a
 /// compat path, answered before auth). The path match is
