@@ -37,5 +37,6 @@ pub mod models;
 pub mod navidrome;
 pub mod navidrome_models;
 pub mod plex;
+pub mod plex_models;
 pub mod reader;
 pub mod service;
