@@ -71,13 +71,11 @@ pub const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
     "_internal",
 ];
 
-/// One dropped section with its decision ref.
+/// One dropped section with the reason it is gone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DroppedSection {
     /// Former config-file key.
     pub key: &'static str,
-    /// Decision ref (D-list, R-answer, or export spec section).
-    pub decision: &'static str,
     /// Why it is gone.
     pub note: &'static str,
 }
@@ -88,32 +86,26 @@ pub struct DroppedSection {
 pub const DROPPED_SECTIONS: &[DroppedSection] = &[
     DroppedSection {
         key: "library_sync_settings",
-        decision: "D2/R8",
         note: "Legacy catalog; one-shot sync_frequency import only.",
     },
     DroppedSection {
         key: "library_scan_dirty_scopes",
-        decision: "D15",
         note: "Transient hints; mechanism stays runtime-only.",
     },
     DroppedSection {
         key: "local_files_settings",
-        decision: "D3",
         note: "Vestigial; zero consumers, no routes.",
     },
     DroppedSection {
         key: "home_settings",
-        decision: "D4",
         note: "Dead routes (500s); section prefs live elsewhere.",
     },
     DroppedSection {
         key: "_legacy_lidarr",
-        decision: "D5",
         note: "One-time backup; its plaintext key never carries forward.",
     },
     DroppedSection {
         key: "jellyfin_url",
-        decision: "D8",
         note: "Top-level mirror; the section URL wins.",
     },
 ];
