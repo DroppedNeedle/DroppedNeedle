@@ -524,7 +524,7 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> PathBuf {
-        Path::new("../backend/tests/fixtures/library").join(name)
+        Path::new("tests/fixtures/library").join(name)
     }
 
     /// The buffered read-once path returns exactly what the streaming

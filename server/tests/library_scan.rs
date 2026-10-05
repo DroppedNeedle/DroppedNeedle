@@ -38,7 +38,7 @@ type TestCoordinator = LibraryScanCoordinator<MemoryScanStore, NullTagReader, Nu
 
 fn fixtures_dir() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let dir = manifest.join("../backend/tests/fixtures/library");
+    let dir = manifest.join("tests/fixtures/library");
     assert!(dir.is_dir(), "fixture corpus missing: {}", dir.display());
     dir
 }

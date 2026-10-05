@@ -27,7 +27,7 @@ use tags::{
 // ---------------------------------------------------------------------------
 
 fn fixture(name: &str) -> PathBuf {
-    Path::new("../backend/tests/fixtures/library").join(name)
+    Path::new("tests/fixtures/library").join(name)
 }
 
 static SCRATCH_COUNTER: AtomicU64 = AtomicU64::new(0);

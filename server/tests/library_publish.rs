@@ -111,7 +111,7 @@ fn write_source(fix: &Fixture, root: &str, rel: &str, bytes: &[u8]) -> FileFinge
 }
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../backend/tests/fixtures/library")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library")
 }
 
 /// Plant a real committed audio fixture as a publish source. Staging

@@ -302,7 +302,7 @@ async fn setup_admin(app: Router, username: &str, password: &str) -> String {
 }
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../backend/tests/fixtures/library")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library")
 }
 
 /// Copy one committed fixture into a sandbox root. The fixture dir is
