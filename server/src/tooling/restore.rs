@@ -96,8 +96,10 @@ pub fn restore_backup(
 }
 
 /// Read-only preflight over the backup restore report. Returns the names
-/// of the checks that passed. Files that cannot take the preflight (names
-/// outside the backups-dir convention) skip it; the restore itself still
+/// of the checks that passed. A file whose name the preflight cannot take
+/// (outside the backups-dir convention) skips it only when no manifest
+/// sits beside it; with a manifest present the restore refuses, so a
+/// recorded checksum is never left unchecked. The restore itself still
 /// verifies integrity and the schema stamp.
 fn preflight(backup_db: &Path, allow_downgrade: bool) -> Result<Vec<String>, RestoreError> {
     let name = backup_db
@@ -110,7 +112,18 @@ fn preflight(backup_db: &Path, allow_downgrade: bool) -> Result<Vec<String>, Res
         .unwrap_or_else(|| Path::new("."));
     let report = match restore_report(parent, name) {
         Ok(report) => report,
-        Err(_) => return Ok(Vec::new()),
+        Err(_) => {
+            let mut sidecar = backup_db.as_os_str().to_owned();
+            sidecar.push(crate::db::backup::MANIFEST_SUFFIX);
+            if Path::new(&sidecar).exists() {
+                return Err(RestoreError::Refused(
+                    "backup name must be a plain file name ending in .db; rename the backup \
+                     and its manifest so the manifest can be checked"
+                        .to_owned(),
+                ));
+            }
+            return Ok(vec!["manifest-present-skipped".to_owned()]);
+        }
     };
     let mut failed: Vec<String> = Vec::new();
     let mut passed: Vec<String> = Vec::new();
@@ -167,5 +180,20 @@ mod tests {
         ));
         let error = restore_backup(&missing, &target, false).unwrap_err();
         assert!(matches!(error, RestoreError::BackupUnreadable(_)));
+    }
+
+    #[test]
+    fn unchecked_manifest_refuses() {
+        let dir = std::env::temp_dir().join(format!(
+            "droppedneedle-restore-{}-sidecar",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let backup = dir.join("backup.sqlite");
+        std::fs::write(&backup, b"not checked").unwrap();
+        std::fs::write(dir.join("backup.sqlite.manifest.json"), b"{}").unwrap();
+        let error = restore_backup(&backup, &dir.join("target"), false).unwrap_err();
+        assert!(matches!(error, RestoreError::Refused(_)), "{error:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

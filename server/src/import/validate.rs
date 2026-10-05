@@ -312,7 +312,10 @@ fn validate_top_level_keys(object: &serde_json::Map<String, Value>, report: &mut
         ));
     }
     for key in object.keys() {
-        if REQUIRED_KEYS.contains(&key.as_str()) || key == "v2_commit" {
+        if REQUIRED_KEYS.contains(&key.as_str())
+            || key == "v2_commit"
+            || key == crate::export::seal::DIGEST_KEY
+        {
             continue;
         }
         if RESERVED_SECTIONS.contains(&key.as_str()) {
@@ -786,6 +789,7 @@ fn validate_follows(
         ));
         return;
     };
+    let mut seen = HashSet::new();
     for (index, follow) in items.iter().enumerate() {
         let path = format!("follows[{index}]");
         let Some(record) = follow.as_object() else {
@@ -797,6 +801,31 @@ fn validate_follows(
             continue;
         };
         validate_member_ref(record, &path, user_ids, report);
+        check_duplicate(record, &path, "DUPLICATE_FOLLOW", &mut seen, report);
+    }
+}
+
+/// One row per user and artist (MBID compared case-insensitively, as the
+/// table key is): a repeat would abort the import on the primary key.
+fn check_duplicate(
+    record: &serde_json::Map<String, Value>,
+    path: &str,
+    code: &'static str,
+    seen: &mut HashSet<(String, String)>,
+    report: &mut ValidationReport,
+) {
+    let (Some(user_id), Some(mbid)) = (
+        record.get("user_id").and_then(Value::as_str),
+        record.get("artist_mbid").and_then(Value::as_str),
+    ) else {
+        return;
+    };
+    if !seen.insert((user_id.to_owned(), mbid.trim().to_lowercase())) {
+        report.errors.push(ValidationIssue::new(
+            code,
+            path.to_owned(),
+            "the same user and artist appear more than once".to_owned(),
+        ));
     }
 }
 
@@ -814,6 +843,7 @@ fn validate_approvals(
         ));
         return;
     };
+    let mut seen = HashSet::new();
     for (index, approval) in items.iter().enumerate() {
         let path = format!("approvals[{index}]");
         let Some(record) = approval.as_object() else {
@@ -825,6 +855,7 @@ fn validate_approvals(
             continue;
         };
         validate_member_ref(record, &path, user_ids, report);
+        check_duplicate(record, &path, "DUPLICATE_APPROVAL", &mut seen, report);
         if let Some(reviewer) = record.get("reviewed_by_id").and_then(Value::as_str)
             && !reviewer.is_empty()
             && !user_ids.contains(reviewer)

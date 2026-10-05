@@ -223,7 +223,7 @@ pub fn export_v2(request: &ExportRequest) -> Result<ExportDoc, ExportError> {
         .exported_at
         .clone()
         .map_or_else(utc_now_rfc3339, Ok)?;
-    Ok(ExportDoc {
+    let mut doc = ExportDoc {
         format: EXPORT_FORMAT.to_owned(),
         format_version: FORMAT_VERSION,
         exported_at,
@@ -234,7 +234,13 @@ pub fn export_v2(request: &ExportRequest) -> Result<ExportDoc, ExportError> {
         settings,
         follows,
         approvals,
-    })
+        content_hmac: String::new(),
+    };
+    let value = serde_json::to_value(&doc).map_err(|error| ExportError::InvalidEnvelope {
+        reason: format!("cannot serialize export document: {error}"),
+    })?;
+    doc.content_hmac = sealer.digest(&value)?;
+    Ok(doc)
 }
 
 /// Export one v2 instance straight to a file. The document fully builds
@@ -256,8 +262,11 @@ pub fn export_v2_to_file(request: &ExportRequest, out_path: &Path) -> Result<(),
             .map(|elapsed| elapsed.as_nanos())
             .unwrap_or(0)
     ));
-    std::fs::write(&tmp_path, &text).map_err(|error| ExportError::ExportWrite {
-        reason: error.to_string(),
+    write_private(&tmp_path, text.as_bytes()).map_err(|error| {
+        let _ = std::fs::remove_file(&tmp_path);
+        ExportError::ExportWrite {
+            reason: error.to_string(),
+        }
     })?;
     std::fs::rename(&tmp_path, out_path).map_err(|error| {
         let _ = std::fs::remove_file(&tmp_path);
@@ -268,13 +277,63 @@ pub fn export_v2_to_file(request: &ExportRequest, out_path: &Path) -> Result<(),
     Ok(())
 }
 
+/// Write `bytes` to a new owner-only file and flush it to disk. The export
+/// holds password and recovery hashes.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+/// Open the stopped v2 database read-only and immutable, so the export
+/// works from a read-only mount (no WAL or shm files are touched).
 fn open_v2_db(path: &Path) -> Result<Connection, ExportError> {
-    Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|error| {
-        ExportError::V2Database {
+    if !path.is_file() {
+        return Err(ExportError::V2Database {
             table: "database".to_owned(),
-            detail: error.to_string(),
-        }
+            detail: format!("{} is not a file", path.display()),
+        });
+    }
+    let uri = format!("file:{}?immutable=1", uri_path(path));
+    Connection::open_with_flags(
+        uri,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+    )
+    .map_err(|error| ExportError::V2Database {
+        table: "database".to_owned(),
+        detail: error.to_string(),
     })
+}
+
+/// Percent-encode the characters a SQLite URI path cannot carry raw.
+fn uri_path(path: &Path) -> String {
+    let mut out = String::new();
+    for ch in path.to_string_lossy().chars() {
+        match ch {
+            '%' => out.push_str("%25"),
+            '?' => out.push_str("%3f"),
+            '#' => out.push_str("%23"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Resolve one stored v2 secret, refusing a token the key cannot open.
+fn decrypt_v2(key: &FernetKey, stored: &str, field: &str) -> Result<String, ExportError> {
+    key.decrypt_legacy(stored)
+        .map(|(plaintext, _legacy)| plaintext)
+        .map_err(|_| ExportError::V2KeyMismatch {
+            field: field.to_owned(),
+        })
 }
 
 fn db_error(table: &str, error: rusqlite::Error) -> ExportError {
@@ -395,7 +454,7 @@ fn attach_user_rows(
         let (user_id, name, secret_encrypted, created_at, last_used_at, last_client, revoked) =
             row.map_err(|error| db_error("connect_app_passwords", error))?;
         if let Some(&index) = by_id.get(user_id.as_str()) {
-            let (plaintext, _legacy) = key.decrypt_legacy(&secret_encrypted);
+            let plaintext = decrypt_v2(key, &secret_encrypted, "connect_app_passwords")?;
             let sealed = sealer.seal(&plaintext)?;
             users[index]
                 .app_passwords
@@ -511,7 +570,7 @@ fn seal_v2_field(
     let Some(stored) = stored else {
         return Ok(());
     };
-    let (plaintext, _legacy) = key.decrypt_legacy(stored);
+    let plaintext = decrypt_v2(key, stored, field)?;
     let sealed = sealer.seal(&plaintext)?;
     section.insert(field.to_owned(), json!({ "$sealed": sealed }));
     Ok(())

@@ -11,6 +11,12 @@
 //! derivation (`SHA-256(argon2id-output || envelope-nonce)`), so blobs from
 //! one export never open under another export's key even if the salt and
 //! passphrase repeated.
+//!
+//! The same derived key authenticates the whole document: `content_hmac`
+//! is HMAC-SHA256 over a canonical serialization of every other top-level
+//! key (object keys sorted, compact JSON), under a MAC key separated from
+//! the sealing key. A modified record, or a sealed blob moved to another
+//! position, fails the digest before anything is imported.
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -18,6 +24,8 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit},
 };
+use hmac::{Hmac, Mac};
+use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
@@ -44,6 +52,10 @@ pub const ENVELOPE_NONCE_LEN: usize = 24;
 /// same literal; attribute macros cannot name a constant, so the two are
 /// kept adjacent by convention.
 pub const SEALED_KEY: &str = "$sealed";
+/// Top-level key carrying the document digest.
+pub const DIGEST_KEY: &str = "content_hmac";
+/// Label separating the digest MAC key from the sealing key.
+const DIGEST_LABEL: &[u8] = b"droppedneedle-export content digest v1";
 /// Per-value cipher-nonce length in bytes.
 const VALUE_NONCE_LEN: usize = 24;
 /// Sealing-key length in bytes.
@@ -81,6 +93,9 @@ pub enum SealError {
     /// encryption only fails on allocation failure) but typed anyway.
     #[error("cannot seal value")]
     SealFailed,
+    /// The document digest is absent or does not match its content.
+    #[error("export content digest does not match")]
+    DigestMismatch,
 }
 
 impl SealError {
@@ -94,6 +109,7 @@ impl SealError {
             Self::KdfFailed => "KDF_FAILED",
             Self::RandomFailed => "RANDOM_FAILED",
             Self::SealFailed => "SEAL_FAILED",
+            Self::DigestMismatch => "CHECKSUM_MISMATCH",
         }
     }
 }
@@ -207,6 +223,158 @@ impl Sealer {
         blob.extend_from_slice(&ciphertext);
         Ok(STANDARD.encode(&blob))
     }
+
+    /// Digest of `doc` (every top-level key but [`DIGEST_KEY`]), base64.
+    pub fn digest(&self, doc: &Value) -> Result<String, SealError> {
+        content_digest(&self.key, doc)
+    }
+
+    /// Set [`DIGEST_KEY`] on `doc` to its digest.
+    pub fn sign(&self, doc: &mut Value) -> Result<(), SealError> {
+        let digest = self.digest(doc)?;
+        let object = doc.as_object_mut().ok_or(SealError::InvalidEnvelope)?;
+        object.insert(DIGEST_KEY.to_owned(), Value::String(digest));
+        Ok(())
+    }
+}
+
+/// The key one export's envelope derives under the operator passphrase.
+/// Derived once, then used for the digest check and every unseal.
+pub struct Opener {
+    key: [u8; KEY_LEN],
+}
+
+impl std::fmt::Debug for Opener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Opener([redacted])")
+    }
+}
+
+impl Drop for Opener {
+    fn drop(&mut self) {
+        for byte in self.key.iter_mut() {
+            // Volatile so the wipe survives optimizer dead-store removal.
+            unsafe {
+                std::ptr::write_volatile(byte, 0);
+            }
+        }
+    }
+}
+
+impl Opener {
+    /// Check the envelope parameters and derive its key.
+    pub fn derive(passphrase: &str, envelope: &SecretEnvelope) -> Result<Self, SealError> {
+        let (salt, envelope_nonce) = envelope_inputs(envelope)?;
+        Ok(Self {
+            key: derive_key(passphrase, &salt, &envelope_nonce)?,
+        })
+    }
+
+    /// Open one sealed blob.
+    pub fn open(&self, blob_b64: &str) -> Result<String, SealError> {
+        let blob = STANDARD
+            .decode(blob_b64.trim())
+            .map_err(|_| SealError::InvalidBlob)?;
+        if blob.len() < VALUE_NONCE_LEN + TAG_LEN {
+            return Err(SealError::InvalidBlob);
+        }
+        let nonce = *XNonce::from_slice(&blob[..VALUE_NONCE_LEN]);
+        let plaintext = cipher(&self.key)
+            .decrypt(&nonce, &blob[VALUE_NONCE_LEN..])
+            .map_err(|_| SealError::AuthFailed)?;
+        String::from_utf8(plaintext).map_err(|_| SealError::InvalidBlob)
+    }
+
+    /// Set [`DIGEST_KEY`] on `doc` to its digest (fixtures and tooling
+    /// that edit a document after export).
+    pub fn sign(&self, doc: &mut Value) -> Result<(), SealError> {
+        let digest = content_digest(&self.key, doc)?;
+        let object = doc.as_object_mut().ok_or(SealError::InvalidEnvelope)?;
+        object.insert(DIGEST_KEY.to_owned(), Value::String(digest));
+        Ok(())
+    }
+
+    /// Check `doc`'s [`DIGEST_KEY`] against its content. Constant-time
+    /// compare; an absent or non-string digest is a mismatch.
+    pub fn verify(&self, doc: &Value) -> Result<(), SealError> {
+        let claimed = doc
+            .get(DIGEST_KEY)
+            .and_then(Value::as_str)
+            .and_then(|text| STANDARD.decode(text.trim()).ok())
+            .ok_or(SealError::DigestMismatch)?;
+        let mut mac = digest_mac(&self.key)?;
+        mac.update(&canonical_content(doc));
+        mac.verify_slice(&claimed)
+            .map_err(|_| SealError::DigestMismatch)
+    }
+}
+
+fn digest_mac(key: &[u8; KEY_LEN]) -> Result<Hmac<Sha256>, SealError> {
+    let mut label = <Hmac<Sha256> as Mac>::new_from_slice(key).map_err(|_| SealError::KdfFailed)?;
+    label.update(DIGEST_LABEL);
+    let mac_key = label.finalize().into_bytes();
+    <Hmac<Sha256> as Mac>::new_from_slice(&mac_key).map_err(|_| SealError::KdfFailed)
+}
+
+/// Digest of `doc` as a reader will see it: serialized and parsed back
+/// first, so float values hash exactly as the importer parses them.
+fn content_digest(key: &[u8; KEY_LEN], doc: &Value) -> Result<String, SealError> {
+    let text = serde_json::to_string(doc).map_err(|_| SealError::SealFailed)?;
+    let reparsed: Value = serde_json::from_str(&text).map_err(|_| SealError::SealFailed)?;
+    let mut mac = digest_mac(key)?;
+    mac.update(&canonical_content(&reparsed));
+    Ok(STANDARD.encode(mac.finalize().into_bytes()))
+}
+
+/// Compact JSON of every top-level key but [`DIGEST_KEY`], object keys
+/// sorted at every depth.
+fn canonical_content(doc: &Value) -> Vec<u8> {
+    let mut out = Vec::new();
+    match doc {
+        Value::Object(object) => {
+            let mut keys: Vec<&String> = object.keys().filter(|key| *key != DIGEST_KEY).collect();
+            keys.sort();
+            write_object(&mut out, &keys, object);
+        }
+        other => write_canonical(&mut out, other),
+    }
+    out
+}
+
+fn write_object(out: &mut Vec<u8>, keys: &[&String], object: &serde_json::Map<String, Value>) {
+    out.push(b'{');
+    for (index, key) in keys.iter().enumerate() {
+        if index > 0 {
+            out.push(b',');
+        }
+        write_canonical(out, &Value::String((*key).clone()));
+        out.push(b':');
+        if let Some(value) = object.get(key.as_str()) {
+            write_canonical(out, value);
+        }
+    }
+    out.push(b'}');
+}
+
+fn write_canonical(out: &mut Vec<u8>, value: &Value) {
+    match value {
+        Value::Object(object) => {
+            let mut keys: Vec<&String> = object.keys().collect();
+            keys.sort();
+            write_object(out, &keys, object);
+        }
+        Value::Array(items) => {
+            out.push(b'[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(b',');
+                }
+                write_canonical(out, item);
+            }
+            out.push(b']');
+        }
+        scalar => out.extend_from_slice(scalar.to_string().as_bytes()),
+    }
 }
 
 /// Open one sealed blob under the operator passphrase. Wrong passphrases,
@@ -217,6 +385,22 @@ pub fn unseal(
     envelope: &SecretEnvelope,
     blob_b64: &str,
 ) -> Result<String, SealError> {
+    let (salt, envelope_nonce) = envelope_inputs(envelope)?;
+    // Blob shape errors come before key derivation, which is slow.
+    let blob = STANDARD
+        .decode(blob_b64.trim())
+        .map_err(|_| SealError::InvalidBlob)?;
+    if blob.len() < VALUE_NONCE_LEN + TAG_LEN {
+        return Err(SealError::InvalidBlob);
+    }
+    let opener = Opener {
+        key: derive_key(passphrase, &salt, &envelope_nonce)?,
+    };
+    opener.open(blob_b64)
+}
+
+/// Check the envelope parameters; return its decoded salt and nonce.
+fn envelope_inputs(envelope: &SecretEnvelope) -> Result<(Vec<u8>, Vec<u8>), SealError> {
     if envelope.scheme != SCHEME {
         return Err(SealError::InvalidEnvelope);
     }
@@ -236,19 +420,7 @@ pub fn unseal(
     if salt.len() != SALT_LEN || envelope_nonce.len() != ENVELOPE_NONCE_LEN {
         return Err(SealError::InvalidEnvelope);
     }
-    let blob = STANDARD
-        .decode(blob_b64.trim())
-        .map_err(|_| SealError::InvalidBlob)?;
-    if blob.len() < VALUE_NONCE_LEN + TAG_LEN {
-        return Err(SealError::InvalidBlob);
-    }
-
-    let key = derive_key(passphrase, &salt, &envelope_nonce)?;
-    let nonce = *XNonce::from_slice(&blob[..VALUE_NONCE_LEN]);
-    let plaintext = cipher(&key)
-        .decrypt(&nonce, &blob[VALUE_NONCE_LEN..])
-        .map_err(|_| SealError::AuthFailed)?;
-    String::from_utf8(plaintext).map_err(|_| SealError::InvalidBlob)
+    Ok((salt, envelope_nonce))
 }
 
 fn derive_key(

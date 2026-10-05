@@ -20,7 +20,7 @@ fn warning_codes(report: &droppedneedle::import::ValidationReport) -> Vec<&str> 
 
 #[test]
 fn valid_shell_passes_silent() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let report = validate_export(&fixture.shell());
     assert!(report.valid(), "errors: {:?}", report.errors);
     assert!(report.warnings.is_empty());
@@ -28,7 +28,7 @@ fn valid_shell_passes_silent() {
 
 #[test]
 fn bad_format_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["format"] = json!("something-else");
     let report = validate_export(&export);
@@ -38,7 +38,7 @@ fn bad_format_rejected() {
 
 #[test]
 fn future_format_version_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["format_version"] = json!(2);
     let report = validate_export(&export);
@@ -47,7 +47,7 @@ fn future_format_version_rejected() {
 
 #[test]
 fn missing_required_key_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     // `format` and `format_version` report their value codes when absent,
     // so they are not in this loop.
     for key in [
@@ -71,7 +71,7 @@ fn missing_required_key_rejected() {
 
 #[test]
 fn bad_exported_at_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     for stamp in [
         "not-a-date",
         "2026-09-28T12:00:00+02:00",
@@ -89,7 +89,7 @@ fn bad_exported_at_rejected() {
 
 #[test]
 fn unknown_envelope_scheme_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["secret_envelope"]["scheme"] = json!("rot13");
     let report = validate_export(&export);
@@ -98,7 +98,7 @@ fn unknown_envelope_scheme_rejected() {
 
 #[test]
 fn unpinned_kdf_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     for (param, bad) in [
         ("m", json!(1024)),
         ("t", json!(1)),
@@ -117,7 +117,7 @@ fn unpinned_kdf_rejected() {
 
 #[test]
 fn short_salt_and_nonce_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["secret_envelope"]["kdf"]["salt_b64"] = json!("AAAA");
     export["secret_envelope"]["nonce_b64"] = json!("AAAA");
@@ -129,7 +129,7 @@ fn short_salt_and_nonce_rejected() {
 
 #[test]
 fn unknown_top_level_key_warns() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["future_thing"] = json!({});
     let report = validate_export(&export);
@@ -139,7 +139,7 @@ fn unknown_top_level_key_warns() {
 
 #[test]
 fn reserved_section_warns() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     for section in [
         "playlists",
         "favorites",
@@ -161,7 +161,7 @@ fn reserved_section_warns() {
 
 #[test]
 fn missing_v2_commit_warns() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export.as_object_mut().unwrap().remove("v2_commit");
     let report = validate_export(&export);
@@ -171,7 +171,7 @@ fn missing_v2_commit_warns() {
 
 #[test]
 fn duplicate_user_id_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1"), fixture.user("u1")]);
     let report = validate_export(&export);
@@ -180,7 +180,7 @@ fn duplicate_user_id_rejected() {
 
 #[test]
 fn email_and_username_collisions_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut first = fixture.user("u1");
     let mut second = fixture.user("u2");
     second["email"] = first["email"].clone();
@@ -197,7 +197,7 @@ fn email_and_username_collisions_rejected() {
 
 #[test]
 fn duplicate_provider_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut first = fixture.user("u1");
     let mut second = fixture.user("u2");
     second["providers"] = first["providers"].clone();
@@ -212,7 +212,7 @@ fn duplicate_provider_rejected() {
 
 #[test]
 fn local_provider_requires_bcrypt() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut user = fixture.user("u1");
     user["providers"][0]["hash_scheme"] = json!("opaque");
     let mut export = fixture.shell();
@@ -227,7 +227,7 @@ fn local_provider_requires_bcrypt() {
 
 #[test]
 fn app_password_secret_must_be_sealed() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut user = fixture.user("u1");
     user["app_passwords"][0]["secret"] = json!("plaintext-secret");
     let mut export = fixture.shell();
@@ -237,7 +237,7 @@ fn app_password_secret_must_be_sealed() {
 
 #[test]
 fn revoked_app_password_warns() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut user = fixture.user("u1");
     user["app_passwords"][0]["revoked"] = json!(true);
     let mut export = fixture.shell();
@@ -249,7 +249,7 @@ fn revoked_app_password_warns() {
 
 #[test]
 fn dropped_sections_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     for section in ["library_sync_settings", "_legacy_lidarr", "home_settings"] {
         let mut export = fixture.shell();
         export["settings"][section] = json!({});
@@ -263,7 +263,7 @@ fn dropped_sections_rejected() {
 
 #[test]
 fn dropped_env_names_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["settings"]["cache_ttl_default"] = json!({});
     assert!(codes(&validate_export(&export)).contains(&"DROPPED_SECTION_PRESENT"));
@@ -274,7 +274,7 @@ fn dropped_env_names_rejected() {
 
 #[test]
 fn advanced_settings_allowlist_enforced() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["settings"]["advanced_settings"] =
         json!({"http_timeout": 30, "artist_discovery_warm_interval": 5});
@@ -287,7 +287,7 @@ fn advanced_settings_allowlist_enforced() {
 
 #[test]
 fn internal_allowlist_enforced() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["settings"]["_internal"] = json!({
         "plex_client_id": "x",
@@ -298,7 +298,7 @@ fn internal_allowlist_enforced() {
 
 #[test]
 fn secret_bare_string_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["settings"]["jellyfin_settings"] = json!({"api_key": "bare-secret"});
     assert!(codes(&validate_export(&export)).contains(&"SECRET_NOT_SEALED"));
@@ -310,7 +310,7 @@ fn secret_bare_string_rejected() {
 
 #[test]
 fn sealed_blob_must_be_long_base64() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["settings"]["jellyfin_settings"] = json!({"api_key": {"$sealed": "!!!not-b64!!!"}});
     assert!(codes(&validate_export(&export)).contains(&"SEALED_NOT_BASE64"));
@@ -322,7 +322,7 @@ fn sealed_blob_must_be_long_base64() {
 
 #[test]
 fn indexers_must_be_array() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["settings"]["indexers"] = json!({"name": "x"});
     assert!(codes(&validate_export(&export)).contains(&"INDEXERS_NOT_ARRAY"));
@@ -330,7 +330,7 @@ fn indexers_must_be_array() {
 
 #[test]
 fn bad_mbid_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     for mbid in ["", "not-an-mbid", "01234567-89ab-cdef-0123-456789abcde!"] {
@@ -351,7 +351,7 @@ fn bad_mbid_rejected() {
 
 #[test]
 fn missing_user_id_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut follow = fixture.follow("u1", support::MBID);
     follow.as_object_mut().unwrap().remove("user_id");
     let mut export = fixture.shell();
@@ -367,7 +367,7 @@ fn missing_user_id_rejected() {
 
 #[test]
 fn dangling_user_ref_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["follows"] = json!([fixture.follow("ghost", support::MBID)]);
@@ -381,7 +381,7 @@ fn dangling_user_ref_rejected() {
 
 #[test]
 fn dangling_reviewer_warns() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     let mut approval = fixture.approval("u1", support::MBID);
@@ -403,7 +403,7 @@ fn non_object_root_rejected() {
 
 #[test]
 fn wrong_format_version_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     for version in [json!(0), json!("1"), json!(null)] {
         let mut export = fixture.shell();
         export["format_version"] = version;
@@ -419,7 +419,7 @@ fn wrong_format_version_rejected() {
 
 #[test]
 fn users_shape_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!({"u1": {}});
     assert!(codes(&validate_export(&export)).contains(&"USERS_NOT_ARRAY"));
@@ -444,7 +444,7 @@ fn users_shape_rejected() {
 
 #[test]
 fn providers_shape_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut user = fixture.user("u1");
     user["providers"] = json!({"local": {}});
     let mut export = fixture.shell();
@@ -460,7 +460,7 @@ fn providers_shape_rejected() {
 
 #[test]
 fn provider_without_a_binding_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     for field in ["provider", "provider_uid"] {
         let mut user = fixture.user("u1");
         user["providers"][0][field] = json!("");
@@ -475,7 +475,7 @@ fn provider_without_a_binding_rejected() {
 
 #[test]
 fn app_passwords_shape_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut user = fixture.user("u1");
     user["app_passwords"] = json!({"phone": {}});
     let mut export = fixture.shell();
@@ -491,7 +491,7 @@ fn app_passwords_shape_rejected() {
 
 #[test]
 fn settings_shape_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["settings"] = json!([]);
     assert!(codes(&validate_export(&export)).contains(&"SETTINGS_NOT_OBJECT"));
@@ -499,7 +499,7 @@ fn settings_shape_rejected() {
 
 #[test]
 fn follows_shape_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["follows"] = json!({"mbid": {}});
     assert!(codes(&validate_export(&export)).contains(&"FOLLOWS_NOT_ARRAY"));
@@ -511,7 +511,7 @@ fn follows_shape_rejected() {
 
 #[test]
 fn approvals_shape_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["approvals"] = json!({"mbid": {}});
     assert!(codes(&validate_export(&export)).contains(&"APPROVALS_NOT_ARRAY"));
@@ -523,7 +523,7 @@ fn approvals_shape_rejected() {
 
 #[test]
 fn duplicate_recovery_hash_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let first = fixture.user("u1");
     let mut second = fixture.user("u2");
     second["recovery_code"]["code_hash"] = first["recovery_code"]["code_hash"].clone();
@@ -536,7 +536,7 @@ fn duplicate_recovery_hash_rejected() {
 
 #[test]
 fn unknown_settings_section_warns_and_skips() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["settings"]["future_section"] = json!({"api_key": {"$sealed": "!!!not-b64!!!"}});
     let report = validate_export(&export);
@@ -554,8 +554,28 @@ fn unknown_settings_section_warns_and_skips() {
 
 #[test]
 fn lastfm_bare_secret_rejected() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["settings"]["lastfm_settings"] = json!({"enabled": true, "api_key": "bare-key"});
     assert!(codes(&validate_export(&export)).contains(&"SECRET_NOT_SEALED"));
+}
+
+#[test]
+fn duplicate_follow_and_approval_rejected() {
+    let fixture = Fixture::shared();
+    let mut export = fixture.shell();
+    export["users"] = json!([fixture.user("u1")]);
+    let upper = support::MBID.to_uppercase();
+    export["follows"] = json!([
+        fixture.follow("u1", support::MBID),
+        fixture.follow("u1", &upper)
+    ]);
+    export["approvals"] = json!([
+        fixture.approval("u1", support::MBID),
+        fixture.approval("u1", &upper)
+    ]);
+    let report = validate_export(&export);
+    let found = codes(&report);
+    assert!(found.contains(&"DUPLICATE_FOLLOW"), "{found:?}");
+    assert!(found.contains(&"DUPLICATE_APPROVAL"), "{found:?}");
 }

@@ -33,11 +33,10 @@ use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use thiserror::Error;
 
-use super::envelope::{ExportFile, collect_sealed, is_sealed, unseal_value};
+use super::envelope::{ExportFile, Opener, collect_sealed, is_sealed, unseal_value};
 use super::r8::carry_frequency;
 use super::report::{ExitCode, ExportProvenance, ImportReport, ReportBuilder, utc_now_iso};
 use super::validate::{ValidationIssue, validate_export};
-use crate::export::envelope::SecretEnvelope;
 use crate::runtime_config::Crypto;
 
 /// Sections the export may carry (kept whole or in part). Present
@@ -155,6 +154,15 @@ pub async fn run_import(request: ImportRequest) -> ImportReport {
             );
         }
     };
+    // Integrity first: a document that does not match its digest is not
+    // read any further. An envelope that cannot derive a key at all is
+    // left to the validator, which names the bad field.
+    let opener = Opener::derive(&request.passphrase, &parsed.envelope);
+    if let Ok(opener) = &opener
+        && opener.verify(&parsed.root).is_err()
+    {
+        return digest_failure(report, &parsed.root, opener);
+    }
     let validation = validate_export(&parsed.root);
     for warning in &validation.warnings {
         report.note(
@@ -179,7 +187,16 @@ pub async fn run_import(request: ImportRequest) -> ImportReport {
         );
     }
 
-    let unsealed = match unseal_consumed(&parsed.root, &parsed.envelope, &request.passphrase) {
+    let opener = match opener {
+        Ok(opener) => opener,
+        Err(error) => {
+            return report.finish(
+                ExitCode::FailedValidation,
+                format!("{}: {error}", error.code()),
+            );
+        }
+    };
+    let unsealed = match unseal_consumed(&parsed.root, &opener) {
         Ok(map) => map,
         Err(SealFailure::AuthFailed(path)) => {
             return report.finish(
@@ -192,11 +209,19 @@ pub async fn run_import(request: ImportRequest) -> ImportReport {
         }
     };
 
-    match run_guarded(&request, &parsed.root, &unsealed, &mut report).await {
+    let outcome = run_guarded(&request, &parsed.root, &unsealed, &mut report).await;
+    if outcome.is_err() && !report.committed() {
+        report.discard_counts();
+    }
+    match outcome {
         Ok(()) => report.finish_completed(),
-        Err(ImportError::FaultBeforeCommit | ImportError::FaultAfterCommit) => report.finish(
+        Err(ImportError::FaultBeforeCommit) => report.finish(
             ExitCode::FailedInternal,
-            "simulated crash; rolled back".to_owned(),
+            "simulated crash before commit; rolled back".to_owned(),
+        ),
+        Err(ImportError::FaultAfterCommit) => report.finish(
+            ExitCode::FailedInternal,
+            "simulated crash after commit; config not written".to_owned(),
         ),
         Err(ImportError::R8(mismatch @ super::r8::R8Error::InstanceMismatch { .. })) => {
             report.finish(ExitCode::FailedValidation, mismatch.to_string())
@@ -244,14 +269,34 @@ enum SealFailure {
     Corrupt(String),
 }
 
-/// Unseal every sealed value the importer consumes (settings plus app
-/// passwords), strictly in memory. Ignored sections (reserved, unknown)
-/// are not consumed, so a broken blob there cannot fail the import.
-fn unseal_consumed(
-    root: &Value,
-    envelope: &SecretEnvelope,
-    passphrase: &str,
-) -> Result<HashMap<String, String>, SealFailure> {
+/// Report a digest mismatch. When a consumed sealed value does not open
+/// either, the passphrase is wrong rather than the file modified.
+fn digest_failure(report: ReportBuilder, root: &Value, opener: &Opener) -> ImportReport {
+    let sealed = consumed_sealed(root);
+    if let Some((path, value)) = sealed.first()
+        && let Err(super::envelope::EnvelopeError::UnlockFailed { .. }) =
+            unseal_value(opener, value, path)
+    {
+        return report.finish(
+            ExitCode::EnvelopeAuthFailed,
+            format!("passphrase did not open sealed value at {path}"),
+        );
+    }
+    let mut report = report;
+    report.note(
+        "export",
+        crate::export::seal::DIGEST_KEY.to_owned(),
+        "error",
+        "CHECKSUM_MISMATCH: the content digest does not match the file".to_owned(),
+    );
+    report.finish(
+        ExitCode::FailedValidation,
+        "CHECKSUM_MISMATCH: export file was modified, truncated, or carries no digest".to_owned(),
+    )
+}
+
+/// Every sealed value the importer consumes, with its path.
+fn consumed_sealed(root: &Value) -> Vec<(String, Value)> {
     let mut found = Vec::new();
     if let Some(settings) = root.get("settings").and_then(Value::as_object) {
         // Known sections only: unknown ones are ignored with a warning, so a
@@ -265,9 +310,17 @@ fn unseal_consumed(
     if let Some(users) = root.get("users") {
         collect_sealed(users, "users".to_owned(), &mut found);
     }
+    found
+}
+
+/// Unseal every sealed value the importer consumes (settings plus app
+/// passwords), strictly in memory. Ignored sections (reserved, unknown)
+/// are not consumed, so a broken blob there cannot fail the import.
+fn unseal_consumed(root: &Value, opener: &Opener) -> Result<HashMap<String, String>, SealFailure> {
+    let found = consumed_sealed(root);
     let mut out = HashMap::with_capacity(found.len());
     for (path, sealed) in &found {
-        match unseal_value(passphrase, envelope, sealed, path) {
+        match unseal_value(opener, sealed, path) {
             Ok(plaintext) => {
                 out.insert(path.clone(), plaintext);
             }
@@ -292,6 +345,7 @@ async fn run_guarded(
     report: &mut ReportBuilder,
 ) -> Result<(), ImportError> {
     let current_config = read_current_config(&request.config_path)?;
+    let secrets_before = report.secrets_counted();
     let staged_config = stage_settings(
         root,
         &current_config,
@@ -300,11 +354,20 @@ async fn run_guarded(
         request.v2_config_path.as_deref(),
         report,
     )?;
-
-    let snapshot = DatabaseSnapshot::load(&request.pool).await?;
-    let plan = Plan::decide(root, &snapshot, unsealed, report);
+    // An unchanged config is not written, so its secrets are not
+    // re-encrypted after all.
+    let config_unchanged = configs_equivalent(&current_config, &staged_config, &request.crypto);
+    if config_unchanged {
+        let staged = report.secrets_counted().saturating_sub(secrets_before);
+        report.uncount_secrets(staged);
+    }
 
     if request.dry_run {
+        // One read transaction, so the snapshot is consistent.
+        let mut tx = request.pool.begin().await?;
+        let snapshot = DatabaseSnapshot::load(&mut tx).await?;
+        tx.rollback().await?;
+        let plan = Plan::decide(root, &snapshot, unsealed, report);
         for action in &plan.rebuild {
             report.note(
                 "rebuild",
@@ -316,11 +379,14 @@ async fn run_guarded(
         return Ok(());
     }
 
-    let mut tx = request.pool.begin().await?;
-    sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&mut *tx)
-        .await?;
+    // The write lock comes first and the snapshot is read under it, so no
+    // other writer can change a row between the plan and the apply. The
+    // pool's connect options keep foreign keys on.
+    let mut tx = request.pool.begin_with("BEGIN IMMEDIATE").await?;
+    let snapshot = DatabaseSnapshot::load(&mut tx).await?;
+    let plan = Plan::decide(root, &snapshot, unsealed, report);
     plan.apply(&mut tx, &request.crypto, unsealed).await?;
+    queue_follow_refresh(&mut tx, &plan).await?;
     // A pure re-import (every record identical) writes nothing at all,
     // not even an audit row: idempotency means zero writes.
     let run_id = if plan.has_writes() {
@@ -333,12 +399,13 @@ async fn run_guarded(
         return Err(ImportError::FaultBeforeCommit);
     }
     tx.commit().await?;
+    report.mark_committed();
     if request.fault_after_commit {
         // No audit fix-up: a real crash could not run one either.
         return Err(ImportError::FaultAfterCommit);
     }
 
-    if !configs_equivalent(&current_config, &staged_config, &request.crypto)
+    if !config_unchanged
         && let Err(error) = write_json_atomically(&request.config_path, &staged_config)
     {
         // The DB already committed, so correct the audit row instead of
@@ -349,7 +416,6 @@ async fn run_guarded(
         }
         return Err(error);
     }
-    run_rebuild(&request.pool, &plan).await?;
     for action in &plan.rebuild {
         report.note("rebuild", action.clone(), "queued", String::new());
     }
@@ -656,43 +722,43 @@ struct DatabaseSnapshot {
 }
 
 impl DatabaseSnapshot {
-    async fn load(pool: &SqlitePool) -> Result<Self, ImportError> {
+    async fn load(conn: &mut sqlx::SqliteConnection) -> Result<Self, ImportError> {
         let users: Vec<UserRow> = sqlx::query_as(
             "SELECT id, display_name, email, avatar_url, role, created_at, \
              last_login_at, username, username_display FROM auth_users",
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?;
         let providers: Vec<ProviderRow> = sqlx::query_as(
             "SELECT user_id, provider, provider_uid, provider_data, created_at \
              FROM auth_providers",
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?;
         let app_passwords: Vec<AppPasswordRow> = sqlx::query_as(
             "SELECT user_id, name, secret_sha256, created_at, last_used_at, \
              last_client, revoked FROM connect_app_passwords",
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?;
         let recoveries: Vec<RecoveryRow> = sqlx::query_as(
             "SELECT user_id, code_hash, created_at, expires_at \
              FROM auth_password_recovery_codes",
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?;
         let follows: Vec<FollowRow> = sqlx::query_as(
             "SELECT user_id, artist_mbid_lower, auto_download, followed_at, \
              updated_at FROM user_followed_artists",
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?;
         let approvals: Vec<ApprovalRow> = sqlx::query_as(
             "SELECT user_id, artist_mbid_lower, state, requested_at, \
              reviewed_by_id, reviewed_by_name, reviewed_at, batch_id, source \
              FROM auto_download_approvals",
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?;
 
         let mut snapshot = Self {
@@ -1783,10 +1849,14 @@ async fn record_import_run(
 /// Best-effort audit correction after a post-commit config failure. Errors
 /// are swallowed: the config failure itself is already the run's verdict.
 async fn mark_import_run_failed(pool: &SqlitePool, run_id: &str) {
-    let _ = sqlx::query("UPDATE import_runs SET exit_code = 'FAILED_INTERNAL' WHERE id = ?")
-        .bind(run_id)
-        .execute(pool)
-        .await;
+    if let Err(error) =
+        sqlx::query("UPDATE import_runs SET exit_code = 'FAILED_INTERNAL' WHERE id = ?")
+            .bind(run_id)
+            .execute(pool)
+            .await
+    {
+        tracing::warn!(run_id, %error, "import audit row correction failed");
+    }
 }
 
 /// True when two configs carry the same plaintexts. Staged secrets use
@@ -1823,7 +1893,12 @@ fn with_plaintexts(value: &Value, crypto: &Crypto) -> Value {
 
 // --- post-import rebuild -----------------------------------------------------
 
-async fn run_rebuild(pool: &SqlitePool, plan: &Plan) -> Result<(), ImportError> {
+/// Mark every touched artist due for a follow refresh, inside the import
+/// transaction so a committed import always carries its refresh.
+async fn queue_follow_refresh(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    plan: &Plan,
+) -> Result<(), ImportError> {
     let mut mbids = HashSet::new();
     for write in &plan.writes {
         match write {
@@ -1849,7 +1924,7 @@ async fn run_rebuild(pool: &SqlitePool, plan: &Plan) -> Result<(), ImportError> 
              ON CONFLICT (artist_mbid_lower) DO UPDATE SET due_at = 0",
         )
         .bind(mbid)
-        .execute(pool)
+        .execute(&mut **tx)
         .await?;
     }
     Ok(())

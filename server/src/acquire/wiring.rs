@@ -10,6 +10,7 @@
 //! deny-by-default session gate; only the Spotify OAuth callback mounts
 //! outside it (it is state-token identified, like v2's ungated route).
 
+use crate::tooling::datalock::DataLock;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -319,6 +320,9 @@ pub struct AcquireSetup {
     pub probe_cache: Arc<ProbeCache>,
     /// Per-task staging root (manifests, drop jobs, quarantine).
     pub staging_root: PathBuf,
+    /// Shared lock on the database that keeps the offline import out
+    /// while the server runs.
+    pub data_lock: Option<Arc<DataLock>>,
 }
 
 /// Flows stores plus the loop deps built over them.
@@ -518,6 +522,7 @@ impl AcquireSetup {
         config_store: Arc<ConfigStore>,
         collections: &mut CollectionsState,
     ) -> Result<Self, String> {
+        let data_lock = Arc::new(DataLock::shared(db.path()).map_err(|error| error.to_string())?);
         let (http, no_redirect) = (http.shared().clone(), http.no_redirect().clone());
         let staging_root = config.imports_dir();
         let policy_store = config_store.clone();
@@ -676,6 +681,7 @@ impl AcquireSetup {
             probes,
             probe_cache,
             staging_root,
+            data_lock: Some(data_lock),
         })
     }
 
@@ -816,6 +822,7 @@ impl AcquireSetup {
             probes,
             probe_cache,
             staging_root,
+            data_lock: None,
         })
     }
 

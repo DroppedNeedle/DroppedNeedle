@@ -62,7 +62,8 @@ pub struct EntityCounts {
     pub dropped_unknown_user: u64,
     /// Records dropped as invalid at import time.
     pub dropped_invalid: u64,
-    /// Fields nulled to survive a collision.
+    /// Fields nulled to survive a collision. Counts fields, not records:
+    /// the record itself also counts under its own outcome.
     pub nulled_field: u64,
     /// Rows that failed with an internal error.
     pub error: u64,
@@ -165,6 +166,7 @@ pub struct ReportBuilder {
     secrets_reencrypted: u64,
     items: Vec<ReportItem>,
     sampled_imports: HashMap<String, usize>,
+    committed: bool,
 }
 
 impl ReportBuilder {
@@ -185,7 +187,39 @@ impl ReportBuilder {
             secrets_reencrypted: 0,
             items: Vec::new(),
             sampled_imports: HashMap::new(),
+            committed: false,
         }
+    }
+
+    /// Secrets counted as re-encrypted so far.
+    #[must_use]
+    pub fn secrets_counted(&self) -> u64 {
+        self.secrets_reencrypted
+    }
+
+    /// Take back secrets counted for a config that is not written.
+    pub fn uncount_secrets(&mut self, count: u64) {
+        self.secrets_reencrypted = self.secrets_reencrypted.saturating_sub(count);
+    }
+
+    /// Note that the database transaction committed.
+    pub fn mark_committed(&mut self) {
+        self.committed = true;
+    }
+
+    /// True once the database transaction committed.
+    #[must_use]
+    pub fn committed(&self) -> bool {
+        self.committed
+    }
+
+    /// Zero every counter: the run failed before its writes landed, so the
+    /// planned counts describe nothing that happened.
+    pub fn discard_counts(&mut self) {
+        for counts in self.entities.values_mut() {
+            *counts = EntityCounts::default();
+        }
+        self.secrets_reencrypted = 0;
     }
 
     /// Record one entity outcome, sampling plain imports.

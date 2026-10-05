@@ -42,7 +42,7 @@ async fn mid_import_failure_rolls_back_everything() {
     // A recovery hash colliding with a row already in the target (across
     // users, so no validator rule can see it) violates the UNIQUE column
     // mid-transaction, which must roll the whole import back.
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1"), fixture.user("u2")]);
     export["settings"]["wanted"] = json!({"enabled": true});
@@ -85,7 +85,7 @@ async fn mid_import_failure_rolls_back_everything() {
 
 #[tokio::test]
 async fn kill_before_commit_recovers_clean() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["follows"] = json!([fixture.follow("u1", MBID)]);
@@ -115,7 +115,7 @@ async fn kill_before_commit_recovers_clean() {
 
 #[tokio::test]
 async fn crash_after_commit_converges_on_retry() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["settings"]["wanted"] = json!({"enabled": true});
@@ -152,7 +152,7 @@ async fn crash_after_commit_converges_on_retry() {
 
 #[tokio::test]
 async fn dry_run_matches_real_import() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1"), fixture.user("u2")]);
     export["follows"] = json!([fixture.follow("u1", MBID)]);
@@ -182,7 +182,7 @@ async fn dry_run_matches_real_import() {
 
 #[tokio::test]
 async fn dry_run_matches_conflicts_too() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut seed = fixture.shell();
     seed["users"] = json!([fixture.user("u1")]);
     let pool = migrated_pool().await;
@@ -212,7 +212,7 @@ async fn dry_run_matches_conflicts_too() {
 
 #[tokio::test]
 async fn wrong_passphrase_writes_nothing() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["settings"]["wanted"] = json!({"enabled": true});
@@ -231,7 +231,7 @@ async fn wrong_passphrase_writes_nothing() {
 
 #[tokio::test]
 async fn wrong_passphrase_preserves_existing_config() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["settings"]["wanted"] = json!({"enabled": true});
@@ -253,7 +253,7 @@ async fn wrong_passphrase_preserves_existing_config() {
 
 #[tokio::test]
 async fn corrupt_v3_config_refuses_with_zero_db_writes() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
 
@@ -277,7 +277,7 @@ async fn corrupt_v3_config_refuses_with_zero_db_writes() {
 async fn stale_tmp_file_does_not_block_retry() {
     // A leftover staging file from a killed run is simply overwritten by
     // the next successful config write.
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["settings"]["wanted"] = json!({"enabled": true});
@@ -305,7 +305,7 @@ async fn failed_config_write_marks_the_audit_row() {
     // The DB commits before the config write; when the write fails the run
     // reports FAILED_INTERNAL and corrects its audit row instead of leaving
     // it claiming success. A retry with a working path then converges.
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["settings"]["wanted"] = json!({"enabled": true});
@@ -346,7 +346,7 @@ async fn failed_config_write_marks_the_audit_row() {
 
 #[tokio::test]
 async fn validation_failure_writes_nothing() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["settings"]["_legacy_lidarr"] = json!({"api_key": "must-not-cross"});
@@ -368,4 +368,83 @@ async fn validation_failure_writes_nothing() {
         std::fs::read_to_string(&config_path).unwrap(),
         r#"{"wanted": {"enabled": false}}"#
     );
+}
+
+// A modified record, or a sealed blob moved to another user, fails the
+// content digest before anything else runs: zero writes.
+#[tokio::test]
+async fn tampered_export_fails_the_checksum() {
+    let fixture = Fixture::shared();
+    let mut export = fixture.shell();
+    export["users"] = json!([fixture.user("u1"), fixture.user("u2")]);
+    let signed: serde_json::Value = serde_json::from_slice(&support::signed(&export)).unwrap();
+
+    let mut promoted = signed.clone();
+    promoted["users"][0]["role"] = json!("admin");
+    let mut swapped = signed.clone();
+    swapped["users"][0]["app_passwords"][0]["secret"] =
+        signed["users"][1]["app_passwords"][0]["secret"].clone();
+    for mutant in [promoted, swapped] {
+        let pool = migrated_pool().await;
+        let (_dir, config_path, crypto) = scratch_config("checksum");
+        let report = run_import(import_request(&mutant, pool.clone(), config_path, crypto)).await;
+        assert_eq!(report.exit.code, ExitCode::FailedValidation);
+        assert!(report.exit.message.contains("CHECKSUM_MISMATCH"));
+        assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+}
+
+// The import takes the write lock before it reads the snapshot: a writer
+// that commits while the import waits is merged, not overwritten or
+// collided with.
+#[tokio::test]
+async fn import_serializes_with_a_concurrent_writer() {
+    use std::str::FromStr as _;
+    let fixture = Fixture::shared();
+    let mut export = fixture.shell();
+    export["users"] = json!([fixture.user("u1")]);
+    export["follows"] = json!([fixture.follow("u1", MBID)]);
+    let (dir, config_path, crypto) = scratch_config("serialize");
+    let db = dir.join("v3.db");
+    let options =
+        sqlx::sqlite::SqliteConnectOptions::from_str(&format!("sqlite:{}?mode=rwc", db.display()))
+            .unwrap()
+            .busy_timeout(std::time::Duration::from_secs(30));
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await
+        .unwrap();
+    droppedneedle::schema::apply_migrations(&pool)
+        .await
+        .unwrap();
+
+    let writer = rusqlite::Connection::open(&db).unwrap();
+    writer
+        .execute_batch(&format!(
+            "BEGIN IMMEDIATE;
+             INSERT INTO auth_users (id, display_name, role, created_at)
+                 VALUES ('u1', 'Live', 'user', '');
+             INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower,
+                 artist_name, auto_download, followed_at, updated_at)
+                 VALUES ('u1', '{MBID}', '{MBID}', 'Live', 1, 1, 1);"
+        ))
+        .unwrap();
+    let import = tokio::spawn(run_import(import_request(
+        &export,
+        pool.clone(),
+        config_path,
+        crypto,
+    )));
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    writer.execute_batch("COMMIT").unwrap();
+    let report = import.await.unwrap();
+
+    assert_ne!(report.exit.code, ExitCode::FailedInternal, "{report:?}");
+    assert_eq!(report.entities["user"].conflict_kept_existing, 1);
+    let auto: i64 = sqlx::query_scalar("SELECT auto_download FROM user_followed_artists")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(auto, 1, "the live writer's switch survives the merge");
 }

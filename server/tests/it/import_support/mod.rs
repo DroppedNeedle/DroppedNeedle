@@ -9,7 +9,7 @@
 use crate::common::ScratchDir;
 use std::path::PathBuf;
 
-use droppedneedle::export::seal::Sealer;
+use droppedneedle::export::seal::{DIGEST_KEY, Opener, Sealer};
 use droppedneedle::runtime_config::Crypto;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
@@ -36,6 +36,13 @@ impl Fixture {
         Self {
             sealer: Sealer::generate(PASSPHRASE).unwrap(),
         }
+    }
+
+    /// One fixture shared by every test that needs no envelope of its
+    /// own, so the suite pays for one key derivation.
+    pub fn shared() -> &'static Self {
+        static SHARED: std::sync::LazyLock<Fixture> = std::sync::LazyLock::new(Fixture::new);
+        &SHARED
     }
 
     /// Seal one secret into a `{ "$sealed": ... }` object.
@@ -177,7 +184,7 @@ pub fn import_request(
     crypto: Crypto,
 ) -> droppedneedle::import::ImportRequest {
     droppedneedle::import::ImportRequest {
-        export_bytes: serde_json::to_vec(export).unwrap(),
+        export_bytes: signed(export),
         passphrase: PASSPHRASE.to_owned(),
         pool,
         config_path,
@@ -187,6 +194,29 @@ pub fn import_request(
         fault_before_commit: false,
         fault_after_commit: false,
     }
+}
+
+/// Serialize `export`, adding its content digest under [`PASSPHRASE`]
+/// unless the test set one (or the envelope cannot derive a key).
+pub fn signed(export: &Value) -> Vec<u8> {
+    let mut doc = export.clone();
+    if doc.get(DIGEST_KEY).is_none()
+        && doc.get("secret_envelope") == Some(&Fixture::shared().envelope())
+    {
+        Fixture::shared().sealer.sign(&mut doc).unwrap();
+        return serde_json::to_vec(&doc).unwrap();
+    }
+    let envelope = doc
+        .get("secret_envelope")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok());
+    if doc.get(DIGEST_KEY).is_none()
+        && let Some(envelope) = envelope
+        && let Ok(opener) = Opener::derive(PASSPHRASE, &envelope)
+    {
+        opener.sign(&mut doc).unwrap();
+    }
+    serde_json::to_vec(&doc).unwrap()
 }
 
 /// Row count helper for atomicity tests.

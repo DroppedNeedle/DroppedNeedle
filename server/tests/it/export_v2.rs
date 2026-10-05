@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use droppedneedle::export::{
-    ExportError, ExportRequest, HashScheme, export_v2, export_v2_to_file, fernet::FernetKey,
-    parse_export, unseal,
+    ExportError, ExportRequest, HashScheme, Opener, SealError, export_v2, export_v2_to_file,
+    fernet::FernetKey, parse_export, unseal,
 };
 use droppedneedle::runtime_config::Secret;
 use rusqlite::{Connection, params};
@@ -544,4 +544,56 @@ fn export_to_file_writes_a_parseable_envelope() {
     export_v2_to_file(&request(&dir), &out).unwrap();
     let text = std::fs::read_to_string(&out).unwrap();
     assert!(parse_export(&text).unwrap().warnings.is_empty());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(&out).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "the export holds password hashes");
+    }
+}
+
+// The export carries a digest that authenticates every section.
+#[test]
+fn export_digest_covers_every_section() {
+    let (text, parsed) = exported();
+    let opener = Opener::derive(PASSPHRASE, &parsed.doc.secret_envelope).unwrap();
+    let mut root: Value = serde_json::from_str(&text).unwrap();
+    opener.verify(&root).unwrap();
+    root["users"][0]["display_name"] = json!("someone else");
+    assert_eq!(opener.verify(&root), Err(SealError::DigestMismatch));
+}
+
+// A token that fails its MAC means the v2 key is wrong: refuse instead of
+// exporting the ciphertext as the secret.
+#[test]
+fn wrong_v2_key_refuses_token_values() {
+    let (dir, _key) = fixture_v2_root();
+    let other = FernetKey::generate().unwrap();
+    std::fs::write(
+        dir.join("config/.env"),
+        format!("DATA_ENC_KEY='{}'\n", other.to_base64()),
+    )
+    .unwrap();
+    let out = dir.join("export.json");
+    let error = export_v2_to_file(&request(&dir), &out).unwrap_err();
+    assert_eq!(error.code(), "V2_KEY_MISMATCH");
+    assert!(!out.exists());
+}
+
+// The stopped v2 database opens immutable: a WAL database exports
+// without the exporter creating its shared-memory file.
+#[test]
+fn export_reads_the_database_immutable() {
+    let (dir, _key) = fixture_v2_root();
+    let db = dir.join("cache/library.db");
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "wal");
+    drop(conn);
+    let shm = dir.join("cache/library.db-shm");
+    assert!(!shm.exists());
+    export_v2(&request(&dir)).unwrap();
+    assert!(!shm.exists(), "an immutable open touches no side files");
 }

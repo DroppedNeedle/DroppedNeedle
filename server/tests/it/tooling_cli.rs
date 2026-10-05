@@ -195,6 +195,26 @@ fn validate_accepts_rejects_and_cross_checks() {
     );
     assert!(combined.contains("DROPPED_SECTION"), "output: {combined}");
 
+    // With the passphrase, the digest check runs first: the clean file
+    // passes and the modified one fails it.
+    let pass = passphrase_file(&root, "operator-passphrase");
+    for (file, ok) in [(&clean, true), (&dropped, false)] {
+        let status = Command::new(tool())
+            .args(["validate"])
+            .arg(file)
+            .args(["--passphrase-file"])
+            .arg(&pass)
+            .output()
+            .expect("tool runs");
+        let stderr = String::from_utf8_lossy(&status.stderr);
+        assert_eq!(status.status.success(), ok, "stderr: {stderr}");
+        assert_eq!(
+            stderr.contains("CHECKSUM_MISMATCH"),
+            !ok,
+            "stderr: {stderr}"
+        );
+    }
+
     // The optional --v2-root cross-check catches an instance mismatch.
     let other = droppedneedle::tooling::fixture::build_v2_fixture(&root.join("other-v2"))
         .expect("second fixture builds");
@@ -459,6 +479,38 @@ async fn import_refuses_a_locked_database() {
         "a pre-pipeline refusal prints no report"
     );
     assert!(!String::from_utf8_lossy(&status.stderr).is_empty());
+}
+
+/// A running server holds the database lock; the import refuses before it
+/// opens the database at all.
+#[test]
+fn import_refuses_while_the_server_holds_the_database() {
+    let root = scratch_dir("server-lock");
+    let (_fixture, export) = repaired_export(&root);
+    let pass = passphrase_file(&root, "operator-passphrase");
+    let db = root.join("v3.db");
+    let config_dir = root.join("config");
+    std::fs::create_dir_all(&config_dir).expect("config dir");
+    let _server = droppedneedle::tooling::datalock::DataLock::shared(&db).expect("server lock");
+
+    let status = Command::new(tool())
+        .args(["import", "--file"])
+        .arg(&export)
+        .args(["--db"])
+        .arg(&db)
+        .args(["--config-dir"])
+        .arg(&config_dir)
+        .args(["--passphrase-file"])
+        .arg(&pass)
+        .output()
+        .expect("tool runs");
+    assert!(!status.status.success());
+    assert!(
+        String::from_utf8_lossy(&status.stderr).contains("stop the server"),
+        "stderr: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    assert!(!db.exists(), "the database was never opened");
 }
 
 /// A migrated merge target plus its repaired export, ready for one seed.

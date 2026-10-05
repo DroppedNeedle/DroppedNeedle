@@ -40,6 +40,13 @@ pub enum ExportError {
     /// The v2 key file exists but holds no usable `DATA_ENC_KEY`.
     #[error("v2 key file holds no usable DATA_ENC_KEY")]
     V2KeyInvalid,
+    /// A stored v2 token does not open under the v2 key: the key file holds
+    /// a different key than the one v2 encrypted with.
+    #[error("v2 secret at {field} does not open under the v2 key; check DATA_ENC_KEY")]
+    V2KeyMismatch {
+        /// Which stored value failed, never its contents.
+        field: String,
+    },
     /// The v2 config file cannot be read.
     #[error("cannot read v2 config {}: {reason}", .path.display())]
     V2ConfigUnreadable {
@@ -89,6 +96,7 @@ impl ExportError {
             Self::InvalidEnvelope { .. } => "INVALID_ENVELOPE",
             Self::V2KeyNotFound { .. } => "V2_KEY_NOT_FOUND",
             Self::V2KeyInvalid => "V2_KEY_INVALID",
+            Self::V2KeyMismatch { .. } => "V2_KEY_MISMATCH",
             Self::V2ConfigUnreadable { .. } => "V2_CONFIG_UNREADABLE",
             Self::V2ConfigInvalid => "V2_CONFIG_INVALID",
             Self::InstanceIdMissing => "MISSING_INSTANCE_ID",

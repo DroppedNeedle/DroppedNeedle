@@ -3,9 +3,10 @@
 //! v2 encrypted stored secrets with Fernet (AES-128-CBC + HMAC-SHA256,
 //! 32-byte urlsafe-base64 key: signing half first, encryption half second).
 //! Its `decrypt` treated anything undecryptable as legacy plaintext and
-//! handed it back unchanged; [`FernetKey::decrypt_legacy`] keeps exactly
-//! those semantics so the exporter resolves every secret the way v2 did
-//! (empty passes through, failures pass the input back flagged).
+//! handed it back unchanged; [`FernetKey::decrypt_legacy`] keeps those
+//! semantics for values that are not tokens, but refuses a token-shaped
+//! value that fails its MAC: that means the v2 key is wrong, and passing
+//! the ciphertext through would export it as the secret.
 //!
 //! [`FernetKey::encrypt`] exists so tests and tooling can build
 //! v2-faithful fixtures; the exporter itself only decrypts.
@@ -30,6 +31,16 @@ const TIMESTAMP_LEN: usize = 8;
 const IV_LEN: usize = 16;
 /// HMAC-SHA256 length in bytes.
 const HMAC_LEN: usize = 32;
+/// Shortest decoded token: version, timestamp, IV, and the HMAC.
+const MIN_TOKEN_LEN: usize = 1 + TIMESTAMP_LEN + IV_LEN + HMAC_LEN;
+
+/// True when `stored` decodes as urlsafe base64 to something that starts
+/// with the token version byte and is long enough to be a token.
+fn token_shaped(stored: &str) -> bool {
+    URL_SAFE
+        .decode(stored.trim())
+        .is_ok_and(|bytes| bytes.len() >= MIN_TOKEN_LEN && bytes[0] == TOKEN_VERSION)
+}
 
 /// Every way v2 key handling or token decryption can fail. Fixed strings
 /// only; no variant carries key, token, or plaintext material.
@@ -49,6 +60,10 @@ pub enum FernetError {
     /// The system clock is unusable for token timestamps.
     #[error("system clock failed")]
     ClockFailed,
+    /// A value shaped like a v2 token fails to open: the key is not the
+    /// one v2 encrypted with.
+    #[error("v2 token does not open under this key")]
+    KeyMismatch,
 }
 
 /// A v2 `DATA_ENC_KEY`: 32 raw bytes, first half signing, second half
@@ -163,20 +178,18 @@ impl FernetKey {
         String::from_utf8(plaintext).map_err(|_| FernetError::InvalidToken)
     }
 
-    /// v2 `decrypt()` semantics: empty passes through unflagged, valid
-    /// tokens decrypt, and anything else comes back unchanged flagged as
-    /// legacy plaintext. The exporter seals both successes and legacy
-    /// values; the flag is only informational. Edge: a valid-MAC token
-    /// decoding to non-UTF8 counts as legacy passthrough here while v2
-    /// raised; unreachable from v2-produced data, which is always UTF-8.
-    #[must_use]
-    pub fn decrypt_legacy(&self, stored: &str) -> (String, bool) {
+    /// v2 `decrypt()` semantics with one guard: empty passes through
+    /// unflagged, valid tokens decrypt, and a value that is not
+    /// token-shaped comes back unchanged flagged as legacy plaintext. A
+    /// token-shaped value that fails to open is [`FernetError::KeyMismatch`].
+    pub fn decrypt_legacy(&self, stored: &str) -> Result<(String, bool), FernetError> {
         if stored.is_empty() {
-            return (String::new(), false);
+            return Ok((String::new(), false));
         }
         match self.decrypt(stored) {
-            Ok(plaintext) => (plaintext, false),
-            Err(_) => (stored.to_owned(), true),
+            Ok(plaintext) => Ok((plaintext, false)),
+            Err(_) if token_shaped(stored) => Err(FernetError::KeyMismatch),
+            Err(_) => Ok((stored.to_owned(), true)),
         }
     }
 }
@@ -224,14 +237,19 @@ mod tests {
     #[test]
     fn legacy_passthrough_matches_v2() {
         let key = FernetKey::from_base64(GOLDEN_KEY).unwrap();
-        assert_eq!(key.decrypt_legacy(""), (String::new(), false));
+        assert_eq!(key.decrypt_legacy(""), Ok((String::new(), false)));
         assert_eq!(
             key.decrypt_legacy(GOLDEN_TOKEN),
-            (GOLDEN_PLAINTEXT.to_owned(), false)
+            Ok((GOLDEN_PLAINTEXT.to_owned(), false))
         );
         assert_eq!(
             key.decrypt_legacy("plaintext-secret"),
-            ("plaintext-secret".to_owned(), true)
+            Ok(("plaintext-secret".to_owned(), true))
+        );
+        let other = FernetKey::generate().unwrap();
+        assert_eq!(
+            other.decrypt_legacy(GOLDEN_TOKEN),
+            Err(FernetError::KeyMismatch)
         );
     }
 

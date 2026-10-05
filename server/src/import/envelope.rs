@@ -6,16 +6,16 @@
 //! document the validator and the merge walk, and open sealed values
 //! under the operator passphrase.
 //!
-//! Unlock cost note: each sealed value re-derives the Argon2id key
-//! (the 64 MiB pinned parameters), so large secret counts take seconds.
-//! That is acceptable for a one-shot migration tool and keeps a single
-//! KDF implementation.
+//! The Argon2id key derives once per import ([`Opener`]); the same key
+//! checks the document digest and opens every sealed value.
 
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::export::envelope::SecretEnvelope;
-use crate::export::seal::{self, SealError};
+use crate::export::seal::SealError;
+
+pub use crate::export::seal::Opener;
 
 pub use crate::export::envelope::{
     EXPORT_FORMAT, FORMAT_VERSION as EXPORT_FORMAT_VERSION, RESERVED_SECTIONS,
@@ -98,21 +98,16 @@ impl ExportFile {
     }
 }
 
-/// Open one sealed value under the operator passphrase. `sealed` is the
+/// Open one sealed value under the derived key. `sealed` is the
 /// `{ "$sealed": ... }` object; `path` names it for error reporting only.
-pub fn unseal_value(
-    passphrase: &str,
-    envelope: &SecretEnvelope,
-    sealed: &Value,
-    path: &str,
-) -> Result<String, EnvelopeError> {
+pub fn unseal_value(opener: &Opener, sealed: &Value, path: &str) -> Result<String, EnvelopeError> {
     let blob = sealed
         .get(SEALED_KEY)
         .and_then(Value::as_str)
         .ok_or_else(|| EnvelopeError::MalformedSealed {
             path: path.to_owned(),
         })?;
-    seal::unseal(passphrase, envelope, blob).map_err(|error| match error {
+    opener.open(blob).map_err(|error| match error {
         SealError::AuthFailed => EnvelopeError::UnlockFailed {
             path: path.to_owned(),
         },
@@ -122,10 +117,23 @@ pub fn unseal_value(
         SealError::InvalidEnvelope
         | SealError::KdfFailed
         | SealError::RandomFailed
-        | SealError::SealFailed => EnvelopeError::BadEnvelope {
+        | SealError::SealFailed
+        | SealError::DigestMismatch => EnvelopeError::BadEnvelope {
             reason: "secret envelope failed before unlock".to_owned(),
         },
     })
+}
+
+/// Derive the envelope key and check the document digest. Run before
+/// anything else reads the document.
+pub fn verify_content_digest(
+    root: &Value,
+    envelope: &SecretEnvelope,
+    passphrase: &str,
+) -> Result<Opener, SealError> {
+    let opener = Opener::derive(passphrase, envelope)?;
+    opener.verify(root)?;
+    Ok(opener)
 }
 
 /// True when `value` is a sealed-secret object (`{"$sealed": ...}`).

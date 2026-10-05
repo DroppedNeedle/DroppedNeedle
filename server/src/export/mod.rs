@@ -20,4 +20,4 @@ pub use envelope::{
 };
 pub use error::ExportError;
 pub use exporter::{ExportRequest, export_v2, export_v2_to_file, utc_now_rfc3339};
-pub use seal::{SealError, Sealer, secret_envelope_params, unseal};
+pub use seal::{Opener, SealError, Sealer, secret_envelope_params, unseal};

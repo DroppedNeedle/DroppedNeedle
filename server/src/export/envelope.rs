@@ -293,6 +293,10 @@ pub struct ExportDoc {
     pub follows: Vec<FollowRecord>,
     /// Auto-download approvals.
     pub approvals: Vec<ApprovalRecord>,
+    /// HMAC over every other top-level key (see `export::seal`). Empty
+    /// only while the exporter assembles the document.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub content_hmac: String,
 }
 
 impl ExportDoc {
@@ -352,7 +356,10 @@ pub fn parse_export(text: &str) -> Result<ParsedExport, ExportError> {
     for key in object.keys() {
         if RESERVED_SECTIONS.contains(&key.as_str()) {
             warnings.push(EnvelopeWarning::ignored_reserved_section(key));
-        } else if !REQUIRED_KEYS.contains(&key.as_str()) && key != "v2_commit" {
+        } else if !REQUIRED_KEYS.contains(&key.as_str())
+            && key != "v2_commit"
+            && key != crate::export::seal::DIGEST_KEY
+        {
             warnings.push(EnvelopeWarning::unknown_top_level_key(key));
         }
     }

@@ -31,7 +31,7 @@ droppedneedle-tool: offline v2 migration tooling
 Usage:
   droppedneedle-tool export --v2-root <dir> --out <file> [--db <path>]
       [--v2-commit <sha>] [--passphrase-file <file>]
-  droppedneedle-tool validate <file> [--v2-root <dir>]
+  droppedneedle-tool validate <file> [--v2-root <dir>] [--passphrase-file <file>]
   droppedneedle-tool import --file <export> --db <v3.db> --config-dir <dir>
       [--passphrase-file <file>] [--v2-config <config.json>]
   droppedneedle-tool dry-run --file <export> --db <v3.db> --config-dir <dir>
@@ -169,14 +169,15 @@ fn run_export(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// `validate <file> [--v2-root <dir>]`.
+/// `validate <file> [--v2-root <dir>] [--passphrase-file <file>]`. With a
+/// passphrase the content digest is checked before anything else.
 fn run_validate(args: &[String]) -> Result<(), String> {
-    check_flags(args, &["--v2-root"], true)?;
-    // Positional file: skip flag values so --v2-root <dir> never misreads.
+    check_flags(args, &["--v2-root", "--passphrase-file"], true)?;
+    // Positional file: skip flag values so a flag's value never misreads.
     let mut file: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
-        if args[index] == "--v2-root" {
+        if args[index] == "--v2-root" || args[index] == "--passphrase-file" {
             index += 2;
             continue;
         }
@@ -191,6 +192,20 @@ fn run_validate(args: &[String]) -> Result<(), String> {
     let bytes = std::fs::read(&file).map_err(|_| format!("cannot read {file}"))?;
     let parsed =
         droppedneedle::r#import::ExportFile::parse(&bytes).map_err(|error| error.to_string())?;
+    if flag_value(args, "--passphrase-file")?.is_some() {
+        let passphrase = read_passphrase(args)?;
+        droppedneedle::r#import::verify_content_digest(
+            &parsed.root,
+            &parsed.envelope,
+            passphrase.expose(),
+        )
+        .map_err(|error| {
+            format!(
+                "{}: {error} (wrong passphrase or modified file)",
+                error.code()
+            )
+        })?;
+    }
     let report = droppedneedle::r#import::validate_export(&parsed.root);
     for issue in &report.warnings {
         println!(
@@ -261,17 +276,22 @@ fn run_import_cmd(args: &[String], dry_run: bool) -> Result<(), String> {
         .build()
         .map_err(|error| format!("cannot start runtime: {error}"))?;
     let verb = if dry_run { "dry-run" } else { "import" };
+    // Held for the whole run: a server holding its shared lock refuses
+    // the import, and a server cannot start until the import ends.
+    if let Some(parent) = PathBuf::from(&db_path).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create database dir: {error}"))?;
+    }
+    let _data_lock =
+        droppedneedle::tooling::datalock::DataLock::exclusive(PathBuf::from(&db_path).as_path())
+            .map_err(|error| format!("{error} (stop the server before importing)"))?;
     let report = runtime.block_on(async {
         // Writable pool, not the serving runtime: its pool turns read-only
         // after boot, while the offline import owns its writes. The server
-        // must be stopped; the immediate-lock probe below refuses a live
-        // database instead of fighting its writer lane.
-        if let Some(parent) = PathBuf::from(&db_path).parent()
-            && !parent.as_os_str().is_empty()
-        {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("cannot create database dir: {error}"))?;
-        }
+        // must be stopped: the data lock above refuses a running server,
+        // and the immediate-lock probe below refuses any other writer.
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(5)
             .connect(&format!("sqlite:{db_path}?mode=rwc"))

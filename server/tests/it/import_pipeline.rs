@@ -25,7 +25,7 @@ fn counts(report: &droppedneedle::import::ImportReport, entity: &str) -> (u64, u
 
 #[tokio::test]
 async fn fresh_import_applies_everything() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["follows"] = json!([fixture.follow("u1", MBID)]);
@@ -115,7 +115,7 @@ async fn fresh_import_applies_everything() {
 
 #[tokio::test]
 async fn provider_binding_conflict_keeps_first_mapping() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     let mut first = fixture.user("u1");
     first["email"] = json!("u1@example.com");
@@ -167,7 +167,7 @@ async fn provider_binding_conflict_keeps_first_mapping() {
 
 #[tokio::test]
 async fn email_and_username_collisions_null_the_field() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut seed = fixture.shell();
     seed["users"] = json!([fixture.user("u1")]);
     let pool = migrated_pool().await;
@@ -204,7 +204,7 @@ async fn email_and_username_collisions_null_the_field() {
 
 #[tokio::test]
 async fn follow_merge_never_downgrades() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let pool = migrated_pool().await;
     let (_dir, config_path, crypto) = scratch_config("follow-merge");
     sqlx::query(
@@ -254,7 +254,7 @@ async fn follow_merge_never_downgrades() {
 
 #[tokio::test]
 async fn approval_merge_most_permissive_wins() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let pool = migrated_pool().await;
     let (_dir, config_path, crypto) = scratch_config("approval-merge");
     let mut seed = fixture.shell();
@@ -299,7 +299,7 @@ async fn approval_merge_most_permissive_wins() {
 
 #[tokio::test]
 async fn dangling_reviewer_nulled_approval_survives() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     let mut approval = fixture.approval("u1", MBID);
@@ -329,7 +329,7 @@ async fn dangling_reviewer_nulled_approval_survives() {
 
 #[tokio::test]
 async fn dangling_user_refs_fail_the_whole_file() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["follows"] = json!([fixture.follow("ghost", MBID)]);
@@ -348,7 +348,7 @@ async fn dangling_user_refs_fail_the_whole_file() {
 
 #[tokio::test]
 async fn reimport_is_identical_with_zero_writes() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["follows"] = json!([fixture.follow("u1", MBID)]);
@@ -422,7 +422,7 @@ async fn conflicted_reimport_converges_with_zero_writes() {
     // re-imports report `conflict_kept_existing` (not `skipped_identical`)
     // and recount the ghost reviewer every run, but they converge: no
     // row changes, no config bytes change, no audit row, repeat runs agree.
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut seed = fixture.shell();
     seed["users"] = json!([fixture.user("u1")]);
     seed["settings"]["wanted"] = json!({"enabled": true});
@@ -505,7 +505,7 @@ async fn bare_plugin_strings_pass_through_verbatim() {
     // Plugin secret positions live only in the v2 manifest, so the
     // importer cannot tell a plaintext plugin secret from a plaintext
     // plugin setting: bare strings land verbatim, unencrypted.
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["settings"]["plugins"] = json!({
@@ -533,7 +533,7 @@ async fn bare_plugin_strings_pass_through_verbatim() {
 
 #[tokio::test]
 async fn app_password_name_collision_disambiguates() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut seed = fixture.shell();
     seed["users"] = json!([fixture.user("u1")]);
     let pool = migrated_pool().await;
@@ -567,7 +567,7 @@ async fn app_password_name_collision_disambiguates() {
 
 #[tokio::test]
 async fn settings_replace_filters_and_preserves() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["settings"]["wanted"] = json!({"enabled": true});
     export["settings"]["lastfm_settings"] =
@@ -639,7 +639,7 @@ async fn settings_replace_filters_and_preserves() {
 
 #[tokio::test]
 async fn r8_carries_sync_frequency_once() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let export = fixture.shell();
     let pool = migrated_pool().await;
     let (dir, config_path, crypto) = scratch_config("r8");
@@ -708,7 +708,7 @@ async fn r8_ignores_unknown_values() {
 
 #[tokio::test]
 async fn reused_secret_keeps_first_registration() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     let first = fixture.user("u1");
     let mut second = fixture.user("u2");
@@ -728,7 +728,7 @@ async fn reused_secret_keeps_first_registration() {
 
 #[tokio::test]
 async fn report_shape_matches_spec() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     let pool = migrated_pool().await;
@@ -775,7 +775,7 @@ async fn report_shape_matches_spec() {
 async fn pending_import_reopens_a_rejected_row() {
     // §6 most-permissive ordering, pinned: pending outranks rejected, so a
     // pending import reopens the decision instead of keeping it.
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let pool = migrated_pool().await;
     let (_dir, config_path, crypto) = scratch_config("rejected-reopen");
     sqlx::query(
@@ -813,7 +813,7 @@ async fn pending_import_reopens_a_rejected_row() {
 
 #[tokio::test]
 async fn rejected_and_unknown_states_never_win_a_merge() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let pool = migrated_pool().await;
     let (_dir, config_path, _crypto) = scratch_config("rejected-kept");
     sqlx::query(
@@ -863,7 +863,7 @@ async fn rejected_and_unknown_states_never_win_a_merge() {
 
 #[tokio::test]
 async fn valid_reviewer_survives_verbatim() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1"), fixture.user("u2")]);
     let mut approval = fixture.approval("u1", MBID);
@@ -893,7 +893,7 @@ async fn valid_reviewer_survives_verbatim() {
 async fn unnamed_app_password_drops_counted() {
     // The one reachable `dropped_invalid` path: an empty name passes
     // validation (no rule covers it) and drops at import time.
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     let mut user = fixture.user("u1");
     user["app_passwords"][0]["name"] = json!("");
@@ -912,7 +912,7 @@ async fn unnamed_app_password_drops_counted() {
 
 #[tokio::test]
 async fn unknown_settings_section_with_corrupt_blob_is_ignored() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["settings"]["future_section"] = json!({"api_key": {"$sealed": "!!!not-b64!!!"}});
@@ -942,7 +942,7 @@ async fn unknown_settings_section_with_corrupt_blob_is_ignored() {
 
 #[tokio::test]
 async fn r8_instance_mismatch_refuses_with_zero_writes() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     let pool = migrated_pool().await;
@@ -989,7 +989,7 @@ fn r8_corrupt_file_fails() {
 
 #[tokio::test]
 async fn reimport_with_secrets_leaves_config_bytes_untouched() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["settings"]["jellyfin_settings"] =
