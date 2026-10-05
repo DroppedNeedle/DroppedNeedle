@@ -214,6 +214,25 @@ async fn avatars_are_self_or_admin() {
 }
 
 #[tokio::test]
+async fn avatar_upload_rejects_svg_and_oversize() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+
+    let (rig, _, user) = rig_with_admin().await;
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg"><script>x()</script></svg>"#;
+    let big = vec![0u8; 5 * 1024 * 1024 + 1];
+    for (content_type, bytes) in [("image/svg+xml", svg.to_vec()), ("image/png", big)] {
+        let (status, body) = call(
+            test_app(&rig, Some(principal_for(&user, "sess-molly"))),
+            "POST",
+            "/api/v3/me/avatar",
+            Some(json!({"content_type": content_type, "image_base64": B64.encode(&bytes)})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{content_type}: {body}");
+    }
+}
+
+#[tokio::test]
 async fn recovery_failures_share_one_message() {
     let (rig, admin, user) = rig_with_admin().await;
     let (_, minted) = call(
