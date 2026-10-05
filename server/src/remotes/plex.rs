@@ -102,8 +102,8 @@ impl PlexAdapter {
         !self.base_url().is_empty() && !self.token.is_empty()
     }
 
-    /// Current base URL (visible so tests can observe the https upgrade).
-    pub fn base_url(&self) -> String {
+    /// Current base URL; an https upgrade rewrites it in place.
+    fn base_url(&self) -> String {
         self.base_url
             .read()
             .map(|guard| guard.clone())
@@ -118,20 +118,6 @@ impl PlexAdapter {
             container.friendly_name.as_deref().unwrap_or("Unknown"),
             container.version.as_deref().unwrap_or("unknown")
         ))
-    }
-
-    /// Server machine identifier via `/identity`, for token scoping. None
-    /// when the server does not answer it.
-    pub async fn machine_identifier(&self) -> Result<Option<String>, AdapterError> {
-        self.require_configured()?;
-        match self.request("/identity", &[]).await {
-            Ok(container) => Ok(container.machine_identifier),
-            Err(AdapterError::Api(detail)) => {
-                tracing::debug!(%detail, "plex identity unavailable");
-                Ok(None)
-            }
-            Err(other) => Err(other),
-        }
     }
 
     /// Music library sections (`type == "artist"`).

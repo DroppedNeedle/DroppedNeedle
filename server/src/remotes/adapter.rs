@@ -16,8 +16,8 @@ use std::sync::Mutex;
 use super::jellyfin::JellyfinAdapter;
 use super::models::{
     AlbumPage, AlbumView, ArtistIndexEntry, ArtistPage, ArtistView, FavoritesView, HistoryPage,
-    HubView, ImportResult, InfoView, LyricsView, MatchView, PlaylistCollection, PlaylistDetail,
-    SearchResults, SessionsView, SourceName, StatsView, TrackPage, TrackView,
+    HubView, ImportResult, InfoView, LyricsView, MatchView, PlaylistDetail, SearchResults,
+    SessionsView, SourceName, StatsView, TrackPage, TrackView,
 };
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
@@ -288,15 +288,6 @@ pub enum RemoteHandle {
 }
 
 impl RemoteHandle {
-    /// Which source this handle talks to.
-    pub fn source(&self) -> SourceName {
-        match self {
-            Self::Jellyfin(_) => SourceName::Jellyfin,
-            Self::Navidrome(_) => SourceName::Navidrome,
-            Self::Plex(_) => SourceName::Plex,
-        }
-    }
-
     /// Hub highlights: stats, recents, favorites, previews, genres.
     pub async fn hub(&self) -> Result<HubView, AdapterError> {
         match self {
@@ -624,9 +615,4 @@ pub fn track_page(page: RemotePage<TrackView>, offset: i64, limit: i64) -> Track
         offset,
         limit,
     }
-}
-
-/// Build a [`PlaylistCollection`] from playlist summaries.
-pub fn playlist_collection(items: Vec<super::models::PlaylistSummary>) -> PlaylistCollection {
-    PlaylistCollection { items }
 }

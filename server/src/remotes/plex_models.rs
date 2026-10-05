@@ -41,9 +41,6 @@ pub struct Container {
     pub friendly_name: Option<String>,
     /// Server version (`/`).
     pub version: Option<String>,
-    /// Server machine id (`/identity`).
-    #[serde(rename = "machineIdentifier")]
-    pub machine_identifier: Option<String>,
 }
 
 /// One `Directory` row.
