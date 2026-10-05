@@ -141,22 +141,22 @@ The values are generated and stored locally. They are not hostnames, URL fingerp
 credentials, or values to copy into public documentation.
 
 1. **Stage the built-in endpoint.** An administrator sends `POST
-/api/v1/settings/musicbrainz/brainzmash/stage` with no provider payload. The server records a
+/api/v3/settings/musicbrainz/brainzmash/stage` with no provider payload. The server records a
 fresh pending endpoint, opaque access revision, source ID, and generation, then applies the
 built-in BrainzMash source. Staging performs local work only and sends zero BrainzMash requests.
 If a different source was active, the explicit stage operation switches runtime traffic to
 BrainzMash; if BrainzMash was already active, the current binding continues serving.
 2. **Accept the disclosure.** An administrator sends `POST
-/api/v1/settings/musicbrainz/brainzmash/consent` with the exact current `access_revision`,
+/api/v3/settings/musicbrainz/brainzmash/consent` with the exact current `access_revision`,
 `source_id`, `generation`, and `disclosure_version`. This is a local zero-wire action. It
 persists consent for that exact pending identity and enables Test Connection for that proposal.
 3. **Test Connection.** DroppedNeedle sends `POST
-/api/v1/settings/musicbrainz/verify` with the same exact binding. The dedicated BrainzMash
+/api/v3/settings/musicbrainz/verify` with the same exact binding. The dedicated BrainzMash
 client uses the local 10 requests/second, capacity-1 policy. A successful test records
 verification for the same endpoint and binding. A failed, stale, or mismatched test cannot
 activate the proposal.
 4. **Activate.** An administrator sends `POST
-/api/v1/settings/musicbrainz/activate` with the same exact binding. Only a matching consent
+/api/v3/settings/musicbrainz/activate` with the same exact binding. Only a matching consent
 and successful verification can atomically promote the pending proposal to the active
 BrainzMash binding.
 

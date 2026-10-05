@@ -119,7 +119,9 @@ docker compose pull
 docker compose up -d
 ```
 
-The first boot after an upgrade can take a while on large libraries. DroppedNeedle upgrades a copy of the database, checks it, and only then swaps it in, keeping a backup under `/app/cache/upgrade-backups`. If validation fails it restores the backup instead of starting half upgraded. Check the container log before retrying a newer image.
+Before a new version changes the database schema, DroppedNeedle writes a verified backup of the database to `/app/cache/backups`. If an upgrade goes wrong, stop the container, delete `library.db-wal` and `library.db-shm` if they exist, put the backup back in place of `/app/cache/library.db`, and run the previous image.
+
+Coming from v2? Follow [docs/upgrading-from-v2.md](docs/upgrading-from-v2.md). v3 does not read a v2 data directory in place.
 
 A `:dev` tag (`droppedneedle/droppedneedle:dev`) is built from `main` on every push and may break. Pin a commit with `:dev-<short-sha>`.
 
@@ -297,7 +299,7 @@ The first account is always admin. Later accounts are created by an admin or aut
 
 Any provider with the authorization code flow works (Authelia, Keycloak, Authentik, and others):
 
-1. Create a client in your provider with redirect URI `https://your-droppedneedle-url/api/v1/auth/oidc/callback`.
+1. Create a client in your provider with redirect URI `https://your-droppedneedle-url/api/v3/auth/oidc/callback`.
 2. Enter the issuer URL, client ID, and client secret under Settings > Security.
 3. Save. An SSO button appears on the login page.
 
@@ -325,7 +327,7 @@ Any provider with the authorization code flow works (Authelia, Keycloak, Authent
 
 ## For builders
 
-Interactive API docs (Swagger UI) live at `/api/v1/docs` on your instance. Every `/api/v1/*` route takes a Bearer token or the session cookie, everything under `/api/v1/settings/*` also needs Admin, and `/health` stays public for the container check.
+The OpenAPI document is served at `/openapi.json` on your instance. Every `/api/v3/*` route takes a Bearer token or the session cookie, everything under `/api/v3/settings/*` also needs Admin, and `/health` stays public for the container check.
 
 Plugins are stable (`api_version = 1`, v0 still loads): Python running in-process with your server's full privileges and no sandbox. Install from a GitHub URL or a copied folder, read the code before you enable it. Nothing is bundled. Contract: [PLUGINS.md](PLUGINS.md). Walkthrough: [docs/PLUGIN-CREATION.md](docs/PLUGIN-CREATION.md).
 

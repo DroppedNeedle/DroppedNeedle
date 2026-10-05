@@ -12,53 +12,51 @@ Use the [feature request template](https://github.com/DroppedNeedle/DroppedNeedl
 
 ## Development setup
 
-The backend is Python 3.13 with FastAPI. The frontend is SvelteKit with Svelte 5, Tailwind CSS, and daisyUI.
+The server is Rust (Axum, tokio, SQLite through sqlx). The frontend is SvelteKit with Svelte 5, TanStack Query, Tailwind CSS and daisyUI. The toolchain version is pinned in `rust-toolchain.toml`; rustup picks it up automatically.
 
 ### Prerequisites
 
-- Python 3.13+
-- Node.js 22+
-- Docker (for building the full image)
+- Rust via rustup
+- `cmake` (the Opus decoder builds a bundled C library)
+- Node.js 22+ and pnpm
+- Docker, to build the image
 
 ### Running locally
 
-Backend:
+Server, with its data in `./dev-data`:
 
 ```bash
-cd backend
-pip install -r requirements-dev.txt
-cp env.dev.example .env
-uvicorn target_main:app --reload --port 8688
+make server-run
 ```
 
-Frontend:
+Frontend, in a second shell, talking to that server:
 
 ```bash
-cd frontend
-cp env.development.example .env.development
-pnpm install
-pnpm run dev
+cp frontend/env.development.example frontend/.env.development
+make frontend-install
+make frontend-dev
 ```
 
-### Running tests
+### Running tests and checks
 
 ```bash
-make backend-test          # backend suite
-make frontend-test         # frontend server and browser suites
-make frontend-test-server  # frontend server suite only
-make frontend-test-client  # frontend browser suite only
-make test                  # backend and frontend server suites; excludes browser tests
+make server-test            # full Rust suite
+make server-lint            # clippy, warnings are errors
+make server-fmt-check       # rustfmt
+make contract-check         # OpenAPI snapshot and generated TypeScript are in sync
+make frontend-check         # svelte-check
+make frontend-test-server   # vitest, node project
+make frontend-test-client   # vitest, browser project
+make check                  # all of the above, plus lint and format checks
 ```
 
-Frontend browser tests use Playwright. Install the browser first:
+Browser tests use Playwright. Install the browser once with `make frontend-browser-install`.
 
-```bash
-make frontend-browser-install
-```
+If you change a route or a request or response type, run `make contract-write` and commit the regenerated `server/openapi/openapi.json` and `frontend/src/lib/api/v3/openapi.d.ts` with your change.
 
 ## Pull requests
 
-1. Fork the repo and create a branch from `main`.
+1. Fork the repo and create a branch from the default branch.
 2. Give your branch a descriptive name: `fix-scrobble-timing`, `feature-playlist-export`, etc.
 3. If you're fixing a bug, mention the issue number in the PR description.
 4. Make sure tests pass before submitting.
@@ -66,8 +64,9 @@ make frontend-browser-install
 
 ## Code style
 
-- Backend: strong typing, async/await, no blocking I/O in async contexts.
-- Frontend: strict TypeScript, no `any`. Named exports. Async/await only.
+- Server: no `unwrap`, `expect` or `panic!` outside tests (clippy enforces it). Services return typed errors; only handlers map them to HTTP status. Blocking file, SQLite or CPU-heavy work runs off the async workers.
+- The server is a single process. Never run two against the same data directory.
+- Frontend: strict TypeScript, no `any`. Svelte 5 runes only. Data fetching goes through TanStack Query hooks and the typed `/api/v3` client.
 - Use existing design tokens (`primary`, `secondary`, etc.) for colours, not hardcoded values.
 - Run `pnpm run lint` and `pnpm run check` in the frontend before submitting.
 

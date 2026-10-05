@@ -221,7 +221,7 @@ Error isolation: every adapter method is delegation + `try/except` that logs aga
 plugin and converts to the safe shape above. A plugin can fail a download; it cannot crash
 the poll loop, the failover loop, or the host.
 
-List this source in the UI via `GET /api/v1/plugins/sources`: each entry carries
+List this source in the UI via `GET /api/v3/plugins/sources`: each entry carries
 `key` (`plugin:<name>`), `plugin`, `display_name`, `has_client`, `has_indexer`,
 `target_source`, `configured`, and `health` (closed enum
 `ok`/`degraded`/`error`/`unknown`; anything else reads back as `unknown`).
@@ -324,7 +324,7 @@ await ctx.publish(kind, payload)
 
 ### Custom routes (`/ext/`)
 
-One router: `GET|POST|DELETE /api/v1/plugins/ext/{plugin_name}/{subpath}`;
+One router: `GET|POST|DELETE /api/v3/plugins/ext/{plugin_name}/{subpath}`;
 `{plugin_name}` matches EXACTLY (case-sensitive, no normalization); mismatch → 404.
 Requires `api_version = 1` AND the `publisher` capability in the manifest.
 
@@ -430,7 +430,7 @@ async def resolve_stream(self, recording_mbid: str, user_id: str) -> PluginStrea
 - `[plugin_ui]`: EITHER `entry` + `pages = ["panel"]` (prebuilt JS inside the plugin dir;
   must exist at load or the plugin loads with `error` set) OR `external_url` (https; http
   loopback-only), never both; neither = settings-fields-only (the common case).
-- Serving: `GET /api/v1/plugins/{name}/ui/panel.js`, admin-only; `Content-Type:
+- Serving: `GET /api/v3/plugins/{name}/ui/panel.js`, admin-only; `Content-Type:
   text/javascript`, `X-Content-Type-Options: nosniff`, sandbox-compatible CSP; ETag from
   host generation + mtime (no stale bytes across save); traversal → 404, real failures →
   generic 5xx (never fs details). External-URL pages need no backend surface (plain link).
