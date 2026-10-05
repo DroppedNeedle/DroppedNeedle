@@ -55,8 +55,8 @@ pub struct WatchdogConfig {
     pub poll_interval_seconds: f64,
     /// Idle-with-active-transfer limit (default 30 minutes).
     pub stall_timeout_seconds: f64,
-    /// Idle-in-remote-queue limit (default 2 hours, deliberately more
-    /// generous than the stall timeout).
+    /// Idle-in-remote-queue limit (default 2 hours, more generous than the
+    /// stall timeout because remote queues move slowly).
     pub queued_timeout_seconds: f64,
     /// Absolute poll-loop ceiling (default 6 hours).
     pub deadline_seconds: f64,

@@ -1,13 +1,13 @@
 //! In-repo mock Lidarr and Spotify servers.
 //!
 //! These axum apps are the executable record of the live-verified quirks
-//! the slice ports: the Lidarr mock pins the `/api/v1` + `X-Api-Key`
+//! the imports code ports: the Lidarr mock pins the `/api/v1` + `X-Api-Key`
 //! contract (key in query is ignored, wrong key 401s) and the tolerant
 //! decode shape (extra fields, `mbId` present-but-ignored); the Spotify
 //! mock pins the `/me/playlists` current shape (`items: {total}`, `tracks`
 //! null), the `/items` tracks endpoint (the legacy `/tracks` path 403s, as
 //! it does for dev-mode apps after the March 2026 migration), and the
-//! `track`/`item` entry alias. No brief touches a live Lidarr or Spotify.
+//! `track`/`item` entry alias. No test touches a live Lidarr or Spotify.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -60,7 +60,7 @@ async fn serve(app: axum::Router) -> Result<MockServer, std::io::Error> {
     })
 }
 
-/// Recorded upstream calls for brief assertions.
+/// Recorded upstream calls for test assertions.
 #[derive(Debug, Clone, Default)]
 pub struct RecordedCalls {
     /// Paths the Lidarr mock served (management paths would show here).
@@ -102,7 +102,7 @@ struct MockState {
 }
 
 /// Serve the mock Lidarr. Serves exactly the two sanctioned GETs; every
-/// other path 404s, so a stray management call fails its brief loudly.
+/// other path 404s, so a stray management call fails its test loudly.
 pub async fn serve_lidarr() -> Result<(MockServer, MockRecorder), std::io::Error> {
     serve_lidarr_with(&[]).await
 }

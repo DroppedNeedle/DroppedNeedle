@@ -1,8 +1,8 @@
 //! Memory state behind the acquisition flows.
 //!
 //! Wanted watches, request rows, follow cursors, the upgrade worklist, and
-//! quarantine entries live here on mutex-guarded maps. Durable rows are a
-//! later persistence tier (the stage-6 precedent); the registry already
+//! quarantine entries live here on mutex-guarded maps; they have no durable
+//! rows yet. The registry already
 //! persists job liveness, and every state transition emits a durable tick
 //! (see [`TickSink`](super::seams::TickSink)), so no outcome is silent.
 
@@ -100,7 +100,7 @@ impl WantedStore {
             .and_then(|watches| watches.get(rg_mbid).cloned())
     }
 
-    /// Watch count, for briefs.
+    /// Watch count, for tests.
     pub fn len(&self) -> usize {
         self.watches
             .lock()
@@ -460,7 +460,7 @@ impl QuarantineStore {
             .unwrap_or(0)
     }
 
-    /// Every entry, for briefs.
+    /// Every entry, for tests.
     pub fn list(&self) -> Vec<QuarantineEntry> {
         self.entries
             .lock()
@@ -498,7 +498,7 @@ impl LibraryPresence {
             .unwrap_or(false)
     }
 
-    /// Every owned MBID, for briefs.
+    /// Every owned MBID, for tests.
     pub fn all(&self) -> HashSet<String> {
         self.mbids
             .lock()
@@ -508,7 +508,7 @@ impl LibraryPresence {
 }
 
 /// Admin directory: upgrades are a curator action owned by the oldest admin
-/// (v2 `run_background_upgrade_sweep`, D18).
+/// (v2 `run_background_upgrade_sweep`).
 #[derive(Debug, Default)]
 pub struct AdminDirectory {
     admins: Mutex<Vec<String>>,

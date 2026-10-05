@@ -30,8 +30,8 @@ pub enum StoreError {
 /// Run the real migration SQL against a scratch connection.
 ///
 /// Tests only: production applies migrations at boot through the sqlx
-/// migrator. Running the same files here keeps the briefs honest about
-/// the schema they exercise.
+/// migrator. Running the same files here keeps the tests on the real
+/// schema.
 #[cfg(any(test, feature = "test-support"))]
 pub fn apply_test_schema(conn: &Connection) -> Result<(), StoreError> {
     conn.execute_batch(include_str!("../../../migrations/0001_baseline.sql"))?;
@@ -506,7 +506,7 @@ impl<'conn> DownloadStore<'conn> {
     /// re-searching: the picked candidate, source link, and search job stay
     /// on the row, so the worker resumes from the linked files instead of
     /// starting over. Answers None when the task is missing or the
-    /// reimport guard above fails. This is the one deliberate write out of
+    /// reimport guard above fails. This is the one intended write out of
     /// a terminal status; `transition_task` still refuses all others.
     pub fn reimport_task(&self, task_id: &str, now: f64) -> Result<Option<TaskRow>, StoreError> {
         let changed = self.conn.execute(
@@ -891,7 +891,7 @@ impl<'conn> DownloadStore<'conn> {
     /// Clear an album's blocklist on manual retry: an explicit "try again"
     /// reconsiders releases the failed attempt quarantined. Album scope
     /// only - a per-track retry must not wipe the album's blocklist, and
-    /// auto-retry deliberately never clears.
+    /// auto-retry never clears it.
     pub fn delete_quarantine_for_album(&self, release_group_mbid: &str) -> Result<i64, StoreError> {
         let removed = self.conn.execute(
             "DELETE FROM download_quarantine WHERE release_group_mbid = ?",

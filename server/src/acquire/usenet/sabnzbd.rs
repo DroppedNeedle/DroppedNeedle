@@ -311,7 +311,7 @@ pub enum NzbFetchError {
 /// enclosure URL carries the indexer's key and SABnzbd may echo it back.
 /// Covers `apikey=`/`api_key=` and DrunkenSlug-style `r=` (anchored so
 /// innocent words like `error=` don't match); `i=` stays visible.
-/// Ported from v2 `_QUERY_SECRET_RE` (no regex crate in this slice).
+/// Ported from v2 `_QUERY_SECRET_RE` (without a regex dependency).
 pub fn redact_query_secrets(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
@@ -363,7 +363,7 @@ fn match_secret_key(bytes: &[u8], index: usize) -> Option<usize> {
 // Raw client.
 // ---------------------------------------------------------------------------
 
-/// Raw SABnzbd API wrapper. The HTTP client is injected (v2 AUD-12); the
+/// Raw SABnzbd API wrapper. The HTTP client is injected; the
 /// full `apikey` is required (the add-only `nzbkey` can't do
 /// queue/history/delete) and is never logged. Debug is hand-written: the
 /// key never appears in debug output.
@@ -526,7 +526,7 @@ impl SabnzbdClient {
     }
 
     /// `mode=addurl` GET: hand SABnzbd the Newznab enclosure URL and let it
-    /// fetch the NZB itself. Enqueue FALLBACK only, for indexers reachable
+    /// fetch the NZB itself. Enqueue fallback only, for indexers reachable
     /// solely from the SABnzbd host; like `add_file` it mutates the queue
     /// and is never retried. Errors are scrubbed of echoed enclosure
     /// credentials before they surface.
@@ -686,7 +686,7 @@ impl SabnzbdClient {
         serde_json::from_value(data).map_err(|err| SabnzbdError::NonJson(err.to_string()))
     }
 
-    /// IDEMPOTENT GETs only: transient transport errors + 5xx retry with
+    /// Idempotent GETs only: transient transport errors + 5xx retry with
     /// exponential backoff. 4xx and logical errors return for the caller.
     async fn get_with_retry(
         &self,
@@ -1079,8 +1079,8 @@ impl SabnzbdQueue {
         .await
     }
 
-    /// Enqueue one track. Usenet has no reliable single-track search (v2
-    /// D4): the track resolved to its album upstream, so this is the same
+    /// Enqueue one track. Usenet has no reliable single-track search: the
+    /// track resolved to its album upstream, so this is the same
     /// release enqueue under a track-derived job name.
     pub async fn enqueue_track(
         &self,
@@ -1279,7 +1279,7 @@ impl SabnzbdQueue {
     }
 
     /// Drop history records after local cleanup is durable. Completed
-    /// output was removed locally and MUST use `del_files=false`; only a
+    /// output was removed locally and must use `del_files=false`; only a
     /// failed job's incomplete bytes go with the record.
     pub async fn discard_client_artifacts(
         &self,
@@ -1305,7 +1305,7 @@ impl SabnzbdQueue {
     }
 
     /// Audio files of the finished job, on disk (the folder-based import
-    /// source, v2 D18).
+    /// source, as in v2).
     pub async fn list_completed_files(
         &self,
         handle: &TaskHandle,
@@ -1430,7 +1430,7 @@ impl SabnzbdQueue {
         &self,
         handle: &TaskHandle,
     ) -> Result<Option<HistorySlot>, SabnzbdError> {
-        // Query by nzo_id ALONE when we have it: also passing
+        // Query by nzo_id alone when we have it: also passing
         // search=job_name risks an AND that drops the row when SAB renamed
         // the job (category sorting, `.1` dedup), making a completed job
         // read as never-completed and falsely blocklisting a good release
@@ -1475,9 +1475,9 @@ impl SabnzbdQueue {
             .unwrap_or_default())
     }
 
-    /// Whether the downloads MOUNT itself is usable. False ONLY when the
+    /// Whether the downloads mount itself is usable. False only when the
     /// mount root is missing or unreadable (a real environment fault). A
-    /// healthy mount whose per-job folder is merely empty is a RELEASE
+    /// healthy mount whose per-job folder is merely empty is a release
     /// problem, not a mount fault (v2 `downloads_mount_healthy`).
     async fn downloads_mount_healthy(&self) -> bool {
         let mount = self.mount.clone();

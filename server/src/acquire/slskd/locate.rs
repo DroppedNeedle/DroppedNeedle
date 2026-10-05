@@ -1,12 +1,12 @@
 //! On-disk locator for finished slskd transfers.
 //!
-//! Ported from `backend/repositories/slskd/slskd_repository.py`
-//! (`_locate_file`, `_locate_partial`, `_walk_find`, `_fuzzy_file_key`).
+//! Ported from v2's slskd repository (`_locate_file`, `_locate_partial`,
+//! `_walk_find`, `_fuzzy_file_key`).
 //! slskd already knows its filenames (from the search/handle), so each one
 //! resolves to its on-disk path via this locator; unresolved files are
 //! skipped. Exact spelling is always tried before a normalized alias, and a
-//! fuzzy track-number/title fallback runs last. Alias lookup is deliberately
-//! bounded and fail-closed: confined to the resolved mount, regular files
+//! fuzzy track-number/title fallback runs last. Alias lookup is bounded and
+//! fail-closed on purpose: confined to the resolved mount, regular files
 //! only, and a hit only when exactly one matching file exists.
 
 use std::collections::HashSet;
@@ -118,7 +118,7 @@ impl Locator {
         {
             return Some(hit);
         }
-        // 4. slskd may have sanitised the folder name — scan one level down
+        // 4. slskd may have sanitised the folder name; scan one level down
         // for it. A size-mismatched hit is skipped, not returned (v2 #397).
         if let Ok(children) = sorted_children(&mount) {
             for child in children {
@@ -583,7 +583,7 @@ fn find_normalised_in_directory(
 /// expected size is known, the already-collected in-memory alias set is
 /// retried without the size gate: exactly one alias resolves (size rejection
 /// is then the verifier's job), zero stays not-found, several fail closed as
-/// ambiguous. The ungated retry keeps NON-EXACT aliases only: an
+/// ambiguous. The ungated retry keeps non-exact aliases only: an
 /// exact-named file whose bytes mismatch is a stale file from another peer's
 /// folder (v2 #397), never a Unicode-drift alias.
 fn walk_find_normalised(

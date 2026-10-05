@@ -15,7 +15,7 @@
 //! - orphans (hourly): complete-dir debris with no owner is removed.
 //!
 //! The loop registers as the durable `download-worker` job and heartbeats
-//! every pass, following the stage-5/6 shutdown plumbing.
+//! every pass and stops on the shared shutdown watch.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -62,7 +62,7 @@ fn now_unix_f64() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// What startup recovery did, for the boot log and briefs.
+/// What startup recovery did, for the boot log and tests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecoveryReport {
     /// Queued rows the first worker pass will dispatch.

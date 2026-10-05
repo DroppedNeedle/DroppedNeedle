@@ -83,7 +83,7 @@ pub enum AttemptState {
     WorkspaceRemoved,
     /// Cleanup debt fully paid.
     Complete,
-    /// Kept deliberately (held for review, or preserved on failure).
+    /// Kept on purpose (held for review, or preserved on failure).
     Preserved,
     /// Needs an operator: unsafe to clean automatically.
     NeedsAttention,

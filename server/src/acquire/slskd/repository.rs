@@ -1,11 +1,10 @@
 //! `SlskdRepository`: search and acquisition over one slskd instance.
 //!
-//! Ported from `backend/repositories/slskd/slskd_repository.py`. Owns the
-//! search and enqueue semaphores (both 1; slskd permits only one concurrent
-//! search and one concurrent enqueue, v2 C3) and translates slskd JSON
-//! shapes to/from the protocol types. slskd has NO batch id: a task is
-//! correlated to its transfers by `TaskHandle(source="soulseek", username,
-//! filenames)` (v2 C2).
+//! Ported from v2's slskd repository. Owns the search and enqueue
+//! semaphores (both 1; slskd permits only one concurrent search and one
+//! concurrent enqueue) and translates slskd JSON shapes to/from the
+//! protocol types. slskd has no batch id: a task is correlated to its
+//! transfers by `TaskHandle(source="soulseek", username, filenames)`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -27,7 +26,7 @@ use super::query::{album_query_ladder, track_query_ladder};
 const DIAGNOSIS_SAMPLE: usize = 3;
 
 /// Correlation key for one enqueue: slskd returns no batch GUID, so the
-/// `(username, filenames)` pair is the task identity (v2 C2).
+/// `(username, filenames)` pair is the task identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskHandle {
     pub source: String,
@@ -94,7 +93,7 @@ pub struct TaskStatus {
 }
 
 /// Health outcome. Auth failures carry the uniform message (never the
-/// URL/host/key/headers); the slskd body — usually empty — is appended only
+/// URL/host/key/headers); the slskd body (usually empty) is appended only
 /// as a stripped single-line snippet (v2 `health_check`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceStatus {
@@ -143,7 +142,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
             downloads_mount,
             incomplete_mount: None,
             // slskd permits only one concurrent search and one concurrent
-            // enqueue (v2 C3).
+            // enqueue.
             search_permits: Arc::new(Semaphore::new(1)),
             enqueue_permits: Arc::new(Semaphore::new(1)),
             policy,
@@ -185,7 +184,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
                     401
                 };
                 let mut message = format!(
-                    "Authentication rejected ({code}) — check the API key and slskd's CIDR allowlist"
+                    "Authentication rejected ({code}): check the API key and slskd's CIDR allowlist"
                 );
                 if !detail.is_empty() {
                     message.push_str(": ");
@@ -334,8 +333,8 @@ impl<T: SlskdHttp> SlskdRepository<T> {
 
     /// Cross-check slskd's completed (not-yet-imported) downloads against
     /// the configured mount (v2 `diagnose_downloads_mount`). Best-effort:
-    /// never raises. The honest test is whether a sample of those finished
-    /// files actually RESOLVES under the mount (`resolvable_downloads`);
+    /// never raises. The real test is whether a sample of those finished
+    /// files actually resolves under the mount (`resolvable_downloads`);
     /// `mount_has_files` is a weaker signal that a parent-of-downloads
     /// mount (e.g. the whole library) defeats.
     pub async fn diagnose_downloads_mount(&self) -> MountDiagnosis {
@@ -367,7 +366,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
                 client_downloads_dir: client_dir,
             };
         }
-        // Resolve a small sample under the mount — the cheap get_file_path
+        // Resolve a small sample under the mount: the cheap get_file_path
         // steps hit first for a correct mount, so only a misconfigured one
         // pays the walk cost (v2).
         let mut resolvable = 0;
@@ -398,7 +397,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
     }
 
     /// slskd's own `directories.downloads` (its in-container path),
-    /// best-effort — shown to the user so they can match it to the mount (v2).
+    /// best-effort, shown to the user so they can match it to the mount (v2).
     async fn configured_downloads_dir(&self) -> Option<String> {
         match self.client.get_options().await {
             Ok(options) if !options.directories.downloads.is_empty() => {
@@ -410,7 +409,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
 
     /// Resolve a finished transfer to its on-disk path, OFF the async
     /// runtime (v2 runs the lookup in a thread: the bounded but potentially
-    /// large walks froze the whole loop — polling, SSE, every request —
+    /// large walks froze the whole loop (polling, SSE, every request)
     /// whenever the mount was big or misconfigured).
     pub async fn get_file_path(
         &self,
@@ -672,12 +671,12 @@ pub fn match_transfers<'t>(
         .collect()
 }
 
-/// Collapse records to the LATEST attempt per unique file (v2
+/// Collapse records to the latest attempt per unique file (v2
 /// `_latest_transfer_per_file`, #131/#253): slskd appends one record per
 /// retry attempt, so raw counts double-count retried files and let a stale
 /// Succeeded row shadow a newer TimedOut/Errored one (and vice versa).
-/// Highest recency key wins; exact ties — including two
-/// untimestamped/garbage-stamped records — fall through to list order, where
+/// Highest recency key wins; exact ties (including two
+/// untimestamped/garbage-stamped records) fall through to list order, where
 /// the later record wins. Winners keep their original input order.
 #[must_use]
 pub fn latest_transfer_per_file<'t>(transfers: &[&'t SlskdTransfer]) -> Vec<&'t SlskdTransfer> {
@@ -704,7 +703,7 @@ pub fn latest_transfer_per_file<'t>(transfers: &[&'t SlskdTransfer]) -> Vec<&'t 
 /// RequestedAt first, falling back to StartedAt (requestedAt is
 /// absent/mixed across slskd versions, v2 PR #222). Absent or unparseable
 /// values rank as the oldest possible instant; naive timestamps read as
-/// UTC. slskd's `id` is a GUID — not monotonic — so it carries no recency
+/// UTC. slskd's `id` is a GUID, not monotonic, so it carries no recency
 /// signal.
 fn transfer_recency(transfer: &SlskdTransfer) -> i64 {
     for text in [&transfer.requested_at, &transfer.started_at]
@@ -772,8 +771,8 @@ fn parse_datetime(text: &str) -> Option<i64> {
 }
 
 /// Per-file status from matched transfer records (v2 `_aggregate_status`).
-/// File-level verdicts judge each file ONLY by its LATEST attempt; byte
-/// totals deliberately stay sum-over-all-records so cumulative progress
+/// File-level verdicts judge each file only by its latest attempt; byte
+/// totals stay sum-over-all-records on purpose so cumulative progress
 /// keeps counting prior attempts. A "succeeded" flag only counts when the
 /// transfer moved at least `size` bytes (size known positive); a short
 /// succeeded record is a truncated stub (v2 #122): failed when terminal,
@@ -877,7 +876,7 @@ pub fn aggregate_status(handle: &TaskHandle, transfers: &[&SlskdTransfer]) -> Ta
 
 /// Whether the downloads mount holds any file (v2 `_mount_has_any_file`):
 /// bounded DFS, stops at the first hit. An unreadable or wrong-path mount
-/// returns false — that is the signal. Sync filesystem I/O; the caller
+/// returns false; that is the signal. Sync filesystem I/O; the caller
 /// offloads it off the async runtime.
 fn mount_has_any_file(mount: &std::path::Path) -> bool {
     let mount = match mount.canonicalize() {

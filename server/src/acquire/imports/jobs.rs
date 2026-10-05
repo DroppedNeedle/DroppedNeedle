@@ -1,15 +1,15 @@
 //! The `spotify:import` durable job and its downloads seam.
 //!
 //! v2 runs the populate as a `TaskRegistry` background task keyed
-//! `spotify:import:{user}:{playlist}` (`backend/api/v1/routes/spotify.py`),
+//! `spotify:import:{user}:{playlist}` (v2 Spotify routes),
 //! answering the POST immediately and skipping the spawn when the key is
 //! already running. This module keeps the key, the answer-fast shape, and
 //! the single-flight rule, and records terminal states for the status route.
 //!
-//! SEAM (noted for the integrator): [`SpotifyImportExecutor`] is the minimal
-//! local trait onto the downloads state machine, which the downloads slice
-//! owns. [`TaskExecutor`] is the memory impl; production swaps in the
-//! durable downloads-backed executor without touching the handlers.
+//! [`SpotifyImportExecutor`] is the minimal local trait onto the downloads
+//! state machine. [`TaskExecutor`] is the in-memory implementation that
+//! spawns a task; a durable downloads-backed executor can replace it
+//! without touching the handlers.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -57,8 +57,8 @@ pub struct QueuedSpotifyImport {
 }
 
 /// Minimal local seam onto the downloads state machine: run one queued
-/// populate. The downloads slice owns the durable implementation; this
-/// slice ships the task-spawning memory one below.
+/// populate. [`TaskExecutor`] below is the task-spawning in-memory
+/// implementation.
 pub trait SpotifyImportExecutor: Send + Sync {
     /// Run `job` to completion, recording its terminal state.
     fn execute(&self, job: QueuedSpotifyImport);
@@ -134,7 +134,7 @@ impl JobRegistry {
 
 /// Task-spawning executor: the memory [`SpotifyImportExecutor`]. Holds the
 /// service behind an async runner closure so the trait itself stays sync
-/// and object-safe for the downloads slice to reimplement.
+/// and object-safe for a durable implementation.
 pub struct TaskExecutor<F> {
     registry: Arc<JobRegistry>,
     run: F,

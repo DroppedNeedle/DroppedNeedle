@@ -1,9 +1,9 @@
-//! Acquire bundle: one setup the app mounts, following the stage-6 shape.
+//! Acquire bundle: one setup the app mounts.
 //!
 //! [`AcquireSetup`] owns the requests state, the imports deps, the flows
 //! stores and loop deps, the unified dispatch, the source adapters, the
 //! health probes, and the download worker. `build` binds everything to
-//! the stage-2 config store (credentials stay encrypted at rest);
+//! the config store (credentials stay encrypted at rest);
 //! `for_tests` binds the same shape over memory stores and a scratch
 //! journal. The routers nest under `/api/v3` inside the deny-by-default
 //! session gate; only the Spotify OAuth callback mounts outside it (it is
@@ -108,7 +108,7 @@ fn clamp_usize(value: i64) -> usize {
     value.max(0) as usize
 }
 
-/// Everything `create_app` needs to mount the acquire slices, built once.
+/// Everything `create_app` needs to mount the acquisition routes, built once.
 #[derive(Clone)]
 pub struct AcquireSetup {
     /// Request intake state (memory ledgers, unified dispatch).
@@ -144,11 +144,11 @@ pub struct FlowsBundle {
     pub ledger: Arc<RequestLedger>,
     /// Follow-poll cursors.
     pub follows: Arc<FlowsFollowStore>,
-    /// Upgrade worklist (empty until the stage-8 scan fills it).
+    /// Upgrade worklist (empty until a library scan fills it).
     pub worklist: Arc<UpgradeWorklist>,
     /// Quarantine registry.
     pub quarantine: Arc<QuarantineStore>,
-    /// Library presence (empty until the stage-8 port fills it).
+    /// Library presence (empty until a library port fills it).
     pub library: Arc<LibraryPresence>,
     /// Sweep ownership directory (refreshed from auth at boot).
     pub admins: Arc<AdminDirectory>,
@@ -171,8 +171,8 @@ pub struct FlowsBundle {
 
 impl FlowsBundle {
     /// Production drop-import deps over the shared stores: extension
-    /// verify plus resolve-into-staging organise (stage 8 owns real
-    /// identification and library placement).
+    /// verify plus resolve-into-staging organise (the library engine owns
+    /// real identification and placement).
     pub fn drop_deps(&self, staging_root: &Path) -> DropImportDeps {
         DropImportDeps {
             verify: Arc::new(ExtensionVerify),
@@ -196,7 +196,7 @@ impl Clock for SystemClock {
 }
 
 /// Drop-file verify by audio extension. Unknown types fail open as local
-/// faults (never quarantined): stage 8 owns real identification.
+/// faults (never quarantined): the library engine owns identification.
 struct ExtensionVerify;
 
 impl DropVerify for ExtensionVerify {
@@ -214,8 +214,8 @@ impl DropVerify for ExtensionVerify {
     }
 }
 
-/// Library organise into the staging `resolved` dir. Stage 8 replaces
-/// this with real library placement; until then drops resolve out of
+/// Library organise into the staging `resolved` dir. Real library
+/// placement belongs to the library engine; until it is wired, drops resolve out of
 /// quarantine into a visible staging area instead of the library.
 struct StagingOrganise {
     staging_root: PathBuf,
@@ -623,7 +623,7 @@ impl AcquireSetup {
     }
 
     /// Refresh the sweep ownership directory from auth (oldest admin
-    /// first). Boot calls this once; the sweep skips honestly when no
+    /// first). Boot calls this once; the sweep skips cleanly when no
     /// admin exists.
     pub async fn refresh_admins(&self) {
         let jonka = self.users.users.list(10_000, 0).await;

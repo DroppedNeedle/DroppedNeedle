@@ -1,9 +1,8 @@
 //! Per-source fetch seam: the minimal traits the durable core needs.
 //!
-//! SEAM NOTE (integrator): the slskd and usenet clients live in other
-//! slices. This module defines only the narrow surface downloads depend
-//! on - enqueue, poll, inspect, discard - ported from v2's
-//! `repositories/protocols/download_client.py`. Source adapters implement
+//! The slskd and usenet clients live in their own modules. This one defines
+//! only the narrow surface downloads depend on (enqueue, poll, inspect,
+//! discard), ported from v2's download-client protocol. Source adapters implement
 //! [`DownloadSource`]; the watchdog, recovery, and orphan logic below
 //! never touch a client directly.
 
@@ -74,7 +73,7 @@ pub enum SourceError {
 
 /// Minimal per-source fetch surface. Object-safe and sync-friendly: each
 /// method returns an opaque future so adapters can be async without this
-/// slice depending on an executor.
+/// module depending on an executor.
 pub trait DownloadSource: Send + Sync {
     /// Enqueue a candidate; returns the correlation handle.
     fn enqueue(
@@ -111,7 +110,7 @@ pub trait DownloadSource: Send + Sync {
 
 /// Ownership lookups the orphan reconciler needs. Kept as a trait (rather
 /// than store methods) because publisher-bundle state belongs to the
-/// library slice, not downloads.
+/// library module, not downloads.
 pub trait OrphanOwnership: Send + Sync {
     /// True when any attempt journal still references this job.
     fn has_cleanup_debt(

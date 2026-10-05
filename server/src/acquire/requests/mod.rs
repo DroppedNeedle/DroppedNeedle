@@ -1,16 +1,14 @@
-//! Stage-7 request intake: album, track, batch, and edition-acquire asks
-//! plus the approval queues behind them.
+//! Request intake: album, track, batch, and edition-acquire asks plus the
+//! approval queues behind them.
 //!
 //! Clean-slate `/api/v3` surface. The router below mounts paths relative to
-//! `/api/v3`; wiring nests it there behind the session middleware and swaps
-//! the slice-local [`auth::gate`] plus [`auth::Principal`] for the real
-//! session gate and role extractors (mirroring the reads collections slice:
-//! add a principal-translation layer that resolves the role fresh from the
-//! user store). Handler utoipa annotations already carry the full `/api/v3`
-//! paths for the contract document.
+//! `/api/v3`; the app nests it there behind the session middleware with a
+//! principal-translation layer that resolves the role fresh from the user
+//! store, as it does for collections. Handler utoipa annotations carry the
+//! full `/api/v3` paths for the contract document.
 //!
 //! Seams owned elsewhere: [`dispatch::DownloadDispatch`] (the downloads
-//! slice implements durable fetch; this slice only starts, cancels, and
+//! module implements durable fetch; intake only starts, cancels, and
 //! polls through it), the mix build behind the refresh key, and the wanted
 //! watcher loop behind the wanted rows.
 

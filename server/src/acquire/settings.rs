@@ -1,17 +1,17 @@
-//! Config-backed settings and cross-slice follow bridges.
+//! Config-backed settings and the follow bridges between modules.
 //!
-//! Credentials and URLs live in the stage-2 config store (encrypted at
+//! Credentials and URLs live in the config store (encrypted at
 //! rest, never in plaintext): [`ConfigLidarrSettings`] and
 //! [`ConfigSpotifySettings`] implement the imports settings traits over
 //! the `lidarr_import` and `spotify_settings` secret sections. The mask
 //! sentinels match the imports models exactly, so a masked save preserves
 //! the stored secret through the store's positional pairing.
 //!
-//! The follow bridges share one follow/approval truth across slices:
+//! The follow bridges share one follow/approval truth across modules:
 //!
 //! - [`CollectionsFollowBridge`] serves the imports `FollowStore` from
 //!   the reads collections follow rows (Lidarr imports land as real
-//!   follows instead of slice-local rows).
+//!   follows instead of rows private to the imports code).
 //! - [`RequestsApprovalBridge`] serves the imports `ApprovalSink` from
 //!   the requests approval store (import batches are actionable through
 //!   the batch mutations).
@@ -160,7 +160,7 @@ impl SpotifySettingsStore for ConfigSpotifySettings {
 }
 
 /// Find a collections follow row by exact then lowercased MBID. The
-/// collections slice keys rows verbatim while the acquire slices
+/// collections code keys rows verbatim while the acquire code
 /// canonicalize to lowercase; both spellings resolve to one row.
 fn find_follow_key(
     rows: &std::collections::HashMap<(String, String), FollowRow>,

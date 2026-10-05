@@ -40,7 +40,7 @@ const BATCH_MAX_ITEMS: usize = 500;
 /// History page-size cap (v2 `page_size` query `le=100`).
 const HISTORY_MAX_PAGE_SIZE: u32 = 100;
 
-/// Domain service over the slice state. Every method is sync; handlers wrap
+/// Domain service over the requests state. Every method is sync; handlers wrap
 /// the calls without holding anything across awaits.
 pub struct RequestsService {
     /// Request ledger.
@@ -57,14 +57,14 @@ pub struct RequestsService {
     mixes: Arc<PersonalMixStore>,
     /// In-flight edition acquires.
     editions: Arc<EditionStore>,
-    /// Verdict sink into the reads slice's follow rows, when wired.
+    /// Verdict sink into the collections follow rows, when wired.
     follow_sink: Option<Arc<dyn FollowDecisionSink>>,
     /// Watches owned by the flows watcher loop, when wired.
     watch_view: Option<Arc<dyn WatchView>>,
 }
 
 impl RequestsService {
-    /// Service over one slice state.
+    /// Service over one requests state.
     pub fn new(state: &RequestsState) -> Self {
         Self {
             store: state.store.clone(),
@@ -91,7 +91,7 @@ impl RequestsService {
         let now = now_epoch();
         // Seam note: v2 resolves provider ids and release aliases through
         // the ownership and MBID stores, then fills missing names from the
-        // album service. This slice treats the submitted id as canonical and
+        // album service. Intake treats the submitted id as canonical and
         // requires real names up front.
         let Some(artist_name) = meaningful_name(body.artist.as_deref()) else {
             return Err(missing_names(&mbid));
@@ -288,7 +288,7 @@ impl RequestsService {
                 duplicate_count = duplicate_count.saturating_add(1);
             }
         }
-        // Dedupe pass two: canonical ids. This slice has no MBID-alias
+        // Dedupe pass two: canonical ids. Intake has no MBID-alias
         // store, so canon equals the validated id; invalid ids skip the way
         // unresolvable rows do in v2.
         let mut seen_canonical = std::collections::HashSet::new();
@@ -486,7 +486,7 @@ impl RequestsService {
         })
     }
 
-    /// Cancel a batch of asks (R10). Non-admins detach from shared rows and
+    /// Cancel a batch of asks. Non-admins detach from shared rows and
     /// cancel their own; only an explicit admin cancels anything (v2
     /// `cancel_batch`: a missing id must never mint admin rights).
     pub fn cancel_batch(
@@ -1020,7 +1020,7 @@ impl RequestsService {
                 },
             })
             .collect::<Vec<_>>();
-        // Watches the flows loop owns render beside this slice's rows.
+        // Watches the flows loop owns render beside the requests rows.
         // Loop watches have no local check counts, so they read zero; the
         // loop tracks album-level availability, so they read `missing`.
         if let Some(view) = &self.watch_view {
@@ -1178,7 +1178,7 @@ impl RequestsService {
         })
     }
 
-    /// Reject one auto-download ask, keeping the follow (admin; v2 L4).
+    /// Reject one auto-download ask, keeping the follow (admin; as v2 does).
     pub fn reject_auto_download(
         &self,
         principal: &Principal,
@@ -1199,7 +1199,7 @@ impl RequestsService {
         })
     }
 
-    /// Revoke one auto-download grant, keeping the follow (admin; v2 L4).
+    /// Revoke one auto-download grant, keeping the follow (admin; as v2 does).
     pub fn revoke_auto_download(
         &self,
         principal: &Principal,
@@ -1380,8 +1380,8 @@ impl RequestsService {
         })
     }
 
-    /// Refresh one user's personal mix (A:393). The build runs behind the
-    /// key another slice owns; while it runs, repeat calls answer
+    /// Refresh one user's personal mix. The build runs behind a key the mix
+    /// builder owns; while it runs, repeat calls answer
     /// `already_running` instead of stacking builds (v2
     /// `me_connections.refresh_personal_mix` quirk, including the
     /// lost-the-race reply).
@@ -1405,8 +1405,8 @@ impl RequestsService {
     }
 
     /// Fill the selected edition's missing tracks and upgrade its
-    /// below-cutoff owned tracks (A:12; curator only per v2 D13/D16). Never
-    /// retags existing files (v2 D15): the seam only fetches.
+    /// below-cutoff owned tracks (curator only, as in v2). Never retags
+    /// existing files: the seam only fetches.
     pub fn acquire_edition(
         &self,
         principal: &Principal,
@@ -1703,7 +1703,7 @@ impl RequestsService {
         }
     }
 
-    /// Quiet admin cancel of one row for batch-cancel (R10): only live rows
+    /// Quiet admin cancel of one row for batch-cancel: only live rows
     /// cancel, and approval cancels revoke the persisted capability.
     fn admin_cancel_one(
         &self,
@@ -1735,7 +1735,7 @@ impl RequestsService {
         Ok(true)
     }
 
-    /// Quiet requester cancel of one row for batch-cancel (R10). The task
+    /// Quiet requester cancel of one row for batch-cancel. The task
     /// cancels under the immutable primary owner, never the actor (v2
     /// quirk: a co-requester can never replace the attribution).
     fn requester_cancel_one(
@@ -1852,7 +1852,7 @@ impl RequestsService {
 
     /// Reconcile one live row against its linked task. Waiting rows have no
     /// task and never move here; taskless dispatch rows keep their status
-    /// (v2 falls back to library presence, which lives in another slice).
+    /// (v2 falls back to library presence, which intake cannot see).
     /// One row plus its linked task's progress snapshot. Rows without a
     /// task (waiting for approval) read exactly as the record maps.
     fn to_item(&self, record: &RequestRecord) -> RequestItem {
@@ -1920,7 +1920,7 @@ fn status_for_role(needs_approval: bool) -> &'static str {
     }
 }
 
-/// Missing-names rejection. This slice has no catalog lookup, so names are
+/// Missing-names rejection. Intake has no catalog lookup, so names are
 /// required up front; v2 fills them from the album service instead.
 fn missing_names(mbid: &str) -> RequestsError {
     RequestsError::InvalidInput {

@@ -702,8 +702,8 @@ pub struct WantedRetrying {
     pub user_name: Option<String>,
 }
 
-/// Wanted watches plus the retrying set. The watcher loop lives in another
-/// slice; this store holds the rows the views read and the stop/resume/seen
+/// Wanted watches plus the retrying set. The watcher loop lives in the
+/// flows module; this store holds the rows the views read and the stop/resume/seen
 /// mutations flip.
 pub struct WantedStore {
     /// Watches by lowercased MBID.
@@ -876,8 +876,8 @@ pub struct ApprovalBatch {
 }
 
 /// Auto-download approvals plus bulk batches. Reject and revoke keep the
-/// follow and flip intent off (v2 `follow_service` L4 quirk); intent itself
-/// lives with follows in the reads slice, so this store only tracks the
+/// follow and flip intent off (v2 `follow_service` quirk); intent itself
+/// lives with follows in collections, so this store only tracks the
 /// approval verdict.
 pub struct FollowApprovalStore {
     /// Approvals by (user, lowercased artist MBID).
@@ -974,7 +974,7 @@ impl FollowApprovalStore {
         Ok(true)
     }
 
-    /// Withdraw a pending ask (the reads slice calls this when the user
+    /// Withdraw a pending ask (collections calls this when the user
     /// turns auto-download back off). Only pending rows withdraw.
     pub fn withdraw(&self, user_id: &str, artist_mbid: &str) -> Result<bool, RequestsError> {
         let mut approvals = self.approvals.write().map_err(|cause| {
@@ -1056,8 +1056,8 @@ pub struct MixApproval {
 }
 
 /// Personal-mix approvals, refresh guard, and link flags. The mix build
-/// itself lives in another slice; this store holds the approval queue plus
-/// the refresh in-flight key (A:393 answers `already_running` while set).
+/// itself lives elsewhere; this store holds the approval queue plus the
+/// refresh in-flight key (refresh answers `already_running` while set).
 pub struct PersonalMixStore {
     /// Approvals by user.
     approvals: RwLock<HashMap<String, MixApproval>>,

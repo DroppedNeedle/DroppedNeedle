@@ -1,8 +1,8 @@
-//! Wire shapes for the imports + health slice.
+//! Wire shapes for the imports and health routes.
 //!
-//! One shape per concept, all snake_case, mirroring the v2 DTOs in
-//! `backend/api/v1/schemas/` (lidarr_import, me_connections, download,
-//! settings). Handlers render these as-is.
+//! One shape per concept, all snake_case, mirroring the v2 schemas
+//! (lidarr_import, me_connections, download, settings). Handlers render
+//! these as-is.
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -14,7 +14,7 @@ pub const LIDARR_API_KEY_MASK: &str = "lidarr****";
 pub const SPOTIFY_SECRET_MASK: &str = "spotify****";
 
 /// Admin-configured read-only Lidarr import connection (v2
-/// `LidarrImportConnectionSettings`, D5). NOT a management integration.
+/// `LidarrImportConnectionSettings`). Not a management integration.
 // Debug is hand-written below: the API key never appears in debug output.
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LidarrConnectionSettings {
@@ -78,7 +78,7 @@ pub struct LidarrImportRequest {
 
 /// Import summary (v2 `LidarrImportResponse`). `imported` counts brand-new
 /// follows only; `already_following` is the disjoint pre-existing subset;
-/// `auto_download_enabled` counts brand-new auto-download follows only (D9).
+/// `auto_download_enabled` counts brand-new auto-download follows only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LidarrImportResponse {
     /// Brand-new follows created.
@@ -220,7 +220,7 @@ pub struct AcquireHealth {
 }
 
 /// Live slskd client status (v2 `DownloadClientStatusResponse`, trimmed to
-/// the client half; the mount half belongs to the downloads slice).
+/// the client half; the mount half belongs to the downloads module).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SlskdStatusResponse {
     /// Credentials/URL present.

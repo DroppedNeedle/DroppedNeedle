@@ -32,7 +32,7 @@ pub struct FanoutSearch {
 
 impl FanoutSearch {
     /// Wire the fan-out. `backend` selects the Usenet side; unconfigured
-    /// clients are skipped, so an empty deployment honestly finds nothing.
+    /// clients are skipped, so an empty deployment finds nothing.
     pub fn new(
         slskd: Option<Arc<SlskdRepository<ReqwestSlskdHttp>>>,
         newznab: Arc<NewznabIndexer>,
@@ -49,7 +49,7 @@ impl FanoutSearch {
         }
     }
 
-    /// Whether any side could answer. Used for honest health detail.
+    /// Whether any side could answer. Used for health detail.
     pub fn any_configured(&self) -> bool {
         let slskd = self.slskd.as_ref().is_some_and(|repo| repo.is_configured());
         let usenet = match self.backend {

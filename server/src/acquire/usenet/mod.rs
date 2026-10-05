@@ -1,17 +1,17 @@
-//! Stage-7 Usenet acquisition: SABnzbd + Newznab + Prowlarr.
+//! Usenet acquisition: SABnzbd + Newznab + Prowlarr.
 //!
 //! The download half of Usenet lives here: [`sabnzbd`] enqueues NZBs and
 //! tracks jobs, [`newznab`] and [`prowlarr`] search indexers for releases.
-//! [`policy`] carries the slice's quality tiers, search recipe, timeouts,
+//! [`policy`] carries the Usenet quality tiers, search recipe, timeouts,
 //! and retention gates, ported from v2's `DownloadPolicySettings` and
 //! `quality_tiers`; [`mocks`] serves the loopback SAB/Newznab/Prowlarr
-//! servers the contract briefs run against. Nothing here touches the live
-//! network: every brief runs against `127.0.0.1` mocks.
+//! servers the contract tests run against. No test touches the live
+//! network: every one runs against `127.0.0.1` mocks.
 //!
 //! HTTP seam: each client takes an injected `reqwest::Client` (built once
-//! from the stage-1 `HttpClientFactory`), mirroring v2's injected httpx
-//! client (AUD-12). The stage-5 catalog `HttpPort` is GET-only and does
-//! not fit SABnzbd's multipart POST, so the slice keeps this minimal seam.
+//! from the shared `HttpClientFactory`), mirroring v2's injected httpx
+//! client. The provider catalog `HttpPort` is GET-only and does not fit
+//! SABnzbd's multipart POST, so Usenet keeps this minimal seam.
 //!
 //! Live-version-cited quirks ported from v2 (each cited at its call site):
 //! SABnzbd 5.0.4 suffix params + `cat`-not-`category` + multipart addfile

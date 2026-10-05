@@ -1,5 +1,5 @@
 //! Intake mutation handlers: album, track, batch, edition-acquire, and the
-//! per-request cancel/retry/clear verbs plus R10 batch-cancel.
+//! per-request cancel/retry/clear verbs plus batch-cancel.
 //!
 //! Route posture: every route needs an authenticated principal; edition
 //! acquire needs a curator; approve/reject live in `views` behind admin.
@@ -84,7 +84,7 @@ pub async fn request_batch_handler(
     Ok((StatusCode::ACCEPTED, Json(response)))
 }
 
-/// Cancel a batch of asks (R10). `POST /api/v3/requests/batches/cancel`.
+/// Cancel a batch of asks. `POST /api/v3/requests/batches/cancel`.
 /// Non-admins detach from shared rows and cancel their own; admins cancel
 /// anything live.
 #[utoipa::path(

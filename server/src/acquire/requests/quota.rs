@@ -1,6 +1,6 @@
 //! Cost-control enforcement, ported from v2 `quota_service.py`.
 //!
-//! Two layers, deliberately not one choke point:
+//! Two layers on purpose, not one choke point:
 //!
 //! - Layer 1, request-count quota, at submit. The ask lands in history long
 //!   before any download task exists, so the count gate runs where the ask is

@@ -1,11 +1,11 @@
-//! Loopback SABnzbd / Newznab / Prowlarr servers for the contract briefs.
+//! Loopback SABnzbd / Newznab / Prowlarr servers for the contract tests.
 //!
-//! Ported from v2's `backend/tests/mocks/` (`sabnzbd_mock.py`,
-//! `newznab_mock.py`, `prowlarr_mock.py`): the same feeds, the same
+//! Ported from v2's SABnzbd, Newznab and Prowlarr test mocks: the same
+//! feeds, the same
 //! scenario indexers, the same recorded-request discipline, served over
 //! real HTTP on `127.0.0.1` so the clients run their production reqwest
 //! path end to end. Nothing here is reachable beyond loopback, and the
-//! briefs never contact the live network.
+//! tests never contact the live network.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -63,7 +63,7 @@ fn xml_response(body: &str) -> Response {
 // ---------------------------------------------------------------------------
 
 /// One recorded `/api` call: raw query string (order-preserving, so the
-/// briefs can prove `output`/`apikey` ride last) plus parsed params.
+/// tests can prove `output`/`apikey` ride last) plus parsed params.
 #[derive(Debug, Clone)]
 pub struct SabApiCall {
     /// Raw query string in arrival order.
@@ -87,7 +87,7 @@ pub enum SabErrorForm {
     PlainText(String),
 }
 
-/// Mutable SABnzbd mock state, shared with the briefs.
+/// Mutable SABnzbd mock state, shared with the tests.
 #[derive(Debug, Default)]
 pub struct SabnzbdState {
     /// Queue slots served by `mode=queue`.
@@ -114,15 +114,15 @@ pub struct SabnzbdState {
     pub retained_completed_storage: Vec<String>,
     /// Recorded non-delete history calls.
     pub history_requests: Vec<Vec<(String, String)>>,
-    /// Every `/api` call in arrival order (suffix-order + retry-count briefs).
+    /// Every `/api` call in arrival order (suffix-order + retry-count tests).
     pub api_calls: Vec<SabApiCall>,
-    /// Countdown of HTTP 500s served on `mode=queue` (retry brief).
+    /// Countdown of HTTP 500s served on `mode=queue` (retry test).
     pub queue_fail_500: usize,
-    /// Countdown of HTTP 500s served on `mode=addfile` (no-retry brief).
+    /// Countdown of HTTP 500s served on `mode=addfile` (no-retry test).
     pub addfile_fail_500: usize,
     /// Forced error form for every `/api` call, until cleared.
     pub api_error: Option<SabErrorForm>,
-    /// When true, addurl rejects echoing the submitted URL (redaction brief).
+    /// When true, addurl rejects echoing the submitted URL (redaction test).
     pub addurl_echo_url: bool,
 }
 
@@ -782,7 +782,7 @@ const TORZNAB_FEED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 </rss>"#;
 
 /// Bare `&`, a non-predefined `&nbsp;`, and a control char: the hardening
-/// brief proves the feed still parses.
+/// test proves the feed still parses.
 const MALFORMED_FEED: &str = concat!(
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
     "<rss version=\"2.0\" xmlns:newznab=\"http://www.newznab.com/DTD/2010/feeds/attributes/\">\n",

@@ -1,11 +1,11 @@
-//! slskd/Soulseek acquisition slice (stage 7).
+//! slskd/Soulseek acquisition.
 //!
 //! The client surface is [`SlskdRepository`]: album and track acquisition
 //! search over the query ladders, download enqueue/status keyed by
 //! `(username, filenames)`, and the mount diagnosis. Quality tiers, the
 //! closed quality recipe, and timeouts come from [`DownloadPolicy`]. The
 //! in-repo [`MockSlskd`] server is the executable record of the
-//! live-verified quirks; the `acquire_slskd` contract briefs run against it
+//! live-verified quirks; the `acquire_slskd` contract tests run against it
 //! on loopback and never touch a live slskd instance.
 
 pub mod client;

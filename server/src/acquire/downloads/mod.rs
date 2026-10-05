@@ -1,10 +1,8 @@
 //! Durable downloads: SQLite state machines with crash-safe recovery.
 //!
-//! This slice ports the v2 acquisition durability contract
-//! (`backend/services/native/download_orchestrator.py`,
-//! `acquisition_cleanup_service.py`, `recycle_bin.py`, the
-//! `download_store.py` journal, and `acquisition/status.py`) into small
-//! pieces the stage-7 integrator can wire to real sources:
+//! Ports the v2 acquisition durability contract (the download
+//! orchestrator, acquisition cleanup, recycle bin, download store journal,
+//! and acquisition status) as small pieces wired to the real sources:
 //!
 //! - [`state`] task and attempt states, terminal sets, legal transitions.
 //! - [`store`] the journal itself: tasks, attempts, idempotency keys,

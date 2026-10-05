@@ -3,11 +3,11 @@
 //! Handlers are thin: extract the caller, call one service, render the
 //! shape. Status mapping lives in [`ImportsError`](super::error::ImportsError);
 //! query strings parse through [`ValidQuery`] and bodies through [`ValidJson`]
-//! so malformed input stays inside the shared envelope. The integrator
-//! mounts [`imports_router`] inside the session gate; every handler except
-//! the Spotify OAuth callback also takes a slice-local user extractor, so
-//! every other route 401s anonymously (the callback is state-token
-//! identified, exactly like v2).
+//! so malformed input stays inside the shared envelope. The app mounts
+//! [`imports_gated_router`] inside the session gate and the Spotify OAuth
+//! callback outside it; every gated handler also takes a user extractor, so
+//! those routes 401 anonymously (the callback is identified by its state
+//! token, exactly like v2).
 
 use std::sync::Arc;
 
@@ -48,7 +48,7 @@ use super::spotify::{
     SpotifyStateStore, now_unix_secs, redirect_uri,
 };
 
-/// Every dependency this slice needs, injected by constructor.
+/// Every dependency the imports routes need, injected by constructor.
 #[derive(Clone)]
 pub struct ImportsDeps {
     /// Shared outbound HTTP client.
@@ -276,7 +276,7 @@ pub async fn put_lidarr_config(
 }
 
 /// Test submitted Lidarr credentials against `system/status` (v2 Test
-/// route): the SUBMITTED url/key are probed so Test works before the first
+/// route): the submitted url/key are probed so Test works before the first
 /// save, a masked key resolves to the stored one, and reachable/bad-key
 /// verdicts travel in the body, never as a leaked 5xx, never echoing the
 /// URL or host.

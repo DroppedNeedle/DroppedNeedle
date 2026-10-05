@@ -1,12 +1,11 @@
 //! Read-only Lidarr import client and service.
 //!
-//! Ports `backend/repositories/lidarr_import/` and
-//! `backend/services/lidarr_import_service.py` exactly: two GET endpoints
+//! Ports v2's Lidarr import repository and service exactly: two GET endpoints
 //! (`/system/status`, `/artist`) under `{base}/api/v1` with the `X-Api-Key`
 //! header (verified against live Lidarr 3.1.3.4968), monitored artists only,
-//! the authoritative re-fetch, the pre-read counts, the D9 auto-download
-//! rule, and the ordered crash-safe writes. The management tombstone holds:
-//! no method here issues any Lidarr management call.
+//! the authoritative re-fetch, the pre-read counts, the auto-download rule
+//! (only brand-new follows monitored `all`), and the ordered crash-safe
+//! writes. No method here issues any Lidarr management call.
 
 use std::collections::{HashMap, HashSet};
 #[cfg(any(test, feature = "test-support"))]
@@ -78,7 +77,7 @@ pub struct LidarrArtist {
     pub monitored: bool,
     /// `none` or `all`.
     pub monitor_new_items: String,
-    /// `continuing`, `ended`, ... Imported regardless (v2 A3).
+    /// `continuing`, `ended`, ... Imported regardless of status, like v2.
     pub status: String,
 }
 
@@ -175,7 +174,7 @@ pub trait FollowStore: Send + Sync {
     fn follow_artists_bulk(&self, user_id: &str, pairs: &[(String, String)]);
     /// Flip auto-download intent for followed rows.
     fn set_auto_download_intent_bulk(&self, user_id: &str, mbids: &[String], intent: bool);
-    /// Auto-download intent for one followed row, for brief assertions.
+    /// Auto-download intent for one followed row.
     fn auto_download_intent(&self, user_id: &str, mbid_lower: &str) -> bool;
 }
 
@@ -279,7 +278,7 @@ impl MemoryApprovalSink {
         Self::default()
     }
 
-    /// Batches opened so far, for brief assertions.
+    /// Batches opened so far, for test assertions.
     pub fn batches(&self) -> Vec<ApprovalBatch> {
         self.inner
             .lock()
@@ -315,7 +314,7 @@ impl MemoryLidarrSettings {
         Self::default()
     }
 
-    /// Seed raw rows for briefs.
+    /// Seed raw rows for tests.
     pub fn seed(&self, url: &str, api_key: &str) {
         let mut inner = self
             .inner
@@ -471,7 +470,7 @@ impl LidarrImportService {
 
         // Pre-read existing follows BEFORE any write (v2 DR6): the bulk
         // upsert cannot tell a fresh insert from a conflict, so both the
-        // counts and the D9 rule need the prior state.
+        // counts and the auto-download rule need the prior state.
         let existing = self
             .follows
             .existing_followed_lower(user_id, &selected_valid_lower);
@@ -481,7 +480,7 @@ impl LidarrImportService {
             .collect();
         let imported = new_lowers.len() as i64;
         let already_following = selected_valid_lower.len() as i64 - imported;
-        // D9: mirror auto-download ONLY for brand-new follows monitored `all`.
+        // Mirror auto-download only for brand-new follows monitored `all`.
         let auto_dl_lowers: Vec<&String> = new_lowers
             .into_iter()
             .filter(|lower| {
@@ -491,7 +490,7 @@ impl LidarrImportService {
             })
             .collect();
 
-        // Writes, ORDER MATTERS (v2): (a) bulk-follow the whole valid
+        // Write order matters (v2): (a) bulk-follow the whole valid
         // selection, (b) approvals for the auto-download subset BEFORE
         // flipping intent, (c) flip intent. A mid-sequence crash fails safe
         // with intent off rather than intent-on-without-approval.

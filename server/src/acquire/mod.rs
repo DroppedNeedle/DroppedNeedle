@@ -1,6 +1,6 @@
-//! Stage-7 acquisition: requests, downloads, sources, flows, imports.
+//! Acquisition: requests, downloads, sources, flows, imports.
 //!
-//! Six slices plus the integrator's unification layer:
+//! Six areas plus a unification layer:
 //!
 //! - [`requests`] serves the user-facing ask/approval/wanted surface.
 //! - [`downloads`] owns the durable task journal, manifests, watchdog
@@ -11,8 +11,8 @@
 //! - [`imports`] serves Lidarr/Spotify import plus the health smoke.
 //!
 //! The `dispatch`, `search`, `sources`, `settings`, `probes`, `mirror`,
-//! `worker`, and `wiring` modules are integrator-owned: they unify the
-//! slice-local seams onto one production spelling each (a single
+//! `worker`, and `wiring` modules unify the per-area seams onto one
+//! production spelling each (a single
 //! [`dispatch::UnifiedDispatch`] implements both dispatch traits, one
 //! [`search::FanoutSearch`] serves the candidate seam, and so on) and
 //! assemble the [`wiring::AcquireSetup`] bundle the app mounts.

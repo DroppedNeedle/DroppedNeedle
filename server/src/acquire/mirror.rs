@@ -1,6 +1,6 @@
 //! Requests-to-flows ledger mirror.
 //!
-//! The requests slice owns the user-facing ledger; the flows loops read
+//! Requests owns the user-facing ledger; the flows loops read
 //! their own memory ledger. The mirror runs ahead of every wanted and
 //! sync pass (through the loops' pre-pass hook) and projects requests
 //! rows and watches into the flows stores so the loops act on real asks.

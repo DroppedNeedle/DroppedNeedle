@@ -1,10 +1,10 @@
 //! Unified download dispatch: one production journal writer behind both
 //! dispatch spellings.
 //!
-//! The requests slice (`requests::dispatch::DownloadDispatch`) and the
-//! flows slice (`flows::seams::DownloadDispatch`) each define the narrow
-//! surface they need from downloads. Both stay (their standalone briefs
-//! pin them); production unifies behind [`UnifiedDispatch`], which
+//! Requests (`requests::dispatch::DownloadDispatch`) and flows
+//! (`flows::seams::DownloadDispatch`) each define the narrow surface they
+//! need from downloads. Both stay (their tests pin them); production
+//! unifies behind [`UnifiedDispatch`], which
 //! implements both over the durable [`Journal`]. One struct, one task-id
 //! mint, one insert path, one status vocabulary mapping.
 //!
@@ -97,7 +97,7 @@ impl Journal {
     }
 }
 
-/// One production dispatch behind both slice spellings.
+/// One production dispatch behind both trait spellings.
 pub struct UnifiedDispatch {
     journal: Arc<Journal>,
     ids: Arc<dyn IdGenerator>,
@@ -128,7 +128,7 @@ impl UnifiedDispatch {
     /// Insert one queued task row plus its manifest skeleton. Track rows
     /// key on the recording MBID; album and edition rows on the
     /// release-group MBID (editions carry the pinned release MBID in the
-    /// row and the manifest for the stage-8 importer).
+    /// row and the manifest for the library importer).
     #[allow(clippy::too_many_arguments)]
     fn insert(
         &self,
@@ -279,7 +279,7 @@ impl requests::DownloadDispatch for UnifiedDispatch {
         request: &requests::DispatchRequest,
     ) -> Result<requests::DispatchOutcome, requests::DispatchError> {
         // Editions dispatch as album fetches; the pinned release MBID rides
-        // in the row and the manifest for the stage-8 importer.
+        // in the row and the manifest for the library importer.
         let is_track = request.kind == "track";
         let origin = match request.origin {
             requests::DispatchOrigin::User
@@ -407,7 +407,7 @@ impl flows::DownloadDispatch for UnifiedDispatch {
         // Active-task dedup: an album already fetching gets nothing new.
         // The seam spells "nothing queued" as AlreadyInLibrary (the sweep
         // only needs to not count it); a true library-cutoff check waits
-        // on the stage-8 catalog port.
+        // on a library catalog port.
         if self.active_task_for_album(&request.mbid).is_some() {
             return Ok(flows::UpgradeDispatch::AlreadyInLibrary);
         }

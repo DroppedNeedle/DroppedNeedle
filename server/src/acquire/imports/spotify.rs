@@ -1,8 +1,7 @@
 //! Spotify OAuth, playlist listing, and playlist import.
 //!
-//! Ports `backend/services/spotify_client.py`,
-//! `backend/services/spotify_import_service.py`, and the Spotify halves of
-//! `backend/api/v1/routes/spotify.py` + `me_connections.py`: the exact
+//! Ports v2's Spotify client, the Spotify import service, and the Spotify
+//! halves of its routes and connection settings: the exact
 //! OAuth scopes, the single-source redirect URI (GH-298), the Basic-auth
 //! token exchange, the 60-second refresh buffer with one 401 retry and one
 //! short 429 wait, the owner-only playlist filter, the `items`/`tracks`
@@ -28,8 +27,8 @@ pub const SPOTIFY_SCOPES: &str =
     "playlist-read-private playlist-read-collaborative user-read-private";
 /// Seconds before expiry a token counts as expired (v2 buffer).
 pub const REFRESH_BUFFER_SECS: i64 = 60;
-/// Network read bound for one playlist cover (v2 5 MiB). Deliberately
-/// looser than the storage cap: it only stops an unbounded wire read.
+/// Network read bound for one playlist cover (v2 5 MiB). Looser than the
+/// storage cap on purpose: it only stops an unbounded wire read.
 pub const MAX_COVER_FETCH_BYTES: usize = 5 * 1024 * 1024;
 /// v3-native OAuth callback path under `/api/v3`.
 pub const SPOTIFY_CALLBACK_PATH: &str = "/api/v3/spotify/auth/callback";
@@ -118,8 +117,8 @@ pub trait SpotifyConnectionStore: Send + Sync {
 }
 
 /// Internal playlist index the import keys on `spotify:{id}` source refs
-/// (v2 `PlaylistService` source-ref half). SEAM: the playlists slice owns
-/// the durable implementation; this memory one serves the slice alone.
+/// (v2 `PlaylistService` source-ref half). The in-memory implementation
+/// below serves until the playlists store backs it.
 pub trait PlaylistIndex: Send + Sync {
     /// Internal id for a source ref, if imported before.
     fn get_by_source_ref(&self, source_ref: &str, user_id: &str) -> Option<String>;
@@ -130,7 +129,7 @@ pub trait PlaylistIndex: Send + Sync {
 }
 
 /// Track rows the populate replaces wholesale (v2 async-playlist half).
-/// SEAM: same owner as [`PlaylistIndex`].
+/// Same backing as [`PlaylistIndex`].
 pub trait PlaylistTrackSink: Send + Sync {
     /// Ids of the rows currently on a playlist.
     fn track_ids(&self, playlist_id: &str) -> Vec<String>;
@@ -149,7 +148,7 @@ pub trait PlaylistTrackSink: Send + Sync {
         data: &[u8],
         content_type: &str,
     ) -> bool;
-    /// Rows currently on a playlist, for brief assertions.
+    /// Rows currently on a playlist, for test assertions.
     fn tracks(&self, playlist_id: &str) -> Vec<ImportedTrack>;
 }
 
@@ -177,14 +176,13 @@ pub struct ImportedTrack {
 }
 
 /// Album-to-MBID resolver (v2 `_resolve_album_mbids` ISRC + title-search
-/// fallback). SEAM: the MusicBrainz slice owns the durable implementation;
-/// tests resolve from a fixed map.
+/// fallback). Tests resolve from a fixed map.
 pub trait AlbumMbidResolver: Send + Sync {
     /// Resolve one album, if the catalog knows it.
     fn resolve(&self, isrc: Option<&str>, artist: &str, album: &str) -> Option<String>;
 }
 
-/// Fixed-map resolver for briefs.
+/// Fixed-map resolver for tests.
 #[derive(Debug, Default)]
 pub struct FixedMbidResolver {
     inner: Mutex<HashMap<(String, String), String>>,
@@ -540,7 +538,7 @@ pub fn best_image_url(images: &serde_json::Value, min_size: i64) -> Option<Strin
 }
 
 /// True for a fetchable Spotify cover URL: https over the CDN allowlist.
-/// The mock CDN host joins the allowlist so briefs run on loopback.
+/// The mock CDN host joins the allowlist so tests run on loopback.
 pub fn is_allowed_cover_url(url: &str) -> bool {
     let Ok(parsed) = reqwest::Url::parse(url) else {
         return false;
@@ -555,7 +553,7 @@ pub fn is_allowed_cover_url(url: &str) -> bool {
         || is_loopback_host(&parsed)
 }
 
-/// Loopback hosts the briefs serve mock covers from.
+/// Loopback hosts the tests serve mock covers from.
 fn is_loopback_host(url: &reqwest::Url) -> bool {
     matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1"))
 }
@@ -571,7 +569,7 @@ pub enum SpotifyError {
 }
 
 /// Per-user Spotify Web API client (v2 `SpotifyClient`). Base URLs inject
-/// so briefs run against the loopback mocks; production passes the
+/// so tests run against the loopback mocks; production passes the
 /// `api.spotify.com` / `accounts.spotify.com` pair.
 #[derive(Debug, Clone)]
 pub struct SpotifyClient {

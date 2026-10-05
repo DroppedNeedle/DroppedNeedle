@@ -1,10 +1,8 @@
-//! Slice policy: quality tiers, search recipe, timeouts, retention.
+//! Usenet policy: quality tiers, search recipe, timeouts, retention.
 //!
-//! Ported from v2's `DownloadPolicySettings`
-//! (`backend/api/v1/schemas/settings.py`) and `quality_tiers.py`. The
-//! stage-7 coordinator binds the real settings object later; this struct
-//! holds the Usenet slice's working subset with v2's defaults so the
-//! clients stay honest about what they consume.
+//! Ported from v2's `DownloadPolicySettings` and quality tiers. This struct
+//! holds the subset the Usenet clients consume, with v2's defaults; the
+//! acquisition wiring fills it from the download policy settings.
 
 use std::time::Duration;
 
@@ -188,7 +186,7 @@ impl UsenetPolicy {
     }
 
     /// Propagation guard: a release younger than `min_release_age` must not
-    /// be permanently blocklisted yet (v2 review M4 / owner Q2).
+    /// be permanently blocklisted yet (indexers propagate slowly).
     pub fn old_enough_to_blocklist(&self, usenet_date_unix: Option<f64>, now_unix: f64) -> bool {
         let Some(posted) = usenet_date_unix else {
             return true;

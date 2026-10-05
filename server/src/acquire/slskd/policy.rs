@@ -1,8 +1,7 @@
 //! Download policy: quality tiers, the closed quality recipe, and timeouts.
 //!
-//! Ported from `backend/models/acquisition_quality.py` (semantics governed
-//! by the owner-signed spec; field names mirror the frontend hand-mirrored
-//! types). The recipe is deliberately closed over formats and quality
+//! Ported from v2's acquisition quality model (field names mirror the
+//! frontend types). The recipe is closed over formats and quality
 //! identifiers: adding a codec later is an explicit schema change rather
 //! than accepting arbitrary codec strings.
 
@@ -35,7 +34,7 @@ pub fn mp3_standard_bounds(quality: &str) -> Option<(i32, i32, Option<i32>)> {
 /// bandwidth even when a noisy title claims "lossless".
 pub const NOT_IMPORTABLE_EXTENSIONS: [&str; 3] = ["dsd", "dsf", "dff"];
 
-/// Fixed 6-step lossless detail ladder INSIDE the canonical `lossless` tier
+/// Fixed 6-step lossless detail ladder inside the canonical `lossless` tier
 /// (v2 `LOSSLESS_DETAIL_STEPS`; never new canonical tiers):
 /// 0 cd (at most 16-bit / 48 kHz), 1 24_48, 2 24_96, 3 24_192,
 /// 4 hi_res (above 24-bit or 192 kHz), 5 partial (resolution partial/unknown).
@@ -325,11 +324,11 @@ impl Default for DownloadPolicy {
 impl DownloadPolicy {
     /// Rank one candidate file against the recipe: the index of the first
     /// entry it satisfies, or `None` when no entry admits it (v2 evaluator
-    /// shape — eligibility plus preference step; structured reasons stay
+    /// shape: eligibility plus preference step; structured reasons stay
     /// with the orchestrator).
     ///
-    /// `bitrate_kbps` is meaningful for lossy only — FLAC bitrate varies
-    /// with compression and is NOT a fidelity axis (v2
+    /// `bitrate_kbps` is meaningful for lossy only: FLAC bitrate varies
+    /// with compression and is not a fidelity axis (v2
     /// `AudioQualityEvidence`). A lossless file with partial/unknown
     /// resolution still matches a standard FLAC entry (v2 detail step
     /// `partial`), because the legacy floor preserves migrated Soulseek FLAC

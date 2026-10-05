@@ -1,10 +1,9 @@
 //! Soulseek query construction: sanitizing, artist wildcards, ladders.
 //!
-//! Ported from `backend/repositories/slskd/slskd_repository.py`
-//! (`_sanitize_query`, `_primary_artist`, `_stripped_album_title`,
+//! Ported from v2's slskd repository (`_sanitize_query`, `_primary_artist`, `_stripped_album_title`,
 //! `_wildcard_artist`, `_album_query_ladder`, `_track_query_ladder`).
 //! Soulseek ANDs every query word, so a specific query sometimes returns
-//! nothing when a broader one returns thousands (v2: verified live) — the
+//! nothing when a broader one returns thousands (verified live), so the
 //! ladders escalate from most-specific to broadest, and the scorer narrows
 //! back down.
 

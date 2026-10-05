@@ -1,9 +1,8 @@
-//! Slice state: in-memory stores behind one handle.
+//! Requests state: in-memory stores behind one handle.
 //!
-//! Services take this handle and clone the arcs they need. Wiring swaps the
-//! memory stores for SQLite-backed ports without touching handler
-//! signatures; the dispatch arc swaps for the downloads slice's durable
-//! implementation.
+//! Services take this handle and clone the arcs they need, so the memory
+//! stores can become SQLite-backed ports without touching handler
+//! signatures. Production passes the downloads module's durable dispatch.
 
 use std::sync::Arc;
 
@@ -21,7 +20,7 @@ pub struct RequestsState {
     pub store: Arc<RequestStore>,
     /// Quota ledger.
     pub quota: Arc<QuotaLedger>,
-    /// Download-dispatch seam (downloads slice owns production).
+    /// Download-dispatch seam (the downloads module in production).
     pub dispatch: Arc<dyn DownloadDispatch>,
     /// Wanted rows.
     pub wanted: Arc<WantedStore>,
@@ -31,11 +30,11 @@ pub struct RequestsState {
     pub mixes: Arc<PersonalMixStore>,
     /// In-flight edition acquires.
     pub editions: Arc<EditionStore>,
-    /// Verdict sink into the reads slice's follow rows. `None` in the
-    /// standalone briefs; wiring connects the reads store.
+    /// Verdict sink into the collections follow rows. `None` in tests that
+    /// run the routes alone; wiring connects the collections store.
     pub follow_sink: Option<Arc<dyn FollowDecisionSink>>,
-    /// Watches owned by the flows watcher loop. `None` in the standalone
-    /// briefs; wiring connects the loop registry for the wanted view.
+    /// Watches owned by the flows watcher loop. `None` in tests that run
+    /// the routes alone; wiring connects the loop registry for the wanted view.
     pub watch_view: Option<Arc<dyn WatchView>>,
 }
 
@@ -56,7 +55,7 @@ impl RequestsState {
     }
 
     /// Test state over the scripted fake. Returns the state plus the fake so
-    /// briefs can script outcomes and flip task states.
+    /// tests can script outcomes and flip task states.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests() -> (Self, Arc<super::dispatch::ScriptedDispatch>) {
         use super::dispatch::ScriptedDispatch;

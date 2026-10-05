@@ -1,14 +1,14 @@
-//! Seams behind the acquisition flows: the boundary this slice does not own.
+//! Seams behind the acquisition flows: the boundary to code they do not own.
 //!
-//! Downloads dispatch and provider/indexer search belong to sibling slices
-//! (orchestrator + clients, and the search fan-out). The flows reach them
-//! only through the traits here, so the siblings can land real
-//! implementations without touching flow logic. Every fallible method
+//! Downloads dispatch and provider/indexer search live elsewhere (the
+//! orchestrator and clients, and the search fan-out). The flows reach them
+//! only through the traits here, so real implementations plug in without
+//! touching flow logic. Every fallible method
 //! returns a plain string cause, the playback-ports convention: provider
 //! detail stays in the log, never on the wire.
 //!
 //! The scripted doubles (`ScriptedDownloads`, `ScriptedSearch`,
-//! `ScriptedPoll`, and friends) are the briefs' stand-ins, not production
+//! `ScriptedPoll`, and friends) are test stand-ins, not production
 //! code. Time flows through [`Clock`] so cadence tests pin a [`ManualClock`]
 //! instead of sleeping.
 
@@ -37,7 +37,7 @@ impl Clock for SystemClock {
     }
 }
 
-/// Manual clock for briefs: time moves only when a test advances it.
+/// Manual clock for tests: time moves only when a test advances it.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, Default)]
 pub struct ManualClock {
@@ -84,7 +84,7 @@ pub enum DispatchKind {
     Track,
 }
 
-/// One download dispatch: the orchestrator slice owns the queue behind it.
+/// One download dispatch: the orchestrator owns the queue behind it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchRequest {
     /// Owning user id.
@@ -129,7 +129,7 @@ pub enum UpgradeDispatch {
     AlreadyInLibrary,
 }
 
-/// Downloads dispatch seam, owned by the orchestrator sibling slice.
+/// Downloads dispatch seam, implemented by the orchestrator.
 pub trait DownloadDispatch: Send + Sync {
     /// Queue a download; answers the new task id.
     fn dispatch(&self, request: &DispatchRequest) -> Result<String, String>;
@@ -274,7 +274,7 @@ pub struct Candidate {
     pub source: String,
 }
 
-/// Provider/indexer search seam, owned by the search fan-out sibling slice.
+/// Provider/indexer search seam, implemented by the search fan-out.
 /// Async like the downloads `DownloadSource` seam: production fans out to
 /// slskd and the Usenet indexers over HTTP.
 pub trait CandidateSearch: Send + Sync {
@@ -428,19 +428,19 @@ impl ReleasePoll for ScriptedPoll {
 /// One durable tick. v2 fired plugin ticks as fire-and-forget asyncio tasks
 /// (`_emit_plugin_event` in `drop_import_service.py`, `wanted_watcher_service.py`);
 /// v3 emits each tick at its durable state transition, beside the registry
-/// heartbeat and the store write (stage plan D11).
+/// heartbeat and the store write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tick {
     /// Tick kind (`request_fulfilled`, `drop_import.resolved`, ...).
     pub kind: String,
-    /// Human-readable detail for logs and briefs.
+    /// Human-readable detail for logs and tests.
     pub detail: String,
     /// Unix seconds when the tick fired.
     pub at: i64,
 }
 
 /// Durable tick sink. Production forwards these to the plugin host from the
-/// registry/store trail; briefs read them back.
+/// registry/store trail; tests read them back.
 pub trait TickSink: Send + Sync {
     /// Record one tick.
     fn emit(&self, kind: &str, detail: &str, at: i64);
@@ -563,7 +563,7 @@ pub enum VerifyVerdict {
     LocalFault(String),
 }
 
-/// Drop-file verify seam. Stage 8 owns real identification; the flow only
+/// Drop-file verify seam. The library engine owns identification; the flow only
 /// needs the verdict shape to route quarantine correctly.
 pub trait DropVerify: Send + Sync {
     /// Verify one staged file.
@@ -603,7 +603,7 @@ impl DropVerify for ScriptedVerify {
     }
 }
 
-/// Library organise seam. Stage 8 owns naming and placement; the flow only
+/// Library organise seam. The library engine owns naming and placement; the flow only
 /// needs the final path to finish the resolve.
 pub trait LibraryOrganise: Send + Sync {
     /// Move one staged file into the library; answers the final path.

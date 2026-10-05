@@ -1,9 +1,9 @@
 //! The smallest HTTP surface the slskd client needs.
 //!
-//! A deliberate local seam rather than the stage-5 catalog `HttpPort`:
+//! A local seam on purpose rather than the provider catalog `HttpPort`:
 //! that port is GET-only with catalog rate rows and cache prefixes, while
 //! slskd needs GET, POST, and DELETE, serializes through its own semaphores
-//! (v2 C3), and caches nothing. Anything before a status line (bad URL, DNS, connect, TLS,
+//! and caches nothing. Anything before a status line (bad URL, DNS, connect, TLS,
 //! timeout, reset, truncated body) is an [`HttpFault`]; every answered
 //! status maps into the reply and the client decides what it means.
 
@@ -42,8 +42,8 @@ pub trait SlskdHttp: Send + Sync {
 
 /// Production [`SlskdHttp`] over one shared reqwest client.
 ///
-/// The `reqwest::Client` is injected (v2 AUD-12: the HTTP client is owned by
-/// the caller, never acquired here). The API key travels only in the
+/// The `reqwest::Client` is injected (the HTTP client is owned by the
+/// caller, never acquired here). The API key travels only in the
 /// `X-API-Key` header and is never logged. Debug is hand-written: the key
 /// never appears in debug output.
 #[derive(Clone)]

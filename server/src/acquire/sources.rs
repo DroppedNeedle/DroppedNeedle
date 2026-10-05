@@ -7,9 +7,9 @@
 //! the returned handle and polls it; on failover it re-enqueues the same
 //! task at the next index, which walks to the next peer or release.
 //!
-//! Pick quality is deliberately simple (free slots and file counts for
+//! Pick quality is simple on purpose (free slots and file counts for
 //! slskd; retention, size, and password gates for Usenet). The full v2
-//! candidate matcher stays a later slice; the adapters never blocklist on
+//! candidate matcher is not ported yet; the adapters never blocklist on
 //! local faults either way.
 
 use std::collections::HashMap;
@@ -458,7 +458,7 @@ impl DownloadSource for SabnzbdSource {
 }
 
 /// Orphan ownership over the journal. Publisher bundles do not exist in v3
-/// yet (the stage-8 importer owns them), so "none exist" reads as settled
+/// yet (the library importer will own them), so "none exist" reads as settled
 /// and the remaining evidence keeps the verdict fail-closed.
 pub struct JournalOwnership {
     journal: Arc<Journal>,

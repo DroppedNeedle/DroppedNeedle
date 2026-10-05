@@ -2,17 +2,16 @@
 //! request-status-sync.
 //!
 //! Each loop is a small cadence contract: a `tick` function that runs one
-//! pass when due (pure over an explicit `now`, so briefs drive it with a
+//! pass when due (pure over an explicit `now`, so tests drive it with a
 //! [`ManualClock`](super::seams::ManualClock) and never sleep), plus a
-//! `spawn_*` constructor following the stage-5/6 pattern — single-flight
-//! registry, log-and-continue passes, shutdown through the sleeper — that
-//! registers the loop as
-//! [`JobKind::Ephemeral`](crate::db::JobKind) and returns a handle
-//! the integrator awaits. Nothing here touches `main.rs`.
+//! `spawn_*` constructor (single-flight registry, log-and-continue passes,
+//! shutdown through the sleeper) that registers the loop as
+//! [`JobKind::Ephemeral`](crate::db::JobKind) and returns a handle the
+//! caller awaits at shutdown.
 //!
-//! Cadences are v2-exact (`backend/core/tasks.py`); each constant cites its
-//! source. Loops that v2 jitters (wanted, follow) take a [`Jitter`]; loops
-//! v2 sleeps plainly (sync, upgrade) sleep the honest interval.
+//! Cadences match v2's task schedule; each constant cites its source.
+//! Loops that v2 jitters (wanted, follow) take a [`Jitter`]; loops v2
+//! sleeps plainly (sync, upgrade) sleep the exact interval.
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -58,7 +57,7 @@ pub const UPGRADE_JOB: &str = "background-upgrade-scan";
 /// Registry name for the request-status sync (v2 `TaskRegistry` key).
 pub const SYNC_JOB: &str = "request-status-sync";
 
-/// Sleep seam so loops test without real waits (the stage-5/6 shape).
+/// Sleep seam so loops test without real waits.
 pub trait Sleeper: Send + Sync {
     /// Sleep `duration`, returning false when shutdown won the race.
     fn sleep(&self, duration: Duration) -> impl Future<Output = bool> + Send;
@@ -87,9 +86,9 @@ impl Sleeper for TokioSleeper {
     }
 }
 
-/// Manual sleeper for briefs: `wake` releases one waiter, `shut_down`
-/// releases all with false. Requested durations are recorded so briefs can
-/// assert the honest intervals.
+/// Manual sleeper for tests: `wake` releases one waiter, `shut_down`
+/// releases all with false. Requested durations are recorded so tests can
+/// assert the intervals.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 pub struct ManualSleeper {
@@ -184,7 +183,7 @@ impl Sleeper for ManualSleeper {
 }
 
 /// Jitter seam. v2 desynchronizes same-second ticks across instances with
-/// mean-preserving ±20% uniform jitter (`_jittered_sleep`); briefs pin
+/// mean-preserving ±20% uniform jitter (`_jittered_sleep`); tests pin
 /// [`NoJitter`] so requested durations assert exactly.
 pub trait Jitter: Send + Sync {
     /// Multiplicative factor for one sleep (0.8..=1.2 in production).
@@ -289,7 +288,7 @@ impl LoopState {
 }
 
 /// Wanted-watcher settings, re-read every sweep so flipping the toggle
-/// needs no restart (v2 `run_sweep`, §5.3).
+/// needs no restart (v2 `run_sweep`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WantedSettings {
     /// The watcher runs at all.
@@ -455,7 +454,7 @@ pub async fn wanted_tick(now: i64, state: &mut LoopState, deps: &WantedDeps) -> 
 
 /// Enrol availability-dead album requests as watches: `failed` rows, plus
 /// `incomplete` rows when the partial toggle is on. Never auto-revives an
-/// existing watch, skips rows with no requester (D7), and skips rows whose
+/// existing watch, skips rows with no requester, and skips rows whose
 /// linked task is still active (v2 `_maybe_enrol` guards).
 fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -> usize {
     let mut statuses = vec!["failed"];
@@ -506,8 +505,8 @@ fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -> usiz
     enrolled
 }
 
-/// A per-want failure reschedules normally with a reset streak — one bad
-/// want never kills the sweep (v2 `_record_error_cycle`, §5.2.3).
+/// A per-want failure reschedules normally with a reset streak: one bad
+/// want never kills the sweep (v2 `_record_error_cycle`).
 fn reschedule_after_error(deps: &WantedDeps, watch: &super::stores::Watch, now: i64) {
     deps.watches.record_check(
         &watch.rg_mbid,
@@ -520,7 +519,7 @@ fn reschedule_after_error(deps: &WantedDeps, watch: &super::stores::Watch, now: 
 /// `_QUIET_DOUBLING_STREAK = 10`).
 pub const QUIET_DOUBLING_STREAK: u32 = 10;
 
-/// Age-based recheck cadence in seconds (v2 `_interval_days`, D3):
+/// Age-based recheck cadence in seconds (v2 `_interval_days`):
 /// under 30 days old → 2 days; under 90 → 4; under a year → 7; older or
 /// unknown → 14, or 28 past the quiet-doubling streak. Unknown release
 /// date reads as old. Day granularity (the table bands are days wide).
@@ -597,13 +596,13 @@ pub struct FollowDeps {
     pub ticks: Arc<dyn TickSink>,
     /// Accepted primary types (`Album`, `Single`, `EP`, ...); empty takes all.
     pub include_types: Vec<String>,
-    /// Today provider, so briefs pin the cursor date.
+    /// Today provider, so tests pin the cursor date.
     pub today: Arc<dyn Fn() -> String + Send + Sync>,
 }
 
 /// Run one follow poll when due: poll at most
-/// [`FOLLOW_MAX_ARTISTS_PER_TICK`] due artists. A first poll — or any poll
-/// with no cursor yet — records every observed release group as a
+/// [`FOLLOW_MAX_ARTISTS_PER_TICK`] due artists. A first poll (or any poll
+/// with no cursor yet) records every observed release group as a
 /// no-feed/no-task baseline; normal polls only emit complete, valid dates
 /// on or after the prior cursor, holding future matches dispatch-pending
 /// until their date (v2 `NewReleaseService` module contract).
@@ -770,7 +769,7 @@ pub struct SweepSummary {
     pub enqueued: usize,
     /// Items skipped because no admin could own them (whole sweep).
     pub skipped_no_admin: bool,
-    /// Items that errored (each isolated, F-13).
+    /// Items that errored (each isolated from the rest).
     pub errors: usize,
 }
 
@@ -792,7 +791,7 @@ pub struct SweepDeps {
 /// AND the scan is enabled, walk the cutoff-unmet worklist and enqueue at
 /// most `max_per_run` origin-`upgrade` grabs owned by the oldest admin.
 /// `AlreadyInLibrary` answers never count as enqueued; a poison item never
-/// starves its siblings (v2 `run_background_upgrade_sweep`, F-13).
+/// starves its siblings (v2 `run_background_upgrade_sweep`).
 pub async fn sweep_tick(now: i64, state: &mut LoopState, deps: &SweepDeps) -> SweepSummary {
     let policy = (deps.policy)();
     let interval = (policy.interval_hours.max(1) * 3600) as i64;
@@ -879,7 +878,7 @@ pub fn map_task_status(task_status: &str) -> Option<&'static str> {
 
 /// Run one request-status-sync pass when due: reconcile every active row
 /// with its native download task. Track rows resolve only through their
-/// linked task id — a recording MBID is not a library key — while album
+/// linked task id (a recording MBID is not a library key), while album
 /// rows without a task fall back to library presence (v2 `_reconcile_request`
 /// quirk). Terminal moves stamp `completed_at`; a won race to `imported`
 /// ticks the notify. One bad row never stops the sweep.
@@ -949,8 +948,8 @@ pub async fn sync_tick(now: i64, state: &mut LoopState, deps: &SyncDeps) -> Sync
     summary
 }
 
-/// Handle for one spawned loop: its registry name plus the task the
-/// integrator awaits after serve.
+/// Handle for one spawned loop: its registry name plus the task `main`
+/// awaits after serve.
 pub struct FlowHandle {
     /// Registry name.
     pub name: &'static str,
@@ -972,7 +971,7 @@ pub async fn register_ephemeral_loop(
 
 /// One loop pass behind the shared run skeleton: async work plus an
 /// optional sync hook ahead of every pass. Wiring uses the hook to mirror
-/// the requests ledger into the flows ledger; briefs leave it empty.
+/// the requests ledger into the flows ledger; tests leave it empty.
 pub trait FlowPass: Send {
     /// Run one pass when due. Per-item failures stay inside the tick.
     fn run(&mut self, now: i64, state: &mut LoopState) -> impl Future<Output = ()> + Send;

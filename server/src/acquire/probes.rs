@@ -52,7 +52,7 @@ pub struct ProbeCache {
 
 impl ProbeCache {
     /// Cache over one snapshot (wiring seeds config-derived fields so the
-    /// first smoke already reports enabled/configured honestly).
+    /// first smoke already reports enabled/configured correctly).
     pub fn new(initial: CachedProbes) -> Self {
         Self {
             inner: Mutex::new(initial),
@@ -185,7 +185,7 @@ pub async fn refresh_probes(cache: &ProbeCache, inputs: &ProbeInputs) {
 }
 
 /// Seed snapshot from config alone (no network): enabled/configured read
-/// honestly while reachability waits for the first refresh pass.
+/// correctly while reachability waits for the first refresh pass.
 pub fn seed_from_config(
     slskd: &SlskdConnection,
     sabnzbd: &DownloadClients,

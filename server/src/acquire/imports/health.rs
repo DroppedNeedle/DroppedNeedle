@@ -1,17 +1,15 @@
 //! Acquisition health smoke and per-source release gates.
 //!
-//! Ports the v2 download-status halves (`backend/api/v1/routes/
-//! download_client.py` `/status`, `download_clients.py` `/sabnzbd/status`,
-//! `status.py` + `status_service.py`): saved-config probes whose verdicts
+//! Ports the v2 download-status halves (the download client `/status`,
+//! `/sabnzbd/status`, and the status service): saved-config probes whose verdicts
 //! travel in the body, never as leaked 5xx. The smoke answers one question:
 //! Free OR slskd OR Usenet readiness. The four release gates (slskd,
 //! SABnzbd, Newznab, Lidarr import) each gate independently: one red gate
 //! never flips another.
 //!
-//! SEAM: every probe is a minimal local trait. The downloads slice owns the
-//! slskd/SABnzbd clients, the indexers slice owns Newznab, and Free Music
-//! readiness reads the policy slice; each swaps its scripted probe below
-//! for the live one without touching the handlers.
+//! Every probe is a minimal local trait. The live implementations sit over
+//! the slskd and SABnzbd clients, the Newznab indexers, and the Free Music
+//! settings; tests use the scripted probes below instead.
 
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
@@ -56,15 +54,13 @@ pub struct FreeReadiness {
     pub preferred_format: String,
 }
 
-/// slskd client probe (v2 `DownloadClientRepository` health half). SEAM:
-/// the downloads slice owns the live client.
+/// slskd client probe (v2 `DownloadClientRepository` health half).
 pub trait SlskdProbe: Send + Sync {
     /// Probe the saved slskd config.
     fn status(&self) -> ClientProbe;
 }
 
-/// SABnzbd client probe (v2 `SabnzbdDownloadClient` health half). SEAM:
-/// the downloads slice owns the live client.
+/// SABnzbd client probe (v2 `SabnzbdDownloadClient` health half).
 pub trait SabnzbdProbe: Send + Sync {
     /// Probe the saved SABnzbd config.
     fn status(&self) -> ClientProbe;
@@ -74,14 +70,13 @@ pub trait SabnzbdProbe: Send + Sync {
     fn complete_dir(&self) -> Option<String>;
 }
 
-/// Newznab indexer probes (v2 indexer health half). SEAM: the indexers
-/// slice owns the live probes.
+/// Newznab indexer probes (v2 indexer health half).
 pub trait NewznabProbe: Send + Sync {
     /// Probe every configured indexer.
     fn indexers(&self) -> Vec<IndexerProbe>;
 }
 
-/// Lidarr import readiness probe, backed by the slice's own settings plus
+/// Lidarr import readiness probe, backed by the import settings plus
 /// a `system/status` reachability check.
 pub trait LidarrReadinessProbe: Send + Sync {
     /// Probe the saved Lidarr import connection.
@@ -89,13 +84,12 @@ pub trait LidarrReadinessProbe: Send + Sync {
 }
 
 /// Free Music readiness (v2 `FreeMusicSettings` + lawful-source guard).
-/// SEAM: the policy slice owns the live settings read.
 pub trait FreeMusicProbe: Send + Sync {
     /// Current Free Music readiness.
     fn readiness(&self) -> FreeReadiness;
 }
 
-/// Scripted slskd probe for briefs and the pre-client tier.
+/// Scripted slskd probe for tests.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedSlskd {

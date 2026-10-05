@@ -69,7 +69,7 @@ pub struct ProwlarrRelease {
     /// NZB URL (embeds `?apikey=`; never logged).
     #[serde(default)]
     pub download_url: String,
-    /// Magnet URL (torrent members; skipped in v1).
+    /// Magnet URL (torrent members; skipped, Usenet only).
     #[serde(default)]
     pub magnet_url: String,
     /// `usenet` or `torrent`.
@@ -187,8 +187,8 @@ impl ProwlarrError {
 // Raw client. Debug is hand-written: the key never appears in debug output.
 // ---------------------------------------------------------------------------
 
-/// Raw wrapper around one Prowlarr instance. The HTTP client is injected
-/// (v2 AUD-12); the key travels in the `X-Api-Key` header only.
+/// Raw wrapper around one Prowlarr instance. The HTTP client is injected;
+/// the key travels in the `X-Api-Key` header only.
 pub struct ProwlarrClient {
     http: Client,
     base_url: String,
@@ -272,7 +272,7 @@ impl ProwlarrClient {
     }
 
     /// Map one release; `None` skips it. Torrent members are skipped,
-    /// never failed (v1 is usenet-only), as are usenet rows without a
+    /// never failed (only Usenet is supported), as are usenet rows without a
     /// download URL.
     fn to_usenet(&self, release: &ProwlarrRelease) -> Option<UsenetRelease> {
         if !release.protocol.eq_ignore_ascii_case("usenet") {
@@ -600,7 +600,7 @@ impl ProwlarrIndexer {
         releases
     }
 
-    /// One Prowlarr search. The bool reports a successful ANSWER (results
+    /// One Prowlarr search. The bool reports a successful answer (results
     /// or a genuine empty); backoff skips, auth failures, and rate limits
     /// report false so the ladder never retries on their silence. Never
     /// raises.

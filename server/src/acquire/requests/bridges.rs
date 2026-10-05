@@ -1,13 +1,13 @@
-//! Wiring bridges to sibling slices, over plain data only.
+//! Bridges from requests to other modules, over plain data only.
 //!
-//! The bridges this slice needs from the app are local traits over plain
-//! structs, implemented by the stage-7 wiring. Both default to `None`:
+//! The bridges are local traits over plain structs, implemented in the
+//! acquisition wiring. Both default to `None`:
 //!
 //! - [`FollowDecisionSink`] carries approval verdicts into the reads
-//!   slice, where auto-download intent lives (the ledger stores only the
+//!   collections, where auto-download intent lives (the ledger stores only the
 //!   verdict). Without a sink the verdicts still record here.
 //! - [`WatchView`] feeds the wanted view with watches the flows watcher
-//!   loop owns. Without it the view shows this slice's rows only.
+//!   loop owns. Without it the view shows the requests rows only.
 
 /// One watched album as the wanted view renders it.
 #[derive(Debug, Clone)]
@@ -26,7 +26,7 @@ pub struct WatchedAlbum {
     pub next_check_at: u64,
 }
 
-/// Approval-verdict sink into the reads slice's follow rows.
+/// Approval-verdict sink into the collections follow rows.
 pub trait FollowDecisionSink: Send + Sync {
     /// Arm auto-download for one follow, creating the follow when the
     /// approval came from intake rather than a follow toggle.
@@ -41,7 +41,7 @@ pub trait FollowDecisionSink: Send + Sync {
     fn clear_auto_download(&self, user_id: &str, artist_mbid: &str);
 }
 
-/// Watches owned outside this slice (the flows watcher loop).
+/// Watches owned by the flows watcher loop.
 pub trait WatchView: Send + Sync {
     /// Currently watching rows.
     fn watching(&self) -> Vec<WatchedAlbum>;

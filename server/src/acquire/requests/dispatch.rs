@@ -1,10 +1,10 @@
 //! Download-dispatch seam.
 //!
-//! Intake records the ask and decides who waits; the downloads slice owns the
+//! Intake records the ask and decides who waits; the downloads module owns the
 //! actual fetch. Everything intake needs from downloads lives in
 //! [`DownloadDispatch`]: start one fetch, cancel one fetch, and read one
-//! fetch's state for status sync. Another slice implements the durable side;
-//! this slice ships only the [`ScriptedDispatch`] fake for briefs.
+//! fetch's state for status sync. The downloads module implements the
+//! durable side; [`ScriptedDispatch`] is the test fake.
 
 #[cfg(any(test, feature = "test-support"))]
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -93,7 +93,7 @@ pub enum DispatchTaskState {
 }
 
 /// Dispatch failures. Validation faults are the caller's problem (quota,
-/// policy); transport faults are the downloads slice's problem.
+/// policy); transport faults are the downloads module's problem.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchError {
     /// The ask passed intake but failed admission (message is user-safe).
@@ -123,7 +123,7 @@ pub struct TaskProgress {
     pub protocol: String,
 }
 
-/// The durability seam. The downloads slice owns the implementation; intake
+/// The durability seam. The downloads module owns the implementation; intake
 /// only starts, cancels, and polls through here.
 pub trait DownloadDispatch: Send + Sync {
     /// Start one fetch for an admitted ask.
@@ -144,7 +144,7 @@ pub trait DownloadDispatch: Send + Sync {
     }
 }
 
-/// Scripted fake for briefs: canned outcomes in call order, every call
+/// Scripted fake for tests: canned outcomes in call order, every call
 /// recorded, task states flipped by hand to simulate landing.
 #[cfg(any(test, feature = "test-support"))]
 pub struct ScriptedDispatch {

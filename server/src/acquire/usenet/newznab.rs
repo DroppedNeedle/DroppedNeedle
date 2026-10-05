@@ -71,7 +71,7 @@ impl std::fmt::Debug for UsenetRelease {
 }
 
 /// One tagged search hit. The coordinator's union also spans soulseek and
-/// plugin hits; this slice only ever produces `usenet` ones.
+/// plugin hits; this module only ever produces `usenet` ones.
 #[derive(Debug, Clone)]
 pub struct IndexerResult {
     /// Always `usenet` here.
@@ -282,7 +282,7 @@ impl NewznabError {
 /// Characters a scene release name never carries. A canonical MusicBrainz
 /// title like "Honestly, Nevermind" must also be searchable without them:
 /// live-verified NZBGeek behavior returns 0 releases for the comma query
-/// and 3 lossless for the stripped one. Survivors are REMOVED (not
+/// and 3 lossless for the stripped one. Survivors are removed (not
 /// spaced), so "Man's" becomes "Mans" exactly the way scene names drop
 /// the apostrophe.
 const QUERY_STRIP: [char; 8] = [',', '\'', '"', '?', '!', ';', ':', '&'];
@@ -310,7 +310,7 @@ pub fn normalize_newznab_query(query: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Date parsing (no chrono in this slice).
+// Date parsing (no date crate needed).
 // ---------------------------------------------------------------------------
 
 /// RFC-2822 (`pubDate`/`usenetdate`) → unix time. Weekday optional;
@@ -406,7 +406,7 @@ pub(crate) fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
 // ---------------------------------------------------------------------------
 
 /// Raw httpx-style wrapper around one Newznab indexer. The HTTP client is
-/// injected (v2 AUD-12); auth is an `apikey` query param, never logged.
+/// injected; auth is an `apikey` query param, never logged.
 pub struct NewznabClient {
     http: Client,
     base_url: String,
@@ -485,7 +485,7 @@ impl NewznabClient {
         self.search_request(&params, timeout).await
     }
 
-    /// Structured `t=music`, used ONLY when caps advertises audio-search
+    /// Structured `t=music`, used only when caps advertises audio-search
     /// with artist/album params. The caller falls back to `search` on a 202.
     #[allow(clippy::too_many_arguments)]
     pub async fn music_search(
@@ -926,7 +926,7 @@ const SEARCH_CACHE_CAP: usize = 256;
 /// `(indexer id, query)` → expiry + pooled releases.
 pub(crate) type SearchCache = Mutex<HashMap<(String, String), (Instant, Vec<UsenetRelease>)>>;
 
-/// One configured indexer paired with its HTTP client (v2 D6). A runtime
+/// One configured indexer paired with its HTTP client. A runtime
 /// holder the wiring builds from settings; never serialised.
 pub struct NewznabIndexerEntry {
     /// Raw client for this indexer.
@@ -1074,7 +1074,7 @@ impl NewznabIndexer {
     }
 
     /// Track search: free-text `artist track` only. There is no reliable
-    /// single-track Usenet search; the orchestrator's D4 path resolves to
+    /// single-track Usenet search; the orchestrator resolves a track to
     /// the album, and `album=None` keeps the structured path off here.
     pub async fn search_track(
         &self,
@@ -1096,7 +1096,7 @@ impl NewznabIndexer {
 
     /// Canonical query first; on a genuine empty, one normalized retry
     /// (#259). The retry fires only when every enabled indexer actually
-    /// ANSWERED (at least one successful empty, none rate-limited,
+    /// answered (at least one successful empty, none rate-limited,
     /// auth-failed, or errored): an indexer that sat out in backoff may
     /// hold the release, so an empty pool with a silent indexer is not
     /// proof the query is dead. The retry rung forces free-text `t=search`
@@ -1178,7 +1178,7 @@ impl NewznabIndexer {
         (dedup_releases(pooled), clean)
     }
 
-    /// One indexer's search. The bool reports a successful indexer ANSWER
+    /// One indexer's search. The bool reports a successful indexer answer
     /// (results or a genuine empty); backoff skips, rate limits, and auth
     /// failures report false so the ladder never retries on their silence.
     #[allow(clippy::too_many_arguments)]

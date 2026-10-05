@@ -2,7 +2,7 @@
 //!
 //! Newznab is XML-only (v2 `newznab_client.py`: neither Lidarr nor Prowlarr
 //! ever sends `o=json`), but the crate carries no XML dependency and this
-//! slice adds none, so the reader here covers exactly what the responses
+//! code adds none, so the reader here covers exactly what the responses
 //! need: elements, attributes, text, comments, processing instructions,
 //! CDATA, and entity decoding. Failures surface as typed errors, never
 //! panics, and the v2 hardening (illegal-character strip, bare-ampersand

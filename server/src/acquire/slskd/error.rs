@@ -1,10 +1,10 @@
 //! slskd error taxonomy, mirroring the v2 client contract.
 //!
-//! Ported from `backend/repositories/slskd/slskd_client.py::_check` (v2
-//! AUD-10): 429 maps to [`SlskdError::RateLimited`] ("only one concurrent
-//! operation is permitted", v2 C3), 401/403 to [`SlskdError::Auth`], any
+//! Ported from v2's slskd client `_check`: 429 maps to
+//! [`SlskdError::RateLimited`] ("only one concurrent operation is
+//! permitted"), 401/403 to [`SlskdError::Auth`], any
 //! other 4xx/5xx to [`SlskdError::Api`]. Like v2, auth failures carry a
-//! stripped single-line body snippet at most — never the URL, host, key, or
+//! stripped single-line body snippet at most: never the URL, host, key, or
 //! headers (v2 repository `health_check`).
 
 use std::fmt;
@@ -12,11 +12,11 @@ use std::fmt;
 /// Failures from the slskd HTTP surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlskdError {
-    /// 429: slskd permits only one concurrent operation (v2 C3). Retriable
-    /// with backoff — v2 retries it via `with_retry` because
+    /// 429: slskd permits only one concurrent operation. Retriable with
+    /// backoff; v2 retries it via `with_retry` because
     /// `RateLimitedError` is an `ExternalServiceError`.
     RateLimited,
-    /// 401/403: wrong key or key-CIDR deny — slskd returns 401 for both
+    /// 401/403: wrong key or key-CIDR deny; slskd returns 401 for both
     /// (v2 mock, issue #193). Never retried, never breaks the circuit
     /// (v2 client `_NON_BREAKING` / `_NON_RETRIABLE`).
     Auth {

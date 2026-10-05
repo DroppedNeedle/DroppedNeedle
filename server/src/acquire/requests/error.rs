@@ -1,10 +1,8 @@
-//! Slice-local typed errors rendering the shared envelope.
+//! Requests errors rendering the shared envelope.
 //!
 //! Shapes are byte-compatible with the crate `error` module: every failure
 //! renders as `{"error": {code, message, details}}`. Server faults carry the
 //! fixed generic message plus an error id; the cause goes to the log only.
-//! Wiring note: when this slice mounts into the app router, swap these
-//! variants for the crate-level error type and keep the codes.
 
 use axum::{
     Json,
@@ -82,8 +80,8 @@ pub enum RequestsError {
 
 impl RequestsError {
     /// Build a server fault, logging the real cause with a fresh id. The id
-    /// is minted here because the slice router has no request-scope layer;
-    /// wiring passes the request id instead.
+    /// is minted here because these routes have no request-scope id of
+    /// their own.
     pub fn internal(cause: &dyn std::fmt::Display) -> Self {
         let error_id = uuid::Uuid::new_v4().to_string();
         tracing::error!(error_id, %cause, "requests request failed");

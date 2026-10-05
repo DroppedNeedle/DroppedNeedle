@@ -1,7 +1,7 @@
 //! Clean-slate wire shapes for request intake.
 //!
 //! Times are epoch seconds; ids are MusicBrainz ids validated to the UUID
-//! shape v2 enforces (`backend/infrastructure/validators.py`, MBID_PATTERN).
+//! shape v2 enforces (its `MBID_PATTERN` validator).
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -35,8 +35,8 @@ impl RequestKind {
     }
 }
 
-/// Album intake body. Names may be omitted only when they resolve; this
-/// slice has no catalog lookup, so blank or literal-"Unknown" names are
+/// Album intake body. Names may be omitted only when they resolve; intake
+/// has no catalog lookup, so blank or literal-"Unknown" names are
 /// rejected (v2 `request_service._meaningful_name` quirk).
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct AlbumIntake {
@@ -107,7 +107,7 @@ pub struct BatchIntake {
     pub auto_download_artist: bool,
 }
 
-/// Batch-cancel body (R10). Dedupe is by exact string before lookup.
+/// Batch-cancel body. Dedupe is by exact string before lookup.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct BatchCancelBody {
     /// MBIDs to cancel.
@@ -182,7 +182,7 @@ pub struct BatchIntakeResponse {
     pub status: String,
 }
 
-/// Batch-cancel response (R10).
+/// Batch-cancel response.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct BatchCancelResponse {
     /// Whether anything was cancelled.
@@ -195,8 +195,8 @@ pub struct BatchCancelResponse {
     pub message: String,
 }
 
-/// One grouped status detail behind the request card's expander. The
-/// intake slice has no producer for these yet (v2 never sent them
+/// One grouped status detail behind the request card's expander. Intake
+/// has no producer for these yet (v2 never sent them
 /// either), so views answer None until one exists.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RequestStatusMessage {
@@ -271,7 +271,7 @@ pub struct RequestItem {
     /// Epoch seconds when reviewed, when reviewed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reviewed_at: Option<u64>,
-    /// Whether the album is in the library. None: the intake slice has
+    /// Whether the album is in the library. None: intake has
     /// no library seam; callers treat unknown as present for imported
     /// rows, which only land after the task completes.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -509,8 +509,8 @@ pub struct PersonalMixApprovalsResponse {
     pub count: u32,
 }
 
-/// Personal-mix refresh outcome (A:393). The schema renames to avoid the
-/// discover slice's unrelated `RefreshResponse` in the shared document.
+/// Personal-mix refresh outcome. The schema renames to avoid discover's
+/// unrelated `RefreshResponse` in the shared document.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 #[schema(as = RequestsRefreshResponse)]
 pub struct RefreshResponse {

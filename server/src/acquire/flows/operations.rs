@@ -1,13 +1,13 @@
 //! Free-music and drop-import as registered durable operations.
 //!
 //! v2 ran both as bare asyncio tasks (`FreeMusicService._tasks`,
-//! `DropImportService._tasks`): a restart lost them without a trace, the
-//! unregistered gap this slice closes. Here each operation registers in the
+//! `DropImportService._tasks`): a restart lost them without a trace. Here
+//! each operation registers in the
 //! durable job registry ([`FREE_MUSIC_JOB`], [`DROP_IMPORT_JOB`]) as
 //! [`JobKind::Durable`](crate::db::JobKind), moves through
 //! running/heartbeat/stopped states on the registry, persists its own
-//! record in the [`OpStore`], and emits its ticks beside those writes
-//! (stage plan D11: plugin ticks move to registry + store).
+//! record in the [`OpStore`], and emits its plugin ticks beside those
+//! writes.
 //!
 //! The drop path runs folder → quarantine → resolve: files land in staging,
 //! bad sources quarantine with their reason, and each item resolves to the
@@ -85,8 +85,7 @@ pub struct OpRecord {
     pub detail: String,
 }
 
-/// Operation record store. Memory for now; durable rows are the later
-/// persistence tier, same as the stage-6 slice stores.
+/// Operation record store. In memory for now; it has no durable rows yet.
 #[derive(Debug, Default)]
 pub struct OpStore {
     ops: Mutex<HashMap<String, OpRecord>>,
@@ -234,7 +233,7 @@ fn tokens(title: &str) -> Vec<String> {
 }
 
 /// One free-music request: an album or track served lawfully from the
-/// Internet Archive (v2 `FreeMusicService` docstring, D24).
+/// Internet Archive (v2 `FreeMusicService`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FreeMusicRequest {
     /// Requesting user id.

@@ -1,23 +1,23 @@
 //! In-repo mock slskd server (axum).
 //!
-//! Ported from `backend/tests/mocks/slskd_mock.py` — the executable record
+//! Ported from v2's slskd mock: the executable record
 //! of live-verified slskd 0.25.1 behavior. Shapes mirror the verified JSON
 //! (camelCase keys, comma-joined `state` flags, plain-array enqueue
-//! returning `{Enqueued, Failed}`, no batch GUID — correlation is by
-//! `(username, filename)`). No test in this slice touches a live slskd
-//! instance; every contract brief runs against this on loopback.
+//! returning `{Enqueued, Failed}`, no batch GUID: correlation is by
+//! `(username, filename)`). No test touches a live slskd instance; every
+//! contract test runs against this on loopback.
 //!
 //! Beyond the v2 mock, this pins three more verified behaviors as
-//! scriptable modes so the briefs can assert them:
+//! scriptable modes so the tests can assert them:
 //!
 //! - 429 single-op: one-shot flags make the next search or enqueue answer
-//!   429 (v2 C3 — slskd permits only one concurrent operation).
+//!   429 (slskd permits only one concurrent operation).
 //! - Specific-query silence: a search text carrying a 4-digit year answers
 //!   with zero peers, the live-verified "a specific query sometimes returns
 //!   nothing when a broader one returns thousands" that justifies the query
 //!   ladder (v2 `search_album`).
 //! - Partial rejection: enqueued filenames containing `REJECT-ME` land in
-//!   `Failed`, so the accepted-filenames correlation brief has teeth.
+//!   `Failed`, so the accepted-filenames correlation test can fail.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -97,14 +97,14 @@ struct MockState {
     /// (v2 mock); `Some` pins the exact key the mock accepts, and any other
     /// non-empty key 401s like a wrong key or a key-CIDR deny (v2 #193).
     expected_api_key: Option<String>,
-    /// One-shot 429s for the rate-limit briefs (v2 C3).
+    /// One-shot 429s for the rate-limit tests.
     fail_next_search: bool,
     fail_next_enqueue: bool,
     /// Concurrent in-flight searches+enqueues right now, and the observed max.
     in_flight: usize,
     max_in_flight: usize,
     /// Artificial delay (ms) applied inside search/enqueue handlers so the
-    /// semaphore brief can observe overlap if serialization breaks.
+    /// semaphore test can observe overlap if serialization breaks.
     handler_delay_ms: u64,
 }
 
@@ -326,7 +326,7 @@ async fn start_search(
         guard.search_timeouts.push(timeout_ms);
         // Specific-query silence: a year-carrying query answers zero peers
         // (v2 `search_album`: a specific query sometimes returns nothing
-        // when a broader one returns thousands — verified live).
+        // when a broader one returns thousands; verified live).
         let responses = if carries_year(search_text) {
             Vec::new()
         } else {
@@ -623,7 +623,7 @@ impl MockSlskd {
             .expected_api_key = key.map(str::to_owned);
     }
 
-    /// The next search answers 429 once (v2 C3 single-op).
+    /// The next search answers 429 once (slskd single-op limit).
     pub fn fail_next_search(&self) {
         self.state
             .inner
@@ -632,7 +632,7 @@ impl MockSlskd {
             .fail_next_search = true;
     }
 
-    /// The next enqueue answers 429 once (v2 C3 single-op).
+    /// The next enqueue answers 429 once (slskd single-op limit).
     pub fn fail_next_enqueue(&self) {
         self.state
             .inner
@@ -641,7 +641,7 @@ impl MockSlskd {
             .fail_next_enqueue = true;
     }
 
-    /// Delay (ms) inside search/enqueue handlers for the semaphore brief.
+    /// Delay (ms) inside search/enqueue handlers for the semaphore test.
     pub fn set_handler_delay_ms(&self, delay_ms: u64) {
         self.state
             .inner
@@ -682,7 +682,7 @@ impl MockSlskd {
             .clone()
     }
 
-    /// Inject a transfer record directly (for status-aggregation briefs).
+    /// Inject a transfer record directly (for status-aggregation tests).
     pub fn inject_transfer(
         &self,
         username: &str,
@@ -704,7 +704,7 @@ impl MockSlskd {
     }
 
     /// Inject a transfer record with explicit moved bytes (for the
-    /// truncated-stub brief, v2 #122).
+    /// truncated-stub test, v2 #122).
     #[allow(clippy::too_many_arguments)]
     pub fn inject_transfer_progress(
         &self,
@@ -738,7 +738,7 @@ impl MockSlskd {
             .push(transfer);
     }
 
-    /// Clear in-memory state between briefs (v2 `reset_state`).
+    /// Clear in-memory state between tests (v2 `reset_state`).
     pub fn reset(&self) {
         let mut guard = self
             .state
