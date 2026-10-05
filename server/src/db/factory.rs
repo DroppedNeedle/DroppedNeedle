@@ -202,14 +202,16 @@ impl DbRuntime {
 /// `after_connect` applies every pragma and fails the connection loudly on
 /// drift; `before_acquire` re-verifies journal mode and FK enforcement at
 /// each checkout and recycles strays. Once `reads_frozen` flips (after boot
-/// migrations), `before_acquire` also pins `query_only=ON` so the pool can
-/// no longer write; boot migrations run before the flip.
+/// migrations), both hooks pin `query_only=ON` so the pool can no longer
+/// write, whether a checkout reuses an idle connection or opens a new one;
+/// boot migrations run before the flip.
 async fn open_pool(
     path: &Path,
     readers: u32,
     busy_timeout: Duration,
     reads_frozen: Arc<AtomicBool>,
 ) -> Result<SqlitePool, DbError> {
+    let frozen_at_connect = Arc::clone(&reads_frozen);
     let connect = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true)
@@ -225,8 +227,16 @@ async fn open_pool(
         .max_lifetime(None)
         .after_connect(
             move |connection: &mut SqliteConnection, _meta: PoolConnectionMetadata| {
+                let reads_frozen = Arc::clone(&frozen_at_connect);
                 Box::pin(async move {
                     apply_pragmas(connection, busy_timeout).await?;
+                    // A connection opened on demand skips `before_acquire`,
+                    // so it has to pick up the read-only pin here.
+                    if reads_frozen.load(Ordering::Acquire) {
+                        sqlx::query("PRAGMA query_only=ON")
+                            .execute(&mut *connection)
+                            .await?;
+                    }
                     Ok(())
                 })
             },
